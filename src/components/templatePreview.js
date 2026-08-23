@@ -296,10 +296,16 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       const content = this._readSlot(this.slot);
       const css = this._readSlot('CustomCSS');
       try {
+        // The slot names which buffer `content` is. With CustomCSS selected it
+        // is a stylesheet, which carries no <style> wrapper to say so, and the
+        // server has to be told or its issue list stays silent where the editor
+        // gutter warns.
+        const slot = this.slot;
         const body = carrier
-          ? { carrier: true, content, css, categoryId: Number(this.categoryId) }
+          ? { carrier: true, slot, content, css, categoryId: Number(this.categoryId) }
           : {
               entityId: Number(this.entityId),
+              slot,
               content,
               css,
               categoryId: this.categoryId ? Number(this.categoryId) : 0,

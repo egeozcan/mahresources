@@ -137,6 +137,128 @@ func TestPreviewTemplate_IssuesPiggybacked(t *testing.T) {
 	}
 }
 
+func countPreviewIssues(issues []lintIssue, want string) int {
+	n := 0
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, want) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestPreviewTemplate_CSSPlacementIssues pins the preview pane's issue list
+// against the editor gutter, which lints the same buffers through
+// POST /v1/shortcodes/lint. Both halves were silent: the selected slot was
+// never linted as a stylesheet even when it was the CustomCSS slot, and the
+// separate css buffer was never linted at all.
+func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
+	const cssBuffer = `.badge{color:[meta path="colour" inline="true"]}`
+
+	t.Run("the selected CustomCSS slot is judged as a stylesheet, once", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "CSS Slot Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		// What the editor sends with the CustomCSS slot selected: content and
+		// css are the same buffer, so a naive "lint both" doubles every issue.
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomCSS",
+			"content":  cssBuffer,
+			"css":      cssBuffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("expected exactly one CSS-placement issue, got %d: %+v", n, resp.Issues)
+		}
+	})
+
+	t.Run("the css buffer is linted while another slot is selected", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "Header Slot Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomHeader",
+			"content":  `<h1>[property path="Name"]</h1>`,
+			"css":      cssBuffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue, got %d: %+v", n, resp.Issues)
+		}
+	})
+
+	t.Run("an HTML slot is not judged as a stylesheet", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "Plain Slot Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomHeader",
+			"content":  `<div>[meta path="colour" inline="true"]</div>`,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 0 {
+			t.Fatalf("an HTML slot must stay ordinary text, got %d: %+v", n, resp.Issues)
+		}
+	})
+
+	// A client that predates the slot field still gets the css buffer linted,
+	// and its content buffer degrades to the previous (non-CSS) judgement
+	// rather than being blanked or refused.
+	t.Run("an unnamed slot degrades to the previous behaviour", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "Legacy Client Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"content":  `<div>[meta path="colour" inline="true"]</div>`,
+			"css":      cssBuffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue alone, got %d: %+v", n, resp.Issues)
+		}
+	})
+}
+
 // TestPreviewTemplate_RoleMatrix verifies the preview endpoints are gated at the
 // same capability as saving the corresponding template: category /
 // resourceCategory require admin (capTaxonomy); noteType requires editor.

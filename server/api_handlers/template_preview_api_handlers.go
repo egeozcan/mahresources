@@ -19,9 +19,16 @@ import (
 const previewMRQLLimitCap = 5
 
 type templatePreviewRequest struct {
-	EntityID   uint   `json:"entityId" schema:"entityId"`
-	Content    string `json:"content" schema:"content"`
-	CSS        string `json:"css" schema:"css"`
+	EntityID uint   `json:"entityId" schema:"entityId"`
+	Content  string `json:"content" schema:"content"`
+	CSS      string `json:"css" schema:"css"`
+	// Slot names which Custom* field Content came from. It is what says whether
+	// Content is markup or a stylesheet: with the CustomCSS slot selected the
+	// editor sends that buffer as Content, and a stylesheet carries no <style>
+	// wrapper of its own, so nothing in the text says so. Empty (an older
+	// client) degrades to judging Content as markup, which is what the endpoint
+	// always did.
+	Slot       string `json:"slot" schema:"slot"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"` // optional: the category being edited, for a mismatch warning
 	// Carrier previews the slot against the carrier (Category/ResourceCategory/
 	// NoteType) itself rather than a member entity — used for CustomListHeader and
@@ -106,15 +113,32 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			css = shortcodes.Process(reqCtx, req.CSS, *metaCtx, renderer, executor)
 		}
 
-		// Piggyback lint issues so the preview pane can show them without a second call.
-		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
+		// Piggyback lint issues so the preview pane can show them without a second
+		// call. The pane and the editor gutter (POST /v1/shortcodes/lint) read the
+		// same buffers, so they have to reach the same verdict on them.
+		lintOpts := shortcodes.LintOptions{
 			Known:        buildKnownShortcodes(ctx),
 			ValidateMRQL: func(q string) error { _, e := mrql.Parse(q); return e },
 			// Finding 155: the preview pane's issue list reports an unknown
 			// [partial] too, so the diagnostic is there whether the author is
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
-		})
+		}
+		contentIsCSS := req.Slot == "CustomCSS"
+		lintOpts.CSSMode = contentIsCSS
+		issues := shortcodes.Lint(req.Content, lintOpts)
+		// The css buffer is a second document and needs its own pass, judged as
+		// a stylesheet whatever slot is selected. Skip it only when it is the
+		// very same lint — the CustomCSS slot is sent as both Content and CSS,
+		// and linting both would print every issue twice. Equal text alone is
+		// not enough to skip: under any other slot the two passes run in
+		// different modes and legitimately disagree. Offsets on the appended
+		// issues index the css buffer, not Content; the pane renders severity
+		// and message only.
+		if req.CSS != "" && !(contentIsCSS && req.CSS == req.Content) {
+			lintOpts.CSSMode = true
+			issues = append(issues, shortcodes.Lint(req.CSS, lintOpts)...)
+		}
 		// Warn (don't fail) when previewing against an entity of a different
 		// category than the one being edited.
 		if req.CategoryID != 0 && entityCategoryID != 0 && req.CategoryID != entityCategoryID {

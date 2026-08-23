@@ -226,3 +226,86 @@ func TestMahresourcesContextTemplateGeneratorSeam(t *testing.T) {
 		t.Fatal("TemplateGenerationRateLimiter should lazily create a limiter")
 	}
 }
+
+func countIssuesContaining(issues []shortcodes.LintIssue, want string) int {
+	n := 0
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, want) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet pins that a generated
+// CustomCSS slot is linted as a stylesheet. The slot carries no <style> wrapper
+// of its own, so nothing in its text says so and the caller has to say it;
+// without that the draft is reported clean while the editor gutter warns on the
+// identical buffer.
+func TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet(t *testing.T) {
+	in := slotInput()
+	in.Mode = "css"
+	in.Slot = "CustomCSS"
+	provider := &fakeTemplateDraftProvider{
+		response: `{"content":".badge{color:[meta path=\"colour\" inline=\"true\"]}","explanation":"Colours the badge."}`,
+	}
+	gen := NewTemplateGenerator(provider, templateGenConfig())
+
+	got, err := gen.GenerateTemplate(context.Background(), in, "colour the badge from meta")
+	if err != nil {
+		t.Fatalf("GenerateTemplate: %v", err)
+	}
+	if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
+		t.Fatalf("expected exactly one CSS-placement issue, got %d: %#v", n, got.Issues)
+	}
+	// Placement is a warning, not an error — the draft stays applicable.
+	if !got.Valid {
+		t.Errorf("a placement warning must not invalidate the draft: %#v", got.Issues)
+	}
+}
+
+// TestTemplateGeneratorHTMLSlotIsNotLintedAsCSS is the other half: the same
+// interpolation in an HTML slot is ordinary text and must stay quiet.
+func TestTemplateGeneratorHTMLSlotIsNotLintedAsCSS(t *testing.T) {
+	provider := &fakeTemplateDraftProvider{
+		response: `{"content":"<div>[meta path=\"colour\" inline=\"true\"]</div>","explanation":"Shows the colour."}`,
+	}
+	gen := NewTemplateGenerator(provider, templateGenConfig())
+
+	got, err := gen.GenerateTemplate(context.Background(), slotInput(), "show the colour")
+	if err != nil {
+		t.Fatalf("GenerateTemplate: %v", err)
+	}
+	if n := countIssuesContaining(got.Issues, "CSS slot"); n != 0 {
+		t.Fatalf("an HTML slot must not be judged as a stylesheet, got %d: %#v", n, got.Issues)
+	}
+}
+
+// TestTemplateGeneratorBundleDecidesCSSModePerSlot pins why cssMode is a
+// parameter rather than something read off the input inside the function:
+// finishBundle shares one TemplateGenerationInput across every slot it
+// validates, so only the CustomCSS slot of a bundle may be linted as a
+// stylesheet. Either whole-bundle answer is wrong — deriving from Mode="html"
+// flags neither slot, deriving from Mode="css" flags both.
+func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
+	const draft = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\"]</div>","CustomCSS":".badge{color:[meta path=\"colour\" inline=\"true\"]}"},"explanation":"Styles the badge."}`
+
+	for _, mode := range []string{"html", "css"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			in := slotInput()
+			in.Target = TemplateTargetBundle
+			in.Mode = mode
+			in.Slot = ""
+			in.BundleSlots = []string{"CustomHeader", "CustomCSS"}
+
+			gen := NewTemplateGenerator(&fakeTemplateDraftProvider{response: draft}, templateGenConfig())
+			got, err := gen.GenerateTemplate(context.Background(), in, "style the badge")
+			if err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
+				t.Fatalf("expected the CSS-placement issue on CustomCSS alone, got %d: %#v", n, got.Issues)
+			}
+		})
+	}
+}

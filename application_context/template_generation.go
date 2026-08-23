@@ -152,7 +152,7 @@ func finishSingle(in TemplateGenerationInput, target, raw string) (*TemplateGene
 		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
 	}
 
-	issues := validateTemplateContent(target, in, content)
+	issues := validateTemplateContent(target, in, content, strings.EqualFold(in.Mode, "css"))
 	return &TemplateGenerationResult{
 		Target:      target,
 		Content:     content,
@@ -215,7 +215,9 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 			content = content[:MaxTemplateGeneratedContentLength]
 		}
 		result.Slots[slotName] = content
-		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content)...)
+		// One input covers every slot of a bundle, so its Mode says nothing
+		// about the slot in hand: only CustomCSS is a stylesheet here.
+		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content, slotName == "CustomCSS")...)
 	}
 	if len(result.Slots) == 0 {
 		return nil, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
@@ -227,13 +229,19 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 // validateTemplateContent lints slot/bundle content as shortcodes and validates
 // metaschema content as JSON + JSON Schema. Returned issues are never fatal —
 // they flag the draft for review.
-func validateTemplateContent(target string, in TemplateGenerationInput, content string) []shortcodes.LintIssue {
+//
+// cssMode is a parameter rather than something read off in, because the caller
+// is the only one who knows: a CustomCSS slot is a stylesheet with no <style>
+// wrapper of its own, so nothing in the text says so, and finishBundle shares
+// one input across every slot it validates.
+func validateTemplateContent(target string, in TemplateGenerationInput, content string, cssMode bool) []shortcodes.LintIssue {
 	if target == TemplateTargetMetaSchema {
 		return validateMetaSchemaJSON(content)
 	}
 	issues := shortcodes.Lint(content, shortcodes.LintOptions{
 		Known:        in.Known,
 		ValidateMRQL: in.ValidateMRQL,
+		CSSMode:      cssMode,
 	})
 	if issues == nil {
 		return []shortcodes.LintIssue{}
