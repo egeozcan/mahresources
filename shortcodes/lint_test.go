@@ -5,6 +5,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
 
 // findIssue returns the first issue whose message contains substr, or nil.
@@ -1497,4 +1499,144 @@ func TestLintRereadRegionEdges(t *testing.T) {
 			t.Errorf("past the depth bound the region is unanalysed, got %q", got)
 		}
 	})
+}
+
+// foreignNestWrappers are the element names that decide how the markup inside
+// them is read: the two foreign roots, the ten the tokenizer raw-texts, the
+// integration points, a few breakout tags and a few inert ones. Nesting them
+// against each other is what produces the cases nobody writes down.
+var foreignNestWrappers = []string{
+	"svg", "math", "div", "p", "span", "g", "text", "title", "desc",
+	"foreignObject", "iframe", "textarea", "xmp", "noembed", "noframes",
+	"noscript", "plaintext", "style", "script", "mtext", "mi",
+	"annotation-xml", "font", "b", "table", "li", "a", "section",
+	`font color="red"`, `annotation-xml encoding="text/html"`,
+	"svg/", "iframe/", "script/", "path/",
+}
+
+// nestMarkup wraps probe in each of parts, in order, closing anything that was
+// not written self-closing.
+func nestMarkup(parts []string, probe string) string {
+	var open string
+	var closers []string
+	for _, p := range parts {
+		open += "<" + p + ">"
+		if strings.HasSuffix(p, "/") {
+			continue
+		}
+		name := p
+		if i := strings.IndexByte(name, ' '); i >= 0 {
+			name = name[:i]
+		}
+		closers = append([]string{"</" + name + ">"}, closers...)
+	}
+	return open + probe + strings.Join(closers, "")
+}
+
+// The linter reads foreign content from a token stream, and the thing it is
+// approximating is a namespace-aware parser. So ask one. For every nest of the
+// names that decide how markup is read, golang.org/x/net/html's PARSER says
+// whether the probe below is a real element with a live "javascript:" href, and
+// the linter has to warn exactly when it is.
+//
+// A warning with no real element behind it is the failure this file is graded
+// on, and it is what two earlier attempts at this shipped. The silent direction
+// is a missed warning, which is the state everything here was in before; the
+// four that are missed are named and explained.
+func TestLintForeignContentAgainstTheParser(t *testing.T) {
+	liveJSLink := func(src string) bool {
+		doc, err := html.Parse(strings.NewReader(src))
+		if err != nil {
+			return false
+		}
+		var walk func(*html.Node) bool
+		walk = func(n *html.Node) bool {
+			if n.Type == html.ElementNode && n.Data == "a" {
+				for _, a := range n.Attr {
+					if a.Key == "href" && strings.HasPrefix(strings.ToLower(a.Val), "javascript:") {
+						return true
+					}
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if walk(c) {
+					return true
+				}
+			}
+			return false
+		}
+		return walk(doc)
+	}
+
+	// A value in a <script> or <style> body is judged as landing in a program
+	// rather than in markup, so the anchor written around it draws the language
+	// message instead of the URL one. That is the better message for the
+	// placement, and these are the only nests where the two disagree.
+	programBody := map[string]bool{
+		`<svg><script><a href="javascript:[property path='Name']">go</a></script></svg>`:   true,
+		`<svg><style><a href="javascript:[property path='Name']">go</a></style></svg>`:     true,
+		`<math><script><a href="javascript:[property path='Name']">go</a></script></math>`: true,
+		`<math><style><a href="javascript:[property path='Name']">go</a></style></math>`:   true,
+	}
+
+	check := func(parts []string) {
+		src := nestMarkup(parts, `<a href="javascript:[property path='Name']">go</a>`)
+		oracle := nestMarkup(parts, `<a href="javascript:VALUE">go</a>`)
+		live := liveJSLink(oracle)
+		warned := lintSaysAny(src, `continues a "javascript:" URL`)
+		switch {
+		case warned && !live:
+			t.Errorf("FALSE POSITIVE: no browser makes a link here, yet %s warns:\n  %q", src, lintWarnings(src))
+		case live && !warned && !programBody[src]:
+			t.Errorf("MISSED: a real javascript: link here, and %s is silent", src)
+		}
+	}
+
+	for _, a := range foreignNestWrappers {
+		check([]string{a})
+		for _, b := range foreignNestWrappers {
+			check([]string{a, b})
+		}
+	}
+	// Three deep over the names that actually change the reading, which is
+	// where a stack that pops the wrong frame shows up.
+	deep := []string{"svg", "math", "div", "iframe", "textarea", "title", "foreignObject", "g", `font color="red"`, "noscript", "p"}
+	for _, a := range deep {
+		for _, b := range deep {
+			for _, c := range deep {
+				check([]string{a, b, c})
+			}
+		}
+	}
+}
+
+// The other half of the same sweep: a value written somewhere ordinary must
+// draw nothing at all, wherever it is nested. The only messages allowed are the
+// two that are about landing in a program rather than about the placement.
+func TestLintSafePlacementsStaySilentEverywhere(t *testing.T) {
+	allowed := []string{"sits inside a <script>", "sits inside a <style>"}
+	safeProbes := []string{
+		`<span class="c">[property path="Name"]</span>`,
+		`<a href="/x/[property path='Name']">go</a>`,
+		`<img src="/v1/r/[property path='ID']" alt="[property path='Name']">`,
+		`[property path="Name"]`,
+	}
+	for _, a := range foreignNestWrappers {
+		for _, b := range foreignNestWrappers {
+			for _, probe := range safeProbes {
+				src := nestMarkup([]string{a, b}, probe)
+				for _, msg := range lintWarnings(src) {
+					ok := false
+					for _, prefix := range allowed {
+						if strings.Contains(msg, prefix) {
+							ok = true
+						}
+					}
+					if !ok {
+						t.Errorf("nothing is wrong with %s, yet it draws %q", src, msg)
+					}
+				}
+			}
+		}
+	}
 }
