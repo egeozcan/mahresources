@@ -159,18 +159,18 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	// One markup scan for every inline [meta] in the template, rather than one
-	// per shortcode: the scan is forward-only from the start of the document, so
+	// One markup scan for every bare value in the template, rather than one per
+	// shortcode: the scan is forward-only from the start of the document, so
 	// doing it per token made a template with many of them quadratic.
 	// Every shortcode that emits a bare value gets the placement analysis, not
 	// just [meta inline]: the danger is the value landing where escaping does
 	// not reach, and [property], [item] and [mrql value=] put values in exactly
 	// the same places. [property path="Description" raw="true"] is in this
 	// repo's own reference panel.
-	var valueSpans []inlineMetaSpan
+	var valueSpans []bareValueSpan
 	for _, tk := range tokens {
 		if !tk.closing && emitsBareValue(tk.name, tk.attrs) {
-			valueSpans = append(valueSpans, inlineMetaSpan{start: tk.start, end: tk.end})
+			valueSpans = append(valueSpans, bareValueSpan{start: tk.start, end: tk.end})
 		}
 	}
 	valueContexts := attributeContextsFor(input, valueSpans)

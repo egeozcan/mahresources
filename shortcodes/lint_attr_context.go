@@ -8,8 +8,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-// Where an inline [meta] lands in the markup around it, which decides whether
-// escaping is enough. Finding that out means answering "which attribute of
+// Where a shortcode that emits a bare value lands in the markup around it,
+// which decides whether escaping is enough. That is [meta inline="true"],
+// [property], [item] and [mrql value=] — see emitsBareValue; the file talks
+// about "[meta inline]" in places because it was the first of them.
+//
+// Finding that out means answering "which attribute of
 // which tag is this inside", and four rounds of review established that a
 // hand-written answer is wrong on the next case every time: a ">" inside a
 // handler is not a tag end, a "<" inside one is not a tag start, a <script>
@@ -22,8 +26,8 @@ import (
 // quoted — is a bounded scan over a single tag's source with no nesting and no
 // escapes to resolve, and that part was never the problem.
 
-// inlineMetaSpan is one [meta ... inline] occurrence in the template source.
-type inlineMetaSpan struct{ start, end int }
+// bareValueSpan is one bare-value shortcode occurrence in the template source.
+type bareValueSpan struct{ start, end int }
 
 // attrContext is where one occurrence falls in the markup around it.
 type attrContext struct {
@@ -52,7 +56,7 @@ func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + 
 // attributeContextsFor answers, for every occurrence, which attribute it sits
 // in. Each occurrence is replaced by an inert unique sentinel, the result is
 // tokenized, and the sentinels are located in the tags that come back.
-func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrContext {
+func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrContext {
 	out := make(map[int]attrContext, len(spans))
 	if len(spans) == 0 {
 		return out
@@ -382,7 +386,7 @@ func isASCIISpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
 }
 
-// unsafeAttributeContexts reports the ways an inline [meta] value is still
+// unsafeAttributeContexts reports the ways a bare shortcode value is still
 // dangerous where it is being placed.
 //
 // html.EscapeString covers & < > ' " and nothing else — exactly enough to keep a
@@ -406,7 +410,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	}
 	if ctx.rawTextElement != "" {
 		// Only script and style ever set this, so the language is never empty.
-		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
+		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`}
 	}
 	if ctx.inName {
 		return []string{label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
@@ -538,8 +542,12 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// scriptLikeElements have bodies in which the parser decodes no entities, so
-// escaping a value placed there accomplishes nothing.
+// scriptLikeElements have bodies in which the parser decodes no entities, so a
+// value placed there arrives with its escaping still in it and escaping is not
+// what decides whether the placement is safe. It is not nothing — an escaped
+// value carries no "<" and no bare quote, so it can neither close the element
+// nor end a JavaScript string — but a backtick, a "${...}" or a ";" is not
+// escaped at all, and those are the characters that matter in a language.
 //
 // The tokenizer raw-texts ten elements, and no tag inside any of them is ever
 // emitted as a tag, so a value in one is analysed as ordinary prose. That reads
@@ -573,21 +581,27 @@ func expressionAttributeKind(attr string) string {
 // was tried — reports those same executable placements as dangerous when they
 // cannot execute in either reading.
 //
-// An UNCLOSED one of these swallows the rest of the document rather than a
-// body, and that is not a fail-open for the same reason: a browser's tokenizer
-// runs to EOF in raw text too, so the href further down that this file then
-// says nothing about is not a link there either. noscript is the exception
-// again, and again only into the residue below.
+// An UNCLOSED one of the other seven swallows the rest of the document rather
+// than a body, and that is not a fail-open either: a browser's tokenizer runs
+// to EOF in raw text (or RCDATA, or PLAINTEXT) too, so the href further down
+// that this file then says nothing about is not a link there either.
+//
+// An unclosed <noscript> is not that, and it is the widest form of the residue
+// rather than a case of the rule above: with scripting disabled it is an
+// ordinary open element, so everything after it is live markup that this file
+// reads as one raw-text run and says nothing about at all.
 //
 // The residue, known and accepted: with scripting disabled, a value inside a
-// <noscript> can land in an unquoted attribute, a style= attribute, an
-// interpolated attribute name, a <style> element, a stylesheet URL, or a
-// srcdoc= — whose value is parsed as a whole document, so even an escaped value
-// becomes real markup inside the frame. None of them execute script in that
-// mode and all of them are unwarned. Buying them means carrying a
-// scripting-mode axis through every rule below, for an element that has to be
-// nested inside a category template first. A raw= value in a <noscript> body
-// already warns, through the raw= rule, which is the one that matters most.
+// <noscript> — or after an unclosed one — can land in an unquoted attribute, a
+// style= attribute, an interpolated attribute name, a <style> element, any
+// URL-bearing attribute (a stylesheet href, a <base href> that re-points every
+// relative URL on the page, a form action), or a srcdoc=, whose value is parsed
+// as a whole document so even an escaped value becomes real markup inside the
+// frame. None of them execute script in that mode and all of them are
+// unwarned. Buying them means carrying a scripting-mode axis through every rule
+// below, for an element that has to be nested inside a category template first.
+// A raw= value in a <noscript> body already warns, through the raw= rule, which
+// is the one that matters most.
 //
 // FOREIGN CONTENT is a wider and older gap that none of this closes and none of
 // it depends on. The tokenizer is namespace-unaware, so it raw-texts these

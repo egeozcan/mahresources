@@ -1165,12 +1165,17 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		// The rest of the slot stops being analysed, which looks like the worst
 		// kind of silence — a typo turning off the check for everything after
 		// it. It is not, because a browser's tokenizer runs to EOF in raw text
-		// too: the href below is not a link there either. <script> is the one
-		// that still speaks, because it is listed and its message keeps
-		// applying to every value after it.
+		// (or RCDATA, or PLAINTEXT) too: the href below is not a link there
+		// either. <script> is the one that still speaks, because it is listed
+		// and its message keeps applying to every value after it.
+		//
+		// <noscript> is deliberately not in this list. With scripting disabled
+		// an unclosed one is an ordinary open element and everything after it
+		// IS live markup, so the same silence is the residue in its widest
+		// form rather than an instance of this rule. See scriptLikeElements.
 		tail := `<a href="javascript:[meta path='x' inline='true']">go</a>` +
 			`<div style="color:[meta path='y' inline='true']">x</div>`
-		for _, opener := range []string{"<iframe>", "<noembed>", "<noframes>", "<xmp>", "<plaintext>", "<textarea>", "<title>", "<noscript>"} {
+		for _, opener := range []string{"<iframe>", "<noembed>", "<noframes>", "<xmp>", "<plaintext>", "<textarea>", "<title>"} {
 			for _, issue := range Lint(opener+tail, LintOptions{Known: KnownFromBuiltins()}) {
 				t.Errorf("after an unclosed %s nothing is markup, got %q", opener, issue.Message)
 			}
