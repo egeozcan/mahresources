@@ -2612,3 +2612,96 @@ func TestLintNoscriptIsReadUnderBothScriptingModes(t *testing.T) {
 		}
 	})
 }
+
+// Round-11 findings 5 through 8: the scan assumed every start tag the
+// tokenizer yields becomes an element, and the tree constructor disagrees in
+// four ways — insertion modes that ignore tokens (frameset documents, <head>
+// and <frame> in body), legacy elements the parser pops immediately or
+// renames, start tags that imply closing an open element first, and x/net's
+// own documented surrender when <template> meets open foreign content. Every
+// expectation below is checked against html.Parse.
+func TestLintTreeConstructionAgreesWithTheParser(t *testing.T) {
+	warns := func(src string) bool {
+		return lintSaysAny(src, `sits in a "srcdoc" attribute`)
+	}
+	srcdoc := `<iframe srcdoc="[property path='Name']"></iframe>`
+
+	t.Run("a frameset document has no body content", func(t *testing.T) {
+		// An honored <frameset> replaces the body; nothing after it is ever
+		// live, including after </frameset> (the after-frameset mode ignores
+		// body content too).
+		for _, src := range []string{
+			`<frameset>` + srcdoc + `</frameset>`,
+			`<frameset></frameset>` + srcdoc,
+		} {
+			if warns(src) {
+				t.Errorf("no iframe exists in a frameset document: %s", src)
+			}
+		}
+		// A <frameset> that arrives after body content is the one that is
+		// ignored, and the iframe after it is real.
+		if !warns(`x<frameset>` + srcdoc + `</frameset>`) {
+			t.Error("a frameset after body content is ignored, and the iframe is live")
+		}
+	})
+
+	t.Run("head and frame in body are ignored tokens", func(t *testing.T) {
+		// <head> at the document start is real, and the <svg> that follows
+		// pops it (in-head hands anything else to the body); the </head>
+		// after that closes nothing, so the svg stays open.
+		if warns(`<head><svg></head>` + srcdoc) {
+			t.Error("</head> in body closes nothing; the iframe is foreign")
+		}
+		// <frame> outside a frameset never becomes an element, so </frame>
+		// has nothing to close and the svg stays open.
+		if warns(`<frame><svg></frame>` + srcdoc) {
+			t.Error("<frame> in body is ignored; the iframe is foreign")
+		}
+	})
+
+	t.Run("legacy elements the parser pops or renames leave no frame", func(t *testing.T) {
+		// <image> is renamed to the void <img>; keygen, basefont and bgsound
+		// are inserted and popped immediately. None of them can be closed, so
+		// the end tag walks find nothing and the svg stays open.
+		for _, el := range []string{"image", "keygen", "basefont", "bgsound"} {
+			src := "<" + el + "><svg></" + el + ">" + srcdoc
+			if warns(src) {
+				t.Errorf("<%s> leaves no frame to close, the iframe is foreign: %s", el, src)
+			}
+		}
+	})
+
+	t.Run("a start tag can close the element before it", func(t *testing.T) {
+		// Each pair: the second start tag implies closing the first, so the
+		// end tag that follows closes the second, and the stray one after the
+		// <svg> names nothing — a browser keeps the svg open.
+		for _, src := range []string{
+			`<button><button></button><svg></button>` + srcdoc,
+			`<a><a></a><svg></a>` + srcdoc,
+			`<h2><h3></h2><svg></h3>` + srcdoc,
+			`<dd><dd></dd><svg></dd>` + srcdoc,
+			`<li><li></li><svg></li>` + srcdoc,
+			`<option><option></option><svg></option>` + srcdoc,
+		} {
+			if warns(src) {
+				t.Errorf("the implied closure leaves the later end tag nothing to close: %s", src)
+			}
+		}
+		// The block family closes an open <p> before inserting, so the
+		// "</p>" that follows is the no-op and "</div>" still closes the div
+		// and the svg inside it: the iframe is a real HTML iframe.
+		if !warns(`<p><div></p><svg></div>` + srcdoc) {
+			t.Error("<div> closes the p, so </div> closes the div and the svg")
+		}
+	})
+
+	t.Run("template meeting open foreign content ends the parse", func(t *testing.T) {
+		// x/net's parser deliberately ignores every remaining token when a
+		// <template> start tag reaches the HTML modes while foreign content
+		// is open (parse.go's ignoreTheRemainingTokens workaround). The
+		// oracle is that parser, so the scan stops where it stops.
+		if warns(`<svg><desc><template>` + srcdoc) {
+			t.Error("nothing after the template exists to that parser")
+		}
+	})
+}

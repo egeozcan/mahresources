@@ -320,6 +320,92 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			stack = stack[:len(stack)-1]
 		}
 	}
+	htmlFrameOpen := func(name string) bool {
+		for _, f := range stack {
+			if f.ns == "" && f.name == name {
+				return true
+			}
+		}
+		return false
+	}
+	// closeP is the tree constructor's "close a p element in button scope",
+	// which nearly every block-level start tag runs before inserting itself.
+	closeP := func() {
+		for i := len(stack) - 1; i >= 0; i-- {
+			f := stack[i]
+			if f.ns == "" && f.name == "p" {
+				stack = stack[:i]
+				return
+			}
+			if scopeBoundary(f) || (f.ns == "" && f.name == "button") {
+				return
+			}
+		}
+	}
+	// adoptionAgency is the agency's stack-visible effect, shared by the
+	// formatting end tags and by the <a>/<nobr> start tags that run the
+	// agency against an already-open element of their own name. Its outer
+	// loop reruns on the clone it inserts until nothing special is open above
+	// one, and each pass reparents one furthest block — so the net the stack
+	// keeps is exactly the SPECIAL frames that were open above the formatting
+	// element, each of which was a furthest block once, and everything else
+	// above it is closed: "<b><div><svg></b>" ends with the div open and the
+	// svg gone, which is where html.Parse puts the next token. Without a
+	// special element above it the agency pops normally, and out of scope it
+	// does nothing.
+	adoptionAgency := func(name string) {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == name && stack[i].ns == "" {
+				if stackHasSpecial(stack[i+1:]) {
+					kept := stack[:i]
+					for _, f := range stack[i+1:] {
+						if isSpecialElement(f) {
+							kept = append(kept, f)
+						}
+					}
+					stack = kept
+				} else {
+					stack = stack[:i]
+				}
+				return
+			}
+			if scopeBoundary(stack[i]) {
+				return
+			}
+		}
+	}
+	// liClosure is the loop the <li>, <dd> and <dt> start tags run: close the
+	// nearest open element of their kind, walking past address, div and p and
+	// stopping at anything else special — then close a p like every other
+	// block start.
+	liClosure := func(a, b string) {
+		for i := len(stack) - 1; i >= 0; i-- {
+			f := stack[i]
+			if f.ns == "" && (f.name == a || f.name == b) {
+				stack = stack[:i]
+				break
+			}
+			if f.name == "address" || f.name == "div" || f.name == "p" {
+				continue
+			}
+			if isSpecialElement(f) {
+				break
+			}
+		}
+		closeP()
+	}
+
+	// inertRest reports that the parser this scan mirrors has stopped
+	// building anything: an honored <frameset> replaced the body and every
+	// insertion mode from there ignores body content, or x/net's parser met a
+	// <template> start tag with foreign content open and — its own documented
+	// workaround — ignores every remaining token. Everything after either is
+	// text to nobody.
+	inertRest := false
+	// framesetOK mirrors the parser's frameset-ok flag: a <frameset> replaces
+	// the body only before any body content has been seen, and is an ignored
+	// token afterwards.
+	framesetOK := true
 
 	// pending describes the raw-text body the tokenizer is about to hand back
 	// as a single text token, for the elements where that reading is also a
@@ -397,22 +483,7 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		// element — an SVG <font> — was already taken by the foreign walk
 		// above; the agency's own search is HTML-only.)
 		if formattingElements[name] {
-			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].name == name && stack[i].ns == "" {
-					if stackHasSpecial(stack[i+1:]) {
-						stack = append(stack[:i], stack[i+1:]...)
-					} else {
-						stack = stack[:i]
-					}
-					return
-				}
-				// "Has an element in scope" is what the agency actually asks
-				// before acting, and these are its boundaries: past one the
-				// formatting element is out of reach and the tag is ignored.
-				if scopeBoundary(stack[i]) {
-					return
-				}
-			}
+			adoptionAgency(name)
 			return
 		}
 		// The names whose end tags pop until the element is popped, provided
@@ -484,6 +555,14 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		// as html.Parse reads it.
 		z.AllowCDATA(enclosing().ns != "")
 		tt := z.Next()
+		if inertRest && tt != html.ErrorToken {
+			// The parser has stopped building; every remaining sentinel is in
+			// text nobody renders, and saying so keeps the fallbacks quiet.
+			for _, idx := range sentinelIndexes(string(z.Raw())) {
+				record(idx.index, attrContext{inertText: true, noscript: inNoscript()})
+			}
+			continue
+		}
 		switch tt {
 		case html.ErrorToken:
 			return
@@ -508,6 +587,134 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			}
 			if ns == "" && (name == "svg" || name == "math") {
 				ns = name
+			}
+			// A start tag that is not head content closes an open <head> —
+			// the in-head mode hands anything else to the body — and that
+			// includes an <svg> or <math>, which is why this sits outside the
+			// HTML-only corrections below.
+			if t := enclosing(); t.ns == "" && t.name == "head" && !headContentTags[name] {
+				stack = stack[:len(stack)-1]
+			}
+			if ns == "" {
+				// The tree constructor's in-body corrections, which the
+				// tokenizer knows nothing about: tokens the parser renames,
+				// ignores outright, or answers by first closing an element
+				// that is still open. A scan without these carries frames the
+				// parser never kept, and a stray end tag later pops through
+				// them into a different namespace than the browser's.
+				if name == "image" {
+					// The parser rewrites the token itself; <image> IS <img>.
+					name = "img"
+				}
+				ignored := false
+				switch {
+				case name == "frameset":
+					// Honored only before body content, where it replaces the
+					// body outright; afterwards it is an ignored token.
+					if framesetOK {
+						inertRest = true
+					}
+					ignored = true
+				case name == "head":
+					// A real element only at the very start of the document.
+					ignored = len(stack) > 0 || !framesetOK
+				case name == "frame":
+					// Real only inside a frameset document, whose whole body
+					// inertRest already covers.
+					ignored = true
+				case tableSectionTags[name]:
+					// In body these are ignored; only the table insertion
+					// modes build them, approximated by an open <table>.
+					ignored = !htmlFrameOpen("table")
+				case name == "form":
+					// A nested form is an ignored token while one is open.
+					ignored = htmlFrameOpen("form")
+				case name == "select":
+					// A <select> with one already in scope pops to it and
+					// inserts nothing — the parser's reading of nesting one.
+					for i := len(stack) - 1; i >= 0; i-- {
+						if stack[i].ns == "" && stack[i].name == "select" {
+							stack = stack[:i]
+							ignored = true
+							break
+						}
+						if scopeBoundary(stack[i]) {
+							break
+						}
+					}
+				case name == "template":
+					// x/net's parser refuses to mix templates with open
+					// foreign content and ignores every remaining token — its
+					// own documented workaround. The oracle is that parser,
+					// so the scan stops where it stops.
+					for _, f := range stack {
+						if f.ns != "" {
+							inertRest = true
+							ignored = true
+							break
+						}
+					}
+				}
+				if ignored {
+					// The element never exists, so its attributes never do
+					// either; recorded as settled so the fallbacks stay out.
+					for _, hit := range hits {
+						record(hit.index, attrContext{inertText: true, noscript: inNoscript()})
+					}
+					continue
+				}
+				if framesetFlipTags[name] {
+					framesetOK = false
+				} else if name == "input" {
+					// An <input> counts as body content unless it is hidden.
+					hidden := false
+					for hasAttr {
+						var key, val []byte
+						key, val, hasAttr = z.TagAttr()
+						if string(key) == "type" && asciiEqualFold(string(val), "hidden") {
+							hidden = true
+						}
+					}
+					if !hidden {
+						framesetOK = false
+					}
+				}
+				// Start tags that close an element before inserting
+				// themselves.
+				switch {
+				case pCloserTags[name]:
+					closeP()
+					if headingTags[name] {
+						// A heading start tag also pops a heading it is
+						// directly inside.
+						if t := enclosing(); t.ns == "" && headingTags[t.name] {
+							stack = stack[:len(stack)-1]
+						}
+					}
+				case name == "li":
+					liClosure("li", "li")
+				case name == "dd", name == "dt":
+					liClosure("dd", "dt")
+				case name == "button":
+					// A button in scope is closed first.
+					for i := len(stack) - 1; i >= 0; i-- {
+						if stack[i].ns == "" && stack[i].name == "button" {
+							stack = stack[:i]
+							break
+						}
+						if scopeBoundary(stack[i]) {
+							break
+						}
+					}
+				case name == "a", name == "nobr":
+					// An open element of the same name means the agency runs
+					// before the new one is inserted.
+					adoptionAgency(name)
+				case name == "option", name == "optgroup":
+					if t := enclosing(); t.ns == "" && t.name == "option" {
+						stack = stack[:len(stack)-1]
+					}
+				}
 			}
 			// The namespace is settled before this tag's own attributes are
 			// recorded, because it decides what some of them mean: a srcdoc= on
@@ -589,6 +796,12 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			nameBytes, _ := z.TagName()
 			closeTag(string(nameBytes))
 		case html.TextToken:
+			// Body text is body content: any non-whitespace character outside
+			// a raw-text body means a later <frameset> is an ignored token.
+			if framesetOK && pending.language == "" && !pending.inert &&
+				strings.TrimSpace(string(z.Raw())) != "" {
+				framesetOK = false
+			}
 			// A text token whose raw begins with the CDATA opener is a section
 			// the tokenizer was allowed to read — a raw-text body that merely
 			// starts with those bytes is caught by its pending case first.
@@ -679,13 +892,55 @@ var scopePopTags = map[string]bool{
 	"footer": true, "header": true, "hgroup": true, "li": true,
 	"listing": true, "main": true, "marquee": true, "menu": true, "nav": true,
 	"object": true, "ol": true, "p": true, "pre": true, "section": true,
-	"summary": true, "table": true, "ul": true,
+	"summary": true, "table": true, "template": true, "ul": true,
 }
 
 // headingTags close as a class: "</h2>" pops to the nearest open heading of
 // any rank.
 var headingTags = map[string]bool{
 	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+}
+
+// headContentTags are the start tags the in-head mode keeps for itself; any
+// other start tag closes an open <head> and belongs to the body.
+var headContentTags = map[string]bool{
+	"base": true, "basefont": true, "bgsound": true, "head": true,
+	"link": true, "meta": true, "noframes": true, "noscript": true,
+	"script": true, "style": true, "template": true, "title": true,
+}
+
+// framesetFlipTags are the start tags that set the frameset-ok flag to "not
+// ok" — the parser's enumerated list, not a complement: a formatting element,
+// an unknown element and an <svg> all leave the flag alone, and a <frameset>
+// after any of them still replaces the body.
+var framesetFlipTags = map[string]bool{
+	"applet": true, "area": true, "body": true, "br": true, "button": true,
+	"dd": true, "dt": true, "embed": true, "hr": true, "iframe": true,
+	"img": true, "keygen": true, "li": true, "listing": true,
+	"marquee": true, "object": true, "pre": true, "select": true,
+	"table": true, "template": true, "textarea": true, "wbr": true,
+	"xmp": true,
+}
+
+// tableSectionTags are ignored tokens in the body; only the table insertion
+// modes build them.
+var tableSectionTags = map[string]bool{
+	"caption": true, "col": true, "colgroup": true, "tbody": true, "td": true,
+	"tfoot": true, "th": true, "thead": true, "tr": true,
+}
+
+// pCloserTags are the block-level start tags that close a p element in button
+// scope before inserting themselves. The headings are here too, with their
+// extra rule applied at the call site.
+var pCloserTags = map[string]bool{
+	"address": true, "article": true, "aside": true, "blockquote": true,
+	"center": true, "details": true, "dialog": true, "dir": true, "div": true,
+	"dl": true, "fieldset": true, "figcaption": true, "figure": true,
+	"footer": true, "form": true, "h1": true, "h2": true, "h3": true,
+	"h4": true, "h5": true, "h6": true, "header": true, "hgroup": true,
+	"hr": true, "listing": true, "main": true, "menu": true, "nav": true,
+	"ol": true, "p": true, "plaintext": true, "pre": true, "section": true,
+	"summary": true, "table": true, "ul": true, "xmp": true,
 }
 
 // scopeBoundary reports whether HTML's "has an element in scope" walk stops at
@@ -912,6 +1167,11 @@ var voidElements = map[string]bool{
 	"area": true, "base": true, "br": true, "col": true, "embed": true,
 	"hr": true, "img": true, "input": true, "link": true, "meta": true,
 	"param": true, "source": true, "track": true, "wbr": true,
+	// Not HTML's official void list but the parser's behaviour: it inserts
+	// and immediately pops all three, so no end tag ever finds one open.
+	// (<image> never reaches this map at all — the parser renames the token
+	// to img.)
+	"basefont": true, "bgsound": true, "keygen": true,
 }
 
 // foreignBreakoutTags are the HTML start tag names that end foreign content,
@@ -1656,15 +1916,19 @@ func expressionAttributeKind(attr string) string {
 //
 // What the stack still does not model is HTML's own tree construction at its
 // deepest, and no claim is made here about which direction any of it fails in.
-// The adoption agency is kept only to its one stack-visible property — a
-// formatting element's end tag never closes a special element open above it —
-// so the clone the agency appends is not reconstructed, and the non-formatting
-// frames it removes between the formatting element and the furthest block stay
-// on this stack. The end tags with their own pop-until-in-scope rules carry
-// their own boundary lists in closeTag, but only as the in-body insertion mode
-// gives them: the table insertion modes do not exist here, so the
-// table-section end tags (td, tr, tbody and friends) ride the any-other walk,
-// and foster parenting never happens.
+// The adoption agency is kept to its stack-visible net — the special frames
+// above the formatting element survive and everything else above it closes —
+// but the active formatting list itself does not exist here, so a formatting
+// element the agency or a scope pop closed is never RECONSTRUCTED into later
+// content the way a browser re-opens a <b> across block boundaries; formatting
+// frames are namespace-neutral, which is why that stays tolerable. The end
+// tags with their own pop-until-in-scope rules carry their own boundary lists
+// in closeTag, but only as the in-body insertion mode gives them: the table
+// insertion modes do not exist here, so the table-section end tags (td, tr,
+// tbody and friends) ride the any-other walk, foster parenting never happens,
+// and the in-body corrections in scanMarkup honor the table-section START
+// tags whenever a <table> is open rather than only in the modes that really
+// do.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element

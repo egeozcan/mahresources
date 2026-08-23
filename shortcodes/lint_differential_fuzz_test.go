@@ -95,6 +95,10 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 		"<form>", "</form>", "<table>", "</table>", "<mglyph>", "<font>", "</font>",
 		`<font color="red">`, "<noscript>", "</noscript>", "<li>", "</li>",
 		"<![CDATA[x]]>", "<![CDATA[ <div> ]]>", "<style>", "</style>",
+		"<select>", "</select>", "<option>", "</option>", "<button>",
+		"</button>", "<h2>", "</h2>", "<h3>", "</h3>", "<dd>", "</dd>",
+		"<image>", "<keygen>", "<frameset>", "</frameset>", "<frame>",
+		"<head>", "</head>", "<template>", "</template>", "<ul>", "</ul>",
 	}
 	fails := 0
 	for _, seed := range []int64{11, 42} {
