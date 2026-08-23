@@ -292,10 +292,13 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 			t.Fatalf("create group: %v", err)
 		}
 
+		// raw= in plain text so the markup reading has something to say. A
+		// purely negative assertion would also hold if this cell skipped its
+		// content pass altogether.
 		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
 			"entityId": g.ID,
 			"slot":     "CustomHeader",
-			"content":  `<div>[meta path="colour" inline="true"]</div>`,
+			"content":  `<div>[meta path="colour" inline="true" raw="true"]</div>`,
 		})
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
@@ -306,6 +309,9 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		}
 		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 0 {
 			t.Fatalf("an HTML slot must stay ordinary text, got %d: %+v", n, resp.Issues)
+		}
+		if n := countPreviewIssues(resp.Issues, "becomes real elements"); n != 1 {
+			t.Fatalf("the content pass must run and read as markup, got %d: %+v", n, resp.Issues)
 		}
 	})
 
