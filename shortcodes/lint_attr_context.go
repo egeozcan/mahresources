@@ -355,10 +355,10 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				case ns == "":
 					// HTML: the tokenizer's reading is a browser's, except for
 					// <noscript>, whose body is markup with scripting off.
-					if scriptLikeElements[name] {
-						if name == "style" && !styleTypeApplies(z, hasAttr, hits) {
-							break
-						}
+					// A <style> a browser will not apply holds no program, and
+					// its body is raw text either way, so nothing is recorded
+					// for it at all.
+					if scriptLikeElements[name] && (name != "style" || styleTypeApplies(z, hasAttr, hits)) {
 						pending.language = name
 					} else if name == "noscript" {
 						pending.reread = true

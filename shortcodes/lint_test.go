@@ -1620,6 +1620,16 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			element:   "script", namespaces: []string{"", "svg"}, childText: true,
 		},
 		{
+			// The same probe with the value wrapped in an element, which is the
+			// child-text-content rule from the other side: inside an HTML
+			// <script> the wrapper is raw text and the value IS the program,
+			// while inside an SVG one it is a real element and the value is not.
+			name: "script program (wrapped)", msg: "JavaScript",
+			lintSrc:   `<script><span>[property path='Name']</span></script>`,
+			oracleSrc: `<script><span>VALUE</span></script>`,
+			element:   "script", namespaces: []string{"", "svg"}, childText: true,
+		},
+		{
 			// A <style> in the same place IS live in that mode: it is a real
 			// stylesheet, and a value in it can close the declaration and open
 			// another. Nothing about it needs a script.
