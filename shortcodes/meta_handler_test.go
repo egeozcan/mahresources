@@ -914,9 +914,11 @@ func metaObject(raw string) map[string]any {
 
 // The memo hands one decoded tree to every reader on every by-value copy of the
 // context, so the tree has to be read-only: a mutation by one reader would be
-// seen by the next, and by every later card in the same render. Nothing writes
-// to it today — the schema resolvers copy into fresh maps and tryEvaluateCondition
-// only reads — and this fails if that changes.
+// seen by every later reader in that Process call, including the nested ones
+// (a card on a list page is its own Process call with its own memo, so the blast
+// radius is one entity's render, not the page). Nothing writes to it today — the
+// schema resolvers copy into fresh maps and tryEvaluateCondition only reads —
+// and this fails if that changes.
 func TestDecodedMetaIsSharedReadOnly(t *testing.T) {
 	const schema = `{
 		"type": "object",
@@ -944,4 +946,72 @@ func TestDecodedMetaIsSharedReadOnly(t *testing.T) {
 	var want any
 	require.NoError(t, json.Unmarshal(raw, &want))
 	assert.Equal(t, want, ctx.decodeMeta(), "a reader mutated the shared Meta tree")
+}
+
+// Every Meta reader answers from the memo rather than from its own Unmarshal.
+// Priming the cache with a tree that disagrees with ctx.Meta is the only way to
+// tell the two apart from outside: a reader that decoded for itself would answer
+// "from-blob".
+func TestEveryMetaReaderReadsThroughTheMemo(t *testing.T) {
+	const schema = `{
+		"type": "object",
+		"properties": {"a": {"type": "string"}},
+		"if": {"properties": {"a": {"const": "from-memo"}}},
+		"then": {"properties": {"a": {"title": "MEMO"}}},
+		"else": {"properties": {"a": {"title": "BLOB"}}}
+	}`
+	ctx := MetaShortcodeContext{
+		EntityType:  "group",
+		EntityID:    1,
+		Meta:        json.RawMessage(`{"a":"from-blob","list":["blob"]}`),
+		MetaSchema:  schema,
+		decodedMeta: &decodedMetaCache{},
+	}
+	ctx.decodedMeta.once.Do(func() {
+		ctx.decodedMeta.value = map[string]any{"a": "from-memo", "list": []any{"memo"}}
+	})
+
+	// [conditional]/[each]
+	assert.Equal(t, "from-memo", ctx.rawValueAtPath("a"))
+	// the widget's data-value
+	assert.Equal(t, `"from-memo"`, ctx.valueJSONAtPath("a"))
+	// the widget's data-schema, whose if/then is evaluated against the value
+	assert.Contains(t, extractSchemaSlice(schema, "a", ctx.decodeMetaObject()), `"MEMO"`)
+	// [meta inline="true"]
+	assert.Equal(t, "from-memo", RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "a", "inline": "true"}}, ctx))
+	// [each]
+	assert.Equal(t, "memo|", RenderEachShortcode(context.Background(),
+		Shortcode{Name: "each", Attrs: map[string]string{"path": "list"}, InnerContent: "[item]|", IsBlock: true},
+		ctx, nil, nil, 0))
+}
+
+// encoding/json keeps decoding after a semantic error, so a blob carrying one
+// number too large for a float64 comes back with that key nil and every other
+// key populated. Half a Meta must not render: the failed key would print as an
+// explicit null, and an editable widget bound to it would offer that null back
+// for writing. All four readers answer "nothing", which is what the three
+// non-inline ones did before they shared the memo.
+func TestPartiallyDecodableMetaReadsAsNothing(t *testing.T) {
+	raw := json.RawMessage(`{"tags":["a"],"huge":1e400}`)
+	ctx := MetaShortcodeContext{
+		EntityType:  "group",
+		EntityID:    1,
+		Meta:        raw,
+		decodedMeta: &decodedMetaCache{},
+	}
+
+	assert.Nil(t, ctx.decodeMeta())
+	assert.Nil(t, ctx.rawValueAtPath("tags"))
+	assert.Equal(t, "", ctx.valueJSONAtPath("huge"))
+	assert.Equal(t, "", ctx.valueJSONAtPath("tags"))
+	assert.Equal(t, "-", RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "tags", "inline": "true", "default": "-"}}, ctx))
+
+	widget := RenderMetaShortcode(Shortcode{Name: "meta", Attrs: map[string]string{"path": "huge"}}, ctx)
+	assert.Contains(t, widget, `data-value=""`, "a key that failed to decode must not render as null")
+
+	assert.Equal(t, "none", RenderEachShortcode(context.Background(),
+		Shortcode{Name: "each", Attrs: map[string]string{"path": "tags"}, InnerContent: "[item]|[else]none", IsBlock: true},
+		ctx, nil, nil, 0))
 }

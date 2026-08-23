@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -232,4 +233,29 @@ func TestItemWithNoPathRendersTheElementItself(t *testing.T) {
 	// both fall through to default=.
 	assert.Equal(t, "-", render(map[string]string{"path": "a", "default": "-"}, map[string]any{"a": nil}))
 	assert.Equal(t, "-", render(map[string]string{"path": "b", "default": "-"}, map[string]any{"a": nil}))
+}
+
+// The splice never rescans what it inserted. A repeated strings.Replace over the
+// sentinels would: the value written for sentinel 0 would be scanned again when
+// sentinel 1 was replaced, so a value carrying sentinel 1's bytes would be
+// expanded. stripNUL already keeps a Meta value from carrying those bytes at
+// all, so this input is unreachable through RenderEachShortcode and only an
+// in-package test can build it — which is exactly why the property needs pinning
+// here rather than through a rendered page.
+func TestSpliceItemsDoesNotRescanWhatItInserted(t *testing.T) {
+	rendered := "a" + itemSentinel(0) + "b" + itemSentinel(1) + "c"
+	forged := "<" + itemSentinel(1) + ">"
+
+	got := spliceItems(rendered, []string{forged, "SECOND"})
+
+	assert.Equal(t, "a"+forged+"bSECONDc", got)
+	assert.Equal(t, 1, strings.Count(got, "SECOND"), "an inserted value was re-expanded")
+}
+
+// A sentinel naming no value is dropped rather than printed: its bytes include a
+// NUL, which is not page content. Unreachable in practice (every sentinel the
+// marker wrote has a value), so it is pinned directly.
+func TestSpliceItemsDropsAnUnknownSentinel(t *testing.T) {
+	rendered := "a" + itemSentinel(7) + "b"
+	assert.Equal(t, "ab", spliceItems(rendered, []string{"only-one"}))
 }

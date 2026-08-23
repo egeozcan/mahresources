@@ -574,7 +574,9 @@ func TestRawValueAtPathEdges(t *testing.T) {
 }
 
 // rawAtPath reads a Meta dot-path the way [conditional] and [each] do: through a
-// context, so the read goes over the same memoized decode the renderers use.
+// context. The context is a bare one with no memo, which decodes per call — the
+// answer is the same either way (TestEveryMetaReaderReadsThroughTheMemo is what
+// pins the memo being used).
 func rawAtPath(meta json.RawMessage, path string) any {
 	return MetaShortcodeContext{Meta: meta}.rawValueAtPath(path)
 }

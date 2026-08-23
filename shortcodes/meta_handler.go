@@ -729,6 +729,14 @@ func (ctx MetaShortcodeContext) decodeMetaObject() map[string]any {
 // nil, which navigates to nothing and falls through to default= — the same
 // answer as a missing path, and what the widget's client side also does.
 //
+// A blob that only *partly* decodes is nil too, and that is the whole of the
+// error branch below. encoding/json keeps going after a semantic error: a number
+// too large for a float64 leaves that one key nil and populates the rest, so
+// half a Meta would render while the failed key rendered as an explicit null —
+// and an editable widget bound to it would offer that null back for writing.
+// The three non-inline readers each rejected the whole decode on error before
+// they shared this memo, so this is also what keeps them answering as they did.
+//
 // The tree is shared by every reader on every by-value copy of the context, so
 // callers must treat it as read-only.
 func (ctx MetaShortcodeContext) decodeMeta() any {
@@ -737,7 +745,9 @@ func (ctx MetaShortcodeContext) decodeMeta() any {
 	}
 	decode := func() any {
 		var v any
-		_ = json.Unmarshal(ctx.Meta, &v)
+		if err := json.Unmarshal(ctx.Meta, &v); err != nil {
+			return nil
+		}
 		return v
 	}
 	if ctx.decodedMeta == nil {
