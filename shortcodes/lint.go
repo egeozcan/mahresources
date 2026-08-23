@@ -287,7 +287,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				for _, attr := range []string{"format", "layout"} {
 					if tk.attrs[attr] != "" {
 						add(tk.start, tk.end, SeverityWarning,
-							`[meta] has `+attr+`= without inline="true"; only the inline form reads it, so it is ignored and the value renders unformatted`)
+							`[meta] has `+attr+`= without inline="true"; only the inline form reads it, so the formatting you asked for is ignored`)
 					}
 				}
 			} else if tk.attrs["editable"] == "true" {

@@ -138,7 +138,9 @@ tokenize:
 	//
 	// Resolving to "not unterminated" writes nothing, deliberately: a raw-text
 	// body's occurrence passes through here too, and it keeps that context
-	// unless an unterminated tag is the better answer.
+	// unless one of the two answers below is the better one. Both can overwrite
+	// it — the element-name check by design, and a "<" written inside a script
+	// string does reach it, which is fail-closed but a worse message.
 	var ask []int     // sentinel offsets, ascending, still needing the test
 	var askSpan []int // parallel: which span each of those belongs to
 	for i, sp := range spans {
@@ -406,7 +408,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		if raw {
 			return []string{label + ` with raw= in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
 		}
-		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
+		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" in it can start another declaration and a "}" can escape the rule, and escaping touches neither.`}
 	}
 	if ctx.unterminated {
 		return []string{label + ` is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
@@ -437,7 +439,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
 	if cssMode {
-		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
+		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" in it can start another declaration and a "}" can escape the rule, and escaping touches neither.`)
 	}
 	if kind := expressionAttributeKind(attr); kind != "" {
 		out = append(out, label+` sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
@@ -607,6 +609,11 @@ func expressionAttributeKind(attr string) string {
 // below, for an element that has to be nested inside a category template first.
 // A raw= value in a <noscript> body already warns, through the raw= rule, which
 // is the one that matters most.
+//
+// One of those is not a <noscript> matter at all and is unwarned everywhere: a
+// refresh <meta content="0;url=…"> chooses a navigation target, and "content"
+// is not in urlBearingAttrs — recognising it needs the sibling http-equiv,
+// since the same attribute on <meta name="description"> is prose.
 //
 // FOREIGN CONTENT is a wider and older gap that none of this closes and none of
 // it depends on. The tokenizer is namespace-unaware, so it raw-texts these

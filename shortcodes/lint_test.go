@@ -1187,8 +1187,10 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		if !warns("<script>"+tail, "reaches JavaScript") {
 			t.Error("an unclosed <script> still takes every value after it into JavaScript")
 		}
-		// The value that is still dangerous after any of them is a raw one,
-		// which can close the element and continue in markup.
+		// The value that is still dangerous after a closable one is a raw one,
+		// which can write "</xmp>" and continue in markup. Not after
+		// <plaintext>, which nothing closes — the warning there is the raw=
+		// rule being conservative, as it is for a closed <plaintext> body.
 		if !warns(`<xmp>[property path="Name" raw="true"]`, "becomes real elements") {
 			t.Error("raw= is unescaped wherever the element ends")
 		}
