@@ -265,6 +265,33 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				add(tk.start, tk.end, SeverityWarning,
 					`[meta] has both hide-empty and default; hide-empty wins and the default is never shown`)
 			}
+			// raw, format and layout are documented attributes of [meta], so
+			// they no longer draw an "unknown attribute" warning — but only the
+			// inline renderer reads them (RenderMetaShortcode branches on
+			// inline=="true"), so without it they do nothing and, until this,
+			// nothing said so. raw is the one that matters: an author who wrote
+			// it believes escaping is off when it is not.
+			//
+			// raw="false" is deliberately quiet. It is a no-op the author asked
+			// for and is the default anyway, so reporting it is noise; only a
+			// raw= that was meant to change something is worth a line.
+			if tk.attrs["inline"] != "true" {
+				if tk.attrs["raw"] == "true" {
+					add(tk.start, tk.end, SeverityWarning,
+						`[meta] has raw="true" without inline="true"; only the inline form reads it, so it is ignored and the value is still escaped`)
+				}
+				for _, attr := range []string{"format", "layout"} {
+					if strings.TrimSpace(tk.attrs[attr]) != "" {
+						add(tk.start, tk.end, SeverityWarning,
+							`[meta] has `+attr+`= without inline="true"; only the inline form reads it, so it is ignored and the value renders unformatted`)
+					}
+				}
+			} else if tk.attrs["editable"] == "true" {
+				// The mirror of the same rule: inline emits the bare value, so
+				// there is no widget for editable to turn on.
+				add(tk.start, tk.end, SeverityWarning,
+					`[meta] has editable="true" with inline="true", which renders the bare value and no widget, so editable is ignored`)
+			}
 		case "mrql":
 			if strings.TrimSpace(tk.attrs["query"]) == "" && strings.TrimSpace(tk.attrs["saved"]) == "" {
 				add(tk.start, tk.end, SeverityError,

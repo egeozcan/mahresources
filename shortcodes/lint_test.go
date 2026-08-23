@@ -998,6 +998,66 @@ func TestLintCoversEveryBareValueShortcode(t *testing.T) {
 	})
 }
 
+// [meta]'s documented attribute set gained raw, format and layout, which took
+// away the `unknown attribute "raw" on [meta]` diagnostic they used to draw.
+// Only RenderMetaShortcode's inline branch reads them, so without inline="true"
+// they now do nothing and nothing says so.
+func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
+	issue := func(src, want string) *LintIssue {
+		return findIssue(Lint(src, LintOptions{Known: KnownFromBuiltins()}), want)
+	}
+
+	t.Run("raw, format and layout are inert without inline", func(t *testing.T) {
+		for _, tc := range []struct{ src, want string }{
+			{`[meta path="x" raw="true"]`, `raw="true" without inline="true"`},
+			{`[meta path="x" format="date"]`, `format= without inline="true"`},
+			{`[meta path="x" layout="Jan 2, 2006"]`, `layout= without inline="true"`},
+			{`[meta path="x" inline="false" raw="true"]`, `raw="true" without inline="true"`},
+		} {
+			got := issue(tc.src, tc.want)
+			if got == nil {
+				t.Errorf("no warning containing %q for %s", tc.want, tc.src)
+				continue
+			}
+			if got.Severity != SeverityWarning {
+				t.Errorf("%s: severity %q, want %q", tc.src, got.Severity, SeverityWarning)
+			}
+		}
+	})
+
+	t.Run("with inline they are read, so they stay quiet", func(t *testing.T) {
+		for _, src := range []string{
+			`[meta path="x" inline="true" raw="true"]`,
+			`[meta path="x" inline="true" format="date"]`,
+			`[meta path="x" inline="true" layout="Jan 2, 2006"]`,
+		} {
+			if got := issue(src, `without inline="true"`); got != nil {
+				t.Errorf("%s: unexpected %q", src, got.Message)
+			}
+		}
+	})
+
+	t.Run("editable is the other way round", func(t *testing.T) {
+		got := issue(`[meta path="x" inline="true" editable="true"]`, "editable is ignored")
+		if got == nil {
+			t.Error(`inline="true" renders the bare value, so there is no editor to turn on`)
+		} else if got.Severity != SeverityWarning {
+			t.Errorf("severity %q, want %q", got.Severity, SeverityWarning)
+		}
+		if got := issue(`[meta path="x" editable="true"]`, "editable is ignored"); got != nil {
+			t.Errorf("editable alone is the widget's whole point: %s", got.Message)
+		}
+	})
+
+	t.Run("a no-op the author asked for stays quiet", func(t *testing.T) {
+		// raw="false" is what the default already is, so saying it changes
+		// nothing whether inline is set or not. Warning there would be noise.
+		if got := issue(`[meta path="x" raw="false"]`, `without inline="true"`); got != nil {
+			t.Errorf("unexpected %q", got.Message)
+		}
+	})
+}
+
 // Round-11 findings. The tokenizer raw-texts eight elements, not two, and for
 // the six besides <script> and <style> nothing inside them was analysed at all:
 // their bodies arrive as text with no open raw-text element recorded, so the
