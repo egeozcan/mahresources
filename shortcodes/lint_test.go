@@ -1769,11 +1769,18 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 		// Two roots deep, so the closer that arrives belongs to the outer one.
 		"<svg><iframe><math>", "<math><iframe><svg>", "<svg><math><iframe>",
 		"<math><mtext><div><svg><iframe>",
+		// A program region, and a scope boundary above the closer.
+		"<svg><script>", "<svg><style>", "<svg><script><div>",
+		"<div><math><annotation-xml>", "<div><math><mtext>",
+		"<svg><script><foreignObject><div>", "<svg><iframe><foreignObject>",
 	}
 	strays := []string{
 		"", "</svg>", "</math>", "</textarea>", "</iframe>", "</div>", "</p>", "</br>",
 		"<br>", "<img>", "<hr>", "<div/>", "<span/>", "<path/>", "<mglyph>",
 		"<br><mglyph>", "<div/><mglyph>", "</svg><script>", "</math><script>",
+		// Close something, then probe: the shape where a stale program or a
+		// stale namespace shows up.
+		"<div></div>", "<g></g>", "<span></span>", "<p></p>", "<foreignObject></foreignObject>",
 	}
 	for _, o := range openers {
 		for _, stray := range strays {
@@ -2161,6 +2168,67 @@ func TestLintStyleTypeDecidesWhetherItIsAStylesheet(t *testing.T) {
 	t.Run("a script with a data type is residue, not a rule", func(t *testing.T) {
 		if !lintSaysAny(`<script type="application/json">{"n":"[property path='Name']"}</script>`, "reaches JavaScript") {
 			t.Error("unchanged: the script rule has never read type=")
+		}
+	})
+}
+
+// Two answers are reached outside scanMarkup — the "<" proof for an interpolated
+// element name, and the unterminated-tag pass — and neither knows what kind of
+// body it is looking at. In a raw-text or RCDATA body a "<" starts nothing, so
+// the scan now says so rather than leaving the question open.
+func TestLintInertBodiesAnswerTheFallbacks(t *testing.T) {
+	for _, src := range []string{
+		`<textarea><[property path="Name"]</textarea>`,
+		`<title><[property path="Name"]</title>`,
+		`<iframe><[property path="Name"]</iframe>`,
+		`<xmp><[property path="Name"]</xmp>`,
+		`<style type="text/plain"><[property path="Name"]</style>`,
+	} {
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: a browser shows that \"<\" as text, got %q", src, got)
+		}
+	}
+	// The real case is untouched: outside such a body the "<" is the whole
+	// proof that a name is being interpolated.
+	src := `<div><[property path="Name"] class="c">x</div>`
+	if !lintSaysAny(src, "interpolated into a tag or attribute NAME") {
+		t.Errorf("%s: this one really is a name, got %q", src, lintWarnings(src))
+	}
+	// And raw= is unescaped in one of those bodies too, since the value can
+	// write "</xmp>" and go on in markup.
+	if !lintSaysAny(`<xmp>[property path="Name" raw="true"]</xmp>`, "becomes real elements") {
+		t.Error("raw= is not what an inert body settles")
+	}
+}
+
+// Leaving foreign content leaves the program with it, and the two walks that
+// decide where an end tag lands both stop at a SPECIAL element.
+func TestLintProgramAndWalkEndWhereABrowserEndsThem(t *testing.T) {
+	t.Run("a breakout ends the program", func(t *testing.T) {
+		// The <div> takes a browser out of SVG, popping the script with it, so
+		// what follows is ordinary HTML text.
+		for _, src := range []string{
+			`<svg><script><div></div>[property path="Name"]</script></svg>`,
+			`<svg><script><p>[property path="Name"]</script></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: past the breakout this is not the program, got %q", src, got)
+			}
+		}
+	})
+
+	t.Run("the walk stops at a special element", func(t *testing.T) {
+		// annotation-xml ends the scope the </div> would need, so a browser
+		// ignores it and the iframe stays MathML.
+		src := `<div><math><annotation-xml></div><iframe srcdoc="[property path='Name']"></iframe>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: the </div> is ignored, got %q", src, got)
+		}
+		// The region-end fallback obeys the same stop: the current node is an
+		// HTML <div>, and HTML's rule refuses to walk past one.
+		src = `<svg><script><foreignObject><div></svg></div></foreignObject><iframe srcdoc="[property path='Name']"></iframe></script></svg>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: the </svg> is ignored, got %q", src, got)
 		}
 	})
 }

@@ -68,6 +68,12 @@ type attrContext struct {
 	// only when scripting is disabled. Nothing there can execute under either
 	// reading, so the rules that describe execution are withheld.
 	noscript bool
+	// inertText marks an occurrence in a body the scan read and deliberately
+	// had nothing to say about — an HTML raw-text or RCDATA body, where a "<"
+	// starts nothing and a tag is literal text. It is the zero value as far as
+	// the rules are concerned, and it exists only to keep the two fallbacks
+	// below from answering a question the scan already settled.
+	inertText bool
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
 	// attribute", so a broken template fails closed.
@@ -138,7 +144,7 @@ func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrConte
 	var ask []int     // sentinel offsets, ascending, still needing the test
 	var askSpan []int // parallel: which span each of those belongs to
 	for i, sp := range spans {
-		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName) {
+		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName || ctx.inertText) {
 			continue
 		}
 		at := sentinelAt[i]
@@ -288,6 +294,10 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 		}
 		if len(stack) == 0 {
 			base = ""
+			// The program element was foreign, so leaving foreign content
+			// leaves it too: "<svg><script><div></div>…" is HTML text past the
+			// <div>, not more of the script.
+			program, programRoot = "", ""
 		}
 	}
 
@@ -299,10 +309,13 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 		// as well, so it is re-read like every other foreign region and reaches
 		// the language through scanMode.program instead.
 		language string
-		reread   bool     // read the body as markup instead
-		mode     scanMode // ... in this mode
+		// inert marks a body that is raw text to a browser as well, so the
+		// scan reads nothing out of it and says so.
+		inert  bool
+		reread bool     // read the body as markup instead
+		mode   scanMode // ... in this mode
 	}
-	forget := func() { pending.language, pending.reread = "", false }
+	forget := func() { pending.language, pending.inert, pending.reread = "", false, false }
 
 	for {
 		tt := z.Next()
@@ -363,6 +376,11 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					} else if name == "noscript" {
 						pending.reread = true
 						pending.mode = scanMode{noscript: true, enclosing: name}
+					} else {
+						// The other seven, plus a <style> a browser will not
+						// apply: raw text or RCDATA to the tokenizer and to a
+						// browser alike, so a tag written in one is text.
+						pending.inert = true
 					}
 				case tt == html.SelfClosingTagToken:
 					// "/>" really closes in foreign content, so what the
@@ -440,7 +458,12 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					// it read as inert; without the stop, "<x-foo><div><math>
 					// </x-foo>" popped a <div> a browser keeps and did the
 					// opposite.
-					for j := i; j >= 0; j-- {
+					// From the TOP, not from this boundary: the elements
+					// between them are where the walk stops.
+					// "<div><math><annotation-xml></div>" is ignored by a
+					// browser because annotation-xml is special and ends the
+					// scope the </div> would need.
+					for j := len(stack) - 1; j >= 0; j-- {
 						if stack[j].name == name {
 							stack, matched = stack[:j], true
 							break
@@ -467,7 +490,11 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// it is, and treating one as an exit would put the scan back into
 			// HTML, where a srcdoc= that is inert on a foreign element starts
 			// warning again.
-			if !matched && base != "" && (name == base || name == mode.enclosing) {
+			// ... and it stops at a SPECIAL element for the same reason the
+			// walk above does. "<svg><script><foreignObject><div></svg>" is
+			// ignored by a browser, because the current node is an HTML <div>
+			// and HTML's rule refuses to walk past one.
+			if !matched && base != "" && (name == base || name == mode.enclosing) && !stackHasSpecial(stack) {
 				stack, base = stack[:0], ""
 				program, programRoot = "", ""
 			}
@@ -491,6 +518,14 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 						foreignRoot:    programRoot,
 						noscript:       mode.noscript,
 					})
+				}
+			case pending.inert:
+				// An HTML raw-text or RCDATA body the scan passed over. Recorded
+				// rather than left blank so the "<" proof below does not read
+				// "<textarea><[meta …]" as an interpolated element name: there
+				// is no tag there, and a browser shows the "<" as text.
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					record(idx.index, attrContext{inertText: true, noscript: mode.noscript})
 				}
 			case pending.language != "":
 				// A script or style body in the HTML namespace is where
@@ -609,11 +644,12 @@ var rawTextElements = map[string]bool{
 // and the data types (importmap, speculationrules) that are neither. That one
 // is named as residue instead.
 func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool {
-	// An interpolated type= is a value nobody here can read, so it is taken as
-	// the stylesheet it may turn out to be.
+	// An interpolated type= is asked what it could complete, exactly as an
+	// interpolated <annotation-xml> encoding is: type="text/plain[meta …]"
+	// cannot become text/css, so nothing is applied and the body is inert.
 	for _, hit := range hits {
 		if hit.ctx.inValue && hit.ctx.attr == "type" {
-			return true
+			return interpolatedValueCouldBe(hit.value, styleSheetTypes)
 		}
 	}
 	for hasAttr {
@@ -622,10 +658,32 @@ func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool 
 		if string(key) != "type" {
 			continue
 		}
-		t := strings.TrimSpace(string(val))
-		return t == "" || strings.EqualFold(t, "text/css")
+		// Not trimmed: the match is "the empty string, or an ASCII
+		// case-insensitive match for text/css", so type=" text/css " applies
+		// nothing at all.
+		for _, want := range styleSheetTypes {
+			if strings.EqualFold(string(val), want) {
+				return true
+			}
+		}
+		return false
 	}
 	return true
+}
+
+// stackHasSpecial reports whether HTML's walk would stop somewhere inside this
+// scan rather than reaching past it. Used only by the region-end fallback,
+// which is about an element this scan never opened, so anything that blocks the
+// walk blocks that too. Conservative when the current node is foreign — the
+// foreign rule does not stop at a special element — and being conservative
+// there costs a warning rather than inventing one.
+func stackHasSpecial(stack []markupFrame) bool {
+	for _, f := range stack {
+		if isSpecialElement(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // isSpecialElement reports whether HTML's "any other end tag" walk stops at this
@@ -1092,6 +1150,11 @@ func couldStillBecomeExecutable(prefix string) bool {
 	return false
 }
 
+// styleSheetTypes are the type= values that leave a <style> element a
+// stylesheet: the empty string, or text/css. The match is ASCII
+// case-insensitive and nothing more — no trimming, no parameters.
+var styleSheetTypes = []string{"", "text/css"}
+
 // htmlAnnotationEncodings are the two <annotation-xml> encodings that make its
 // children HTML. The match is ASCII case-insensitive and nothing more — no
 // trimming, no parameters.
@@ -1108,12 +1171,21 @@ var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
 // either. Asking only whether the value holds an interpolation at all failed
 // closed on all three, which is a warning about a script no browser runs.
 func encodingCouldBeHTML(value string) bool {
+	return interpolatedValueCouldBe(value, htmlAnnotationEncodings)
+}
+
+// interpolatedValueCouldBe reports whether some assignment to the
+// interpolations in value could make the whole of it one of wants. Two
+// attributes turn on this question — <annotation-xml>'s encoding, which decides
+// a namespace, and <style>'s type, which decides whether there is a stylesheet
+// at all — and both are written by whoever can edit the entity.
+func interpolatedValueCouldBe(value string, wants []string) bool {
 	runs := fixedRunsAround(value)
 	if len(runs) < 2 {
 		return false // no interpolation in it at all
 	}
-	for _, enc := range htmlAnnotationEncodings {
-		if fixedRunsFit(runs, enc) {
+	for _, want := range wants {
+		if fixedRunsFit(runs, want) {
 			return true
 		}
 	}
