@@ -207,11 +207,13 @@ describe('template preview frame', () => {
 
     test("emits the frame's own reset before the author CSS, as the real pages do", async () => {
         // base.tpl links the app stylesheets and only then renders the head
-        // block, where the custom_css tag writes its <style>, so an author's
-        // own `body` rule wins in production. The frame's reset is preview
-        // chrome with no counterpart there; emitted after the author CSS it
-        // silently won instead, and body margin, padding, background and color
-        // previewed as unstylable.
+        // block, where the custom_css tag writes its <style>, so nothing of the
+        // page's own outranks the author at equal specificity. The frame's
+        // reset is preview chrome with no counterpart there; emitted after the
+        // author CSS it silently outranked them, and a `body` rule the author
+        // wrote previewed as having no effect at all. What the ordering does
+        // not do is reproduce a real page, whose body carries classes that beat
+        // a bare `body` selector either way; see _renderFrame.
         const fetchMock = stubFetch({ html: '', css: 'body{background:#000}' });
         const component = templatePreview({
             entityType: 'group',

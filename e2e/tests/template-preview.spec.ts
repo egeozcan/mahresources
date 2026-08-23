@@ -116,12 +116,14 @@ test.describe('Template live preview', () => {
     const stamp = Date.now();
     const marker = `css-slot-applied-${stamp}`;
     // Two rules, because they prove different things. The background pins the
-    // cascade: the frame's own body reset is preview chrome with no counterpart
-    // on a real page, so it is emitted before the author's CSS exactly as
-    // base.tpl puts the app stylesheets before the custom_css tag's <style>.
-    // The ::after content is the marker the body must NOT contain as text --
-    // generated content never reaches textContent, so the only way the marker
-    // gets there is the stylesheet being injected as markup as well.
+    // frame's internal cascade: its own body reset is preview chrome with no
+    // counterpart on a real page, so it is emitted before the author's CSS and
+    // must not outrank it. (That is a rule about the chrome, not a claim of
+    // parity: a real page's body carries classes that beat a bare `body`
+    // selector either way. See _renderFrame.) The ::after content is the marker
+    // the body must NOT contain as text -- generated content never reaches
+    // textContent, so the only way the marker gets there is the stylesheet
+    // being injected as markup as well.
     const css = `body{background-color:rgb(3,5,7)}body::after{content:"${marker}"}`;
     const headerProbe = `header-probe-${stamp}`;
     const category = await apiClient.createCategory(`CSS Slot Cat ${stamp}`, undefined, {
@@ -161,8 +163,8 @@ test.describe('Template live preview', () => {
       )
       .toContain(marker);
 
-    // ...and the author's own body rule wins over the frame's reset, which is
-    // what it will do in production.
+    // ...and the author's own body rule outranks the frame's reset rather than
+    // the other way round.
     await expect
       .poll(
         async () =>

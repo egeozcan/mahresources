@@ -56,16 +56,18 @@
             This category has no entities yet, so the preview uses one from elsewhere. It does not carry this category's metadata.
         </p>
 
-        {# A CustomCSS buffer reaches the page through the custom_css tag, which #}
-        {# writes a style element and nothing else, so the frame renders it the  #}
-        {# same way and has no body content of its own to show. Say that, rather #}
-        {# than leaving the frame an unexplained void (WS6 finding 29).          #}
-        {# aria-live because it appears in response to the Slot control, and a  #}
-        {# frame that just went empty is exactly what a screen reader cannot    #}
-        {# see for itself.                                                      #}
-        <p x-show="isCSSSlot()" aria-live="polite" class="text-xs text-stone-700 font-mono px-3 py-2 bg-stone-50">
-            CSS is injected as a &lt;style&gt; block, so this slot adds no markup of its own to the frame below. It is applied to the frame whichever slot is selected — pick a markup slot to see it styling that slot.
-        </p>
+        {# A CustomCSS buffer reaches the page through the custom_css tag, which  #}
+        {# writes a style element and nothing else, so the frame renders it the   #}
+        {# same way and has no body content of its own to show. Say that, rather  #}
+        {# than leaving the frame an unexplained void (WS6 finding 29).           #}
+        {# The region is always present and gains its text, rather than being     #}
+        {# pre-filled and unhidden: a live region merely revealed is not reliably  #}
+        {# announced, and this one appears in answer to the Slot control, where a  #}
+        {# frame that just went empty is what a screen reader cannot see for       #}
+        {# itself. Empty, it carries no padding and collapses to nothing.          #}
+        <p aria-live="polite"
+           x-text="isCSSSlot() ? 'CSS is injected as a <style> block, so this slot adds no markup of its own to the frame below. Pick a markup slot to see it styling that slot.' : ''"
+           :class="isCSSSlot() ? 'text-xs text-stone-700 font-mono px-3 py-2 bg-stone-50' : ''"></p>
 
         <p class="text-[11px] text-stone-600 px-3 pt-2">
             Rendered in an isolated sandbox — interactive editors and API-backed widgets are non-functional in preview.

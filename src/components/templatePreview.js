@@ -401,11 +401,22 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // Alpine widgets hydrate — /public/ is served with a CORS header because
       // module scripts are CORS-fetched from this frame's opaque origin).
       // The frame's own body reset is preview chrome with no counterpart on a
-      // real page, so it is emitted BEFORE the author's CSS: base.tpl links the
-      // app stylesheets and only then renders {% block head %}, where the
-      // custom_css tag writes its <style>, so an author's own `body` rule wins
-      // in production. Emitted after, the reset silently won here instead, and
-      // margin, padding, background and color previewed as unstylable.
+      // real page, so it is emitted BEFORE the author's CSS rather than after:
+      // base.tpl links the app stylesheets and only then renders {% block head
+      // %}, where the custom_css tag writes its <style>, so nothing of the
+      // page's own outranks the author at equal specificity. Emitted after, the
+      // chrome silently did, and a `body` rule the author wrote previewed as
+      // having no effect at all.
+      //
+      // That is the whole of what the ordering fixes, and it is not the same as
+      // reproducing a real page. Production's body carries `class="site
+      // bg-stone-50"`, and a class beats a bare `body` selector: `.site` sets
+      // padding (public/index.css) and `bg-stone-50` sets background, so those
+      // two properties are the page's whichever way this frame is ordered. The
+      // classes are deliberately not copied here — `.site` is a four-row page
+      // grid written for the header/nav/main/footer shell, and this frame holds
+      // one slot fragment, so wearing it would substitute a different wrong
+      // context for the current one. The pane says the frame is a sandbox.
       // The rendered slot is wrapped in the same x-data="{ entity: ... }"
       // scope the display pages provide, so Alpine expressions like
       // x-text="entity.Name" behave as they will on the real page.
@@ -422,6 +433,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       const settingsJson = JSON.stringify(userSettings.snapshot()).replace(/</g, '\\u003c');
       frame.srcdoc = `<!doctype html><html><head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="/public/index.css">
 <link rel="stylesheet" href="/public/tailwind.css">
 <link rel="stylesheet" href="/public/jsonTable.css">
