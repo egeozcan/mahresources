@@ -115,6 +115,26 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 		in.Target = target
 	}
 
+	// Settle "is this slot CSS?" once, here, so the prompt and the linter cannot
+	// answer it differently. The handler validates Slot and does not validate
+	// Mode, so a request can arrive contradicting itself; left alone,
+	// slot=CustomCSS with mode=html asked the model for HTML and then judged the
+	// answer as CSS. in is a value copy, so this rewrite is local to the call.
+	//
+	// A slot draft is one of exactly two things, so the mode is rewritten to
+	// whichever singleSlotIsCSS says rather than passed through. That also
+	// canonicalises a mixed-case "CSS", which that predicate accepts and
+	// modeRuleLine's exact-match switch does not, and refuses "json", which
+	// belongs to the metaschema target and would otherwise have asked for JSON
+	// and linted the reply as markup. Other targets keep their own mode.
+	if target == TemplateTargetSlot {
+		if singleSlotIsCSS(in) {
+			in.Mode = "css"
+		} else {
+			in.Mode = "html"
+		}
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, g.config.Timeout)
 	defer cancel()
 
@@ -152,7 +172,7 @@ func finishSingle(in TemplateGenerationInput, target, raw string) (*TemplateGene
 		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
 	}
 
-	issues := validateTemplateContent(target, in, content)
+	issues := validateTemplateContent(target, in, content, singleSlotIsCSS(in))
 	return &TemplateGenerationResult{
 		Target:      target,
 		Content:     content,
@@ -215,7 +235,9 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 			content = content[:MaxTemplateGeneratedContentLength]
 		}
 		result.Slots[slotName] = content
-		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content)...)
+		// One input covers every slot of a bundle, so its Mode says nothing
+		// about the slot in hand: only CustomCSS is a stylesheet here.
+		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content, slotName == "CustomCSS")...)
 	}
 	if len(result.Slots) == 0 {
 		return nil, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
@@ -224,16 +246,44 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 	return result, nil
 }
 
+// singleSlotIsCSS reports whether a slot-target draft is a stylesheet.
+//
+// The slot decides whenever there is one. It is the half the handler validates
+// (templateGenerateSlotAllowed) and the half that actually names the document,
+// so a client that names CustomCSS and mislabels or omits the mode still gets
+// the placement warnings — and, more importantly, one that names a markup slot
+// is not read as CSS because it mislabelled the mode. That direction is not a
+// harmless false positive. At a non-attribute position — where a stylesheet
+// interpolation sits — shortcodes' CSS branch *returns* in place of the markup
+// checks rather than adding to them, so a markup draft judged as CSS loses the
+// raw= "becomes real elements on the page" warning, which is the XSS one.
+// (Inside an attribute value the CSS note is merely appended and nothing is
+// lost; the non-attribute case is the one that costs something.) Mode answers
+// only when no slot is named, and an unlabelled request then falls through to
+// markup, the safe reading.
+func singleSlotIsCSS(in TemplateGenerationInput) bool {
+	if in.Slot != "" {
+		return in.Slot == "CustomCSS"
+	}
+	return strings.EqualFold(in.Mode, "css")
+}
+
 // validateTemplateContent lints slot/bundle content as shortcodes and validates
 // metaschema content as JSON + JSON Schema. Returned issues are never fatal —
 // they flag the draft for review.
-func validateTemplateContent(target string, in TemplateGenerationInput, content string) []shortcodes.LintIssue {
+//
+// cssMode is a parameter rather than something read off in, because the caller
+// is the only one who knows: a CustomCSS slot is a stylesheet with no <style>
+// wrapper of its own, so nothing in the text says so, and finishBundle shares
+// one input across every slot it validates.
+func validateTemplateContent(target string, in TemplateGenerationInput, content string, cssMode bool) []shortcodes.LintIssue {
 	if target == TemplateTargetMetaSchema {
 		return validateMetaSchemaJSON(content)
 	}
 	issues := shortcodes.Lint(content, shortcodes.LintOptions{
 		Known:        in.Known,
 		ValidateMRQL: in.ValidateMRQL,
+		CSSMode:      cssMode,
 	})
 	if issues == nil {
 		return []shortcodes.LintIssue{}

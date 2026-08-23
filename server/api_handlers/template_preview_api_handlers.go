@@ -19,9 +19,17 @@ import (
 const previewMRQLLimitCap = 5
 
 type templatePreviewRequest struct {
-	EntityID   uint   `json:"entityId" schema:"entityId"`
-	Content    string `json:"content" schema:"content"`
-	CSS        string `json:"css" schema:"css"`
+	EntityID uint   `json:"entityId" schema:"entityId"`
+	Content  string `json:"content" schema:"content"`
+	CSS      string `json:"css" schema:"css"`
+	// Slot names which Custom* field Content came from, and is the only thing
+	// that says whether Content is markup or a stylesheet: with the CustomCSS
+	// slot selected the editor sends that buffer as Content, and a stylesheet
+	// carries no <style> wrapper of its own to say so. Empty is an older client;
+	// Content is then linted as markup, which is what the endpoint always did,
+	// and if it also arrived as CSS the stylesheet reading is reported
+	// alongside rather than instead.
+	Slot       string `json:"slot" schema:"slot"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"` // optional: the category being edited, for a mismatch warning
 	// Carrier previews the slot against the carrier (Category/ResourceCategory/
 	// NoteType) itself rather than a member entity — used for CustomListHeader and
@@ -37,8 +45,14 @@ type templatePreviewResponse struct {
 	// `{{ group|json }}` filter (plain json.Marshal of the model), so the
 	// preview frame can recreate the `x-data="{ entity: ... }"` Alpine scope
 	// those pages wrap the Custom* slots in.
-	Entity json.RawMessage        `json:"entity"`
-	Issues []shortcodes.LintIssue `json:"issues"`
+	Entity json.RawMessage `json:"entity"`
+	// Issues are the content buffer's, plus the whole-request notes (the
+	// category mismatch), which index nothing. CSSIssues are the css buffer's.
+	// They are two lists because a LintIssue's Start/End are offsets, and one
+	// list of offsets into two different buffers is not readable by anything
+	// but the pane, which shows severity and message only.
+	Issues    []shortcodes.LintIssue `json:"issues"`
+	CSSIssues []shortcodes.LintIssue `json:"cssIssues"`
 }
 
 // GetPreviewTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/previewTemplate.
@@ -106,15 +120,50 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			css = shortcodes.Process(reqCtx, req.CSS, *metaCtx, renderer, executor)
 		}
 
-		// Piggyback lint issues so the preview pane can show them without a second call.
-		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
+		// Piggyback lint issues so the preview pane can show them without a second
+		// call. The pane and the editor gutter (POST /v1/shortcodes/lint) read the
+		// same buffers, so they have to reach the same verdict on them.
+		lintOpts := shortcodes.LintOptions{
 			Known:        buildKnownShortcodes(ctx),
 			ValidateMRQL: func(q string) error { _, e := mrql.Parse(q); return e },
 			// Finding 155: the preview pane's issue list reports an unknown
 			// [partial] too, so the diagnostic is there whether the author is
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
-		})
+		}
+		// The slot says which document Content is, and nothing else does. An
+		// unnamed slot is deliberately *not* guessed at from the buffers: at a
+		// non-attribute position — where a stylesheet interpolation sits —
+		// shortcodes' CSS branch returns in place of the markup checks rather
+		// than adding to them, so reading markup as CSS silently drops the raw=
+		// "becomes real elements on the page" warning, which is the XSS one.
+		// Markup is the safe reading and was the endpoint's only one.
+		contentIsCSS := req.Slot == "CustomCSS"
+		lintOpts.CSSMode = contentIsCSS
+		issues := shortcodes.Lint(req.Content, lintOpts)
+
+		// The css buffer is a second document needing its own pass as a
+		// stylesheet — unless it is the document just linted, which is what the
+		// CustomCSS slot sends, and linting it again would report everything
+		// twice. Text equality alone does not establish that: with a markup slot
+		// named, the two buffers are two documents however alike they read.
+		var cssIssues []shortcodes.LintIssue
+		if req.CSS != "" && !(contentIsCSS && req.CSS == req.Content) {
+			lintOpts.CSSMode = true
+			cssIssues = shortcodes.Lint(req.CSS, lintOpts)
+			// An older client names no slot and sends one buffer as both, so
+			// Content is under both readings at once and has just been linted
+			// under the markup one. Report what the two readings agree on once
+			// and keep what only one of them says — the markup XSS warnings and
+			// the CSS placement warning are each visible to a single reading,
+			// so dropping either pass would drop real diagnostics. Both ran over
+			// one text, so a shared finding carries identical offsets and matches
+			// exactly. This is the one case where CSSIssues is not the whole of
+			// what the css buffer produced.
+			if req.Slot == "" && req.CSS == req.Content {
+				cssIssues = issuesNotAlreadyReported(issues, cssIssues)
+			}
+		}
 		// Warn (don't fail) when previewing against an entity of a different
 		// category than the one being edited.
 		if req.CategoryID != 0 && entityCategoryID != 0 && req.CategoryID != entityCategoryID {
@@ -126,6 +175,9 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		if issues == nil {
 			issues = []shortcodes.LintIssue{}
 		}
+		if cssIssues == nil {
+			cssIssues = []shortcodes.LintIssue{}
+		}
 
 		entityJSON, err := json.Marshal(entity)
 		if err != nil {
@@ -133,8 +185,35 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{HTML: html, CSS: css, Entity: entityJSON, Issues: issues})
+		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{
+			HTML:      html,
+			CSS:       css,
+			Entity:    entityJSON,
+			Issues:    issues,
+			CSSIssues: cssIssues,
+		})
 	}
+}
+
+// issuesNotAlreadyReported drops from add every issue already present in have.
+// LintIssue is a comparable struct of exactly the four fields the response
+// carries, so equality here is the whole of what a caller could tell apart.
+func issuesNotAlreadyReported(have, add []shortcodes.LintIssue) []shortcodes.LintIssue {
+	if len(have) == 0 || len(add) == 0 {
+		return add
+	}
+	seen := make(map[shortcodes.LintIssue]struct{}, len(have))
+	for _, iss := range have {
+		seen[iss] = struct{}{}
+	}
+	out := add[:0:0]
+	for _, iss := range add {
+		if _, dup := seen[iss]; dup {
+			continue
+		}
+		out = append(out, iss)
+	}
+	return out
 }
 
 // loadPreviewEntity fetches the carrier entity with its category relation

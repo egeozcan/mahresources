@@ -226,3 +226,204 @@ func TestMahresourcesContextTemplateGeneratorSeam(t *testing.T) {
 		t.Fatal("TemplateGenerationRateLimiter should lazily create a limiter")
 	}
 }
+
+func countIssuesContaining(issues []shortcodes.LintIssue, want string) int {
+	n := 0
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, want) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet pins that a generated
+// CustomCSS slot is linted as a stylesheet. The slot carries no <style> wrapper
+// of its own, so nothing in its text says so and the caller has to say it;
+// without that the draft is reported clean while the editor gutter warns on the
+// identical buffer.
+// It takes either signal on its own. The slot name is the half the handler
+// validates, so a client that names CustomCSS and mislabels the mode still gets
+// the warning; a client that names no slot is taken at its word about the mode.
+func TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet(t *testing.T) {
+	cases := map[string]struct{ mode, slot string }{
+		"both signals agree":     {mode: "css", slot: "CustomCSS"},
+		"slot alone":             {mode: "html", slot: "CustomCSS"},
+		"slot alone, no mode":    {mode: "", slot: "CustomCSS"},
+		"mode alone, no slot":    {mode: "css", slot: ""},
+		"mode alone, mixed case": {mode: "CSS", slot: ""},
+	}
+	// A named slot outranks the mode, so this table may not gain a case that
+	// names a markup slot; see TestTemplateGeneratorNamedSlotOutranksTheMode.
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := slotInput()
+			in.Mode = tc.mode
+			in.Slot = tc.slot
+			provider := &fakeTemplateDraftProvider{
+				response: `{"content":".badge{color:[meta path=\"colour\" inline=\"true\"]}","explanation":"Colours the badge."}`,
+			}
+			gen := NewTemplateGenerator(provider, templateGenConfig())
+
+			got, err := gen.GenerateTemplate(context.Background(), in, "colour the badge from meta")
+			if err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
+				t.Fatalf("expected exactly one CSS-placement issue, got %d: %#v", n, got.Issues)
+			}
+			// Placement is a warning, not an error — the draft stays applicable.
+			if !got.Valid {
+				t.Errorf("a placement warning must not invalidate the draft: %#v", got.Issues)
+			}
+		})
+	}
+}
+
+// TestTemplateGeneratorHTMLSlotIsNotLintedAsCSS is the other half: the same
+// interpolation in an HTML slot is ordinary text and must stay quiet.
+func TestTemplateGeneratorHTMLSlotIsNotLintedAsCSS(t *testing.T) {
+	provider := &fakeTemplateDraftProvider{
+		response: `{"content":"<div>[meta path=\"colour\" inline=\"true\"]</div>","explanation":"Shows the colour."}`,
+	}
+	gen := NewTemplateGenerator(provider, templateGenConfig())
+
+	got, err := gen.GenerateTemplate(context.Background(), slotInput(), "show the colour")
+	if err != nil {
+		t.Fatalf("GenerateTemplate: %v", err)
+	}
+	if n := countIssuesContaining(got.Issues, "CSS slot"); n != 0 {
+		t.Fatalf("an HTML slot must not be judged as a stylesheet, got %d: %#v", n, got.Issues)
+	}
+}
+
+// TestTemplateGeneratorNamedSlotOutranksTheMode pins the direction that costs
+// something. The slot is the half the handler validates; the mode is not
+// validated at all, and a markup draft judged as CSS does not merely gain a
+// spurious warning — shortcodes' CSS branch stands in place of the markup
+// checks, so the raw= "becomes real elements on the page" warning, the XSS one,
+// disappears.
+func TestTemplateGeneratorNamedSlotOutranksTheMode(t *testing.T) {
+	in := slotInput()
+	in.Slot = "CustomHeader"
+	in.Mode = "css" // the request contradicts itself; the slot is the half to believe
+	provider := &fakeTemplateDraftProvider{
+		response: `{"content":"<div>[meta path=\"colour\" inline=\"true\" raw=\"true\"]</div>","explanation":"Shows the colour."}`,
+	}
+	gen := NewTemplateGenerator(provider, templateGenConfig())
+
+	got, err := gen.GenerateTemplate(context.Background(), in, "show the colour")
+	if err != nil {
+		t.Fatalf("GenerateTemplate: %v", err)
+	}
+	if n := countIssuesContaining(got.Issues, "CSS slot"); n != 0 {
+		t.Errorf("a markup slot must not be judged as a stylesheet, got %d: %#v", n, got.Issues)
+	}
+	if n := countIssuesContaining(got.Issues, "becomes real elements"); n != 1 {
+		t.Fatalf("the markup XSS warning is what a CSS reading would swallow; got %d: %#v", n, got.Issues)
+	}
+}
+
+// TestTemplateGeneratorSlotGovernsThePromptToo pins the two halves together.
+// The handler validates Slot and does not validate Mode, so a request can
+// contradict itself; the prompt's mode rule and the linter's reading must not
+// then answer it differently — asking the model for HTML and grading the reply
+// as CSS is worse than either reading alone.
+func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
+	cases := map[string]struct {
+		slot, mode string
+		wantRule   string
+		rejectRule string
+	}{
+		"CSS slot labelled html": {
+			slot: "CustomCSS", mode: "html",
+			wantRule: "Output CSS only", rejectRule: "Output HTML",
+		},
+		"markup slot labelled css": {
+			slot: "CustomHeader", mode: "css",
+			wantRule: "Output HTML", rejectRule: "Output CSS only",
+		},
+		// No slot, so the mode is all there is — but the linter accepts it
+		// case-insensitively and modeRuleLine's switch is exact, so an
+		// uncanonicalised "CSS" asked for HTML and was graded as CSS.
+		"no slot, mixed-case css": {
+			slot: "", mode: "CSS",
+			wantRule: "Output CSS only", rejectRule: "Output HTML",
+		},
+		// json belongs to the metaschema target. Reaching a slot target it
+		// asked for JSON and had the reply linted as markup.
+		"no slot, json is not a slot mode": {
+			slot: "", mode: "json",
+			wantRule: "Output HTML", rejectRule: "Output valid JSON",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := slotInput()
+			in.Slot = tc.slot
+			in.Mode = tc.mode
+			provider := &fakeTemplateDraftProvider{
+				response: `{"content":"x","explanation":"y"}`,
+			}
+			gen := NewTemplateGenerator(provider, templateGenConfig())
+
+			if _, err := gen.GenerateTemplate(context.Background(), in, "do the thing"); err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			if !strings.Contains(provider.seenUser, tc.wantRule) {
+				t.Errorf("prompt should follow the slot and say %q:\n%s", tc.wantRule, provider.seenUser)
+			}
+			if strings.Contains(provider.seenUser, tc.rejectRule) {
+				t.Errorf("prompt must not follow the contradicted mode and say %q:\n%s", tc.rejectRule, provider.seenUser)
+			}
+		})
+	}
+}
+
+// TestTemplateGeneratorBundleDecidesCSSModePerSlot pins why cssMode is a
+// parameter rather than something read off the input inside the function:
+// finishBundle shares one TemplateGenerationInput across every slot it
+// validates, so only the CustomCSS slot of a bundle may be linted as a
+// stylesheet. Either whole-bundle answer is wrong — deriving from Mode="html"
+// flags neither slot, deriving from Mode="css" flags both.
+func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
+	// Each slot's content is diagnostic of the mode it was linted in, so the
+	// assertions below name a direction rather than a count. Counting "CSS
+	// slot" alone would not: inverting the condition merely moves that one
+	// warning from CustomCSS to CustomHeader, leaving the total at one.
+	//
+	// CustomHeader carries raw= in plain text, which warns "becomes real
+	// elements" as markup and "raw= ... in a CSS slot" as CSS. CustomCSS
+	// carries a bare interpolation, which warns only as CSS and is silent as
+	// markup.
+	const draft = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\" raw=\"true\"]</div>","CustomCSS":".badge{color:[meta path=\"colour\" inline=\"true\"]}"},"explanation":"Styles the badge."}`
+
+	for _, mode := range []string{"html", "css"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			in := slotInput()
+			in.Target = TemplateTargetBundle
+			in.Mode = mode
+			in.Slot = ""
+			in.BundleSlots = []string{"CustomHeader", "CustomCSS"}
+
+			gen := NewTemplateGenerator(&fakeTemplateDraftProvider{response: draft}, templateGenConfig())
+			got, err := gen.GenerateTemplate(context.Background(), in, "style the badge")
+			if err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			// CustomCSS was read as a stylesheet — and only it, or this count
+			// would be two.
+			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
+				t.Fatalf("expected the CSS-placement issue on CustomCSS alone, got %d: %#v", n, got.Issues)
+			}
+			// ...and CustomHeader was read as markup. This is the assertion an
+			// inverted condition fails: it would lint the header as CSS, whose
+			// branch stands in place of this warning rather than beside it.
+			if n := countIssuesContaining(got.Issues, "becomes real elements"); n != 1 {
+				t.Fatalf("expected CustomHeader's markup XSS warning, got %d: %#v", n, got.Issues)
+			}
+		})
+	}
+}

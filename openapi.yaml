@@ -2690,7 +2690,13 @@ paths:
                     category and CustomPreview, CustomLightbox and CustomCell on a resource category.
                     A slot the carrier does not declare is rejected with 400 "unknown template slot",
                     so the accepted set differs per endpoint.
-                  - mode       (string) — "html", "css", or "json" (hints the output format)
+                  - mode       (string) — "html", "css" or "json". Ignored wherever the target
+                    already settles the format, which is everywhere a public request can reach:
+                    a slot target takes CSS from slot == "CustomCSS" and HTML otherwise, and the
+                    metaschema and bundle targets have formats of their own. It is read only for
+                    a slot target naming no slot, which this endpoint rejects. Both the model's
+                    instructions and the lint of its reply follow the resolved format, so this
+                    field cannot put them at odds.
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
                   - prompt     (string, required) — the natural-language request
@@ -2720,15 +2726,29 @@ paths:
 
                 Request body fields:
                   - entityId   (integer, required unless carrier) — the entity to render against
-                  - content    (string) — the template slot markup to render
+                  - content    (string) — the template slot body to render. Markup for every
+                    slot but CustomCSS, whose body is a stylesheet.
                   - css        (string) — CustomCSS to process alongside
+                  - slot       (string) — which Custom* field content came from. It decides how
+                    content is linted, because a stylesheet carries no <style> wrapper of its
+                    own to say it is one. "CustomCSS" lints content as a stylesheet, and a css
+                    that repeats it verbatim is then the same document, linted once. Any other
+                    slot makes content markup and css a second document, each linted its own
+                    way even when their text matches. Omitting slot lints content as markup,
+                    which is what this endpoint always did; if css repeats it verbatim the
+                    document is ambiguous, so the stylesheet reading is reported as well, minus
+                    the findings the two readings share.
                   - categoryId (integer) — the category being edited (for a mismatch warning;
                     required when carrier is set)
                   - carrier    (boolean) — render against the category/type itself rather than a
                     member entity (used for the CustomListHeader slot). entityId is then ignored
                     and categoryId identifies the carrier.
 
-                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                Response: {"html", "css", "entity", "issues": [...], "cssIssues": [...]}.
+                "issues" holds the content buffer's lint findings plus any whole-request note
+                (the category mismatch, which indexes nothing); "cssIssues" holds the css
+                buffer's. They are two lists because a finding's start/end are byte offsets, and
+                one list of offsets into two buffers cannot be resolved by the reader. "entity" is
                 the carrier entity marshaled like the display pages' json filter, so the preview
                 frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
                 Executes MRQL and plugin shortcodes, so it is gated at the same capability as
@@ -4834,7 +4854,13 @@ paths:
                     category and CustomPreview, CustomLightbox and CustomCell on a resource category.
                     A slot the carrier does not declare is rejected with 400 "unknown template slot",
                     so the accepted set differs per endpoint.
-                  - mode       (string) — "html", "css", or "json" (hints the output format)
+                  - mode       (string) — "html", "css" or "json". Ignored wherever the target
+                    already settles the format, which is everywhere a public request can reach:
+                    a slot target takes CSS from slot == "CustomCSS" and HTML otherwise, and the
+                    metaschema and bundle targets have formats of their own. It is read only for
+                    a slot target naming no slot, which this endpoint rejects. Both the model's
+                    instructions and the lint of its reply follow the resolved format, so this
+                    field cannot put them at odds.
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
                   - prompt     (string, required) — the natural-language request
@@ -4864,15 +4890,29 @@ paths:
 
                 Request body fields:
                   - entityId   (integer, required unless carrier) — the entity to render against
-                  - content    (string) — the template slot markup to render
+                  - content    (string) — the template slot body to render. Markup for every
+                    slot but CustomCSS, whose body is a stylesheet.
                   - css        (string) — CustomCSS to process alongside
+                  - slot       (string) — which Custom* field content came from. It decides how
+                    content is linted, because a stylesheet carries no <style> wrapper of its
+                    own to say it is one. "CustomCSS" lints content as a stylesheet, and a css
+                    that repeats it verbatim is then the same document, linted once. Any other
+                    slot makes content markup and css a second document, each linted its own
+                    way even when their text matches. Omitting slot lints content as markup,
+                    which is what this endpoint always did; if css repeats it verbatim the
+                    document is ambiguous, so the stylesheet reading is reported as well, minus
+                    the findings the two readings share.
                   - categoryId (integer) — the category being edited (for a mismatch warning;
                     required when carrier is set)
                   - carrier    (boolean) — render against the category/type itself rather than a
                     member entity (used for the CustomListHeader slot). entityId is then ignored
                     and categoryId identifies the carrier.
 
-                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                Response: {"html", "css", "entity", "issues": [...], "cssIssues": [...]}.
+                "issues" holds the content buffer's lint findings plus any whole-request note
+                (the category mismatch, which indexes nothing); "cssIssues" holds the css
+                buffer's. They are two lists because a finding's start/end are byte offsets, and
+                one list of offsets into two buffers cannot be resolved by the reader. "entity" is
                 the carrier entity marshaled like the display pages' json filter, so the preview
                 frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
                 Executes MRQL and plugin shortcodes, so it is gated at the same capability as
@@ -6641,7 +6681,13 @@ paths:
                     category and CustomPreview, CustomLightbox and CustomCell on a resource category.
                     A slot the carrier does not declare is rejected with 400 "unknown template slot",
                     so the accepted set differs per endpoint.
-                  - mode       (string) — "html", "css", or "json" (hints the output format)
+                  - mode       (string) — "html", "css" or "json". Ignored wherever the target
+                    already settles the format, which is everywhere a public request can reach:
+                    a slot target takes CSS from slot == "CustomCSS" and HTML otherwise, and the
+                    metaschema and bundle targets have formats of their own. It is read only for
+                    a slot target naming no slot, which this endpoint rejects. Both the model's
+                    instructions and the lint of its reply follow the resolved format, so this
+                    field cannot put them at odds.
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
                   - prompt     (string, required) — the natural-language request
@@ -6671,15 +6717,29 @@ paths:
 
                 Request body fields:
                   - entityId   (integer, required unless carrier) — the entity to render against
-                  - content    (string) — the template slot markup to render
+                  - content    (string) — the template slot body to render. Markup for every
+                    slot but CustomCSS, whose body is a stylesheet.
                   - css        (string) — CustomCSS to process alongside
+                  - slot       (string) — which Custom* field content came from. It decides how
+                    content is linted, because a stylesheet carries no <style> wrapper of its
+                    own to say it is one. "CustomCSS" lints content as a stylesheet, and a css
+                    that repeats it verbatim is then the same document, linted once. Any other
+                    slot makes content markup and css a second document, each linted its own
+                    way even when their text matches. Omitting slot lints content as markup,
+                    which is what this endpoint always did; if css repeats it verbatim the
+                    document is ambiguous, so the stylesheet reading is reported as well, minus
+                    the findings the two readings share.
                   - categoryId (integer) — the category being edited (for a mismatch warning;
                     required when carrier is set)
                   - carrier    (boolean) — render against the category/type itself rather than a
                     member entity (used for the CustomListHeader slot). entityId is then ignored
                     and categoryId identifies the carrier.
 
-                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                Response: {"html", "css", "entity", "issues": [...], "cssIssues": [...]}.
+                "issues" holds the content buffer's lint findings plus any whole-request note
+                (the category mismatch, which indexes nothing); "cssIssues" holds the css
+                buffer's. They are two lists because a finding's start/end are byte offsets, and
+                one list of offsets into two buffers cannot be resolved by the reader. "entity" is
                 the carrier entity marshaled like the display pages' json filter, so the preview
                 frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
                 Executes MRQL and plugin shortcodes, so it is gated at the same capability as

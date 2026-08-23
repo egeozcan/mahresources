@@ -296,10 +296,16 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       const content = this._readSlot(this.slot);
       const css = this._readSlot('CustomCSS');
       try {
+        // The slot names which buffer `content` is. With CustomCSS selected it
+        // is a stylesheet, which carries no <style> wrapper to say so, and the
+        // server has to be told or its issue list stays silent where the editor
+        // gutter warns.
+        const slot = this.slot;
         const body = carrier
-          ? { carrier: true, content, css, categoryId: Number(this.categoryId) }
+          ? { carrier: true, slot, content, css, categoryId: Number(this.categoryId) }
           : {
               entityId: Number(this.entityId),
+              slot,
               content,
               css,
               categoryId: this.categoryId ? Number(this.categoryId) : 0,
@@ -319,7 +325,9 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         }
         const data = await resp.json();
         if (seq !== this._refreshSeq) return;
-        this.issues = data.issues || [];
+        // Two lists because a lint issue's offsets index one buffer or the
+        // other; the pane shows severity and message, so it reads them as one.
+        this.issues = [...(data.issues || []), ...(data.cssIssues || [])];
         this._renderFrame(data.html || '', data.css || '', data.entity);
       } catch (e) {
         if (seq !== this._refreshSeq) return;
