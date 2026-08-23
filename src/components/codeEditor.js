@@ -83,7 +83,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
             return el ? el.value : '';
           };
           shortcodeExtensions = [
-            ...lintMod.shortcodeLintExtensions(this.mode),
+            ...lintMod.shortcodeLintExtensions(mode),
             // Override completion with a combined source: shortcode completions
             // inside [ ... ] brackets, delegating to the html/css source elsewhere.
             autocompletion({ override: [completionMod.shortcodeOverrideSource(mode, schemaProvider)] }),
