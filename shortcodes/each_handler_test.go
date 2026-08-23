@@ -154,3 +154,60 @@ func TestItemFormatsJSONDecodedValues(t *testing.T) {
 		t.Errorf("filesize on 2.5 = %q, want it unchanged", got)
 	}
 }
+
+// A Meta array element is data, never template source. [each] used to splice the
+// rendered element into the branch and *then* parse the result, so an element
+// carrying shortcode markup executed: html.EscapeString leaves "[" and "]" alone,
+// and parseAttrs runs html.UnescapeString over the attribute string, restoring
+// the escaped quotes before parsing. Anyone who can edit an entity's Meta could
+// therefore run any shortcode in the template's own context.
+func TestEachItemValueIsNotTemplateSource(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `<li>[item]</li>`)
+	ctx := MetaShortcodeContext{
+		Entity: testEntity{Description: `<script>alert(1)</script>`},
+		Meta:   json.RawMessage(`{"tags":["[property path=\"Description\" raw=\"true\"]"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.NotContains(t, got, "<script>", "the element ran as template source")
+	assert.Equal(t, `<li>[property path=&#34;Description&#34; raw=&#34;true&#34;]</li>`, got)
+}
+
+// The same hole with [mrql]: an element containing a query ran it as the viewer.
+// The executor must never see a query that came out of a Meta value.
+func TestEachItemValueCannotRunAnMRQLQuery(t *testing.T) {
+	var executed []string
+	executor := func(_ context.Context, query string, _ QueryOptions) (*QueryResult, error) {
+		executed = append(executed, query)
+		return &QueryResult{Mode: "count", Rows: []map[string]any{{"count": float64(7)}}}, nil
+	}
+	sc := eachSC(map[string]string{"path": "tags"}, `<li>[item]</li>`)
+	ctx := MetaShortcodeContext{
+		Meta: json.RawMessage(`{"tags":["[mrql query=\"FIND resources\" value=\"count\"]"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Empty(t, executed, "a Meta value executed a query")
+	assert.NotContains(t, got, "7")
+}
+
+// raw="true" means "not HTML-escaped" — the same thing it means on [property] and
+// on [meta inline="true"], neither of which re-processes its output. It does not
+// mean "re-processed as template source": the value renders as literal text.
+func TestEachRawItemValueIsLiteralTextNotMarkup(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `[item raw="true"]`)
+	ctx := MetaShortcodeContext{
+		Entity: testEntity{Description: "secret"},
+		Meta:   json.RawMessage(`{"tags":["<b>[property path=\"Description\"]</b>"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, `<b>[property path="Description"]</b>`, got)
+}
+
+// A JSON NUL escape unmarshals to a real NUL byte, which is what the item-splice
+// sentinels are delimited with. A Meta value must not be able to carry one into
+// the output.
+func TestEachStripsNULBytesFromItemValues(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `[item]`)
+	ctx := MetaShortcodeContext{Meta: json.RawMessage("{\"tags\":[\"a\\u0000b\"]}")}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, "ab", got)
+}
