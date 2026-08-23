@@ -103,6 +103,84 @@ test.describe('Template live preview', () => {
     await expect(frame.locator('body')).toContainText(`CARRIER=${catName}`, { timeout: 10000 });
   });
 
+  test('the CSS slot previews as a stylesheet, never as body text', async ({
+    page,
+    apiClient,
+  }) => {
+    // Every production sink for a CustomCSS buffer renders it as stylesheet
+    // content and nothing else. The preview sends that one buffer as both
+    // halves of its request, so the response carries it twice, and the frame
+    // used to render the markup half into the body as well — printing the
+    // stylesheet's own source as page text, which is the one thing saving the
+    // template can never produce.
+    const stamp = Date.now();
+    const marker = `css-slot-applied-${stamp}`;
+    // Two rules, because they prove different things. The background pins the
+    // frame's internal cascade: its own body reset is preview chrome with no
+    // counterpart on a real page, so it is emitted before the author's CSS and
+    // must not outrank it. (That is a rule about the chrome, not a claim of
+    // parity: a real page's body carries classes that beat a bare `body`
+    // selector either way. See _renderFrame.) The ::after content is the marker
+    // the body must NOT contain as text -- generated content never reaches
+    // textContent, so the only way the marker gets there is the stylesheet
+    // being injected as markup as well.
+    const css = `body{background-color:rgb(3,5,7)}body::after{content:"${marker}"}`;
+    const headerProbe = `header-probe-${stamp}`;
+    const category = await apiClient.createCategory(`CSS Slot Cat ${stamp}`, undefined, {
+      CustomCSS: css,
+      CustomHeader: `<div id="${headerProbe}">rendered header</div>`,
+    });
+    const groupName = `CSS Slot Target ${stamp}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await page.waitForLoadState('load');
+
+    const entityInput = page.locator('#tp-entity-group');
+    await expect(entityInput).toBeVisible({ timeout: 10000 });
+    await expect(entityInput).toHaveValue(groupName, { timeout: 10000 });
+
+    // The pane opens on the Header slot, so the probe marks the first render.
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator(`#${headerProbe}`)).toHaveCount(1, { timeout: 10000 });
+
+    await page.locator('#tp-slot-group').selectOption('CustomCSS');
+
+    // The probe leaving is what says the CSS-slot render has landed; without it
+    // the assertions below could still be reading the header render.
+    await expect(frame.locator(`#${headerProbe}`)).toHaveCount(0, { timeout: 10000 });
+
+    // Applied as a stylesheet: the generated content exists only if the rule is
+    // live in the frame's cascade.
+    await expect
+      .poll(
+        async () =>
+          frame
+            .locator('body')
+            .evaluate((el) => getComputedStyle(el, '::after').content)
+            .catch(() => ''),
+        { timeout: 10000 },
+      )
+      .toContain(marker);
+
+    // ...and the author's own body rule outranks the frame's reset rather than
+    // the other way round.
+    await expect
+      .poll(
+        async () =>
+          frame
+            .locator('body')
+            .evaluate((el) => getComputedStyle(el).backgroundColor)
+            .catch(() => ''),
+        { timeout: 10000 },
+      )
+      .toBe('rgb(3, 5, 7)');
+
+    // ...and not injected as body content. The marker can only reach textContent
+    // if the stylesheet was written into the body as markup as well.
+    await expect(frame.locator('body')).not.toContainText(marker);
+  });
+
   test('editing a category only offers entities from that category', async ({
     page,
     apiClient,

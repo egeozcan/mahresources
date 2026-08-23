@@ -26,6 +26,15 @@ const SLOTS = [
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
+// The one slot whose buffer is a stylesheet rather than markup. Production has
+// three sinks for it and every one of them renders it as stylesheet content and
+// nothing else: the {% custom_css %} tag on detail and list pages
+// (server/template_handlers/template_filters/custom_css_tag.go), the per-card
+// block the /mrql API and the inline [mrql] shortcode prepend (mrqlCategoryCSS,
+// renderResultCSS), and the share page's own head block (shared/displayNote.tpl).
+// None of them ever puts the buffer in body flow.
+const CSS_SLOT = 'CustomCSS';
+
 export function slotsForEntityType(entityType) {
   return SLOTS.filter((s) => !s.only || s.only === entityType);
 }
@@ -62,17 +71,37 @@ const CATEGORY_PARAMS = {
   note: 'noteTypeId',
 };
 
+/**
+ * Alpine injects these through the component's scope chain rather than onto the
+ * data object, so they are declared as types and never as properties: a real
+ * `$refs` on the data object shadows Alpine's magic, and `_renderFrame` would
+ * stop finding the iframe.
+ *
+ * @typedef {object} TemplatePreviewMagics
+ * @property {{ frame?: HTMLIFrameElement }} $refs The x-ref registry.
+ * @property {HTMLElement} $root The element carrying this component's x-data.
+ */
+
+/**
+ * @param {object} [options]
+ * @param {string} [options.entityType] Carrier entity type: group, resource or note.
+ * @param {string} [options.previewPath] Endpoint that renders one slot.
+ * @param {number|string|null} [options.categoryId] The category/type being edited; null on the create form.
+ * @param {string} [options.generatePath] Endpoint behind the per-slot generate buttons.
+ */
 export function templatePreview({ entityType = 'group', previewPath = '', categoryId = null, generatePath = '' } = {}) {
-  return {
+  const component = {
     entityType,
     previewPath,
     generatePath,
     categoryId: categoryId || null,
     slots: slotsForEntityType(entityType),
     slot: 'CustomHeader',
+    /** @type {number|string|null} */
     entityId: null,
     entityLabel: '',
     query: '',
+    /** @type {{ id: number, name: string }[]} */
     suggestions: [],
     open: false,
     loading: false,
@@ -82,9 +111,13 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // otherwise reasonably assume the sample carries the category's own meta
     // (WS6, finding 29).
     usingUnscopedSample: false,
+    /** @type {{ severity: string, message: string, start?: number, end?: number }[]} */
     issues: [],
+    /** @type {ReturnType<typeof setTimeout>|null} */
     _refreshTimer: null,
+    /** @type {ReturnType<typeof setTimeout>|null} */
     _searchTimer: null,
+    /** @type {HTMLFormElement|null} */
     _form: null,
     _refreshSeq: 0,
 
@@ -107,6 +140,11 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       } catch (e) {
         /* ignore malformed storage */
       }
+      // A restore writes entityId directly rather than through _selectEntity,
+      // so it is the one way the pane can hold an entity the store has never
+      // heard of — and a generate button reading the store would then ground on
+      // nothing while the pane showed a remembered entity by name.
+      this._publishStore();
 
       if (!this.entityId) {
         await this._loadDefaultEntity();
@@ -115,13 +153,18 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       if (this._form) {
         this._form.addEventListener('template-slot-changed', (e) => {
           const changed = e.detail && e.detail.name;
-          if (changed === this.slot || changed === 'CustomCSS') {
+          if (changed === this.slot || changed === CSS_SLOT) {
             this._scheduleRefresh();
           }
         });
       }
 
-      if (this.entityId) this.refresh();
+      // Unconditionally: with no entity at all — a fresh deployment, or a
+      // category whose members were deleted — refresh() is what says so and
+      // blanks the frame. Guarded on entityId, that case reached neither, and
+      // the pane sat at an unexplained 384px void, which is the very thing WS6
+      // finding 29 was raised about.
+      this.refresh();
     },
 
     _storageKey() {
@@ -163,6 +206,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // category/type itself (carrier mode) rather than a member entity.
     isCarrierSlot() {
       return CARRIER_SLOTS.has(this.slot);
+    },
+
+    // isCSSSlot reports whether the selected buffer is a stylesheet. It reaches
+    // the frame through a <style> element and nothing else, which is what every
+    // production sink does with it (see CSS_SLOT), so the frame body is empty
+    // while it is selected and the pane says why rather than leaving an
+    // unexplained void.
+    isCSSSlot() {
+      return this.slot === CSS_SLOT;
     },
 
     hasErrors() {
@@ -267,6 +319,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 
     async refresh() {
       if (!this.previewPath) return;
+      // Concurrent refreshes (slot switch racing a debounced edit) can resolve
+      // out of order; only the newest request may touch the pane state. Claimed
+      // here rather than at the fetch, because the two branches below answer
+      // without sending one and must retire an in-flight request too: a
+      // response for the slot just left would otherwise land afterwards and
+      // overwrite the frame they had deliberately blanked. They also clear
+      // `loading` for the same reason — a superseded response returns before
+      // the line that would have cleared it.
+      const seq = ++this._refreshSeq;
       const carrier = this.isCarrierSlot();
       if (carrier) {
         // A list-header slot renders against the category itself, which must
@@ -274,6 +335,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         if (!this.categoryId) {
           this.error = 'Save this category first, then reopen the form to preview the list header.';
           this.issues = [];
+          this.loading = false;
           this._renderFrame('', '', null);
           return;
         }
@@ -285,22 +347,21 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
           'Nothing to preview against yet — this category has no ' +
           `${this.entityType}s, and none exist to borrow. Pick one above, or create one first.`;
         this.issues = [];
+        this.loading = false;
         this._renderFrame('', '', null);
         return;
       }
-      // Concurrent refreshes (slot switch racing a debounced edit) can resolve
-      // out of order; only the newest request may touch the pane state.
-      const seq = ++this._refreshSeq;
       this.loading = true;
       this.error = '';
       const content = this._readSlot(this.slot);
-      const css = this._readSlot('CustomCSS');
+      const css = this._readSlot(CSS_SLOT);
       try {
         // The slot names which buffer `content` is. With CustomCSS selected it
         // is a stylesheet, which carries no <style> wrapper to say so, and the
         // server has to be told or its issue list stays silent where the editor
         // gutter warns.
         const slot = this.slot;
+        const cssSlot = slot === CSS_SLOT;
         const body = carrier
           ? { carrier: true, slot, content, css, categoryId: Number(this.categoryId) }
           : {
@@ -328,7 +389,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         // Two lists because a lint issue's offsets index one buffer or the
         // other; the pane shows severity and message, so it reads them as one.
         this.issues = [...(data.issues || []), ...(data.cssIssues || [])];
-        this._renderFrame(data.html || '', data.css || '', data.entity);
+        // With the CSS slot selected the request sent one buffer as both
+        // `content` and `css`, so `data.html` is the stylesheet a second time.
+        // The frame renders `css` into a <style> element, which is the only
+        // thing production ever does with a CustomCSS buffer; injecting the
+        // other copy into the body as well printed the stylesheet's own source
+        // as page text — a document no saved template can produce. Keyed on the
+        // slot the request was built from, not on the two halves reading alike,
+        // which for a markup slot means two documents however similar they are.
+        this._renderFrame(cssSlot ? '' : data.html || '', data.css || '', data.entity);
       } catch (e) {
         if (seq !== this._refreshSeq) return;
         this.error = 'Preview request failed.';
@@ -346,6 +415,23 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // returned CustomCSS, and the app JS bundle (so [meta] web components and
       // Alpine widgets hydrate — /public/ is served with a CORS header because
       // module scripts are CORS-fetched from this frame's opaque origin).
+      // The frame's own body reset is preview chrome with no counterpart on a
+      // real page, so it is emitted BEFORE the author's CSS rather than after:
+      // base.tpl links the app stylesheets and only then renders {% block head
+      // %}, where the custom_css tag writes its <style>, so nothing of the
+      // page's own outranks the author at equal specificity. Emitted after, the
+      // chrome silently did, and a `body` rule the author wrote previewed as
+      // having no effect at all.
+      //
+      // That is the whole of what the ordering fixes, and it is not the same as
+      // reproducing a real page. Production's body carries `class="site
+      // bg-stone-50"`, and a class beats a bare `body` selector: `.site` sets
+      // padding (public/index.css) and `bg-stone-50` sets background, so those
+      // two properties are the page's whichever way this frame is ordered. The
+      // classes are deliberately not copied here — `.site` is a four-row page
+      // grid written for the header/nav/main/footer shell, and this frame holds
+      // one slot fragment, so wearing it would substitute a different wrong
+      // context for the current one. The pane says the frame is a sandbox.
       // The rendered slot is wrapped in the same x-data="{ entity: ... }"
       // scope the display pages provide, so Alpine expressions like
       // x-text="entity.Name" behave as they will on the real page.
@@ -362,11 +448,12 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       const settingsJson = JSON.stringify(userSettings.snapshot()).replace(/</g, '\\u003c');
       frame.srcdoc = `<!doctype html><html><head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="/public/index.css">
 <link rel="stylesheet" href="/public/tailwind.css">
 <link rel="stylesheet" href="/public/jsonTable.css">
-<style>${css}</style>
 <style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
+<style>${css}</style>
 <script>window.__previewEntity = ${entityJson};
 window.__mahUserSettings = ${settingsJson};</script>
 </head><body>
@@ -377,4 +464,5 @@ ${html}
 </body></html>`;
     },
   };
+  return /** @type {typeof component & TemplatePreviewMagics} */ (component);
 }
