@@ -180,12 +180,16 @@ intercepts the submit and sends one request per file instead,
   files; completed ones collapse to a count. Progress is aggregated over
   **bytes**, not files completed, or one 4 GB file among nine small ones would
   sit at 0% and jump to 90%.
-- **A conflict is excluded from "Retry failed".** A 409 means the bytes already
-  exist and will be refused identically forever; the row links to the resource it
-  collided with instead. Only transport and server errors are retryable.
-- **A partial batch does not navigate.** Full success goes to `/group?id=<owner>`
-  (or `/resources` with no owner — the server's own multi-file redirect is
-  `/group?id=0` there, which is a dead page).
+- **Deterministic failures are excluded from "Retry failed".** Every 4xx except
+  the codes that mean "try again" (408, 423, 425, 429) answers identically
+  however many times the same bytes are sent — a 409 duplicate, a 413 the browser
+  refused on size, a 400 the server could not decode. A duplicate's row links to
+  the resource it collided with instead, which is the only useful action left.
+  Transport failures and 5xx stay retryable.
+- **A partial batch does not navigate.** Full success of a single file goes to
+  that resource, mirroring the server's own single-file redirect; a full batch
+  goes to `/group?id=<owner>`, or to `/resources` when no owner was chosen — the
+  server's own multi-file redirect is `/group?id=0` there, which is a dead page.
 - **The three settings are runtime-only** — no flag, no env var, no
   `MahresourcesConfig` field, following `hash_backfill_paused`. They govern
   browser behaviour on one page, so a restart to change one would be the wrong
@@ -212,17 +216,38 @@ disk. The sequential loop hid this completely: within one request goroutine, two
    already handles it);
 3. `insertUploadedResource`, whose **first statement is a write**.
 
-Two properties of that first phase are worth stating plainly. A read that fails
-for any reason other than `gorm.ErrRecordNotFound` is **returned, not treated as
-"no such content"** — `Hash` carries a plain index rather than a unique one
-(`models/resource_model.go:21`), so falling through on a transient failure would
-persist a second row for content that already exists and nothing below would
-catch it. And the dedup guarantee is **process-local, as it always has been**:
-two processes sharing one database hold two idlocks, and there is no
-database-level backstop. `TestAddResource_ConcurrentSameHashOnWAL` pins the
-in-process property under the production SQLite configuration; closing the
-cross-process gap means adding a unique index, which cannot be done safely while
-duplicate hashes may already exist in a live database.
+A read that fails for any reason other than `gorm.ErrRecordNotFound` is
+**returned, not treated as "no such content"**: falling through on a transient
+failure would persist a second row for content that already exists.
+
+**Deduplication now holds across processes**, which it never did before.
+`Resource.Hash` carried a plain `gorm:"index"` and the per-hash lock is in
+memory, so two processes sharing one database held two locks, could both read
+"not found" for the same bytes, and both insert. Sequential uploads made that
+vanishingly rare; a bulk batch is many concurrent requests, so it stopped being
+theoretical. `models.EnsureResourceHashUnique` (called from `main` beside
+`EnsureImageHashResourceIdUnique`) adds a **partial** unique index over
+non-empty hashes: partial because unhashed rows all carry the empty string and
+an unqualified index would reject every one after the first; under its own name
+because AutoMigrate never upgrades an index's uniqueness in place; and
+**non-destructive**, so a database already holding duplicate hashes keeps them,
+is named in a startup warning, and stays on the old behaviour until an operator
+merges them. That is where it differs from `EnsureImageHashResourceIdUnique`,
+which does dedup its own rows — an `image_hashes` row is derived data, a
+resource is not. Losing the index is then treated as what it is: another process
+inserted the same content first, so `AddResource` re-reads the winner and merges
+into it rather than reporting HTTP 500. `TestDedupHoldsAcrossProcesses` pins it
+with two contexts over one file — separate pools, separate idlocks — and fails
+without the index.
+
+**The collision branches validate their association ids *inside* their
+transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
+than by becoming write-first. Hoisting those reads out was tried and is wrong:
+`Association.Append` upserts its target, so a group deleted between the check
+and the append is **recreated as a blank stub** and the foreign key cannot
+object, because by then the row exists. `TestPhantomGroupIsNotCreatedByADuplicateUpload`
+pins that. The different-owner branch validates the owner id for the same
+reason; master validated nothing there at all.
 
 **INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
 there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`

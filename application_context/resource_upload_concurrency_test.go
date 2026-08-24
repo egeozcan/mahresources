@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -32,34 +33,23 @@ import (
 // AddResource's io.Copy into the target filesystem.
 func newWALTestContext(t *testing.T, maxConns int) *MahresourcesContext {
 	t.Helper()
+	return walTestContextAt(t, filepath.Join(t.TempDir(), "concurrency.db"), maxConns, true)
+}
 
-	dsn := filepath.Join(t.TempDir(), "concurrency.db")
+// walTestContextAt builds a context against a named database file. A second
+// context over the same file is the closest a Go test gets to a second process:
+// its own MahresourcesContext, its own connection pool and — the point — its own
+// in-memory per-hash idlock.
+func walTestContextAt(t *testing.T, dsn string, maxConns int, migrate bool) *MahresourcesContext {
+	t.Helper()
+
 	db, _, err := models.CreateDatabaseConnection(constants.DbTypeSqlite, dsn, "", 0)
 	if err != nil {
 		t.Fatalf("open WAL test database: %v", err)
 	}
 
-	if err := db.AutoMigrate(
-		&models.Query{},
-		&models.Resource{},
-		&models.Note{},
-		&models.Tag{},
-		&models.Group{},
-		&models.Category{},
-		&models.NoteType{},
-		&models.Preview{},
-		&models.GroupRelation{},
-		&models.GroupRelationType{},
-		&models.ImageHash{},
-		&models.ResourceSimilarity{},
-		&models.LogEntry{},
-		&models.ResourceCategory{},
-		&models.Series{},
-		&models.NoteBlock{},
-		&models.PluginKV{},
-		&models.ResourceVersion{},
-	); err != nil {
-		t.Fatalf("migrate WAL test database: %v", err)
+	if migrate {
+		migrateWALTestSchema(t, db)
 	}
 
 	sqlDB, err := db.DB()
@@ -85,6 +75,32 @@ func newWALTestContext(t *testing.T, maxConns int) *MahresourcesContext {
 	db.FirstOrCreate(defaultRC, 1)
 
 	return ctx
+}
+
+func migrateWALTestSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(
+		&models.Query{},
+		&models.Resource{},
+		&models.Note{},
+		&models.Tag{},
+		&models.Group{},
+		&models.Category{},
+		&models.NoteType{},
+		&models.Preview{},
+		&models.GroupRelation{},
+		&models.GroupRelationType{},
+		&models.ImageHash{},
+		&models.ResourceSimilarity{},
+		&models.LogEntry{},
+		&models.ResourceCategory{},
+		&models.Series{},
+		&models.NoteBlock{},
+		&models.PluginKV{},
+		&models.ResourceVersion{},
+	); err != nil {
+		t.Fatalf("migrate WAL test database: %v", err)
+	}
 }
 
 // TestAddResource_ConcurrentDistinctHashes is the guard for the client-side
@@ -456,5 +472,211 @@ func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
 	}
 	if created != 1 || duplicates != concurrency-1 {
 		t.Fatalf("expected 1 create and %d duplicate refusals, got %d and %d", concurrency-1, created, duplicates)
+	}
+}
+
+// TestDedupHoldsAcrossProcesses is the guard for EnsureResourceHashUnique.
+//
+// The per-hash idlock lives in memory, so it says nothing about a second process
+// against the same database. Two MahresourcesContexts over one file is the
+// closest a Go test gets: separate contexts, separate pools, separate idlocks.
+// Without the partial unique index on resources.hash both read "not found" for
+// the same bytes and both inserted, and Hash's plain index let the second row
+// stand — measured 20/20 duplicated before the index existed.
+//
+// The interleave is injected rather than raced for. A lock this test merely
+// hoped to lose would pass whenever the goroutines happened to serialise, which
+// is most of the time.
+//
+// The loser must not merely fail: it must resolve the way an in-process
+// duplicate does, as a ResourceExistsError naming the winner, or a user would
+// see HTTP 500 for having done nothing wrong.
+func TestDedupHoldsAcrossProcesses(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "cross-process.db")
+	first := walTestContextAt(t, dsn, 0, true)
+
+	if err := models.EnsureResourceHashUnique(first.db); err != nil {
+		t.Fatalf("create the hash unique index: %v", err)
+	}
+
+	// Its own idlock, so the in-process guard cannot be what makes this pass.
+	second := walTestContextAt(t, dsn, 0, false)
+	if first.locks == second.locks {
+		t.Fatal("the two contexts share a lock registry, which would make this test prove nothing")
+	}
+
+	// Hold the first context's write until the second has finished its own
+	// lookup, so both are guaranteed to have seen "not found".
+	bothLookedUp := make(chan struct{})
+	secondDone := make(chan struct{})
+	var gateOnce sync.Once
+	err := first.db.Callback().Create().Before("gorm:create").Register(
+		"test:wait_for_second_lookup",
+		func(db *gorm.DB) {
+			if db.Statement == nil || db.Statement.Table != "resources" {
+				return
+			}
+			gateOnce.Do(func() {
+				close(bothLookedUp)
+				<-secondDone
+			})
+		},
+	)
+	if err != nil {
+		t.Fatalf("register gate callback: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = first.db.Callback().Create().Remove("test:wait_for_second_lookup")
+	})
+
+	payload := make([]byte, 256*1024)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+
+	upload := func(ctx *MahresourcesContext, name string) error {
+		_, err := ctx.AddResource(newBytesFile(payload), name+".bin", &query_models.ResourceCreator{
+			ResourceQueryBase: query_models.ResourceQueryBase{Name: name},
+		})
+		return err
+	}
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		results[0] = upload(first, "cross-0")
+	}()
+	go func() {
+		defer wg.Done()
+		<-bothLookedUp
+		results[1] = upload(second, "cross-1")
+		close(secondDone)
+	}()
+	wg.Wait()
+
+	var stored int64
+	if err := first.db.Model(&models.Resource{}).Where("hash <> ''").Count(&stored).Error; err != nil {
+		t.Fatalf("count resources: %v", err)
+	}
+	if stored != 1 {
+		t.Fatalf("identical content uploaded from two contexts must dedupe to one row, found %d", stored)
+	}
+
+	var created, duplicates int
+	for _, err := range results {
+		var exists *ResourceExistsError
+		switch {
+		case err == nil:
+			created++
+		case errors.As(err, &exists):
+			duplicates++
+		default:
+			t.Errorf("the losing upload must be reported as a duplicate, got: %v", err)
+		}
+	}
+	if created != 1 || duplicates != 1 {
+		t.Fatalf("expected one create and one duplicate refusal, got %d and %d", created, duplicates)
+	}
+}
+
+// TestResourceHashUniqueIndexIsSkippedWhenDuplicatesExist pins the
+// non-destructive half: a database that already holds duplicate hashes keeps
+// them, and keeps working.
+func TestResourceHashUniqueIndexIsSkippedWhenDuplicatesExist(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	for i := 0; i < 2; i++ {
+		row := &models.Resource{Name: fmt.Sprintf("legacy-%d", i), Hash: "collides", HashType: "SHA1"}
+		if err := ctx.db.Create(row).Error; err != nil {
+			t.Fatalf("seed duplicate row %d: %v", i, err)
+		}
+	}
+
+	err := models.EnsureResourceHashUnique(ctx.db)
+	if err == nil {
+		t.Fatal("expected a warning naming the duplicates rather than a silent skip")
+	}
+	if !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("the warning must name the colliding hash so an operator can act on it, got: %v", err)
+	}
+
+	// Both rows survive: merging resources is an operator's decision.
+	var stored int64
+	ctx.db.Model(&models.Resource{}).Where("hash = ?", "collides").Count(&stored)
+	if stored != 2 {
+		t.Fatalf("the fixup must not delete anything, found %d of 2 rows", stored)
+	}
+}
+
+// TestResourceHashUniqueIndexToleratesUnhashedRows pins why the index is
+// partial: rows that were never hashed all carry the empty string, and an
+// unqualified unique index would reject every one after the first.
+func TestResourceHashUniqueIndexToleratesUnhashedRows(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	for i := 0; i < 3; i++ {
+		row := &models.Resource{Name: fmt.Sprintf("unhashed-%d", i), Hash: ""}
+		if err := ctx.db.Create(row).Error; err != nil {
+			t.Fatalf("seed unhashed row %d: %v", i, err)
+		}
+	}
+
+	if err := models.EnsureResourceHashUnique(ctx.db); err != nil {
+		t.Fatalf("empty hashes must not block the index: %v", err)
+	}
+
+	if err := ctx.db.Create(&models.Resource{Name: "unhashed-3", Hash: ""}).Error; err != nil {
+		t.Fatalf("the partial index must not constrain unhashed rows: %v", err)
+	}
+
+	// Idempotent.
+	if err := models.EnsureResourceHashUnique(ctx.db); err != nil {
+		t.Fatalf("second call should be a no-op: %v", err)
+	}
+}
+
+// TestPhantomGroupIsNotCreatedByADuplicateUpload pins why the association ids
+// are validated inside the merge transaction rather than before it.
+//
+// Association.Append upserts its target. Validating outside the transaction
+// leaves a window in which the group is deleted, and Append then recreates it as
+// a blank row carrying nothing but the id before inserting the join — the
+// foreign key cannot object, because by then the row exists again.
+func TestPhantomGroupIsNotCreatedByADuplicateUpload(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	payload := make([]byte, 4096)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+	if _, err := ctx.AddResource(newBytesFile(payload), "original.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "original"},
+	}); err != nil {
+		t.Fatalf("seed upload: %v", err)
+	}
+
+	// An id that has never existed stands in for one deleted between a hoisted
+	// check and the append: both reach the association code as "not there".
+	const ghostID = 4242
+
+	_, err := ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:   "duplicate",
+			Groups: []uint{ghostID},
+		},
+	})
+	if err == nil {
+		t.Fatal("appending an association to a group that does not exist must be refused")
+	}
+
+	var ghosts int64
+	if countErr := ctx.db.Model(&models.Group{}).Where("id = ?", ghostID).Count(&ghosts).Error; countErr != nil {
+		t.Fatalf("count groups: %v", countErr)
+	}
+	if ghosts != 0 {
+		t.Fatal("a blank group was conjured from an id that never existed")
 	}
 }
