@@ -174,37 +174,59 @@ func rawBreakoutReachesLive(substituted string, at, n int) (reachesOn, reachesOf
 		return false, false
 	}
 	elem := lintProbePrefix + "elem"
-	breakout := `'"></title></textarea></style></script></xmp></noscript></noframes><` +
-		elem + `></` + elem + `><frame ` + elem + ` src=x>`
-	src := substituted[:at+n] + breakout + substituted[at+n:]
+	// The finite set of ways unescaped bytes at this position become a live
+	// node. Two variants are needed because they are mutually exclusive in one
+	// string: the element variant closes the tag; the attribute variant does
+	// NOT, so it can add an attribute to the still-open start tag (a <plaintext>
+	// or any start tag, where closing the tag would put the marker in a body
+	// nothing escapes). Each variant leads with '" to close a single- OR
+	// double-quoted value, and the element variant closes EVERY raw-text body a
+	// value might sit in before opening its markers. The markers cover a plain
+	// element, a <frameset>'s only child <frame>, and the <html>/<body> singleton
+	// merges — all detected as the marker element OR the marker attribute.
+	variants := []string{
+		// element: close quotes, close the tag, close every raw-text body, then
+		// open elements and merge onto the singletons.
+		`'"></title></textarea></style></script></xmp></iframe></noembed></noframes></noscript><` +
+			elem + `></` + elem + `><frame ` + elem + ` src=x><html ` + elem + `><body ` + elem + `>`,
+		// attribute: close the quote and add a marker attribute WITHOUT closing
+		// the tag, for a start tag whose body admits no markup (<plaintext>).
+		`'" ` + elem + `=x `,
+	}
 	reaches := func(scripting bool) bool {
 		opts := []html.ParseOption{}
 		if !scripting {
 			opts = append(opts, html.ParseOptionEnableScripting(false))
 		}
-		doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
-		if err != nil {
-			return false
-		}
-		found := false
-		var walk func(*html.Node)
-		walk = func(nd *html.Node) {
-			if nd.Type == html.ElementNode {
-				if nd.Data == elem {
-					found = true
-				}
-				for _, a := range nd.Attr {
-					if a.Key == elem {
+		for _, breakout := range variants {
+			src := substituted[:at+n] + breakout + substituted[at+n:]
+			doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
+			if err != nil {
+				continue
+			}
+			found := false
+			var walk func(*html.Node)
+			walk = func(nd *html.Node) {
+				if nd.Type == html.ElementNode {
+					if nd.Data == elem {
 						found = true
 					}
+					for _, a := range nd.Attr {
+						if a.Key == elem {
+							found = true
+						}
+					}
+				}
+				for c := nd.FirstChild; c != nil && !found; c = c.NextSibling {
+					walk(c)
 				}
 			}
-			for c := nd.FirstChild; c != nil; c = c.NextSibling {
-				walk(c)
+			walk(doc)
+			if found {
+				return true
 			}
 		}
-		walk(doc)
-		return found
+		return false
 	}
 	return reaches(true), reaches(false)
 }

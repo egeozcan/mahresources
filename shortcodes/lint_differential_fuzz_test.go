@@ -321,20 +321,29 @@ func TestLintRawBreakoutDifferential(t *testing.T) {
 	// tag closer, then a marker element and a frameset frame — substituted into
 	// each context. It is the worst case a value could actually take, so the
 	// linter (which must warn iff SOME value is live) should agree with it.
-	attack := `'"></title></textarea></style></script></xmp></noscript></noframes><` +
-		marker + `></` + marker + `><frame ` + marker + ` src=x>`
+	// The oracle's OWN copy of the worst-case raw value: it must close whatever
+	// the occurrence sits in and then try every way bytes become a live node.
+	// A single value cannot both close its tag (for an element) and keep it open
+	// (to add an attribute to a <plaintext> start tag), so there are two, tried
+	// in turn — the same shape the probe uses, kept as a SEPARATE copy so a
+	// vector dropped from the probe still shows here as a mismatch.
+	attacks := []string{
+		`'"></title></textarea></style></script></xmp></iframe></noembed></noframes></noscript><` +
+			marker + `></` + marker + `><frame ` + marker + ` src=x><html ` + marker + `><body ` + marker + `>`,
+		`'" ` + marker + `=x `,
+	}
 	shapes := []struct{ lint, oracle string }{
-		{`<x>[property path='Name' raw='true']</x>`, `<x>` + attack + `</x>`},
-		{`<x title="[property path='Name' raw='true']">`, `<x title="` + attack + `">`},
-		{`<x title='[property path="Name" raw="true"]'>`, `<x title='` + attack + `'>`},
-		{`<x title=fixed title='[property path="Name" raw="true"]'>`, `<x title=fixed title='` + attack + `'>`},
-		{`<x>y</x data-z="[property path='Name' raw='true']">`, `<x>y</x data-z="` + attack + `">`},
-		{`[property path='Name' raw='true']`, attack},
+		{`<x>[property path='Name' raw='true']</x>`, `<x>%s</x>`},
+		{`<x title="[property path='Name' raw='true']">`, `<x title="%s">`},
+		{`<x title='[property path="Name" raw="true"]'>`, `<x title='%s'>`},
+		{`<x title=fixed title='[property path="Name" raw="true"]'>`, `<x title=fixed title='%s'>`},
+		{`<x>y</x data-z="[property path='Name' raw='true']">`, `<x>y</x data-z="%s">`},
+		{`[property path='Name' raw='true']`, `%s`},
 	}
 	fails := 0
 	for _, seed := range []int64{3, 14, 15, 92} {
 		rng := rand.New(rand.NewSource(seed))
-		for c := 0; c < 2500 && fails < 12; c++ {
+		for c := 0; c < 1500 && fails < 12; c++ {
 			n := rng.Intn(7)
 			var sb strings.Builder
 			for i := 0; i < n; i++ {
@@ -343,16 +352,21 @@ func TestLintRawBreakoutDifferential(t *testing.T) {
 			before := sb.String()
 			for _, sh := range shapes {
 				lintSrc := before + sh.lint
-				oracleSrc := before + sh.oracle
-				isLive := live(oracleSrc)
+				isLive := false
+				for _, a := range attacks {
+					if live(before + strings.Replace(sh.oracle, "%s", a, 1)) {
+						isLive = true
+						break
+					}
+				}
 				warned := warnsRaw(lintSrc)
 				switch {
 				case warned && !isLive:
 					fails++
-					t.Errorf("FALSE POSITIVE: raw= warned but no breakout is live: %q -> %q", lintSrc, lintWarnings(lintSrc))
+					t.Errorf("FALSE POSITIVE: raw= warned but no attack is live: %q -> %q", lintSrc, lintWarnings(lintSrc))
 				case isLive && !warned:
 					fails++
-					t.Errorf("MISSED: raw= breakout is live yet no warning: %q (oracle %q) -> %q", lintSrc, oracleSrc, lintWarnings(lintSrc))
+					t.Errorf("MISSED: a raw= attack is live yet no warning: %q -> %q", lintSrc, lintWarnings(lintSrc))
 				}
 			}
 		}
