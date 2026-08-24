@@ -1550,10 +1550,10 @@ func TestLintCDATAIsCharacterDataInForeignContent(t *testing.T) {
 	})
 }
 
-// The two bodies scanMarkup reads against the tokenizer's default — foreign
-// content and <noscript> — stream through the same scan, and the parts of the
-// answer that are reached outside it do not. Both facts are deliberate and
-// both are easy to change by accident, so they are pinned here.
+// The <noscript> body reads differently under the two scripting modes, and the
+// syntactic answers (an interpolated name, an unterminated tag) are reached by
+// the lexical pass rather than the parse. Both facts are deliberate and both
+// are easy to change by accident, so they are pinned here.
 func TestLintRereadRegionEdges(t *testing.T) {
 	t.Run("the two regions compose", func(t *testing.T) {
 		// An <svg> inside a <noscript> is both at once, and the noscript half
@@ -1571,10 +1571,10 @@ func TestLintRereadRegionEdges(t *testing.T) {
 		}
 	})
 
-	t.Run("the answers reached outside the region scan still apply", func(t *testing.T) {
+	t.Run("the answers reached by the lexical pass still apply", func(t *testing.T) {
 		// An interpolated ELEMENT name is proved by the "<" in front of it, and
 		// an unterminated tag is answered by one pass over the whole document.
-		// Both run after scanMarkup and neither is told which region it is
+		// Both are lexical facts and neither is told which region it is
 		// looking at, so they warn without the scripting-mode caveat. Leaving
 		// them there is fail-closed, and both are in the set a <noscript> body
 		// reaches with scripting disabled anyway.
@@ -2290,7 +2290,7 @@ func TestLintStyleTypeDecidesWhetherItIsAStylesheet(t *testing.T) {
 	})
 }
 
-// Two answers are reached outside scanMarkup — the "<" proof for an interpolated
+// Two answers are reached by the lexical pass — the "<" proof for an interpolated
 // element name, and the unterminated-tag pass — and neither knows what kind of
 // body it is looking at. In a raw-text or RCDATA body a "<" starts nothing, so
 // the scan now says so rather than leaving the question open.

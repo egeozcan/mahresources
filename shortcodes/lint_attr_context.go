@@ -22,12 +22,6 @@ import (
 // body is not markup, "</scripture>" does not close a script, a comment ends at
 // "-->" and not at ">", and "java&#x73;cript" is a scheme.
 //
-// So the tag-finding is delegated to golang.org/x/net/html, which is the
-// browsers' own reading of all of that. What is left — which attribute of one
-// already-delimited tag a byte offset falls in, and whether that attribute was
-// quoted — is a bounded scan over a single tag's source with no nesting and no
-// escapes to resolve, and that part was never the problem.
-//
 // The tag-finding is the parser's, not a hand-written model of it. Earlier
 // versions of this file tracked the open-elements stack themselves and spent
 // many review rounds discovering, one HTML5 insertion mode at a time, every
@@ -76,25 +70,20 @@ type attrContext struct {
 	// only when scripting is disabled. Nothing there can execute under either
 	// reading, so the rules that describe execution are withheld.
 	noscript bool
-	// inertText marks an occurrence in a body the scan read and deliberately
-	// had nothing to say about — an HTML raw-text or RCDATA body, where a "<"
-	// starts nothing and a tag is literal text. It is the zero value as far as
-	// the rules are concerned, and it exists only to keep the two fallbacks
-	// below from answering a question the scan already settled.
+	// inertText marks an occurrence the parser placed in a text node the rules
+	// have nothing to say about. It is the zero value as far as the rules are
+	// concerned, and exists only to keep the "<"-name and unterminated-tag
+	// fallbacks from re-answering a placement the parse already settled.
 	inertText bool
-	// noscriptRaw marks an occurrence the scripting-enabled reading put inside
-	// a <noscript> raw-text body. No rule reads it: it exists only so
-	// attributeContextsFor knows which occurrences to ask the scripting-off
-	// reading about, and it never survives that merge.
-	noscriptRaw bool
 	// discarded marks an occurrence in the value of a REPEATED attribute,
 	// which the parser drops: nothing there reaches the DOM, and only raw= —
 	// whose unescaped bytes still pass through the tokenizer and can close
 	// the attribute — has anything left to warn about.
 	discarded bool
-	// unterminated marks an occurrence inside a tag that is never closed, which
-	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
-	// attribute", so a broken template fails closed.
+	// unterminated marks an occurrence inside a tag that is never closed. The
+	// parser recovers such a tag (or drops it), so this is a lexical fact;
+	// treated as unsafe rather than as "not in an attribute", so a broken
+	// template fails closed.
 	unterminated bool
 }
 
@@ -820,9 +809,10 @@ type sentinelHit struct {
 	value string
 }
 
-// sentinelsInTag scans one tag's own source for sentinels sitting in attribute
-// values. The tag is already delimited by the tokenizer, so this is a flat walk
-// over "name=value" pairs — no comments, no raw-text bodies, no nesting.
+// sentinelsInTag scans one tag's own source for sentinels sitting in an
+// attribute value or a tag/attribute name. The tag is already delimited by
+// lexicalContexts, so this is a flat walk over "name=value" pairs — no
+// comments, no raw-text bodies, no nesting.
 func sentinelsInTag(tag string) []sentinelHit {
 	var hits []sentinelHit
 	i := 0
@@ -1311,180 +1301,45 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// scriptLikeElements are the two whose body is a program rather than markup, so
-// a value placed in one is judged as landing in a language. In the HTML
-// namespace the parser decodes no entities there, so the value arrives with its
-// escaping still in it and escaping is not what decides whether the placement is
-// safe. It is not nothing — an escaped value carries no "<" and no bare quote,
-// so it can neither close the element nor end a JavaScript string — but a
-// backtick, a "${...}" or a ";" is not escaped at all, and those are the
-// characters that matter in a language. In foreign content the sentence inverts;
-// see below.
+// scriptLikeElements are the two whose body is a program rather than markup,
+// so a value placed in one is judged as landing in a language. Whether a given
+// occurrence sits in such a body — rather than in a nested element's markup —
+// is read from the DOM: classifyByParse marks a sentinel kScript or kStyle
+// only when its DIRECT parent is the script or style element, which is the
+// spec's "child text content" and free from the parser. The rules the two
+// bodies then draw differ by namespace, and unsafeAttributeContexts is where
+// that is decided:
 //
-// The tokenizer raw-texts ten names (rawTextElements), and no tag inside any of
-// them is emitted as a tag. Two of the ten are here, and <noscript> is re-read
-// (below). The remaining SEVEN are read as ordinary prose while they are in the
-// HTML namespace, which is a decision rather than an oversight: it has been got
-// wrong twice, once by warning on all eight of the non-program bodies and once
-// by re-reading a <noscript> body as markup and reporting placements in it that
-// cannot execute under either reading.
+//   - In the HTML namespace the parser decodes no entities in these bodies, so
+//     an escaped value arrives with its escaping still in it. That is not
+//     nothing — no "<" and no bare quote, so it can neither close the element
+//     nor end a string — but a backtick, a "${...}" or a ";" is untouched, and
+//     those are the characters that matter in a language.
+//   - In SVG the sentence inverts: foreign content DOES decode entities, so the
+//     escaping is undone before the language sees the value and an escaped
+//     quote arrives as a real one. That placement is worse than the HTML one,
+//     which foreignRoot carries into the message. A CDATA section decodes
+//     nothing even in foreign content, so a CDATA-wrapped SVG body takes the
+//     HTML message instead — the one lexical fact (l.cdata) the body needs.
+//   - MathML has neither a script that runs nor a style that applies, so a
+//     MathML <script>/<style> body is inert markup and classifyByParse leaves
+//     it kText.
 //
-// textarea and title are RCDATA: entities *are* decoded there, so escaping
-// works exactly as it does in an attribute — and a tag written inside one is
-// literal text to the browser too, which is precisely what the zero-value "not
-// in an attribute" context already reports.
+// A <style> is a program body only when a browser would apply it — type absent,
+// empty, or text/css (styleIsStylesheet) — and an interpolated encoding= or
+// type= that COULD complete a namespace- or stylesheet-deciding value is parsed
+// at that worst case (substituteWorstCase), so a placement it might decide is
+// read fail-closed.
 //
-// iframe, noembed, noframes, xmp and plaintext are raw text, which makes the
-// same answer right for a different reason: a tag inside one is text to the
-// browser as well, so "not in an attribute" is the truth rather than a gap. An
-// escaped value cannot even close the element — html.EscapeString leaves no "<"
-// and no entity is decoded to give one back — and a raw value that closes it
-// with "</xmp>" is already covered by the raw= rule in
-// unsafeAttributeContexts, which is the message that case wants. plaintext runs
-// to EOF and cannot be closed at all.
-//
-// An UNCLOSED one of those seven swallows the rest of the document rather than
-// a body, and that is not a fail-open either: a browser's tokenizer runs to EOF
-// in raw text (or RCDATA, or PLAINTEXT) too, so the href further down that this
-// file then says nothing about is not a link there either.
-//
-// Both of the places where the tokenizer's reading is not a browser's — the
-// <noscript> body and foreign content — are read in place by scanMarkup, which
-// clears the tokenizer's raw-text state for them, rather than being listed
-// here.
-//
-// NOSCRIPT is raw text to the tokenizer whatever the scripting flag says, and
-// markup to a browser only when scripting is disabled — which is the mode the
-// element exists for, so the placements live in that mode are worth reporting.
-// The set that is reported is exactly the one that needs no script: srcdoc, an
-// unquoted attribute, style=, a <style> ELEMENT a browser would apply, an
-// interpolated attribute name, and raw=. Every
-// script-execution rule (an on* handler, an Alpine directive, a javascript: URL,
-// a <script> body) is withheld, because it is inapplicable under BOTH readings —
-// with scripting on the body is inert raw text, with it off the handler is real
-// and does nothing — and reporting it is the false positive that had the earlier
-// attempt withdrawn. Every message from a body carries noscriptQualifier, which
-// names the mode it applies in. An unclosed <noscript> is the same case at its
-// widest and is read the same way, since with scripting disabled everything
-// after it is live markup.
-//
-// A <style> element and a <script> element are the pair that shows where the
-// dividing line runs. Both are real elements with scripting disabled; only one
-// of them does anything. The stylesheet applies, and a value in it can close
-// the declaration and open another — the same hazard style= carries, and it
-// needs no script; the script is inert. So the language rule reports the first
-// and withholds the second, rather than treating "a program body" as one case.
-// A <style> whose type= no browser supports is not a stylesheet either, and
-// styleTypeApplies is where that is asked, everywhere rather than only here.
-//
-// One member of the non-execution set stays unreported and is residue: every
-// URL-bearing attribute other than an executable scheme — a stylesheet href, a
-// <base href> that re-points every relative URL on the page, a form action — is
-// out because the two URL rules only ever describe an executable scheme, which
-// is exactly what that mode cannot reach.
-//
-// One thing here is not a <noscript> matter at all and is unwarned everywhere: a
-// refresh <meta content="0;url=…"> chooses a navigation target, and "content"
-// is not in urlBearingAttrs — recognising it needs the sibling http-equiv,
-// since the same attribute on <meta name="description"> is prose.
-//
-// FOREIGN CONTENT is where the tokenizer is simply wrong rather than
-// conservative, because it is namespace-unaware and raw-texts all ten names
-// inside <svg> and <math> as well. Three consequences, all handled by
-// scanMarkup and the namespace it puts on every context:
-//
-//   - An SVG <script> or <style> still holds a program — the parser spec
-//     special-cases the end tag of an SVG script and has nothing of the sort
-//     for MathML, and an SVG <style> is a real stylesheet — but foreign content
-//     DOES decode entities, so the escaping is undone before the language sees
-//     the value and an escaped quote arrives as a real quote. That placement is
-//     worse than the HTML one, not better, and the old message claimed the
-//     opposite. The body is not raw text either, so it is read as markup like
-//     every other foreign body, and what is program source is its CHILD TEXT
-//     CONTENT — the direct Text children a script's source is built from, not
-//     textContent. An attribute on an element inside one is an attribute of a
-//     real element, and text inside that element is markup nothing runs.
-//   - MathML has neither, so a <math><script> runs nothing and a <math><style>
-//     applies nothing. Both are read as the ordinary markup they are.
-//   - The remaining names are inert foreign elements whose children are real,
-//     so their bodies are read as the markup they are. <svg><iframe><a
-//     href="javascript:…"> is a live SVG link and was silent; <svg><title> is
-//     an HTML integration point, so the anchor in it is a real HTML anchor.
-//
-// Foreign content is also where "<![CDATA[" opens a real CDATA section — the
-// wrapper Illustrator and Inkscape put around a style body — whose content is
-// character data with no entity decoding. The tokenizer is told per token via
-// AllowCDATA, from the namespace this scan tracks anyway. Both directions were
-// defects first: a bogus-comment reading of the section ended at its first ">"
-// and read the rest as markup, so character data holding "<div>" broke out of
-// SVG and a foreign iframe after it warned as an HTML one; and a CDATA-wrapped
-// SVG program body never reached the language rules at all. A program value
-// inside one takes the HTML message rather than the foreign one, because the
-// undoing of the escaping is exactly what a CDATA section does not do.
-//
-// An element being foreign also narrows the rules that describe what one
-// particular HTML element DOES, since a foreign element is not that element
-// however it is spelled: a foreign <iframe> has no browsing context, so its
-// srcdoc is never parsed as a document. What is untouched is everything about
-// markup syntax (raw=, an unquoted value, an interpolated name), the two
-// attributes every namespace honours (style=, on*), and the URL rules, which
-// stay element-blind on purpose (unsafeAttributeContexts says why).
-//
-// Three things keep this from becoming a third false-positive machine, and each
-// was a false positive first. breaksOutOfForeignContent: ~40 HTML tag names end
-// foreign content (the list copied from x/net's own breakout map, plus the
-// "</br>"/"</p>" end tags), so an <svg> the author forgot to close does not turn
-// every later <textarea> into a live one. markupFrame.namespaceForChild and
-// the end-tag search: x/net's inForeignContent and parseForeignContent written
-// against one frame, so <svg><title>, the
-// MathML text points and their <mglyph>/<malignmark> exceptions, and an <svg>
-// inside <annotation-xml> all land where a browser puts them. And an end tag
-// matching nothing open is ignored, as both HTML's rule and the foreign one
-// ignore it, rather than being read as an exit from anything.
-//
-// One thing predates all of this and is unchanged by it: whether a <script>
-// body is a program at all is decided by the element's name, never by its
-// type=. A <script type="application/json"> holds data rather than code, so
-// naming JavaScript there overstates it — though an escaped value in one can
-// neither close the element nor be decoded back into a quote, so what it
-// overstates is the verdict as well: nothing there reaches JavaScript, and a
-// <script type="application/ld+json"> holding an escaped value is a warning
-// about a program that does not exist. What the escaping does still hold is
-// real — no "<" and no decoded quote, so the element cannot be closed — which
-// is why this is a wrong reason attached to a wrong verdict rather than a
-// missed hazard. <style> DID get the
-// equivalent check (styleTypeApplies), and the asymmetry is the two specs'
-// rather than this file's: a style has exactly one valid type, while deciding
-// whether a script runs means classifying the JavaScript MIME types, "module",
-// and the data types (importmap, speculationrules) that are neither.
-//
-// What the stack still does not model is HTML's own tree construction at its
-// deepest, and no claim is made here about which direction any of it fails in.
-// The adoption agency is kept to its stack-visible net — the special frames
-// above the formatting element survive and everything else above it closes —
-// and the active formatting list exists (a scope pop does not delist a
-// formatting element, and the next body insertion reconstructs it), but
-// without the spec's Noah's Ark clause, so more than three identical entries
-// can accumulate where a browser would cap them. The end tags with their own
-// pop-until-in-scope rules carry their own boundary lists in closeTag, but
-// only as the in-body insertion mode gives them: the table insertion modes do
-// not exist here, so the table-section end tags (td, tr, tbody and friends)
-// have their own boundary lists here but no clear-back-to-context, foster
-// parenting never happens, and the in-body corrections in scanMarkup honor
-// the table-section START tags whenever a <table> or <template> is open
-// rather than only in the modes that really do. Document phases are modelled
-// only as far as the frameset-ok flag and the one-head/one-html/one-body
-// merge rules reach: a template's own contents are treated as a nested parse
-// only for the frameset-ok flag they must not touch, not as the separate
-// insertion-mode stack a browser keeps, and x/net's template-meets-foreign
-// surrender is mirrored as a leaky "HTML insertion mode is dead" that foreign
-// end tags still escape.
-//
-// TestLintPlacementsAgainstTheParser is what holds all of it: it asks
-// x/net/html's parser, over a few thousand generated nests, whether the element
-// that would make each placement dangerous exists at all — and its tag-soup
-// sibling, TestLintDifferentialTagSoup, asks the same of markup nobody wrote
-// on purpose.
+// The residue that remains, all of it small and none of it in the tree model
+// the parser now owns: whether a <script> is a program is decided by its name
+// and never its type=, so a <script type="application/ld+json"> holding an
+// escaped value still draws the JavaScript message — a wrong reason attached to
+// a wrong verdict (nothing there reaches JavaScript) rather than a missed
+// hazard, since the escaping there can neither close the element nor be decoded
+// back into a quote. The URL rules stay element-blind (a <div href> warns), the
+// on* match is a prefix, and a refresh <meta content="0;url=…"> is unwarned
+// because "content" is not a URL attribute without its sibling http-equiv.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
