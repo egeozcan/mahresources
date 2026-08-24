@@ -650,6 +650,10 @@ const (
 // lockUploadAssociations validates and locks every association id an upload
 // names, in one canonical order: groups, then notes, then tags.
 //
+// Every transaction in the upload path that appends associations goes through
+// this, including the one that attaches a single owner group — an exception
+// would only be safe until someone widened it.
+//
 // The order is the point. Each of these takes SELECT ... FOR UPDATE on Postgres,
 // and two transactions taking the same locks in opposite orders deadlock — which
 // is what the upload paths did to each other, one locking groups/notes/tags and
@@ -918,7 +922,7 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 			}
 		}()
 
-		if valErr := ValidateAndLockAssociationIDs[models.Group](tx, []uint{resourceQuery.OwnerId}, "groups"); valErr != nil {
+		if valErr := lockUploadAssociations(tx, []uint{resourceQuery.OwnerId}, nil, nil); valErr != nil {
 			tx.Rollback()
 			return valErr
 		}
@@ -942,7 +946,18 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 		return nil, err
 	}
 
-	return existingResource, nil
+	// Appending through `target` keeps the caller's model unmutated across
+	// retries, which also means it does not know about the group just
+	// committed — and this object is what the API serialises, so a successful
+	// different-owner collision would describe the resource without its new
+	// owner. Re-read rather than patch the slice by hand.
+	var refreshed models.Resource
+	if reloadErr := ctx.db.Preload("Groups").First(&refreshed, existingResource.ID).Error; reloadErr != nil {
+		// The write committed; failing the upload over a read that is only for
+		// the response body would be the wrong trade.
+		return existingResource, nil
+	}
+	return &refreshed, nil
 }
 
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {

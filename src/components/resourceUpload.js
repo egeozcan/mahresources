@@ -58,8 +58,12 @@ export function aggregateProgress(files) {
 }
 
 /**
- * Human-readable byte count. Mirrors downloadCockpit.formatBytes so the two
- * progress surfaces read the same.
+ * Human-readable byte count.
+ *
+ * Deliberately its own: downloadCockpit has a formatter of the same name that
+ * renders whole units with a decimal ("1.0 KB" where this gives "1 KB"), and
+ * this panel counts a file selection rather than a transfer. Sharing one would
+ * mean changing that surface's output to change this one.
  * @param {number} bytes
  * @returns {string}
  */

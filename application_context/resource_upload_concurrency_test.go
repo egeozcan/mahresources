@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
@@ -427,6 +428,59 @@ func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, concurrency)
 
+	// The interleave is injected, and injected at the hash lookup itself —
+	// which needs a trick, because the lock under test is what stops two
+	// goroutines being there at once.
+	//
+	// The first arrival waits for a second; the second releases it. With the
+	// lock in place no second arrival can happen (it is queued behind the lock),
+	// the wait times out, and the winner commits and releases so the rest find
+	// its row. Remove the lock and two goroutines sit at the lookup together,
+	// both read "not found", and both insert.
+	//
+	// A plain start barrier does not work here, and that was measured rather
+	// than assumed: AddResource writes a temp file, sniffs its mime type and
+	// hashes it before reaching the lock, so the goroutines drift apart and the
+	// first finishes its whole upload before the others look anything up. With a
+	// start barrier, 0 of 8 runs with the lock deleted caught it; with the
+	// pairing below, 2 of 6 did.
+	//
+	// Be clear about what that means. This test reliably asserts the *claim* —
+	// identical content uploaded concurrently becomes one row, one create and N-1
+	// duplicate refusals — and it catches the lock's removal only sometimes. It
+	// is a property test, not a proof of the lock, and a green run here is not
+	// evidence that the serialization is intact. Making it deterministic needs a
+	// seam inside AddResource that does not exist, and adding one to serve a test
+	// would be worse than the partial coverage.
+	var arrivals atomic.Int32
+	paired := make(chan struct{})
+	var pairOnce sync.Once
+	var armed atomic.Bool
+
+	if err := ctx.db.Callback().Query().Before("gorm:query").Register(
+		"test:pair_at_the_hash_lookup",
+		func(db *gorm.DB) {
+			if !armed.Load() || db.Statement == nil || db.Statement.Table != "resources" {
+				return
+			}
+			switch arrivals.Add(1) {
+			case 1:
+				select {
+				case <-paired:
+				case <-time.After(750 * time.Millisecond):
+				}
+			case 2:
+				pairOnce.Do(func() { close(paired) })
+			}
+		},
+	); err != nil {
+		t.Fatalf("register gate callback: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Callback().Query().Remove("test:pair_at_the_hash_lookup")
+	})
+	armed.Store(true)
+
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		go func(idx int) {
@@ -444,6 +498,13 @@ func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	armed.Store(false)
+
+	// A control: if only one goroutine ever reached the lookup the pairing never
+	// happened and nothing about simultaneity was exercised.
+	if arrivals.Load() < 2 {
+		t.Fatalf("only %d goroutines reached the hash lookup; the race was never set up", arrivals.Load())
+	}
 
 	// Exactly one row, whatever order they arrived in.
 	var stored int64
