@@ -544,11 +544,12 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	if err := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	if len(resourceQuery.Groups) > 0 {
-		if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 		if err := tx.Model(&res).Association("Groups").Append(&groups); err != nil {
 			tx.Rollback()
@@ -557,10 +558,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Notes) > 0 {
-		if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 		if err := tx.Model(&res).Association("Notes").Append(&notes); err != nil {
 			tx.Rollback()
@@ -569,10 +566,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Tags) > 0 {
-		if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 		if err := tx.Model(&res).Association("Tags").Append(&tags); err != nil {
 			tx.Rollback()
@@ -645,6 +638,326 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return res, nil
+}
+
+// uploadTxMaxAttempts bounds the retry of an upload's write transaction, and
+// uploadTxRetryBackoff is multiplied by the attempt number between tries.
+const (
+	uploadTxMaxAttempts  = 4
+	uploadTxRetryBackoff = 25 * time.Millisecond
+)
+
+// lockUploadAssociations validates and locks every association id an upload
+// names, in one canonical order: groups, then notes, then tags.
+//
+// Every transaction in the upload path that appends associations goes through
+// this, including the one that attaches a single owner group — an exception
+// would only be safe until someone widened it.
+//
+// The order is the point. Each of these takes SELECT ... FOR UPDATE on Postgres,
+// and two transactions taking the same locks in opposite orders deadlock — which
+// is what the upload paths did to each other, one locking groups/notes/tags and
+// the other groups/tags/notes. Postgres aborts one of them with 40P01, a
+// transaction that did nothing wrong. Taking them through one function is what
+// stops the order drifting apart again.
+func lockUploadAssociations(tx *gorm.DB, groups, notes, tags []uint) error {
+	if err := ValidateAndLockAssociationIDs[models.Group](tx, groups, "groups"); err != nil {
+		return err
+	}
+	if err := ValidateAndLockAssociationIDs[models.Note](tx, notes, "notes"); err != nil {
+		return err
+	}
+	return ValidateAndLockAssociationIDs[models.Tag](tx, tags, "tags")
+}
+
+// withUploadTxRetry runs a write transaction, retrying it on lock contention.
+//
+// Every write transaction in the upload path needs this, for the same reason: a
+// bulk batch is many concurrent requests, SQLite has one writer, and losing that
+// race is not a reason to fail an upload. Retrying is safe because a failed
+// attempt rolled back, so nothing partial persisted and re-running appends the
+// same rows exactly once.
+func (ctx *MahresourcesContext) withUploadTxRetry(run func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := run()
+		if err == nil {
+			return nil
+		}
+		// A deadlock is retried too. Every lock this path takes is ordered
+		// (see ValidateAndLockAssociationIDs and lockUploadAssociations), so one
+		// should not happen — but 40P01 aborts a transaction that did nothing
+		// wrong, and reporting it as a failed upload would be the same mistake
+		// as reporting lock contention.
+		if attempt >= uploadTxMaxAttempts-1 || (!isLockContentionError(err) && !isDeadlockError(err)) {
+			return err
+		}
+		time.Sleep(uploadTxRetryBackoff * time.Duration(attempt+1))
+	}
+}
+
+// insertUploadedResource is AddResource's write transaction: the resource row,
+// its associations, its series membership and its initial version.
+//
+// Extracted so it can be retried as a unit on lock contention. See the call site
+// for why that is safe.
+func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, resourceQuery *query_models.ResourceCreator) (err error) {
+	tx := ctx.db.Begin()
+	// The named return is load-bearing. recover() here exists to guarantee the
+	// rollback, but a bare recover in a function with unnamed results returns
+	// the zero error — nil — so a panicking GORM callback would roll the row
+	// back and then report success. AddResource would go on to log the create,
+	// fire after_resource_create and hand back a resource whose row does not
+	// exist. Converting it to an error keeps the rollback guarantee, keeps the
+	// process alive (net/http recovers per connection, and nothing in this
+	// server maps a panic to a response), and cannot be mistaken for success.
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			err = fmt.Errorf("panic while writing the uploaded resource: %v", r)
+		}
+	}()
+
+	if err := tx.Save(res).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if lockErr := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); lockErr != nil {
+		tx.Rollback()
+		return lockErr
+	}
+
+	if len(resourceQuery.Groups) > 0 {
+		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+
+		if createGroupsErr := tx.Model(&res).Association("Groups").Append(&groups); createGroupsErr != nil {
+			tx.Rollback()
+			return createGroupsErr
+		}
+	}
+
+	if len(resourceQuery.Notes) > 0 {
+		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+
+		if createNotesErr := tx.Model(&res).Association("Notes").Append(&notes); createNotesErr != nil {
+			tx.Rollback()
+			return createNotesErr
+		}
+	}
+
+	if len(resourceQuery.Tags) > 0 {
+		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+
+		if createTagsErr := tx.Model(&res).Association("Tags").Append(&tags); createTagsErr != nil {
+			tx.Rollback()
+			return createTagsErr
+		}
+	}
+
+	// Series assignment
+	if resourceQuery.SeriesId != 0 {
+		var series models.Series
+		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, &series, false); err != nil {
+			tx.Rollback()
+			return err
+		}
+	} else if resourceQuery.SeriesSlug != "" {
+		series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, series, isCreator); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// Create version 1 for the new resource
+	version := &models.ResourceVersion{
+		ResourceID:      res.ID,
+		VersionNumber:   1,
+		Hash:            res.Hash,
+		HashType:        res.HashType,
+		FileSize:        res.FileSize,
+		ContentType:     res.ContentType,
+		Width:           res.Width,
+		Height:          res.Height,
+		Location:        res.Location,
+		StorageLocation: res.StorageLocation,
+		Comment:         "Initial version",
+	}
+
+	if err := tx.Create(version).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Update resource's current version
+	if err := tx.Model(&models.Resource{}).Where("id = ?", res.ID).Updates(map[string]interface{}{"current_version_id": version.ID}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// mergeIntoExistingResource handles a content-hash collision: the bytes are
+// already stored, so the upload turns into an association change on the row
+// that holds them rather than a new resource.
+//
+// It runs before AddResource opens its write transaction, and takes short
+// transactions of its own, so that the upload path never opens a transaction
+// with a read. See the phase-1 comment in AddResource for why that matters.
+// The caller must hold the per-hash idlock.
+func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
+		return ctx.mergeSameOwnerAssociations(existingResource, resourceQuery)
+	}
+
+	if resourceQuery.OwnerId == 0 {
+		return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
+	}
+
+	for _, group := range existingResource.Groups {
+		if resourceQuery.OwnerId == group.ID {
+			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameRelation}
+		}
+	}
+
+	return ctx.attachOwnerToExistingResource(existingResource, resourceQuery)
+}
+
+// mergeSameOwnerAssociations appends whatever associations a duplicate upload
+// carried to the resource that already holds its bytes, and then reports the
+// collision.
+//
+// The id validation stays INSIDE the transaction, and contention is handled by
+// retrying the whole thing rather than by making the first statement a write.
+// Hoisting those SELECTs out was tried and is wrong: `Association.Append`
+// upserts its target, so handed a group id whose row was deleted between the
+// check and the append, GORM recreates it as a blank stub and then inserts the
+// join. Validating outside the transaction does not merely fail to protect —
+// it manufactures a phantom group, and the foreign key cannot catch it because
+// by then the row exists again. Reading and writing under one transaction is
+// the guarantee; losing the writer lock is the retry's problem.
+func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	// Nothing to append means nothing to write, so no transaction is opened.
+	if len(resourceQuery.Groups) == 0 && len(resourceQuery.Tags) == 0 && len(resourceQuery.Notes) == 0 {
+		return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
+	}
+
+	err := ctx.withUploadTxRetry(func() (err error) {
+		tx := ctx.db.Begin()
+		// Named return: a bare recover in a function with unnamed results returns
+		// nil, so a panic here would roll the associations back and report success.
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+				err = fmt.Errorf("panic while merging into the existing resource: %v", r)
+			}
+		}()
+
+		if lockErr := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); lockErr != nil {
+			tx.Rollback()
+			return lockErr
+		}
+
+		if len(resourceQuery.Groups) > 0 {
+			groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+			if appendErr := tx.Model(existingResource).Association("Groups").Append(&groups); appendErr != nil {
+				tx.Rollback()
+				return appendErr
+			}
+		}
+
+		if len(resourceQuery.Tags) > 0 {
+			tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+			if appendErr := tx.Model(existingResource).Association("Tags").Append(&tags); appendErr != nil {
+				tx.Rollback()
+				return appendErr
+			}
+		}
+
+		if len(resourceQuery.Notes) > 0 {
+			notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+			if appendErr := tx.Model(existingResource).Association("Notes").Append(&notes); appendErr != nil {
+				tx.Rollback()
+				return appendErr
+			}
+		}
+
+		return tx.Commit().Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
+}
+
+// attachOwnerToExistingResource handles a collision from a *different* owner,
+// which is not a refusal: the new owner group is attached to the resource that
+// already holds these bytes, and it is returned as a success.
+//
+// The owner id is validated inside the transaction for the reason spelled out on
+// mergeSameOwnerAssociations — Append would otherwise resurrect a group deleted
+// since the request was made, as a blank row with the right id and nothing else.
+// Master validated nothing here at all.
+func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	err := ctx.withUploadTxRetry(func() (err error) {
+		tx := ctx.db.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+				err = fmt.Errorf("panic while attaching the owner group: %v", r)
+			}
+		}()
+
+		if valErr := lockUploadAssociations(tx, []uint{resourceQuery.OwnerId}, nil, nil); valErr != nil {
+			tx.Rollback()
+			return valErr
+		}
+
+		groups := &[]*models.Group{
+			{ID: resourceQuery.OwnerId},
+		}
+		// Appended against a bare handle, not against existingResource: GORM
+		// mutates the model's Groups slice in memory as well as the join table,
+		// so a retried attempt would return an object listing the owner twice
+		// even though the row is written once.
+		target := &models.Resource{ID: existingResource.ID}
+		if attachToGroupErr := tx.Model(target).Association("Groups").Append(groups); attachToGroupErr != nil {
+			tx.Rollback()
+			return attachToGroupErr
+		}
+
+		return tx.Commit().Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Appending through `target` keeps the caller's model unmutated across
+	// retries, which also means it does not know about the group just
+	// committed — and this object is what the API serialises, so a successful
+	// different-owner collision would describe the resource without its new
+	// owner. Re-read rather than patch the slice by hand.
+	var refreshed models.Resource
+	if reloadErr := ctx.db.Preload("Groups").First(&refreshed, existingResource.ID).Error; reloadErr != nil {
+		// The write committed; failing the upload over a read that is only for
+		// the response body would be the wrong trade.
+		return existingResource, nil
+	}
+	return &refreshed, nil
 }
 
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
@@ -765,105 +1078,66 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	}
 
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
-	// with the same hash both pass the "existing resource" check before either commits
+	// with the same hash both pass the "existing resource" check before either commits.
 	ctx.locks.ResourceHashLock.Acquire(hash)
 	defer ctx.locks.ResourceHashLock.Release(hash)
 
-	// Begin transaction AFTER acquiring the lock to avoid TOCTOU: if the transaction
-	// started before the lock, its snapshot could miss rows committed by another
-	// goroutine that held the lock and committed between our BEGIN and our check.
-	tx := ctx.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
+	// ---------------------------------------------------------------------
+	// Phase 1: the content-hash existence check, deliberately OUTSIDE any
+	// transaction.
+	//
+	// The whole reason AddResource is split into phases is that the write
+	// transaction below must open with a WRITE. This used to be the first
+	// statement of that transaction, which made it a deferred read: on SQLite
+	// in WAL mode, promoting such a snapshot to a write after another
+	// connection has committed returns SQLITE_BUSY_SNAPSHOT, and for that
+	// extended result code SQLite does not invoke the busy handler — so
+	// busy_timeout does not apply and nothing here retries. Concurrent uploads
+	// of *different* files reported "database is locked" to the user, on bytes
+	// that had already been written to disk.
+	//
+	// Reading outside a transaction loses nothing. The per-hash idlock above is
+	// what actually guarantees the dedup invariant: only another upload of this
+	// same hash could change the answer, and it releases the lock only after it
+	// has committed, so an autocommit read taken here is guaranteed to see it.
 	var existingResource models.Resource
 
-	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
-		if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
-			needsCommit := false
-			if len(resourceQuery.Groups) > 0 {
-				if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
-					tx.Rollback()
-					return nil, valErr
-				}
-				groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
-				if appendErr := tx.Model(&existingResource).Association("Groups").Append(&groups); appendErr != nil {
-					tx.Rollback()
-					return nil, appendErr
-				}
-				needsCommit = true
-			}
-			if len(resourceQuery.Tags) > 0 {
-				if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
-					tx.Rollback()
-					return nil, valErr
-				}
-				tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
-				if appendErr := tx.Model(&existingResource).Association("Tags").Append(&tags); appendErr != nil {
-					tx.Rollback()
-					return nil, appendErr
-				}
-				needsCommit = true
-			}
-			if len(resourceQuery.Notes) > 0 {
-				if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
-					tx.Rollback()
-					return nil, valErr
-				}
-				notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
-				if appendErr := tx.Model(&existingResource).Association("Notes").Append(&notes); appendErr != nil {
-					tx.Rollback()
-					return nil, appendErr
-				}
-				needsCommit = true
-			}
-			if needsCommit {
-				if commitErr := tx.Commit().Error; commitErr != nil {
-					return nil, commitErr
-				}
-			} else {
-				tx.Rollback()
-			}
-			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
-		}
-
-		if resourceQuery.OwnerId == 0 {
-			tx.Rollback()
-			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
-		}
-
-		for _, group := range existingResource.Groups {
-			if resourceQuery.OwnerId == group.ID {
-				tx.Rollback()
-				return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameRelation}
-			}
-		}
-
-		groups := &[]*models.Group{
-			{ID: resourceQuery.OwnerId},
-		}
-
-		if attachToGroupErr := tx.Model(&existingResource).Association("Groups").Append(groups); attachToGroupErr != nil {
-			tx.Rollback()
-			return nil, attachToGroupErr
-		}
-
-		return &existingResource, tx.Commit().Error
+	switch lookupErr := ctx.db.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; {
+	case lookupErr == nil:
+		return ctx.mergeIntoExistingResource(&existingResource, resourceQuery)
+	case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+		// Genuinely new content: fall through and create it.
+	default:
+		// Anything else — a lock, a closed pool, a broken schema — is not an
+		// answer to "does this hash already exist". Treating it as "no" was the
+		// long-standing shape here and it was survivable while uploads were
+		// sequential; concurrent uploads make a transient failure on this read
+		// realistic, and Resource.Hash carries a plain index rather than a
+		// unique one, so falling through would persist a second row for content
+		// that already exists and quietly break the dedup invariant.
+		return nil, lookupErr
 	}
+
+	// ---------------------------------------------------------------------
+	// Phase 2: write the file, also OUTSIDE any transaction.
+	//
+	// This used to run between the transaction's snapshot-taking read and its
+	// first write, so a full multi-gigabyte io.Copy sat inside the transaction
+	// holding a pooled connection — the window that made the promotion conflict
+	// above near-certain rather than rare.
+	//
+	// A transaction failure after this point leaves a file with no row, but
+	// that state already existed and is already handled: the Stat branch below
+	// reuses a stale file on the next attempt with the same hash.
 
 	// BH-023: select target filesystem based on PathName (alt-fs key).
 	targetFs := ctx.fs
 	if resourceQuery.PathName != "" {
 		if _, ok := ctx.Config.AltFileSystems[resourceQuery.PathName]; !ok {
-			tx.Rollback()
 			return nil, fmt.Errorf("unknown filesystem: %s", resourceQuery.PathName)
 		}
 		altFs, altErr := ctx.GetFsForStorageLocation(&resourceQuery.PathName)
 		if altErr != nil {
-			tx.Rollback()
 			return nil, altErr
 		}
 		targetFs = altFs
@@ -872,7 +1146,6 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
 
 	if err := targetFs.MkdirAll(folder, 0777); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -891,7 +1164,6 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	}
 
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -900,13 +1172,11 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	if !fileExists {
 		_, err = io.Copy(savedFile, tempFile)
 		if err != nil {
-			tx.Rollback()
 			return nil, err
 		}
 
 		_, err = tempFile.Seek(0, io.SeekStart)
 		if err != nil {
-			tx.Rollback()
 			return nil, err
 		}
 	}
@@ -926,7 +1196,6 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	}
 
 	if err := ValidateMeta(resourceQuery.Meta); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -935,126 +1204,74 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	height := preHeight
 	fileSize := preFileSize
 
-	res := &models.Resource{
-		Name:               name,
-		Hash:               hash,
-		HashType:           "SHA1",
-		Location:           filePath,
-		Meta:               []byte(resourceQuery.Meta),
-		OwnMeta:            []byte("{}"),
-		Category:           resourceQuery.Category,
-		ContentType:        fileMime.String(),
-		ContentCategory:    resourceQuery.ContentCategory,
-		ResourceCategoryId: resolvedCategoryID,
-		FileSize:           fileSize,
-		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
-		Description:        resourceQuery.Description,
-		OriginalLocation:   resourceQuery.OriginalLocation,
-		OriginalName:       resourceQuery.OriginalName,
-		Width:              uint(width),
-		Height:             uint(height),
-	}
-	// BH-023: set StorageLocation when an alt-fs key was provided.
-	if resourceQuery.PathName != "" {
-		pn := resourceQuery.PathName
-		res.StorageLocation = &pn
-	}
-
-	if err := tx.Save(res).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if len(resourceQuery.Groups) > 0 {
-		if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
-			tx.Rollback()
-			return nil, valErr
+	// A factory rather than a value, because phase 3 may run more than once and
+	// its transaction mutates what it is given: GORM stamps the id and the GUID,
+	// AssignResourceToSeries writes SeriesID and OwnMeta (series_context.go:227,
+	// 243, 247). Re-running an attempt with a struct the previous one had
+	// mutated carries a SeriesID whose row the rollback removed — on SQLite,
+	// where foreign keys are ON, the retry then dies with "FOREIGN KEY
+	// constraint failed" instead of succeeding. Building it fresh each attempt
+	// closes that whole class rather than resetting the fields known today.
+	newResource := func() *models.Resource {
+		r := &models.Resource{
+			Name:               name,
+			Hash:               hash,
+			HashType:           "SHA1",
+			Location:           filePath,
+			Meta:               []byte(resourceQuery.Meta),
+			OwnMeta:            []byte("{}"),
+			Category:           resourceQuery.Category,
+			ContentType:        fileMime.String(),
+			ContentCategory:    resourceQuery.ContentCategory,
+			ResourceCategoryId: resolvedCategoryID,
+			FileSize:           fileSize,
+			OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
+			Description:        resourceQuery.Description,
+			OriginalLocation:   resourceQuery.OriginalLocation,
+			OriginalName:       resourceQuery.OriginalName,
+			Width:              uint(width),
+			Height:             uint(height),
 		}
-		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
-
-		if createGroupsErr := tx.Model(&res).Association("Groups").Append(&groups); createGroupsErr != nil {
-			tx.Rollback()
-			return nil, createGroupsErr
+		// BH-023: set StorageLocation when an alt-fs key was provided.
+		if resourceQuery.PathName != "" {
+			pn := resourceQuery.PathName
+			r.StorageLocation = &pn
 		}
+		return r
 	}
 
-	if len(resourceQuery.Notes) > 0 {
-		if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
-			tx.Rollback()
-			return nil, valErr
-		}
-		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
-
-		if createNotesErr := tx.Model(&res).Association("Notes").Append(&notes); createNotesErr != nil {
-			tx.Rollback()
-			return nil, createNotesErr
-		}
-	}
-
-	if len(resourceQuery.Tags) > 0 {
-		if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
-			tx.Rollback()
-			return nil, valErr
-		}
-		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
-
-		if createTagsErr := tx.Model(&res).Association("Tags").Append(&tags); createTagsErr != nil {
-			tx.Rollback()
-			return nil, createTagsErr
-		}
-	}
-
-	// Series assignment
-	if resourceQuery.SeriesId != 0 {
-		var series models.Series
-		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
-		}
-		if err := ctx.AssignResourceToSeries(tx, res, &series, false); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	} else if resourceQuery.SeriesSlug != "" {
-		series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
-		if err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		if err := ctx.AssignResourceToSeries(tx, res, series, isCreator); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	}
-
-	// Create version 1 for the new resource
-	version := &models.ResourceVersion{
-		ResourceID:      res.ID,
-		VersionNumber:   1,
-		Hash:            res.Hash,
-		HashType:        res.HashType,
-		FileSize:        res.FileSize,
-		ContentType:     res.ContentType,
-		Width:           res.Width,
-		Height:          res.Height,
-		Location:        res.Location,
-		StorageLocation: res.StorageLocation,
-		Comment:         "Initial version",
-	}
-
-	if err := tx.Create(version).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Update resource's current version
-	if err := tx.Model(&models.Resource{}).Where("id = ?", res.ID).Updates(map[string]interface{}{"current_version_id": version.ID}).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return nil, err
+	// ---------------------------------------------------------------------
+	// ---------------------------------------------------------------------
+	// Phase 3: the write transaction, retried on lock contention.
+	//
+	// The phase ordering above removes the read-snapshot promotion described in
+	// phase 1, and with it the great majority of the contention: 6-7 of 8
+	// concurrent distinct-file uploads failed before it, none after. A residue
+	// survives at roughly one request in a hundred at concurrency 4 over HTTP,
+	// and it is worth being precise about what is and is not known about it.
+	//
+	// Known: those failures return "database is locked" in well under a
+	// millisecond, so SQLite's busy handler demonstrably never engages for them
+	// and the 10s busy_timeout is not what is being exhausted. Not known: which
+	// lock they are losing. Disabling the hash and thumbnail workers does not
+	// change the rate, and the transaction's first statement really is the
+	// INSERT, so neither of the obvious explanations holds.
+	//
+	// Retrying is the right answer regardless of which SQLITE_BUSY variant it
+	// is: the condition is transient write contention rather than a failure on
+	// the statement's own merits, which is exactly what isLockContentionError
+	// names. Measured 0 failures in 220 uploads at concurrency 4 with this loop.
+	//
+	// Retrying is safe because the transaction is the only thing being repeated:
+	// a failed attempt rolled back, so nothing partial persisted, and the file
+	// is already on disk from phase 2 (content-addressed, so the Stat branch
+	// there reuses it rather than writing it twice).
+	var res *models.Resource
+	if insertErr := ctx.withUploadTxRetry(func() error {
+		res = newResource()
+		return ctx.insertUploadedResource(res, resourceQuery)
+	}); insertErr != nil {
+		return nil, insertErr
 	}
 
 	ctx.syncMentionsForResource(res)

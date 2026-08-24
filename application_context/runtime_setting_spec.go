@@ -173,6 +173,9 @@ const (
 	KeyHashSimilarityThreshold  = "hash_similarity_threshold"
 	KeyHashAHashThreshold       = "hash_ahash_threshold"
 	KeyHashBackfillPaused       = "hash_backfill_paused"
+	KeyUploadConcurrency        = "upload_concurrency"
+	KeyUploadWidgetFileCount    = "upload_widget_file_threshold"
+	KeyUploadWidgetSizeBytes    = "upload_widget_size_threshold"
 )
 
 // buildSpecs returns the registry of runtime-editable settings.
@@ -181,7 +184,7 @@ func buildSpecs() map[string]SettingSpec {
 	return map[string]SettingSpec{
 		KeyMaxUploadSize: {
 			Key: KeyMaxUploadSize, Label: "Max upload size",
-			Description: "Upper bound on resource and version upload body size in bytes. 0 = unlimited.",
+			Description: "Upper bound on one upload request body in bytes. 0 = unlimited. Note this bounds a *request*: a native multi-file form post is capped as a whole, while the client-side bulk upload widget sends one file per request, so it caps each file individually.",
 			Group:       GroupUploads, Type: SettingTypeInt64,
 			MinNumeric: 1024, MaxNumeric: 1 << 40, AllowZero: true,
 		},
@@ -281,6 +284,24 @@ func buildSpecs() map[string]SettingSpec {
 			Group:       GroupDeduplication, Type: SettingTypeUint64,
 			MinNumeric: 0, MaxNumeric: 64, AllowZero: true,
 		},
+		KeyUploadConcurrency: {
+			Key: KeyUploadConcurrency, Label: "Bulk upload concurrency",
+			Description: "How many files the browser's bulk upload widget sends at once, each as its own request. SQLite has exactly one writer, so values above ~3 buy little there; Postgres tolerates more.",
+			Group:       GroupUploads, Type: SettingTypeInt,
+			MinNumeric: 1, MaxNumeric: 16,
+		},
+		KeyUploadWidgetFileCount: {
+			Key: KeyUploadWidgetFileCount, Label: "Bulk upload file threshold",
+			Description: "Selecting more than this many files on the create-resource page switches to the client-side upload widget, which uploads one file per request and shows progress. At or below it the browser posts the whole batch in one request, as before.",
+			Group:       GroupUploads, Type: SettingTypeInt,
+			MinNumeric: 1, MaxNumeric: 10000,
+		},
+		KeyUploadWidgetSizeBytes: {
+			Key: KeyUploadWidgetSizeBytes, Label: "Bulk upload size threshold",
+			Description: "Selecting files totalling more than this many bytes switches to the client-side upload widget, independently of how many files there are.",
+			Group:       GroupUploads, Type: SettingTypeInt64,
+			MinNumeric: 1 << 20, MaxNumeric: 1 << 40,
+		},
 		KeyHashBackfillPaused: {
 			Key: KeyHashBackfillPaused, Label: "Pause v2 hash backfill",
 			Description: "Set to 1 to pause the incremental v2 perceptual-hash backfill of existing images without disabling the whole hash worker. 0 = running.",
@@ -355,6 +376,12 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyHashAHashThreshold:       cfg.HashAHashThreshold,
 		// Runtime-only operational toggle; defaults to running (not paused).
 		KeyHashBackfillPaused: 0,
+		// Runtime-only: these govern browser behaviour on the create-resource
+		// page, so a restart to change one would be the wrong shape. No flag,
+		// no env var, no MahresourcesConfig field — the default is this literal.
+		KeyUploadConcurrency:     defaultUploadConcurrency,
+		KeyUploadWidgetFileCount: defaultUploadWidgetFileCount,
+		KeyUploadWidgetSizeBytes: int64(defaultUploadWidgetSizeBytes),
 	}
 }
 

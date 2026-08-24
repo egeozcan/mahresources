@@ -14,10 +14,25 @@
   {% endif %}
 </div>
 {% endif %}
+{# The initial URL travels as a data attribute rather than being interpolated  #}
+{# into the x-data expression. queryValues is the raw query string, Pongo2      #}
+{# escapes a quote to &#39;, and the HTML parser decodes that back to a quote   #}
+{# before Alpine evaluates the attribute as JavaScript — so the old inline form #}
+{# let /resource/new?URL=... inject script. A dataset value is only read as a   #}
+{# string.                                                                      #}
 <form
     class="space-y-8"
     method="post"
-    x-data="{ url: '{{ queryValues.URL.0 }}', background: false }"
+    x-data="resourceUpload()"
+    data-initial-url="{{ queryValues.URL.0 }}"
+    data-upload-concurrency="{{ uploadConcurrency }}"
+    data-upload-file-threshold="{{ uploadWidgetFileCount }}"
+    data-upload-size-threshold="{{ uploadWidgetSizeBytes }}"
+    data-max-upload-size="{{ maxUploadSize }}"
+    {# No @submit here on purpose: the handler is registered on `document` in    #}
+    {# init(), so that schema-form-mode's stopPropagation() on a failed Meta     #}
+    {# validation actually prevents the upload. A listener on this element would #}
+    {# fire before it — see the comment in resourceUpload.js init().             #}
     :action="url.trim() && background ? '/v1/resource/remote?background=true' : '/v1/resource{% if resource.ID %}/edit{% endif %}'"
     :enctype="url.trim() && background ? 'application/x-www-form-urlencoded' : '{% if !resource.ID %}multipart/form-data{% endif %}'"
 >
@@ -96,9 +111,23 @@
                                 type="file"
                                 :required="!url.trim()"
                                 aria-describedby="resource-description"
+                                @change="onFilesChosen($event)"
+                                {# Locked while a batch is running. The files are #}
+                                {# already held by the component, so disabling    #}
+                                {# takes nothing away — but leaving it open let a #}
+                                {# selection made mid-run replace the input       #}
+                                {# without being adopted, and picking the same    #}
+                                {# files again fires no change event, so the form #}
+                                {# stranded with Save disabled.                   #}
+                                :disabled="phase === 'uploading'"
                             >
                         </div>
                         <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose one or more files, or give a URL below instead.</p>
+                        {# Shown once the selection crosses a threshold, so the switch to #}
+                        {# per-file uploads is not a surprise after clicking Save.        #}
+                        <p x-show="willUseWidget && phase === 'idle'" x-cloak
+                           data-testid="bulk-upload-hint"
+                           class="mt-1 text-sm text-amber-800" x-text="selectionSummary"></p>
                     </div>
                     <label for="URL" class="block text-sm font-medium font-mono text-stone-700">
                         URL
@@ -244,6 +273,8 @@
         </div>
     </div>
 
-    {% include "/partials/form/createFormSubmit.tpl" %}
+    {% include "/partials/form/uploadProgressPanel.tpl" %}
+
+    {% include "/partials/form/createFormSubmit.tpl" with busyWhenUploading=true %}
 </form>
 {% endblock %}

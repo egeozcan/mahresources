@@ -137,6 +137,153 @@ The download queue (`download_queue/`) is in-memory: jobs are evicted once the m
 - **Live rows are filtered, not dropped.** `/downloads` merges in-flight jobs over the stored rows; a *status* filter excludes them as a class (they are in none of the terminal states), but a search term or date range is asked of each live row in Go (`liveRowMatchesFilter`) so searching for a download by name does not hide the copy of it that is running. The status filter applies to *relabelled* rows too: a stored failure that a live job has moved past is dropped from a page filtered to failures rather than printed there saying "downloading".
 - **Job ids are 64-bit** (`generateShortID`). They were 32-bit while they lived only in memory; as the history table's unique key, a collision would merge two users' downloads into one row that keeps the first submitter as owner.
 
+### Bulk resource uploads
+
+The create-resource form posts every selected file in one multipart body, which
+the server buffers with `ParseMultipartForm`. Above a threshold that is minutes
+of a page that looks hung, no per-file outcome and no cancel — and one
+`MaxBytesReader` budget for the whole batch, so exceeding it wastes the entire
+transfer. Above `upload_widget_file_threshold` files **or**
+`upload_widget_size_threshold` bytes, `src/components/resourceUpload.js`
+intercepts the submit and sends one request per file instead,
+`upload_concurrency` at a time.
+
+- **The endpoint is unchanged.** `POST /v1/resource` still accepts many files per
+  request and still loops them; the split is a browser-side decision. Below the
+  threshold, or with JavaScript unavailable, the native post is what happens — so
+  the no-JS path, the API, the CLI and every existing create-form test are
+  untouched, and the rarely-exercised path is the *new* one, not the old one.
+- **XMLHttpRequest, not fetch**, because `fetch` has no upload-progress event.
+  It is the only XHR in `src/`, so it is outside `src/csrf.js`'s `window.fetch`
+  wrapper and sets `X-CSRF-Token` itself. `csrfToken()` therefore lives in
+  `src/utils/csrfToken.js`, separate from `csrf.js`, whose import installs the
+  wrapper and a document listener — importing that from a vitest suite would run
+  both. It also sets `Accept: application/json`, without which the endpoint
+  answers a 302 that XHR follows silently.
+- **The payload is snapshotted once**, as `[...new FormData(form).entries()]`
+  minus `resource`, and replayed per file. `FormData(form)` reproduces native
+  submission exactly: it skips the autocompleters' `disabled` empty sentinels and
+  picks up the light-DOM hidden input `schema-form-mode` appends for `Meta`.
+  Taxonomy travels as ids (creatable selectors persist the entity first), so
+  replaying is idempotent.
+- **The submit handler is registered on `document`, not on the form.**
+  `schema-form-mode` registers its own submit listener on that same form and
+  calls `preventDefault()` + `stopPropagation()` when the Meta schema fails
+  validation. It is created inside an `x-if`, so it connects *after* Alpine has
+  wired the form — and listeners on one element fire in registration order, so an
+  `@submit` there would run first and upload the batch past a visible validation
+  error. Listening on an ancestor makes `stopPropagation()` do what it says; the
+  `event.defaultPrevented` check that remains is a second line, not the
+  mechanism. `TestPhantom`-style reasoning applies to the guard too: the e2e that
+  covers it uploads eleven files against a required-field schema and asserts zero
+  requests, and it was verified failing with the handler moved back onto the form.
+- **`max_upload_size` becomes a per-file bound** under the widget, which is the
+  point rather than a regression — it bounds a *request*, and a request is now
+  one file. Each file is pre-checked in the browser, because the server's own
+  answer is a raw `MaxBytesError` string at HTTP 400, not worth transferring a
+  gigabyte to receive.
+- **Only in-flight and failed files get a row.** A batch can be hundreds of
+  files; completed ones collapse to a count. Progress is aggregated over
+  **bytes**, not files completed, or one 4 GB file among nine small ones would
+  sit at 0% and jump to 90%.
+- **Deterministic failures are excluded from "Retry failed".** Every 4xx except
+  the codes that mean "try again" (408, 423, 425, 429) answers identically
+  however many times the same bytes are sent — a 409 duplicate, a 413 the browser
+  refused on size, a 400 the server could not decode. A duplicate's row links to
+  the resource it collided with instead, which is the only useful action left.
+  Transport failures and 5xx stay retryable.
+- **A partial batch does not navigate.** Full success of a single file goes to
+  that resource, mirroring the server's own single-file redirect; a full batch
+  goes to `/group?id=<owner>`, or to `/resources` when no owner was chosen — the
+  server's own multi-file redirect is `/group?id=0` there, which is a dead page.
+- **The three settings are runtime-only** — no flag, no env var, no
+  `MahresourcesConfig` field, following `hash_backfill_paused`. They govern
+  browser behaviour on one page, so a restart to change one would be the wrong
+  shape. They are read through context accessors rather than `Settings()`, since
+  a context built from a bare config would publish 0, which reads as "every
+  selection crosses the threshold" and "start no workers".
+
+**`AddResource` had to be made concurrency-safe first.** It opened a *deferred*
+transaction, made its first statement a read (the content-hash lookup), copied
+the entire file body, and only then wrote. In WAL, promoting a read snapshot to a
+write after another connection has committed returns `SQLITE_BUSY_SNAPSHOT`, for
+which SQLite **does not invoke the busy handler** — so `busy_timeout` did not
+apply, nothing retried, and the caller got HTTP 500 on bytes already written to
+disk. The sequential loop hid this completely: within one request goroutine, two
+`AddResource` transactions never overlap. It is now three phases —
+
+1. the hash existence check, outside any transaction (the per-hash idlock is what
+   guarantees the dedup invariant, and it is released only after the winner
+   commits, so an autocommit read sees it; the collision branches take their own
+   short transactions in `mergeIntoExistingResource`, which validate their
+   association ids **inside** theirs — see below);
+2. the filesystem write, outside any transaction (an orphan file on a later
+   failure is a state that already existed, and the `Stat`-then-reuse branch
+   already handles it);
+3. `insertUploadedResource`, whose **first statement is a write**.
+
+A read that fails for any reason other than `gorm.ErrRecordNotFound` is
+**returned, not treated as "no such content"**: falling through on a transient
+failure would persist a second row for content that already exists.
+
+**Deduplication is process-local, and a unique index on `hash` cannot fix that.**
+`Resource.Hash` carries a plain `gorm:"index"` and the per-hash lock is in
+memory, so two processes sharing one database hold two locks, can both read "not
+found" for the same bytes, and both insert. A partial unique index over
+non-empty hashes was built for exactly this, and the test suite proved it
+unsound: **version uploads legitimately give two resources the same hash.**
+`AddResourceVersion` updates `resources.hash` to the new version's hash
+(`resource_version_context.go:184-196`) and does not dedupe, so resource 1 can
+version-upload content X while resource 2 is later created from the file that
+still hashes to whatever 1 used to hold — and then version-uploaded to X too.
+Eight `mr resource version-*` doctests plus `resource-versioning.spec.ts` fail
+on the index within one shared server, which is how this was found rather than
+reasoned about.
+
+So "one resource per content hash" is a rule `AddResource` applies **at create
+time**, not an invariant the schema can hold. Closing the cross-process race
+needs a claim keyed on hash with its own lifetime — a distributed lock, with
+stale-claim recovery — not a constraint. That has not been built; the race
+requires a multi-process deployment *and* two simultaneous uploads of identical
+new content, and `TestAddResource_ConcurrentSameHashOnWAL` pins the in-process
+guarantee under the production SQLite configuration.
+
+**The collision branches validate their association ids *inside* their
+transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
+than by becoming write-first. Hoisting those reads out was tried and is wrong:
+`Association.Append` upserts its target, so a group deleted between the check and
+the append is **recreated as a blank stub** — and no foreign key objects, because
+by then the row exists again. The different-owner branch validates the owner id
+for the same reason; master validated nothing there at all.
+
+Placement alone is not enough on Postgres. A `COUNT` inside a READ COMMITTED
+transaction is still check-then-act: the delete commits and is immediately
+visible. `ValidateAndLockAssociationIDs` therefore takes `SELECT ... FOR UPDATE`
+on the rows it validated, so the deleter waits for the transaction to end. The
+clause is Postgres-only — SQLite serializes writers already and rejects the
+syntax, which also means **SQLite cannot exhibit this bug and cannot test it**:
+`TestDeleteRacingAValidatedGroupIsRefusedPG` is a Postgres test, and it
+resurrects a blank group the moment the lock clause is removed.
+
+**INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
+there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`
+(and its constrained-pool twin, which mirrors the e2e harness's
+`-max-db-connections=2`) is the only thing that would catch it. Reads *after* the
+first write are fine — the writer lock is already held, which covers the
+association validations and the series lookup. Measured: 6–7 of 8 concurrent
+distinct-file uploads failed before, none after. A residue survives that fix at roughly one
+request in a hundred at concurrency 4 over HTTP, so phase 3 is retried a bounded
+number of times on `isLockContentionError`. Be precise about that residue: those
+failures return in well under a millisecond, so the busy handler demonstrably
+never engages and the 10s `busy_timeout` is not what is being exhausted — but
+which lock they lose is **not** root-caused (disabling the hash and thumbnail
+workers does not change the rate, and the transaction's first statement really is
+the INSERT). Retrying is right regardless of the variant, because the condition
+is transient contention rather than a failure on the statement's own merits;
+it is safe because a failed attempt rolled back and the file is already on disk,
+and `res.ID` is reset each attempt or a re-run `Save` would be an UPDATE of a row
+the rollback removed. Measured 0 failures in 220 uploads after.
+
 ### Job lifecycle events
 
 `after_job_completed`, `after_job_failed` and `after_job_cancelled` fire when a background job reaches a terminal state, for **every** job kind the download queue runs — downloads, group export and import, and plugin action jobs submitted through it.
@@ -218,7 +365,8 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many **finished downloads** the jobs panel renders, newest first (default: 10); older ones stay reachable at `/downloads`. Active work and every non-download job (exports, imports, plugin actions) are never capped — `/downloads` cannot show them, so hiding them would leave their cancel and result controls unreachable. Runtime-editable. |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work (default: `30s`). It bounds the resolution of every plugin schedule: a plugin may not declare an interval shorter than `plugin_system.MinScheduleInterval` (30s), and a tick slower than a schedule's interval simply runs it at the tick's resolution. |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | Maximum import tar upload size in bytes (default: 10 GB) |
-| `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB) |
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB). Bounds one **request**: a native multi-file form post is capped as a whole, while the client-side bulk upload widget sends one file per request and is therefore capped per file. Runtime-editable. |
+| (runtime only) | (runtime only) | `upload_concurrency` (default `3`), `upload_widget_file_threshold` (default `10`) and `upload_widget_size_threshold` (default 1 GiB) govern the client-side bulk upload widget on `/resource/new`. Editable only at runtime, via `/admin/settings`, `mr admin settings` or `/v1/admin/settings` — they change browser behaviour on one page, so there is no boot flag. |
 | `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes. `0` (default) disables the limit, preserving the historical unbounded behaviour. Keyed on Content-Type, so multipart uploads (bounded by `-max-upload-size`) are unaffected. Recommended for `-auth` deployments where any authenticated user can POST JSON. |
 | `-max-action-entities` | `MAX_ACTION_ENTITIES` | Maximum entities one plugin-action run may name (default: `1000`). `0` selects the default rather than "unlimited": the async branch creates a goroutine, a job-map entry and an SSE notification **per submitted id** before any of them runs, and the 1 MB body limit admits on the order of 10^5. An action's own `bulk_max` is the author's policy, checked first and independently; this is the deployment's ceiling. |
 | `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap (default: `100`). Bounds the self-service token table so one account cannot exhaust it. |

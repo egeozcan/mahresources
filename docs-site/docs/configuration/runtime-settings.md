@@ -24,6 +24,9 @@ boot value.
 | Key | Type | Bounds | Boot flag | Takes effect |
 | --- | --- | --- | --- | --- |
 | `max_upload_size` | int64 (bytes) | 1 KiB–1 TiB; 0 = unlimited | `-max-upload-size` | next upload request |
+| `upload_concurrency` | int | 1–16 | (runtime only) | next page render |
+| `upload_widget_file_threshold` | int | 1–10000 | (runtime only) | next page render |
+| `upload_widget_size_threshold` | int64 (bytes) | 1 MiB–1 TiB | (runtime only) | next page render |
 | `max_import_size` | int64 (bytes) | 1 MiB–1 TiB | `-max-import-size` | next import parse |
 | `mrql_default_limit` | int | 1–100000 | `-mrql-default-limit` | next MRQL query |
 | `mrql_page_query_budget` | int | 0–100000; 0 disables | `-mrql-page-query-budget` | next page render |
@@ -38,6 +41,27 @@ boot value.
 | `hash_similarity_threshold` | int | 0–11 (v2 pairs stored up to distance 11) | `-hash-similarity-threshold` | next hash comparison |
 | `hash_ahash_threshold` | uint64 | 0–64; 0 disables | `-hash-ahash-threshold` | next hash comparison |
 | `hash_backfill_paused` | int | 0–1; 1 pauses the v2 backfill | (runtime only) | next backfill cycle |
+
+## Bulk resource uploads
+
+`max_upload_size` bounds one **request** body. That distinction matters on the
+create-resource page, which has two ways of submitting:
+
+- **Native post** — the browser sends every selected file in one multipart body,
+  so `max_upload_size` caps the batch as a whole.
+- **Client-side widget** — above `upload_widget_file_threshold` files *or*
+  `upload_widget_size_threshold` bytes, the page sends one request per file,
+  `upload_concurrency` at a time, with a progress bar and per-file errors. Each
+  file is then capped individually, and the widget refuses an oversized file in
+  the browser rather than spending the transfer to be rejected.
+
+All three are read when the create-resource page renders and embedded in the
+form, so a change applies to the next page load rather than to an upload already
+in flight.
+
+Set `upload_widget_file_threshold` to `1` to put every multi-file selection
+through the widget. SQLite has exactly one writer, so `upload_concurrency` above
+about 3 buys little there; Postgres tolerates more.
 
 ## Audit trail
 

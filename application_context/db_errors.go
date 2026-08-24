@@ -46,6 +46,22 @@ func isLockContentionError(err error) bool {
 		strings.Contains(msg, "55P03")
 }
 
+// isDeadlockError reports a database that aborted this transaction to break a
+// deadlock, rather than one that failed on its own merits. Postgres reports
+// SQLSTATE 40P01; SQLite has a single writer and cannot deadlock between
+// transactions.
+//
+// Deliberately separate from isLockContentionError rather than folded into it:
+// that helper decides, among other things, whether a failed login is answered
+// with 503 Retry-After, and widening it would change an unrelated contract.
+func isDeadlockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "deadlock detected") || strings.Contains(msg, "40P01")
+}
+
 // friendlyUniqueError wraps a unique-constraint error with a user-readable message.
 func friendlyUniqueError(entityName string, err error) error {
 	if isUniqueConstraintError(err) {

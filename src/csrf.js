@@ -13,12 +13,9 @@
  * is attached and behaviour matches the historical no-auth deployment.
  */
 
-const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+import { csrfToken } from './utils/csrfToken.js';
 
-function csrfToken() {
-  const el = document.querySelector('meta[name="csrf-token"]');
-  return (el && el.getAttribute('content')) || '';
-}
+const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function isSameOrigin(url) {
   try {

@@ -25,8 +25,12 @@ func TestListSettings_EmptyDB(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &views); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(views) != 18 {
-		t.Fatalf("want 18, got %d", len(views))
+	// Derived from the registry rather than hardcoded: the claim is that the
+	// endpoint lists every registered setting and nothing else, and a literal
+	// count only ever fails later for the uninteresting reason that a setting
+	// was added.
+	if want := len(application_context.BuildSpecsExported()); len(views) != want {
+		t.Fatalf("want %d settings, got %d", want, len(views))
 	}
 	for _, v := range views {
 		if v.Overridden {
@@ -117,7 +121,7 @@ func TestListSettings_ViaRouter(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &views); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(views) != 18 {
-		t.Fatalf("want 18 settings via router, got %d", len(views))
+	if want := len(application_context.BuildSpecsExported()); len(views) != want {
+		t.Fatalf("want %d settings via router, got %d", want, len(views))
 	}
 }

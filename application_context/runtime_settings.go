@@ -527,6 +527,26 @@ func (s *RuntimeSettings) DownloadCockpitLimit() int {
 	return v.(int)
 }
 
+// UploadConcurrency is how many files the bulk upload widget sends at once.
+func (s *RuntimeSettings) UploadConcurrency() int {
+	v, _ := s.getRaw(KeyUploadConcurrency)
+	return v.(int)
+}
+
+// UploadWidgetFileCount is the file count above which the create-resource page
+// switches from the native multi-file post to the client-side upload widget.
+func (s *RuntimeSettings) UploadWidgetFileCount() int {
+	v, _ := s.getRaw(KeyUploadWidgetFileCount)
+	return v.(int)
+}
+
+// UploadWidgetSizeBytes is the total selection size above which the
+// create-resource page switches to the client-side upload widget.
+func (s *RuntimeSettings) UploadWidgetSizeBytes() int64 {
+	v, _ := s.getRaw(KeyUploadWidgetSizeBytes)
+	return v.(int64)
+}
+
 // DownloadSettings adapter methods — satisfy download_queue.DownloadSettings
 // without leaking the download_queue package into the service layer.
 func (s *RuntimeSettings) ConnectTimeout() time.Duration { return s.RemoteConnectTimeout() }
