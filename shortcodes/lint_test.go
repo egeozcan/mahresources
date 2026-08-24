@@ -3095,3 +3095,40 @@ func TestLintAttributeContextRoundSeventeen(t *testing.T) {
 		}
 	})
 }
+
+// Round-18 findings — the fourth review of the parse-backed engine. Two were
+// real message defects (raw= in a program body, raw= in plaintext); the rest
+// were stale docs or the documented one-assignment residue. Verified against
+// html.Parse.
+func TestLintAttributeContextRoundEighteen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("raw= in a script body is markup injection, not escaped text", func(t *testing.T) {
+		src := `<script>const x='[property path="Name" raw="true"]'</script>`
+		if !warns(src, "can close the <script>") {
+			t.Errorf("raw= can close the script and inject markup, got %q", lintWarnings(src))
+		}
+		if warns(src, "with its escaping still in it") {
+			t.Error("raw= performs no escaping; that message is the wrong mechanism")
+		}
+	})
+
+	t.Run("raw= in a plaintext body cannot inject markup", func(t *testing.T) {
+		if warns(`<plaintext>[property path="Name" raw="true"]`, "becomes real elements") {
+			t.Error("plaintext runs to EOF; a < there starts nothing")
+		}
+	})
+
+	t.Run("an SVG script body decodes entities even CDATA-wrapped", func(t *testing.T) {
+		if warns(`<svg><script><![CDATA[var s="[property path='Name']"]]></script></svg>`, "does not decode entities") {
+			t.Error("html.Parse decodes an SVG script body; the message must not claim otherwise")
+		}
+	})
+}

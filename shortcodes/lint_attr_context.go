@@ -326,8 +326,10 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 		return attrContext{rawTextElement: "style", foreignRoot: t.ns, noscript: t.noscript}
 	case kText:
 		// The parser placed it in a text node the rules have nothing to say
-		// about; recorded as settled so the fallbacks do not re-answer it.
-		return attrContext{inertText: true, noscript: t.noscript}
+		// about; recorded as settled so the fallbacks do not re-answer it. The
+		// element is carried so the raw= text rule can tell a <plaintext> body
+		// — which runs to EOF and admits no markup — from ordinary text.
+		return attrContext{inertText: true, element: t.element, noscript: t.noscript}
 	default:
 		// kAbsent: the occurrence is in no DOM node — dropped by an ignored or
 		// duplicate element, or in a name the parser did not keep. Here, and
@@ -395,21 +397,18 @@ func couldCompleteEndTag(text string, at int, name string) bool {
 	return n <= len(name) && asciiEqualFold(text[i:at], name[:n])
 }
 
-// lexicalContexts walks the source's tags — quote-, comment- and
-// CDATA-aware, but with no tree and no raw-text elements — and returns the
-// syntactic facts for every sentinel that lands in one. A sentinel in text is
-// left as the zero lexFact, to be answered by the parser.
 // lexicalContexts runs golang.org/x/net/html's own TOKENIZER over the source
 // — which delimits tags, comments and CDATA exactly as a browser does, so no
 // hand-written scanner can diverge from it — and reads the syntactic facts off
 // each tag: quoted and discarded for a START-tag attribute value, and inName
 // for a sentinel in an END-tag NAME. Interpolated START-tag element and
 // attribute names are the parser's kName and are not reported here, and an
-// END-tag ATTRIBUTE (ignored by the parser) is not a name. The tokenizer
-// raw-texts <script>, <iframe> and friends, so a tag NESTED in one of their
-// foreign bodies is not emitted; such an occurrence gets the zero lexFact and
-// mergeContext defaults it to quoted (no false "unquoted" on a foreign-nested
-// value), which is the one deliberate approximation here.
+// END-tag ATTRIBUTE (ignored by the parser) is not a name. Raw-text mode is
+// cleared after every tag (NextIsNotRawText), so the tags nested in a
+// <script>, <iframe> or <noscript> body ARE emitted and their quoted-ness is
+// read — a sentinel really in one of those bodies is answered by the parser
+// (kScript, kText), so this over-reading never reaches a rule. A sentinel in
+// text is left as the zero lexFact, to be answered by the parser.
 func lexicalContexts(src string, nspans int) []lexFact {
 	facts := make([]lexFact, nspans)
 	z := html.NewTokenizer(strings.NewReader(src))
@@ -945,16 +944,19 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	}
 	if ctx.rawTextElement != "" {
 		// Only script and style ever set this, so the language is never empty.
+		if raw {
+			// raw= performs no escaping, so the value keeps its "<": it can
+			// write "</` + `script>" (or "</` + `style>") and everything after
+			// is real markup. That is the hazard, not escaped text reaching
+			// the language — and it holds under every reading, noscript
+			// included.
+			return []string{label + ` with raw= is not escaped, so a value containing markup can close the <` + ctx.rawTextElement + `> and become real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
+		}
 		switch {
 		case ctx.noscript && ctx.rawTextElement == "script":
 			// A <script> in a <noscript> body reaches nothing under either
 			// reading: with scripting enabled the body is inert raw text, and
-			// with it disabled the element is real and does not run. What
-			// survives is raw=, which is unescaped either way and can write
-			// "</noscript>" and go on in markup.
-			if raw {
-				return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
-			}
+			// with it disabled the element is real and does not run.
 			return nil
 		case ctx.foreignRoot != "":
 			return []string{label + ` sits inside a <` + ctx.rawTextElement + `> that is inside <` + ctx.foreignRoot +
@@ -969,10 +971,13 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		return []string{qualify(label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`)}
 	}
 	if !ctx.inValue || ctx.attr == "" {
-		if raw {
+		if raw && ctx.element != "plaintext" {
 			// raw= disables escaping outright, so it is unsafe wherever it
 			// lands, including ordinary text: a Meta value of
-			// "<img src=x onerror=...>" becomes a real element.
+			// "<img src=x onerror=...>" becomes a real element. The one text
+			// position where it cannot is a <plaintext> body, whose tokenizer
+			// state runs to EOF: a "<" there starts nothing, so the value
+			// stays literal text however it is written.
 			return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
 		}
 		return nil
@@ -1244,9 +1249,9 @@ func expressionAttributeKind(attr string) string {
 //   - In SVG the sentence inverts: foreign content DOES decode entities, so the
 //     escaping is undone before the language sees the value and an escaped
 //     quote arrives as a real one. That placement is worse than the HTML one,
-//     which foreignRoot carries into the message. A CDATA section decodes
-//     nothing even in foreign content, so a CDATA-wrapped SVG body takes the
-//     HTML message instead — the one lexical fact (l.cdata) the body needs.
+//     which foreignRoot carries into the message. html.Parse decodes entities
+//     in an SVG body whether or not it is CDATA-wrapped (verified against the
+//     parser), so a CDATA section takes the foreign message too.
 //   - MathML has neither a script that runs nor a style that applies, so a
 //     MathML <script>/<style> body is inert markup and classifyByParse leaves
 //     it kText.
@@ -1278,16 +1283,35 @@ func expressionAttributeKind(attr string) string {
 // positive on safe markup, which this file treats as worse than a miss. The
 // in-place name warning is the signal that the region is author-controlled.
 //
-// The same shape, and the same treatment, covers two more: an interpolation
-// that could COMPLETE a raw-text end tag ("<textarea></text[Close]>", where
-// Close="area" would close the textarea and make a later <iframe srcdoc> live)
-// and an UNQUOTED interpolation that could add a deciding attribute
-// ("<annotation-xml title=[A]>", where A could be `x encoding=text/html`,
-// making a later <script> HTML). Each completing occurrence is warned in place
-// — Close as an interpolated NAME, A as an unquoted value — but the content
-// after it is not re-warned under the completion, for the same reason: the
-// completion is unbounded, and warning the tail on the chance the author chose
-// the one dangerous value flags markup that is safe under every other choice.
+// It is one face of the architecture's one real limit: the engine parses ONE
+// concrete assignment — each occurrence substituted by its sentinel — so an
+// interpolation whose VALUE (not just its own placement) would change the tree
+// somewhere ELSE is judged as if it took the sentinel's value, not every value
+// it could take. The same shape recurs:
+//   - completing a raw-text end tag: "<textarea></text[Close]>", Close="area"
+//     closes the textarea and makes a later <iframe srcdoc> live.
+//   - adding a deciding attribute: "<annotation-xml title=[A]>", A could be
+//     `x encoding=text/html`, making a later <script> HTML content.
+//   - deciding a document phase: an empty text run or an <input type=[T]>
+//     before a <frameset> decides whether the frameset is honored, and so
+//     whether a <frame src=...> after it exists at all.
+//   - completing a character reference: `href="java&#[C]cript:..."`, C="115;"
+//     decodes to "javascript:".
+// The one deciding attribute the engine DOES explore is encoding=/type=
+// (substituteWorstCase), because a namespace or stylesheet it might select is
+// a common, bounded case; the rest are left because the completion is
+// unbounded and re-warning the tail on the chance the author chose the one
+// dangerous value flags markup safe under every other choice — the false
+// positive this file treats as worse than a miss. Where there IS a completing
+// occurrence it is warned in place (the interpolated name, the unquoted value),
+// which is the signal that the region is author-controlled.
+//
+// A last, non-exploitable corner: a character reference in the template that
+// decodes to a genuine occurrence's sentinel could shadow it. The sentinel
+// carries a per-process CRYPTO-RANDOM nonce, so no template author can produce
+// it on purpose, and a chance collision needs the input to contain those 48
+// random bits (literally or entity-encoded) — about 2^-48. classifyByParse's
+// first-writer-wins keeps the genuine, earlier placement in the ordinary case.
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
 
