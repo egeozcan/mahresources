@@ -3450,15 +3450,27 @@ func TestLintAttributeContextRoundTwentyTwo(t *testing.T) {
 		}
 	})
 
-	t.Run("a colon after an earlier occurrence does not make a later one safe", func(t *testing.T) {
-		// href="[A]:[B]": ":" names a scheme whose text is A — which could be
-		// "javascript" — so B is inside a possibly-executable URL and must warn,
-		// unlike href="[A]/[B]" where "/" makes it relative.
-		if got := countScheme(`<a href="[property path='A']:[property path='B']">x</a>`); got != 2 {
-			t.Errorf(`[A]:[B] leaves the scheme unsafe for both, got %d`, got)
+	t.Run("a scheme only a PRIOR interpolation could choose is residue", func(t *testing.T) {
+		// href="[A]:[B]": whether B is dangerous depends on A's value (A could
+		// be "javascript"), which the engine does not know — the same
+		// value-changes-elsewhere residue as a char-ref completion. Read with A
+		// empty, ":[B]" has an empty scheme and is relative, so B is not warned;
+		// only A, which could itself choose the scheme, is. (Round 23 revised
+		// round 22's assumption here: warning B produced the mirror-image false
+		// positive on "https:[A][B]", where a FIXED literal scheme makes B safe.)
+		if got := countScheme(`<a href="[property path='A']:[property path='B']">x</a>`); got != 1 {
+			t.Errorf(`[A]:[B] warns only A; B is residue, got %d`, got)
 		}
 		if got := countScheme(`<a href="[property path='A']/[property path='B']">x</a>`); got != 1 {
 			t.Errorf(`[A]/[B] is relative after the slash, only A warns, got %d`, got)
+		}
+		// A FIXED literal scheme, by contrast, IS decided: https makes B safe,
+		// javascript makes B unsafe.
+		if got := countScheme(`<a href="https:[property path='A'][property path='B']">x</a>`); got != 0 {
+			t.Errorf(`a fixed https scheme is safe for both, got %d`, got)
+		}
+		if !warns(`<a href="javascript:1/[property path='A']/[property path='B']">x</a>`, "continues") {
+			t.Error("a fixed javascript scheme puts a later occurrence in the executable body")
 		}
 	})
 
@@ -3480,6 +3492,70 @@ func TestLintAttributeContextRoundTwentyTwo(t *testing.T) {
 		src := `<svg><desc><template>[property path='Name' raw='true']<script>alert(1)</script>`
 		if warns(src, "becomes real elements") {
 			t.Errorf("a dead position builds nothing, got %q", lintWarnings(src))
+		}
+	})
+}
+
+func TestLintAttributeContextRoundTwentyThree(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a leading = in an attribute name is not a value start", func(t *testing.T) {
+		// <style = type="[T]">: the "=" is an attribute named "=", "type" is a
+		// separate quoted attribute. T must not read as unquoted.
+		src := `<style = type="[property path='T']">.x{color:red}</style>`
+		if warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("T is a quoted value; the leading = must not be read as its start, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a fixed literal scheme decides a later interpolation", func(t *testing.T) {
+		// https is fixed before the interpolations, so a later one is in the
+		// https body (safe); javascript is fixed, so a later one is executable.
+		if warns(`<a href="https:[property path='A'][property path='B']">x</a>`, "scheme") ||
+			warns(`<a href="https:[property path='A'][property path='B']">x</a>`, "continues") {
+			t.Error("a fixed https scheme is safe for later occurrences")
+		}
+		if !warns(`<a href="javascript:1/[property path='A']/[property path='B']">x</a>`, "continues") {
+			t.Error("a fixed javascript scheme puts a later occurrence in the executable body")
+		}
+	})
+
+	t.Run("repeated occurrences of one property must complete consistently", func(t *testing.T) {
+		same := `<math><annotation-xml encoding="[property path='E']x[property path='E']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`
+		if warns(same, "JavaScript") {
+			t.Errorf("no E makes E+x+E a text/html encoding; the script stays MathML, got %q", lintWarnings(same))
+		}
+		diff := `<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`
+		if !warns(diff, "JavaScript") {
+			t.Error("E and F are independent, so text/html is reachable and the script becomes a program")
+		}
+	})
+
+	t.Run("a raw= value in a noscript script body is markup, not script", func(t *testing.T) {
+		// With scripting off the <script> is real but does not run; the raw=
+		// value there injects markup, qualified, not running script.
+		src := `<noscript><script>const x='[property path="Name" raw="true"]'</script></noscript>`
+		if !warns(src, "reachable only with scripting disabled") {
+			t.Errorf("the closed-script reading is scripting-off, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("an end-tag name completion is not claimed to be scripting-off only", func(t *testing.T) {
+		// Closing </noscript> reveals the following <img> in BOTH modes, so the
+		// warning must not say it is reachable only with scripting disabled.
+		src := `<noscript></nos[property path="Name"]><img src=x onerror=alert(1)></noscript>`
+		if !warns(src, "completes the NAME of an end tag") {
+			t.Errorf("the end-tag name is dangerous, got %q", lintWarnings(src))
+		}
+		if warns(src, "reachable only with scripting disabled") {
+			t.Error("closing </noscript> reveals content in both modes; the mode claim is false")
 		}
 	})
 }

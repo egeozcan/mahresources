@@ -149,6 +149,33 @@ var lintProbePrefix = "mahprobe" + lintSentinelNonce + "x"
 
 func lintProbe(i int) string { return lintProbePrefix + strconv.Itoa(i) }
 
+// stripSentinels removes every substituted-occurrence sentinel from a string,
+// leaving the literal text with all interpolations taken as empty. The URL
+// analysis uses it to read one occurrence's own placement while treating the
+// others at their most benign value.
+func stripSentinels(s string) string {
+	if !strings.Contains(s, lintSentinelPrefix) {
+		return s
+	}
+	var b strings.Builder
+	for len(s) > 0 {
+		i := strings.Index(s, lintSentinelPrefix)
+		if i < 0 {
+			b.WriteString(s)
+			break
+		}
+		b.WriteString(s[:i])
+		s = s[i+len(lintSentinelPrefix):]
+		for len(s) > 0 && s[0] >= '0' && s[0] <= '9' {
+			s = s[1:]
+		}
+		if len(s) > 0 && s[0] == lintSentinelSuffix[0] {
+			s = s[1:]
+		}
+	}
+	return b.String()
+}
+
 // rawBreakoutReachesLive reports, per scripting mode, whether a raw= value at
 // the occurrence whose sentinel occupies substituted[at:at+n] could reach live
 // markup. A raw= value is unescaped, so its worst case closes whatever contains
@@ -370,7 +397,15 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// fail-closed. The occurrences that worst case removes (the encoding/type
 	// values themselves, which are inert placements) keep their own contexts
 	// from the untouched parse.
-	worst, removed := substituteWorstCase(substituted, len(spans))
+	// spanKey[i] is span i's source text, so two occurrences of one property
+	// (identical text) share a key — the worst-case fit binds them to one value.
+	spanKey := make([]string, len(spans))
+	for i, sp := range spans {
+		if sp.start >= 0 && sp.end <= len(input) && sp.start <= sp.end {
+			spanKey[i] = input[sp.start:sp.end]
+		}
+	}
+	worst, removed := substituteWorstCase(substituted, len(spans), spanKey)
 	on := classifyByParse(worst, true, len(spans))
 	off := classifyByParse(worst, false, len(spans))
 	if len(removed) > 0 {
@@ -728,7 +763,7 @@ func lexicalContexts(src string, nspans int) []lexFact {
 // that value, so a downstream placement is read fail-closed. It returns the
 // rewritten source and the set of sentinel indices it removed (which the
 // caller classifies from the untouched parse).
-func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
+func substituteWorstCase(src string, nspans int, spanKey []string) (string, map[int]bool) {
 	removed := map[int]bool{}
 	var b strings.Builder
 	z := html.NewTokenizer(strings.NewReader(src))
@@ -750,7 +785,7 @@ func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
 		// and every sentinel still findable by its prefix.
 		raw := string(z.Raw())
 		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
-			b.WriteString(rewriteWorstCaseTag(raw, removed, nspans))
+			b.WriteString(rewriteWorstCaseTag(raw, removed, nspans, spanKey))
 		} else {
 			b.WriteString(raw)
 		}
@@ -759,16 +794,16 @@ func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
 
 // rewriteWorstCaseTag rewrites one tag's encoding=/type= values to their
 // dangerous completion when an interpolation could reach it.
-func rewriteWorstCaseTag(tag string, removed map[int]bool, nspans int) string {
+func rewriteWorstCaseTag(tag string, removed map[int]bool, nspans int, spanKey []string) string {
 	replace := func(name, value string) (string, bool) {
 		var target string
 		switch name {
 		case "encoding":
-			if interpolatedValueCouldBe(value, htmlAnnotationEncodings) {
+			if interpolatedValueCouldBe(value, htmlAnnotationEncodings, spanKey) {
 				target = htmlAnnotationEncodings[0]
 			}
 		case "type":
-			if interpolatedValueCouldBe(value, styleSheetTypes) && strings.Contains(value, lintSentinelPrefix) {
+			if interpolatedValueCouldBe(value, styleSheetTypes, spanKey) && strings.Contains(value, lintSentinelPrefix) {
 				target = "text/css"
 			}
 		}
@@ -802,6 +837,12 @@ func rewriteWorstCaseTag(tag string, removed map[int]bool, nspans int) string {
 			return out.String()
 		}
 		attrNameStart := i
+		// A leading "=" is the attribute name's first character, not a value
+		// start (see sentinelsInTag) — consume it so the worst-case rewrite
+		// splits "= type=..." the way the tokenizer does.
+		if i < len(tag) && tag[i] == '=' {
+			i++
+		}
 		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
 			i++
 		}
@@ -1008,6 +1049,15 @@ func sentinelsInTag(tag string) []sentinelHit {
 			break
 		}
 		nameStart := i
+		// A "=" as the FIRST character of an attribute name is a parse error
+		// the tokenizer keeps AS the name's first character — it does NOT start
+		// a value — so "<style = type=...>" is an attribute named "=" then a
+		// separate "type". Consume it before the name scan that stops at "=",
+		// or the scan reads an empty name and mistakes the real next attribute
+		// for this one's unquoted value.
+		if i < len(tag) && tag[i] == '=' {
+			i++
+		}
 		// "/" separates names as well: <div x/onclick="..."> is two attributes
 		// to the tokenizer, and reading it as one hid the handler.
 		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
@@ -1220,9 +1270,14 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		if raw {
 			// raw= performs no escaping, so the value keeps its "<": it can
 			// write "</` + `script>" (or "</` + `style>") and everything after
-			// is real markup. That is the hazard, not escaped text reaching
-			// the language — and it holds under every reading, noscript
-			// included.
+			// is real markup. In a <noscript> body, though, this reading is the
+			// scripting-OFF one (with it on the body is inert raw text), where a
+			// closed <script> runs nothing: markup injection, qualified, not
+			// script. The scripting-ON danger of that same body — escaping the
+			// <noscript> itself — is reported through the inertText reading.
+			if ctx.noscript {
+				return []string{label + ` with raw= is not escaped, so a value containing markup can close the <` + ctx.rawTextElement + `> and become real elements on the page. Anyone who can edit the entity can then inject markup — no script runs with scripting disabled, but it can still deface the page or add phishing content.` + noscriptQualifier}
+			}
 			return []string{label + ` with raw= is not escaped, so a value containing markup can close the <` + ctx.rawTextElement + `> and become real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
 		}
 		switch {
@@ -1252,7 +1307,15 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// close reveals — an <iframe srcdoc>, a raw-text body that was
 			// holding markup inert — becomes live. Escaping does not change
 			// which element the name matches.
-			return []string{qualify(label + ` completes the NAME of an end tag, choosing which element it closes — a value can close an ancestor and make whatever that reveals (an <iframe srcdoc>, a raw-text body) live. Escaping does not change which element the name matches. Build the tag in the template instead.`)}
+			//
+			// Deliberately NOT qualified by scripting mode: WHICH element the
+			// name closes decides that, and the value decides the name. Closing
+			// "</noscript>" reveals what follows in BOTH modes; closing an
+			// inner "</textarea>" only with scripting off. The engine cannot
+			// know the name, so it neither claims "only with scripting disabled"
+			// (false for the </noscript> completion — round 23) nor omits the
+			// warning; it states the danger without over-specifying the mode.
+			return []string{label + ` completes the NAME of an end tag, choosing which element it closes — a value can close an ancestor and make whatever that reveals (an <iframe srcdoc>, a raw-text body) live. Escaping does not change which element the name matches. Build the tag in the template instead.`}
 		}
 		return []string{qualify(label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`)}
 	}
@@ -1325,29 +1388,23 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, qualify(label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent `+injection+` injection anywhere in it.`))
 	}
 	if urlBearingAttrs[attr] && scriptCanRun {
-		// A sentinel in the prefix is ANOTHER occurrence in the same value,
-		// whose text is unknown. The LITERAL run after that other occurrence
-		// decides what is still open: a "/", "?" or "#" makes the URL RELATIVE
-		// before this occurrence, which is safe; but a bare ":" does NOT — it
-		// only names a scheme whose text is the earlier unknown occurrence,
-		// which could be "javascript", leaving this occurrence inside an
-		// executable URL. So suppress only on a relative fix (a fixed scheme
-		// whose name resolved to ""), and warn otherwise — whether this
-		// occurrence could still CHOOSE the scheme (the earlier one is empty)
-		// or sits in a scheme the earlier one chose.
-		if strings.Contains(ctx.valueSoFar, lintSentinelPrefix) {
-			last := strings.LastIndex(ctx.valueSoFar, lintSentinelPrefix)
-			if scheme, fixed := urlSchemeBefore(ctx.valueSoFar[last:]); !(fixed && scheme == "") {
-				out = append(out, label+` shares the "`+attr+`" URL with an earlier interpolation, so its scheme is not fixed to a safe one — the earlier value could make it "javascript:", and escaping does not stop that. Put a fixed path or a complete scheme at the start of the URL, e.g. href="/x/[meta ...]".`)
-			}
-		} else {
-			scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
-			switch {
-			case fixed && executableURLSchemes[scheme]:
-				out = append(out, label+` continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
-			case !fixed && couldStillBecomeExecutable(scheme):
-				out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
-			}
+		// Whether ANOTHER interpolation earlier in the same URL makes THIS one
+		// dangerous depends on that other one's value, which the engine does not
+		// know — the value-changes-the-tree-elsewhere residue. Read this
+		// occurrence's own placement by taking every OTHER interpolation at its
+		// most benign, empty: stripping the sentinels yields exactly that
+		// literal prefix, and the ordinary scheme analysis then applies. So
+		// "https:[A][B]" reads B under a fixed https scheme (safe), and
+		// "javascript:1/[A]/[B]" reads B inside the fixed javascript: body
+		// (unsafe) — while a scheme only a PRIOR interpolation could choose
+		// ("[A]:[B]") is left to residue, since with A empty it is not one.
+		effective := stripSentinels(ctx.valueSoFar)
+		scheme, fixed := urlSchemeBefore(effective)
+		switch {
+		case fixed && executableURLSchemes[scheme]:
+			out = append(out, label+` continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
+		case !fixed && couldStillBecomeExecutable(scheme):
+			out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
 		}
 	}
 	return out
@@ -1457,13 +1514,13 @@ var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
 // attributes turn on this question — <annotation-xml>'s encoding, which decides
 // a namespace, and <style>'s type, which decides whether there is a stylesheet
 // at all — and both are written by whoever can edit the entity.
-func interpolatedValueCouldBe(value string, wants []string) bool {
-	runs := fixedRunsAround(value)
+func interpolatedValueCouldBe(value string, wants []string, spanKey []string) bool {
+	runs, idx := fixedRunsAround(value)
 	if len(runs) < 2 {
 		return false // no interpolation in it at all
 	}
 	for _, want := range wants {
-		if fixedRunsFit(runs, want) {
+		if fixedRunsFit(runs, idx, spanKey, want) {
 			return true
 		}
 	}
@@ -1478,15 +1535,17 @@ func interpolatedValueCouldBe(value string, wants []string) bool {
 // sees — z.TagAttr decodes entities, so encoding="text&#x2f;[meta …]" has to be
 // judged as the "text/" it becomes. Same bypass the URL rules close with
 // html.UnescapeString.
-func fixedRunsAround(value string) []string {
+func fixedRunsAround(value string) (runs []string, idx []int) {
 	hits := sentinelIndexes(value)
 	if len(hits) == 0 {
-		return nil
+		return nil, nil
 	}
-	runs := make([]string, 0, len(hits)+1)
+	runs = make([]string, 0, len(hits)+1)
+	idx = make([]int, 0, len(hits))
 	at := 0
 	for _, h := range hits {
 		runs = append(runs, asciiLower(html.UnescapeString(value[at:h.at])))
+		idx = append(idx, h.index)
 		// Skip past the whole sentinel: prefix, digit run, and "z" suffix.
 		at = h.at + len(lintSentinelPrefix)
 		for at < len(value) && value[at] >= '0' && value[at] <= '9' {
@@ -1496,7 +1555,7 @@ func fixedRunsAround(value string) []string {
 			at++
 		}
 	}
-	return append(runs, asciiLower(html.UnescapeString(value[at:])))
+	return append(runs, asciiLower(html.UnescapeString(value[at:]))), idx
 }
 
 // fixedRunsFit reports whether some assignment to the interpolations could make
@@ -1504,20 +1563,52 @@ func fixedRunsAround(value string) []string {
 // it, and the ones between have to appear in order in what is left — which is
 // exact rather than conservative, so encoding="[meta …]zzz[meta …]" is refused:
 // neither interpolation can delete the "zzz", and no encoding contains one.
-func fixedRunsFit(runs []string, want string) bool {
+func fixedRunsFit(runs []string, idx []int, spanKey []string, want string) bool {
 	if !strings.HasPrefix(want, runs[0]) {
 		return false
 	}
-	pos := len(runs[0])
-	for _, r := range runs[1 : len(runs)-1] {
-		i := strings.Index(want[pos:], r)
-		if i < 0 {
-			return false
+	m := len(runs) - 1 // interpolation count; interpolation k sits between runs[k] and runs[k+1]
+	// bindKey identifies which interpolations must take the SAME value. Two
+	// occurrences of one property (same source text) share a key and are bound
+	// together; a distinct or unknown one gets a per-position key so it stays
+	// free. This is what refuses "[E]x[E]" for "text/html" (no E is both "te"
+	// and "t/html") while still admitting "[E]x[F]" ("te"+"x"+"t/html").
+	bindKey := func(k int) string {
+		if k < len(idx) && idx[k] >= 0 && idx[k] < len(spanKey) && spanKey[idx[k]] != "" {
+			return "k:" + spanKey[idx[k]]
 		}
-		pos += i + len(r)
+		return "u:" + strconv.Itoa(k)
 	}
-	last := runs[len(runs)-1]
-	return len(want)-len(last) >= pos && strings.HasSuffix(want, last)
+	var match func(pos, k int, bind map[string]string) bool
+	match = func(pos, k int, bind map[string]string) bool {
+		if k == m {
+			return pos == len(want)
+		}
+		next := runs[k+1]
+		// Interpolation k spans want[pos:p]; runs[k+1] must start at p.
+		for p := pos; p+len(next) <= len(want); p++ {
+			if want[p:p+len(next)] != next {
+				continue
+			}
+			v := want[pos:p]
+			key := bindKey(k)
+			prev, bound := bind[key]
+			if bound && prev != v {
+				continue
+			}
+			bind[key] = v
+			if match(p+len(next), k+1, bind) {
+				return true
+			}
+			if !bound {
+				delete(bind, key)
+			} else {
+				bind[key] = prev
+			}
+		}
+		return false
+	}
+	return match(len(runs[0]), 0, map[string]string{})
 }
 
 // executableURLSchemes run rather than fetch, so continuing one is unsafe even
