@@ -435,10 +435,12 @@ test.describe('Bulk upload widget', () => {
     await retry.click();
 
     await expect(retry).toBeHidden({ timeout: 30000 });
-    // Polled rather than read once: the handoff is deferred by a macrotask so it
-    // cannot be undone by Alpine's own DOM update, which means it lands slightly
-    // after the button disappears. Without the handoff focus stays on <body>
-    // indefinitely, so this still fails against the defect.
+    // Polled rather than read once. Retry moves focus synchronously, before the
+    // phase change hides the button, but Alpine's DOM update and the browser's
+    // own focus handling land afterwards — polling means the assertion is about
+    // where focus settles rather than about winning that ordering. Without the
+    // handoff it settles on <body> and stays there, so this still fails against
+    // the defect.
     await expect
       .poll(
         () =>
