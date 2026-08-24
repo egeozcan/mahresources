@@ -1977,13 +1977,17 @@ func TestLintAnnotationXMLEncoding(t *testing.T) {
 		}
 	})
 
-	t.Run("an interpolated encoding fails closed", func(t *testing.T) {
-		// The value decides whether everything inside is HTML, and it is written
-		// by whoever can edit the entity. Reading it as the integration point it
-		// may turn out to be is the same choice the unterminated-tag rule makes.
+	t.Run("an interpolated encoding is unexplored residue", func(t *testing.T) {
+		// The worst-case exploration of an interpolated encoding= was removed
+		// (round 24): completing it independently forced trees no concrete
+		// value can build when the interpolation was shared, and detecting every
+		// form of sharing is unbounded. An interpolated encoding is now read
+		// from the concrete sentinel parse — the annotation-xml stays MathML, so
+		// the inner <script> is inert markup — documented like the other
+		// value-changes-the-tree-elsewhere residue.
 		src := `<math><annotation-xml encoding="[property path='Encoding']"><script>var s="[property path='Name']"</script></annotation-xml></math>`
-		if !lintSaysAny(src, "reaches JavaScript") {
-			t.Errorf("an encoding nobody can predict must not read as inert, got %q", lintWarnings(src))
+		if lintSaysAny(src, "reaches JavaScript") {
+			t.Errorf("an interpolated encoding is unexplored residue, not read as HTML, got %q", lintWarnings(src))
 		}
 	})
 }
@@ -2070,34 +2074,37 @@ func TestLintSVGProgramBodiesAreAlsoMarkup(t *testing.T) {
 // decides, so an interpolation in it is asked what it could complete rather
 // than whether it is there — the shape couldStillBecomeExecutable already uses
 // for a URL scheme.
-func TestLintInterpolatedEncodingAsksWhatItCouldBecome(t *testing.T) {
-	inert := func(src string) {
+// An interpolated encoding= completion is unexplored residue (round 24): the
+// worst-case exploration was removed because completing shared interpolations
+// independently synthesized impossible trees (false positives) and detecting
+// every form of sharing is unbounded. Every interpolated-encoding case below —
+// achievable or not, single or repeated — now reads from the concrete sentinel
+// parse, where the annotation-xml stays MathML and the inner script is inert.
+func TestLintInterpolatedEncodingIsResidue(t *testing.T) {
+	residue := func(src string) {
 		t.Helper()
 		if got := lintWarnings(src); len(got) != 0 {
-			t.Errorf("%s: this stays MathML, got %q", src, got)
+			t.Errorf("%s: an interpolated encoding is unexplored, got %q", src, got)
 		}
 	}
-	live := func(src string) {
-		t.Helper()
-		if !lintSaysAny(src, "reaches JavaScript") {
-			t.Errorf("%s: this could become HTML, got %q", src, lintWarnings(src))
-		}
+	for _, src := range []string{
+		`<math><annotation-xml encoding="image/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		`<math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		`<math><annotation-xml encoding="text/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		`<math><annotation-xml encoding="text&#x2f;[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		`<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		// The shared-value cases that motivated removal (rounds 23-24): a
+		// repeat, a cross-attribute share, and a semantic equivalent.
+		`<math><annotation-xml encoding="[property path='E']x[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`,
+		`<math><annotation-xml encoding="[property path='E']"><style type="[property path='E']">.x{color:[property path='N']}</style></annotation-xml></math>`,
+		`<math><annotation-xml encoding="[property path='E']x[property path='E' raw='false']"><script>[property path='N']</script></annotation-xml></math>`,
+	} {
+		residue(src)
 	}
-	// Nothing appended to "image/" is "text/html" or "application/xhtml+xml".
-	inert(`<math><annotation-xml encoding="image/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	inert(`<math><annotation-xml encoding="[property path='E']/svg+xml"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	// These could.
-	live(`<math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	live(`<math><annotation-xml encoding="text/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	live(`<math><annotation-xml encoding="[property path='E']/html"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	// The static path compares what the browser sees, because z.TagAttr decodes
-	// entities. So must this one, or "text&#x2f;" reads as inert.
-	live(`<math><annotation-xml encoding="text&#x2f;[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	// A fixed run BETWEEN two interpolations is immutable too. No assignment
-	// makes "[E]zz[F]" either encoding, because neither contains a "zz"...
-	inert(`<math><annotation-xml encoding="[property path='E']zz[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	// ... while "[E]x[F]" is text/html with E="te" and F="t/html".
-	live(`<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// A LITERAL encoding is still read directly by the parser, unaffected.
+	if !lintSaysAny(`<math><annotation-xml encoding="text/html"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`, `sits in a "srcdoc" attribute`) {
+		t.Error("a literal text/html encoding still makes the annotation-xml an HTML integration point")
+	}
 }
 
 // A <style> and a <script> inside a <noscript> are the pair that shows where
@@ -2170,10 +2177,11 @@ func TestLintStyleTypeDecidesWhetherItIsAStylesheet(t *testing.T) {
 				t.Errorf("%s: this one applies, got %q", src, lintWarnings(src))
 			}
 		}
-		// An interpolated type is a value nobody here can read, so it is taken
-		// as the stylesheet it may turn out to be.
-		if !lintSaysAny(`<style type="[property path='T']">.c{color:[property path='Name']}</style>`, "CSS") {
-			t.Error("an interpolated type= fails closed")
+		// An interpolated type= is unexplored residue (round 24): read from the
+		// concrete sentinel parse, the type is neither empty nor text/css, so
+		// the <style> is not a stylesheet and its body is inert.
+		if lintSaysAny(`<style type="[property path='T']">.c{color:[property path='Name']}</style>`, "CSS") {
+			t.Error("an interpolated type= is unexplored, not forced to a stylesheet")
 		}
 	})
 
@@ -2950,32 +2958,32 @@ func TestLintAttributeContextRoundSixteen(t *testing.T) {
 	}
 
 	t.Run("an empty comment closes at <!-->", func(t *testing.T) {
-		src := `<!--><math><annotation-xml encoding="[property path='E']"><script>var s="[property path='N']"</script></annotation-xml></math>`
-		if warns(src, "unquoted") {
-			t.Error("the empty comment closed; the encoding is quoted")
-		}
-		if !warns(src, "reaches JavaScript") {
-			t.Errorf("encoding could be text/html, making the script HTML, got %q", lintWarnings(src))
+		// <!--> is an empty comment that closes immediately, so the div after it
+		// is a real tag — its unquoted attribute is the signal the parse
+		// continued (rather than swallowing the rest as comment text).
+		src := `<!--><div title=[property path='N']>x</div>`
+		if !warns(src, "unquoted") {
+			t.Errorf("the empty comment closed; the div after it is real, got %q", lintWarnings(src))
 		}
 	})
 
 	t.Run("a CDATA in HTML is a bogus comment ending at the first >", func(t *testing.T) {
-		src := `<![CDATA[ ><math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math> ]]>`
-		if warns(src, "unquoted") {
-			t.Error("the bogus comment closed at the first >; the encoding is quoted")
-		}
-		if !warns(src, "reaches JavaScript") {
-			t.Errorf("the math/script after the bogus comment is real, got %q", lintWarnings(src))
+		// In HTML "<![CDATA[" is a bogus comment ending at the first ">", so the
+		// div after that ">" is a real tag whose unquoted attribute is seen.
+		src := `<![CDATA[ ><div title=[property path='N']>x</div> ]]>`
+		if !warns(src, "unquoted") {
+			t.Errorf("the bogus comment closed at the first >; the div after it is real, got %q", lintWarnings(src))
 		}
 	})
 
 	t.Run("a second = in an unquoted value is not an assignment", func(t *testing.T) {
-		src := `<math><annotation-xml x== foo=">" encoding="[property path='E']"><script>var s="[property path='N']"</script></annotation-xml></math>`
+		// x== gives attribute x the value "=" (the tokenizer's "=" as first
+		// value char), foo=">" is a quoted value containing ">", and title is a
+		// separate quoted attribute — so N is a QUOTED value, not unquoted, and
+		// the tag did not run past foo=">".
+		src := `<div x== foo=">" title="[property path='N']">z</div>`
 		if warns(src, "unquoted") {
-			t.Error("the encoding is a quoted value; the tag did not run past foo=\">\"")
-		}
-		if !warns(src, "reaches JavaScript") {
-			t.Errorf("encoding could be text/html, got %q", lintWarnings(src))
+			t.Errorf("title is a quoted value; the tag did not end at foo=\">\", got %q", lintWarnings(src))
 		}
 	})
 
@@ -3054,12 +3062,17 @@ func TestLintAttributeContextRoundSeventeen(t *testing.T) {
 		return false
 	}
 
-	t.Run("a deciding attribute nested in a noscript body still fails closed", func(t *testing.T) {
-		// scripting off: the <style type=...> is a real element whose body is
-		// CSS; the interpolated type could complete text/css.
-		src := `<noscript><style type="[property path='T']">.x{color:[property path='Name']}</style></noscript>`
-		if !warns(src, "CSS") {
-			t.Errorf("the type could make the style apply, got %q", lintWarnings(src))
+	t.Run("a nested deciding attribute is unexplored, but a real stylesheet is not", func(t *testing.T) {
+		// An interpolated type= is unexplored residue (round 24), so the
+		// interpolated-type case reads as a non-stylesheet and is inert.
+		if warns(`<noscript><style type="[property path='T']">.x{color:[property path='Name']}</style></noscript>`, "CSS") {
+			t.Error("an interpolated type= is unexplored, not forced to a stylesheet")
+		}
+		// A LITERAL text/css style in a noscript body is still a real,
+		// scripting-off stylesheet whose interpolated value reaches CSS.
+		if !warns(`<noscript><style type="text/css">.x{color:[property path='Name']}</style></noscript>`, "CSS") {
+			t.Errorf("a literal stylesheet in a noscript body still applies with scripting off, got %q",
+				lintWarnings(`<noscript><style type="text/css">.x{color:[property path='Name']}</style></noscript>`))
 		}
 	})
 
@@ -3527,14 +3540,17 @@ func TestLintAttributeContextRoundTwentyThree(t *testing.T) {
 		}
 	})
 
-	t.Run("repeated occurrences of one property must complete consistently", func(t *testing.T) {
-		same := `<math><annotation-xml encoding="[property path='E']x[property path='E']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`
-		if warns(same, "JavaScript") {
-			t.Errorf("no E makes E+x+E a text/html encoding; the script stays MathML, got %q", lintWarnings(same))
-		}
-		diff := `<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`
-		if !warns(diff, "JavaScript") {
-			t.Error("E and F are independent, so text/html is reachable and the script becomes a program")
+	t.Run("an interpolated encoding is unexplored, however many occurrences", func(t *testing.T) {
+		// Round 23 tried to make repeated occurrences of one property complete
+		// consistently; round 24 removed the exploration entirely (detecting
+		// every form of shared value is unbounded), so both are residue now.
+		for _, src := range []string{
+			`<math><annotation-xml encoding="[property path='E']x[property path='E']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`,
+			`<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let y='[property path="Y"]'</script></annotation-xml></math>`,
+		} {
+			if warns(src, "JavaScript") {
+				t.Errorf("an interpolated encoding is unexplored residue, got %q", lintWarnings(src))
+			}
 		}
 	})
 

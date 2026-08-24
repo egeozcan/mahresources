@@ -388,31 +388,9 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		return lex[i].inValue && !lex[i].quoted &&
 			unquotedSiblingInjectsOne(substituted, sentinelAt[i], len(lintSentinel(i)), false)
 	}
-	// The tree layer: html.Parse in both scripting modes. An interpolated
-	// encoding= or type= is parsed at its worst case first — as the value it
-	// could complete — so a namespace or stylesheet it MIGHT decide is read
-	// fail-closed. The occurrences that worst case removes (the encoding/type
-	// values themselves, which are inert placements) keep their own contexts
-	// from the untouched parse.
-	// spanKey[i] is span i's source text, so two occurrences of one property
-	// (identical text) share a key — the worst-case fit binds them to one value.
-	spanKey := make([]string, len(spans))
-	for i, sp := range spans {
-		if sp.start >= 0 && sp.end <= len(input) && sp.start <= sp.end {
-			spanKey[i] = input[sp.start:sp.end]
-		}
-	}
-	worst, removed := substituteWorstCase(substituted, len(spans), spanKey)
-	on := classifyByParse(worst, true, len(spans))
-	off := classifyByParse(worst, false, len(spans))
-	if len(removed) > 0 {
-		onPlain := classifyByParse(substituted, true, len(spans))
-		offPlain := classifyByParse(substituted, false, len(spans))
-		for idx := range removed {
-			on[idx] = onPlain[idx]
-			off[idx] = offPlain[idx]
-		}
-	}
+	// The tree layer: html.Parse in both scripting modes.
+	on := classifyByParse(substituted, true, len(spans))
+	off := classifyByParse(substituted, false, len(spans))
 
 	for i, sp := range spans {
 		if sentinelAt[i] < 0 {
@@ -755,136 +733,6 @@ func lexicalContexts(src string, nspans int) []lexFact {
 			}
 		}
 	}
-}
-
-// substituteWorstCase replaces the value of an interpolated encoding= or type=
-// attribute that COULD complete a namespace- or stylesheet-deciding value with
-// that value, so a downstream placement is read fail-closed. It returns the
-// rewritten source and the set of sentinel indices it removed (which the
-// caller classifies from the untouched parse).
-func substituteWorstCase(src string, nspans int, spanKey []string) (string, map[int]bool) {
-	removed := map[int]bool{}
-	var b strings.Builder
-	z := html.NewTokenizer(strings.NewReader(src))
-	for {
-		tt := z.Next()
-		// Clear raw-text mode after every token, like lexicalContexts, so an
-		// encoding= or type= nested in a <noscript> or <script> body is still
-		// seen and rewritten to its worst case.
-		z.NextIsNotRawText()
-		if tt == html.ErrorToken {
-			// The final token's raw holds any trailing unterminated tag; it
-			// must be copied through, or the reconstructed source is truncated
-			// and every sentinel in that tail vanishes from the parse.
-			b.WriteString(string(z.Raw()))
-			return b.String(), removed
-		}
-		// Concatenating every token's Raw() reproduces the input exactly, so
-		// rewriting only the start tags leaves everything else byte-identical
-		// and every sentinel still findable by its prefix.
-		raw := string(z.Raw())
-		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
-			b.WriteString(rewriteWorstCaseTag(raw, removed, nspans, spanKey))
-		} else {
-			b.WriteString(raw)
-		}
-	}
-}
-
-// rewriteWorstCaseTag rewrites one tag's encoding=/type= values to their
-// dangerous completion when an interpolation could reach it.
-func rewriteWorstCaseTag(tag string, removed map[int]bool, nspans int, spanKey []string) string {
-	replace := func(name, value string) (string, bool) {
-		var target string
-		switch name {
-		case "encoding":
-			if interpolatedValueCouldBe(value, htmlAnnotationEncodings, spanKey) {
-				target = htmlAnnotationEncodings[0]
-			}
-		case "type":
-			if interpolatedValueCouldBe(value, styleSheetTypes, spanKey) && strings.Contains(value, lintSentinelPrefix) {
-				target = "text/css"
-			}
-		}
-		if target == "" {
-			return "", false
-		}
-		for _, p := range sentinelIndexes(value) {
-			if p.index >= 0 && p.index < nspans {
-				removed[p.index] = true
-			}
-		}
-		return target, true
-	}
-	// Walk the tag's attributes, rewriting values in place.
-	var out strings.Builder
-	i := 0
-	if i < len(tag) && tag[i] == '<' {
-		i++
-	}
-	for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '>' && tag[i] != '/' {
-		i++
-	}
-	out.WriteString(tag[:i])
-	for i < len(tag) {
-		nameStart := i
-		for i < len(tag) && (isASCIISpace(tag[i]) || tag[i] == '/') {
-			i++
-		}
-		if i >= len(tag) || tag[i] == '>' {
-			out.WriteString(tag[nameStart:])
-			return out.String()
-		}
-		attrNameStart := i
-		// A leading "=" is the attribute name's first character, not a value
-		// start (see sentinelsInTag) — consume it so the worst-case rewrite
-		// splits "= type=..." the way the tokenizer does.
-		if i < len(tag) && tag[i] == '=' {
-			i++
-		}
-		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
-			i++
-		}
-		name := asciiLower(tag[attrNameStart:i])
-		for i < len(tag) && isASCIISpace(tag[i]) {
-			i++
-		}
-		if i >= len(tag) || tag[i] != '=' {
-			out.WriteString(tag[nameStart:i])
-			continue
-		}
-		i++
-		for i < len(tag) && isASCIISpace(tag[i]) {
-			i++
-		}
-		var q byte
-		if i < len(tag) && (tag[i] == '"' || tag[i] == '\'') {
-			q = tag[i]
-			i++
-		}
-		valStart := i
-		for i < len(tag) {
-			if q != 0 && tag[i] == q {
-				break
-			}
-			if q == 0 && (isASCIISpace(tag[i]) || tag[i] == '>') {
-				break
-			}
-			i++
-		}
-		value := tag[valStart:i]
-		out.WriteString(tag[nameStart:valStart])
-		if target, ok := replace(name, value); ok {
-			out.WriteString(target)
-		} else {
-			out.WriteString(value)
-		}
-		if i < len(tag) {
-			out.WriteString(tag[i : i+1])
-			i++
-		}
-	}
-	return out.String()
 }
 
 // classifyByParse parses src with the given scripting mode and returns each
@@ -1503,113 +1351,6 @@ func asciiLowerByte(c byte) byte {
 // case-insensitive and nothing more — no trimming, no parameters.
 var styleSheetTypes = []string{"", "text/css"}
 
-// htmlAnnotationEncodings are the two <annotation-xml> encodings that make its
-// children HTML. The match is ASCII case-insensitive and nothing more — no
-// trimming, no parameters.
-var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
-
-// interpolatedValueCouldBe reports whether some assignment to the
-// interpolations in value could make the whole of it one of wants. Two
-// attributes turn on this question — <annotation-xml>'s encoding, which decides
-// a namespace, and <style>'s type, which decides whether there is a stylesheet
-// at all — and both are written by whoever can edit the entity.
-func interpolatedValueCouldBe(value string, wants []string, spanKey []string) bool {
-	runs, idx := fixedRunsAround(value)
-	if len(runs) < 2 {
-		return false // no interpolation in it at all
-	}
-	for _, want := range wants {
-		if fixedRunsFit(runs, idx, spanKey, want) {
-			return true
-		}
-	}
-	return false
-}
-
-// fixedRunsAround splits an attribute value into the text an interpolation
-// cannot change: the run before the first sentinel, the runs between them, and
-// the run after the last. Returns nil when the value holds no sentinel.
-//
-// Each run is unescaped, because the static path compares the value the browser
-// sees — z.TagAttr decodes entities, so encoding="text&#x2f;[meta …]" has to be
-// judged as the "text/" it becomes. Same bypass the URL rules close with
-// html.UnescapeString.
-func fixedRunsAround(value string) (runs []string, idx []int) {
-	hits := sentinelIndexes(value)
-	if len(hits) == 0 {
-		return nil, nil
-	}
-	runs = make([]string, 0, len(hits)+1)
-	idx = make([]int, 0, len(hits))
-	at := 0
-	for _, h := range hits {
-		runs = append(runs, asciiLower(html.UnescapeString(value[at:h.at])))
-		idx = append(idx, h.index)
-		// Skip past the whole sentinel: prefix, digit run, and "z" suffix.
-		at = h.at + len(lintSentinelPrefix)
-		for at < len(value) && value[at] >= '0' && value[at] <= '9' {
-			at++
-		}
-		if at < len(value) && value[at] == lintSentinelSuffix[0] {
-			at++
-		}
-	}
-	return append(runs, asciiLower(html.UnescapeString(value[at:]))), idx
-}
-
-// fixedRunsFit reports whether some assignment to the interpolations could make
-// the whole value equal want. The first run has to start it, the last has to end
-// it, and the ones between have to appear in order in what is left — which is
-// exact rather than conservative, so encoding="[meta …]zzz[meta …]" is refused:
-// neither interpolation can delete the "zzz", and no encoding contains one.
-func fixedRunsFit(runs []string, idx []int, spanKey []string, want string) bool {
-	if !strings.HasPrefix(want, runs[0]) {
-		return false
-	}
-	m := len(runs) - 1 // interpolation count; interpolation k sits between runs[k] and runs[k+1]
-	// bindKey identifies which interpolations must take the SAME value. Two
-	// occurrences of one property (same source text) share a key and are bound
-	// together; a distinct or unknown one gets a per-position key so it stays
-	// free. This is what refuses "[E]x[E]" for "text/html" (no E is both "te"
-	// and "t/html") while still admitting "[E]x[F]" ("te"+"x"+"t/html").
-	bindKey := func(k int) string {
-		if k < len(idx) && idx[k] >= 0 && idx[k] < len(spanKey) && spanKey[idx[k]] != "" {
-			return "k:" + spanKey[idx[k]]
-		}
-		return "u:" + strconv.Itoa(k)
-	}
-	var match func(pos, k int, bind map[string]string) bool
-	match = func(pos, k int, bind map[string]string) bool {
-		if k == m {
-			return pos == len(want)
-		}
-		next := runs[k+1]
-		// Interpolation k spans want[pos:p]; runs[k+1] must start at p.
-		for p := pos; p+len(next) <= len(want); p++ {
-			if want[p:p+len(next)] != next {
-				continue
-			}
-			v := want[pos:p]
-			key := bindKey(k)
-			prev, bound := bind[key]
-			if bound && prev != v {
-				continue
-			}
-			bind[key] = v
-			if match(p+len(next), k+1, bind) {
-				return true
-			}
-			if !bound {
-				delete(bind, key)
-			} else {
-				bind[key] = prev
-			}
-		}
-		return false
-	}
-	return match(len(runs[0]), 0, map[string]string{})
-}
-
 // executableURLSchemes run rather than fetch, so continuing one is unsafe even
 // though the scheme is already fixed.
 var executableURLSchemes = map[string]bool{
@@ -1679,10 +1420,11 @@ func expressionAttributeKind(attr string) string {
 //     it kText.
 //
 // A <style> is a program body only when a browser would apply it — type absent,
-// empty, or text/css (styleIsStylesheet) — and an interpolated encoding= or
-// type= that COULD complete a namespace- or stylesheet-deciding value is parsed
-// at that worst case (substituteWorstCase), so a placement it might decide is
-// read fail-closed.
+// empty, or text/css (styleIsStylesheet). An INTERPOLATED encoding= or type=,
+// whose completed value could flip a namespace or a stylesheet decision, is NOT
+// explored (see the residue note below): its downstream placement is read from
+// the concrete sentinel parse, where an interpolated type= leaves the <style> a
+// non-stylesheet and its body inert.
 //
 // The residue that remains, all of it small and none of it in the tree model
 // the parser now owns: whether a <script> is a program is decided by its name
@@ -1728,16 +1470,27 @@ func expressionAttributeKind(attr string) string {
 //     false positive. A completing occurrence in a reference is therefore not
 //     warned in place either — the reference spans the occurrence, and what it
 //     resolves to is exactly the unexplored value.
-// The one deciding case the engine DOES explore is a SINGLE encoding=/type=
-// interpolation (substituteWorstCase parses it at its dangerous completion),
-// because a namespace or stylesheet it might select is a common, bounded case;
-// the rest are left because the completion is unbounded and re-warning the tail
-// on the chance the author chose the one dangerous value flags markup safe under
-// every other choice — the false positive this file treats as worse than a
-// miss. Where there IS a completing occurrence whose OWN placement is dangerous
-// it is warned in place (the interpolated name, the unquoted value), which is
-// the signal that the region is author-controlled; a reference-completing one,
-// whose own placement is an ordinary escaped value, is not.
+//   - selecting a namespace or stylesheet: an interpolated `encoding=` on a
+//     MathML <annotation-xml>, or `type=` on a <style>, could complete to a
+//     value that makes a later <script>/<style> a program. This too is NOT
+//     explored. An engine that DID substitute the worst case ("text/html", or
+//     "text/css") forced a tree no concrete assignment can build whenever the
+//     interpolation was SHARED — the same property in two deciding attributes,
+//     or two textually-different-but-semantically-equal expressions, or one
+//     property repeated in a value ("[E]x[E]") — because each occurrence was
+//     completed independently. Detecting every form of sharing is unbounded
+//     (source text is not shortcode semantics), so the exploration was removed
+//     rather than approximated further; the false alarms it produced weigh more
+//     than the near-zero-real-world case it caught.
+// So the engine explores NONE of these completions. It parses one concrete
+// assignment — each occurrence at its sentinel — because the alternatives are
+// unbounded and re-warning the tail on the chance the author chose the one
+// dangerous value flags markup safe under every other choice — the false
+// positive this file treats as worse than a miss. Where there IS a completing
+// occurrence whose OWN placement is dangerous it is warned in place (the
+// interpolated name, the unquoted value), which is the signal that the region
+// is author-controlled; an occurrence whose own placement is an ordinary
+// escaped value is not.
 //
 // A last, non-exploitable corner: a character reference in the template that
 // decodes to a genuine occurrence's sentinel could shadow it. The sentinel
