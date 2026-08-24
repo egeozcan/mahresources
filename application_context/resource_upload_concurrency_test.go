@@ -474,19 +474,21 @@ func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
 	}
 }
 
-// TestPhantomGroupIsNotCreatedByADuplicateUpload pins why the association ids
-// are validated inside the merge transaction rather than before it.
+// TestPhantomGroupIsNotCreatedByADuplicateUpload pins the cheap half of the
+// rule: an association id that does not exist is refused, and no blank row is
+// conjured from it.
 //
-// `Association.Append` upserts its target. Handed a group id whose row is not
-// there it inserts a blank one carrying nothing but the id, and returns no
-// error — measured directly: one ghost group created, no error. Validating
-// outside the transaction leaves a window in which the group is deleted, and
-// the append then recreates it; the foreign key cannot object, because by then
-// the row exists again.
+// `Association.Append` upserts its target — measured directly: handed a group id
+// whose row is absent it inserts a blank one carrying nothing but the id, and
+// returns no error. Validation is what turns that into a refusal.
 //
 // The duplicate must share the original's owner, or AddResource refuses it at
 // the OwnerId check and never reaches the association code at all — which is
 // how the first draft of this test passed against the very defect it names.
+//
+// Note what this does NOT prove: it passes with the validation immediately
+// before the transaction as well as inside it, because a never-existent id is
+// absent either way. TestDeleteRacingAValidatedGroupIsRefused covers placement.
 func TestPhantomGroupIsNotCreatedByADuplicateUpload(t *testing.T) {
 	ctx := newWALTestContext(t, 0)
 
@@ -505,8 +507,6 @@ func TestPhantomGroupIsNotCreatedByADuplicateUpload(t *testing.T) {
 		t.Fatalf("seed upload: %v", err)
 	}
 
-	// An id that has never existed stands in for one deleted between a hoisted
-	// check and the append: both reach the association code as "not there".
 	const ghostID = 4242
 
 	_, err := ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{

@@ -124,7 +124,6 @@ export function resourceUpload() {
     /** { file, name, size, loaded, status, error, errorResourceId, httpStatus } */
     files: [],
     doneCount: 0,
-    willUseWidget: false,
     selectionCount: 0,
     selectionBytes: 0,
 
@@ -208,7 +207,18 @@ export function resourceUpload() {
       this.cancelled = false;
       this.selectionCount = picked.length;
       this.selectionBytes = picked.reduce((sum, f) => sum + f.size, 0);
-      this.willUseWidget = shouldUseClientUpload({
+    },
+
+    /**
+     * Whether the current selection would go through the widget.
+     *
+     * A getter, not a field set in onFilesChosen: the answer also depends on the
+     * URL field, which changes without the picker changing. Typing a URL used to
+     * leave a stale "these will upload one at a time" promise on screen, and
+     * clearing one left the hint hidden while the submit did use the widget.
+     */
+    get willUseWidget() {
+      return shouldUseClientUpload({
         fileCount: this.selectionCount,
         totalBytes: this.selectionBytes,
         hasUrl: this.url.trim() !== '',
@@ -257,7 +267,12 @@ export function resourceUpload() {
       this._baseEntries = [...base.entries()];
       this._action = form.getAttribute('action') || '/v1/resource';
 
-      this.files = picked.map((file) => ({
+      // The index is the key. A file input can hold two entries with the same
+      // name and the same size — picked from different directories — so that
+      // pair is not an identity, and Alpine reconciling two rows onto one key
+      // reports the wrong progress against the wrong file.
+      this.files = picked.map((file, index) => ({
+        key: `${index}:${file.name}`,
         file,
         name: file.name,
         size: file.size,

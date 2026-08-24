@@ -290,9 +290,15 @@ function withFakeXHR(metaToken: string | null = 'tok-123') {
         : null,
   };
   (globalThis as never as { FormData: unknown }).FormData = class {
-    entries: Array<[string, unknown]> = [];
+    _entries: Array<[string, unknown]> = [];
     append(k: string, v: unknown) {
-      this.entries.push([k, v]);
+      this._entries.push([k, v]);
+    }
+    delete(k: string) {
+      this._entries = this._entries.filter(([key]) => key !== k);
+    }
+    entries() {
+      return this._entries[Symbol.iterator]();
     }
   };
 }
@@ -446,6 +452,43 @@ describe('starting a new batch', () => {
     expect(c.doneCount).toBe(2);
     expect(c.files).toHaveLength(1);
     expect(c.selectionCount).toBe(11);
+  });
+
+  it('tracks the URL field without the picker changing', () => {
+    // willUseWidget is a getter rather than a value set in onFilesChosen,
+    // because the answer also depends on the URL. Typing one used to leave a
+    // stale "these will upload one at a time" promise on screen, and clearing
+    // one left the hint hidden while the submit did use the widget.
+    const c = resourceUpload();
+    c.countThreshold = 10;
+    c.sizeThreshold = 1 << 30;
+    c.onFilesChosen({ target: { files: Array.from({ length: 11 }, () => ({ size: 10 })) } } as never);
+    expect(c.willUseWidget).toBe(true);
+
+    c.url = 'https://example.com/file.bin';
+    expect(c.willUseWidget).toBe(false);
+
+    c.url = '';
+    expect(c.willUseWidget).toBe(true);
+  });
+
+  it('keys rows by position, not by name and size', () => {
+    // A file input can hold two entries with the same name and size, picked
+    // from different directories. Alpine reconciling both onto one key reports
+    // the wrong progress against the wrong file.
+    withFakeXHR();
+    const c = resourceUpload();
+    c.countThreshold = 1;
+    c.sizeThreshold = 1 << 30;
+    const twins = [{ name: 'photo.png', size: 100 }, { name: 'photo.png', size: 100 }];
+    c.onSubmit({
+      target: { querySelector: () => ({ files: twins }), getAttribute: () => '/v1/resource' },
+      defaultPrevented: false,
+      preventDefault: () => {},
+    } as never);
+
+    const keys = c.files.map((f: { key: string }) => f.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 

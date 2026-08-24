@@ -125,7 +125,7 @@
                         <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose one or more files, or give a URL below instead.</p>
                         {# Shown once the selection crosses a threshold, so the switch to #}
                         {# per-file uploads is not a surprise after clicking Save.        #}
-                        <p x-show="willUseWidget && !url.trim() && phase === 'idle'" x-cloak
+                        <p x-show="willUseWidget && phase === 'idle'" x-cloak
                            data-testid="bulk-upload-hint"
                            class="mt-1 text-sm text-amber-800" x-text="selectionSummary"></p>
                     </div>

@@ -5,6 +5,7 @@ import (
 	"path"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"mahresources/application_context/validation"
 	"mahresources/models"
 )
@@ -85,6 +86,50 @@ func ValidateAssociationIDs[T any](db *gorm.DB, ids []uint, entityName string) e
 		return err
 	}
 	if int(count) != len(uniqueSlice) {
+		return fmt.Errorf("one or more %s not found", entityName)
+	}
+	return nil
+}
+
+// ValidateAndLockAssociationIDs is ValidateAssociationIDs that also holds the
+// rows it validated for the rest of the transaction.
+//
+// A plain COUNT is a check-then-act. On Postgres READ COMMITTED a delete
+// committing between it and the write that follows is immediately visible, and
+// GORM's Association.Append upserts its target — so the association write
+// *recreates* the deleted row as a blank stub carrying nothing but the id, and
+// no foreign key objects because by then it exists again. SQLite's snapshot
+// isolation masks that, which is exactly why it needs saying out loud here.
+//
+// SELECT ... FOR UPDATE closes the window: the delete blocks until this
+// transaction ends. The lock clause is Postgres-only — SQLite serializes writers
+// already, and rejects the syntax.
+//
+// Aggregates cannot be locked, so this selects the ids rather than counting
+// them.
+func ValidateAndLockAssociationIDs[T any](db *gorm.DB, ids []uint, entityName string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	unique := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		unique[id] = true
+	}
+	uniqueSlice := make([]uint, 0, len(unique))
+	for id := range unique {
+		uniqueSlice = append(uniqueSlice, id)
+	}
+
+	query := db.Model(new(T)).Where("id IN ?", uniqueSlice)
+	if db.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+
+	var found []uint
+	if err := query.Pluck("id", &found).Error; err != nil {
+		return err
+	}
+	if len(found) != len(uniqueSlice) {
 		return fmt.Errorf("one or more %s not found", entityName)
 	}
 	return nil

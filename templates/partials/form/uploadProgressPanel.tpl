@@ -48,7 +48,7 @@
 
     {# The files actually moving right now — at most `concurrency` rows. #}
     <ul x-show="inFlight.length > 0" class="mt-3 space-y-2" data-testid="bulk-upload-inflight">
-        <template x-for="entry in inFlight" :key="entry.name + ':' + entry.size">
+        <template x-for="entry in inFlight" :key="entry.key">
             <li>
                 <p class="text-xs text-stone-600 truncate" x-text="entry.name"></p>
                 <div class="w-full bg-stone-200 rounded-full h-1.5 mt-0.5"
@@ -71,7 +71,7 @@
         <h3 class="text-sm font-medium text-red-800"
             x-text="failed.length + ' file' + (failed.length === 1 ? '' : 's') + ' could not be saved'"></h3>
         <ul class="mt-1 space-y-1">
-            <template x-for="entry in failed" :key="'failed:' + entry.name + ':' + entry.size">
+            <template x-for="entry in failed" :key="entry.key">
                 <li class="text-sm text-red-800">
                     <span class="font-mono" x-text="entry.name"></span>
                     <span x-text="' — ' + entry.error"></span>

@@ -157,7 +157,7 @@ test.describe('Bulk upload widget', () => {
     expect(errors).toEqual([]);
   });
 
-  test('the progress bar is named and reports a real percentage', async ({ page }) => {
+  test('the progress bar is named, determinate and bounded', async ({ page }) => {
     // Held open deliberately: eleven small PNGs finish in milliseconds, so the
     // uploading state has to be stalled to be observed at all.
     // A latch, not a list of resolvers: only `concurrency` requests are in
@@ -193,10 +193,17 @@ test.describe('Bulk upload widget', () => {
     expect(announced.label).not.toBe('Upload progress: ');
     expect(announced.label).toContain('of 11 files');
     // The total is known from the picker, so the bar must be determinate.
-    // Asserted as a present string first: Number(null) is 0, so a bar that had
-    // lost aria-valuenow entirely would sail through a bare >= 0 check.
+    // Asserted as a present numeric string first: Number(null) is 0, so a bar
+    // that had lost aria-valuenow entirely would sail through a bare >= 0 check.
+    //
+    // It deliberately does not assert a value above zero. Every request is
+    // latched open, so nothing has been acknowledged yet and 0 is the honest
+    // reading — demanding more would be asserting a race. That progress
+    // actually advances is unit-tested against the upload stream
+    // ("reports byte progress from the upload stream"), where the events can be
+    // driven rather than waited for.
     expect(announced.valuenow).not.toBeNull();
-    expect(Number(announced.valuenow)).toBeGreaterThanOrEqual(0);
+    expect(announced.valuenow).toMatch(/^\d+$/);
     expect(Number(announced.valuenow)).toBeLessThanOrEqual(100);
 
     // Save is unavailable while the batch is in flight.

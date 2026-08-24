@@ -545,7 +545,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Groups) > 0 {
-		if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
+		if err := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -557,7 +557,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Notes) > 0 {
-		if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
+		if err := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -569,7 +569,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Tags) > 0 {
-		if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
+		if err := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -656,7 +656,7 @@ const (
 
 // withUploadTxRetry runs a write transaction, retrying it on lock contention.
 //
-// Both of the upload path's transactions need this and for the same reason: a
+// Every write transaction in the upload path needs this, for the same reason: a
 // bulk batch is many concurrent requests, SQLite has one writer, and losing that
 // race is not a reason to fail an upload. Retrying is safe because a failed
 // attempt rolled back, so nothing partial persisted and re-running appends the
@@ -702,7 +702,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	}
 
 	if len(resourceQuery.Groups) > 0 {
-		if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
+		if valErr := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
 			tx.Rollback()
 			return valErr
 		}
@@ -715,7 +715,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	}
 
 	if len(resourceQuery.Notes) > 0 {
-		if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
+		if valErr := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
 			tx.Rollback()
 			return valErr
 		}
@@ -728,7 +728,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	}
 
 	if len(resourceQuery.Tags) > 0 {
-		if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
+		if valErr := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
 			tx.Rollback()
 			return valErr
 		}
@@ -853,7 +853,7 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 		}()
 
 		if len(resourceQuery.Groups) > 0 {
-			if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
+			if valErr := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
 				tx.Rollback()
 				return valErr
 			}
@@ -865,7 +865,7 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 		}
 
 		if len(resourceQuery.Tags) > 0 {
-			if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
+			if valErr := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
 				tx.Rollback()
 				return valErr
 			}
@@ -877,7 +877,7 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 		}
 
 		if len(resourceQuery.Notes) > 0 {
-			if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
+			if valErr := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
 				tx.Rollback()
 				return valErr
 			}
@@ -915,7 +915,7 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 			}
 		}()
 
-		if valErr := ValidateAssociationIDs[models.Group](tx, []uint{resourceQuery.OwnerId}, "groups"); valErr != nil {
+		if valErr := ValidateAndLockAssociationIDs[models.Group](tx, []uint{resourceQuery.OwnerId}, "groups"); valErr != nil {
 			tx.Rollback()
 			return valErr
 		}
@@ -923,7 +923,12 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 		groups := &[]*models.Group{
 			{ID: resourceQuery.OwnerId},
 		}
-		if attachToGroupErr := tx.Model(existingResource).Association("Groups").Append(groups); attachToGroupErr != nil {
+		// Appended against a bare handle, not against existingResource: GORM
+		// mutates the model's Groups slice in memory as well as the join table,
+		// so a retried attempt would return an object listing the owner twice
+		// even though the row is written once.
+		target := &models.Resource{ID: existingResource.ID}
+		if attachToGroupErr := tx.Model(target).Association("Groups").Append(groups); attachToGroupErr != nil {
 			tx.Rollback()
 			return attachToGroupErr
 		}

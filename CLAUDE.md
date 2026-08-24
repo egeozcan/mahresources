@@ -210,7 +210,7 @@ disk. The sequential loop hid this completely: within one request goroutine, two
    guarantees the dedup invariant, and it is released only after the winner
    commits, so an autocommit read sees it; the collision branches take their own
    short transactions in `mergeIntoExistingResource`, which validate their
-   association ids **before** opening one for the same reason this phase exists);
+   association ids **inside** theirs — see below);
 2. the filesystem write, outside any transaction (an orphan file on a later
    failure is a state that already existed, and the `Stat`-then-reuse branch
    already handles it);
@@ -245,11 +245,19 @@ guarantee under the production SQLite configuration.
 **The collision branches validate their association ids *inside* their
 transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
 than by becoming write-first. Hoisting those reads out was tried and is wrong:
-`Association.Append` upserts its target, so a group deleted between the check
-and the append is **recreated as a blank stub** and the foreign key cannot
-object, because by then the row exists. `TestPhantomGroupIsNotCreatedByADuplicateUpload`
-pins that. The different-owner branch validates the owner id for the same
-reason; master validated nothing there at all.
+`Association.Append` upserts its target, so a group deleted between the check and
+the append is **recreated as a blank stub** — and no foreign key objects, because
+by then the row exists again. The different-owner branch validates the owner id
+for the same reason; master validated nothing there at all.
+
+Placement alone is not enough on Postgres. A `COUNT` inside a READ COMMITTED
+transaction is still check-then-act: the delete commits and is immediately
+visible. `ValidateAndLockAssociationIDs` therefore takes `SELECT ... FOR UPDATE`
+on the rows it validated, so the deleter waits for the transaction to end. The
+clause is Postgres-only — SQLite serializes writers already and rejects the
+syntax, which also means **SQLite cannot exhibit this bug and cannot test it**:
+`TestDeleteRacingAValidatedGroupIsRefusedPG` is a Postgres test, and it
+resurrects a blank group the moment the lock clause is removed.
 
 **INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
 there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`
