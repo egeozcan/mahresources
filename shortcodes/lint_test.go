@@ -3132,3 +3132,68 @@ func TestLintAttributeContextRoundEighteen(t *testing.T) {
 		}
 	})
 }
+
+func TestLintAttributeContextRoundNineteen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("an unquoted discarded duplicate still injects a sibling attribute", func(t *testing.T) {
+		// html.Parse builds <div title="fixed" onclick="alert(1)"> for a value
+		// of "x onclick=alert(1)": the duplicate title is dropped but the space
+		// opens a live sibling. Escaping touches neither the space nor the "=".
+		src := `<div title="fixed" title=[property path='Name']>x</div>`
+		if !warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("unquoted discarded duplicate injects a sibling, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a quoted discarded duplicate is still harmless", func(t *testing.T) {
+		// The whole value is contained by the quotes and the attribute is
+		// dropped, so nothing reaches the page — no warning.
+		src := `<div title="fixed" title="[property path='Name']">x</div>`
+		if warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("a quoted discarded duplicate breaks out of nothing, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("an unquoted duplicate on a re-opened body injects onto the singleton", func(t *testing.T) {
+		// A second <body> merges its not-already-present attributes onto the
+		// one body; a duplicate name is dropped but the unquoted value's space
+		// still adds a live sibling to the singleton.
+		src := `<body title=fixed><body title=[property path='Name']>x`
+		if !warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("merged body keeps the injected sibling, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a wholly ignored tag's unquoted duplicate stays silent", func(t *testing.T) {
+		// When the parser drops the whole tag, the injected sibling goes with
+		// it — the oracle sees no live attribute, so the linter says nothing.
+		// (A plain, placed unquoted value warns; this asserts the drop path
+		// does not over-warn.)
+		src := `<div class="ok">plain text, no interpolation</div>`
+		if warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("no interpolation, no unquoted warning, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a scripting-off-only SVG stylesheet placement is qualified", func(t *testing.T) {
+		// With scripting on the <svg><style> is inert <noscript> raw text; with
+		// it off the style is a real SVG element whose body decodes entities.
+		// The foreign-content CSS message must say it is reachable only with
+		// scripting disabled, like every other placement reason.
+		src := `<noscript><svg><style>.x{color:[property path='Name']}</style></svg></noscript>`
+		if !warns(src, "which is foreign content, where the parser decodes entities") {
+			t.Errorf("foreign CSS body should warn, got %q", lintWarnings(src))
+		}
+		if !warns(src, "reachable only with scripting disabled") {
+			t.Errorf("a scripting-off-only foreign placement must be qualified, got %q", lintWarnings(src))
+		}
+	})
+}

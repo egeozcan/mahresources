@@ -85,6 +85,15 @@ type attrContext struct {
 	// treated as unsafe rather than as "not in an attribute", so a broken
 	// template fails closed.
 	unterminated bool
+	// unquotedSibling marks an UNQUOTED attribute value the parser dropped from
+	// the tree — a repeated attribute (discarded), or a duplicate-named one on
+	// a re-opened <body>/<html> that merges onto the singleton — yet whose
+	// escaping still lets a space open a live sibling attribute. The dropped
+	// name is gone, but the tag survives and keeps the injected attribute, so
+	// the value is not harmless the way a QUOTED dropped one is. Set only when
+	// the parse oracle confirms the injected attribute reaches a live element,
+	// so a wholly ignored tag stays silent.
+	unquotedSibling bool
 }
 
 // lintSentinelNonce randomises the sentinel prefix per process so it cannot
@@ -111,6 +120,78 @@ var lintSentinelPrefix = "mahlintx" + lintSentinelNonce + "x"
 const lintSentinelSuffix = "z"
 
 func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + lintSentinelSuffix }
+
+// lintProbePrefix names the synthetic bareword attribute the unquoted-value
+// oracle appends after a sentinel. It is per-process random like the sentinel
+// so it cannot collide with real template bytes, and all lowercase so it
+// survives the parser lowercasing an attribute name.
+var lintProbePrefix = "mahprobe" + lintSentinelNonce + "x"
+
+func lintProbe(i int) string { return lintProbePrefix + strconv.Itoa(i) }
+
+// unquotedSiblingInjectors reports, per span, whether an UNQUOTED attribute
+// value at that occurrence would add a live sibling attribute. Escaping does
+// not touch the space that opens one, so a value the parser keeps in an
+// unquoted position can write attributes of its own — even when the parser
+// then DROPS the value's own attribute as a duplicate, because the tag itself
+// survives and keeps the sibling. The oracle appends a unique bareword probe
+// after each unquoted-value sentinel and asks html.Parse whether the probe
+// survives on some element: a wholly ignored tag drops the probe with
+// everything else, so silence there is the parser's own answer rather than a
+// guess about which tags live. Quoted values (the space is contained) and NAME
+// occurrences (already fail-closed) are not probed.
+func unquotedSiblingInjectors(substituted string, sentinelAt []int, lex []lexFact, scripting bool) map[int]bool {
+	// Splice the probes in from left to right; sentinelAt is increasing in i.
+	var b strings.Builder
+	prev := 0
+	any := false
+	for i := range lex {
+		if sentinelAt[i] < 0 || !lex[i].inValue || lex[i].quoted {
+			continue
+		}
+		end := sentinelAt[i] + len(lintSentinel(i))
+		if end > len(substituted) || end < prev {
+			continue
+		}
+		b.WriteString(substituted[prev:end])
+		b.WriteByte(' ')
+		b.WriteString(lintProbe(i))
+		prev = end
+		any = true
+	}
+	if !any {
+		return nil
+	}
+	b.WriteString(substituted[prev:])
+
+	injects := map[int]bool{}
+	opts := []html.ParseOption{}
+	if !scripting {
+		opts = append(opts, html.ParseOptionEnableScripting(false))
+	}
+	doc, err := html.ParseWithOptions(strings.NewReader(b.String()), opts...)
+	if err != nil {
+		return injects
+	}
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			for _, a := range n.Attr {
+				if a.Namespace != "" || !strings.HasPrefix(a.Key, lintProbePrefix) {
+					continue
+				}
+				if idx, err := strconv.Atoi(a.Key[len(lintProbePrefix):]); err == nil {
+					injects[idx] = true
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return injects
+}
 
 // attributeContextsFor answers, for every occurrence, the attribute context of
 // its default (scripting-enabled) reading, and — as a second map keyed the
@@ -167,6 +248,14 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// The syntactic layer: quoted, discarded, valueSoFar, and the interpolated
 	// tag/attribute NAME, from a flat pass over the source's tags.
 	lex := lexicalContexts(substituted, len(spans))
+	// The oracle for the one danger the parser's placement hides: an unquoted
+	// value the parser dropped (a repeated attribute, or a merge duplicate on
+	// <body>/<html>) still adds a live sibling attribute, because escaping does
+	// not touch the space that opens one. Run in both scripting modes: a drop
+	// that happens only with scripting off (the value is inert <noscript> text
+	// with it on) still injects there, and its warning is qualified to match.
+	injectsOn := unquotedSiblingInjectors(substituted, sentinelAt, lex, true)
+	injectsOff := unquotedSiblingInjectors(substituted, sentinelAt, lex, false)
 	// The tree layer: html.Parse in both scripting modes. An interpolated
 	// encoding= or type= is parsed at its worst case first — as the value it
 	// could complete — so a namespace or stylesheet it MIGHT decide is read
@@ -202,6 +291,14 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 				primary = attrContext{inName: true}
 			}
 		}
+		// An unquoted value the parser dropped is not harmless: it still adds a
+		// live sibling attribute (the oracle confirmed one reaches an element).
+		// kAbsent is exactly "placed in no node" — a discarded duplicate, or a
+		// merge duplicate on <body>/<html> — so a value the parser DID place
+		// keeps its ordinary unquoted rule and is never doubly warned.
+		if injectsOn[i] && on[i].kind == kAbsent {
+			primary.unquotedSibling = true
+		}
 		out[sp.start] = primary
 		// The two readings are two real browser configurations, and a
 		// placement dangerous in either must be reported. Compare the TREE
@@ -216,6 +313,12 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 			// the element still contains it).
 			sc := mergeContext(lex[i], off[i])
 			sc.noscript = true
+			// A drop that injects only with scripting off — the value is inert
+			// <noscript> text with it on — carries the same unquoted warning as
+			// the on-mode drop, qualified by sc.noscript above.
+			if injectsOff[i] && off[i].kind == kAbsent {
+				sc.unquotedSibling = true
+			}
 			if sc != primary {
 				alt[sp.start] = sc
 			}
@@ -237,7 +340,7 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// and an interpolated name in it must fail closed.
 		settledInert := ctx.inertText && on[i] == off[i]
 		if ctx.inValue || ctx.inName || settledInert || ctx.discarded ||
-			ctx.rawTextElement != "" || ctx.unterminated {
+			ctx.rawTextElement != "" || ctx.unterminated || ctx.unquotedSibling {
 			continue
 		}
 		at := sentinelAt[i]
@@ -933,14 +1036,20 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	}
 	if ctx.discarded {
 		// A repeated attribute: the parser keeps the first and drops this
-		// one, so no rule about the attribute's meaning applies. raw= still
-		// does — the unescaped bytes pass through the tokenizer whatever the
-		// DOM keeps, and a value containing a quote closes the attribute and
-		// reshapes the tag.
+		// one, so no rule about the attribute's meaning applies. Two things
+		// still do. raw= — the unescaped bytes pass through the tokenizer
+		// whatever the DOM keeps, and a value containing a quote closes the
+		// attribute and reshapes the tag. And an UNQUOTED value — a space in
+		// it adds a sibling attribute the surviving tag keeps even as the
+		// duplicate name is dropped (unquotedSibling, oracle-confirmed).
+		var msgs []string
 		if raw {
-			return []string{label + ` with raw= is not escaped at all, so placing it in the "` + ctx.attr + `" attribute lets the value close the attribute and add its own. Drop raw= here.`}
+			msgs = append(msgs, label+` with raw= is not escaped at all, so placing it in the "`+ctx.attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
 		}
-		return nil
+		if ctx.unquotedSibling {
+			msgs = append(msgs, qualify(label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`))
+		}
+		return msgs
 	}
 	if ctx.rawTextElement != "" {
 		// Only script and style ever set this, so the language is never empty.
@@ -959,11 +1068,15 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// with it disabled the element is real and does not run.
 			return nil
 		case ctx.foreignRoot != "":
-			return []string{label + ` sits inside a <` + ctx.rawTextElement + `> that is inside <` + ctx.foreignRoot +
+			// A placement reason like the non-foreign one below, so it takes
+			// the same qualifier: an SVG <style>/<script> that exists only
+			// with scripting disabled (lifted out of a <noscript> by the
+			// scripting-off parse) must say so, not read as always live.
+			return []string{qualify(label + ` sits inside a <` + ctx.rawTextElement + `> that is inside <` + ctx.foreignRoot +
 				`>, which is foreign content, where the parser decodes entities — unlike an HTML <` + ctx.rawTextElement +
 				`> body. The escaping is therefore undone before ` + scriptLikeLanguage[ctx.rawTextElement] +
 				` sees the value: an escaped quote arrives as a real quote and can ` + foreignEscapeConsequence[ctx.rawTextElement] +
-				`. Escaping makes this placement worse than the HTML one rather than safer. Pass the value in through a data- attribute instead.`}
+				`. Escaping makes this placement worse than the HTML one rather than safer. Pass the value in through a data- attribute instead.`)}
 		}
 		return []string{qualify(label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`)}
 	}
@@ -971,6 +1084,12 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		return []string{qualify(label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`)}
 	}
 	if !ctx.inValue || ctx.attr == "" {
+		if ctx.unquotedSibling {
+			// An unquoted value the parser dropped as a merge duplicate on a
+			// re-opened <body>/<html>: the singleton keeps the sibling the
+			// value's space opens even though its own name was a duplicate.
+			return []string{qualify(label + ` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)}
+		}
 		if raw && ctx.element != "plaintext" {
 			// raw= disables escaping outright, so it is unsafe wherever it
 			// lands, including ordinary text: a Meta value of

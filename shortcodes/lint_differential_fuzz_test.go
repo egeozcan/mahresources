@@ -166,3 +166,88 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 		}
 	}
 }
+
+// TestLintUnquotedSiblingDifferential is the independent oracle for the
+// unquoted-sibling rule (round 19). It substitutes a space-bearing value — the
+// worst case of an escaped [property] — into the SAME interpolation point with
+// a marker attribute the test alone controls, parses in BOTH scripting modes,
+// and asserts the linter says "unquoted attribute value" exactly when a browser
+// keeps the marker as a live sibling. It is independent of the linter's own
+// probe: a bug in unquotedSiblingInjectors shows up as a mismatch here.
+func TestLintUnquotedSiblingDifferential(t *testing.T) {
+	markerLive := func(src string, scripting bool) bool {
+		opts := []html.ParseOption{}
+		if !scripting {
+			opts = append(opts, html.ParseOptionEnableScripting(false))
+		}
+		doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
+		if err != nil {
+			return false
+		}
+		found := false
+		var walk func(*html.Node)
+		walk = func(n *html.Node) {
+			if n.Type == html.ElementNode {
+				for _, a := range n.Attr {
+					if a.Namespace == "" && a.Key == "zqmarkerx" {
+						found = true
+					}
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(doc)
+		return found
+	}
+
+	tokens := []string{
+		"<svg>", "</svg>", "<math>", "</math>", "<div>", "</div>", "<b>", "</b>",
+		"<a>", "</a>", "<iframe>", "</iframe>", "<textarea>", "</textarea>",
+		"<title>", "</title>", "<foreignObject>", "</foreignObject>", "<p>", "</p>",
+		"<form>", "</form>", "<table>", "</table>", "<noscript>", "</noscript>",
+		"<style>", "</style>", "<select>", "</select>", "<option>", "<button>",
+		"<frameset>", "</frameset>", "<head>", "</head>", "<template>", "</template>",
+		"<noframes>", "</noframes>", "<body>", "<html>", "<td>", "<tr>", "<optgroup>",
+		"<script>", "</script>", "<span>", "</span>", "<font>", "</font>", "<h1>",
+	}
+	shapes := []struct{ lint, oracle string }{
+		{`<div class=[property path='Name']>`, `<div class=zqx zqmarkerx>`},
+		{`<body class=[property path='Name']>`, `<body class=zqx zqmarkerx>`},
+		{`<html class=[property path='Name']>`, `<html class=zqx zqmarkerx>`},
+		{`<div title="fixed" title=[property path='Name']>`, `<div title="fixed" title=zqx zqmarkerx>`},
+		{`<body id=a><body id=[property path='Name']>`, `<body id=a><body id=zqx zqmarkerx>`},
+		{`<input value=[property path='Name']>`, `<input value=zqx zqmarkerx>`},
+		{`<tr foo=[property path='Name']>`, `<tr foo=zqx zqmarkerx>`},
+		{`<td foo=[property path='Name']>`, `<td foo=zqx zqmarkerx>`},
+	}
+	warns := func(src, sub string) bool { return lintSaysAny(src, sub) }
+	mism := 0
+	for _, seed := range []int64{1, 7, 19, 55} {
+		rng := rand.New(rand.NewSource(seed))
+		for c := 0; c < 3000 && mism < 15; c++ {
+			n := rng.Intn(9)
+			var sb strings.Builder
+			for i := 0; i < n; i++ {
+				sb.WriteString(tokens[rng.Intn(len(tokens))])
+			}
+			before := sb.String()
+			for _, sh := range shapes {
+				lintSrc := before + sh.lint
+				oracleSrc := before + sh.oracle
+				live := markerLive(oracleSrc, true) || markerLive(oracleSrc, false)
+				warnedUnquoted := warns(lintSrc, "sits in an unquoted attribute value")
+				warnedName := warns(lintSrc, "interpolated into a tag or attribute NAME")
+				switch {
+				case warnedUnquoted && !live:
+					mism++
+					t.Errorf("FALSE POSITIVE: marker not live yet unquoted-warned: %q -> %q", lintSrc, lintWarnings(lintSrc))
+				case live && !warnedUnquoted && !warnedName:
+					mism++
+					t.Errorf("MISSED: marker live yet no unquoted/NAME warning: %q -> %q", lintSrc, lintWarnings(lintSrc))
+				}
+			}
+		}
+	}
+}
