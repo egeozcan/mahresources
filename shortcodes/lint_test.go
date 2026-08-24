@@ -2402,8 +2402,10 @@ func TestLintAttributeContextRoundTen(t *testing.T) {
 	t.Run("a CDATA section swallows a fake raw-text end tag", func(t *testing.T) {
 		// The "</script>" sits inside the CDATA section, so html.Parse makes
 		// one SVG <script> whose direct child text is the whole var block —
-		// the value reaches JavaScript, with its escaping intact (a CDATA
-		// section decodes no entities).
+		// the value reaches JavaScript. (html.Parse decodes entities in an SVG
+		// script body whether or not it is CDATA-wrapped, so the message is
+		// the foreign one; only that the value reaches the language is checked
+		// here.)
 		src := `<svg><script><![CDATA[var x="</script>"; var y="[property path='Name']";]]></script></svg>`
 		if !warns(src, "JavaScript") {
 			t.Errorf("this is the program text of an SVG <script>: %s", src)
@@ -3021,6 +3023,75 @@ func TestLintAttributeContextRoundSixteen(t *testing.T) {
 		}
 		if !warns(`<math><annotation-xml title=[property path='A']><script>let x="[property path='B']"</script></annotation-xml></math>`, "unquoted attribute value") {
 			t.Error("the unquoted attribute that could add another is warned")
+		}
+	})
+}
+
+// Round-17 findings — the third review of the parse-backed engine. Every one
+// was in the lexical/merge layer or a phantom from the raw-text-cleared
+// tokenizer; the parser's placement is correct throughout. Verified against
+// html.Parse.
+func TestLintAttributeContextRoundSeventeen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a deciding attribute nested in a noscript body still fails closed", func(t *testing.T) {
+		// scripting off: the <style type=...> is a real element whose body is
+		// CSS; the interpolated type could complete text/css.
+		src := `<noscript><style type="[property path='T']">.x{color:[property path='Name']}</style></noscript>`
+		if !warns(src, "CSS") {
+			t.Errorf("the type could make the style apply, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a noscript element's own attribute is live, not body content", func(t *testing.T) {
+		src := `<body><noscript onclick="[property path='Name']">fallback</noscript></body>`
+		if !warns(src, "event handler") {
+			t.Errorf("onclick on the noscript element itself runs, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a raw-text body's text is not read as an unterminated tag", func(t *testing.T) {
+		src := `<textarea><div title='[property path="Name"]</textarea>`
+		if warns(src, "inside a tag that is never closed") {
+			t.Error("the <div is textarea text; there is no tag")
+		}
+	})
+
+	t.Run("an end tag inside foreign CDATA is not an interpolated name", func(t *testing.T) {
+		src := `<svg><g><![CDATA[a > </g[property path='Close']>]]></g></svg>`
+		if warns(src, "interpolated into a tag or attribute NAME") {
+			t.Error("the payload is one CDATA text node; nothing is a tag there")
+		}
+	})
+
+	t.Run("a namespaced type does not decide the stylesheet", func(t *testing.T) {
+		src := `<svg><style xlink:type="text/plain">.x{color:[property path='Name']}</style></svg>`
+		if !warns(src, "CSS") {
+			t.Errorf("xlink:type is not the stylesheet type; the style applies, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("an SVG script CDATA body takes the foreign message", func(t *testing.T) {
+		if !warns(`<svg><script><![CDATA[var s=&quot;[property path='Name']&quot;]]></script></svg>`, "where the parser decodes entities") {
+			t.Error("html.Parse decodes entities in an SVG script body, CDATA or not")
+		}
+	})
+
+	// Template contents are treated as live, deliberately: a template is a
+	// fragment meant to be cloned into the document, and an iframe srcdoc or an
+	// on* handler in it renders and fires once it is. Warning them is the
+	// fail-closed choice, and the differential oracle (which asks only whether
+	// the element exists) agrees.
+	t.Run("template contents are warned as live", func(t *testing.T) {
+		if !warns(`<template><iframe srcdoc="[property path='Name']"></iframe></template>`, `sits in a "srcdoc" attribute`) {
+			t.Error("an iframe srcdoc in a template renders when the template is activated")
 		}
 	})
 }

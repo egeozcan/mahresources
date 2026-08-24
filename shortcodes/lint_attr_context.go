@@ -190,14 +190,15 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 			continue
 		}
 		primary := mergeContext(lex[i], on[i])
-		// A sentinel in a raw-text body that could complete the body's own
-		// end tag is treated as an interpolated NAME, fail-closed — unless it
-		// sits in a real (foreign) CDATA section, where the end tag runs to
-		// "]]>" and no spelling of it closes anything.
+		// A sentinel in an HTML raw-text body ("<textarea>...</text[X]>") that
+		// could complete that body's own end tag is treated as an interpolated
+		// NAME, fail-closed: X could spell the rest of the terminator. Only the
+		// HTML raw-text elements have a body the tokenizer reads to "</name>";
+		// a foreign body is markup (its interpolated end-tag names are the
+		// lexical pass's job) and a CDATA section is character data.
 		if primary.inertText || primary.rawTextElement != "" {
-			inForeign := on[i].ns != "" && inForeignCDATA(substituted, sentinelAt[i])
-			if !inForeign && (couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
-				couldCompleteEndTag(substituted, sentinelAt[i], off[i].element)) {
+			if endTagCompletable(on[i]) && couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
+				endTagCompletable(off[i]) && couldCompleteEndTag(substituted, sentinelAt[i], off[i].element) {
 				primary = attrContext{inName: true}
 			}
 		}
@@ -296,9 +297,6 @@ const (
 // rules read. The syntactic NAME and unterminated facts win, being fail-closed;
 // otherwise the parser's placement decides.
 func mergeContext(l lexFact, t treeFact) attrContext {
-	if l.unterminated {
-		return attrContext{unterminated: true}
-	}
 	if t.kind == kName {
 		// The parser read the occurrence as an element or attribute NAME. The
 		// lexical layer is not consulted for this: a broken quote in a script
@@ -339,6 +337,16 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 		// such position with something left to say (raw= bytes still pass the
 		// tokenizer); everything else is left UNRESOLVED for the "<"-name and
 		// unterminated-tag fallbacks.
+		// The lexical NAME and unterminated readings are trusted ONLY here,
+		// where the parser placed the occurrence nowhere: an interpolated
+		// END-tag name ("</s[x]>") leaves no node, and an unterminated tag is
+		// recovered as text by the parser but must fail closed. When the
+		// parser DID place it (as text, an attribute value, a program body),
+		// a lexical fact is a phantom from the raw-text-cleared tokenizer and
+		// the parser wins.
+		if l.unterminated {
+			return attrContext{unterminated: true}
+		}
 		if l.inName {
 			return attrContext{inName: true}
 		}
@@ -349,23 +357,18 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 	}
 }
 
-// inForeignCDATA reports whether the byte at offset `at` sits inside a CDATA
-// section — the most recent of "<![CDATA[", a closing "]]>", and a tag
-// boundary ">" before it is the opener. A CDATA section cannot cross a tag, so
-// a ">" more recent than the opener means the section belongs to an earlier
-// element; this keeps a CDATA in one element's body from being read as
-// covering the next element's.
-func inForeignCDATA(src string, at int) bool {
-	if at > len(src) {
-		at = len(src)
-	}
-	open := strings.LastIndex(src[:at], "<![CDATA[")
-	if open < 0 {
-		return false
-	}
-	closeAt := strings.LastIndex(src[:at], "]]>")
-	tagEnd := strings.LastIndexByte(src[:at], '>')
-	return open > closeAt && open > tagEnd
+// htmlRawTextElements are the HTML elements whose body the tokenizer reads as
+// one run to "</name>", so a value in the body that completes that name closes
+// the element. A foreign element of the same spelling is not one of these.
+var htmlRawTextElements = map[string]bool{
+	"script": true, "style": true, "textarea": true, "title": true,
+	"xmp": true, "iframe": true, "noembed": true, "noframes": true,
+}
+
+// endTagCompletable reports whether an occurrence sits in an HTML raw-text
+// element's body, the only place couldCompleteEndTag applies.
+func endTagCompletable(t treeFact) bool {
+	return t.ns == "" && htmlRawTextElements[t.element]
 }
 
 // couldCompleteEndTag reports whether the text right before offset `at` spells
@@ -480,7 +483,15 @@ func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
 	z := html.NewTokenizer(strings.NewReader(src))
 	for {
 		tt := z.Next()
+		// Clear raw-text mode after every token, like lexicalContexts, so an
+		// encoding= or type= nested in a <noscript> or <script> body is still
+		// seen and rewritten to its worst case.
+		z.NextIsNotRawText()
 		if tt == html.ErrorToken {
+			// The final token's raw holds any trailing unterminated tag; it
+			// must be copied through, or the reconstructed source is truncated
+			// and every sentinel in that tail vanishes from the parse.
+			b.WriteString(string(z.Raw()))
 			return b.String(), removed
 		}
 		// Concatenating every token's Raw() reproduces the input exactly, so
@@ -597,21 +608,28 @@ func classifyByParse(src string, scripting bool, nspans int) []treeFact {
 	if err != nil {
 		return facts
 	}
+	seen := make([]bool, nspans)
 	set := func(idx int, f treeFact) {
-		if idx >= 0 && idx < nspans {
+		// First writer wins: a character reference elsewhere in the document
+		// could decode to a real occurrence's sentinel, and the genuine
+		// substituted one is the earlier of the two in document order.
+		if idx >= 0 && idx < nspans && !seen[idx] {
+			seen[idx] = true
 			facts[idx] = f
 		}
 	}
 	var walk func(n *html.Node, noscript bool)
 	walk = func(n *html.Node, noscript bool) {
-		here := noscript
+		// A <noscript> makes only its CHILDREN noscript-body content; its own
+		// attributes are the element's and are live under both readings.
+		childNoscript := noscript
 		if n.Type == html.ElementNode && n.Namespace == "" && n.Data == "noscript" {
-			here = true
+			childNoscript = true
 		}
 		switch n.Type {
 		case html.ElementNode:
 			for _, p := range sentinelIndexes(n.Data) {
-				set(p.index, treeFact{kind: kName, noscript: here})
+				set(p.index, treeFact{kind: kName, noscript: noscript})
 			}
 			for _, a := range n.Attr {
 				// The namespaced name, so an SVG xlink:href is named as itself
@@ -621,12 +639,12 @@ func classifyByParse(src string, scripting bool, nspans int) []treeFact {
 					attrName = a.Namespace + ":" + a.Key
 				}
 				for _, p := range sentinelIndexes(a.Key) {
-					set(p.index, treeFact{kind: kName, noscript: here})
+					set(p.index, treeFact{kind: kName, noscript: noscript})
 				}
 				for _, p := range sentinelIndexes(a.Val) {
 					set(p.index, treeFact{
 						kind: kAttrValue, element: n.Data, ns: n.Namespace,
-						attr: attrName, prefix: a.Val[:p.at], noscript: here,
+						attr: attrName, prefix: a.Val[:p.at], noscript: noscript,
 					})
 				}
 			}
@@ -635,7 +653,7 @@ func classifyByParse(src string, scripting bool, nspans int) []treeFact {
 			// text; recorded so the "<"-name fallback does not read comment
 			// content as an interpolated tag.
 			for _, p := range sentinelIndexes(n.Data) {
-				set(p.index, treeFact{kind: kText, noscript: here})
+				set(p.index, treeFact{kind: kText})
 			}
 		case html.TextNode:
 			// A text node's own Namespace is always "", so the parent — the
@@ -657,11 +675,11 @@ func classifyByParse(src string, scripting bool, nspans int) []treeFact {
 				}
 			}
 			for _, p := range sentinelIndexes(n.Data) {
-				set(p.index, treeFact{kind: kind, element: parentData(n), ns: ns, noscript: here})
+				set(p.index, treeFact{kind: kind, element: parentData(n), ns: ns, noscript: childNoscript})
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c, here)
+			walk(c, childNoscript)
 		}
 	}
 	walk(doc, false)
@@ -685,7 +703,9 @@ func programScript(n *html.Node) bool { return true }
 // text/css.
 func styleIsStylesheet(n *html.Node) bool {
 	for _, a := range n.Attr {
-		if a.Key != "type" {
+		// Only the ordinary, un-namespaced type= decides; an SVG xlink:type is
+		// a different attribute and leaves the stylesheet applying.
+		if a.Namespace != "" || a.Key != "type" {
 			continue
 		}
 		for _, want := range styleSheetTypes {
