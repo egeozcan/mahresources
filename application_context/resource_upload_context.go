@@ -793,6 +793,26 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
 		}
 
+		// The association ids are validated BEFORE the transaction opens, for the
+		// same reason phase 1 of AddResource reads outside one: these are SELECTs,
+		// and a transaction whose first statement is a read takes a snapshot that
+		// must then be promoted to write. On SQLite in WAL that promotion returns
+		// SQLITE_BUSY_SNAPSHOT, which the busy handler does not cover — so a
+		// duplicate upload carrying tags could fail with "database is locked"
+		// during exactly the concurrent batch this feature makes ordinary.
+		// Validating on ctx.db costs nothing: these rows are not part of the
+		// transaction's consistency requirement, and a group deleted between the
+		// check and the append fails on the foreign key anyway.
+		if valErr := ValidateAssociationIDs[models.Group](ctx.db, resourceQuery.Groups, "groups"); valErr != nil {
+			return nil, valErr
+		}
+		if valErr := ValidateAssociationIDs[models.Tag](ctx.db, resourceQuery.Tags, "tags"); valErr != nil {
+			return nil, valErr
+		}
+		if valErr := ValidateAssociationIDs[models.Note](ctx.db, resourceQuery.Notes, "notes"); valErr != nil {
+			return nil, valErr
+		}
+
 		tx := ctx.db.Begin()
 		// Named return, for the reason spelled out on insertUploadedResource: a
 		// bare recover in a function with unnamed results returns nil, so a
@@ -805,10 +825,6 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 		}()
 
 		if len(resourceQuery.Groups) > 0 {
-			if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
-				tx.Rollback()
-				return nil, valErr
-			}
 			groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 			if appendErr := tx.Model(existingResource).Association("Groups").Append(&groups); appendErr != nil {
 				tx.Rollback()
@@ -817,10 +833,6 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 		}
 
 		if len(resourceQuery.Tags) > 0 {
-			if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
-				tx.Rollback()
-				return nil, valErr
-			}
 			tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 			if appendErr := tx.Model(existingResource).Association("Tags").Append(&tags); appendErr != nil {
 				tx.Rollback()
@@ -829,10 +841,6 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 		}
 
 		if len(resourceQuery.Notes) > 0 {
-			if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
-				tx.Rollback()
-				return nil, valErr
-			}
 			notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 			if appendErr := tx.Model(existingResource).Association("Notes").Append(&notes); appendErr != nil {
 				tx.Rollback()

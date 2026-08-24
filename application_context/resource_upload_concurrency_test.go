@@ -378,3 +378,83 @@ func TestHashLookupFailureIsNotTreatedAsNewContent(t *testing.T) {
 		t.Fatalf("expected the content to still exist exactly once, found %d rows", stored)
 	}
 }
+
+// TestAddResource_ConcurrentSameHashOnWAL is the dedup twin of
+// TestAddResource_ConcurrentDistinctHashes, and covers a gap the restructure
+// opened up: the existence check moved OUT of the write transaction, so the
+// property "N simultaneous uploads of identical bytes produce one row" now rests
+// on the per-hash idlock and an autocommit read taken while holding it, rather
+// than on a transaction snapshot.
+//
+// TestAddResource_ConcurrentSameHash covers the same claim, but against a
+// shared-cache memory DSN opened with the plain sqlite driver — no WAL, no busy
+// timeout. This one runs the production configuration.
+//
+// Note what it does NOT claim. The guard is process-local: two processes sharing
+// one database hold two idlocks, and Resource.Hash carries a plain index rather
+// than a unique one, so nothing at the database level would stop them both
+// inserting. That was equally true before this change and is recorded in
+// CLAUDE.md; it is a property of the design, not of this test.
+func TestAddResource_ConcurrentSameHashOnWAL(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	ownerGroup := &models.Group{Name: "same-hash-owner"}
+	if err := ctx.db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("create owner group: %v", err)
+	}
+
+	payload := make([]byte, 1<<20)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+
+	const concurrency = 8
+	var wg sync.WaitGroup
+	errs := make([]error, concurrency)
+
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			_, errs[idx] = ctx.AddResource(
+				newBytesFile(payload),
+				fmt.Sprintf("same-%d.bin", idx),
+				&query_models.ResourceCreator{
+					ResourceQueryBase: query_models.ResourceQueryBase{
+						Name:    fmt.Sprintf("same-%d", idx),
+						OwnerId: ownerGroup.ID,
+					},
+				},
+			)
+		}(i)
+	}
+	wg.Wait()
+
+	// Exactly one row, whatever order they arrived in.
+	var stored int64
+	if err := ctx.db.Model(&models.Resource{}).Count(&stored).Error; err != nil {
+		t.Fatalf("count resources: %v", err)
+	}
+	if stored != 1 {
+		t.Fatalf("identical content must dedupe to one resource, found %d", stored)
+	}
+
+	// One winner; every loser is refused as a duplicate rather than failing for
+	// some other reason (a lock, say), which would make the count above pass for
+	// the wrong reason.
+	var created, duplicates int
+	for _, err := range errs {
+		var exists *ResourceExistsError
+		switch {
+		case err == nil:
+			created++
+		case errors.As(err, &exists):
+			duplicates++
+		default:
+			t.Errorf("unexpected error from a duplicate upload: %v", err)
+		}
+	}
+	if created != 1 || duplicates != concurrency-1 {
+		t.Fatalf("expected 1 create and %d duplicate refusals, got %d and %d", concurrency-1, created, duplicates)
+	}
+}

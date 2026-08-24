@@ -205,11 +205,24 @@ disk. The sequential loop hid this completely: within one request goroutine, two
 1. the hash existence check, outside any transaction (the per-hash idlock is what
    guarantees the dedup invariant, and it is released only after the winner
    commits, so an autocommit read sees it; the collision branches take their own
-   short transactions in `mergeIntoExistingResource`);
+   short transactions in `mergeIntoExistingResource`, which validate their
+   association ids **before** opening one for the same reason this phase exists);
 2. the filesystem write, outside any transaction (an orphan file on a later
    failure is a state that already existed, and the `Stat`-then-reuse branch
    already handles it);
 3. `insertUploadedResource`, whose **first statement is a write**.
+
+Two properties of that first phase are worth stating plainly. A read that fails
+for any reason other than `gorm.ErrRecordNotFound` is **returned, not treated as
+"no such content"** — `Hash` carries a plain index rather than a unique one
+(`models/resource_model.go:21`), so falling through on a transient failure would
+persist a second row for content that already exists and nothing below would
+catch it. And the dedup guarantee is **process-local, as it always has been**:
+two processes sharing one database hold two idlocks, and there is no
+database-level backstop. `TestAddResource_ConcurrentSameHashOnWAL` pins the
+in-process property under the production SQLite configuration; closing the
+cross-process gap means adding a unique index, which cannot be done safely while
+duplicate hashes may already exist in a live database.
 
 **INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
 there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`
