@@ -2936,3 +2936,95 @@ func TestLintAttributeContextRoundThirteen(t *testing.T) {
 		}
 	})
 }
+
+// Round-15 findings — the first review of the parse-backed engine. All but one
+// were lexical-layer bugs (comment/CDATA/quote-state delimiting, end-tag
+// names, plaintext, the scripting-off caveat wording). Each expectation is
+// verified against html.Parse (and ParseWithOptions for scripting-off).
+func TestLintAttributeContextRoundFifteen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a comment closes at --!> as well as -->", func(t *testing.T) {
+		// The comment ends at --!>, so the <a> after it is a real element with
+		// a quoted href — not an unquoted value swallowed by an open comment.
+		src := `<!-- c --!><a href="javascript:[property path='Name']">go</a>`
+		if !warns(src, `continues a "javascript:" URL`) {
+			t.Error("the anchor after --!> is live")
+		}
+		if warns(src, "unquoted attribute value") {
+			t.Error("the href is quoted; the comment closed at --!>")
+		}
+	})
+
+	t.Run("a quote outside a value is not a delimiter", func(t *testing.T) {
+		// The " in the malformed <div weird"> is part of a name, not a value
+		// delimiter, so the button after it has a real quoted onclick.
+		src := `<div weird"><button onclick="[property path='Name']">go</button>`
+		if !warns(src, "event handler") {
+			t.Error("the onclick is a live handler")
+		}
+		if warns(src, "unquoted attribute value") {
+			t.Error("the onclick is quoted")
+		}
+	})
+
+	t.Run("a CDATA in HTML raw text does not cross into a later SVG script", func(t *testing.T) {
+		// The <![CDATA[ opens inside the HTML <script> body (literal text), and
+		// the later SVG <script> body is ordinary foreign content — its value
+		// is decoded, so the foreign message, not the CDATA/HTML one, applies.
+		src := `<script><![CDATA[</script><svg><script>var x='[property path="Name"]'</script></svg>]]>`
+		if !warns(src, "foreign content, where the parser decodes entities") {
+			t.Errorf("the SVG script decodes entities, got %q", lintWarnings(src))
+		}
+		if warns(src, "does not decode entities") {
+			t.Error("the CDATA belonged to the HTML script, not this one")
+		}
+	})
+
+	t.Run("a sentinel in a comment is inert", func(t *testing.T) {
+		if warns(`<!-- <[property path='Name'] x -->`, "interpolated into a tag or attribute NAME") {
+			t.Error("comment content is not an interpolated tag name")
+		}
+	})
+
+	t.Run("an attribute on an end tag is ignored, not an interpolated name", func(t *testing.T) {
+		if warns(`<div>x</div data-[property path='Name']="x"><p>ok</p>`, "interpolated into a tag or attribute NAME") {
+			t.Error("end-tag attributes are ignored by the parser")
+		}
+	})
+
+	t.Run("a sentinel in an end-tag NAME is fail-closed", func(t *testing.T) {
+		// </s[Close]> could complete </svg>, which would close the svg and
+		// make the iframe after it a live HTML srcdoc; warn on the name.
+		if !warns(`<svg></s[property path='Close']><iframe srcdoc="[property path='Name']"></iframe>`, "interpolated into a tag or attribute NAME") {
+			t.Error("an interpolated end-tag name could close a real element")
+		}
+	})
+
+	t.Run("plaintext has no end tag to complete", func(t *testing.T) {
+		if warns(`<plaintext></plain[property path='Name']><script>alert(1)</script>`, "interpolated into a tag or attribute NAME") {
+			t.Error("plaintext runs to EOF; nothing completes its end tag")
+		}
+	})
+
+	t.Run("a placement a noscript body moved to the body keeps an accurate caveat", func(t *testing.T) {
+		// scripting on: the div is head-noscript raw text (dead). scripting
+		// off: the div moves into <body>, outside the noscript, with a live
+		// style — so the caveat must say the placement is scripting-off-only
+		// WITHOUT claiming the element is still inside a noscript.
+		src := `<noscript><div style="color:[property path='Name']"></div></noscript>`
+		if !warns(src, `sits in a "style" attribute`) {
+			t.Error("the style is live with scripting off")
+		}
+		if !warns(src, "reachable only with scripting disabled") {
+			t.Error("the caveat must name the mode")
+		}
+	})
+}

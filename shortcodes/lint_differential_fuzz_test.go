@@ -95,6 +95,7 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 		"<form>", "</form>", "<table>", "</table>", "<mglyph>", "<font>", "</font>",
 		`<font color="red">`, "<noscript>", "</noscript>", "<li>", "</li>",
 		"<![CDATA[x]]>", "<![CDATA[ <div> ]]>", "<style>", "</style>",
+		"<!-- c -->", "<!-- c --!>", `<div weird">`, "</div x=y>", "<!doctype html>",
 		"<select>", "</select>", "<option>", "</option>", "<button>",
 		"</button>", "<h2>", "</h2>", "<h3>", "</h3>", "<dd>", "</dd>",
 		"<image>", "<keygen>", "<frameset>", "</frameset>", "<frame>",
@@ -135,6 +136,18 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 				excused := lintSaysAny(lintSrc, "which is foreign content, where the parser decodes entities") ||
 					lintSaysAny(lintSrc, "sits inside a <script>") || lintSaysAny(lintSrc, "sits inside a <style>") ||
 					lintSaysAny(lintSrc, "interpolated into a tag or attribute NAME")
+				// When the probe is live, its occurrence is a real QUOTED
+				// attribute value (srcdoc, href), so a warning that it is an
+				// unquoted value or an interpolated NAME is a false positive —
+				// the class the lexical over-read bugs produced.
+				extraFalse := ""
+				if live && p.attr != "" {
+					if lintSaysAny(lintSrc, "sits in an unquoted attribute value") {
+						extraFalse = "false unquoted"
+					} else if lintSaysAny(lintSrc, "interpolated into a tag or attribute NAME") {
+						extraFalse = "false NAME"
+					}
+				}
 				switch {
 				case warned && !live:
 					fails++
@@ -144,6 +157,10 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 					fails++
 					t.Errorf("MISSED (%s): live in a browser, and %q said %q",
 						p.name, lintSrc, lintWarnings(lintSrc))
+				case extraFalse != "":
+					fails++
+					t.Errorf("EXTRA FALSE (%s, %s): the value is a live quoted attribute, yet %q warns %q",
+						p.name, extraFalse, lintSrc, lintWarnings(lintSrc))
 				}
 			}
 		}
