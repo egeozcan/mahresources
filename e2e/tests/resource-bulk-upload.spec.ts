@@ -384,6 +384,74 @@ test.describe('Bulk upload widget', () => {
     await expect(page.locator('button[type="submit"]:has-text("Save")')).toBeEnabled();
   });
 
+  test('retrying moves focus onto the panel instead of dropping it to the body', async ({ page, apiClient }) => {
+    // Retry hides the button that was just activated — run() sets phase to
+    // 'uploading' synchronously — so focus would fall to <body> without a
+    // handoff, exactly as Cancel would.
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const category = await apiClient.createCategory(`Retry Focus Cat ${stamp}`);
+    const owner = await apiClient.createGroup({
+      name: `Retry Focus Owner ${stamp}`,
+      categoryId: category.ID,
+    });
+
+    // One injected 500 gives a retryable failure; a 409 would offer no Retry.
+    // The retry itself is then held open, because the moment under test is while
+    // it is in flight: a retry that completes navigates away, and the focus
+    // question no longer exists.
+    const files = uniqueFilesFrom(2, 11);
+    const victim = path.basename(files[0]);
+    let injected = false;
+    let openLatch: () => void = () => {};
+    const latch = new Promise<void>((resolve) => {
+      openLatch = resolve;
+    });
+
+    await page.route('**/v1/resource', async (route) => {
+      const body = route.request().postData() || '';
+      if (route.request().method() !== 'POST' || !body.includes(victim)) {
+        return route.fallback();
+      }
+      if (!injected) {
+        injected = true;
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'injected', details: [{ error: 'injected' }] }),
+        });
+        return;
+      }
+      await latch;
+      await route.fallback();
+    });
+
+    await gotoNewResource(page);
+    await page.locator('input[type="file"]').setInputFiles(files);
+    await selectAutocomplete(page, 'Owner', owner.Name, 'ownerId');
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    const retry = page.getByTestId('bulk-upload-retry');
+    await expect(retry).toBeVisible({ timeout: 60000 });
+    await retry.click();
+
+    await expect(retry).toBeHidden({ timeout: 30000 });
+    // Polled rather than read once: the handoff is deferred by a macrotask so it
+    // cannot be undone by Alpine's own DOM update, which means it lands slightly
+    // after the button disappears. Without the handoff focus stays on <body>
+    // indefinitely, so this still fails against the defect.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName
+          ),
+        { timeout: 5000, message: 'focus should have been parked on the panel summary' }
+      )
+      .toBe('bulk-upload-summary');
+
+    openLatch();
+  });
+
   test('cancelling moves focus onto the panel instead of dropping it to the body', async ({ page }) => {
     // Cancel is hidden by the phase change it causes, and a focused element that
     // disappears sends focus to <body> — a keyboard or screen-reader user would

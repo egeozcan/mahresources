@@ -61,9 +61,10 @@ export function aggregateProgress(files) {
  * Human-readable byte count.
  *
  * Deliberately its own: downloadCockpit has a formatter of the same name that
- * renders whole units with a decimal ("1.0 KB" where this gives "1 KB"), and
- * this panel counts a file selection rather than a transfer. Sharing one would
- * mean changing that surface's output to change this one.
+ * trims a whole unit's decimal via parseFloat, so 1024 reads "1 KB" there and
+ * "1.0 KB" here. This panel counts a file selection rather than a transfer, and
+ * sharing one formatter would mean changing that surface's output to change
+ * this one.
  * @param {number} bytes
  * @returns {string}
  */
@@ -139,6 +140,13 @@ export function resourceUpload() {
     cancelled: false,
 
     init() {
+      // Captured here, not read from $el later. Alpine's $el resolves to the
+      // element whose expression is being evaluated, so inside a method invoked
+      // from @click it is the *button*, not this form — focusSummary() searching
+      // it found nothing and focus fell to <body>. It only appeared to work from
+      // finish(), which runs in a later macrotask where $el has fallen back to
+      // the component root.
+      this._root = this.$el;
       const d = this.$el.dataset;
       // The submit handler is registered on `document`, not as @submit on the
       // form, and that is load-bearing rather than stylistic.
@@ -152,7 +160,7 @@ export function resourceUpload() {
       // ancestor instead means stopPropagation() does exactly what it says: the
       // event never reaches this handler, and nothing is uploaded.
       this._submitHandler = (event) => {
-        if (event.target !== this.$el) return;
+        if (event.target !== this._root) return;
         this.onSubmit(event);
       };
       document.addEventListener('submit', this._submitHandler);
@@ -486,13 +494,17 @@ export function resourceUpload() {
     parkFocus() {
       if (!this._returnFocusToPanel) return;
       this._returnFocusToPanel = false;
-      setTimeout(() => {
-        // Optional chaining, not decoration: this runs a macrotask later, by
-        // which time the component may have been torn down. An exception in a
-        // timer is unhandled — it reaches the page as an uncaught error.
-        const summary = this.$el?.querySelector('[data-testid="bulk-upload-summary"]');
-        if (summary) focusOn(summary);
-      }, 0);
+      setTimeout(() => this.focusSummary(), 0);
+    },
+
+    /** Puts focus on the panel summary, which is present in every phase. */
+    focusSummary() {
+      // Optional chaining, not decoration: parkFocus reaches this a macrotask
+      // later, by which time the component may have been torn down, and an
+      // exception in a timer is unhandled — it reaches the page as an uncaught
+      // error.
+      const summary = this._root?.querySelector('[data-testid="bulk-upload-summary"]');
+      if (summary) focusOn(summary);
     },
 
     /** Files worth sending again — a 409 would be refused identically forever. */
@@ -511,6 +523,17 @@ export function resourceUpload() {
         this.files[i].error = '';
         this.files[i].loaded = 0;
       }
+      // Same trap as Cancel: the phase change hides the button that was just
+      // activated, and the browser drops focus to <body> when the focused
+      // element disappears.
+      //
+      // Handled the other way round from Cancel, though — focus moves *before*
+      // run() rather than after. Cancel's handoff happens from finish(), a
+      // macrotask later, by which time the button is already gone. Here the
+      // phase changes synchronously inside run(), so moving focus first means
+      // the browser never has to relocate it at all, and there is no ordering
+      // between Alpine's flush and a timer to get right.
+      this.focusSummary();
       this.run(indices);
     },
 
