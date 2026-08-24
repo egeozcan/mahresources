@@ -1817,3 +1817,23 @@ The corollary for thresholds: the first version budgeted total page CLS, and
 budget would have made it a catch-all failing for other people's reasons. Assert
 the specific mechanism — here, that `x-collapse` wrote a height *transition* on
 a page nobody had touched.
+
+## Re-verify the constraint that chose the architecture when you are N rounds deep polishing it
+
+The `shortcodes/lint_attr_context.go` foreign-content linter was built on `x/net/html`'s
+tokenizer plus a hand-written open-elements stack, because a full parse "would cost the byte
+offsets every diagnostic is anchored to." That was already false when written: the scan maps
+occurrences back by span index, diagnostics anchor to `tk.start/tk.end`, and tokenizer byte
+offsets are never read. Every verification all campaign was `html.Parse` + walk-the-DOM — the
+parse-backed engine lived in the test harness the whole time.
+
+The gate (two consecutive `pi` rounds with zero majors) never closed across 13 rounds:
+each round's fixes added hand-written tree-construction surface (frameset phases, adoption
+agency, active formatting list, in-head-noscript, template surrender), and that surface is
+where the next round's majors lived (5, 8, 12, 10 per round; round 13's ten were almost all in
+round 12's own additions). Polishing an approximation of an oracle by hand does not terminate —
+the reviewer's runway is the distance between the hand model and the oracle, closed only by
+more hand model.
+
+When N rounds deep polishing an approximation, stop and re-verify the constraint that made you
+approximate instead of calling the oracle directly. Your own later work may have dissolved it.
