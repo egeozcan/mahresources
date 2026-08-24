@@ -59,6 +59,10 @@ test.describe('Bulk upload widget accessibility', () => {
     // Cancelling is not the same surface as failing: the alert region, the link
     // to the colliding resource and the Retry control only exist here, and the
     // audit above never rendered any of them.
+    //
+    // Two kinds of failure are needed, not one. A 409 collision is permanent, so
+    // it renders the link and deliberately no Retry; Retry only appears for a
+    // failure a retry could change, which is what the injected 500 below is for.
     const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     const category = await apiClient.createCategory(`A11y Bulk Cat ${stamp}`);
     const owner = await apiClient.createGroup({
@@ -76,14 +80,31 @@ test.describe('Bulk upload widget accessibility', () => {
       exactBytes: true,
     });
 
+    const others = Array.from({ length: 10 }, (_, i) =>
+      uniqueAssetFile(path.join(ASSETS, `sample-image-${i + 20}.png`))
+    );
+    const victim = path.basename(others[0]);
+
+    // Fail one named request with a 500 so a retryable row exists beside the
+    // permanent collision. Matched on the filename in the multipart headers,
+    // not on arrival order: three requests are in flight at once, so "the first
+    // POST" is whichever wins the race — and if that were the collider this
+    // test would silently audit a panel with no collision link in it.
+    await page.route('**/v1/resource', async (route) => {
+      const body = route.request().postData() || '';
+      if (route.request().method() !== 'POST' || !body.includes(victim)) {
+        return route.fallback();
+      }
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'injected failure', details: [{ error: 'injected failure' }] }),
+      });
+    });
+
     await page.goto('/resource/new');
     await page.waitForLoadState('load');
-    await page.locator('input[type="file"]').setInputFiles([
-      collider,
-      ...Array.from({ length: 10 }, (_, i) =>
-        uniqueAssetFile(path.join(ASSETS, `sample-image-${i + 20}.png`))
-      ),
-    ]);
+    await page.locator('input[type="file"]').setInputFiles([collider, ...others]);
 
     const ownerInput = page.getByRole('combobox', { name: 'Owner' }).first();
     await ownerInput.click();
@@ -98,8 +119,10 @@ test.describe('Bulk upload widget accessibility', () => {
     const failures = page.getByTestId('bulk-upload-failures');
     await expect(failures).toBeVisible({ timeout: 60000 });
     await expect(page.getByTestId('bulk-upload-cancel')).toBeHidden({ timeout: 60000 });
-    // The controls this audit exists for must actually be on the page.
+    // The controls this audit exists for must actually be on the page, or it is
+    // auditing an empty region and reporting success.
     await expect(failures.locator('a[href^="/resource?id="]')).toBeVisible();
+    await expect(page.getByTestId('bulk-upload-retry')).toBeVisible();
 
     await checkA11y();
   });

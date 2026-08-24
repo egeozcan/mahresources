@@ -212,7 +212,11 @@ export function setupPasteListener() {
     // silently swallow the paste. Pages built around a real upload form (e.g.
     // createResource) carry no paste-context, so they keep the legacy behaviour.
     const hasPasteContext = document.querySelector('[data-paste-context]') !== null;
-    const fileInput = document.querySelector("input[type='file']");
+    // `:not([disabled])` matters. The create-resource page disables its picker
+    // while a bulk upload is running, and a disabled control should not receive
+    // a paste — files merged into it there look selected but belong to no batch,
+    // and the run that is already in flight navigates away without them.
+    const fileInput = document.querySelector("input[type='file']:not([disabled])");
     if (!hasPasteContext && fileInput && e.clipboardData?.files && e.clipboardData.files.length > 0) {
       e.preventDefault();
       const dt = new DataTransfer();

@@ -76,20 +76,30 @@ export function formatBytes(bytes) {
 }
 
 /**
+ * The 4xx codes that explicitly mean "the same request may work later".
+ * Everything else in the range is the server's settled answer about these bytes.
+ */
+const RETRYABLE_4XX = new Set([
+  408, // Request Timeout
+  423, // Locked
+  425, // Too Early
+  429, // Too Many Requests
+]);
+
+/**
  * A failure that a retry cannot change.
  *
  * Every deterministic 4xx qualifies, not only the duplicate 409: an oversized
  * file (refused in the browser, recorded as 413), an image the server cannot
  * decode (400) and a stale CSRF token (403) all answer identically however many
- * times the same bytes are sent. The exceptions are the two 4xx codes that mean
- * "try again" — 408 Request Timeout and 429 Too Many Requests.
+ * times the same bytes are sent. The exceptions are collected in RETRYABLE_4XX.
  *
  * @param {{httpStatus: number}} file
  * @returns {boolean}
  */
 export function isPermanentFailure(file) {
   const s = file.httpStatus;
-  if (s === 408 || s === 429) return false;
+  if (RETRYABLE_4XX.has(s)) return false;
   return s >= 400 && s < 500;
 }
 
@@ -181,16 +191,21 @@ export function resourceUpload() {
 
     /** Recompute the threshold decision whenever the picker changes. */
     onFilesChosen(event) {
+      // A change during a run belongs to no batch: the running one was
+      // snapshotted at submit and will not adopt it, and updating the hint from
+      // it would describe a selection nothing is going to upload. The picker is
+      // disabled while uploading and the paste handler skips a disabled input,
+      // so this is the backstop rather than the mechanism.
+      if (this.phase === 'uploading') return;
+
       const picked = [...(event?.target?.files || [])];
       // A fresh selection is a fresh batch. Without this the panel from a
       // previous partial run stays on screen describing files that are no longer
       // selected, and Save stays disabled with no way back to `idle`.
-      if (this.phase !== 'uploading') {
-        this.phase = 'idle';
-        this.files = [];
-        this.doneCount = 0;
-        this.cancelled = false;
-      }
+      this.phase = 'idle';
+      this.files = [];
+      this.doneCount = 0;
+      this.cancelled = false;
       this.selectionCount = picked.length;
       this.selectionBytes = picked.reduce((sum, f) => sum + f.size, 0);
       this.willUseWidget = shouldUseClientUpload({

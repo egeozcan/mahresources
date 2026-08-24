@@ -320,3 +320,61 @@ func TestUploadPanicIsNotReportedAsSuccess(t *testing.T) {
 		t.Fatalf("expected the rolled-back row to be gone, found %d resources", stored)
 	}
 }
+
+// TestHashLookupFailureIsNotTreatedAsNewContent pins the dedup lookup's error
+// handling.
+//
+// The read that asks "does a resource with this hash already exist" used to
+// treat every error as "no". Resource.Hash carries a plain index, not a unique
+// one, so falling through on a transient failure persists a second row for
+// content that already exists — silently breaking the invariant the per-hash
+// idlock exists to protect. Sequential uploads made such a failure vanishingly
+// unlikely; concurrent ones do not.
+func TestHashLookupFailureIsNotTreatedAsNewContent(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	payload := make([]byte, 2048)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+
+	// One good upload, so there is a row the lookup would have found.
+	if _, err := ctx.AddResource(newBytesFile(payload), "original.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "original"},
+	}); err != nil {
+		t.Fatalf("seed upload: %v", err)
+	}
+
+	// Now break only that lookup.
+	err := ctx.db.Callback().Query().Before("gorm:query").Register(
+		"test:fail_hash_lookup",
+		func(db *gorm.DB) {
+			if db.Statement != nil && db.Statement.Table == "resources" {
+				_ = db.AddError(errors.New("database is locked"))
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("register injection callback: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Callback().Query().Remove("test:fail_hash_lookup")
+	})
+
+	_, err = ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "duplicate"},
+	})
+	if err == nil {
+		t.Fatal("a failed dedup lookup must surface as an error, not as new content")
+	}
+
+	_ = ctx.db.Callback().Query().Remove("test:fail_hash_lookup")
+
+	var stored int64
+	if countErr := ctx.db.Model(&models.Resource{}).Where("hash IS NOT NULL AND hash != ''").Count(&stored).Error; countErr != nil {
+		t.Fatalf("count resources: %v", countErr)
+	}
+	if stored != 1 {
+		t.Fatalf("expected the content to still exist exactly once, found %d rows", stored)
+	}
+}

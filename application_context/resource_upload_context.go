@@ -784,7 +784,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 // transactions of its own, so that the upload path never opens a transaction
 // with a read. See the phase-1 comment in AddResource for why that matters.
 // The caller must hold the per-hash idlock.
-func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (merged *models.Resource, err error) {
 	if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
 		// Same owner: the upload adds nothing but the associations it carried,
 		// and is then reported as a duplicate. With no associations to add
@@ -794,9 +794,13 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 		}
 
 		tx := ctx.db.Begin()
+		// Named return, for the reason spelled out on insertUploadedResource: a
+		// bare recover in a function with unnamed results returns nil, so a
+		// panic here would roll the associations back and report success.
 		defer func() {
 			if r := recover(); r != nil {
 				tx.Rollback()
+				merged, err = nil, fmt.Errorf("panic while merging into the existing resource: %v", r)
 			}
 		}()
 
@@ -863,6 +867,7 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			merged, err = nil, fmt.Errorf("panic while attaching the owner group: %v", r)
 		}
 	}()
 
@@ -1016,8 +1021,20 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	// has committed, so an autocommit read taken here is guaranteed to see it.
 	var existingResource models.Resource
 
-	if existingNotFoundErr := ctx.db.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
+	switch lookupErr := ctx.db.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; {
+	case lookupErr == nil:
 		return ctx.mergeIntoExistingResource(&existingResource, resourceQuery)
+	case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+		// Genuinely new content: fall through and create it.
+	default:
+		// Anything else — a lock, a closed pool, a broken schema — is not an
+		// answer to "does this hash already exist". Treating it as "no" was the
+		// long-standing shape here and it was survivable while uploads were
+		// sequential; concurrent uploads make a transient failure on this read
+		// realistic, and Resource.Hash carries a plain index rather than a
+		// unique one, so falling through would persist a second row for content
+		// that already exists and quietly break the dedup invariant.
+		return nil, lookupErr
 	}
 
 	// ---------------------------------------------------------------------

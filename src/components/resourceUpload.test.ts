@@ -213,8 +213,9 @@ describe('retry eligibility', () => {
     for (const status of [400, 403, 409, 413, 422]) {
       expect(isPermanentFailure({ httpStatus: status })).toBe(true);
     }
-    // The two 4xx codes that mean "try again", plus transport failures and 5xx.
-    for (const status of [0, 408, 429, 500, 502, 503]) {
+    // The 4xx codes that mean "the same request may work later", plus transport
+    // failures and every 5xx.
+    for (const status of [0, 408, 423, 425, 429, 500, 502, 503]) {
       expect(isPermanentFailure({ httpStatus: status })).toBe(false);
     }
   });
@@ -428,16 +429,23 @@ describe('starting a new batch', () => {
     expect(c.doneCount).toBe(0);
   });
 
-  it('leaves a running batch alone', () => {
+  it('ignores a selection made while a batch is running', () => {
+    // The picker is disabled during a run and the paste handler skips a disabled
+    // input, so this should be unreachable — but if a change does arrive it must
+    // not touch the running batch or the hint, which would describe files that
+    // nothing is going to upload.
     const c = resourceUpload();
     c.phase = 'uploading';
     c.doneCount = 2;
+    c.selectionCount = 11;
     c.files = [{ name: 'live', size: 1, loaded: 0, status: 'uploading', error: '', httpStatus: 0 }];
 
-    c.onFilesChosen({ target: { files: [{ size: 10 }] } } as never);
+    c.onFilesChosen({ target: { files: [{ size: 10 }, { size: 10 }] } } as never);
 
     expect(c.phase).toBe('uploading');
     expect(c.doneCount).toBe(2);
+    expect(c.files).toHaveLength(1);
+    expect(c.selectionCount).toBe(11);
   });
 });
 
