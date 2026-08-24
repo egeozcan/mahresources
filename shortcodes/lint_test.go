@@ -3559,3 +3559,39 @@ func TestLintAttributeContextRoundTwentyThree(t *testing.T) {
 		}
 	})
 }
+
+func TestLintAttributeContextRoundTwentyFour(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	raw := func(src string) bool {
+		return warns(src, "becomes real elements") || warns(src, "close the attribute") || warns(src, "can close the <")
+	}
+
+	t.Run("a raw= value in a FOREIGN plaintext body is not inert", func(t *testing.T) {
+		// SVG <plaintext> is an ordinary foreign element, not the HTML plaintext
+		// that runs to EOF; a raw= value there escapes with </svg>.
+		if !raw(`<svg><plaintext>[property path="Name" raw="true"]`) {
+			t.Errorf("a foreign plaintext body is live, got %q", lintWarnings(`<svg><plaintext>[property path="Name" raw="true"]`))
+		}
+		// Control: an HTML <plaintext> body IS inert (runs to EOF).
+		if raw(`<plaintext>[property path="Name" raw="true"]`) {
+			t.Error("an HTML plaintext body admits no markup")
+		}
+	})
+
+	t.Run("probing one occurrence at a time does not hide another", func(t *testing.T) {
+		// Probing all occurrences in one parse let A's synthetic probe expose a
+		// real type=hidden on the <input>, changing the frameset decision and
+		// discarding B's live div. Per-occurrence probing keeps them independent.
+		src := `<input x=[property path='A']type=hidden><frameset></frameset><div title=fixed title=[property path='B']>x</div>`
+		if !warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("B's unquoted injection must be seen independently of A, got %q", lintWarnings(src))
+		}
+	})
+}

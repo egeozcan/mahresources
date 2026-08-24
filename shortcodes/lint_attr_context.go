@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -122,8 +123,18 @@ var lintSentinelNonce = randomSentinelNonce()
 
 func randomSentinelNonce() string {
 	var b [6]byte
-	if _, err := cryptorand.Read(b[:]); err != nil {
-		return "0f0f0f0f0f0f"
+	if _, err := cryptorand.Read(b[:]); err == nil {
+		return hex.EncodeToString(b[:])
+	}
+	// crypto/rand failed (a broken system RNG). Do NOT fall back to a FIXED
+	// public constant: an author who knew it could write the exact sentinel —
+	// entity-encoded — and shadow a real occurrence, suppressing its warning.
+	// Derive the nonce from the boot nanosecond instead. It is not
+	// crypto-random, but it is not a compile-time constant an author can
+	// produce either, which is the property the sentinel needs.
+	n := uint64(time.Now().UnixNano())
+	for i := range b {
+		b[i] = byte(n >> (8 * uint(i)))
 	}
 	return hex.EncodeToString(b[:])
 }
@@ -269,63 +280,43 @@ func rawBreakoutReachesLive(substituted string, at, n int) (reachesOn, reachesOf
 // everything else, so silence there is the parser's own answer rather than a
 // guess about which tags live. Quoted values (the space is contained) and NAME
 // occurrences (already fail-closed) are not probed.
-func unquotedSiblingInjectors(substituted string, sentinelAt []int, lex []lexFact, scripting bool) map[int]bool {
-	// Splice the probes in from left to right; sentinelAt is increasing in i.
-	var b strings.Builder
-	prev := 0
-	any := false
-	for i := range lex {
-		if sentinelAt[i] < 0 || !lex[i].inValue || lex[i].quoted {
-			continue
-		}
-		end := sentinelAt[i] + len(lintSentinel(i))
-		if end > len(substituted) || end < prev {
-			continue
-		}
-		b.WriteString(substituted[prev:end])
-		// A space on BOTH sides: the leading one opens the probe as a sibling
-		// attribute; the trailing one ends its NAME, so literal template text
-		// glued to the occurrence ("title=[property]SAFE") becomes its own
-		// attribute rather than corrupting the probe's name into "…0safe",
-		// which then fails the index parse and silently drops the probe.
-		b.WriteByte(' ')
-		b.WriteString(lintProbe(i))
-		b.WriteByte(' ')
-		prev = end
-		any = true
+func unquotedSiblingInjectsOne(substituted string, at, n int, scripting bool) bool {
+	if at < 0 || at+n > len(substituted) {
+		return false
 	}
-	if !any {
-		return nil
-	}
-	b.WriteString(substituted[prev:])
-
-	injects := map[int]bool{}
+	elem := lintProbePrefix + "s"
+	// A space on BOTH sides: the leading one opens the probe as a sibling
+	// attribute; the trailing one ends its NAME, so literal template text glued
+	// to the occurrence ("title=[property]SAFE") becomes its own attribute
+	// rather than corrupting the probe's name. ONE occurrence is probed per
+	// parse: probing them all at once let an earlier probe's synthetic
+	// attribute (e.g. exposing "type=hidden" on an <input>) change tree
+	// construction and hide a later occurrence's live sibling (round 24).
+	src := substituted[:at+n] + " " + elem + " " + substituted[at+n:]
 	opts := []html.ParseOption{}
 	if !scripting {
 		opts = append(opts, html.ParseOptionEnableScripting(false))
 	}
-	doc, err := html.ParseWithOptions(strings.NewReader(b.String()), opts...)
+	doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
 	if err != nil {
-		return injects
+		return false
 	}
-	var walk func(n *html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			for _, a := range n.Attr {
-				if a.Namespace != "" || !strings.HasPrefix(a.Key, lintProbePrefix) {
-					continue
-				}
-				if idx, err := strconv.Atoi(a.Key[len(lintProbePrefix):]); err == nil {
-					injects[idx] = true
+	found := false
+	var walk func(nd *html.Node)
+	walk = func(nd *html.Node) {
+		if nd.Type == html.ElementNode {
+			for _, a := range nd.Attr {
+				if a.Namespace == "" && a.Key == elem {
+					found = true
 				}
 			}
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
+		for c := nd.FirstChild; c != nil && !found; c = c.NextSibling {
 			walk(c)
 		}
 	}
 	walk(doc)
-	return injects
+	return found
 }
 
 // attributeContextsFor answers, for every occurrence, the attribute context of
@@ -386,11 +377,17 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// The oracle for the one danger the parser's placement hides: an unquoted
 	// value the parser dropped (a repeated attribute, or a merge duplicate on
 	// <body>/<html>) still adds a live sibling attribute, because escaping does
-	// not touch the space that opens one. Run in both scripting modes: a drop
-	// that happens only with scripting off (the value is inert <noscript> text
-	// with it on) still injects there, and its warning is qualified to match.
-	injectsOn := unquotedSiblingInjectors(substituted, sentinelAt, lex, true)
-	injectsOff := unquotedSiblingInjectors(substituted, sentinelAt, lex, false)
+	// not touch the space that opens one. It is checked per occurrence, in both
+	// scripting modes, below — only where the parser dropped the value (kAbsent),
+	// which is the only place the answer is read.
+	injectsOn := func(i int) bool {
+		return lex[i].inValue && !lex[i].quoted &&
+			unquotedSiblingInjectsOne(substituted, sentinelAt[i], len(lintSentinel(i)), true)
+	}
+	injectsOff := func(i int) bool {
+		return lex[i].inValue && !lex[i].quoted &&
+			unquotedSiblingInjectsOne(substituted, sentinelAt[i], len(lintSentinel(i)), false)
+	}
 	// The tree layer: html.Parse in both scripting modes. An interpolated
 	// encoding= or type= is parsed at its worst case first — as the value it
 	// could complete — so a namespace or stylesheet it MIGHT decide is read
@@ -441,7 +438,7 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// kAbsent is exactly "placed in no node" — a discarded duplicate, or a
 		// merge duplicate on <body>/<html> — so a value the parser DID place
 		// keeps its ordinary unquoted rule and is never doubly warned.
-		if injectsOn[i] && on[i].kind == kAbsent {
+		if on[i].kind == kAbsent && injectsOn(i) {
 			primary.unquotedSibling = true
 		}
 		// A value the parser dropped may still be a live raw= breakout site (a
@@ -468,7 +465,7 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// report kAbsent for different reasons (a <frameset> discards the whole
 		// element with scripting on while only its duplicate name is dropped
 		// with it off, leaving the element and the injected sibling live).
-		offInjects := injectsOff[i] && off[i].kind == kAbsent && !primary.unquotedSibling
+		offInjects := off[i].kind == kAbsent && !primary.unquotedSibling && injectsOff(i)
 		if on[i] != off[i] || offInjects {
 			sc := mergeContext(lex[i], off[i])
 			sc.noscript = true
@@ -593,9 +590,11 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 	case kText:
 		// The parser placed it in a text node the rules have nothing to say
 		// about; recorded as settled so the fallbacks do not re-answer it. The
-		// element is carried so the raw= text rule can tell a <plaintext> body
-		// — which runs to EOF and admits no markup — from ordinary text.
-		return attrContext{inertText: true, element: t.element, noscript: t.noscript}
+		// element AND its namespace are carried so the raw= text rule can tell
+		// an HTML <plaintext> body — which runs to EOF and admits no markup —
+		// from ordinary text and from a FOREIGN <plaintext>, which is an
+		// ordinary foreign element a value escapes with "</svg>".
+		return attrContext{inertText: true, element: t.element, foreignRoot: t.ns, noscript: t.noscript}
 	default:
 		// kAbsent: the occurrence is in no DOM node — dropped by an ignored or
 		// duplicate element, or in a name the parser did not keep. Here, and
@@ -1332,7 +1331,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// close the attribute and add their own onto the merged element.
 			return []string{rawDrop(label + ` with raw= is not escaped at all, so placing it in the "` + ctx.attr + `" attribute lets the value close the attribute and add its own. Drop raw= here.`)}
 		}
-		if raw && (ctx.inertText || ctx.rawReachesLive) && ctx.element != "plaintext" {
+		if raw && (ctx.inertText || ctx.rawReachesLive) && !(ctx.element == "plaintext" && ctx.foreignRoot == "") {
 			// raw= disables escaping outright, so it is unsafe wherever it can
 			// reach live markup: a Meta value of "<img src=x onerror=...>"
 			// becomes a real element. inertText is the parser confirming a live
@@ -1742,10 +1741,13 @@ func expressionAttributeKind(attr string) string {
 //
 // A last, non-exploitable corner: a character reference in the template that
 // decodes to a genuine occurrence's sentinel could shadow it. The sentinel
-// carries a per-process CRYPTO-RANDOM nonce, so no template author can produce
-// it on purpose, and a chance collision needs the input to contain those 48
-// random bits (literally or entity-encoded) — about 2^-48. classifyByParse's
-// first-writer-wins keeps the genuine, earlier placement in the ordinary case.
+// carries a per-process nonce that is not a compile-time constant — crypto-random,
+// or derived from the boot nanosecond if the system RNG fails (never a fixed
+// public value, which an author COULD reproduce) — so no template author can
+// produce it on purpose, and a chance collision needs the input to contain those
+// 48 unpredictable bits (literally or entity-encoded) — about 2^-48.
+// classifyByParse's first-writer-wins keeps the genuine, earlier placement in
+// the ordinary case.
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
 
