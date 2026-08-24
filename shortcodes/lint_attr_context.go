@@ -158,8 +158,6 @@ func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + 
 // survives the parser lowercasing an attribute name.
 var lintProbePrefix = "mahprobe" + lintSentinelNonce + "x"
 
-func lintProbe(i int) string { return lintProbePrefix + strconv.Itoa(i) }
-
 // stripSentinels removes every substituted-occurrence sentinel from a string,
 // leaving the literal text with all interpolations taken as empty. The URL
 // analysis uses it to read one occurrence's own placement while treating the
@@ -991,22 +989,6 @@ func sentinelIndexes(value string) []sentinelPos {
 		}
 		from = i + len(lintSentinelPrefix) + j
 	}
-}
-
-// hasNonHTMLSpace reports whether s holds any character that is not HTML
-// whitespace (space, tab, LF, FF, CR). It is a byte scan on purpose: a NBSP
-// (U+00A0) is body content to the parser, and its UTF-8 bytes are not any of
-// these, so it reads as content — where strings.TrimSpace, which trims every
-// Unicode space, would wrongly treat it as blank.
-func hasNonHTMLSpace(s string) bool {
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ', '\t', '\n', '\f', '\r':
-		default:
-			return true
-		}
-	}
-	return false
 }
 
 func isASCIISpace(c byte) bool {

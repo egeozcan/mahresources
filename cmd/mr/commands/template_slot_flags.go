@@ -97,18 +97,13 @@ func (f *customSlotFlags) each(changedOnly bool, set func(field, value string)) 
 	}
 }
 
-// The four wrappers exist because the request bodies in this package are
-// map[string]string in some commands and map[string]any in others.
+// Two wrappers rather than the symmetric four, because only two combinations
+// occur: the create commands send a map[string]string, and note-type edit --
+// the one generic edit command, since category and resource-category expose
+// only edit-name and edit-description -- sends a map[string]any. staticcheck
+// fails the build on the unused pair, so add one when a command needs it.
 func (f *customSlotFlags) applySet(body map[string]string) {
 	f.each(false, func(k, v string) { body[k] = v })
-}
-
-func (f *customSlotFlags) applySetAny(body map[string]any) {
-	f.each(false, func(k, v string) { body[k] = v })
-}
-
-func (f *customSlotFlags) applyChanged(body map[string]string) {
-	f.each(true, func(k, v string) { body[k] = v })
 }
 
 func (f *customSlotFlags) applyChangedAny(body map[string]any) {

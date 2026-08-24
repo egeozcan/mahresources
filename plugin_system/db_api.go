@@ -1348,9 +1348,6 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 		// Check cache
 		reqCtx := pm.luaContext(L)
-		if reqCtx == nil {
-			reqCtx = context.Background()
-		}
 		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets, params, actor)
 		if cache := MRQLCacheFromContext(reqCtx); cache != nil {
 			if cached, ok := cache.Get(cacheKey); ok {
