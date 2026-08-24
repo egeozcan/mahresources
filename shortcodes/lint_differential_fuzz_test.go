@@ -214,6 +214,11 @@ func TestLintUnquotedSiblingDifferential(t *testing.T) {
 	}
 	shapes := []struct{ lint, oracle string }{
 		{`<div class=[property path='Name']>`, `<div class=zqx zqmarkerx>`},
+		// Occurrences with LITERAL text glued after them (round 21): the probe
+		// must delimit its own name so the trailing text does not corrupt it.
+		{`<div class=[property path='Name']SAFE>`, `<div class=zqx zqmarkerx SAFE>`},
+		{`<div title=fixed title=[property path='Name']7>`, `<div title=fixed title=zqx zqmarkerx 7>`},
+		{`<div class=[property path='Name']=v>`, `<div class=zqx zqmarkerx =v>`},
 		{`<body class=[property path='Name']>`, `<body class=zqx zqmarkerx>`},
 		{`<html class=[property path='Name']>`, `<html class=zqx zqmarkerx>`},
 		{`<div title="fixed" title=[property path='Name']>`, `<div title="fixed" title=zqx zqmarkerx>`},

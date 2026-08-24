@@ -50,6 +50,12 @@ type attrContext struct {
 	// inName marks an occurrence in a tag or attribute NAME, where nothing
 	// delimits the value at all.
 	inName bool
+	// endTagName narrows inName to an END-tag name ("</s[x]>" or a raw-text
+	// terminator "</text[x]>"). The danger there is NOT that the value adds
+	// attributes — an end tag's attributes are ignored by the parser — but that
+	// it chooses which element the tag closes, and so what the close reveals.
+	// It needs its own message; the shared inName one states the wrong reason.
+	endTagName bool
 	// rawTextElement names the script- or style-like element whose body the
 	// occurrence sits in, where escaping contains the value without making the
 	// placement safe.
@@ -85,6 +91,15 @@ type attrContext struct {
 	// treated as unsafe rather than as "not in an attribute", so a broken
 	// template fails closed.
 	unterminated bool
+	// rawReachesLive marks a value the parser DROPPED (kAbsent) whose position
+	// a raw= breakout could nonetheless reach live markup from — a re-opened
+	// <body>/<html> whose duplicate attribute is dropped but whose tag merges
+	// live, as opposed to a position past a <frameset> or x/net's foreign
+	// <template> surrender, which the parser ignores entirely. Set from a
+	// per-occurrence breakout probe, and read only for the raw= rules: an
+	// unescaped value there can close the attribute and write markup, but only
+	// where the parser builds anything at all.
+	rawReachesLive bool
 	// unquotedSibling marks an UNQUOTED attribute value the parser dropped from
 	// the tree — a repeated attribute (discarded), or a duplicate-named one on
 	// a re-opened <body>/<html> that merges onto the singleton — yet whose
@@ -129,6 +144,46 @@ var lintProbePrefix = "mahprobe" + lintSentinelNonce + "x"
 
 func lintProbe(i int) string { return lintProbePrefix + strconv.Itoa(i) }
 
+// rawBreakoutReachesLive reports whether a raw= value at the occurrence whose
+// sentinel occupies substituted[at:at+n] could reach live markup. A raw= value
+// is unescaped, so its worst case closes any attribute and tag and opens an
+// element; the probe substitutes exactly that (`"><…elem>`) right after the
+// sentinel and asks html.Parse, in EITHER scripting mode, whether the probe
+// element survives. A position the parser dropped — past a <frameset>, or past
+// x/net's foreign-<template> surrender — builds nothing there, so the element
+// never appears and the raw value reaches nothing. One occurrence is probed at
+// a time so a breakout cannot perturb another occurrence's answer.
+func rawBreakoutReachesLive(substituted string, at, n int) bool {
+	if at < 0 || at+n > len(substituted) {
+		return false
+	}
+	elem := lintProbePrefix + "elem"
+	src := substituted[:at+n] + `"><` + elem + `>` + substituted[at+n:]
+	reaches := func(scripting bool) bool {
+		opts := []html.ParseOption{}
+		if !scripting {
+			opts = append(opts, html.ParseOptionEnableScripting(false))
+		}
+		doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
+		if err != nil {
+			return false
+		}
+		found := false
+		var walk func(*html.Node)
+		walk = func(nd *html.Node) {
+			if nd.Type == html.ElementNode && nd.Data == elem {
+				found = true
+			}
+			for c := nd.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(doc)
+		return found
+	}
+	return reaches(true) || reaches(false)
+}
+
 // unquotedSiblingInjectors reports, per span, whether an UNQUOTED attribute
 // value at that occurrence would add a live sibling attribute. Escaping does
 // not touch the space that opens one, so a value the parser keeps in an
@@ -154,8 +209,14 @@ func unquotedSiblingInjectors(substituted string, sentinelAt []int, lex []lexFac
 			continue
 		}
 		b.WriteString(substituted[prev:end])
+		// A space on BOTH sides: the leading one opens the probe as a sibling
+		// attribute; the trailing one ends its NAME, so literal template text
+		// glued to the occurrence ("title=[property]SAFE") becomes its own
+		// attribute rather than corrupting the probe's name into "…0safe",
+		// which then fails the index parse and silently drops the probe.
 		b.WriteByte(' ')
 		b.WriteString(lintProbe(i))
+		b.WriteByte(' ')
 		prev = end
 		any = true
 	}
@@ -288,7 +349,9 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		if primary.inertText || primary.rawTextElement != "" {
 			if endTagCompletable(on[i]) && couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
 				endTagCompletable(off[i]) && couldCompleteEndTag(substituted, sentinelAt[i], off[i].element) {
-				primary = attrContext{inName: true}
+				// Completing a raw-text element's own end tag ("</text[x]>"):
+				// the value chooses to close it, the same end-tag-name mechanism.
+				primary = attrContext{inName: true, endTagName: true}
 			}
 		}
 		// An unquoted value the parser dropped is not harmless: it still adds a
@@ -298,6 +361,15 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// keeps its ordinary unquoted rule and is never doubly warned.
 		if injectsOn[i] && on[i].kind == kAbsent {
 			primary.unquotedSibling = true
+		}
+		// A value the parser dropped may still be a live raw= breakout site (a
+		// merge-dropped <body>/<html> attribute) rather than a truly dead one
+		// (past a <frameset> or foreign-<template> surrender). The breakout
+		// probe decides which; read only by the raw= rules.
+		if lex[i].inValue && (on[i].kind == kAbsent || off[i].kind == kAbsent) {
+			if rawBreakoutReachesLive(substituted, sentinelAt[i], len(lintSentinel(i))) {
+				primary.rawReachesLive = true
+			}
 		}
 		out[sp.start] = primary
 		// The two readings are two real browser configurations, and a
@@ -337,7 +409,8 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// and an interpolated name in it must fail closed.
 		settledInert := ctx.inertText && on[i] == off[i]
 		if ctx.inValue || ctx.inName || settledInert || ctx.discarded ||
-			ctx.rawTextElement != "" || ctx.unterminated || ctx.unquotedSibling {
+			ctx.rawTextElement != "" || ctx.unterminated || ctx.unquotedSibling ||
+			ctx.rawReachesLive {
 			continue
 		}
 		at := sentinelAt[i]
@@ -450,10 +523,24 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 			return attrContext{unterminated: true}
 		}
 		if l.inName {
-			return attrContext{inName: true}
+			// lexFact.inName is set only for an END-tag name (start-tag and
+			// attribute names come through the tree's kName above), so this is
+			// the "chooses which element closes" mechanism, not "adds
+			// attributes".
+			return attrContext{inName: true, endTagName: true}
 		}
 		if l.discarded {
 			return attrContext{discarded: true, attr: l.attr, quoted: l.quoted}
+		}
+		if l.inValue {
+			// The lexical pass read an attribute value here, but the parser
+			// placed it nowhere — most often a duplicate-named attribute the
+			// singleton merge of a re-opened <body>/<html> dropped. It is not a
+			// within-one-tag duplicate (that is l.discarded above), so the tag
+			// itself is live and a raw= value can still inject onto it. Carry
+			// the attribute name so the raw= rule can name it; nothing else
+			// fires, since inValue is left false (the value reached no node).
+			return attrContext{attr: l.attr, quoted: l.quoted}
 		}
 		return attrContext{}
 	}
@@ -498,17 +585,24 @@ func couldCompleteEndTag(text string, at int, name string) bool {
 }
 
 // lexicalContexts runs golang.org/x/net/html's own TOKENIZER over the source
-// — which delimits tags, comments and CDATA exactly as a browser does, so no
-// hand-written scanner can diverge from it — and reads the syntactic facts off
-// each tag: quoted and discarded for a START-tag attribute value, and inName
-// for a sentinel in an END-tag NAME. Interpolated START-tag element and
-// attribute names are the parser's kName and are not reported here, and an
-// END-tag ATTRIBUTE (ignored by the parser) is not a name. Raw-text mode is
-// cleared after every tag (NextIsNotRawText), so the tags nested in a
-// <script>, <iframe> or <noscript> body ARE emitted and their quoted-ness is
-// read — a sentinel really in one of those bodies is answered by the parser
-// (kScript, kText), so this over-reading never reaches a rule. A sentinel in
-// text is left as the zero lexFact, to be answered by the parser.
+// — which delimits TAGS as a browser does, so no hand-written scanner can
+// diverge from it there — and reads the syntactic facts off each tag: quoted
+// and discarded for a START-tag attribute value, and inName for a sentinel in
+// an END-tag NAME. Interpolated START-tag element and attribute names are the
+// parser's kName and are not reported here, and an END-tag ATTRIBUTE (ignored
+// by the parser) is not a name. Raw-text mode is cleared after every tag
+// (NextIsNotRawText), so the tags nested in a <script>, <iframe> or <noscript>
+// body ARE emitted and their quoted-ness is read — a sentinel really in one of
+// those bodies is answered by the parser (kScript, kText), so this over-reading
+// never reaches a rule.
+//
+// It does NOT enable AllowCDATA or track namespaces, so it does not treat a
+// "<![CDATA[" section as the character data a foreign-content parser does: the
+// tokenizer reads it as a bogus comment, whose token this switch ignores. That
+// is harmless, not authoritative — a sentinel inside CDATA falls in that
+// ignored comment and gets the zero lexFact, and the PARSE, which does place it
+// in a text node (kText), is what answers it. A sentinel in ordinary text is
+// likewise the zero lexFact, answered by the parser.
 func lexicalContexts(src string, nspans int) []lexFact {
 	facts := make([]lexFact, nspans)
 	z := html.NewTokenizer(strings.NewReader(src))
@@ -1040,7 +1134,13 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		// it adds a sibling attribute the surviving tag keeps even as the
 		// duplicate name is dropped (unquotedSibling, oracle-confirmed).
 		var msgs []string
-		if raw {
+		if raw && ctx.rawReachesLive {
+			// The parser drops this duplicate, but the raw= bytes still pass
+			// the tokenizer and — where the tag is live (a re-opened <body>, a
+			// still-open element) — can close the attribute and add their own.
+			// Gated on rawReachesLive so a duplicate past a <frameset> or a
+			// foreign-<template> surrender, whose tag the parser ignores
+			// entirely, is not warned about a breakout that reaches nothing.
 			msgs = append(msgs, label+` with raw= is not escaped at all, so placing it in the "`+ctx.attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
 		}
 		if ctx.unquotedSibling {
@@ -1078,6 +1178,15 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		return []string{qualify(label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`)}
 	}
 	if ctx.inName {
+		if ctx.endTagName {
+			// An end tag's attributes are ignored, so the danger is not added
+			// attributes but the choice of WHICH element the name closes: a
+			// value of "vg" in "</s[value]>" closes a <svg>, and whatever the
+			// close reveals — an <iframe srcdoc>, a raw-text body that was
+			// holding markup inert — becomes live. Escaping does not change
+			// which element the name matches.
+			return []string{qualify(label + ` completes the NAME of an end tag, choosing which element it closes — a value can close an ancestor and make whatever that reveals (an <iframe srcdoc>, a raw-text body) live. Escaping does not change which element the name matches. Build the tag in the template instead.`)}
+		}
 		return []string{qualify(label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`)}
 	}
 	if !ctx.inValue || ctx.attr == "" {
@@ -1086,6 +1195,12 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// re-opened <body>/<html>: the singleton keeps the sibling the
 			// value's space opens even though its own name was a duplicate.
 			return []string{qualify(label + ` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)}
+		}
+		if raw && ctx.rawReachesLive && ctx.attr != "" {
+			// A raw= value the merge dropped (its name duplicated the
+			// singleton's) but whose tag is live: the unescaped bytes still
+			// close the attribute and add their own onto the merged element.
+			return []string{label + ` with raw= is not escaped at all, so placing it in the "` + ctx.attr + `" attribute lets the value close the attribute and add its own. Drop raw= here.`}
 		}
 		if raw && ctx.inertText && ctx.element != "plaintext" {
 			// raw= disables escaping outright, so it is unsafe wherever it
@@ -1136,9 +1251,17 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	if urlBearingAttrs[attr] && scriptCanRun {
 		// A sentinel in the prefix is ANOTHER occurrence in the same value,
 		// whose text is unknown — it could be empty, so the scheme is not yet
-		// fixed and this occurrence could still start a "javascript:" URL.
+		// fixed and this occurrence could still start a "javascript:" URL. But
+		// the LITERAL text after that other occurrence is fixed: a "/", "?" or
+		// "#" there makes the URL relative, and a ":" terminates the scheme,
+		// before this occurrence — so it can no longer choose it. Only warn
+		// when the run after the last prior occurrence still leaves the scheme
+		// open.
 		if strings.Contains(ctx.valueSoFar, lintSentinelPrefix) {
-			out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+			last := strings.LastIndex(ctx.valueSoFar, lintSentinelPrefix)
+			if _, fixed := urlSchemeBefore(ctx.valueSoFar[last:]); !fixed {
+				out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+			}
 		} else {
 			scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
 			switch {
@@ -1172,69 +1295,24 @@ func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
 	for i := 0; i < len(prefix); i++ {
 		switch prefix[i] {
 		case ':':
-			return asciiLower(trimURLEdges(prefix[:i])), true
+			return asciiLower(trimURLLeading(prefix[:i])), true
 		case '/', '?', '#':
 			return "", true
-		case '&':
-			// prefix is already entity-decoded, so any '&' left is an
-			// UNTERMINATED reference; when it runs to the end, the
-			// interpolation right after it completes the reference ("java&#" +
-			// "115;" -> "javas"). The '&', '#' and following bytes are then not
-			// literal URL characters — the '#' in particular is not a fragment
-			// start — and the scheme is not settled: hand back the part before
-			// the '&', unfixed, so couldStillBecomeExecutable judges what the
-			// occurrence could still spell.
-			if isTrailingCharRefBody(prefix[i+1:]) {
-				return asciiLower(trimURLEdges(prefix[:i])), false
-			}
 		}
 	}
-	return asciiLower(trimURLEdges(prefix)), false
+	return asciiLower(trimURLLeading(prefix)), false
 }
 
-// trimURLEdges removes the leading and trailing bytes a browser strips from a
-// URL before resolving it — C0 controls and ASCII space, everything <= 0x20 —
-// and NOTHING else. strings.TrimSpace also trims Unicode whitespace (U+00A0,
-// U+2028, …) which a browser keeps, so a leading U+00A0 before "javascript:"
-// is NOT the javascript: scheme and must not be read as one.
-func trimURLEdges(s string) string {
-	return strings.TrimFunc(s, func(r rune) bool { return r <= 0x20 })
-}
-
-// isTrailingCharRefBody reports whether s — the bytes between a '&' and the end
-// of the prefix — is the body of a NUMERIC character reference still open for
-// the interpolation to complete: empty (a bare "&", which the value can turn
-// into "&#106;…"), "#", "#x"/"#X", or "#" then decimal digits (hex after "#x").
-// A numeric reference lets the value choose ANY code point, so the occurrence
-// can spell a scheme letter or a ':'. A NAMED reference in progress ("&am…") is
-// deliberately NOT matched: its completions are the fixed set of entities
-// beginning with those letters, none of which the value picks freely, so
-// treating it as scheme-choosing would warn on markup no value makes
-// executable — the false positive this file weighs above the rarer, more
-// esoteric named-reference miss (e.g. "javascript&col…" -> "&colon;").
-func isTrailingCharRefBody(s string) bool {
-	if s == "" {
-		return true // a bare trailing "&": the value can open "#…;"
-	}
-	if s[0] != '#' {
-		return false // a named reference in progress
-	}
-	rest := s[1:]
-	hex := false
-	if len(rest) > 0 && (rest[0] == 'x' || rest[0] == 'X') {
-		hex, rest = true, rest[1:]
-	}
-	for i := 0; i < len(rest); i++ {
-		c := rest[i]
-		if c >= '0' && c <= '9' {
-			continue
-		}
-		if hex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			continue
-		}
-		return false
-	}
-	return true
+// trimURLLeading removes only the LEADING bytes a browser strips from a URL
+// before resolving it — C0 controls and ASCII space, everything <= 0x20. It
+// does not trim the trailing edge, because this operates on the PREFIX before
+// an interpolation, whose trailing side is interior to the completed URL: a
+// space there ("java [value]") stays a space the value cannot cross, not an
+// edge, so "java script:" is not the javascript: scheme. And it does not trim
+// Unicode whitespace (U+00A0, U+2028, …), which a browser keeps, so a leading
+// U+00A0 before "javascript:" is not the javascript: scheme either.
+func trimURLLeading(s string) string {
+	return strings.TrimLeftFunc(s, func(r rune) bool { return r <= 0x20 })
 }
 
 // couldStillBecomeExecutable reports whether a value appended to this prefix
@@ -1471,22 +1549,27 @@ func expressionAttributeKind(attr string) string {
 //   - deciding a document phase: an empty text run or an <input type=[T]>
 //     before a <frameset> decides whether the frameset is honored, and so
 //     whether a <frame src=...> after it exists at all.
-//   - completing a NAMED character reference in a URL: `href="javascript&col[C]"`,
-//     C="on;" decodes to "javascript:". A NUMERIC one — `href="java&#[C]cript:"`,
-//     C="115;" — IS explored (urlSchemeBefore reads a trailing "&", "&#" or
-//     "&#x" as an unfixed scheme the value chooses), because the value picks any
-//     code point there; a named one can only complete to entities starting with
-//     the letters already written, so exploring it would warn where no value is
-//     executable.
-// The two deciding cases the engine DOES explore are encoding=/type=
-// (substituteWorstCase) and the numeric character reference just named, because
-// each selects from a bounded, common set; the rest are left because the
-// completion is unbounded and re-warning the tail on the chance the author chose
-// the one dangerous value flags markup safe under every other choice — the false
-// positive this file treats as worse than a miss. Where there IS a completing
-// occurrence it is warned in place (the interpolated name, the unquoted value,
-// the numeric-reference scheme), which is the signal that the region is
-// author-controlled.
+//   - completing a character reference: `href="java&#[C]cript:"`, C="115;"
+//     decodes to "javascript:"; and the same across two interpolations —
+//     `encoding="text&#[E];html"` with E="47" selects text/html, making a later
+//     <script> a program. This is NOT explored, in a URL or an encoding value.
+//     An attempt to read a trailing "&#" as a value-chosen scheme was reverted:
+//     ctx.valueSoFar is entity-DECODED, so an existing partial reference has
+//     already lost the digits the answer depends on ("&#0" is U+FFFD there, not
+//     "0"), and reasoning from the decoded prefix produced both a miss and a
+//     false positive. A completing occurrence in a reference is therefore not
+//     warned in place either — the reference spans the occurrence, and what it
+//     resolves to is exactly the unexplored value.
+// The one deciding case the engine DOES explore is a SINGLE encoding=/type=
+// interpolation (substituteWorstCase parses it at its dangerous completion),
+// because a namespace or stylesheet it might select is a common, bounded case;
+// the rest are left because the completion is unbounded and re-warning the tail
+// on the chance the author chose the one dangerous value flags markup safe under
+// every other choice — the false positive this file treats as worse than a
+// miss. Where there IS a completing occurrence whose OWN placement is dangerous
+// it is warned in place (the interpolated name, the unquoted value), which is
+// the signal that the region is author-controlled; a reference-completing one,
+// whose own placement is an ordinary escaped value, is not.
 //
 // A last, non-exploitable corner: a character reference in the template that
 // decodes to a genuine occurrence's sentinel could shadow it. The sentinel

@@ -1387,10 +1387,14 @@ func TestLintNoscriptBodyPlacement(t *testing.T) {
 }
 
 // A "<![CDATA[" section is real character data in foreign content and a bogus
-// comment in HTML — the tokenizer's AllowCDATA flag is how the scan follows the
-// namespace it already tracks. Both directions matter: character data that
-// looks like markup must not move the scan, and a program body Illustrator or
-// Inkscape wrapped in CDATA still reaches the language.
+// comment in HTML. The PARSE is what draws that line — classifyByParse places a
+// CDATA sentinel in the text node it is (kText, or kScript/kStyle for an SVG
+// program body). The lexical pass does not: it runs the tokenizer without
+// AllowCDATA and tracks no namespace, so it reads a "<![CDATA[" as a bogus
+// comment and supplies no fact there, leaving the parser to answer. Both
+// directions matter: character data that looks like markup must not draw a
+// warning, and a program body Illustrator or Inkscape wrapped in CDATA still
+// reaches the language.
 func TestLintCDATAIsCharacterDataInForeignContent(t *testing.T) {
 	t.Run("a CDATA-wrapped SVG program body still reaches the language", func(t *testing.T) {
 		for _, tc := range []struct{ src, want string }{
@@ -2670,7 +2674,7 @@ func TestLintAttributeContextRoundTwelve(t *testing.T) {
 			`<svg></s[property path='Close']><iframe srcdoc="x">`,
 			`<noscript></noscr[property path='Close']><iframe srcdoc="x">`,
 		} {
-			if !warns(src, "interpolated into a tag or attribute NAME") {
+			if !warns(src, "choosing which element it closes") {
 				t.Errorf("the value can complete the end tag: %s", src)
 			}
 		}
@@ -2904,7 +2908,7 @@ func TestLintAttributeContextRoundFifteen(t *testing.T) {
 	t.Run("a sentinel in an end-tag NAME is fail-closed", func(t *testing.T) {
 		// </s[Close]> could complete </svg>, which would close the svg and
 		// make the iframe after it a live HTML srcdoc; warn on the name.
-		if !warns(`<svg></s[property path='Close']><iframe srcdoc="[property path='Name']"></iframe>`, "interpolated into a tag or attribute NAME") {
+		if !warns(`<svg></s[property path='Close']><iframe srcdoc="[property path='Name']"></iframe>`, "choosing which element it closes") {
 			t.Error("an interpolated end-tag name could close a real element")
 		}
 	})
@@ -3024,7 +3028,7 @@ func TestLintAttributeContextRoundSixteen(t *testing.T) {
 	// COMPLETE an end tag or ADD a deciding attribute is warned in place, but
 	// the content after it is not re-warned under that completion.
 	t.Run("the completing occurrence itself is always warned", func(t *testing.T) {
-		if !warns(`<textarea></text[property path='Close']><iframe srcdoc="[property path='Tail']"></iframe>`, "interpolated into a tag or attribute NAME") {
+		if !warns(`<textarea></text[property path='Close']><iframe srcdoc="[property path='Tail']"></iframe>`, "choosing which element it closes") {
 			t.Error("the end-tag-completing occurrence is warned")
 		}
 		if !warns(`<math><annotation-xml title=[property path='A']><script>let x="[property path='B']"</script></annotation-xml></math>`, "unquoted attribute value") {
@@ -3268,33 +3272,127 @@ func TestLintAttributeContextRoundTwenty(t *testing.T) {
 		}
 	})
 
-	t.Run("a value completing a trailing character reference chooses the scheme", func(t *testing.T) {
-		// java&#[value]cript: — a value of "115;" completes &#115; to 's',
-		// building javascript:. The '#' is a char-ref body, NOT a URL fragment
-		// start, and the occurrence controls a scheme character.
+	t.Run("completing a character reference in a URL prefix is unexplored residue", func(t *testing.T) {
+		// "java&#[C]cript:" with C="115;" decodes to "javascript:", but the
+		// engine cannot see this: ctx.valueSoFar is entity-decoded, so an
+		// EXISTING partial numeric reference ("&#0", "&#2") has already lost its
+		// digits, and reasoning about what a value could complete from the
+		// decoded prefix produced both a miss and a false positive (round 21).
+		// It is documented as residue — a value that changes the tree via a
+		// reference the engine did not resolve — and stays silent rather than
+		// warn from a broken model. A miss here is preferred to that.
 		src := `<a href="java&#[property path='C']cript:alert(1)">x</a>`
-		if !warns(src, "choose the scheme") {
-			t.Errorf("the occurrence completes a char ref into javascript:, got %q", lintWarnings(src))
+		if warns(src, "choose the scheme") {
+			t.Errorf("char-ref completion is unexplored residue; the engine must not guess it, got %q", lintWarnings(src))
+		}
+	})
+}
+
+func TestLintAttributeContextRoundTwentyOne(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	countScheme := func(src string) int {
+		n := 0
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "choose the scheme") {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("literal text after an unquoted occurrence does not hide the injection", func(t *testing.T) {
+		// "title=[property]SAFE" -> title=x onclick=... SAFE: the injected
+		// onclick survives. The probe must delimit its own name so the glued
+		// "SAFE" does not corrupt it and silently drop the probe.
+		src := `<div title=fixed title=[property path='Name']SAFE>x</div>`
+		if !warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("trailing literal must not hide the sibling injection, got %q", lintWarnings(src))
 		}
 	})
 
-	t.Run("a trailing character reference that cannot reach an executable scheme is quiet", func(t *testing.T) {
-		// "page.html&#[value]" — the settled prefix "page.html" is no prefix of
-		// any executable scheme, so completing the ref cannot build one.
-		src := `<a href="page.html&#[property path='C']">x</a>`
-		if warns(src, "choose the scheme") {
-			t.Errorf("no executable scheme starts with page.html, got %q", lintWarnings(src))
+	t.Run("a raw= value on a merge-dropped body attribute injects live", func(t *testing.T) {
+		// The second <body>'s title duplicates the singleton's and is dropped,
+		// but a raw= value closes the quote and adds a live sibling to the body.
+		src := `<body title=fixed><body title="[property path='Name' raw='true']">x`
+		if !warns(src, "close the attribute") {
+			t.Errorf("raw= breaks out onto the live merged body, got %q", lintWarnings(src))
 		}
 	})
 
-	t.Run("a NAMED trailing reference is not treated as scheme-choosing", func(t *testing.T) {
-		// Only a NUMERIC reference lets the value pick an arbitrary character.
-		// "&am[value]" can only complete to entities beginning "am" (&amp; etc.),
-		// none of which is a scheme letter, so warning here would be a false
-		// positive — worse than the rare named-reference miss.
-		src := `<a href="&am[property path='C']">x</a>`
-		if warns(src, "choose the scheme") {
-			t.Errorf("a named ref in progress cannot pick a scheme letter, got %q", lintWarnings(src))
+	t.Run("a raw= discarded value past a foreign-template surrender is silent", func(t *testing.T) {
+		// The <div> is past x/net's surrender, so the parser builds nothing
+		// there; the raw= breakout reaches no live markup.
+		src := `<svg><desc><template><div title=fixed title="[property path='Name' raw='true']">tail`
+		if warns(src, "close the attribute") {
+			t.Errorf("a dead position has no live markup for raw= to reach, got %q", lintWarnings(src))
+		}
+		// Control: a live within-tag discarded raw= still warns.
+		live := `<div title="a" title="[property path='Name' raw='true']">x</div>`
+		if !warns(live, "close the attribute") {
+			t.Errorf("a live discarded raw= is still a breakout, got %q", lintWarnings(live))
+		}
+	})
+
+	t.Run("a fixed delimiter between occurrences settles the scheme", func(t *testing.T) {
+		// href="[A]/[B]": the literal "/" after A makes the URL relative, so B
+		// (after it) cannot choose the scheme — only A is warned.
+		if got := countScheme(`<a href="[property path='A']/[property path='B']">x</a>`); got != 1 {
+			t.Errorf("only the first occurrence can choose the scheme, got %d warnings", got)
+		}
+		// Control: adjacent occurrences both leave the scheme open.
+		if got := countScheme(`<a href="[property path='A'][property path='B']">x</a>`); got != 2 {
+			t.Errorf("adjacent occurrences both can choose the scheme, got %d", got)
+		}
+	})
+
+	t.Run("an interior space in a URL prefix is not an edge", func(t *testing.T) {
+		// href="java [P]" -> "java script:": the space is interior to the
+		// completed URL, so it is not the javascript: scheme.
+		if warns(`<a href="java [property path='P']">x</a>`, "choose the scheme") {
+			t.Errorf("an interior space invalidates the scheme, got %q", lintWarnings(`<a href="java [property path='P']">x</a>`))
+		}
+		// Control: a LEADING space is stripped by the browser, so it warns.
+		if !warns(`<a href=" java[property path='P']">x</a>`, "choose the scheme") {
+			t.Error("a leading space is stripped; the value can still complete javascript:")
+		}
+	})
+
+	t.Run("character reference completion is unexplored residue", func(t *testing.T) {
+		// Both a URL scheme and an encoding value completed across a reference
+		// are unexplored — the engine reasons off the decoded prefix and cannot
+		// see the digits. Silent rather than warn from a broken model.
+		if warns(`<a href="java&#[property path='C']cript:alert(1)">x</a>`, "choose the scheme") {
+			t.Error("URL char-ref completion is residue")
+		}
+		src := "<math><annotation-xml encoding=\"text&#[property path='E'];html\"><script>const x=`[property path='N']`</script></annotation-xml></math>"
+		if warns(src, "JavaScript") {
+			t.Error("encoding char-ref completion is residue")
+		}
+	})
+
+	t.Run("an end-tag name warns about which element it closes, not added attributes", func(t *testing.T) {
+		src := `<svg></s[property path='Close']><iframe srcdoc="[property path='Name']"></iframe>`
+		if !warns(src, "choosing which element it closes") {
+			t.Errorf("an end-tag name chooses which element closes, got %q", lintWarnings(src))
+		}
+		if warns(src, "adds attributes of its own") {
+			t.Error("end-tag attributes are ignored; the message must not claim they are added")
+		}
+	})
+
+	t.Run("a sentinel inside foreign CDATA is inert text", func(t *testing.T) {
+		// The parse places CDATA content in a text node; the lexical pass reads
+		// the bogus comment and supplies no fact, so the value is inert.
+		src := `<svg><![CDATA[ <a href="javascript:[property path='P']"> ]]></svg>`
+		if warns(src, "javascript") || warns(src, "choose the scheme") {
+			t.Errorf("CDATA content is character data, not a live link, got %q", lintWarnings(src))
 		}
 	})
 }
