@@ -108,6 +108,8 @@ func migrateWALTestSchema(t *testing.T, db *gorm.DB) {
 // several AddResource calls on the server at once. The pre-existing shape of
 // AddResource could not survive that on SQLite:
 //
+// The shape it used to have — this is the defect, not the code today:
+//
 //	tx := ctx.db.Begin()                    // deferred — takes no lock
 //	tx.Where("hash = ?", ...).First(...)    // first statement is a READ → WAL snapshot
 //	io.Copy(savedFile, tempFile)            // the whole file, transaction still open

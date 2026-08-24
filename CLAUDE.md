@@ -166,11 +166,17 @@ intercepts the submit and sends one request per file instead,
   picks up the light-DOM hidden input `schema-form-mode` appends for `Meta`.
   Taxonomy travels as ids (creatable selectors persist the entity first), so
   replaying is idempotent.
-- **`onSubmit` returns early on `event.defaultPrevented`.** `schema-form-mode`
-  registers its own bubble-phase submit listener and `preventDefault()`s when the
-  Meta schema fails validation; `stopPropagation` does not stop a sibling
-  listener on the same element, so without the check the batch uploads past a
-  validation failure.
+- **The submit handler is registered on `document`, not on the form.**
+  `schema-form-mode` registers its own submit listener on that same form and
+  calls `preventDefault()` + `stopPropagation()` when the Meta schema fails
+  validation. It is created inside an `x-if`, so it connects *after* Alpine has
+  wired the form — and listeners on one element fire in registration order, so an
+  `@submit` there would run first and upload the batch past a visible validation
+  error. Listening on an ancestor makes `stopPropagation()` do what it says; the
+  `event.defaultPrevented` check that remains is a second line, not the
+  mechanism. `TestPhantom`-style reasoning applies to the guard too: the e2e that
+  covers it uploads eleven files against a required-field schema and asserts zero
+  requests, and it was verified failing with the handler moved back onto the form.
 - **`max_upload_size` becomes a per-file bound** under the widget, which is the
   point rather than a regression — it bounds a *request*, and a request is now
   one file. Each file is pre-checked in the browser, because the server's own

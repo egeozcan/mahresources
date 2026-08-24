@@ -24,7 +24,7 @@ boot value.
 | Key | Type | Bounds | Boot flag | Takes effect |
 | --- | --- | --- | --- | --- |
 | `max_upload_size` | int64 (bytes) | 1 KiB–1 TiB; 0 = unlimited | `-max-upload-size` | next upload request |
-| `upload_concurrency` | int | 1–16 | (runtime only) | next bulk upload |
+| `upload_concurrency` | int | 1–16 | (runtime only) | next page render |
 | `upload_widget_file_threshold` | int | 1–10000 | (runtime only) | next page render |
 | `upload_widget_size_threshold` | int64 (bytes) | 1 MiB–1 TiB | (runtime only) | next page render |
 | `max_import_size` | int64 (bytes) | 1 MiB–1 TiB | `-max-import-size` | next import parse |
@@ -54,6 +54,10 @@ create-resource page, which has two ways of submitting:
   `upload_concurrency` at a time, with a progress bar and per-file errors. Each
   file is then capped individually, and the widget refuses an oversized file in
   the browser rather than spending the transfer to be rejected.
+
+All three are read when the create-resource page renders and embedded in the
+form, so a change applies to the next page load rather than to an upload already
+in flight.
 
 Set `upload_widget_file_threshold` to `1` to put every multi-file selection
 through the widget. SQLite has exactly one writer, so `upload_concurrency` above
