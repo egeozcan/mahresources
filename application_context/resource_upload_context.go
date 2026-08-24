@@ -1097,29 +1097,40 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	height := preHeight
 	fileSize := preFileSize
 
-	res := &models.Resource{
-		Name:               name,
-		Hash:               hash,
-		HashType:           "SHA1",
-		Location:           filePath,
-		Meta:               []byte(resourceQuery.Meta),
-		OwnMeta:            []byte("{}"),
-		Category:           resourceQuery.Category,
-		ContentType:        fileMime.String(),
-		ContentCategory:    resourceQuery.ContentCategory,
-		ResourceCategoryId: resolvedCategoryID,
-		FileSize:           fileSize,
-		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
-		Description:        resourceQuery.Description,
-		OriginalLocation:   resourceQuery.OriginalLocation,
-		OriginalName:       resourceQuery.OriginalName,
-		Width:              uint(width),
-		Height:             uint(height),
-	}
-	// BH-023: set StorageLocation when an alt-fs key was provided.
-	if resourceQuery.PathName != "" {
-		pn := resourceQuery.PathName
-		res.StorageLocation = &pn
+	// A factory rather than a value, because phase 3 may run more than once and
+	// its transaction mutates what it is given: GORM stamps the id and the GUID,
+	// AssignResourceToSeries writes SeriesID and OwnMeta (series_context.go:227,
+	// 243, 247). Re-running an attempt with a struct the previous one had
+	// mutated carries a SeriesID whose row the rollback removed — on SQLite,
+	// where foreign keys are ON, the retry then dies with "FOREIGN KEY
+	// constraint failed" instead of succeeding. Building it fresh each attempt
+	// closes that whole class rather than resetting the fields known today.
+	newResource := func() *models.Resource {
+		r := &models.Resource{
+			Name:               name,
+			Hash:               hash,
+			HashType:           "SHA1",
+			Location:           filePath,
+			Meta:               []byte(resourceQuery.Meta),
+			OwnMeta:            []byte("{}"),
+			Category:           resourceQuery.Category,
+			ContentType:        fileMime.String(),
+			ContentCategory:    resourceQuery.ContentCategory,
+			ResourceCategoryId: resolvedCategoryID,
+			FileSize:           fileSize,
+			OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
+			Description:        resourceQuery.Description,
+			OriginalLocation:   resourceQuery.OriginalLocation,
+			OriginalName:       resourceQuery.OriginalName,
+			Width:              uint(width),
+			Height:             uint(height),
+		}
+		// BH-023: set StorageLocation when an alt-fs key was provided.
+		if resourceQuery.PathName != "" {
+			pn := resourceQuery.PathName
+			r.StorageLocation = &pn
+		}
+		return r
 	}
 
 	// ---------------------------------------------------------------------
@@ -1148,11 +1159,9 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	// a failed attempt rolled back, so nothing partial persisted, and the file
 	// is already on disk from phase 2 (content-addressed, so the Stat branch
 	// there reuses it rather than writing it twice).
+	var res *models.Resource
 	for attempt := 0; ; attempt++ {
-		// GORM stamps res.ID from the INSERT, and a later statement in the same
-		// transaction can still fail — re-running Save with an id set would be
-		// an UPDATE of a row the rollback removed, silently matching nothing.
-		res.ID = 0
+		res = newResource()
 		err := ctx.insertUploadedResource(res, resourceQuery)
 		if err == nil {
 			break

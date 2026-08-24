@@ -2,13 +2,16 @@ package application_context
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -175,5 +178,95 @@ func testConcurrentDistinctUploads(t *testing.T, maxConns int) {
 	}
 	if stored != concurrency {
 		t.Fatalf("expected %d resources, found %d", concurrency, stored)
+	}
+}
+
+// TestUploadRetryRebuildsTheResource pins the one thing a retry of the write
+// transaction must get right: it may not reuse a struct the previous attempt
+// mutated.
+//
+// The transaction hands `res` to GORM (which stamps the id and the GUID) and to
+// AssignResourceToSeries, which writes SeriesID and OwnMeta
+// (series_context.go:227,243,247). A rollback removes the series row but not the
+// pointer to it, so an attempt that reused the struct carried a SeriesID
+// referencing nothing — and SQLite runs with PRAGMA foreign_keys = ON, so the
+// retry died with "FOREIGN KEY constraint failed" rather than succeeding.
+//
+// The contention is injected rather than raced for: a lock this test waited to
+// lose would make it a coin flip, and the interleave that matters here is
+// "something after the series assignment failed", which is precisely specifiable.
+func TestUploadRetryRebuildsTheResource(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	ownerGroup := &models.Group{Name: "retry-owner"}
+	if err := ctx.db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("create owner group: %v", err)
+	}
+
+	// Fail the first resource_versions INSERT only. That statement runs after
+	// GetOrCreateSeriesForResource and AssignResourceToSeries, so the attempt it
+	// kills is one that has already written SeriesID onto res.
+	var failures atomic.Int32
+	err := ctx.db.Callback().Create().Before("gorm:create").Register(
+		"test:fail_first_version_insert",
+		func(db *gorm.DB) {
+			if db.Statement == nil || db.Statement.Table != "resource_versions" {
+				return
+			}
+			if failures.Add(1) == 1 {
+				_ = db.AddError(errors.New("database is locked"))
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("register injection callback: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Callback().Create().Remove("test:fail_first_version_insert")
+	})
+
+	payload := make([]byte, 4096)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+
+	res, err := ctx.AddResource(newBytesFile(payload), "retried.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:       "retried",
+			OwnerId:    ownerGroup.ID,
+			SeriesSlug: "retry-series",
+		},
+	})
+	if err != nil {
+		t.Fatalf("upload should have survived one injected lock failure, got: %v", err)
+	}
+	if res == nil || res.ID == 0 {
+		t.Fatal("expected a persisted resource")
+	}
+	if failures.Load() < 2 {
+		// A control: if the injection never fired twice the retry never happened
+		// and this test proves nothing about it.
+		t.Fatalf("expected the version insert to be attempted at least twice, saw %d", failures.Load())
+	}
+
+	// The surviving row must point at a series that actually exists.
+	var stored models.Resource
+	if err := ctx.db.First(&stored, res.ID).Error; err != nil {
+		t.Fatalf("re-read resource: %v", err)
+	}
+	if stored.SeriesID == nil {
+		t.Fatal("expected the retried upload to still land in its series")
+	}
+	var series models.Series
+	if err := ctx.db.First(&series, *stored.SeriesID).Error; err != nil {
+		t.Fatalf("the resource points at a series that does not exist: %v", err)
+	}
+
+	// Exactly one resource and one version, not one per attempt.
+	var resources, versions int64
+	ctx.db.Model(&models.Resource{}).Count(&resources)
+	ctx.db.Model(&models.ResourceVersion{}).Count(&versions)
+	if resources != 1 || versions != 1 {
+		t.Fatalf("retry duplicated rows: %d resources, %d versions", resources, versions)
 	}
 }

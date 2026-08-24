@@ -11,7 +11,10 @@
     {# Phase transitions are announced through the shared live region in the    #}
     {# component (window.mahAnnounce), so this text is visual only.             #}
     <div class="mt-2 flex justify-between text-xs text-stone-600">
-        <span data-testid="bulk-upload-summary" x-text="formatProgress()"></span>
+        {# tabindex="-1" so cancel() can park focus here: the Cancel button is  #}
+        {# hidden by the phase change that follows it, and focus would otherwise #}
+        {# fall to <body>. Not reachable by Tab.                                 #}
+        <span data-testid="bulk-upload-summary" tabindex="-1" x-text="formatProgress()"></span>
         <span x-show="phase === 'uploading'" x-text="inFlight.length + ' in flight'"></span>
     </div>
 
@@ -66,8 +69,17 @@
         </ul>
     </div>
 
+    {# Aborting an XHR stops the browser reading the response, not the server  #}
+    {# processing the request. A file that was mid-flight may well have been    #}
+    {# saved, and saying otherwise would be a guess presented as a fact.        #}
+    <div x-show="cancelledInFlight.length > 0" class="mt-3" role="status" data-testid="bulk-upload-cancelled">
+        <p class="text-sm text-stone-700"
+           x-text="cancelledInFlight.length + ' upload' + (cancelledInFlight.length === 1 ? ' was' : 's were') + ' still in progress when you cancelled. The server may have saved ' + (cancelledInFlight.length === 1 ? 'it' : 'them') + ' anyway — check the resource list before uploading again.'"></p>
+    </div>
+
     <p x-show="phase === 'partial'" class="mt-3 text-xs text-stone-600">
         Files that uploaded successfully have already been saved and are not re-sent.
+        Choose files again to start a new batch.
     </p>
 
     <div class="mt-4 flex gap-2">

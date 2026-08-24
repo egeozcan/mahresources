@@ -21,8 +21,13 @@
         {# only ever exists where the name does.                                  #}
         <button type="submit"
                 {% if busyWhenUploading %}
-                :disabled="phase === 'uploading'"
-                :class="phase === 'uploading' ? 'opacity-60 cursor-not-allowed' : ''"
+                {# Disabled through `partial` too, not just `uploading`: Save  #}
+                {# rebuilds the batch from the file input, so on a partial run   #}
+                {# it would resend the files that already succeeded and turn     #}
+                {# every one of them into a duplicate failure. Retry failed is   #}
+                {# the control for that state; choosing files again starts over. #}
+                :disabled="phase === 'uploading' || phase === 'partial'"
+                :class="phase === 'uploading' || phase === 'partial' ? 'opacity-60 cursor-not-allowed' : ''"
                 {% endif %}
                 class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Save

@@ -192,8 +192,12 @@ test.describe('Bulk upload widget', () => {
     // Never a bare prefix — the bug downloadCockpit.js:570 documents.
     expect(announced.label).not.toBe('Upload progress: ');
     expect(announced.label).toContain('of 11 files');
-    // The total is known from the picker, so the bar is determinate.
+    // The total is known from the picker, so the bar must be determinate.
+    // Asserted as a present string first: Number(null) is 0, so a bar that had
+    // lost aria-valuenow entirely would sail through a bare >= 0 check.
+    expect(announced.valuenow).not.toBeNull();
     expect(Number(announced.valuenow)).toBeGreaterThanOrEqual(0);
+    expect(Number(announced.valuenow)).toBeLessThanOrEqual(100);
 
     // Save is unavailable while the batch is in flight.
     await expect(page.locator('button[type="submit"]:has-text("Save")')).toBeDisabled();
@@ -290,6 +294,119 @@ test.describe('Bulk upload widget', () => {
     }
   });
 
+  test('a failed Meta schema validation stops the batch before anything uploads', async ({ page, apiClient }) => {
+    // The ordering trap. `schema-form-mode` registers its own submit listener on
+    // this form and preventDefault()s + stopPropagation()s when the schema fails.
+    // It is created inside an x-if, so it connects AFTER Alpine wires the form —
+    // and listeners on one element fire in registration order. A handler
+    // attached to the form itself would therefore run first and upload eleven
+    // files past a visible validation error.
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const category = await apiClient.createResourceCategory(
+      `Required Meta ${stamp}`,
+      'has a required field',
+      {
+        MetaSchema: JSON.stringify({
+          type: 'object',
+          properties: { ticket: { type: 'string', minLength: 3 } },
+          required: ['ticket'],
+        }),
+      }
+    );
+
+    try {
+      await gotoNewResource(page);
+      await selectAutocomplete(page, 'Resource Category', category.Name, 'ResourceCategoryId');
+
+      // The schema form must actually be on the page, or this test proves
+      // nothing about ordering.
+      await expect(page.locator('schema-form-mode')).toBeVisible({ timeout: 10000 });
+
+      await page.locator('input[type="file"]').setInputFiles(elevenUniqueFiles());
+
+      const uploadRequests: string[] = [];
+      page.on('request', (r) => {
+        if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploadRequests.push(r.url());
+      });
+
+      await page.locator('button[type="submit"]:has-text("Save")').click();
+
+      // Give a handler that ignored the validation time to start requests.
+      await page.waitForTimeout(1500);
+
+      expect(uploadRequests).toHaveLength(0);
+      await expect(page.getByTestId('bulk-upload-panel')).toBeHidden();
+      expect(page.url()).toContain('/resource/new');
+    } finally {
+      await apiClient.deleteResourceCategory(category.ID).catch(() => {});
+    }
+  });
+
+  test('Save cannot resend a partial batch', async ({ page, apiClient }) => {
+    // Save rebuilds the batch from the file input. Left enabled after a partial
+    // run it would resend the files that already succeeded, turning each of them
+    // into a duplicate failure — while the panel promised they were not re-sent.
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const category = await apiClient.createCategory(`Partial Cat ${stamp}`);
+    const owner = await apiClient.createGroup({
+      name: `Partial Owner ${stamp}`,
+      categoryId: category.ID,
+    });
+
+    const collider = uniqueAssetFile(path.join(ASSETS, 'sample-image-35.png'));
+    await apiClient.createResource({
+      filePath: collider,
+      name: `Partial Collider ${stamp}`,
+      ownerId: owner.ID,
+      exactBytes: true,
+    });
+
+    await gotoNewResource(page);
+    await page.locator('input[type="file"]').setInputFiles([collider, ...uniqueFilesFrom(2, 10)]);
+    await selectAutocomplete(page, 'Owner', owner.Name, 'ownerId');
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    await expect(page.getByTestId('bulk-upload-failures')).toBeVisible({ timeout: 60000 });
+    await waitForBatchToSettle(page);
+
+    await expect(page.locator('button[type="submit"]:has-text("Save")')).toBeDisabled();
+
+    // Choosing files again is the way back to a fresh batch.
+    await page.locator('input[type="file"]').setInputFiles(uniqueFilesFrom(20, 2));
+    await expect(page.getByTestId('bulk-upload-panel')).toBeHidden();
+    await expect(page.locator('button[type="submit"]:has-text("Save")')).toBeEnabled();
+  });
+
+  test('cancelling moves focus onto the panel instead of dropping it to the body', async ({ page }) => {
+    // Cancel is hidden by the phase change it causes, and a focused element that
+    // disappears sends focus to <body> — a keyboard or screen-reader user would
+    // have to navigate the whole page again.
+    let openLatch: () => void = () => {};
+    const latch = new Promise<void>((resolve) => {
+      openLatch = resolve;
+    });
+    let stalling = true;
+    await page.route('**/v1/resource', async (route) => {
+      if (route.request().method() !== 'POST' || !stalling) return route.fallback();
+      await latch;
+      await route.fallback();
+    });
+
+    await gotoNewResource(page);
+    await page.locator('input[type="file"]').setInputFiles(elevenUniqueFiles());
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    const cancel = page.getByTestId('bulk-upload-cancel');
+    await expect(cancel).toBeVisible({ timeout: 10000 });
+    await cancel.click();
+    stalling = false;
+    openLatch();
+
+    await expect(cancel).toBeHidden({ timeout: 30000 });
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName);
+    expect(focused).toBe('bulk-upload-summary');
+  });
+
   test('the file-count threshold is driven by the runtime setting', async ({ page }) => {
     // Reset in a finally: the settings row is process-wide and one ephemeral
     // server is shared by every spec this worker runs.
@@ -303,6 +420,13 @@ test.describe('Bulk upload widget', () => {
         'data-upload-file-threshold',
         '2'
       );
+
+      // And that the lowered value actually changes behaviour: three files is
+      // below the shipped default of 10, so a widget that ignored the setting
+      // would leave this hint hidden.
+      await page.locator('input[type="file"]').setInputFiles(uniqueFilesFrom(2, 3));
+      await expect(page.getByTestId('bulk-upload-hint')).toBeVisible();
+      await expect(page.getByTestId('bulk-upload-hint')).toContainText('3 files');
     } finally {
       await page.request.delete('/v1/admin/settings/upload_widget_file_threshold');
     }

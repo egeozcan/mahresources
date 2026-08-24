@@ -29,7 +29,10 @@
     data-upload-file-threshold="{{ uploadWidgetFileCount }}"
     data-upload-size-threshold="{{ uploadWidgetSizeBytes }}"
     data-max-upload-size="{{ maxUploadSize }}"
-    @submit="onSubmit($event)"
+    {# No @submit here on purpose: the handler is registered on `document` in    #}
+    {# init(), so that schema-form-mode's stopPropagation() on a failed Meta     #}
+    {# validation actually prevents the upload. A listener on this element would #}
+    {# fire before it — see the comment in resourceUpload.js init().             #}
     :action="url.trim() && background ? '/v1/resource/remote?background=true' : '/v1/resource{% if resource.ID %}/edit{% endif %}'"
     :enctype="url.trim() && background ? 'application/x-www-form-urlencoded' : '{% if !resource.ID %}multipart/form-data{% endif %}'"
 >

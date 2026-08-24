@@ -15,6 +15,7 @@
 
 import { csrfToken } from '../utils/csrfToken.js';
 import { parseUploadError } from '../utils/uploadError.js';
+import { focusOn } from '../utils/focus.js';
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for unit tests)
@@ -75,16 +76,21 @@ export function formatBytes(bytes) {
 }
 
 /**
- * A failure the server will answer identically on every retry.
+ * A failure that a retry cannot change.
  *
- * A 409 means the bytes already exist; retrying re-sends them to be refused
- * again. The row links to the colliding resource instead, which is the only
- * useful action left.
+ * Every deterministic 4xx qualifies, not only the duplicate 409: an oversized
+ * file (refused in the browser, recorded as 413), an image the server cannot
+ * decode (400) and a stale CSRF token (403) all answer identically however many
+ * times the same bytes are sent. The exceptions are the two 4xx codes that mean
+ * "try again" — 408 Request Timeout and 429 Too Many Requests.
+ *
  * @param {{httpStatus: number}} file
  * @returns {boolean}
  */
 export function isPermanentFailure(file) {
-  return file.httpStatus === 409;
+  const s = file.httpStatus;
+  if (s === 408 || s === 429) return false;
+  return s >= 400 && s < 500;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +127,22 @@ export function resourceUpload() {
 
     init() {
       const d = this.$el.dataset;
+      // The submit handler is registered on `document`, not as @submit on the
+      // form, and that is load-bearing rather than stylistic.
+      //
+      // `schema-form-mode` registers its own submit listener on this same form
+      // and calls preventDefault() + stopPropagation() when the Meta schema
+      // fails validation. It is created inside an `x-if`, so it connects *after*
+      // Alpine has wired the form — and listeners on one element fire in
+      // registration order, so an @submit here would run first and start
+      // uploading before validation had a chance to object. Listening on an
+      // ancestor instead means stopPropagation() does exactly what it says: the
+      // event never reaches this handler, and nothing is uploaded.
+      this._submitHandler = (event) => {
+        if (event.target !== this.$el) return;
+        this.onSubmit(event);
+      };
+      document.addEventListener('submit', this._submitHandler);
       // Read from data-* attributes rather than an interpolated x-data
       // expression: `url` is a reflected query parameter, and Pongo2 escapes a
       // quote to &#39;, which the HTML parser decodes back to a quote before
@@ -144,6 +166,7 @@ export function resourceUpload() {
 
     destroy() {
       window.removeEventListener('beforeunload', this._beforeUnload);
+      document.removeEventListener('submit', this._submitHandler);
       this.abortAll();
     },
 
@@ -152,6 +175,15 @@ export function resourceUpload() {
     /** Recompute the threshold decision whenever the picker changes. */
     onFilesChosen(event) {
       const picked = [...(event?.target?.files || [])];
+      // A fresh selection is a fresh batch. Without this the panel from a
+      // previous partial run stays on screen describing files that are no longer
+      // selected, and Save stays disabled with no way back to `idle`.
+      if (this.phase !== 'uploading') {
+        this.phase = 'idle';
+        this.files = [];
+        this.doneCount = 0;
+        this.cancelled = false;
+      }
       this.selectionCount = picked.length;
       this.selectionBytes = picked.reduce((sum, f) => sum + f.size, 0);
       this.willUseWidget = shouldUseClientUpload({
@@ -231,7 +263,18 @@ export function resourceUpload() {
       const worker = async () => {
         for (let i = next(); i !== -1; i = next()) {
           if (this.cancelled) return;
-          await this.uploadOne(i);
+          try {
+            await this.uploadOne(i);
+          } catch (err) {
+            // uploadOne resolves on every path it knows about, so reaching here
+            // means something unforeseen threw. Swallowing it into the file's
+            // own row matters: an escaping rejection would reject Promise.all,
+            // skip finish(), and leave the panel stuck in 'uploading' forever
+            // with Save disabled and no cancel that ends anything.
+            const entry = this.files[i];
+            entry.status = 'failed';
+            entry.error = err?.message || 'Upload failed unexpectedly.';
+          }
         }
       };
 
@@ -246,13 +289,20 @@ export function resourceUpload() {
 
       if (this.cancelled) {
         this.phase = 'partial';
-        announce(`Upload cancelled. ${this.doneCount} of ${this.files.length} files were saved.`);
+        const inFlight = this.cancelledInFlight.length;
+        announce(
+          inFlight > 0
+            ? `Upload cancelled. ${this.doneCount} of ${this.files.length} files were saved, and ${inFlight} were still in progress, which the server may have saved anyway.`
+            : `Upload cancelled. ${this.doneCount} of ${this.files.length} files were saved.`
+        );
+        this.parkFocus();
         return;
       }
 
       if (failed.length > 0) {
         this.phase = 'partial';
         announce(`${this.doneCount} uploaded, ${failed.length} failed.`);
+        this.parkFocus();
         return;
       }
 
@@ -350,8 +400,13 @@ export function resourceUpload() {
         };
 
         xhr.onabort = () => {
-          // A cancelled file is not a failure to report; it simply never ran.
-          entry.status = 'queued';
+          // Deliberately its own status, not 'queued'. Aborting an XHR stops the
+          // browser reading the response; it does not stop the server. A request
+          // whose body had already arrived may have been committed, so claiming
+          // the file was not saved would be a guess presented as a fact. The
+          // panel says so instead, and the row is neither counted as done nor
+          // offered for retry.
+          entry.status = 'cancelled';
           entry.loaded = 0;
           settle();
         };
@@ -369,7 +424,30 @@ export function resourceUpload() {
 
     cancel() {
       this.cancelled = true;
+      // Cancel is about to be hidden by the phase change, and the browser drops
+      // focus to <body> when the focused element disappears — a keyboard or
+      // screen-reader user would have to navigate the whole page again. finish()
+      // parks focus on the panel summary instead.
+      this._returnFocusToPanel = true;
       this.abortAll();
+    },
+
+    /**
+     * Move focus onto the panel summary when the control that had it is about to
+     * disappear. Deferred by a macrotask: Alpine has not applied the x-show that
+     * hides Cancel yet, and focusing before that runs lets the teardown take
+     * focus straight back off again.
+     */
+    parkFocus() {
+      if (!this._returnFocusToPanel) return;
+      this._returnFocusToPanel = false;
+      setTimeout(() => {
+        // Optional chaining, not decoration: this runs a macrotask later, by
+        // which time the component may have been torn down. An exception in a
+        // timer is unhandled — it reaches the page as an uncaught error.
+        const summary = this.$el?.querySelector('[data-testid="bulk-upload-summary"]');
+        if (summary) focusOn(summary);
+      }, 0);
     },
 
     /** Files worth sending again — a 409 would be refused identically forever. */
@@ -399,6 +477,14 @@ export function resourceUpload() {
 
     get failed() {
       return this.files.filter((f) => f.status === 'failed');
+    },
+
+    /**
+     * Files whose request was aborted mid-flight. Their outcome is genuinely
+     * unknown to the browser — see xhr.onabort.
+     */
+    get cancelledInFlight() {
+      return this.files.filter((f) => f.status === 'cancelled');
     },
 
     get progress() {

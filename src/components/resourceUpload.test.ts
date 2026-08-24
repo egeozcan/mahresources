@@ -149,8 +149,6 @@ describe('the upload pool', () => {
   });
 
   it('keeps draining the queue after a file fails', async () => {
-    // A rejected worker would abandon its whole share of the queue, silently
-    // leaving files unsent while the batch reported itself finished.
     let completed = 0;
     const c = pooled(6, 2, async (i) => {
       if (i === 1) {
@@ -167,6 +165,27 @@ describe('the upload pool', () => {
 
     expect(completed).toBe(5);
     expect(c.phase).toBe('partial');
+  });
+
+  it('survives an uploadOne that rejects rather than resolving', async () => {
+    // uploadOne resolves on every path it knows about, so this is the unforeseen
+    // case. It matters because an escaping rejection rejects the Promise.all in
+    // run(), skips finish(), and leaves the panel stuck in 'uploading' forever
+    // with Save disabled — a dead page, not a failed file.
+    let completed = 0;
+    const c = pooled(6, 2, async (i) => {
+      if (i === 1) throw new Error('boom');
+      c.files[i].status = 'done';
+      c.doneCount++;
+      completed++;
+    });
+
+    await expect(c.run(c.files.map((_, i) => i))).resolves.toBeUndefined();
+
+    expect(completed).toBe(5);
+    expect(c.phase).toBe('partial');
+    expect(c.files[1].status).toBe('failed');
+    expect(c.files[1].error).toBe('boom');
   });
 
   it('stops pulling new work once cancelled', async () => {
@@ -186,16 +205,78 @@ describe('the upload pool', () => {
 });
 
 describe('retry eligibility', () => {
-  it('excludes a duplicate, which would be refused identically forever', () => {
+  it('excludes every deterministic 4xx, not only the duplicate', () => {
+    // Each of these answers identically however many times the same bytes are
+    // sent, so offering Retry on them is offering a button that cannot work:
+    // 409 duplicate, 413 oversized (refused in the browser), 400 undecodable
+    // image, 403 stale CSRF token.
+    for (const status of [400, 403, 409, 413, 422]) {
+      expect(isPermanentFailure({ httpStatus: status })).toBe(true);
+    }
+    // The two 4xx codes that mean "try again", plus transport failures and 5xx.
+    for (const status of [0, 408, 429, 500, 502, 503]) {
+      expect(isPermanentFailure({ httpStatus: status })).toBe(false);
+    }
+  });
+
+  it('offers retry only for the failures a retry could change', () => {
     const c = resourceUpload();
     c.files = [
       { name: 'dupe', size: 1, loaded: 0, status: 'failed', error: 'exists', httpStatus: 409 },
       { name: 'flaky', size: 1, loaded: 0, status: 'failed', error: 'network', httpStatus: 0 },
       { name: 'fine', size: 1, loaded: 1, status: 'done', error: '', httpStatus: 200 },
+      { name: 'huge', size: 1, loaded: 0, status: 'failed', error: 'too big', httpStatus: 413 },
+      { name: 'aborted', size: 1, loaded: 0, status: 'cancelled', error: '', httpStatus: 0 },
     ];
     expect(c.retryableIndices).toEqual([1]);
-    expect(isPermanentFailure(c.files[0])).toBe(true);
-    expect(isPermanentFailure(c.files[1])).toBe(false);
+  });
+});
+
+describe('cancelling mid-flight', () => {
+  it('does not claim an aborted upload was left unsaved', () => {
+    // Aborting an XHR stops the browser reading the response, not the server
+    // processing the request. A request whose body already arrived may have been
+    // committed, so an aborted row is neither counted as done nor reported as a
+    // failure — it is surfaced as unknown.
+    const c = resourceUpload();
+    c.files = [
+      { name: 'done', size: 1, loaded: 1, status: 'done', error: '', httpStatus: 200 },
+      { name: 'aborted', size: 1, loaded: 0, status: 'cancelled', error: '', httpStatus: 0 },
+    ];
+    expect(c.cancelledInFlight.map((f: { name: string }) => f.name)).toEqual(['aborted']);
+    expect(c.failed).toEqual([]);
+    expect(c.retryableIndices).toEqual([]);
+  });
+});
+
+describe('starting a new batch', () => {
+  it('clears a finished batch when files are chosen again', () => {
+    // Otherwise the panel from a partial run stays on screen describing files
+    // that are no longer selected, and Save stays disabled with no way back.
+    const c = resourceUpload();
+    c.countThreshold = 10;
+    c.sizeThreshold = 1 << 30;
+    c.phase = 'partial';
+    c.doneCount = 4;
+    c.files = [{ name: 'old', size: 1, loaded: 0, status: 'failed', error: 'x', httpStatus: 500 }];
+
+    c.onFilesChosen({ target: { files: [{ size: 10 }, { size: 10 }] } } as never);
+
+    expect(c.phase).toBe('idle');
+    expect(c.files).toEqual([]);
+    expect(c.doneCount).toBe(0);
+  });
+
+  it('leaves a running batch alone', () => {
+    const c = resourceUpload();
+    c.phase = 'uploading';
+    c.doneCount = 2;
+    c.files = [{ name: 'live', size: 1, loaded: 0, status: 'uploading', error: '', httpStatus: 0 }];
+
+    c.onFilesChosen({ target: { files: [{ size: 10 }] } } as never);
+
+    expect(c.phase).toBe('uploading');
+    expect(c.doneCount).toBe(2);
   });
 });
 
@@ -222,9 +303,6 @@ describe('submit interception', () => {
   });
 
   it('does not upload past a schema validation failure', () => {
-    // schema-form-mode preventDefault()s on its own submit listener;
-    // stopPropagation does not stop a sibling listener on the same element, so
-    // without the defaultPrevented check the batch would upload anyway.
     const c = resourceUpload();
     c.run = vi.fn();
     const e = submitEvent(Array.from({ length: 20 }, () => ({ size: 10 })), true);
