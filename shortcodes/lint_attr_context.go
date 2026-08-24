@@ -1,6 +1,8 @@
 package shortcodes
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,16 +28,19 @@ import (
 // quoted — is a bounded scan over a single tag's source with no nesting and no
 // escapes to resolve, and that part was never the problem.
 //
-// The tokenizer is not a parser, and in three places its reading is not a
-// browser's: it raw-texts ten element names wherever they appear, while a
-// browser only does so in the HTML namespace; it raw-texts <noscript> whatever
-// the scripting mode; and it reads "<![CDATA[" as a bogus comment everywhere
-// unless told otherwise, while a browser reads a real CDATA section in foreign
-// content. All three are corrected through the tokenizer's own escape hatches,
-// used the way x/net/html's parser uses them: NextIsNotRawText keeps a foreign
-// or <noscript> body streaming through the one tokenizer as ordinary tokens,
-// and AllowCDATA is set before every token from the namespace of the element
-// the scan is inside.
+// The tag-finding is the parser's, not a hand-written model of it. Earlier
+// versions of this file tracked the open-elements stack themselves and spent
+// many review rounds discovering, one HTML5 insertion mode at a time, every
+// place that model diverged from a browser — foreign content, <noscript>
+// scripting modes, the adoption agency, document phases, template surrender.
+// All of that is now answered by parsing the substituted source with
+// golang.org/x/net/html directly, in both scripting modes, and reading each
+// occurrence's placement out of the DOM: it is a browser's reading by
+// construction. What is left to a flat lexical pass is only the handful of
+// syntactic facts the DOM does not carry — whether an attribute value is
+// quoted, whether it is a repeated (discarded) one, whether an interpolation
+// forms a tag or attribute NAME, whether it sits in a tag that is never
+// closed — and those, as the note above says, were never the problem.
 
 // bareValueSpan is one bare-value shortcode occurrence in the template source.
 type bareValueSpan struct{ start, end int }
@@ -93,19 +98,47 @@ type attrContext struct {
 	unterminated bool
 }
 
-const lintSentinelPrefix = "\x00mahlint"
+// lintSentinelNonce randomises the sentinel prefix per process so it cannot
+// collide with bytes a template already contains.
+var lintSentinelNonce = randomSentinelNonce()
 
-func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + "\x00" }
+func randomSentinelNonce() string {
+	var b [6]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return "0f0f0f0f0f0f"
+	}
+	return hex.EncodeToString(b[:])
+}
 
-// attributeContextsFor answers, for every occurrence, which attribute it sits
-// in. Each occurrence is replaced by an inert unique sentinel, the result is
-// tokenized, and the sentinels are located in the tags that come back.
-// attributeContextsFor returns, for every occurrence, the attribute context
-// of its default (scripting-enabled) reading, and — as a second map keyed the
+// lintSentinelPrefix marks a substituted occurrence. It is NUL-free and all
+// lowercase ASCII, so it survives html.Parse intact — in an attribute value,
+// in text, and lowercased into an element or attribute name — where the old
+// NUL-delimited sentinel was mangled (the parser rewrites NUL to U+FFFD). A
+// per-process random middle makes a collision with real template bytes
+// vanishingly unlikely, and the one that could still happen is neutralised in
+// attributeContextsFor.
+var lintSentinelPrefix = "mahlintx" + lintSentinelNonce + "x"
+
+const lintSentinelSuffix = "z"
+
+func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + lintSentinelSuffix }
+
+// attributeContextsFor answers, for every occurrence, the attribute context of
+// its default (scripting-enabled) reading, and — as a second map keyed the
 // same way — the scripting-DISABLED reading for the occurrences whose two
-// readings differ, so a caller that evaluates both catches a placement live
-// in only one mode. The second map is empty unless the source contains a
+// readings differ, so a caller that evaluates both catches a placement live in
+// only one mode. The second map is empty unless the source contains a
 // <noscript>.
+//
+// The tree facts — which element an occurrence sits in, its namespace, whether
+// it is an attribute value or a program body, whether it is inside a
+// <noscript> — are read from golang.org/x/net/html's own parser, so they are a
+// browser's exactly and by construction rather than by a hand-written model of
+// the tree constructor. The syntactic facts the DOM does not carry — whether
+// an attribute value is quoted, whether it is a repeated (discarded) one,
+// whether an occurrence interpolates a tag or attribute NAME, whether it sits
+// in a tag that is never closed — are read from a flat lexical pass over the
+// source, which is a bounded scan of one tag at a time with no nesting.
 func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrContext, map[int]attrContext) {
 	out := make(map[int]attrContext, len(spans))
 	alt := make(map[int]attrContext)
@@ -114,19 +147,17 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 
-	// A template that already contains the sentinel bytes could otherwise remap
-	// one occurrence onto another's context. NUL carries no meaning in a
-	// template, and replacing it byte-for-byte keeps every span offset valid.
-	if strings.IndexByte(input, 0) >= 0 {
-		input = strings.ReplaceAll(input, "\x00", " ")
+	// A template that already contains the sentinel prefix could otherwise
+	// remap one occurrence onto another's context. The prefix carries a random
+	// nonce, so this is close to impossible, but replacing it keeps every span
+	// offset valid if it does happen.
+	if strings.Contains(input, lintSentinelPrefix) {
+		input = strings.ReplaceAll(input, lintSentinelPrefix, strings.Repeat(" ", len(lintSentinelPrefix)))
 	}
 
 	var b strings.Builder
 	// sentinelAt[i] is where span i's sentinel begins in the substituted text,
-	// or -1 for a span that was not substituted. Recording it here rather than
-	// searching for it afterwards is half of what keeps the fallback below
-	// linear: a strings.Index over the whole document, once per span, made a
-	// template full of bare values quadratic in how many it held.
+	// or -1 for a span that was not substituted.
 	sentinelAt := make([]int, len(spans))
 	last := 0
 	for i, sp := range spans {
@@ -142,94 +173,81 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		out[sp.start] = attrContext{}
 	}
 	b.WriteString(input[last:])
-
 	substituted := b.String()
-	// First reading: scripting enabled, which is the default mode and the
-	// tokenizer's own — a <noscript> body is raw text ending at the first
-	// "</noscript>", and everything after that is live markup whatever the
-	// body contained. An occurrence that lands INSIDE such a body is dead in
-	// this reading and comes back marked noscriptRaw instead of answered.
-	sawNoscript := scanMarkup(substituted, true, func(index int, ctx attrContext) {
-		if index >= 0 && index < len(spans) {
-			out[spans[index].start] = ctx
+
+	// The syntactic layer: quoted, discarded, valueSoFar, and the interpolated
+	// tag/attribute NAME, from a flat pass over the source's tags.
+	lex := lexicalContexts(substituted, len(spans))
+
+	// The tree layer: html.Parse in both scripting modes. An interpolated
+	// encoding= or type= is parsed at its worst case first — as the value it
+	// could complete — so a namespace or stylesheet it MIGHT decide is read
+	// fail-closed. The occurrences that worst case removes (the encoding/type
+	// values themselves, which are inert placements) keep their own contexts
+	// from the untouched parse.
+	worst, removed := substituteWorstCase(substituted, len(spans))
+	on := classifyByParse(worst, true, len(spans))
+	off := classifyByParse(worst, false, len(spans))
+	if len(removed) > 0 {
+		onPlain := classifyByParse(substituted, true, len(spans))
+		offPlain := classifyByParse(substituted, false, len(spans))
+		for idx := range removed {
+			on[idx] = onPlain[idx]
+			off[idx] = offPlain[idx]
 		}
-	})
-	// Second reading, whenever a <noscript> was seen at all: scripting
-	// disabled, where the body is markup — in which an unclosed <textarea>
-	// can swallow the very "</noscript>" the first reading stopped at, so
-	// the two readings are different segmentations of one document and
-	// neither can stand in for the other. And the divergence is not confined
-	// to the body: the parser STATE the body changes — a frameset-ok flag, an
-	// open element — reshapes everything after it, so any occurrence the
-	// first reading answered with "dead" or with nothing takes this reading's
-	// answer instead, with noscript forced on it: live here and not there is
-	// exactly what the scripting-mode qualifier says — including when an end
-	// tag inside the body popped the <noscript> element itself before the
-	// occurrence was reached. An occurrence the FIRST reading already found
-	// live keeps that answer, unqualified, because scripting-on is the mode a
-	// browser defaults to.
-	if sawNoscript {
-		off := make(map[int]attrContext, len(spans))
-		scanMarkup(substituted, false, func(index int, ctx attrContext) {
-			if index >= 0 && index < len(spans) {
-				off[index] = ctx
+	}
+
+	for i, sp := range spans {
+		if sentinelAt[i] < 0 {
+			continue
+		}
+		primary := mergeContext(lex[i], on[i])
+		// A sentinel in a raw-text body that could complete the body's own
+		// end tag is treated as an interpolated NAME, fail-closed.
+		if primary.inertText || primary.rawTextElement != "" {
+			if couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
+				couldCompleteEndTag(substituted, sentinelAt[i], off[i].element) {
+				primary = attrContext{inName: true}
 			}
-		})
-		for i, sp := range spans {
-			s1, ok := out[sp.start]
-			if !ok {
-				continue
-			}
-			oc := off[i]
-			oc.noscript = true
-			oc.noscriptRaw = false
-			// The two readings are two real browser configurations, and a
-			// placement dangerous in either must be reported.
-			switch {
-			case s1.noscriptRaw || s1.inertText || s1 == (attrContext{}):
-				// The scripting-on reading found nothing here — the
-				// occurrence sat in a <noscript> raw-text body, or in text
-				// the scan settled as inert. The scripting-off reading takes
-				// over as the primary answer, qualified, so the element-name
-				// and unterminated-tag FALLBACKS below (which run on this
-				// map) also see it.
-				out[sp.start] = oc
-			case oc != s1:
-				// The scripting-on reading resolved this to something live or
-				// safe, and the scripting-off reading differs — keep it
-				// ALONGSIDE, qualified, because a value dead as foreign markup
-				// with scripting on can be live CSS with it off. Lint
-				// evaluates both and unions the warnings.
-				alt[sp.start] = oc
+		}
+		out[sp.start] = primary
+		// The two readings are two real browser configurations, and a
+		// placement dangerous in either must be reported. Compare the TREE
+		// facts (the only thing scripting changes); where they differ the
+		// scripting-off reading is kept alongside, qualified.
+		if on[i] != off[i] {
+			sc := mergeContext(lex[i], off[i])
+			sc.noscript = true
+			if sc != primary {
+				alt[sp.start] = sc
 			}
 		}
 	}
 
-	// An unterminated tag never reaches the tokenizer as a tag, so its
-	// occurrences come back unresolved. Reporting those as "not in an
-	// attribute" would fail open on exactly the template that is most broken:
-	// <div title="[meta ... raw="true"] with no ">" is still an attribute an
-	// author is interpolating into. Mark them unknown so the caller warns.
-	//
-	// Resolving to "not unterminated" writes nothing, deliberately: a raw-text
-	// body's occurrence passes through here too, and it keeps that context
-	// unless one of the two answers below is the better one. Both can overwrite
-	// it — the element-name check by design, and a "<" written inside a script
-	// string does reach it, which is fail-closed but a worse message.
-	var ask []int     // sentinel offsets, ascending, still needing the test
-	var askSpan []int // parallel: which span each of those belongs to
+	// The two fallbacks the parse cannot answer, applied only to occurrences it
+	// left unresolved: an interpolated element name (a "<" the parser reads as
+	// text because the sentinel is not a name-start), and a tag that is never
+	// closed.
+	var ask []int
+	var askSpan []int
 	for i, sp := range spans {
-		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName || ctx.inertText || ctx.discarded) {
+		ctx, ok := out[sp.start]
+		if !ok {
+			continue
+		}
+		// A settled placement is not re-answered. An inertText from a
+		// <noscript> body is settled only if the two scripting modes AGREE it
+		// is text: where they differ, the body is markup with scripting off,
+		// and an unterminated tag or interpolated name in it must fail closed.
+		settledInert := ctx.inertText && on[i] == off[i]
+		if ctx.inValue || ctx.inName || settledInert || ctx.discarded ||
+			ctx.rawTextElement != "" || ctx.unterminated {
 			continue
 		}
 		at := sentinelAt[i]
 		if at < 0 {
 			continue
 		}
-		// An interpolated ELEMENT name never reaches the tokenizer as a tag:
-		// "<" followed by anything that is not a name character is text, and the
-		// sentinel is deliberately not a name character. The "<" immediately
-		// before it is the whole proof, so no tokenizer is needed.
 		if at > 0 {
 			j := at - 1
 			if j > 0 && substituted[j] == '/' {
@@ -251,1505 +269,449 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	return out, alt
 }
 
-// markupFrame is one open element, carrying the little this scan wants from
-// it: its own namespace, whether it is one of the two kinds of integration
-// point (decided when it is opened, because <annotation-xml> needs its
-// encoding attribute to answer), and the two per-element readings that follow
-// from the namespace: whether it is a <noscript> read as markup, and whether
-// its child text is program source.
-type markupFrame struct {
-	name            string
-	ns              string // "", "svg" or "math": this element's own namespace
-	htmlIntegration bool
-	mathText        bool
-	// noscript marks an HTML <noscript>, whose body this scan reads as markup
-	// — the scripting-off reading, which is the mode the element exists for —
-	// while every rule that describes execution is withheld for anything
-	// inside one.
+// lexFact is the syntactic half of an occurrence's context, from the source's
+// tag structure alone.
+type lexFact struct {
+	inName     bool
+	inValue    bool
+	discarded  bool
+	quoted     bool
+	attr       string
+	valueSoFar string
+	cdata      bool // the occurrence sits in a CDATA section (entities not decoded)
+}
+
+// treeFact is the tree half, from html.Parse.
+type treeFact struct {
+	kind     treeKind
+	element  string
+	ns       string
+	attr     string
+	prefix   string // decoded attribute value before the occurrence
 	noscript bool
-	// program names this element when it is an SVG <script> or an SVG <style>
-	// a browser would apply: the one foreign namespace where those two do
-	// their HTML job while their bodies are still markup. A DIRECT child text
-	// node of one is program source; anything deeper sits inside some other
-	// frame and is markup like everything else.
-	program string
-	// headNoscript marks a <noscript> opened at the head of the document in
-	// the scripting-off reading, where the in-head-noscript mode allows only
-	// head content: any other start tag closes it first.
-	headNoscript bool
-	// id makes one opened element distinguishable from another spelled the
-	// same, which the active formatting list needs: whether an entry is still
-	// OPEN is a question about this element, not about its name.
-	id int
 }
 
-// afeEntry is one entry in the list of active formatting elements: a
-// formatting element that was opened, or the marker an applet, marquee,
-// object, template, td, th or caption inserts so reconstruction cannot reach
-// past it.
-type afeEntry struct {
-	frame  markupFrame
-	marker bool
+type treeKind int
+
+const (
+	kAbsent treeKind = iota // the occurrence is in no DOM node (dropped, or in text)
+	kAttrValue
+	kName // element or attribute name
+	kScript
+	kStyle
+	kText
+)
+
+// mergeContext combines the syntactic and tree halves into the attrContext the
+// rules read. The syntactic NAME and unterminated facts win, being fail-closed;
+// otherwise the parser's placement decides.
+func mergeContext(l lexFact, t treeFact) attrContext {
+	if t.kind == kName {
+		// The parser read the occurrence as an element or attribute NAME. The
+		// lexical layer is not consulted for this: a broken quote in a script
+		// body can make its flat scan read a real attribute value as a name,
+		// and the parser is the authority on which it is.
+		return attrContext{inName: true, noscript: t.noscript}
+	}
+	switch t.kind {
+	case kAttrValue:
+		return attrContext{
+			inValue:     true,
+			attr:        t.attr,
+			quoted:      l.quoted,
+			valueSoFar:  t.prefix,
+			discarded:   l.discarded,
+			element:     t.element,
+			foreignRoot: t.ns,
+			noscript:    t.noscript,
+		}
+	case kScript:
+		fr := t.ns
+		if l.cdata {
+			fr = ""
+		}
+		return attrContext{rawTextElement: "script", foreignRoot: fr, noscript: t.noscript}
+	case kStyle:
+		fr := t.ns
+		if l.cdata {
+			fr = ""
+		}
+		return attrContext{rawTextElement: "style", foreignRoot: fr, noscript: t.noscript}
+	case kText:
+		// The parser placed it in a text node the rules have nothing to say
+		// about; recorded as settled so the fallbacks do not re-answer it.
+		return attrContext{inertText: true, noscript: t.noscript}
+	default:
+		// kAbsent: the occurrence is in no DOM node — dropped by an ignored or
+		// duplicate element, or in a name the parser did not keep. Here, and
+		// only here, the lexical NAME reading is trusted: an interpolated
+		// END-tag name ("</s[x]>") leaves no node, and the lexical scan is the
+		// only thing that sees it. A discarded duplicate attribute is the one
+		// such position with something left to say (raw= bytes still pass the
+		// tokenizer); everything else is left UNRESOLVED for the "<"-name and
+		// unterminated-tag fallbacks.
+		if l.inName {
+			return attrContext{inName: true}
+		}
+		if l.discarded {
+			return attrContext{discarded: true, attr: l.attr, quoted: l.quoted}
+		}
+		return attrContext{}
+	}
 }
 
-// namespaceForChild answers which namespace a start tag with this name lands in
-// when it is opened inside this element. It is x/net/html's inForeignContent
-// written as a function of one frame, and the order of the clauses is that
-// function's: the MathML text points hand over to HTML for every start tag
-// except <mglyph> and <malignmark>, an <svg> inside <annotation-xml> is taken
-// by HTML rules whatever the encoding says (and the HTML rule for <svg> then
-// enters SVG), and an HTML integration point hands over unconditionally.
-func (f markupFrame) namespaceForChild(name string) string {
-	if f.ns == "" {
-		return ""
+// couldCompleteEndTag reports whether the text right before offset `at` spells
+// "</" plus a case-insensitive prefix of `name`, so the interpolated value
+// there could complete the end tag that ends this raw-text body — "</text[x]>"
+// is "</textarea>" for a value of "area", and the body and everything after it
+// is then markup. The interpolated-NAME rule is the fail-closed answer, and it
+// is a lexical fact the parse cannot supply because the parser reads the
+// sentinel as part of a name that does not match.
+func couldCompleteEndTag(text string, at int, name string) bool {
+	if name == "" {
+		return false
 	}
-	if f.mathText && name != "mglyph" && name != "malignmark" {
-		return ""
+	i := at
+	for i > 0 && asciiLowerByte(text[i-1]) >= 'a' && asciiLowerByte(text[i-1]) <= 'z' {
+		i--
 	}
-	if f.ns == "math" && f.name == "annotation-xml" && name == "svg" {
-		return ""
+	if i < 2 || text[i-1] != '/' || text[i-2] != '<' {
+		return false
 	}
-	if f.htmlIntegration {
-		return ""
-	}
-	return f.ns
+	n := at - i
+	return n <= len(name) && asciiEqualFold(text[i:at], name[:n])
 }
 
-// keepsForeignContent reports whether a breakout stops at this frame. x/net's
-// parseForeignContent discards every open element above the nearest one that is
-// HTML or an integration point, and these are those three.
-func (f markupFrame) keepsForeignContent() bool {
-	return f.ns == "" || f.htmlIntegration || f.mathText
-}
-
-// scanMarkup tokenizes src and records the attribute context of every sentinel
-// it can place, reading src the way a browser with the given scripting mode
-// reads it.
-//
-// The tokenizer is namespace-unaware, and left alone its reading is not a
-// browser's in two places: it raw-texts the ten names in rawTextElements
-// wherever they appear, while a browser does so only in the HTML namespace —
-// inside <svg> or <math> an <iframe> is an inert foreign element whose
-// children are real markup — and it raw-texts <noscript>, which is a
-// browser's reading only when scripting is enabled. Both are corrected the
-// way x/net/html's own parser corrects them (parse.go: "Don't let the
-// tokenizer go into raw text mode in foreign content", and its scripting-off
-// <noscript> cases): Tokenizer.NextIsNotRawText clears the armed raw-text
-// state, so the element's body streams through this same loop as ordinary
-// tokens, read against the same stack. No region is copied and re-read and no
-// second tokenizer exists, so a CDATA section swallows a fake end tag the way
-// a browser's does, and an end tag inside such a body acts exactly where it
-// stands — on the one stack, in document order.
-//
-// scripting decides only what a <noscript> body is: with it enabled the body
-// is raw text and every sentinel inside comes back marked noscriptRaw, and
-// with it disabled the body is markup. attributeContextsFor runs the enabled
-// reading first and asks the disabled one about exactly the marked positions,
-// because the two readings can disagree about where markup resumes.
-func scanMarkup(src string, scripting bool, emit func(index int, ctx attrContext)) (sawNoscript bool) {
-	z := html.NewTokenizer(strings.NewReader(src))
-	var stack []markupFrame
-	// record wraps emit and remembers the order occurrences were recorded in,
-	// so an honored <frameset> — which replaces the body outright — can
-	// retract everything recorded since the body started.
-	var recorded []int
-	bodyStartMark := -1
-	record := func(index int, ctx attrContext) {
-		emit(index, ctx)
-		recorded = append(recorded, index)
-	}
-	// enclosing is the frame the next token is opened inside. The bottom of
-	// the stack is the document itself, which is HTML.
-	enclosing := func() markupFrame {
-		if n := len(stack); n > 0 {
-			return stack[n-1]
-		}
-		return markupFrame{}
-	}
-	inNoscript := func() bool {
-		for _, f := range stack {
-			if f.noscript {
-				return true
+// lexicalContexts walks the source's tags — quote-, comment- and
+// CDATA-aware, but with no tree and no raw-text elements — and returns the
+// syntactic facts for every sentinel that lands in one. A sentinel in text is
+// left as the zero lexFact, to be answered by the parser.
+func lexicalContexts(src string, nspans int) []lexFact {
+	facts := make([]lexFact, nspans)
+	i := 0
+	for i < len(src) {
+		if strings.HasPrefix(src[i:], "<!--") {
+			if e := strings.Index(src[i+4:], "-->"); e >= 0 {
+				i += 4 + e + 3
+			} else {
+				i = len(src)
 			}
+			continue
 		}
-		return false
-	}
-	leaveForeignContent := func() {
-		for len(stack) > 0 && !stack[len(stack)-1].keepsForeignContent() {
-			stack = stack[:len(stack)-1]
-		}
-	}
-	htmlFrameOpen := func(name string) bool {
-		for _, f := range stack {
-			if f.ns == "" && f.name == name {
-				return true
+		if strings.HasPrefix(src[i:], "<![CDATA[") {
+			body := i + 9
+			e := strings.Index(src[body:], "]]>")
+			end := len(src)
+			if e >= 0 {
+				end = body + e
 			}
-		}
-		return false
-	}
-	// closeP is the tree constructor's "close a p element in button scope",
-	// which nearly every block-level start tag runs before inserting itself.
-	closeP := func() {
-		for i := len(stack) - 1; i >= 0; i-- {
-			f := stack[i]
-			if f.ns == "" && f.name == "p" {
-				stack = stack[:i]
-				return
-			}
-			if scopeBoundary(f) || (f.ns == "" && f.name == "button") {
-				return
-			}
-		}
-	}
-	// The list of active formatting elements. A formatting element a scope
-	// pop or the agency's surgery closed does not leave this list, and that
-	// is the point of it: the next insertion in body content RECONSTRUCTS
-	// every listed element that is no longer open, the way a browser re-opens
-	// a <b> across block boundaries. This is not namespace-cosmetic — a
-	// reconstructed <a> stands between an <svg> and the "</a>" that will run
-	// the agency over both, so without it the scan and the parser disagree
-	// about whether that svg is still open.
-	var afe []afeEntry
-	nextID := 0
-	afeIndex := func(name string) int {
-		for i := len(afe) - 1; i >= 0 && !afe[i].marker; i-- {
-			if afe[i].frame.name == name {
-				return i
-			}
-		}
-		return -1
-	}
-	onStack := func(id int) bool {
-		for _, f := range stack {
-			if f.id == id {
-				return true
-			}
-		}
-		return false
-	}
-	clearAfeToMarker := func() {
-		hasMarker := false
-		for _, e := range afe {
-			if e.marker {
-				hasMarker = true
-			}
-		}
-		if !hasMarker {
-			return
-		}
-		for len(afe) > 0 {
-			last := afe[len(afe)-1]
-			afe = afe[:len(afe)-1]
-			if last.marker {
-				return
-			}
-		}
-	}
-	// reconstruct re-opens, in order, every entry after the last marker that
-	// is not on the stack. Called where x/net's parser calls its own — before
-	// body text and before the start tags whose in-body rules reconstruct —
-	// and nowhere else: a <div> deliberately does not, which is why a <b> can
-	// stay closed across one until text re-opens it.
-	reconstruct := func() {
-		n := len(afe)
-		if n == 0 || afe[n-1].marker || onStack(afe[n-1].frame.id) {
-			return
-		}
-		i := n - 1
-		for i > 0 && !afe[i-1].marker && !onStack(afe[i-1].frame.id) {
-			i--
-		}
-		for ; i < n; i++ {
-			clone := afe[i].frame
-			nextID++
-			clone.id = nextID
-			stack = append(stack, clone)
-			afe[i].frame = clone
-		}
-	}
-	inScope := func(name string) bool {
-		for i := len(stack) - 1; i >= 0; i-- {
-			if stack[i].ns == "" && stack[i].name == name {
-				return true
-			}
-			if scopeBoundary(stack[i]) {
-				return false
-			}
-		}
-		return false
-	}
-	// adoptionAgency is the agency's stack-visible effect, shared by the
-	// formatting end tags and by the <a>/<nobr> start tags that run the
-	// agency against an already-open element of their own name. The element
-	// it acts on comes from the active formatting LIST, not from the stack: a
-	// listed element that is no longer open is simply delisted, and one out
-	// of scope is left alone. For an open one, the agency's outer loop reruns
-	// on the clone it inserts until nothing special is open above one, and
-	// each pass reparents one furthest block — so the net the stack keeps is
-	// exactly the SPECIAL frames that were open above the formatting element,
-	// each of which was a furthest block once, and everything else above it
-	// is closed: "<b><div><svg></b>" ends with the div open and the svg gone,
-	// which is where html.Parse puts the next token. Without a special
-	// element above it the agency pops normally. It reports false when the
-	// list holds no such element at all, which for an end tag means the
-	// any-other rule speaks instead.
-	adoptionAgency := func(name string) bool {
-		ai := afeIndex(name)
-		if ai < 0 {
-			return false
-		}
-		fe := afe[ai].frame
-		si := -1
-		for i := len(stack) - 1; i >= 0; i-- {
-			if stack[i].id == fe.id {
-				si = i
-				break
-			}
-		}
-		if si < 0 {
-			afe = append(afe[:ai], afe[ai+1:]...)
-			return true
-		}
-		for i := len(stack) - 1; i > si; i-- {
-			if scopeBoundary(stack[i]) {
-				return true // out of scope: parse error, nothing moves
-			}
-		}
-		if stackHasSpecial(stack[si+1:]) {
-			kept := stack[:si]
-			for _, f := range stack[si+1:] {
-				if isSpecialElement(f) {
-					kept = append(kept, f)
+			for _, p := range sentinelIndexes(src[body:end]) {
+				if p.index >= 0 && p.index < nspans {
+					facts[p.index].cdata = true
 				}
 			}
-			stack = kept
-		} else {
-			stack = stack[:si]
-		}
-		afe = append(afe[:ai], afe[ai+1:]...)
-		return true
-	}
-	// liClosure is the loop the <li>, <dd> and <dt> start tags run: close the
-	// nearest open element of their kind, walking past address, div and p and
-	// stopping at anything else special — then close a p like every other
-	// block start.
-	liClosure := func(a, b string) {
-		for i := len(stack) - 1; i >= 0; i-- {
-			f := stack[i]
-			if f.ns == "" && (f.name == a || f.name == b) {
-				stack = stack[:i]
-				break
+			if e >= 0 {
+				i = end + 3
+			} else {
+				i = len(src)
 			}
-			if f.name == "address" || f.name == "div" || f.name == "p" {
-				continue
-			}
-			if isSpecialElement(f) {
-				break
-			}
+			continue
 		}
-		closeP()
-	}
-
-	// couldCompleteEndTag reports whether the text immediately before a
-	// sentinel spells "</" plus a case-insensitive prefix of name, so the
-	// VALUE could complete the end tag that ends this raw-text body:
-	// "</text[x]>" is "</textarea>" for a value of "area", and the body —
-	// with everything after it — is then markup a browser parses. The
-	// interpolated-NAME rule is the fail-closed answer.
-	couldCompleteEndTag := func(text string, at int, name string) bool {
-		i := at
-		for i > 0 && asciiLowerByte(text[i-1]) >= 'a' && asciiLowerByte(text[i-1]) <= 'z' {
-			i--
-		}
-		if i < 2 || text[i-1] != '/' || text[i-2] != '<' {
-			return false
-		}
-		n := at - i
-		return n <= len(name) && asciiEqualFold(text[i:at], name[:n])
-	}
-
-	// peekTagName reads the element name out of a raw tag token without
-	// consuming the tokenizer's own TagName (which is not idempotent), for
-	// the few dispatch decisions the inertRest gate makes before the switch.
-	peekTagName := func(raw string) string {
-		i := 0
-		if i < len(raw) && raw[i] == '<' {
-			i++
-		}
-		if i < len(raw) && raw[i] == '/' {
-			i++
-		}
-		start := i
-		for i < len(raw) && raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\n' &&
-			raw[i] != '\f' && raw[i] != '\r' && raw[i] != '>' && raw[i] != '/' {
-			i++
-		}
-		return asciiLower(raw[start:i])
-	}
-	// foreignDispatch reports whether the parser would hand this token to
-	// foreign-content processing rather than to the HTML insertion mode —
-	// x/net's inForeignContent, as a function of the current node. It is what
-	// makes the template surrender below leaky: ignoreTheRemainingTokens kills
-	// the HTML insertion mode, but a token dispatched to foreign content still
-	// runs, so an end tag can still pop back out of foreign content and the
-	// start tags that follow are live again.
-	foreignDispatch := func(tt html.TokenType, raw string) bool {
-		e := enclosing()
-		if e.ns == "" {
-			return false
-		}
-		start := tt == html.StartTagToken || tt == html.SelfClosingTagToken
-		text := tt == html.TextToken
-		if e.mathText {
-			if text {
-				return false
-			}
-			if start {
-				if nm := peekTagName(raw); nm != "mglyph" && nm != "malignmark" {
-					return false
+		if src[i] == '<' && i+1 < len(src) && (isTagNameStart(src[i+1]) || src[i+1] == '/') {
+			// Read one tag, respecting quotes.
+			j := i + 1
+			var q byte
+			for j < len(src) {
+				c := src[j]
+				if q != 0 {
+					if c == q {
+						q = 0
+					}
+					j++
+					continue
 				}
-			}
-		}
-		if e.ns == "math" && e.name == "annotation-xml" && start && peekTagName(raw) == "svg" {
-			return false
-		}
-		if e.htmlIntegration && (start || text) {
-			return false
-		}
-		return true
-	}
-
-	// inertRest reports that the parser this scan mirrors has stopped
-	// building anything: an honored <frameset> replaced the body and every
-	// insertion mode from there ignores body content, or x/net's parser met a
-	// <template> start tag with foreign content open and — its own documented
-	// workaround — ignores every remaining token. Everything after either is
-	// text to nobody.
-	inertRest := false
-	// framesetOK mirrors the parser's frameset-ok flag: a <frameset> replaces
-	// the body only before any body content has been seen, and is an ignored
-	// token afterwards.
-	framesetOK := true
-	// headSeen: the document has one head, at its start; every later <head>
-	// token is ignored. htmlAttrs and bodyAttrs carry the attribute names the
-	// one real <html> and <body> element already have, because a later token
-	// with either name MERGES: only an attribute the element does not yet
-	// have survives.
-	headSeen := false
-	htmlAttrs := map[string]bool{}
-	bodyAttrs := map[string]bool{}
-	// bodyStarted reports that something has opened the body: a start tag
-	// that is not head content, or non-whitespace text, arriving at the top
-	// level — template contents are head-side and do not count. Until then a
-	// <frameset> is handed to the frameset rules directly and the frameset-ok
-	// flag is never read; after, the flag decides.
-	bodyStarted := false
-	// framesetMode is an honored frameset document: the <frameset> and its
-	// <frame> and <noframes> children are real — an onload= runs and a frame
-	// src= navigates — and every OTHER token is ignored, before and after the
-	// "</frameset>".
-	framesetMode := false
-	// framesetDepth counts open frameset elements in a frameset document, and
-	// framesetClosed marks the after-frameset phase the top frameset's close
-	// begins — where every token, a later <frameset> included, is ignored.
-	framesetDepth := 0
-	framesetClosed := false
-
-	// pending describes the raw-text body the tokenizer is about to hand back
-	// as a single text token, for the elements where that reading is also a
-	// browser's: the HTML raw-text and RCDATA names. The foreign and
-	// <noscript> cases never set it — their bodies are never handed back as
-	// one token at all.
-	var pending struct {
-		// language is the HTML <script> or <style> whose body is a program AND
-		// raw text. Only HTML has one of those: an SVG program body is markup
-		// as well, and reaches the language through markupFrame.program.
-		language string
-		// inert marks a body that is raw text to a browser as well, so the
-		// scan reads nothing out of it and says so.
-		inert bool
-		// name is the element whose body this is, which the end-tag-prefix
-		// check below needs: a sentinel right after "</text" inside a
-		// <textarea> body could complete "</textarea>".
-		name string
-		// noscriptRaw marks the inert body of a <noscript> under scripting:
-		// dead in THIS reading, but the caller has another one to ask.
-		noscriptRaw bool
-	}
-	forget := func() { pending.language, pending.inert, pending.noscriptRaw, pending.name = "", false, false, "" }
-
-	// closeTag applies an end tag to the stack. HTML gives an end tag one of
-	// four readings, and which one is decided by name and namespace, not by a
-	// single search: the foreign-content walk, the adoption agency, a
-	// pop-until-in-scope rule the name carries, or "any other end tag".
-	// Conflating them was measurably wrong in both directions — a generic
-	// search that matched a foreign <title> from an HTML current node closed
-	// an element a browser keeps open, and a special-element stop applied to
-	// "</li>" refused a pop whose real boundary list ("list item scope")
-	// walks straight past a <div> and a foreign root.
-	closeTag := func(name string) {
-		forget()
-		// "</frameset>" in a frameset document decrements the frame depth;
-		// closing the top one begins the after-frameset phase, where every
-		// later token is ignored.
-		if framesetMode && name == "frameset" {
-			if framesetDepth > 0 {
-				framesetDepth--
-				if framesetDepth == 0 {
-					framesetClosed = true
-				}
-			}
-			return
-		}
-		// "</br>" acts as a <br> START tag: a breakout in foreign content,
-		// body content for the frameset-ok flag everywhere, and it closes
-		// nothing.
-		if name == "br" {
-			if enclosing().ns != "" {
-				leaveForeignContent()
-			}
-			reconstruct()
-			if !htmlFrameOpen("template") {
-				framesetOK = false
-			}
-			return
-		}
-		// Foreign content first, which is the spec's own order: with a
-		// foreign current node the end tag walks the foreign prefix of the
-		// stack and pops to a name match. Only when the walk reaches an HTML
-		// element without matching does the tag become HTML's business. This
-		// runs BEFORE the html/body no-op, because a foreign element spelled
-		// <html> or <body> — an SVG one inside a <script> — is closed here
-		// like any other foreign element, and only an unmatched one falls
-		// through to the HTML rule.
-		if enclosing().ns != "" {
-			for i := len(stack) - 1; i >= 0 && stack[i].ns != ""; i-- {
-				if stack[i].name == name {
-					stack = stack[:i]
-					return
-				}
-			}
-		}
-		// "</body>" and "</html>" switch insertion modes and close nothing in
-		// HTML content: the elements they name outlive them, so the stack
-		// does not move. (The foreign walk above already handled a foreign
-		// element of either name.)
-		if name == "body" || name == "html" {
-			return
-		}
-		// "</form>" REMOVES the form element from the stack rather than popping
-		// down to it, so an <svg> the author forgot to close inside a form
-		// survives it and everything after is still SVG — where an <iframe> has
-		// no browsing context and its srcdoc is inert. Popping to the form took
-		// the <svg> with it and made that srcdoc read as a real one.
-		if name == "form" {
-			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].ns == "" && stack[i].name == "form" {
-					stack = append(stack[:i], stack[i+1:]...)
+				if c == '"' || c == '\'' {
+					q = c
+				} else if c == '>' {
 					break
 				}
+				j++
 			}
-			return
-		}
-		// A formatting element's end tag is the adoption agency's business,
-		// and the agency's one property this stack has to keep is that a
-		// SPECIAL element open above the formatting element — the "furthest
-		// block" — stays open: "<b><div></b>" removes the b and keeps the div,
-		// so a later "</div>" still closes it, and the <svg> that was opened
-		// inside it. Popping through the div instead closed it early, and the
-		// "</div>" that then matched nothing left that <svg> open where a
-		// browser had left foreign content. Without a special element above it
-		// the agency pops normally, and that is the whole of what is modelled:
-		// the clone the agency appends and the in-between frames it removes
-		// are DOM surgery that never changes which elements stay open under
-		// which namespace. (A foreign element spelled like a formatting
-		// element — an SVG <font> — was already taken by the foreign walk
-		// above; the agency's own search is HTML-only.)
-		if formattingElements[name] {
-			if adoptionAgency(name) {
-				return
+			end := j
+			if end >= len(src) {
+				end = len(src) - 1
 			}
-			// The list holds no such element, and the agency's answer for
-			// that is the any-other rule below.
-		}
-		// The names whose end tags pop until the element is popped, provided
-		// it is "in scope" — and each name's scope has its own boundary list,
-		// which is why they cannot ride the any-other walk below: "</li>"
-		// walks past a <div> and a foreign root that would stop an unknown
-		// name, and "</table>" stops at nearly nothing. A boundary met first
-		// means the element is not in scope and the tag is ignored.
-		if scopePopTags[name] || headingTags[name] {
-			boundary := func(f markupFrame) bool {
-				switch {
-				case name == "table":
-					// Table scope: html, table, template — and the nearest
-					// table is the match itself, so only template stops.
-					return f.ns == "" && f.name == "template"
-				case name == "template":
-					// "</template>" pops to the template unconditionally —
-					// the parser checks only that one is open, and nothing
-					// stops the walk.
-					return false
-				case name == "caption" || tableSectionTags[name]:
-					// The table modes close their pieces in TABLE scope,
-					// which only the table machinery bounds — a "</tr>" pops
-					// straight across an <svg> a div-family walk would keep.
-					return f.ns == "" && (f.name == "table" || f.name == "template")
-				case name == "li":
-					// List item scope adds the list containers.
-					return scopeBoundary(f) || (f.ns == "" && (f.name == "ol" || f.name == "ul"))
-				case name == "p":
-					// Button scope adds <button>.
-					return scopeBoundary(f) || (f.ns == "" && f.name == "button")
-				default:
-					return scopeBoundary(f)
+			tag := src[i : end+1]
+			for _, h := range sentinelsInTag(tag) {
+				if h.index < 0 || h.index >= nspans {
+					continue
 				}
-			}
-			for i := len(stack) - 1; i >= 0; i-- {
-				f := stack[i]
-				if f.ns == "" && (f.name == name || (headingTags[name] && headingTags[f.name])) {
-					stack = stack[:i]
-					if afeMarkerTags[name] {
-						clearAfeToMarker()
-					}
-					return
+				lf := lexFact{}
+				if h.ctx.inName {
+					lf.inName = true
+				} else if h.ctx.inValue {
+					lf.inValue = true
+					lf.attr = h.ctx.attr
+					lf.quoted = h.ctx.quoted
+					lf.valueSoFar = h.ctx.valueSoFar
+					lf.discarded = h.ctx.discarded
 				}
-				if boundary(f) {
-					break // not in scope: the tag closes nothing
-				}
+				facts[h.index] = lf
 			}
-			// "</p>" with no p in scope — whether the walk met a boundary or
-			// ran out — inserts a p start tag and closes it, and a <p> start
-			// tag is a breakout when the current node is foreign. The
-			// insertion itself leaves the stack as it was.
-			if name == "p" {
-				leaveForeignContent()
-			}
-			return
-		}
-		// Any other end tag: the walk matches an HTML element with the same
-		// name and stops at the first SPECIAL element. A foreign frame can
-		// never be matched here — it is not an HTML element however it is
-		// spelled — but a special one (an integration point, say) still stops
-		// the walk. "<svg><title><g></title>" is the shape both halves pin:
-		// the <g> inside the integration point is HTML, the SVG <title> is
-		// special, and a browser ignores the tag and keeps all three open.
-		for i := len(stack) - 1; i >= 0; i-- {
-			if stack[i].ns == "" && stack[i].name == name {
-				stack = stack[:i]
-				if afeMarkerTags[name] {
-					clearAfeToMarker()
-				}
-				return
-			}
-			if isSpecialElement(stack[i]) {
-				return
-			}
-		}
-	}
-	for {
-		// A "<![CDATA[" is a real CDATA section only when the current node is
-		// foreign — in HTML it is a bogus comment — and the tokenizer cannot
-		// know which, so it is told before every token. enclosing() is the
-		// spec's adjusted current node, and the element's OWN namespace is
-		// what answers: a CDATA section inside an SVG <title> — an HTML
-		// integration point, but an SVG element — is character data, exactly
-		// as html.Parse reads it.
-		z.AllowCDATA(enclosing().ns != "")
-		tt := z.Next()
-		if inertRest && tt != html.ErrorToken && !foreignDispatch(tt, string(z.Raw())) {
-			// The parser's HTML insertion mode has stopped building, so a
-			// token it dispatches to that mode is in text nobody renders.
-			// A token dispatched to foreign content still runs, though, and
-			// falls through to the switch below — an end tag there can pop
-			// back out of foreign content and make later tokens live again.
-			for _, idx := range sentinelIndexes(string(z.Raw())) {
-				record(idx.index, attrContext{inertText: true, noscript: inNoscript()})
+			if j >= len(src) {
+				i = len(src)
+			} else {
+				i = j + 1
 			}
 			continue
 		}
-		switch tt {
-		case html.ErrorToken:
-			return
-		case html.StartTagToken, html.SelfClosingTagToken:
-			raw := string(z.Raw())
-			nameBytes, hasAttr := z.TagName()
-			name := string(nameBytes)
-			// Read from the tag's own source rather than through z.TagAttr,
-			// which replaces NUL with U+FFFD and so erases the sentinel.
-			hits := sentinelsInTag(raw)
-			if framesetMode {
-				// In a frameset document only the frameset machinery is real,
-				// plus an <html> token whose attributes merge onto the
-				// document element; everything else, and everything at all
-				// once the top frameset has closed, is an ignored token whose
-				// attributes never exist.
-				real := !framesetClosed && (name == "frameset" || name == "frame" ||
-					name == "noframes" || name == "html")
-				if !real {
-					for _, hit := range hits {
-						record(hit.index, attrContext{inertText: true})
-					}
-					continue
-				}
-			}
-			interpolatedEncoding := false
-			for _, hit := range hits {
-				// A discarded duplicate never reaches the DOM, so it cannot
-				// decide the namespace: the parser keeps the first encoding.
-				if hit.ctx.inValue && hit.ctx.attr == "encoding" && !hit.ctx.discarded && encodingCouldBeHTML(hit.value) {
-					interpolatedEncoding = true
-				}
-			}
-
-			ns := enclosing().namespaceForChild(name)
-			if ns != "" && breaksOutOfForeignContent(name, z, hasAttr) {
-				leaveForeignContent()
-				ns = enclosing().namespaceForChild(name)
-			}
-			enteredForeignFromHTML := false
-			if ns == "" && (name == "svg" || name == "math") {
-				ns = name
-				enteredForeignFromHTML = true
-			}
-			// A start tag that is not head content closes an open <head> —
-			// the in-head mode hands anything else to the body — and that
-			// includes an <svg> or <math>, which is why this sits outside the
-			// HTML-only corrections below. A head-position <noscript> in the
-			// scripting-off reading has the same shape one level in: the
-			// in-head-noscript mode keeps only head content, and anything
-			// else closes the noscript first.
-			if t := enclosing(); t.ns == "" && t.headNoscript && !headNoscriptContentTags[name] {
-				stack = stack[:len(stack)-1]
-			}
-			if t := enclosing(); t.ns == "" && t.name == "head" && !headContentTags[name] {
-				stack = stack[:len(stack)-1]
-			}
-			if ns == "" {
-				// The tree constructor's in-body corrections, which the
-				// tokenizer knows nothing about: tokens the parser renames,
-				// ignores outright, or answers by first closing an element
-				// that is still open. A scan without these carries frames the
-				// parser never kept, and a stray end tag later pops through
-				// them into a different namespace than the browser's.
-				if name == "image" {
-					// The parser rewrites the token itself; <image> IS <img>.
-					name = "img"
-				}
-				ignored := false
-				switch {
-				case (name == "noscript" || name == "head") && enclosing().ns == "" && enclosing().headNoscript:
-					// The in-head-noscript mode ignores a nested noscript or
-					// head token outright — neither closes the one that is
-					// open nor opens anything. The tokenizer still armed its
-					// raw-text state for the noscript spelling, and the
-					// parser clears it exactly here (parse.go's in-head-
-					// noscript case does), or the ignored token would swallow
-					// the body the real element keeps.
-					if rawTextElements[name] {
-						z.NextIsNotRawText()
-					}
-					ignored = true
-				case name == "html", name == "body":
-					// One element each: a later token with either name opens
-					// nothing and MERGES its attributes onto the real one —
-					// an attribute the element already has is discarded. The
-					// tag's own hits are recorded here with that rule, and
-					// nothing is pushed. While a <template> is open the
-					// in-template mode ignores both outright, merging nothing.
-					if htmlFrameOpen("template") {
-						for _, hit := range hits {
-							record(hit.index, attrContext{inertText: true})
-						}
-						continue
-					}
-					attrsSeen := htmlAttrs
-					if name == "body" {
-						attrsSeen = bodyAttrs
-					}
-					noscript := inNoscript()
-					for _, hit := range hits {
-						ctx := hit.ctx
-						if ctx.inValue && attrsSeen[ctx.attr] {
-							ctx = attrContext{inertText: true}
-						}
-						ctx.noscript = noscript
-						ctx.element = name
-						record(hit.index, ctx)
-					}
-					for hasAttr {
-						var key []byte
-						key, _, hasAttr = z.TagAttr()
-						attrsSeen[asciiLower(string(key))] = true
-					}
-					if name == "body" {
-						framesetOK = false
-						if !bodyStarted {
-							bodyStartMark = len(recorded)
-						}
-						bodyStarted = true
-					}
-					continue
-				case name == "frameset":
-					// Honored only before body content, where it replaces the
-					// body outright — the element itself is real, and so are
-					// the frames inside it; afterwards it is an ignored
-					// token, and inside template contents it always is: the
-					// body it would replace is not the second element on the
-					// stack there. Either way it opens no frame here.
-					switch {
-					case framesetMode:
-						// A nested frameset is real; one arriving after the
-						// top frameset closed is not.
-						if framesetClosed {
-							ignored = true
-						} else {
-							framesetDepth++
-						}
-					case framesetOK && !htmlFrameOpen("template"):
-						framesetMode = true
-						framesetDepth = 1
-						// The body and everything recorded in it is gone.
-						if bodyStartMark >= 0 {
-							for _, idx := range recorded[bodyStartMark:] {
-								emit(idx, attrContext{inertText: true})
-							}
-						}
-					default:
-						ignored = true
-					}
-				case name == "head":
-					// A real element only at the very start of the document,
-					// and only once: after the body has started the implicit
-					// head is already closed, so a later head token is
-					// ignored.
-					ignored = bodyStarted || len(stack) > 0 || !framesetOK || headSeen
-					if !ignored {
-						headSeen = true
-					}
-				case name == "frame":
-					// Real only inside a frameset document that has not yet
-					// closed; in the body, and after the top frameset closes,
-					// it is an ignored token.
-					ignored = !framesetMode || framesetClosed
-				case tableSectionTags[name]:
-					// In body these are ignored; the table insertion modes
-					// build them, approximated by an open <table> — and
-					// template contents do too, because the in-template mode
-					// hands them to those modes.
-					ignored = !htmlFrameOpen("table") && !htmlFrameOpen("template")
-				case name == "form":
-					// A nested form is an ignored token while one is open.
-					ignored = htmlFrameOpen("form")
-				case name == "select":
-					// A <select> with one already in scope pops to it and
-					// inserts nothing — the parser's reading of nesting one.
-					for i := len(stack) - 1; i >= 0; i-- {
-						if stack[i].ns == "" && stack[i].name == "select" {
-							stack = stack[:i]
-							ignored = true
-							break
-						}
-						if scopeBoundary(stack[i]) {
-							break
-						}
-					}
-				case name == "template":
-					// x/net's parser refuses to mix templates with open
-					// foreign content and ignores every remaining token — its
-					// own documented workaround. The oracle is that parser,
-					// so the scan stops where it stops.
-					for _, f := range stack {
-						if f.ns != "" {
-							inertRest = true
-							ignored = true
-							break
-						}
-					}
-				}
-				if ignored {
-					// The element never exists, so its attributes never do
-					// either; recorded as settled so the fallbacks stay out.
-					for _, hit := range hits {
-						record(hit.index, attrContext{inertText: true, noscript: inNoscript()})
-					}
-					continue
-				}
-				if framesetFlipTags[name] {
-					// A <template> at the head of the document is head
-					// content: the head modes hand a later <frameset>
-					// straight to the frameset rules, flag unread, so only a
-					// template the body has started around counts against it.
-					headPosition := len(stack) == 0 ||
-						(len(stack) == 1 && stack[0].ns == "" && stack[0].name == "head")
-					// A flip inside template contents does not reach the
-					// document's frameset-ok flag: the template is a separate
-					// parse, so a <select> or <br> in it leaves a later
-					// top-level <frameset> still eligible.
-					if !(name == "template" && headPosition) && !htmlFrameOpen("template") {
-						framesetOK = false
-					}
-				} else if name == "input" {
-					// An <input> counts as body content unless it is hidden.
-					hidden := false
-					for hasAttr {
-						var key, val []byte
-						key, val, hasAttr = z.TagAttr()
-						if string(key) == "type" && asciiEqualFold(string(val), "hidden") {
-							hidden = true
-						}
-					}
-					if !hidden && !htmlFrameOpen("template") {
-						framesetOK = false
-					}
-				}
-				// Start tags that close an element before inserting
-				// themselves.
-				switch {
-				case pCloserTags[name]:
-					closeP()
-					if headingTags[name] {
-						// A heading start tag also pops a heading it is
-						// directly inside.
-						if t := enclosing(); t.ns == "" && headingTags[t.name] {
-							stack = stack[:len(stack)-1]
-						}
-					}
-					if name == "xmp" {
-						// The one raw-text element whose in-body rule
-						// reconstructs before it goes raw.
-						reconstruct()
-					}
-				case name == "li":
-					liClosure("li", "li")
-				case name == "dd", name == "dt":
-					liClosure("dd", "dt")
-				case name == "button":
-					// A button in scope is closed first.
-					for i := len(stack) - 1; i >= 0; i-- {
-						if stack[i].ns == "" && stack[i].name == "button" {
-							stack = stack[:i]
-							break
-						}
-						if scopeBoundary(stack[i]) {
-							break
-						}
-					}
-					reconstruct()
-				case name == "a":
-					// An <a> still in the list means the agency runs before
-					// the new one is inserted — the list, not the stack, is
-					// what the rule consults.
-					if afeIndex("a") >= 0 {
-						adoptionAgency("a")
-					}
-					reconstruct()
-				case name == "nobr":
-					reconstruct()
-					if inScope("nobr") {
-						adoptionAgency("nobr")
-						reconstruct()
-					}
-				case formattingElements[name]:
-					reconstruct()
-				case name == "option", name == "optgroup":
-					if t := enclosing(); t.ns == "" && t.name == "option" {
-						stack = stack[:len(stack)-1]
-					}
-					reconstruct()
-				case name == "input":
-					// An <input> pops a <select> in scope before it inserts.
-					for i := len(stack) - 1; i >= 0; i-- {
-						if stack[i].ns == "" && stack[i].name == "select" {
-							stack = stack[:i]
-							break
-						}
-						if scopeBoundary(stack[i]) {
-							break
-						}
-					}
-					reconstruct()
-				case name == "applet", name == "marquee", name == "object", name == "select",
-					name == "area", name == "br", name == "embed", name == "img",
-					name == "keygen", name == "wbr":
-					reconstruct()
-				default:
-					// Any other start tag reconstructs before inserting —
-					// except the raw-text names, whose in-body rules go
-					// straight to the tokenizer.
-					if !rawTextElements[name] {
-						reconstruct()
-					}
-				}
-			}
-			if len(stack) == 0 && name != "frameset" && name != "frame" &&
-				!(ns == "" && headContentTags[name]) {
-				if !bodyStarted {
-					bodyStartMark = len(recorded)
-				}
-				bodyStarted = true
-			}
-			if enteredForeignFromHTML {
-				// An <svg> or <math> root is inserted by the in-body mode,
-				// which reconstructs first like any other phrasing content.
-				reconstruct()
-			}
-			// The namespace is settled before this tag's own attributes are
-			// recorded, because it decides what some of them mean: a srcdoc= on
-			// a foreign element is an attribute of an element with no browsing
-			// context, not a document waiting to be parsed.
-			noscript := inNoscript()
-			for _, hit := range hits {
-				ctx := hit.ctx
-				ctx.noscript = noscript
-				ctx.foreignRoot = ns
-				ctx.element = name
-				record(hit.index, ctx)
-			}
-
-			frame := markupFrame{
-				name:            name,
-				ns:              ns,
-				htmlIntegration: isHTMLIntegrationPoint(ns, name, z, hasAttr, interpolatedEncoding),
-				mathText:        ns == "math" && mathTextIntegrationPoints[name],
-			}
-			forget()
-			if rawTextElements[name] {
-				switch {
-				case ns != "":
-					// A foreign element is not the HTML element its name
-					// spells, and a browser does not raw-text it. This is the
-					// parser's own correction, and it is needed for a
-					// self-closing tag too: the tokenizer arms its raw-text
-					// state before it looks for the "/".
-					z.NextIsNotRawText()
-					// SVG is the one foreign namespace where <script> executes
-					// and <style> applies — the parser spec special-cases the
-					// SVG <script> end tag and has nothing of the sort for
-					// MathML. The body is still markup, so the tags in it are
-					// read like any others; only what lands in this element's
-					// DIRECT child text is program source, which the text case
-					// reads off this frame. An unsupported type= means the
-					// browser applies nothing, and the body is markup and only
-					// markup.
-					if ns == "svg" && name == "script" {
-						frame.program = name
-					} else if ns == "svg" && name == "style" && styleTypeApplies(z, hasAttr, hits) {
-						frame.program = name
-					}
-				case scriptLikeElements[name] && (name != "style" || styleTypeApplies(z, hasAttr, hits)):
-					// HTML: the tokenizer's reading is a browser's, and the
-					// body arrives as one text token of program source.
-					pending.language = name
-					pending.name = name
-				case name == "noscript":
-					// Markup with scripting off, raw text with scripting on,
-					// and this scan reads it in its own mode. Off: the frame
-					// marks everything inside as reachable only in that mode.
-					// On: the body is raw text ending at the first
-					// "</noscript>", and each sentinel in it is marked for
-					// the caller to ask the other reading about. Either way
-					// the caller is told one was here, because the two
-					// readings can diverge in parser STATE — a frameset-ok
-					// flag, an open element — even when no sentinel sits in
-					// the body itself.
-					sawNoscript = true
-					if scripting {
-						pending.inert = true
-						pending.noscriptRaw = true
-						pending.name = name
-					} else {
-						z.NextIsNotRawText()
-						frame.noscript = true
-						frame.headNoscript = len(stack) == 0 && framesetOK
-					}
-				default:
-					// The other seven, plus a <style> a browser will not
-					// apply: raw text or RCDATA to the tokenizer and to a
-					// browser alike, so a tag written in one is text.
-					pending.inert = true
-					pending.name = name
-				}
-			}
-			// A void element is popped the instant it is inserted, and a "/"
-			// only really closes a tag in foreign content — HTML ignores it, so
-			// "<div/>" opens a div. Getting either wrong leaves a frame on the
-			// stack that a browser does not have, and the namespace of
-			// everything after it is then read off the wrong element.
-			if !framesetMode && !(voidElements[name] && ns == "") && !(tt == html.SelfClosingTagToken && ns != "") {
-				nextID++
-				frame.id = nextID
-				stack = append(stack, frame)
-				if ns == "" {
-					if formattingElements[name] {
-						afe = append(afe, afeEntry{frame: frame})
-					}
-					if afeMarkerTags[name] {
-						afe = append(afe, afeEntry{marker: true})
-					}
-				}
-			}
-		case html.EndTagToken:
-			// An interpolation inside an END tag chooses what the tag
-			// closes — "</text[x]>" is "</textarea>" for a value of "area" —
-			// and nothing delimits it there, so it is the NAME case.
-			for _, idx := range sentinelIndexes(string(z.Raw())) {
-				record(idx.index, attrContext{inName: true, noscript: inNoscript()})
-			}
-			nameBytes, _ := z.TagName()
-			closeTag(string(nameBytes))
-		case html.TextToken:
-			if framesetMode && !pending.inert && pending.language == "" {
-				// Text outside a <noframes> body in a frameset document is
-				// ignored content.
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					record(idx.index, attrContext{inertText: true})
-				}
-				continue
-			}
-			// Non-whitespace text closes a head-position <noscript> the way a
-			// non-head start tag does: the in-head-noscript mode hands it to
-			// the head, which hands it to the body.
-			if t := enclosing(); t.ns == "" && t.headNoscript &&
-				pending.language == "" && !pending.inert &&
-				hasNonHTMLSpace(html.UnescapeString(string(z.Raw()))) {
-				stack = stack[:len(stack)-1]
-			}
-			// Body text is body content: any non-whitespace character outside
-			// a raw-text body means a later <frameset> is an ignored token —
-			// judged on the text the parser decodes, so entity-spelled
-			// whitespace is still whitespace.
-			if pending.language == "" && !pending.inert &&
-				hasNonHTMLSpace(html.UnescapeString(string(z.Raw()))) {
-				if !htmlFrameOpen("template") {
-					framesetOK = false
-				}
-				if len(stack) == 0 {
-					if !bodyStarted {
-						bodyStartMark = len(recorded)
-					}
-					bodyStarted = true
-				}
-			}
-			// Body text also reconstructs the active formatting elements
-			// before it is inserted, whitespace included.
-			if enclosing().ns == "" && pending.language == "" && !pending.inert {
-				reconstruct()
-			}
-			// A text token whose raw begins with the CDATA opener is a section
-			// the tokenizer was allowed to read — a raw-text body that merely
-			// starts with those bytes is caught by its pending case first.
-			isCDATA := strings.HasPrefix(string(z.Raw()), "<![CDATA[")
-			switch {
-			case pending.inert:
-				// An HTML raw-text or RCDATA body the scan passed over. Recorded
-				// rather than left blank so the "<" proof below does not read
-				// "<textarea><[meta …]" as an interpolated element name: there
-				// is no tag there, and a browser shows the "<" as text.
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					if couldCompleteEndTag(string(z.Raw()), idx.at, pending.name) {
-						record(idx.index, attrContext{inName: true, noscript: inNoscript()})
-						continue
-					}
-					record(idx.index, attrContext{
-						inertText:   true,
-						noscript:    inNoscript(),
-						noscriptRaw: pending.noscriptRaw,
-					})
-				}
-			case pending.language != "":
-				// A script or style body in the HTML namespace is where
-				// escaping helps least, not most: the parser decodes no
-				// entities there, so the value lands in JavaScript or CSS with
-				// its escaping still in it. Contained against a quote or a "<",
-				// and no help at all against a backtick, a "${...}", a ";" or a
-				// brace, none of which it touches. In an SVG one the decoding
-				// does happen, and unsafeAttributeContexts says so.
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					if couldCompleteEndTag(string(z.Raw()), idx.at, pending.name) {
-						record(idx.index, attrContext{inName: true, noscript: inNoscript()})
-						continue
-					}
-					record(idx.index, attrContext{
-						rawTextElement: pending.language,
-						noscript:       inNoscript(),
-					})
-				}
-			case enclosing().program != "":
-				// A DIRECT child text node of an SVG <script> or <style> is
-				// the program. Not every descendant one: the spec builds the
-				// source from "child text content", which is the Text children
-				// and not textContent, so a value written inside a <g> in
-				// there is markup that no browser executes — and this case
-				// never fires there, because the <g>'s own frame is what
-				// enclosing() reads.
-				top := enclosing()
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					fr := top.ns
-					if isCDATA {
-						// Entities are NOT decoded inside a CDATA section —
-						// that is what Illustrator wraps a style body in one
-						// for — so the escaping arrives intact and the HTML
-						// message is the true one, not the foreign message
-						// that says the parser undoes it.
-						fr = ""
-					}
-					record(idx.index, attrContext{
-						rawTextElement: top.program,
-						foreignRoot:    fr,
-						noscript:       inNoscript(),
-					})
-				}
-			case isCDATA:
-				// Character data in foreign content, outside any program.
-				// Recorded as settled text so the fallbacks do not answer for
-				// it: an unpaired quote in it is not an open attribute, and a
-				// "<" in it starts nothing.
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					record(idx.index, attrContext{inertText: true, noscript: inNoscript()})
-				}
-			}
-		}
+		i++
 	}
+	return facts
 }
 
-// formattingElements are the names whose end tags the adoption agency
-// algorithm owns — the spec's list of elements eligible for the active
-// formatting list.
-var formattingElements = map[string]bool{
-	"a": true, "b": true, "big": true, "code": true, "em": true, "font": true,
-	"i": true, "nobr": true, "s": true, "small": true, "strike": true,
-	"strong": true, "tt": true, "u": true,
-}
-
-// afeMarkerTags insert a marker into the active formatting list when they
-// open, and clear the list back to one when they close: reconstruction never
-// reaches past the boundary they draw.
-var afeMarkerTags = map[string]bool{
-	"applet": true, "caption": true, "marquee": true, "object": true,
-	"td": true, "template": true, "th": true,
-}
-
-// scopePopTags are the end-tag names the in-body insertion mode gives their
-// own pop-until-popped rule, each guarded by a scope test. The table-section
-// names (td, tr, tbody and friends) are deliberately absent: their rules live
-// in the table insertion modes this scan does not model.
-var scopePopTags = map[string]bool{
-	"address": true, "applet": true, "article": true, "aside": true,
-	"blockquote": true, "button": true, "caption": true, "center": true, "dd": true,
-	"details": true, "dialog": true, "dir": true, "div": true, "dl": true,
-	"dt": true, "fieldset": true, "figcaption": true, "figure": true,
-	"footer": true, "header": true, "hgroup": true, "li": true,
-	"listing": true, "main": true, "marquee": true, "menu": true, "nav": true,
-	"object": true, "ol": true, "p": true, "pre": true, "search": true,
-	"section": true, "select": true, "summary": true, "table": true,
-	"tbody": true, "td": true, "template": true, "tfoot": true, "th": true,
-	"thead": true, "tr": true, "ul": true,
-}
-
-// headingTags close as a class: "</h2>" pops to the nearest open heading of
-// any rank.
-var headingTags = map[string]bool{
-	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
-}
-
-// headContentTags are the start tags the in-head mode keeps for itself; any
-// other start tag closes an open <head> and belongs to the body.
-var headContentTags = map[string]bool{
-	"base": true, "basefont": true, "bgsound": true, "head": true,
-	"link": true, "meta": true, "noframes": true, "noscript": true,
-	"script": true, "style": true, "template": true, "title": true,
-}
-
-// headNoscriptContentTags are the start tags the in-head-noscript mode keeps
-// inside a head-position <noscript> with scripting off; anything else closes
-// the noscript first.
-var headNoscriptContentTags = map[string]bool{
-	"basefont": true, "bgsound": true, "head": true, "link": true,
-	"meta": true, "noframes": true, "noscript": true, "style": true,
-}
-
-// framesetFlipTags are the start tags that set the frameset-ok flag to "not
-// ok" — the parser's enumerated list, not a complement: a formatting element,
-// an unknown element and an <svg> all leave the flag alone, and a <frameset>
-// after any of them still replaces the body.
-var framesetFlipTags = map[string]bool{
-	"applet": true, "area": true, "body": true, "br": true, "button": true,
-	"dd": true, "dt": true, "embed": true, "hr": true, "iframe": true,
-	"img": true, "keygen": true, "li": true, "listing": true,
-	"marquee": true, "object": true, "pre": true, "select": true,
-	"table": true, "template": true, "textarea": true, "wbr": true,
-	"xmp": true,
-}
-
-// tableSectionTags are ignored tokens in the body; only the table insertion
-// modes build them.
-var tableSectionTags = map[string]bool{
-	"caption": true, "col": true, "colgroup": true, "tbody": true, "td": true,
-	"tfoot": true, "th": true, "thead": true, "tr": true,
-}
-
-// pCloserTags are the block-level start tags that close a p element in button
-// scope before inserting themselves. The headings are here too, with their
-// extra rule applied at the call site.
-var pCloserTags = map[string]bool{
-	"address": true, "article": true, "aside": true, "blockquote": true,
-	"center": true, "details": true, "dialog": true, "dir": true, "div": true,
-	"dl": true, "fieldset": true, "figcaption": true, "figure": true,
-	"footer": true, "form": true, "h1": true, "h2": true, "h3": true,
-	"h4": true, "h5": true, "h6": true, "header": true, "hgroup": true,
-	"hr": true, "listing": true, "main": true, "menu": true, "nav": true,
-	"ol": true, "p": true, "plaintext": true, "pre": true, "search": true,
-	"section": true, "summary": true, "table": true, "ul": true, "xmp": true,
-}
-
-// scopeBoundary reports whether HTML's "has an element in scope" walk stops at
-// this element — a different and shorter list than the special one. Copied
-// from the spec's particular-element-scope list, with its MathML and SVG
-// entries.
-func scopeBoundary(f markupFrame) bool {
-	switch f.ns {
-	case "":
-		switch f.name {
-		case "applet", "caption", "html", "table", "td", "th", "marquee",
-			"object", "select", "template":
-			// select is the new select parsing's addition to the list, and
-			// x/net carries it.
-			return true
-		}
-	case "math":
-		switch f.name {
-		case "mi", "mo", "mn", "ms", "mtext", "annotation-xml":
-			return true
-		}
-	case "svg":
-		switch f.name {
-		case "foreignobject", "desc", "title":
-			return true
-		}
-	}
-	return false
-}
-
-// breaksOutOfForeignContent reports whether this start tag takes a browser back
-// out of <svg>/<math> and into HTML rules.
-//
-// It is not a refinement: without it an <svg> the author forgot to close would
-// make every later <textarea> and <iframe> foreign content, and this file would
-// warn about a link written inside one when a browser reads it as text. A
-// template typo is the last input that should draw a warning.
-//
-// The names are the HTML parser's own list (section 12.2.6.5, and x/net/html's
-// "breakout" map in foreign.go), copied rather than reasoned out.
-func breaksOutOfForeignContent(name string, z *html.Tokenizer, hasAttr bool) bool {
-	if foreignBreakoutTags[name] {
-		return true
-	}
-	// <font> is one of them only when it carries a presentational attribute.
-	if name != "font" {
-		return false
-	}
-	for hasAttr {
-		var key []byte
-		key, _, hasAttr = z.TagAttr()
-		switch string(key) {
-		case "color", "face", "size":
-			return true
-		}
-	}
-	return false
-}
-
-// isHTMLIntegrationPoint reports whether this element's children are read with
-// HTML rules again despite it sitting inside <svg> or <math>. <svg><title> is
-// the one that earns its keep: it is the accessible name of an inline icon, so
-// it is ordinary in a category template, and its content is HTML rather than
-// SVG.
-func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr, interpolatedEncoding bool) bool {
-	switch ns {
-	case "svg":
-		return name == "desc" || name == "foreignobject" || name == "title"
-	case "math":
-		if name != "annotation-xml" {
-			return false
-		}
-		// An encoding an interpolation could complete decides the namespace of
-		// everything inside, from a value a lower-privileged user writes, so it
-		// reads as the HTML integration point it may become — the same
-		// fail-closed choice the unterminated-tag case makes. "Could complete"
-		// and not "contains one": see encodingCouldBeHTML.
-		if interpolatedEncoding {
-			return true
-		}
-		// Only with an HTML encoding; with any other one, or none, the children
-		// are still MathML. (A start-tag <svg> inside one is taken by HTML rules
-		// regardless, which namespaceForChild handles separately.)
-		for hasAttr {
-			var key, val []byte
-			key, val, hasAttr = z.TagAttr()
-			if string(key) != "encoding" {
-				continue
-			}
-			// Not trimmed: the match is ASCII case-insensitive and nothing more,
-			// so encoding=" text/html " is NOT an integration point.
-			for _, enc := range htmlAnnotationEncodings {
-				if asciiEqualFold(string(val), enc) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	return false
-}
-
-// mathTextIntegrationPoints hand their children to HTML rules, with the two
-// exceptions namespaceForChild names.
-var mathTextIntegrationPoints = map[string]bool{
-	"mi": true, "mo": true, "mn": true, "ms": true, "mtext": true,
-}
-
-// rawTextElements are the ten names golang.org/x/net/html's tokenizer reads as
-// raw text or RCDATA. It does so by name and wherever the name appears, which
-// is the whole of the foreign-content problem: a browser only reads them that
-// way in the HTML namespace.
-var rawTextElements = map[string]bool{
-	"iframe": true, "noembed": true, "noframes": true, "noscript": true,
-	"plaintext": true, "script": true, "style": true, "textarea": true,
-	"title": true, "xmp": true,
-}
-
-// styleTypeApplies reports whether a browser will treat this <style> element as
-// a stylesheet. The type must be absent, empty, or text/css; anything else and
-// nothing is applied, so a value in the body is inert text.
-//
-// <script> deliberately gets no equivalent, and the asymmetry is the two specs'
-// rather than this file's: a style has exactly one valid type, while deciding
-// whether a script runs means classifying the JavaScript MIME types, "module",
-// and the data types (importmap, speculationrules) that are neither. That one
-// is named as residue instead.
-func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool {
-	// An interpolated type= is asked what it could complete, exactly as an
-	// interpolated <annotation-xml> encoding is: type="text/plain[meta …]"
-	// cannot become text/css, so nothing is applied and the body is inert. A
-	// discarded duplicate type is skipped: the parser keeps the first, so the
-	// z.TagAttr walk below reads the value that actually decides.
-	for _, hit := range hits {
-		if hit.ctx.inValue && hit.ctx.attr == "type" && !hit.ctx.discarded {
-			return interpolatedValueCouldBe(hit.value, styleSheetTypes)
-		}
-	}
-	for hasAttr {
-		var key, val []byte
-		key, val, hasAttr = z.TagAttr()
-		if string(key) != "type" {
+// substituteWorstCase replaces the value of an interpolated encoding= or type=
+// attribute that COULD complete a namespace- or stylesheet-deciding value with
+// that value, so a downstream placement is read fail-closed. It returns the
+// rewritten source and the set of sentinel indices it removed (which the
+// caller classifies from the untouched parse).
+func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
+	removed := map[int]bool{}
+	var b strings.Builder
+	i := 0
+	for i < len(src) {
+		if strings.HasPrefix(src[i:], "<!--") || strings.HasPrefix(src[i:], "<![CDATA[") {
+			// Leave comments and CDATA untouched; copy through.
+			b.WriteByte(src[i])
+			i++
 			continue
 		}
-		// Not trimmed: the match is "the empty string, or an ASCII
-		// case-insensitive match for text/css", so type=" text/css " applies
-		// nothing at all.
+		if src[i] == '<' && i+1 < len(src) && (isTagNameStart(src[i+1]) || src[i+1] == '/') {
+			j := i + 1
+			var q byte
+			for j < len(src) {
+				c := src[j]
+				if q != 0 {
+					if c == q {
+						q = 0
+					}
+					j++
+					continue
+				}
+				if c == '"' || c == '\'' {
+					q = c
+				} else if c == '>' {
+					break
+				}
+				j++
+			}
+			end := j
+			if end >= len(src) {
+				end = len(src) - 1
+			}
+			tag := src[i : end+1]
+			b.WriteString(rewriteWorstCaseTag(tag, removed, nspans))
+			if j >= len(src) {
+				i = len(src)
+			} else {
+				i = j + 1
+			}
+			continue
+		}
+		b.WriteByte(src[i])
+		i++
+	}
+	return b.String(), removed
+}
+
+// rewriteWorstCaseTag rewrites one tag's encoding=/type= values to their
+// dangerous completion when an interpolation could reach it.
+func rewriteWorstCaseTag(tag string, removed map[int]bool, nspans int) string {
+	replace := func(name, value string) (string, bool) {
+		var target string
+		switch name {
+		case "encoding":
+			if interpolatedValueCouldBe(value, htmlAnnotationEncodings) {
+				target = htmlAnnotationEncodings[0]
+			}
+		case "type":
+			if interpolatedValueCouldBe(value, styleSheetTypes) && strings.Contains(value, lintSentinelPrefix) {
+				target = "text/css"
+			}
+		}
+		if target == "" {
+			return "", false
+		}
+		for _, p := range sentinelIndexes(value) {
+			if p.index >= 0 && p.index < nspans {
+				removed[p.index] = true
+			}
+		}
+		return target, true
+	}
+	// Walk the tag's attributes, rewriting values in place.
+	var out strings.Builder
+	i := 0
+	if i < len(tag) && tag[i] == '<' {
+		i++
+	}
+	for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '>' && tag[i] != '/' {
+		i++
+	}
+	out.WriteString(tag[:i])
+	for i < len(tag) {
+		nameStart := i
+		for i < len(tag) && (isASCIISpace(tag[i]) || tag[i] == '/') {
+			i++
+		}
+		if i >= len(tag) || tag[i] == '>' {
+			out.WriteString(tag[nameStart:])
+			return out.String()
+		}
+		attrNameStart := i
+		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
+			i++
+		}
+		name := asciiLower(tag[attrNameStart:i])
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		if i >= len(tag) || tag[i] != '=' {
+			out.WriteString(tag[nameStart:i])
+			continue
+		}
+		i++
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		var q byte
+		if i < len(tag) && (tag[i] == '"' || tag[i] == '\'') {
+			q = tag[i]
+			i++
+		}
+		valStart := i
+		for i < len(tag) {
+			if q != 0 && tag[i] == q {
+				break
+			}
+			if q == 0 && (isASCIISpace(tag[i]) || tag[i] == '>') {
+				break
+			}
+			i++
+		}
+		value := tag[valStart:i]
+		out.WriteString(tag[nameStart:valStart])
+		if target, ok := replace(name, value); ok {
+			out.WriteString(target)
+		} else {
+			out.WriteString(value)
+		}
+		if i < len(tag) {
+			out.WriteString(tag[i : i+1])
+			i++
+		}
+	}
+	return out.String()
+}
+
+// classifyByParse parses src with the given scripting mode and returns each
+// sentinel's tree fact.
+func classifyByParse(src string, scripting bool, nspans int) []treeFact {
+	facts := make([]treeFact, nspans)
+	opts := []html.ParseOption{}
+	if !scripting {
+		opts = append(opts, html.ParseOptionEnableScripting(false))
+	}
+	doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
+	if err != nil {
+		return facts
+	}
+	set := func(idx int, f treeFact) {
+		if idx >= 0 && idx < nspans {
+			facts[idx] = f
+		}
+	}
+	var walk func(n *html.Node, noscript bool)
+	walk = func(n *html.Node, noscript bool) {
+		here := noscript
+		if n.Type == html.ElementNode && n.Namespace == "" && n.Data == "noscript" {
+			here = true
+		}
+		switch n.Type {
+		case html.ElementNode:
+			for _, p := range sentinelIndexes(n.Data) {
+				set(p.index, treeFact{kind: kName, noscript: here})
+			}
+			for _, a := range n.Attr {
+				for _, p := range sentinelIndexes(a.Key) {
+					set(p.index, treeFact{kind: kName, noscript: here})
+				}
+				for _, p := range sentinelIndexes(a.Val) {
+					set(p.index, treeFact{
+						kind: kAttrValue, element: n.Data, ns: n.Namespace,
+						attr: a.Key, prefix: a.Val[:p.at], noscript: here,
+					})
+				}
+			}
+		case html.TextNode:
+			// A text node's own Namespace is always "", so the parent — the
+			// element whose DIRECT child text this is — carries what decides
+			// the kind: an HTML or SVG <script> whose body is program source,
+			// an applied <style> whose body is CSS, or anything else.
+			kind := kText
+			ns := ""
+			if p := n.Parent; p != nil && p.Type == html.ElementNode {
+				ns = p.Namespace
+				// Only HTML and SVG have a <script> that runs and a <style>
+				// that applies; a MathML <script> or <style> is inert markup.
+				if ns == "" || ns == "svg" {
+					if p.Data == "script" && programScript(p) {
+						kind = kScript
+					} else if p.Data == "style" && styleIsStylesheet(p) {
+						kind = kStyle
+					}
+				}
+			}
+			for _, p := range sentinelIndexes(n.Data) {
+				set(p.index, treeFact{kind: kind, element: parentData(n), ns: ns, noscript: here})
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, here)
+		}
+	}
+	walk(doc, false)
+	return facts
+}
+
+func parentData(n *html.Node) string {
+	if n.Parent != nil {
+		return n.Parent.Data
+	}
+	return ""
+}
+
+// programScript reports whether a <script> element's body is program source.
+// The element's name decides it, never its type= — the documented residue that
+// a data <script type="application/json"> still draws the JavaScript message.
+func programScript(n *html.Node) bool { return true }
+
+// styleIsStylesheet reports whether a browser applies this <style> element, so
+// its body is CSS rather than inert text: the type must be absent, empty, or
+// text/css.
+func styleIsStylesheet(n *html.Node) bool {
+	for _, a := range n.Attr {
+		if a.Key != "type" {
+			continue
+		}
 		for _, want := range styleSheetTypes {
-			if asciiEqualFold(string(val), want) {
+			if asciiEqualFold(a.Val, want) {
 				return true
 			}
 		}
 		return false
 	}
 	return true
-}
-
-// stackHasSpecial reports whether HTML's walk would stop somewhere in this
-// part of the stack rather than reaching past it. The adoption agency clause
-// asks it to decide whether a formatting element has a furthest block above
-// it, and the end-tag search asks it before leaving foreign content from an
-// HTML current node.
-//
-// Asked only when the current node is HTML, because the stop is HTML's rule.
-// The foreign rule has none: in "<svg><iframe><foreignObject><math></svg>" a
-// browser walks past the special <foreignObject>, finds the svg and leaves —
-// and refusing to leave there left a real HTML <iframe srcdoc> unwarned.
-func stackHasSpecial(stack []markupFrame) bool {
-	for _, f := range stack {
-		if isSpecialElement(f) {
-			return true
-		}
-	}
-	return false
-}
-
-// isSpecialElement reports whether HTML's "any other end tag" walk stops at this
-// element. Copied from x/net/html's own isSpecialElementMap and the namespace
-// switch beside it.
-func isSpecialElement(f markupFrame) bool {
-	switch f.ns {
-	case "":
-		return htmlSpecialElements[f.name]
-	case "math":
-		switch f.name {
-		case "mi", "mo", "mn", "ms", "mtext", "annotation-xml":
-			return true
-		}
-	case "svg":
-		switch f.name {
-		case "foreignobject", "desc", "title":
-			return true
-		}
-	}
-	return false
-}
-
-var htmlSpecialElements = map[string]bool{
-	"address": true, "applet": true, "area": true, "article": true,
-	"aside": true, "base": true, "basefont": true, "bgsound": true,
-	"blockquote": true, "body": true, "br": true, "button": true,
-	"caption": true, "center": true, "col": true, "colgroup": true,
-	"dd": true, "details": true, "dir": true, "div": true, "dl": true,
-	"dt": true, "embed": true, "fieldset": true, "figcaption": true,
-	"figure": true, "footer": true, "form": true, "frame": true,
-	"frameset": true, "h1": true, "h2": true, "h3": true, "h4": true,
-	"h5": true, "h6": true, "head": true, "header": true, "hgroup": true,
-	"hr": true, "html": true, "iframe": true, "img": true, "input": true,
-	"keygen": true, "li": true, "link": true, "listing": true, "main": true,
-	"marquee": true, "menu": true, "meta": true, "nav": true, "noembed": true,
-	"noframes": true, "noscript": true, "object": true, "ol": true, "p": true,
-	"param": true, "plaintext": true, "pre": true, "script": true,
-	"section": true, "select": true, "source": true, "style": true,
-	"summary": true, "table": true, "tbody": true, "td": true,
-	"template": true, "textarea": true, "tfoot": true, "th": true,
-	"thead": true, "title": true, "tr": true, "track": true, "ul": true,
-	"wbr": true, "xmp": true,
-}
-
-// voidElements have no end tag and no children, so a browser pops one as soon
-// as it inserts it. Keeping a frame for one would put the namespace of its
-// following siblings on the wrong element.
-//
-// The list is HTML's, and so is the rule: an <svg><source> is an ordinary
-// foreign element that stays open, and dropping its frame made the text under
-// it read as a direct child of whatever was above.
-var voidElements = map[string]bool{
-	"area": true, "base": true, "br": true, "col": true, "embed": true,
-	"hr": true, "img": true, "input": true, "link": true, "meta": true,
-	"param": true, "source": true, "track": true, "wbr": true,
-	// Not HTML's official void list but the parser's behaviour: it inserts
-	// and immediately pops all three, so no end tag ever finds one open.
-	// (<image> never reaches this map at all — the parser renames the token
-	// to img.)
-	"basefont": true, "bgsound": true, "keygen": true,
-}
-
-// foreignBreakoutTags are the HTML start tag names that end foreign content,
-// copied from section 12.2.6.5 by way of x/net/html's own "breakout" map.
-// <font> is conditional and is handled in breaksOutOfForeignContent.
-var foreignBreakoutTags = map[string]bool{
-	"b": true, "big": true, "blockquote": true, "body": true, "br": true,
-	"center": true, "code": true, "dd": true, "div": true, "dl": true,
-	"dt": true, "em": true, "embed": true, "h1": true, "h2": true, "h3": true,
-	"h4": true, "h5": true, "h6": true, "head": true, "hr": true, "i": true,
-	"img": true, "li": true, "listing": true, "menu": true, "meta": true,
-	"nobr": true, "ol": true, "p": true, "pre": true, "ruby": true, "s": true,
-	"small": true, "span": true, "strong": true, "strike": true, "sub": true,
-	"sup": true, "table": true, "tt": true, "u": true, "ul": true, "var": true,
 }
 
 // insideUnterminatedTags reports, for each offset in at (ascending), whether it
@@ -1960,14 +922,17 @@ func sentinelIndexes(value string) []sentinelPos {
 		}
 		i += from
 		rest := value[i+len(lintSentinelPrefix):]
-		end := strings.IndexByte(rest, 0)
-		if end < 0 {
-			return out
+		// The index is the digit run between the prefix and the "z" suffix.
+		j := 0
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			j++
 		}
-		if n, err := strconv.Atoi(rest[:end]); err == nil {
-			out = append(out, sentinelPos{index: n, at: i})
+		if j > 0 && j < len(rest) && rest[j] == lintSentinelSuffix[0] {
+			if n, err := strconv.Atoi(rest[:j]); err == nil {
+				out = append(out, sentinelPos{index: n, at: i})
+			}
 		}
-		from = i + len(lintSentinelPrefix) + end + 1
+		from = i + len(lintSentinelPrefix) + j
 	}
 }
 
@@ -2234,20 +1199,6 @@ var styleSheetTypes = []string{"", "text/css"}
 // trimming, no parameters.
 var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
 
-// encodingCouldBeHTML reports whether an interpolated <annotation-xml>
-// encoding= could come out as one of those two, which is the question the
-// namespace of everything inside the element turns on.
-//
-// The shape is couldStillBecomeExecutable's: what is fixed is every run of text
-// an interpolation cannot change, so encoding="text/[meta …]" could and
-// encoding="image/[meta …]" could not. The runs BETWEEN two interpolations are
-// fixed as well and are checked, so encoding="[meta …]zzz[meta …]" could not
-// either. Asking only whether the value holds an interpolation at all failed
-// closed on all three, which is a warning about a script no browser runs.
-func encodingCouldBeHTML(value string) bool {
-	return interpolatedValueCouldBe(value, htmlAnnotationEncodings)
-}
-
 // interpolatedValueCouldBe reports whether some assignment to the
 // interpolations in value could make the whole of it one of wants. Two
 // attributes turn on this question — <annotation-xml>'s encoding, which decides
@@ -2283,11 +1234,13 @@ func fixedRunsAround(value string) []string {
 	at := 0
 	for _, h := range hits {
 		runs = append(runs, asciiLower(html.UnescapeString(value[at:h.at])))
+		// Skip past the whole sentinel: prefix, digit run, and "z" suffix.
 		at = h.at + len(lintSentinelPrefix)
-		if i := strings.IndexByte(value[at:], 0); i >= 0 {
-			at += i + 1
-		} else {
-			at = len(value)
+		for at < len(value) && value[at] >= '0' && value[at] <= '9' {
+			at++
+		}
+		if at < len(value) && value[at] == lintSentinelSuffix[0] {
+			at++
 		}
 	}
 	return append(runs, asciiLower(html.UnescapeString(value[at:])))
