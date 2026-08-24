@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('/admin/settings', () => {
-  test('renders 18 settings grouped across 7 sections', async ({ page }) => {
+  test('renders every registered setting, grouped across 7 sections', async ({ page }) => {
     await page.goto('/admin/settings');
     // Level 2, not 1: /admin/settings rendered two <h1>s — partials/title.tpl's
     // "Settings" plus this "Runtime Settings" — and heading navigation reported two
@@ -11,8 +11,13 @@ test.describe('/admin/settings', () => {
     await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
     const groupCount = await page.locator('section[aria-labelledby^="grp-"]').count();
     expect(groupCount).toBe(7);
+
+    // Compared against the registry rather than a literal: the claim is that the
+    // page renders one row per registered setting, and a hardcoded number only
+    // ever fails later for the uninteresting reason that a setting was added.
+    const registered = await (await page.request.get('/v1/admin/settings')).json();
     const rowCount = await page.locator('[data-testid^="setting-row-"]').count();
-    expect(rowCount).toBe(18);
+    expect(rowCount).toBe(registered.length);
   });
 
   test('max_upload_size save + reset roundtrip', async ({ page, request }) => {

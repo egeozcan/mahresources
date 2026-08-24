@@ -1,0 +1,338 @@
+import { test, expect, type Page } from '../fixtures/base.fixture';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { uniqueAssetFile, uniqueMarker } from '../helpers/unique-upload';
+
+/**
+ * The client-side bulk upload widget on /resource/new.
+ *
+ * Above a threshold (more than 10 files, or more than 1 GiB total) the form
+ * stops posting one multipart body and instead sends one request per file
+ * through a bounded pool, reporting real byte progress. Below the threshold the
+ * native post is untouched, which is why every other create-form spec keeps
+ * working unchanged.
+ */
+
+const ASSETS = path.join(__dirname, '../test-assets');
+
+/**
+ * Eleven distinct files — one more than the default file threshold of 10.
+ *
+ * The sample-image fixtures are numbered from 2, and every one is copied to a
+ * temp file with unique trailing bytes, so sharing indices with another spec
+ * cannot collide on the server's global content hash.
+ */
+function uniqueFilesFrom(first: number, count: number): string[] {
+  return Array.from({ length: count }, (_, i) =>
+    uniqueAssetFile(path.join(ASSETS, `sample-image-${first + i}.png`))
+  );
+}
+
+function elevenUniqueFiles(): string[] {
+  return uniqueFilesFrom(2, 11);
+}
+
+/** Resolves once nothing is in flight any more, whatever the outcome. */
+async function waitForBatchToSettle(page: Page) {
+  await expect(page.getByTestId('bulk-upload-cancel')).toBeHidden({ timeout: 60000 });
+}
+
+async function gotoNewResource(page: Page) {
+  await page.goto('/resource/new');
+  await page.waitForLoadState('load');
+}
+
+/** Collects uncaught page errors so a spec can assert the widget threw none. */
+function trackPageErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  return errors;
+}
+
+test.describe('Bulk upload widget', () => {
+  // The settings row is process-wide and one ephemeral server is shared by every
+  // spec this Playwright worker runs. An in-test `finally` is not enough: a test
+  // that times out never reaches it, and a leaked max_upload_size or threshold
+  // would then fail unrelated specs with a signature nobody traces back here.
+  // Resetting an override that was never set is a no-op.
+  test.afterEach(async ({ page }) => {
+    await page.request.delete('/v1/admin/settings/max_upload_size').catch(() => {});
+    await page.request.delete('/v1/admin/settings/upload_widget_file_threshold').catch(() => {});
+  });
+
+  test('a small selection still uses the native single-request post', async ({ page }) => {
+    // The guard for every other create-form spec: two files is below both
+    // thresholds, so the browser must post them in one body and the widget must
+    // never appear.
+    const errors = trackPageErrors(page);
+    await gotoNewResource(page);
+
+    const files = [
+      uniqueAssetFile(path.join(ASSETS, 'sample-image-20.png')),
+      uniqueAssetFile(path.join(ASSETS, 'sample-image-21.png')),
+    ];
+    await page.locator('input[type="file"]').setInputFiles(files);
+
+    await expect(page.getByTestId('bulk-upload-hint')).toBeHidden();
+
+    const uploadRequests: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploadRequests.push(r.url());
+    });
+
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+    await page.waitForURL(/\/(resource\?id=|resources|group\?id=)/, { timeout: 20000 });
+
+    expect(uploadRequests).toHaveLength(1);
+    expect(page.getByTestId('bulk-upload-panel')).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test('eleven files upload one request each, with progress, and land on the owner group', async ({ page, apiClient }) => {
+    const errors = trackPageErrors(page);
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+    const category = await apiClient.createCategory(`Bulk Upload Cat ${stamp}`);
+    const owner = await apiClient.createGroup({
+      name: `Bulk Upload Owner ${stamp}`,
+      categoryId: category.ID,
+    });
+    const tag = await apiClient.createTag(`bulk-upload-${stamp}`);
+
+    await gotoNewResource(page);
+
+    const files = elevenUniqueFiles();
+    await page.locator('input[type="file"]').setInputFiles(files);
+
+    // The threshold is announced before Save, not discovered after it.
+    await expect(page.getByTestId('bulk-upload-hint')).toBeVisible();
+    await expect(page.getByTestId('bulk-upload-hint')).toContainText('11 files');
+
+    // Every other form field must survive the FormData replay onto each request.
+    await page.locator('input[name="Name"]').fill(`Bulk ${stamp}`);
+    await page.locator('textarea[name="Description"]').fill('uploaded by the bulk widget');
+
+    // Meta travels as a hidden input that the freeFields component writes, which
+    // is the part of the "new FormData(form) reproduces native submission"
+    // argument most likely to be silently wrong.
+    await page.getByRole('button', { name: 'Add new field' }).first().click();
+    await page.getByLabel('Field 1 name').fill('batch');
+    await page.getByLabel('Field 1 value').fill(stamp);
+    await selectAutocomplete(page, 'Owner', owner.Name, 'ownerId');
+    await selectAutocomplete(page, 'Tags', tag.Name, 'tags');
+
+    // One request per file, not one for the batch.
+    const uploadRequests: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploadRequests.push(r.url());
+    });
+
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    await expect(page.getByTestId('bulk-upload-panel')).toBeVisible({ timeout: 10000 });
+
+    // A full batch lands on the owner group, matching the server's own
+    // multi-file redirect (without its /group?id=0 dead end for no owner).
+    await page.waitForURL(new RegExp(`/group\\?id=${owner.ID}`), { timeout: 60000 });
+
+    expect(uploadRequests).toHaveLength(11);
+
+    // The payload actually arrived: name, description, owner and tag on each.
+    const resources = await apiClient.getResources();
+    const mine = resources.filter((r) => r.Name === `Bulk ${stamp}`);
+    expect(mine).toHaveLength(11);
+
+    const detail = (await apiClient.getResource(mine[0].ID)) as unknown as {
+      Description: string;
+      OwnerId: number;
+      Tags: Array<{ ID: number }> | null;
+      Meta: Record<string, unknown>;
+    };
+    expect(detail.Description).toBe('uploaded by the bulk widget');
+    expect(detail.OwnerId).toBe(owner.ID);
+    expect((detail.Tags ?? []).map((t) => t.ID)).toContain(tag.ID);
+    expect(detail.Meta).toMatchObject({ batch: stamp });
+
+    expect(errors).toEqual([]);
+  });
+
+  test('the progress bar is named and reports a real percentage', async ({ page }) => {
+    // Held open deliberately: eleven small PNGs finish in milliseconds, so the
+    // uploading state has to be stalled to be observed at all.
+    // A latch, not a list of resolvers: only `concurrency` requests are in
+    // flight at any moment, so releasing the ones seen so far would leave the
+    // rest of the batch stalled against a handler nobody will ever release.
+    let openLatch: () => void = () => {};
+    const latch = new Promise<void>((resolve) => {
+      openLatch = resolve;
+    });
+    await page.route('**/v1/resource', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await latch;
+      await route.fallback();
+    });
+
+    await gotoNewResource(page);
+    await page.locator('input[type="file"]').setInputFiles(elevenUniqueFiles());
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    const bar = page.getByTestId('bulk-upload-progressbar');
+    await expect(bar).toBeVisible({ timeout: 10000 });
+
+    const announced = await bar.evaluate((el) => ({
+      role: el.getAttribute('role'),
+      label: el.getAttribute('aria-label'),
+      valuenow: el.getAttribute('aria-valuenow'),
+      valuemax: el.getAttribute('aria-valuemax'),
+    }));
+
+    expect(announced.role).toBe('progressbar');
+    expect(announced.valuemax).toBe('100');
+    // Never a bare prefix — the bug downloadCockpit.js:570 documents.
+    expect(announced.label).not.toBe('Upload progress: ');
+    expect(announced.label).toContain('of 11 files');
+    // The total is known from the picker, so the bar is determinate.
+    expect(Number(announced.valuenow)).toBeGreaterThanOrEqual(0);
+
+    // Save is unavailable while the batch is in flight.
+    await expect(page.locator('button[type="submit"]:has-text("Save")')).toBeDisabled();
+
+    // The in-flight list is capped by the concurrency setting (default 3).
+    await expect(page.getByTestId('bulk-upload-inflight').locator('li')).toHaveCount(3);
+
+    openLatch();
+    await page.waitForURL(/\/(resources|group\?id=)/, { timeout: 60000 });
+  });
+
+  test('a duplicate fails on its own row, links to the collision, and is not retryable', async ({ page, apiClient }) => {
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const category = await apiClient.createCategory(`Dupe Cat ${stamp}`);
+    const owner = await apiClient.createGroup({
+      name: `Dupe Owner ${stamp}`,
+      categoryId: category.ID,
+    });
+
+    // Uniquify ONCE and reuse that exact path, otherwise every upload gets
+    // distinct bytes and there is no collision to observe. Both copies must
+    // share an owner too: a different-owner collision is a success on this
+    // endpoint, not a 409.
+    const collider = uniqueAssetFile(path.join(ASSETS, 'sample-image-30.png'));
+    const existing = await apiClient.createResource({
+      filePath: collider,
+      name: `Collider ${stamp}`,
+      ownerId: owner.ID,
+      exactBytes: true,
+    });
+
+    await gotoNewResource(page);
+    await page.locator('input[type="file"]').setInputFiles([
+      collider,
+      ...uniqueFilesFrom(2, 10),
+    ]);
+    await selectAutocomplete(page, 'Owner', owner.Name, 'ownerId');
+
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+
+    const failures = page.getByTestId('bulk-upload-failures');
+    await expect(failures).toBeVisible({ timeout: 60000 });
+    await waitForBatchToSettle(page);
+    await expect(failures).toContainText(path.basename(collider));
+    await expect(failures.locator(`a[href="/resource?id=${existing.ID}"]`)).toBeVisible();
+
+    // A partial batch must not navigate away and lose the report.
+    expect(page.url()).toContain('/resource/new');
+
+    // Retry is offered only for failures a retry could change. A 409 will be
+    // refused identically forever, so this batch offers no retry at all.
+    await expect(page.getByTestId('bulk-upload-retry')).toBeHidden();
+
+    // The ten good files were still saved.
+    await expect(page.getByTestId('bulk-upload-summary')).toContainText('10 of 11 files');
+  });
+
+  test('an oversized file is refused before it is transferred', async ({ page }) => {
+    // max_upload_size is a per-request bound, and the widget sends one file per
+    // request, so it can reject a file up front instead of spending the whole
+    // transfer to receive a raw MaxBytesError.
+    const tmp = path.join(os.tmpdir(), `mahres-oversize-${uniqueMarker()}.bin`);
+    fs.writeFileSync(tmp, Buffer.alloc(3 * 1024 * 1024));
+
+    try {
+      await page.request.put('/v1/admin/settings/max_upload_size', {
+        data: { value: String(1024 * 1024), reason: 'e2e bulk upload' },
+      });
+
+      await gotoNewResource(page);
+      await page.locator('input[type="file"]').setInputFiles([tmp, ...uniqueFilesFrom(20, 10)]);
+
+      const uploadRequests: string[] = [];
+      page.on('request', (r) => {
+        if (r.method() === 'POST' && r.url().includes('/v1/resource')) uploadRequests.push(r.url());
+      });
+
+      await page.locator('button[type="submit"]:has-text("Save")').click();
+
+      const failures = page.getByTestId('bulk-upload-failures');
+      await expect(failures).toBeVisible({ timeout: 60000 });
+      await expect(failures).toContainText('larger than');
+
+      // The oversized file is refused client-side and therefore instantly, so
+      // the failures panel is visible while the other ten are still uploading.
+      // Counting requests before the batch settles is a race.
+      await waitForBatchToSettle(page);
+
+      // Ten requests, not eleven: the oversized one never left the browser.
+      expect(uploadRequests).toHaveLength(10);
+    } finally {
+      await page.request.delete('/v1/admin/settings/max_upload_size');
+      fs.rmSync(tmp, { force: true });
+    }
+  });
+
+  test('the file-count threshold is driven by the runtime setting', async ({ page }) => {
+    // Reset in a finally: the settings row is process-wide and one ephemeral
+    // server is shared by every spec this worker runs.
+    try {
+      await page.request.put('/v1/admin/settings/upload_widget_file_threshold', {
+        data: { value: '2', reason: 'e2e bulk upload' },
+      });
+
+      await gotoNewResource(page);
+      await expect(page.locator('form[data-upload-file-threshold]')).toHaveAttribute(
+        'data-upload-file-threshold',
+        '2'
+      );
+    } finally {
+      await page.request.delete('/v1/admin/settings/upload_widget_file_threshold');
+    }
+
+    await gotoNewResource(page);
+    await expect(page.locator('form[data-upload-file-threshold]')).toHaveAttribute(
+      'data-upload-file-threshold',
+      '10'
+    );
+  });
+});
+
+/**
+ * The create form's autocompleters, located by accessible name.
+ *
+ * Not by section label: Tags, Groups and Notes all sit inside one section whose
+ * label is "Relations", so a `:has(span:has-text("Tags"))` locator matches
+ * nothing. Each combobox is aria-labelledby its own title.
+ */
+async function selectAutocomplete(page: Page, label: string, value: string, fieldName: string) {
+  const input = page.getByRole('combobox', { name: label }).first();
+  await input.click();
+  await input.fill(value);
+  const option = page.locator(`div[role="option"]:has-text("${value}")`).first();
+  await option.waitFor({ state: 'visible', timeout: 10000 });
+  await option.click();
+  // The selection materialises as a hidden input carrying the id. Waiting for it
+  // means the FormData snapshot taken at submit cannot race the picker.
+  await page.waitForSelector(`input[name="${fieldName}"][value]:not([disabled])`, {
+    state: 'attached',
+    timeout: 5000,
+  });
+}

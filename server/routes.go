@@ -205,6 +205,16 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// programmatic embeds) falls back to the default instead of publishing 0 —
 		// which the panel would honour by rendering nothing.
 		ctx["downloadCockpitLimit"] = appContext.DownloadCockpitLimit()
+		// The client-side bulk upload widget on /resource/new. Read through the
+		// context accessors, not Settings(), for the same reason as above: a 0
+		// here would read as "every selection crosses the threshold" and "start
+		// no workers". maxUploadSize travels with them so the widget can reject
+		// an oversized file before transferring it — the server's own answer is
+		// a raw MaxBytesError at HTTP 400.
+		ctx["uploadConcurrency"] = appContext.UploadConcurrency()
+		ctx["uploadWidgetFileCount"] = appContext.UploadWidgetFileCount()
+		ctx["uploadWidgetSizeBytes"] = appContext.UploadWidgetSizeBytes()
+		ctx["maxUploadSize"] = appContext.Settings().MaxUploadSize()
 		docsLinksEnabled := !appContext.Settings().DocsLinksDisabled() && appContext.Settings().DocsSiteBaseURL() != ""
 		ctx["docsLinksEnabled"] = docsLinksEnabled
 		ctx["docsURL"] = func(slug string) string {

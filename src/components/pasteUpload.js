@@ -6,6 +6,7 @@
  */
 
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
+import { parseUploadError } from '../utils/uploadError.js';
 
 // ---------------------------------------------------------------------------
 // Helpers (module-private)
@@ -48,46 +49,6 @@ function friendlyType(mime) {
 function stripToSnippet(html, maxLen = 120) {
   const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   return text.length > maxLen ? text.slice(0, maxLen) + '\u2026' : text;
-}
-
-/**
- * Parse an upload error response into a user-friendly message and optional
- * resource ID (when the server reports a duplicate).
- *
- * The backend returns structured JSON:
- *   { "error": "...", "details": [{ "error": "...", "existingResourceId": 52 }] }
- *
- * @param {string} responseText  Raw response body
- * @param {number} statusCode    HTTP status code
- * @returns {{ message: string, resourceId: number|null }}
- */
-function parseUploadError(responseText, statusCode) {
-  let message = responseText || `Upload failed (HTTP ${statusCode})`;
-  let resourceId = null;
-
-  try {
-    const json = JSON.parse(responseText);
-
-    // Use the first detail entry when available (paste-upload sends one file per request)
-    const detail = json.details?.[0];
-    if (detail) {
-      message = detail.error;
-      if (detail.existingResourceId != null) {
-        resourceId = detail.existingResourceId;
-      }
-    } else if (json.error) {
-      message = json.error;
-    }
-  } catch (_) {
-    // Not JSON – use raw text as-is
-  }
-
-  // Capitalise first letter for display
-  if (message.length > 0) {
-    message = message.charAt(0).toUpperCase() + message.slice(1);
-  }
-
-  return { message, resourceId };
 }
 
 // ---------------------------------------------------------------------------

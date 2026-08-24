@@ -57,18 +57,30 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 
 func TestBuildSpecs_AllKeys(t *testing.T) {
 	specs := buildSpecs()
-	if len(specs) != 18 {
-		t.Fatalf("want 18 specs, got %d", len(specs))
-	}
 	expected := []string{
 		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLPageQueryBudget, KeyMRQLQueryTimeout,
 		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout, KeySharePublicURL,
 		KeyDocsSiteBaseURL, KeyDocsLinksDisabled, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 		KeyDownloadFailedRetention, KeyDownloadHistoryRetention, KeyDownloadCockpitLimit,
+		KeyUploadConcurrency, KeyUploadWidgetFileCount, KeyUploadWidgetSizeBytes,
+	}
+	// Counted from the list rather than written as a literal: the claim is that
+	// the registry holds exactly these keys, and a separate number only ever
+	// fails later for the uninteresting reason that a setting was added.
+	if len(specs) != len(expected) {
+		t.Fatalf("want %d specs, got %d", len(expected), len(specs))
 	}
 	for _, k := range expected {
 		if _, ok := specs[k]; !ok {
 			t.Errorf("missing spec for key %q", k)
+		}
+	}
+	// Every registered spec must also have a default, or the setting reads as
+	// its type's zero value until an operator sets it.
+	defaults := BuildDefaultsFromConfig(&MahresourcesConfig{})
+	for k := range specs {
+		if _, ok := defaults[k]; !ok {
+			t.Errorf("spec %q has no entry in BuildDefaultsFromConfig", k)
 		}
 	}
 }

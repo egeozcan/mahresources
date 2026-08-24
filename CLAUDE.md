@@ -137,6 +137,99 @@ The download queue (`download_queue/`) is in-memory: jobs are evicted once the m
 - **Live rows are filtered, not dropped.** `/downloads` merges in-flight jobs over the stored rows; a *status* filter excludes them as a class (they are in none of the terminal states), but a search term or date range is asked of each live row in Go (`liveRowMatchesFilter`) so searching for a download by name does not hide the copy of it that is running. The status filter applies to *relabelled* rows too: a stored failure that a live job has moved past is dropped from a page filtered to failures rather than printed there saying "downloading".
 - **Job ids are 64-bit** (`generateShortID`). They were 32-bit while they lived only in memory; as the history table's unique key, a collision would merge two users' downloads into one row that keeps the first submitter as owner.
 
+### Bulk resource uploads
+
+The create-resource form posts every selected file in one multipart body, which
+the server buffers with `ParseMultipartForm`. Above a threshold that is minutes
+of a page that looks hung, no per-file outcome and no cancel — and one
+`MaxBytesReader` budget for the whole batch, so exceeding it wastes the entire
+transfer. Above `upload_widget_file_threshold` files **or**
+`upload_widget_size_threshold` bytes, `src/components/resourceUpload.js`
+intercepts the submit and sends one request per file instead,
+`upload_concurrency` at a time.
+
+- **The endpoint is unchanged.** `POST /v1/resource` still accepts many files per
+  request and still loops them; the split is a browser-side decision. Below the
+  threshold, or with JavaScript unavailable, the native post is what happens — so
+  the no-JS path, the API, the CLI and every existing create-form test are
+  untouched, and the rarely-exercised path is the *new* one, not the old one.
+- **XMLHttpRequest, not fetch**, because `fetch` has no upload-progress event.
+  It is the only XHR in `src/`, so it is outside `src/csrf.js`'s `window.fetch`
+  wrapper and sets `X-CSRF-Token` itself. `csrfToken()` therefore lives in
+  `src/utils/csrfToken.js`, separate from `csrf.js`, whose import installs the
+  wrapper and a document listener — importing that from a vitest suite would run
+  both. It also sets `Accept: application/json`, without which the endpoint
+  answers a 302 that XHR follows silently.
+- **The payload is snapshotted once**, as `[...new FormData(form).entries()]`
+  minus `resource`, and replayed per file. `FormData(form)` reproduces native
+  submission exactly: it skips the autocompleters' `disabled` empty sentinels and
+  picks up the light-DOM hidden input `schema-form-mode` appends for `Meta`.
+  Taxonomy travels as ids (creatable selectors persist the entity first), so
+  replaying is idempotent.
+- **`onSubmit` returns early on `event.defaultPrevented`.** `schema-form-mode`
+  registers its own bubble-phase submit listener and `preventDefault()`s when the
+  Meta schema fails validation; `stopPropagation` does not stop a sibling
+  listener on the same element, so without the check the batch uploads past a
+  validation failure.
+- **`max_upload_size` becomes a per-file bound** under the widget, which is the
+  point rather than a regression — it bounds a *request*, and a request is now
+  one file. Each file is pre-checked in the browser, because the server's own
+  answer is a raw `MaxBytesError` string at HTTP 400, not worth transferring a
+  gigabyte to receive.
+- **Only in-flight and failed files get a row.** A batch can be hundreds of
+  files; completed ones collapse to a count. Progress is aggregated over
+  **bytes**, not files completed, or one 4 GB file among nine small ones would
+  sit at 0% and jump to 90%.
+- **A conflict is excluded from "Retry failed".** A 409 means the bytes already
+  exist and will be refused identically forever; the row links to the resource it
+  collided with instead. Only transport and server errors are retryable.
+- **A partial batch does not navigate.** Full success goes to `/group?id=<owner>`
+  (or `/resources` with no owner — the server's own multi-file redirect is
+  `/group?id=0` there, which is a dead page).
+- **The three settings are runtime-only** — no flag, no env var, no
+  `MahresourcesConfig` field, following `hash_backfill_paused`. They govern
+  browser behaviour on one page, so a restart to change one would be the wrong
+  shape. They are read through context accessors rather than `Settings()`, since
+  a context built from a bare config would publish 0, which reads as "every
+  selection crosses the threshold" and "start no workers".
+
+**`AddResource` had to be made concurrency-safe first.** It opened a *deferred*
+transaction, made its first statement a read (the content-hash lookup), copied
+the entire file body, and only then wrote. In WAL, promoting a read snapshot to a
+write after another connection has committed returns `SQLITE_BUSY_SNAPSHOT`, for
+which SQLite **does not invoke the busy handler** — so `busy_timeout` did not
+apply, nothing retried, and the caller got HTTP 500 on bytes already written to
+disk. The sequential loop hid this completely: within one request goroutine, two
+`AddResource` transactions never overlap. It is now three phases —
+
+1. the hash existence check, outside any transaction (the per-hash idlock is what
+   guarantees the dedup invariant, and it is released only after the winner
+   commits, so an autocommit read sees it; the collision branches take their own
+   short transactions in `mergeIntoExistingResource`);
+2. the filesystem write, outside any transaction (an orphan file on a later
+   failure is a state that already existed, and the `Stat`-then-reuse branch
+   already handles it);
+3. `insertUploadedResource`, whose **first statement is a write**.
+
+**INVARIANT: no SELECT between that `Begin()` and the first `Save`.** One read
+there restores the hazard silently; `TestAddResource_ConcurrentDistinctHashes`
+(and its constrained-pool twin, which mirrors the e2e harness's
+`-max-db-connections=2`) is the only thing that would catch it. Reads *after* the
+first write are fine — the writer lock is already held, which covers the
+association validations and the series lookup. Measured: 6–7 of 8 concurrent
+distinct-file uploads failed before, none after. A residue survives that fix at roughly one
+request in a hundred at concurrency 4 over HTTP, so phase 3 is retried a bounded
+number of times on `isLockContentionError`. Be precise about that residue: those
+failures return in well under a millisecond, so the busy handler demonstrably
+never engages and the 10s `busy_timeout` is not what is being exhausted — but
+which lock they lose is **not** root-caused (disabling the hash and thumbnail
+workers does not change the rate, and the transaction's first statement really is
+the INSERT). Retrying is right regardless of the variant, because the condition
+is transient contention rather than a failure on the statement's own merits;
+it is safe because a failed attempt rolled back and the file is already on disk,
+and `res.ID` is reset each attempt or a re-run `Save` would be an UPDATE of a row
+the rollback removed. Measured 0 failures in 220 uploads after.
+
 ### Job lifecycle events
 
 `after_job_completed`, `after_job_failed` and `after_job_cancelled` fire when a background job reaches a terminal state, for **every** job kind the download queue runs — downloads, group export and import, and plugin action jobs submitted through it.
@@ -218,7 +311,8 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many **finished downloads** the jobs panel renders, newest first (default: 10); older ones stay reachable at `/downloads`. Active work and every non-download job (exports, imports, plugin actions) are never capped — `/downloads` cannot show them, so hiding them would leave their cancel and result controls unreachable. Runtime-editable. |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work (default: `30s`). It bounds the resolution of every plugin schedule: a plugin may not declare an interval shorter than `plugin_system.MinScheduleInterval` (30s), and a tick slower than a schedule's interval simply runs it at the tick's resolution. |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | Maximum import tar upload size in bytes (default: 10 GB) |
-| `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB) |
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB). Bounds one **request**: a native multi-file form post is capped as a whole, while the client-side bulk upload widget sends one file per request and is therefore capped per file. Runtime-editable. |
+| (runtime only) | (runtime only) | `upload_concurrency` (default `3`), `upload_widget_file_threshold` (default `10`) and `upload_widget_size_threshold` (default 1 GiB) govern the client-side bulk upload widget on `/resource/new`. Editable only at runtime, via `/admin/settings`, `mr admin settings` or `/v1/admin/settings` — they change browser behaviour on one page, so there is no boot flag. |
 | `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes. `0` (default) disables the limit, preserving the historical unbounded behaviour. Keyed on Content-Type, so multipart uploads (bounded by `-max-upload-size`) are unaffected. Recommended for `-auth` deployments where any authenticated user can POST JSON. |
 | `-max-action-entities` | `MAX_ACTION_ENTITIES` | Maximum entities one plugin-action run may name (default: `1000`). `0` selects the default rather than "unlimited": the async branch creates a goroutine, a job-map entry and an SSE notification **per submitted id** before any of them runs, and the 1 MB body limit admits on the order of 10^5. An action's own `bulk_max` is the author's policy, checked first and independently; this is the deployment's ceiling. |
 | `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap (default: `100`). Bounds the self-service token table so one account cannot exhaust it. |
