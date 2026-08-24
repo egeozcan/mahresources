@@ -101,3 +101,40 @@ One precedent worth weighing: earlier in the same campaign a lane withdrew a cha
 same file entirely, after proving with primary sources that the premise it had been given was
 false and that both attempted fixes warned where nothing could go wrong. A warning that fires
 on safe markup is worse than silence, because authors learn to ignore the linter.
+
+---
+
+## Resolution (2026-08-24): rewritten parse-backed, and shipped without the gate
+
+The parked verdict above blamed the review gate's non-convergence on missed-warning defects.
+The root cause was deeper: this branch is a HAND-WRITTEN model of the HTML tree (a tokenizer
+plus an open-elements stack, `scanMarkup`, frameset/template phases, an adoption-agency
+approximation), and a hand model of a browser diverges from the browser in an unbounded number
+of small ways — so each review round's fixes added tree-construction surface, and the next
+round's majors lived in that new surface (rounds 5→8→12→10→10). The constraint that justified
+the hand model — "a full parse would cost the byte offsets every diagnostic is anchored to" —
+was already false: diagnostics anchor to `tk.start`/`tk.end` and occurrences map back by SPAN
+INDEX, and every verification all campaign was `html.Parse` + walk-the-DOM. See the lesson
+[[reference_reverify_the_constraint_that_chose_the_architecture]].
+
+**The linter was rewritten onto `html.Parse` itself** on branch `wip/lint-parse-backed`
+(a per-process-random sentinel substituted per occurrence, parsed in BOTH scripting modes, each
+placement read out of the DOM; a flat lexical pass supplies only the syntactic facts the DOM
+drops). The whole tree model — `scanMarkup`, frames, adoption agency, frameset/template phases —
+is gone; the parser IS the model. Once the tree-construction surface was gone, the review
+found ZERO tree-construction defects: every subsequent finding was in the finite lexical/merge/
+message/URL/raw= layer.
+
+**Rounds 15–24** ran the same adversarial pi gate on the rewrite and fixed ~38 real,
+`html.Parse`-verified defects (majors/round 3, 4, 9, 5, 9, 5). Two features were REMOVED rather
+than approximated further, both the same pattern as this parked branch — an unbounded
+approximation that regenerated findings each round: a char-ref URL-completion mechanism
+(round 21) and the encoding/type worst-case exploration (round 24, on shared interpolation
+values). Both are now documented residue.
+
+**The gate was not closed; the operator dropped it.** "Two consecutive zero-major rounds"
+against gpt-5.6-at-high proved impractical for a linter this complex — the reviewer always
+finds SOME esoteric imprecision. But rounds 21–22 had zero false positives, and the delivered
+state (`wip/lint-parse-backed`) is false-positive-clean, ~38 defects fixed, full Go + E2E +
+Postgres green. That branch — NOT this one — is the deliverable. `wip/lint-foreign-content`
+(this hand model) is superseded and can be deleted.
