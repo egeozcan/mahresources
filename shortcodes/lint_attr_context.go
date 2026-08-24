@@ -167,17 +167,6 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// The syntactic layer: quoted, discarded, valueSoFar, and the interpolated
 	// tag/attribute NAME, from a flat pass over the source's tags.
 	lex := lexicalContexts(substituted, len(spans))
-	// Whether each occurrence sits in a CDATA section is a source fact the
-	// parser erases (it strips the markers from a foreign text node), and it
-	// only changes the message for an SVG <script>/<style> body — where a
-	// CDATA section, unlike ordinary foreign content, does not decode
-	// entities.
-	for i := range spans {
-		if sentinelAt[i] >= 0 {
-			lex[i].cdata = inForeignCDATA(substituted, sentinelAt[i])
-		}
-	}
-
 	// The tree layer: html.Parse in both scripting modes. An interpolated
 	// encoding= or type= is parsed at its worst case first — as the value it
 	// could complete — so a namespace or stylesheet it MIGHT decide is read
@@ -202,10 +191,13 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		}
 		primary := mergeContext(lex[i], on[i])
 		// A sentinel in a raw-text body that could complete the body's own
-		// end tag is treated as an interpolated NAME, fail-closed.
+		// end tag is treated as an interpolated NAME, fail-closed — unless it
+		// sits in a real (foreign) CDATA section, where the end tag runs to
+		// "]]>" and no spelling of it closes anything.
 		if primary.inertText || primary.rawTextElement != "" {
-			if couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
-				couldCompleteEndTag(substituted, sentinelAt[i], off[i].element) {
+			inForeign := on[i].ns != "" && inForeignCDATA(substituted, sentinelAt[i])
+			if !inForeign && (couldCompleteEndTag(substituted, sentinelAt[i], on[i].element) ||
+				couldCompleteEndTag(substituted, sentinelAt[i], off[i].element)) {
 				primary = attrContext{inName: true}
 			}
 		}
@@ -233,8 +225,6 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// left unresolved: an interpolated element name (a "<" the parser reads as
 	// text because the sentinel is not a name-start), and a tag that is never
 	// closed.
-	var ask []int
-	var askSpan []int
 	for i, sp := range spans {
 		ctx, ok := out[sp.start]
 		if !ok {
@@ -243,32 +233,27 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// A settled placement is not re-answered. An inertText from a
 		// <noscript> body is settled only if the two scripting modes AGREE it
 		// is text: where they differ, the body is markup with scripting off,
-		// and an unterminated tag or interpolated name in it must fail closed.
+		// and an interpolated name in it must fail closed.
 		settledInert := ctx.inertText && on[i] == off[i]
 		if ctx.inValue || ctx.inName || settledInert || ctx.discarded ||
 			ctx.rawTextElement != "" || ctx.unterminated {
 			continue
 		}
 		at := sentinelAt[i]
-		if at < 0 {
+		if at <= 0 {
 			continue
 		}
-		if at > 0 {
-			j := at - 1
-			if j > 0 && substituted[j] == '/' {
-				j--
-			}
-			if substituted[j] == '<' {
-				out[sp.start] = attrContext{inName: true}
-				continue
-			}
+		// The interpolated element name the parser reads as text — a "<"
+		// (optionally "</") immediately before the sentinel. With the
+		// sentinel being a name-start, the parser usually reads it AS a name
+		// (kName), so this is a belt-and-suspenders for the rare non-name-start
+		// completion.
+		j := at - 1
+		if j > 0 && substituted[j] == '/' {
+			j--
 		}
-		ask = append(ask, at)
-		askSpan = append(askSpan, i)
-	}
-	for k, unterminated := range insideUnterminatedTags(substituted, ask) {
-		if unterminated {
-			out[spans[askSpan[k]].start] = attrContext{unterminated: true}
+		if substituted[j] == '<' {
+			out[sp.start] = attrContext{inName: true}
 		}
 	}
 	return out, alt
@@ -277,13 +262,13 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 // lexFact is the syntactic half of an occurrence's context, from the source's
 // tag structure alone.
 type lexFact struct {
-	inName     bool
-	inValue    bool
-	discarded  bool
-	quoted     bool
-	attr       string
-	valueSoFar string
-	cdata      bool // the occurrence sits in a CDATA section (entities not decoded)
+	inName       bool
+	inValue      bool
+	discarded    bool
+	quoted       bool
+	attr         string
+	valueSoFar   string
+	unterminated bool
 }
 
 // treeFact is the tree half, from html.Parse.
@@ -311,6 +296,9 @@ const (
 // rules read. The syntactic NAME and unterminated facts win, being fail-closed;
 // otherwise the parser's placement decides.
 func mergeContext(l lexFact, t treeFact) attrContext {
+	if l.unterminated {
+		return attrContext{unterminated: true}
+	}
 	if t.kind == kName {
 		// The parser read the occurrence as an element or attribute NAME. The
 		// lexical layer is not consulted for this: a broken quote in a script
@@ -331,17 +319,13 @@ func mergeContext(l lexFact, t treeFact) attrContext {
 			noscript:    t.noscript,
 		}
 	case kScript:
-		fr := t.ns
-		if l.cdata {
-			fr = ""
-		}
-		return attrContext{rawTextElement: "script", foreignRoot: fr, noscript: t.noscript}
+		// SVG <script>/<style> decode entities in their body — verified
+		// against html.Parse, CDATA-wrapped or not — so an SVG body always
+		// takes the foreign message (escaping undone); an HTML one (ns "")
+		// takes the raw-text message (escaping intact).
+		return attrContext{rawTextElement: "script", foreignRoot: t.ns, noscript: t.noscript}
 	case kStyle:
-		fr := t.ns
-		if l.cdata {
-			fr = ""
-		}
-		return attrContext{rawTextElement: "style", foreignRoot: fr, noscript: t.noscript}
+		return attrContext{rawTextElement: "style", foreignRoot: t.ns, noscript: t.noscript}
 	case kText:
 		// The parser placed it in a text node the rules have nothing to say
 		// about; recorded as settled so the fallbacks do not re-answer it.
@@ -412,132 +396,77 @@ func couldCompleteEndTag(text string, at int, name string) bool {
 // CDATA-aware, but with no tree and no raw-text elements — and returns the
 // syntactic facts for every sentinel that lands in one. A sentinel in text is
 // left as the zero lexFact, to be answered by the parser.
-// scanComment returns the index just past a comment beginning at src[i] ("<!--"),
-// which the HTML tokenizer closes at "-->" OR "--!>". Returns len(src) for an
-// unterminated comment.
-func scanComment(src string, i int) int {
-	j := i + 4
-	for j < len(src) {
-		if strings.HasPrefix(src[j:], "-->") {
-			return j + 3
-		}
-		if strings.HasPrefix(src[j:], "--!>") {
-			return j + 4
-		}
-		j++
-	}
-	return len(src)
-}
-
-// scanTagEnd returns the index of a start/end tag's closing ">" (or len(src)-1
-// if it runs off the end), reading it the way the HTML tokenizer does: a quote
-// delimits a value only when it opens one, i.e. in the "before attribute
-// value" state right after "="; a quote anywhere in a name or an unquoted
-// value is a literal character, not a delimiter.
-func scanTagEnd(src string, i int) int {
-	j := i + 1
-	afterEquals := false
-	for j < len(src) {
-		c := src[j]
-		if c == '>' {
-			return j
-		}
-		if c == '=' {
-			afterEquals = true
-			j++
-			continue
-		}
-		if afterEquals && !isASCIISpace(c) {
-			if c == '"' || c == '\'' {
-				// A quoted value: skip to the matching quote.
-				k := j + 1
-				for k < len(src) && src[k] != c {
-					k++
-				}
-				j = k + 1
-			} else {
-				// An unquoted value: skip to whitespace or ">".
-				for j < len(src) && !isASCIISpace(src[j]) && src[j] != '>' {
-					j++
-				}
-			}
-			afterEquals = false
-			continue
-		}
-		j++
-	}
-	return len(src) - 1
-}
-
-// lexicalContexts walks the source's tags — comment-aware and with correct
-// tag delimiting, but with no tree and no raw-text elements — and returns the
-// syntactic facts for every sentinel that lands in one: quoted and discarded
-// for a START-tag attribute value, and inName for a sentinel in an END-tag
-// NAME. Interpolated START-tag element and attribute names are NOT reported
-// here: the parser resolves those to kName, and an END-tag ATTRIBUTE (which
-// the parser ignores) must not be mistaken for a name. A sentinel in text is
-// left as the zero lexFact, to be answered by the parser.
+// lexicalContexts runs golang.org/x/net/html's own TOKENIZER over the source
+// — which delimits tags, comments and CDATA exactly as a browser does, so no
+// hand-written scanner can diverge from it — and reads the syntactic facts off
+// each tag: quoted and discarded for a START-tag attribute value, and inName
+// for a sentinel in an END-tag NAME. Interpolated START-tag element and
+// attribute names are the parser's kName and are not reported here, and an
+// END-tag ATTRIBUTE (ignored by the parser) is not a name. The tokenizer
+// raw-texts <script>, <iframe> and friends, so a tag NESTED in one of their
+// foreign bodies is not emitted; such an occurrence gets the zero lexFact and
+// mergeContext defaults it to quoted (no false "unquoted" on a foreign-nested
+// value), which is the one deliberate approximation here.
 func lexicalContexts(src string, nspans int) []lexFact {
 	facts := make([]lexFact, nspans)
-	i := 0
-	for i < len(src) {
-		if strings.HasPrefix(src[i:], "<!--") {
-			i = scanComment(src, i)
-			continue
-		}
-		if strings.HasPrefix(src[i:], "<![CDATA[") {
-			if e := strings.Index(src[i+9:], "]]>"); e >= 0 {
-				i = i + 9 + e + 3
-			} else {
-				i = len(src)
-			}
-			continue
-		}
-		endTag := i+1 < len(src) && src[i+1] == '/'
-		if src[i] == '<' && i+1 < len(src) && (isTagNameStart(src[i+1]) || endTag) {
-			end := scanTagEnd(src, i)
-			tag := src[i : end+1]
-			if endTag {
-				// Only the NAME of an end tag matters — a sentinel completing
-				// it could name a real element to close. Its attributes are
-				// ignored by the parser, so a sentinel there is inert.
-				k := i + 2
-				for k <= end && !isASCIISpace(src[k]) && src[k] != '>' {
-					k++
+	z := html.NewTokenizer(strings.NewReader(src))
+	for {
+		tt := z.Next()
+		// Never let the tokenizer go into raw-text mode: a browser reads the
+		// bodies of <script>, <iframe>, <noscript> and friends as raw text,
+		// but for the SYNTACTIC facts this pass wants — the quoted-ness of the
+		// tags NESTED in them — every tag has to be emitted. A sentinel that
+		// really is in one of those bodies is answered by the parser (kScript,
+		// kText), so this over-reading never reaches a rule.
+		z.NextIsNotRawText()
+		switch tt {
+		case html.ErrorToken:
+			// A tag the tokenizer could not close runs to EOF and comes back
+			// as the final ErrorToken's raw, starting with "<". Its sentinels
+			// are inside a tag that is never closed — the quote state that
+			// decides where it ends is the tokenizer's, so no hand-written
+			// scan can disagree with it.
+			raw := string(z.Raw())
+			if len(raw) > 1 && raw[0] == '<' && (isTagNameStart(raw[1]) || raw[1] == '/') {
+				for _, p := range sentinelIndexes(raw) {
+					if p.index >= 0 && p.index < nspans {
+						facts[p.index] = lexFact{unterminated: true}
+					}
 				}
-				for _, p := range sentinelIndexes(src[i+2 : k]) {
+			}
+			return facts
+		case html.StartTagToken, html.SelfClosingTagToken:
+			for _, h := range sentinelsInTag(string(z.Raw())) {
+				if h.index < 0 || h.index >= nspans || !h.ctx.inValue {
+					continue
+				}
+				facts[h.index] = lexFact{
+					inValue:    true,
+					attr:       h.ctx.attr,
+					quoted:     h.ctx.quoted,
+					valueSoFar: h.ctx.valueSoFar,
+					discarded:  h.ctx.discarded,
+				}
+			}
+		case html.EndTagToken:
+			// Only the NAME of an end tag matters — a sentinel completing it
+			// could name a real element to close; the attributes an end tag
+			// may carry are ignored by the parser, so a sentinel there is
+			// inert. The name is the run right after "</".
+			raw := string(z.Raw())
+			k := 2
+			for k < len(raw) && !isASCIISpace(raw[k]) && raw[k] != '/' && raw[k] != '>' {
+				k++
+			}
+			if k > 2 {
+				for _, p := range sentinelIndexes(raw[2:k]) {
 					if p.index >= 0 && p.index < nspans {
 						facts[p.index] = lexFact{inName: true}
 					}
 				}
-			} else {
-				for _, h := range sentinelsInTag(tag) {
-					if h.index < 0 || h.index >= nspans {
-						continue
-					}
-					// Only the attribute-value facts are taken; a start-tag
-					// element or attribute NAME is the parser's kName.
-					if h.ctx.inValue {
-						facts[h.index] = lexFact{
-							inValue:    true,
-							attr:       h.ctx.attr,
-							quoted:     h.ctx.quoted,
-							valueSoFar: h.ctx.valueSoFar,
-							discarded:  h.ctx.discarded,
-						}
-					}
-				}
 			}
-			if end >= len(src)-1 {
-				i = len(src)
-			} else {
-				i = end + 1
-			}
-			continue
 		}
-		i++
 	}
-	return facts
 }
 
 // substituteWorstCase replaces the value of an interpolated encoding= or type=
@@ -548,38 +477,22 @@ func lexicalContexts(src string, nspans int) []lexFact {
 func substituteWorstCase(src string, nspans int) (string, map[int]bool) {
 	removed := map[int]bool{}
 	var b strings.Builder
-	i := 0
-	for i < len(src) {
-		if strings.HasPrefix(src[i:], "<!--") {
-			e := scanComment(src, i)
-			b.WriteString(src[i:e])
-			i = e
-			continue
+	z := html.NewTokenizer(strings.NewReader(src))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			return b.String(), removed
 		}
-		if strings.HasPrefix(src[i:], "<![CDATA[") {
-			e := strings.Index(src[i+9:], "]]>")
-			end := len(src)
-			if e >= 0 {
-				end = i + 9 + e + 3
-			}
-			b.WriteString(src[i:end])
-			i = end
-			continue
+		// Concatenating every token's Raw() reproduces the input exactly, so
+		// rewriting only the start tags leaves everything else byte-identical
+		// and every sentinel still findable by its prefix.
+		raw := string(z.Raw())
+		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
+			b.WriteString(rewriteWorstCaseTag(raw, removed, nspans))
+		} else {
+			b.WriteString(raw)
 		}
-		if src[i] == '<' && i+1 < len(src) && (isTagNameStart(src[i+1]) || src[i+1] == '/') {
-			end := scanTagEnd(src, i)
-			b.WriteString(rewriteWorstCaseTag(src[i:end+1], removed, nspans))
-			if end >= len(src)-1 {
-				i = len(src)
-			} else {
-				i = end + 1
-			}
-			continue
-		}
-		b.WriteByte(src[i])
-		i++
 	}
-	return b.String(), removed
 }
 
 // rewriteWorstCaseTag rewrites one tag's encoding=/type= values to their
@@ -701,13 +614,19 @@ func classifyByParse(src string, scripting bool, nspans int) []treeFact {
 				set(p.index, treeFact{kind: kName, noscript: here})
 			}
 			for _, a := range n.Attr {
+				// The namespaced name, so an SVG xlink:href is named as itself
+				// rather than as the ordinary "href" beside it.
+				attrName := a.Key
+				if a.Namespace != "" {
+					attrName = a.Namespace + ":" + a.Key
+				}
 				for _, p := range sentinelIndexes(a.Key) {
 					set(p.index, treeFact{kind: kName, noscript: here})
 				}
 				for _, p := range sentinelIndexes(a.Val) {
 					set(p.index, treeFact{
 						kind: kAttrValue, element: n.Data, ns: n.Namespace,
-						attr: a.Key, prefix: a.Val[:p.at], noscript: here,
+						attr: attrName, prefix: a.Val[:p.at], noscript: here,
 					})
 				}
 			}
@@ -777,102 +696,6 @@ func styleIsStylesheet(n *html.Node) bool {
 		return false
 	}
 	return true
-}
-
-// insideUnterminatedTags reports, for each offset in at (ascending), whether it
-// sits after a "<" that is never closed — the one case the tokenizer cannot
-// describe. One left-to-right pass answers for all of them, because asking per
-// offset means walking back to the nearest "<" and then forward to EOF, which
-// is the whole document once per occurrence.
-//
-// The pass can carry every pending answer at once because there are only ever
-// three of them to carry. Each byte acts on the quote state as a permutation
-// (a '"' swaps "outside" with "inside a double quote" and fixes the third; a
-// "'" does the mirror; every other byte is the identity), so two scans in
-// different states never converge into one, and three states is the ceiling on
-// how many distinct scans can be in flight. pending[q] holds the offsets whose
-// scan currently sits in state q, and a byte that permutes the states just
-// swaps those buckets.
-func insideUnterminatedTags(substituted string, at []int) []bool {
-	out := make([]bool, len(at))
-	if len(at) == 0 {
-		return out
-	}
-	const (
-		outside = iota // not inside an attribute value
-		inDouble
-		inSingle
-	)
-	var pending [3][]int
-	// active is the quote state of the scan belonging to the nearest "<" that
-	// could open a tag, or -1 when the nearest one could not open one, was
-	// already closed by a ">", or does not exist yet.
-	active := -1
-	remaining, next := 0, 0
-	// The bound is inclusive: an offset at the very end of the document is a
-	// legitimate question ("<a", 2), and answering it needs one pass with no
-	// byte left to read.
-	for i := 0; i <= len(substituted); i++ {
-		for next < len(at) && at[next] == i {
-			// Everything the answer depends on is at or after this byte, so an
-			// offset is registered before its own byte is processed — which is
-			// what "the nearest < strictly before it" means.
-			if active >= 0 {
-				pending[active] = append(pending[active], next)
-				remaining++
-			}
-			next++
-		}
-		if i == len(substituted) {
-			break
-		}
-		switch substituted[i] {
-		case '"':
-			pending[outside], pending[inDouble] = pending[inDouble], pending[outside]
-			switch active {
-			case outside:
-				active = inDouble
-			case inDouble:
-				active = outside
-			}
-		case '\'':
-			pending[outside], pending[inSingle] = pending[inSingle], pending[outside]
-			switch active {
-			case outside:
-				active = inSingle
-			case inSingle:
-				active = outside
-			}
-		case '>':
-			// Only a scan that is outside quotes is closed by this ">":
-			// <div title="before > [meta …] contains one that closes nothing.
-			remaining -= len(pending[outside])
-			pending[outside] = pending[outside][:0]
-			if active == outside {
-				active = -1
-			}
-		case '<':
-			// "<" only opens a tag when a name or a markup declaration follows
-			// it; "Score < [meta ...]" is text and closes nothing. Scans already
-			// in flight are unaffected — each keeps the quote state it has had
-			// since its own "<".
-			if i+1 < len(substituted) && isTagNameStart(substituted[i+1]) {
-				active = outside
-			} else {
-				active = -1
-			}
-		}
-		if next == len(at) && remaining == 0 {
-			break
-		}
-	}
-	// Whatever is still pending met no ">" outside quotes before the end.
-	for q := range pending {
-		for _, k := range pending[q] {
-			out[k] = true
-		}
-	}
-	return out
 }
 
 type sentinelHit struct {
@@ -1167,12 +990,19 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, qualify(label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent `+injection+` injection anywhere in it.`))
 	}
 	if urlBearingAttrs[attr] && scriptCanRun {
-		scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
-		switch {
-		case fixed && executableURLSchemes[scheme]:
-			out = append(out, label+` continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
-		case !fixed && couldStillBecomeExecutable(scheme):
+		// A sentinel in the prefix is ANOTHER occurrence in the same value,
+		// whose text is unknown — it could be empty, so the scheme is not yet
+		// fixed and this occurrence could still start a "javascript:" URL.
+		if strings.Contains(ctx.valueSoFar, lintSentinelPrefix) {
 			out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+		} else {
+			scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
+			switch {
+			case fixed && executableURLSchemes[scheme]:
+				out = append(out, label+` continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
+			case !fixed && couldStillBecomeExecutable(scheme):
+				out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+			}
 		}
 	}
 	return out
@@ -1427,7 +1257,17 @@ func expressionAttributeKind(attr string) string {
 // could equally be an ordinary custom element, and warning [C] then is a false
 // positive on safe markup, which this file treats as worse than a miss. The
 // in-place name warning is the signal that the region is author-controlled.
-var scriptLikeElements = map[string]bool{"script": true, "style": true}
+//
+// The same shape, and the same treatment, covers two more: an interpolation
+// that could COMPLETE a raw-text end tag ("<textarea></text[Close]>", where
+// Close="area" would close the textarea and make a later <iframe srcdoc> live)
+// and an UNQUOTED interpolation that could add a deciding attribute
+// ("<annotation-xml title=[A]>", where A could be `x encoding=text/html`,
+// making a later <script> HTML). Each completing occurrence is warned in place
+// — Close as an interpolated NAME, A as an unquoted value — but the content
+// after it is not re-warned under the completion, for the same reason: the
+// completion is unbounded, and warning the tail on the chance the author chose
+// the one dangerous value flags markup that is safe under every other choice.
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
 

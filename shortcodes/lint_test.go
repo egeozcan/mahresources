@@ -2,7 +2,6 @@ package shortcodes
 
 import (
 	"errors"
-	"math/rand"
 	"strings"
 	"testing"
 
@@ -586,111 +585,6 @@ func TestLintManyBareValuesAtScale(t *testing.T) {
 			}
 		}
 	})
-}
-
-// The unterminated-tag test used to run once per occurrence, each time locating
-// the sentinel in the whole document, walking back to the nearest "<" and then
-// forward to EOF. It is now one left-to-right pass that answers for every
-// occurrence at once. That old shape is short enough to hold in the head, so it
-// serves here as the specification the new one is held to, over hand-picked
-// shapes and randomized ones, at every byte offset.
-//
-// Specification of what the code did, not of what is ideal. It restarts its
-// quote state at the nearest "<" even when that "<" is inside a quoted value,
-// so `<div title="a <b">[property path="Name"]</div>` is reported as an
-// unterminated tag when it is nothing of the sort. That predates this rewrite,
-// which had to preserve it exactly; the differential is what says so.
-func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
-	// The pre-rewrite algorithm, verbatim apart from taking an offset instead of
-	// searching for a sentinel.
-	reference := func(s string, at int) bool {
-		open := strings.LastIndexByte(s[:at], '<')
-		if open < 0 {
-			return false
-		}
-		if open+1 >= len(s) || !isTagNameStart(s[open+1]) {
-			return false
-		}
-		var q byte
-		for i := open; i < len(s); i++ {
-			c := s[i]
-			switch {
-			case q != 0:
-				if c == q {
-					q = 0
-				}
-			case c == '"' || c == '\'':
-				q = c
-			case c == '>':
-				return false
-			}
-		}
-		return true
-	}
-
-	// Every offset, len(s) included: an offset at the very end is a legitimate
-	// question the old shape answered, even though a recorded sentinel start is
-	// always followed by the sentinel's own bytes. Sparse subsets go with it,
-	// because a real call asks about a handful of offsets, and they are what
-	// exercises the early exit once nothing is left pending.
-	check := func(t *testing.T, s string) {
-		t.Helper()
-		verify := func(at []int) {
-			got := insideUnterminatedTags(s, at)
-			for k, off := range at {
-				if want := reference(s, off); got[k] != want {
-					t.Fatalf("offset %d of %q (asked %v): got %v, want %v", off, s, at, got[k], want)
-				}
-			}
-		}
-		all := make([]int, len(s)+1)
-		for i := range all {
-			all[i] = i
-		}
-		verify(all)
-		for _, step := range []int{2, 3, 7} {
-			var sparse []int
-			for i := 0; i < len(all); i += step {
-				sparse = append(sparse, all[i])
-			}
-			verify(sparse)
-		}
-		for _, one := range all {
-			verify([]int{one})
-		}
-	}
-
-	for _, s := range []string{
-		``,
-		`<`,
-		`<a`,
-		`plain text`,
-		`Score < 5 and more`,
-		`<div title="x">after</div>`,
-		`<div title="before > still open`,
-		`<div title='mixed " quoting' >done`,
-		`<a href="/x/">one</a><b class="y`,
-		// A "<" inside a quoted value is still the nearest one, and the forward
-		// scan restarts its quote state there.
-		`<div title="a <b" > tail`,
-		`<div x=y> a=" </div>`,
-		`<!-- > <x a=" --> <button onclick="f()">`,
-		`</`,
-		`<//a b="`,
-		`<a b='c"d' e="f'g" >`,
-	} {
-		check(t, s)
-	}
-
-	rng := rand.New(rand.NewSource(20260823))
-	alphabet := []byte(`<>"'/= abx!-`)
-	for n := 0; n < 2000; n++ {
-		buf := make([]byte, rng.Intn(28))
-		for i := range buf {
-			buf[i] = alphabet[rng.Intn(len(alphabet))]
-		}
-		check(t, string(buf))
-	}
 }
 
 // Round-4 findings, all of which came from the scanner trying to find tag
@@ -1506,13 +1400,12 @@ func TestLintCDATAIsCharacterDataInForeignContent(t *testing.T) {
 			if !lintSaysAny(tc.src, tc.want) {
 				t.Errorf("%s: want %q, got %q", tc.src, tc.want, lintWarnings(tc.src))
 			}
-			// Entities are NOT decoded inside a CDATA section, so the message
-			// is the HTML one — escaping arrives intact — not the foreign one,
-			// which says the parser undoes it.
-			for _, msg := range lintWarnings(tc.src) {
-				if strings.Contains(msg, "where the parser decodes entities") {
-					t.Errorf("%s: a CDATA section decodes nothing: %q", tc.src, msg)
-				}
+			// html.Parse DOES decode entities in an SVG <script>/<style>
+			// body, CDATA-wrapped or not (verified against the parser), so
+			// the message is the foreign one — the escaping is undone — which
+			// is also the fail-closed direction.
+			if !lintSaysAny(tc.src, "where the parser decodes entities") {
+				t.Errorf("%s: the SVG body decodes entities, got %q", tc.src, lintWarnings(tc.src))
 			}
 		}
 	})
@@ -3025,6 +2918,109 @@ func TestLintAttributeContextRoundFifteen(t *testing.T) {
 		}
 		if !warns(src, "reachable only with scripting disabled") {
 			t.Error("the caveat must name the mode")
+		}
+	})
+}
+
+// Round-16 findings — the second review of the parse-backed engine, and again
+// all lexical/merge-layer. The lexical pass now runs x/net/html's own
+// tokenizer (with raw-text mode cleared so every nested tag is seen), which
+// answers the comment, CDATA and quote-state cases by construction. Each
+// expectation is verified against html.Parse.
+func TestLintAttributeContextRoundSixteen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("an empty comment closes at <!-->", func(t *testing.T) {
+		src := `<!--><math><annotation-xml encoding="[property path='E']"><script>var s="[property path='N']"</script></annotation-xml></math>`
+		if warns(src, "unquoted") {
+			t.Error("the empty comment closed; the encoding is quoted")
+		}
+		if !warns(src, "reaches JavaScript") {
+			t.Errorf("encoding could be text/html, making the script HTML, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a CDATA in HTML is a bogus comment ending at the first >", func(t *testing.T) {
+		src := `<![CDATA[ ><math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math> ]]>`
+		if warns(src, "unquoted") {
+			t.Error("the bogus comment closed at the first >; the encoding is quoted")
+		}
+		if !warns(src, "reaches JavaScript") {
+			t.Errorf("the math/script after the bogus comment is real, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a second = in an unquoted value is not an assignment", func(t *testing.T) {
+		src := `<math><annotation-xml x== foo=">" encoding="[property path='E']"><script>var s="[property path='N']"</script></annotation-xml></math>`
+		if warns(src, "unquoted") {
+			t.Error("the encoding is a quoted value; the tag did not run past foo=\">\"")
+		}
+		if !warns(src, "reaches JavaScript") {
+			t.Errorf("encoding could be text/html, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("material after a solidus in an end tag is not a name", func(t *testing.T) {
+		if warns(`<div>x</div/[property path='Name']><p>ok</p>`, "interpolated into a tag or attribute NAME") {
+			t.Error("the parser ignores post-solidus end-tag material")
+		}
+	})
+
+	t.Run("an end tag inside foreign CDATA completes nothing", func(t *testing.T) {
+		if warns(`<svg><script><![CDATA[</scr[property path='Name']>]]></script></svg>`, "interpolated into a tag or attribute NAME") {
+			t.Error("the end tag inside CDATA is text; it closes nothing")
+		}
+	})
+
+	t.Run("an SVG script body decodes entities, CDATA or not", func(t *testing.T) {
+		src := `<svg><script><![CDATA[var s="[property path='Name']"]]></script></svg>`
+		if !warns(src, "where the parser decodes entities") {
+			t.Errorf("html.Parse decodes entities in an SVG script body, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a second occurrence in one URL can still choose the scheme", func(t *testing.T) {
+		// The first could be empty, so the second could start a javascript: URL.
+		msgs := lintWarnings(`<a href="[property path='A'][property path='B']">go</a>`)
+		count := 0
+		for _, m := range msgs {
+			if strings.Contains(m, "can still choose the scheme") {
+				count++
+			}
+		}
+		if count != 2 {
+			t.Errorf("both occurrences can choose the scheme, got %d: %q", count, msgs)
+		}
+	})
+
+	t.Run("a namespaced attribute is named as itself", func(t *testing.T) {
+		if !warns(`<svg><a xlink:href="javascript:[property path='Name']">x</a></svg>`, `in "xlink:href"`) {
+			t.Errorf("the message must name xlink:href, got %q", lintWarnings(`<svg><a xlink:href="javascript:[property path='Name']">x</a></svg>`))
+		}
+	})
+
+	t.Run("a malformed end tag does not read as an unterminated one", func(t *testing.T) {
+		if warns(`<div>x</div weird" [property path='Name']><p>ok</p>`, "inside a tag that is never closed") {
+			t.Error("the end tag is closed; its malformed attributes are ignored")
+		}
+	})
+
+	// Findings 7 and 8 are documented residue: an interpolation that could
+	// COMPLETE an end tag or ADD a deciding attribute is warned in place, but
+	// the content after it is not re-warned under that completion.
+	t.Run("the completing occurrence itself is always warned", func(t *testing.T) {
+		if !warns(`<textarea></text[property path='Close']><iframe srcdoc="[property path='Tail']"></iframe>`, "interpolated into a tag or attribute NAME") {
+			t.Error("the end-tag-completing occurrence is warned")
+		}
+		if !warns(`<math><annotation-xml title=[property path='A']><script>let x="[property path='B']"</script></annotation-xml></math>`, "unquoted attribute value") {
+			t.Error("the unquoted attribute that could add another is warned")
 		}
 	})
 }
