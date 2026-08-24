@@ -174,8 +174,14 @@ jobs:
             package-lock.json
             e2e/package-lock.json
 
+      # ffmpeg is not on the ubuntu-24.04 runner image, and the server only
+      # auto-detects it from PATH (main.go), so without it Config.FfmpegPath
+      # stays empty and the trim endpoint execs "" -- surfacing as
+      # 'failed to trim video: ffmpeg error: exec: no command' and failing
+      # resource-trim.spec.ts. Only this job needs it: the auth and cli
+      # projects run no video work.
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev ffmpeg
 
       - name: Install frontend deps
         run: npm ci
