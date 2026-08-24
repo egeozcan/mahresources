@@ -2602,6 +2602,12 @@ func TestLintTreeConstructionAgreesWithTheParser(t *testing.T) {
 		if warns(`<svg><desc><template>` + srcdoc) {
 			t.Error("nothing after the template exists to that parser")
 		}
+		// The srcdoc form drops into an attribute value; the raw= text form
+		// (round 20) drops into a TEXT position, whose "becomes real elements"
+		// fallback must be silent too — the parser builds no text node there.
+		if lintSaysAny(`<svg><desc><template>[property path='Name' raw='true']<script>alert(1)</script>`, "becomes real elements") {
+			t.Error("a raw= value past the surrender lands in no node; it cannot become real elements")
+		}
 	})
 }
 
@@ -3194,6 +3200,101 @@ func TestLintAttributeContextRoundNineteen(t *testing.T) {
 		}
 		if !warns(src, "reachable only with scripting disabled") {
 			t.Errorf("a scripting-off-only foreign placement must be qualified, got %q", lintWarnings(src))
+		}
+	})
+}
+
+func TestLintAttributeContextRoundTwenty(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a scripting-off-only injection reachable when both trees drop it", func(t *testing.T) {
+		// The <frameset> discards the whole <div> with scripting ON (after-
+		// frameset ignores body content); with it OFF the frameset is itself
+		// ignored (body content preceded it) and the div is live, its duplicate
+		// title dropped but the unquoted value's sibling kept. Both parses
+		// report the sentinel kAbsent, so the tree facts alone do not reveal
+		// the divergence — only the scripting-off injection probe does.
+		src := `<noscript>x</noscript><frameset></frameset><div title=fixed title=[property path='Name']>x</div>`
+		if !warns(src, "sits in an unquoted attribute value") {
+			t.Errorf("scripting-off drop still injects a sibling, got %q", lintWarnings(src))
+		}
+		if !warns(src, "reachable only with scripting disabled") {
+			t.Errorf("the injection exists only with scripting off; the warning must say so, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a raw= value past the foreign template surrender is silent", func(t *testing.T) {
+		// x/net ignores every token after a <template> meets open foreign
+		// content, so the value lands in no node: raw markup there builds
+		// nothing and "becomes real elements" would be a false positive.
+		src := `<svg><desc><template>[property path='Name' raw='true']<script>alert(1)</script>`
+		if warns(src, "becomes real elements") {
+			t.Errorf("a dropped position builds nothing; raw= cannot inject there, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("raw= in live text still warns", func(t *testing.T) {
+		// The gate is droppedness, not raw= itself: a value the parser DID
+		// place in text is still unsafe under raw=.
+		src := `<div>[property path='Name' raw='true']</div>`
+		if !warns(src, "becomes real elements") {
+			t.Errorf("live text under raw= is unsafe, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a leading U+00A0 does not make a javascript: scheme", func(t *testing.T) {
+		// Browsers strip leading ASCII whitespace and C0 controls from a URL,
+		// never Unicode whitespace: " javascript:" stays a relative path.
+		src := "<a href=\" javascript:[property path='Name']\">x</a>"
+		if warns(src, `continues a "javascript:" URL`) {
+			t.Errorf("U+00A0 is not stripped; the value is not a javascript: URL, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a leading ASCII space or tab still makes a javascript: scheme", func(t *testing.T) {
+		// The browser DOES strip these, so the value runs.
+		for _, ws := range []string{" ", "\t"} {
+			src := "<a href=\"" + ws + "javascript:[property path='Name']\">x</a>"
+			if !warns(src, `continues a "javascript:" URL`) {
+				t.Errorf("ASCII %q is stripped; the value is a javascript: URL, got %q", ws, lintWarnings(src))
+			}
+		}
+	})
+
+	t.Run("a value completing a trailing character reference chooses the scheme", func(t *testing.T) {
+		// java&#[value]cript: — a value of "115;" completes &#115; to 's',
+		// building javascript:. The '#' is a char-ref body, NOT a URL fragment
+		// start, and the occurrence controls a scheme character.
+		src := `<a href="java&#[property path='C']cript:alert(1)">x</a>`
+		if !warns(src, "choose the scheme") {
+			t.Errorf("the occurrence completes a char ref into javascript:, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a trailing character reference that cannot reach an executable scheme is quiet", func(t *testing.T) {
+		// "page.html&#[value]" — the settled prefix "page.html" is no prefix of
+		// any executable scheme, so completing the ref cannot build one.
+		src := `<a href="page.html&#[property path='C']">x</a>`
+		if warns(src, "choose the scheme") {
+			t.Errorf("no executable scheme starts with page.html, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a NAMED trailing reference is not treated as scheme-choosing", func(t *testing.T) {
+		// Only a NUMERIC reference lets the value pick an arbitrary character.
+		// "&am[value]" can only complete to entities beginning "am" (&amp; etc.),
+		// none of which is a scheme letter, so warning here would be a false
+		// positive — worse than the rare named-reference miss.
+		src := `<a href="&am[property path='C']">x</a>`
+		if warns(src, "choose the scheme") {
+			t.Errorf("a named ref in progress cannot pick a scheme letter, got %q", lintWarnings(src))
 		}
 	})
 }

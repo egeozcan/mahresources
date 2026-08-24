@@ -301,22 +301,19 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		}
 		out[sp.start] = primary
 		// The two readings are two real browser configurations, and a
-		// placement dangerous in either must be reported. Compare the TREE
-		// facts (the only thing scripting changes); where they differ the
-		// scripting-off reading is kept alongside, qualified.
-		if on[i] != off[i] {
-			// alt exists exactly when the two scripting modes place the
-			// occurrence differently, which means it is reachable in only one
-			// of them — so the scripting-mode caveat holds even when the
-			// scripting-off parse moved the occurrence's element out of the
-			// <noscript> it came from (the reworded qualifier does not claim
-			// the element still contains it).
+		// placement dangerous in either must be reported. The scripting-off
+		// reading is kept alongside, qualified, when it says something the
+		// primary does not: a different placement (the tree facts differ), OR a
+		// sibling the scripting-off drop injects that the on-mode reading did
+		// not warn — which the tree facts alone do NOT reveal, since both modes
+		// report kAbsent for different reasons (a <frameset> discards the whole
+		// element with scripting on while only its duplicate name is dropped
+		// with it off, leaving the element and the injected sibling live).
+		offInjects := injectsOff[i] && off[i].kind == kAbsent && !primary.unquotedSibling
+		if on[i] != off[i] || offInjects {
 			sc := mergeContext(lex[i], off[i])
 			sc.noscript = true
-			// A drop that injects only with scripting off — the value is inert
-			// <noscript> text with it on — carries the same unquoted warning as
-			// the on-mode drop, qualified by sc.noscript above.
-			if injectsOff[i] && off[i].kind == kAbsent {
+			if offInjects {
 				sc.unquotedSibling = true
 			}
 			if sc != primary {
@@ -1090,13 +1087,16 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// value's space opens even though its own name was a duplicate.
 			return []string{qualify(label + ` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)}
 		}
-		if raw && ctx.element != "plaintext" {
+		if raw && ctx.inertText && ctx.element != "plaintext" {
 			// raw= disables escaping outright, so it is unsafe wherever it
-			// lands, including ordinary text: a Meta value of
-			// "<img src=x onerror=...>" becomes a real element. The one text
-			// position where it cannot is a <plaintext> body, whose tokenizer
-			// state runs to EOF: a "<" there starts nothing, so the value
-			// stays literal text however it is written.
+			// lands in LIVE text: a Meta value of "<img src=x onerror=...>"
+			// becomes a real element. inertText is the parser confirming the
+			// occurrence reached a text node at all — a position the parser
+			// DROPPED (kAbsent: after a <frameset>, past x/net's foreign
+			// <template> surrender) builds nothing, so raw markup there is
+			// dropped with everything else and the warning would be false. The
+			// one live-text position raw cannot inject is a <plaintext> body,
+			// whose tokenizer state runs to EOF: a "<" there starts nothing.
 			return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
 		}
 		return nil
@@ -1172,12 +1172,69 @@ func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
 	for i := 0; i < len(prefix); i++ {
 		switch prefix[i] {
 		case ':':
-			return asciiLower(strings.TrimSpace(prefix[:i])), true
+			return asciiLower(trimURLEdges(prefix[:i])), true
 		case '/', '?', '#':
 			return "", true
+		case '&':
+			// prefix is already entity-decoded, so any '&' left is an
+			// UNTERMINATED reference; when it runs to the end, the
+			// interpolation right after it completes the reference ("java&#" +
+			// "115;" -> "javas"). The '&', '#' and following bytes are then not
+			// literal URL characters — the '#' in particular is not a fragment
+			// start — and the scheme is not settled: hand back the part before
+			// the '&', unfixed, so couldStillBecomeExecutable judges what the
+			// occurrence could still spell.
+			if isTrailingCharRefBody(prefix[i+1:]) {
+				return asciiLower(trimURLEdges(prefix[:i])), false
+			}
 		}
 	}
-	return asciiLower(strings.TrimSpace(prefix)), false
+	return asciiLower(trimURLEdges(prefix)), false
+}
+
+// trimURLEdges removes the leading and trailing bytes a browser strips from a
+// URL before resolving it — C0 controls and ASCII space, everything <= 0x20 —
+// and NOTHING else. strings.TrimSpace also trims Unicode whitespace (U+00A0,
+// U+2028, …) which a browser keeps, so a leading U+00A0 before "javascript:"
+// is NOT the javascript: scheme and must not be read as one.
+func trimURLEdges(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool { return r <= 0x20 })
+}
+
+// isTrailingCharRefBody reports whether s — the bytes between a '&' and the end
+// of the prefix — is the body of a NUMERIC character reference still open for
+// the interpolation to complete: empty (a bare "&", which the value can turn
+// into "&#106;…"), "#", "#x"/"#X", or "#" then decimal digits (hex after "#x").
+// A numeric reference lets the value choose ANY code point, so the occurrence
+// can spell a scheme letter or a ':'. A NAMED reference in progress ("&am…") is
+// deliberately NOT matched: its completions are the fixed set of entities
+// beginning with those letters, none of which the value picks freely, so
+// treating it as scheme-choosing would warn on markup no value makes
+// executable — the false positive this file weighs above the rarer, more
+// esoteric named-reference miss (e.g. "javascript&col…" -> "&colon;").
+func isTrailingCharRefBody(s string) bool {
+	if s == "" {
+		return true // a bare trailing "&": the value can open "#…;"
+	}
+	if s[0] != '#' {
+		return false // a named reference in progress
+	}
+	rest := s[1:]
+	hex := false
+	if len(rest) > 0 && (rest[0] == 'x' || rest[0] == 'X') {
+		hex, rest = true, rest[1:]
+	}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if c >= '0' && c <= '9' {
+			continue
+		}
+		if hex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // couldStillBecomeExecutable reports whether a value appended to this prefix
@@ -1414,16 +1471,22 @@ func expressionAttributeKind(attr string) string {
 //   - deciding a document phase: an empty text run or an <input type=[T]>
 //     before a <frameset> decides whether the frameset is honored, and so
 //     whether a <frame src=...> after it exists at all.
-//   - completing a character reference: `href="java&#[C]cript:..."`, C="115;"
-//     decodes to "javascript:".
-// The one deciding attribute the engine DOES explore is encoding=/type=
-// (substituteWorstCase), because a namespace or stylesheet it might select is
-// a common, bounded case; the rest are left because the completion is
-// unbounded and re-warning the tail on the chance the author chose the one
-// dangerous value flags markup safe under every other choice — the false
+//   - completing a NAMED character reference in a URL: `href="javascript&col[C]"`,
+//     C="on;" decodes to "javascript:". A NUMERIC one — `href="java&#[C]cript:"`,
+//     C="115;" — IS explored (urlSchemeBefore reads a trailing "&", "&#" or
+//     "&#x" as an unfixed scheme the value chooses), because the value picks any
+//     code point there; a named one can only complete to entities starting with
+//     the letters already written, so exploring it would warn where no value is
+//     executable.
+// The two deciding cases the engine DOES explore are encoding=/type=
+// (substituteWorstCase) and the numeric character reference just named, because
+// each selects from a bounded, common set; the rest are left because the
+// completion is unbounded and re-warning the tail on the chance the author chose
+// the one dangerous value flags markup safe under every other choice — the false
 // positive this file treats as worse than a miss. Where there IS a completing
-// occurrence it is warned in place (the interpolated name, the unquoted value),
-// which is the signal that the region is author-controlled.
+// occurrence it is warned in place (the interpolated name, the unquoted value,
+// the numeric-reference scheme), which is the signal that the region is
+// author-controlled.
 //
 // A last, non-exploitable corner: a character reference in the template that
 // decodes to a genuine occurrence's sentinel could shadow it. The sentinel
