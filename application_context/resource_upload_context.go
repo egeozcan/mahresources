@@ -1248,18 +1248,6 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 		res = newResource()
 		return ctx.insertUploadedResource(res, resourceQuery)
 	}); insertErr != nil {
-		// Losing the unique index on hash means another process inserted this
-		// exact content between this one's lookup and its write — the
-		// cross-process race that index exists to catch. That is a duplicate
-		// upload, not a failure, so it resolves the way an in-process duplicate
-		// does: re-read the winner and merge into it. Without this the loser
-		// would report HTTP 500 for having done nothing wrong.
-		if isUniqueConstraintError(insertErr) {
-			var winner models.Resource
-			if lookupErr := ctx.db.Where("hash = ?", hash).Preload("Groups").First(&winner).Error; lookupErr == nil {
-				return ctx.mergeIntoExistingResource(&winner, resourceQuery)
-			}
-		}
 		return nil, insertErr
 	}
 

@@ -486,14 +486,6 @@ func main() {
 		log.Printf("Warning: ensuring image_hashes.resource_id unique index failed: %v", err)
 	}
 
-	// Content deduplication was only ever guaranteed within one process — the
-	// per-hash lock in AddResource is in memory. This gives it a database-level
-	// backstop. Non-destructive: a database that already holds duplicate hashes
-	// keeps them and stays on the old behaviour, with the collisions named here.
-	if err := models.EnsureResourceHashUnique(db); err != nil {
-		log.Printf("Warning: %v", err)
-	}
-
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
 

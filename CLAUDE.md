@@ -220,25 +220,27 @@ A read that fails for any reason other than `gorm.ErrRecordNotFound` is
 **returned, not treated as "no such content"**: falling through on a transient
 failure would persist a second row for content that already exists.
 
-**Deduplication now holds across processes**, which it never did before.
-`Resource.Hash` carried a plain `gorm:"index"` and the per-hash lock is in
-memory, so two processes sharing one database held two locks, could both read
-"not found" for the same bytes, and both insert. Sequential uploads made that
-vanishingly rare; a bulk batch is many concurrent requests, so it stopped being
-theoretical. `models.EnsureResourceHashUnique` (called from `main` beside
-`EnsureImageHashResourceIdUnique`) adds a **partial** unique index over
-non-empty hashes: partial because unhashed rows all carry the empty string and
-an unqualified index would reject every one after the first; under its own name
-because AutoMigrate never upgrades an index's uniqueness in place; and
-**non-destructive**, so a database already holding duplicate hashes keeps them,
-is named in a startup warning, and stays on the old behaviour until an operator
-merges them. That is where it differs from `EnsureImageHashResourceIdUnique`,
-which does dedup its own rows — an `image_hashes` row is derived data, a
-resource is not. Losing the index is then treated as what it is: another process
-inserted the same content first, so `AddResource` re-reads the winner and merges
-into it rather than reporting HTTP 500. `TestDedupHoldsAcrossProcesses` pins it
-with two contexts over one file — separate pools, separate idlocks — and fails
-without the index.
+**Deduplication is process-local, and a unique index on `hash` cannot fix that.**
+`Resource.Hash` carries a plain `gorm:"index"` and the per-hash lock is in
+memory, so two processes sharing one database hold two locks, can both read "not
+found" for the same bytes, and both insert. A partial unique index over
+non-empty hashes was built for exactly this, and the test suite proved it
+unsound: **version uploads legitimately give two resources the same hash.**
+`AddResourceVersion` updates `resources.hash` to the new version's hash
+(`resource_version_context.go:184-196`) and does not dedupe, so resource 1 can
+version-upload content X while resource 2 is later created from the file that
+still hashes to whatever 1 used to hold — and then version-uploaded to X too.
+Eight `mr resource version-*` doctests plus `resource-versioning.spec.ts` fail
+on the index within one shared server, which is how this was found rather than
+reasoned about.
+
+So "one resource per content hash" is a rule `AddResource` applies **at create
+time**, not an invariant the schema can hold. Closing the cross-process race
+needs a claim keyed on hash with its own lifetime — a distributed lock, with
+stale-claim recovery — not a constraint. That has not been built; the race
+requires a multi-process deployment *and* two simultaneous uploads of identical
+new content, and `TestAddResource_ConcurrentSameHashOnWAL` pins the in-process
+guarantee under the production SQLite configuration.
 
 **The collision branches validate their association ids *inside* their
 transaction**, and handle contention by retrying (`withUploadTxRetry`) rather
