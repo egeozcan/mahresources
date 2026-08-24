@@ -3,6 +3,7 @@ package application_context
 import (
 	"fmt"
 	"path"
+	"sort"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -120,7 +121,14 @@ func ValidateAndLockAssociationIDs[T any](db *gorm.DB, ids []uint, entityName st
 		uniqueSlice = append(uniqueSlice, id)
 	}
 
-	query := db.Model(new(T)).Where("id IN ?", uniqueSlice)
+	// Sorted, and locked in that order. Two transactions taking the same row
+	// locks in opposite orders deadlock, and uniqueSlice comes from a map, whose
+	// iteration order Go deliberately randomises — so without this, two uploads
+	// naming the same two tags could pick opposite orders and Postgres would
+	// abort one with 40P01.
+	sort.Slice(uniqueSlice, func(i, j int) bool { return uniqueSlice[i] < uniqueSlice[j] })
+
+	query := db.Model(new(T)).Where("id IN ?", uniqueSlice).Order("id")
 	if db.Dialector.Name() == "postgres" {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}

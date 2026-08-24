@@ -544,11 +544,12 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	if err := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	if len(resourceQuery.Groups) > 0 {
-		if err := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 		if err := tx.Model(&res).Association("Groups").Append(&groups); err != nil {
 			tx.Rollback()
@@ -557,10 +558,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Notes) > 0 {
-		if err := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 		if err := tx.Model(&res).Association("Notes").Append(&notes); err != nil {
 			tx.Rollback()
@@ -569,10 +566,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Tags) > 0 {
-		if err := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 		if err := tx.Model(&res).Association("Tags").Append(&tags); err != nil {
 			tx.Rollback()
@@ -654,6 +647,25 @@ const (
 	uploadTxRetryBackoff = 25 * time.Millisecond
 )
 
+// lockUploadAssociations validates and locks every association id an upload
+// names, in one canonical order: groups, then notes, then tags.
+//
+// The order is the point. Each of these takes SELECT ... FOR UPDATE on Postgres,
+// and two transactions taking the same locks in opposite orders deadlock — which
+// is what the upload paths did to each other, one locking groups/notes/tags and
+// the other groups/tags/notes. Postgres aborts one of them with 40P01, a
+// transaction that did nothing wrong. Taking them through one function is what
+// stops the order drifting apart again.
+func lockUploadAssociations(tx *gorm.DB, groups, notes, tags []uint) error {
+	if err := ValidateAndLockAssociationIDs[models.Group](tx, groups, "groups"); err != nil {
+		return err
+	}
+	if err := ValidateAndLockAssociationIDs[models.Note](tx, notes, "notes"); err != nil {
+		return err
+	}
+	return ValidateAndLockAssociationIDs[models.Tag](tx, tags, "tags")
+}
+
 // withUploadTxRetry runs a write transaction, retrying it on lock contention.
 //
 // Every write transaction in the upload path needs this, for the same reason: a
@@ -667,7 +679,12 @@ func (ctx *MahresourcesContext) withUploadTxRetry(run func() error) error {
 		if err == nil {
 			return nil
 		}
-		if attempt >= uploadTxMaxAttempts-1 || !isLockContentionError(err) {
+		// A deadlock is retried too. Every lock this path takes is ordered
+		// (see ValidateAndLockAssociationIDs and lockUploadAssociations), so one
+		// should not happen — but 40P01 aborts a transaction that did nothing
+		// wrong, and reporting it as a failed upload would be the same mistake
+		// as reporting lock contention.
+		if attempt >= uploadTxMaxAttempts-1 || (!isLockContentionError(err) && !isDeadlockError(err)) {
 			return err
 		}
 		time.Sleep(uploadTxRetryBackoff * time.Duration(attempt+1))
@@ -701,11 +718,12 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 		return err
 	}
 
+	if lockErr := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); lockErr != nil {
+		tx.Rollback()
+		return lockErr
+	}
+
 	if len(resourceQuery.Groups) > 0 {
-		if valErr := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
-			tx.Rollback()
-			return valErr
-		}
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 
 		if createGroupsErr := tx.Model(&res).Association("Groups").Append(&groups); createGroupsErr != nil {
@@ -715,10 +733,6 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	}
 
 	if len(resourceQuery.Notes) > 0 {
-		if valErr := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
-			tx.Rollback()
-			return valErr
-		}
 		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 
 		if createNotesErr := tx.Model(&res).Association("Notes").Append(&notes); createNotesErr != nil {
@@ -728,10 +742,6 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	}
 
 	if len(resourceQuery.Tags) > 0 {
-		if valErr := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
-			tx.Rollback()
-			return valErr
-		}
 		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 
 		if createTagsErr := tx.Model(&res).Association("Tags").Append(&tags); createTagsErr != nil {
@@ -852,11 +862,12 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 			}
 		}()
 
+		if lockErr := lockUploadAssociations(tx, resourceQuery.Groups, resourceQuery.Notes, resourceQuery.Tags); lockErr != nil {
+			tx.Rollback()
+			return lockErr
+		}
+
 		if len(resourceQuery.Groups) > 0 {
-			if valErr := ValidateAndLockAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
-				tx.Rollback()
-				return valErr
-			}
 			groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 			if appendErr := tx.Model(existingResource).Association("Groups").Append(&groups); appendErr != nil {
 				tx.Rollback()
@@ -865,10 +876,6 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 		}
 
 		if len(resourceQuery.Tags) > 0 {
-			if valErr := ValidateAndLockAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
-				tx.Rollback()
-				return valErr
-			}
 			tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 			if appendErr := tx.Model(existingResource).Association("Tags").Append(&tags); appendErr != nil {
 				tx.Rollback()
@@ -877,10 +884,6 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 		}
 
 		if len(resourceQuery.Notes) > 0 {
-			if valErr := ValidateAndLockAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
-				tx.Rollback()
-				return valErr
-			}
 			notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 			if appendErr := tx.Model(existingResource).Association("Notes").Append(&notes); appendErr != nil {
 				tx.Rollback()

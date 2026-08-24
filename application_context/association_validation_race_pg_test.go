@@ -3,6 +3,7 @@
 package application_context
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -80,7 +81,8 @@ func TestDeleteRacingAValidatedGroupIsRefusedPG(t *testing.T) {
 	// Fires on the group upsert Append performs: after validation accepted the
 	// id, before the association row lands.
 	var once sync.Once
-	var deleteBlocked bool
+	var callbackFired, deleteBlocked bool
+	var deleteErr error
 	if err := db.Callback().Create().Before("gorm:create").Register(
 		"test:delete_validated_group",
 		func(tx *gorm.DB) {
@@ -88,10 +90,11 @@ func TestDeleteRacingAValidatedGroupIsRefusedPG(t *testing.T) {
 				return
 			}
 			once.Do(func() {
+				callbackFired = true
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					_, _ = deleter.Exec("DELETE FROM groups WHERE id = $1", victimID)
+					_, deleteErr = deleter.Exec("DELETE FROM groups WHERE id = $1", victimID)
 				}()
 				select {
 				case <-done:
@@ -108,7 +111,7 @@ func TestDeleteRacingAValidatedGroupIsRefusedPG(t *testing.T) {
 		_ = db.Callback().Create().Remove("test:delete_validated_group")
 	})
 
-	_, _ = ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{
+	_, uploadErr := ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name:    "duplicate",
 			OwnerId: owner.ID,
@@ -116,11 +119,20 @@ func TestDeleteRacingAValidatedGroupIsRefusedPG(t *testing.T) {
 		},
 	})
 
-	// A control: if the callback never fired there was no race to observe and a
-	// clean result would mean nothing.
-	var fired bool
-	once.Do(func() { fired = false })
-	_ = fired
+	// Controls first. Without these the interesting assertion below passes for
+	// any number of uninteresting reasons: a callback that stopped matching the
+	// groups table, an upload that failed before it ever reached the append, or
+	// a delete that errored instead of racing.
+	if !callbackFired {
+		t.Fatal("the delete was never injected, so no race was observed and the result below means nothing")
+	}
+	var exists *ResourceExistsError
+	if uploadErr != nil && !errors.As(uploadErr, &exists) {
+		t.Fatalf("the duplicate upload should have reached the association append, got: %v", uploadErr)
+	}
+	if !deleteBlocked && deleteErr != nil {
+		t.Fatalf("the injected delete neither blocked nor succeeded: %v", deleteErr)
+	}
 
 	var revived models.Group
 	if lookupErr := db.First(&revived, victimID).Error; lookupErr == nil && revived.Name == "" {
