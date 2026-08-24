@@ -6,7 +6,11 @@
      data-testid="bulk-upload-panel"
      class="mt-6 border border-stone-300 rounded-md p-4 bg-stone-50">
 
-    <h2 class="text-sm font-medium font-mono text-stone-700">Uploading</h2>
+    {# The heading tracks the phase. A panel left saying "Uploading" after every #}
+    {# request has stopped tells a screen reader the batch is still running.     #}
+    <h2 class="text-sm font-medium font-mono text-stone-700"
+        data-testid="bulk-upload-heading"
+        x-text="phase === 'uploading' ? 'Uploading' : (phase === 'done' ? 'Upload complete' : 'Upload stopped')"></h2>
 
     {# Phase transitions are announced through the shared live region in the    #}
     {# component (window.mahAnnounce), so this text is visual only.             #}
@@ -18,18 +22,29 @@
         <span x-show="phase === 'uploading'" x-text="inFlight.length + ' in flight'"></span>
     </div>
 
-    <div class="w-full bg-stone-200 rounded-full h-2 mt-1"
-         data-testid="bulk-upload-progressbar"
-         role="progressbar"
-         :aria-valuenow="progressValueNow()"
-         :aria-valuetext="progressValueText()"
-         aria-valuemin="0"
-         aria-valuemax="100"
-         :aria-label="progressLabel()">
-        <div class="h-2 rounded-full transition-all duration-300"
-             :class="phase === 'partial' ? 'bg-stone-400' : 'bg-amber-700'"
-             :style="'width: ' + progress.percent + '%'"></div>
-    </div>
+    {# role="progressbar" only while there is progress to report. Once the batch #}
+    {# has stopped the same bar is rendered as decoration: the numbers it stood  #}
+    {# for are in the summary above, which is a static string by then.           #}
+    <template x-if="phase === 'uploading'">
+        <div class="w-full bg-stone-200 rounded-full h-2 mt-1"
+             data-testid="bulk-upload-progressbar"
+             role="progressbar"
+             :aria-valuenow="progressValueNow()"
+             :aria-valuetext="progressValueText()"
+             aria-valuemin="0"
+             aria-valuemax="100"
+             :aria-label="progressLabel()">
+            <div class="bg-amber-700 h-2 rounded-full transition-all duration-300"
+                 :style="'width: ' + progress.percent + '%'"></div>
+        </div>
+    </template>
+    <template x-if="phase !== 'uploading'">
+        <div class="w-full bg-stone-200 rounded-full h-2 mt-1" aria-hidden="true">
+            <div class="h-2 rounded-full"
+                 :class="phase === 'done' ? 'bg-amber-700' : 'bg-stone-400'"
+                 :style="'width: ' + progress.percent + '%'"></div>
+        </div>
+    </template>
 
     {# The files actually moving right now — at most `concurrency` rows. #}
     <ul x-show="inFlight.length > 0" class="mt-3 space-y-2" data-testid="bulk-upload-inflight">

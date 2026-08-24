@@ -167,6 +167,13 @@ export function resourceUpload() {
     destroy() {
       window.removeEventListener('beforeunload', this._beforeUnload);
       document.removeEventListener('submit', this._submitHandler);
+      // Order matters. abortAll() on its own resolves the in-flight requests
+      // without stopping the pool: the workers would read `cancelled` as false,
+      // dequeue the next file and keep uploading from a component that is no
+      // longer on the page — and finish() could then navigate the browser
+      // somewhere the user never asked to go.
+      this._destroyed = true;
+      this.cancelled = true;
       this.abortAll();
     },
 
@@ -285,6 +292,10 @@ export function resourceUpload() {
     },
 
     finish() {
+      // A batch that ended because the component went away has no one left to
+      // report to, and must not navigate.
+      if (this._destroyed) return;
+
       const failed = this.files.filter((f) => f.status === 'failed');
 
       if (this.cancelled) {

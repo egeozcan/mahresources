@@ -659,11 +659,20 @@ const (
 //
 // Extracted so it can be retried as a unit on lock contention. See the call site
 // for why that is safe.
-func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, resourceQuery *query_models.ResourceCreator) error {
+func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, resourceQuery *query_models.ResourceCreator) (err error) {
 	tx := ctx.db.Begin()
+	// The named return is load-bearing. recover() here exists to guarantee the
+	// rollback, but a bare recover in a function with unnamed results returns
+	// the zero error — nil — so a panicking GORM callback would roll the row
+	// back and then report success. AddResource would go on to log the create,
+	// fire after_resource_create and hand back a resource whose row does not
+	// exist. Converting it to an error keeps the rollback guarantee, keeps the
+	// process alive (net/http recovers per connection, and nothing in this
+	// server maps a panic to a response), and cannot be mistaken for success.
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			err = fmt.Errorf("panic while writing the uploaded resource: %v", r)
 		}
 	}()
 

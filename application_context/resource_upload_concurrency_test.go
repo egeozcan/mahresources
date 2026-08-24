@@ -270,3 +270,53 @@ func TestUploadRetryRebuildsTheResource(t *testing.T) {
 		t.Fatalf("retry duplicated rows: %d resources, %d versions", resources, versions)
 	}
 }
+
+// TestUploadPanicIsNotReportedAsSuccess pins the named return on
+// insertUploadedResource's recover.
+//
+// The recover exists to guarantee the rollback. In a function with unnamed
+// results a bare recover also returns the zero error, so a panicking callback
+// rolled the row back and then reported success: AddResource logged the create,
+// fired after_resource_create, and handed back a resource whose row was gone.
+func TestUploadPanicIsNotReportedAsSuccess(t *testing.T) {
+	ctx := newWALTestContext(t, 0)
+
+	err := ctx.db.Callback().Create().Before("gorm:create").Register(
+		"test:panic_on_version_insert",
+		func(db *gorm.DB) {
+			if db.Statement != nil && db.Statement.Table == "resource_versions" {
+				panic("injected callback panic")
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("register injection callback: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Callback().Create().Remove("test:panic_on_version_insert")
+	})
+
+	payload := make([]byte, 2048)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+
+	res, err := ctx.AddResource(newBytesFile(payload), "panics.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "panics"},
+	})
+	if err == nil {
+		t.Fatalf("a panic mid-transaction must not be reported as success; got resource %+v", res)
+	}
+	if res != nil {
+		t.Fatalf("expected no resource alongside the error, got %+v", res)
+	}
+
+	// And the rollback actually happened.
+	var stored int64
+	if err := ctx.db.Model(&models.Resource{}).Count(&stored).Error; err != nil {
+		t.Fatalf("count resources: %v", err)
+	}
+	if stored != 0 {
+		t.Fatalf("expected the rolled-back row to be gone, found %d resources", stored)
+	}
+}

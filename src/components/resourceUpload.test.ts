@@ -232,20 +232,181 @@ describe('retry eligibility', () => {
   });
 });
 
+/**
+ * A stand-in for XMLHttpRequest that records what the component sent and lets a
+ * test drive the outcome. Everything below goes through the real uploadOne, so
+ * these assertions cannot pass against a handler that was never wired.
+ */
+class FakeXHR {
+  static instances: FakeXHR[] = [];
+  headers: Record<string, string> = {};
+  method = '';
+  url = '';
+  status = 0;
+  responseText = '';
+  upload = { onprogress: null as null | ((e: { lengthComputable: boolean; loaded: number }) => void) };
+  onload: null | (() => void) = null;
+  onerror: null | (() => void) = null;
+  onabort: null | (() => void) = null;
+  sent: unknown = null;
+  aborted = false;
+
+  constructor() {
+    FakeXHR.instances.push(this);
+  }
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader(k: string, v: string) {
+    this.headers[k] = v;
+  }
+  send(body: unknown) {
+    this.sent = body;
+  }
+  abort() {
+    this.aborted = true;
+    this.onabort?.();
+  }
+}
+
+function withFakeXHR(metaToken: string | null = 'tok-123') {
+  FakeXHR.instances = [];
+  // The component legitimately reaches for window/document in a browser; node
+  // has neither, and an exception thrown inside a worker would be swallowed by
+  // the pool's catch and misread as an ordinary upload failure.
+  (globalThis as never as { window: unknown }).window = {
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  (globalThis as never as { XMLHttpRequest: unknown }).XMLHttpRequest = FakeXHR;
+  (globalThis as never as { document: unknown }).document = {
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector: (sel: string) =>
+      sel === 'meta[name="csrf-token"]' && metaToken !== null
+        ? { getAttribute: () => metaToken }
+        : null,
+  };
+  (globalThis as never as { FormData: unknown }).FormData = class {
+    entries: Array<[string, unknown]> = [];
+    append(k: string, v: unknown) {
+      this.entries.push([k, v]);
+    }
+  };
+}
+
+function componentWithOneFile() {
+  const c = resourceUpload();
+  c._xhrs = new Set();
+  c._baseEntries = [['Name', 'batch']];
+  c._action = '/v1/resource';
+  c.files = [
+    { file: { name: 'a.png' }, name: 'a.png', size: 100, loaded: 0, status: 'queued', error: '', errorResourceId: null, httpStatus: 0 },
+  ];
+  return c;
+}
+
+describe('one request', () => {
+  it('carries the CSRF token and asks for JSON', async () => {
+    // The global fetch wrapper in csrf.js cannot cover XMLHttpRequest, so the
+    // header is set here or nowhere. Accept matters too: without it the endpoint
+    // answers a 302 that XHR follows silently.
+    withFakeXHR();
+    const c = componentWithOneFile();
+
+    const pending = c.uploadOne(0);
+    const xhr = FakeXHR.instances[0];
+    expect(xhr.headers['X-CSRF-Token']).toBe('tok-123');
+    expect(xhr.headers['Accept']).toBe('application/json');
+    expect(xhr.method).toBe('POST');
+
+    xhr.status = 200;
+    xhr.responseText = JSON.stringify([{ ID: 7 }]);
+    xhr.onload!();
+    await pending;
+
+    expect(c.files[0].status).toBe('done');
+    expect(c.files[0].resourceId).toBe(7);
+    expect(c.doneCount).toBe(1);
+  });
+
+  it('omits the CSRF header entirely when auth is off', () => {
+    // The meta tag renders empty under auth-off; sending an empty header would
+    // be worse than sending none.
+    withFakeXHR('');
+    const c = componentWithOneFile();
+    c.uploadOne(0);
+    expect(FakeXHR.instances[0].headers).not.toHaveProperty('X-CSRF-Token');
+  });
+
+  it('reports byte progress from the upload stream', async () => {
+    withFakeXHR();
+    const c = componentWithOneFile();
+    const pending = c.uploadOne(0);
+    const xhr = FakeXHR.instances[0];
+
+    xhr.upload.onprogress!({ lengthComputable: true, loaded: 40 });
+    expect(c.files[0].loaded).toBe(40);
+    expect(c.progress.percent).toBe(40);
+
+    xhr.status = 200;
+    xhr.responseText = '[]';
+    xhr.onload!();
+    await pending;
+  });
+});
+
 describe('cancelling mid-flight', () => {
-  it('does not claim an aborted upload was left unsaved', () => {
+  it('does not claim an aborted upload was left unsaved', async () => {
+    // Driven through cancel() and the real onabort handler, not by fabricating
+    // the end state: with status set back to 'queued' this test goes red.
+    //
     // Aborting an XHR stops the browser reading the response, not the server
     // processing the request. A request whose body already arrived may have been
     // committed, so an aborted row is neither counted as done nor reported as a
     // failure — it is surfaced as unknown.
-    const c = resourceUpload();
-    c.files = [
-      { name: 'done', size: 1, loaded: 1, status: 'done', error: '', httpStatus: 200 },
-      { name: 'aborted', size: 1, loaded: 0, status: 'cancelled', error: '', httpStatus: 0 },
-    ];
-    expect(c.cancelledInFlight.map((f: { name: string }) => f.name)).toEqual(['aborted']);
+    withFakeXHR();
+    const c = componentWithOneFile();
+
+    const pending = c.uploadOne(0);
+    expect(c.files[0].status).toBe('uploading');
+
+    c.cancel();
+    await pending;
+
+    expect(FakeXHR.instances[0].aborted).toBe(true);
+    expect(c.files[0].status).toBe('cancelled');
+    expect(c.cancelledInFlight).toHaveLength(1);
     expect(c.failed).toEqual([]);
     expect(c.retryableIndices).toEqual([]);
+    expect(c.doneCount).toBe(0);
+  });
+
+  it('stops the pool and does not navigate when the component is destroyed', async () => {
+    // destroy() used to abort without cancelling: the aborted request resolved,
+    // the worker read `cancelled` as false, dequeued the next file and kept
+    // uploading from a detached component — and finish() could navigate.
+    withFakeXHR();
+    const c = resourceUpload();
+    c._xhrs = new Set();
+    c.concurrency = 1;
+    c.navigateAfterSuccess = vi.fn();
+    let started = 0;
+    c.uploadOne = async (i: number) => {
+      started++;
+      if (started === 1) c.destroy();
+      c.files[i].status = 'done';
+      c.doneCount++;
+    };
+    c.files = Array.from({ length: 5 }, (_, i) => ({
+      name: `f${i}`, size: 1, loaded: 0, status: 'queued', error: '', errorResourceId: null, httpStatus: 0,
+    }));
+
+    await c.run(c.files.map((_, i) => i));
+
+    expect(started).toBe(1);
+    expect(c.navigateAfterSuccess).not.toHaveBeenCalled();
   });
 });
 

@@ -112,6 +112,14 @@
                                 :required="!url.trim()"
                                 aria-describedby="resource-description"
                                 @change="onFilesChosen($event)"
+                                {# Locked while a batch is running. The files are #}
+                                {# already held by the component, so disabling    #}
+                                {# takes nothing away — but leaving it open let a #}
+                                {# selection made mid-run replace the input       #}
+                                {# without being adopted, and picking the same    #}
+                                {# files again fires no change event, so the form #}
+                                {# stranded with Save disabled.                   #}
+                                :disabled="phase === 'uploading'"
                             >
                         </div>
                         <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose one or more files, or give a URL below instead.</p>
