@@ -641,19 +641,30 @@ func TestResourceHashUniqueIndexToleratesUnhashedRows(t *testing.T) {
 // TestPhantomGroupIsNotCreatedByADuplicateUpload pins why the association ids
 // are validated inside the merge transaction rather than before it.
 //
-// Association.Append upserts its target. Validating outside the transaction
-// leaves a window in which the group is deleted, and Append then recreates it as
-// a blank row carrying nothing but the id before inserting the join — the
-// foreign key cannot object, because by then the row exists again.
+// `Association.Append` upserts its target. Handed a group id whose row is not
+// there it inserts a blank one carrying nothing but the id, and returns no
+// error — measured directly: one ghost group created, no error. Validating
+// outside the transaction leaves a window in which the group is deleted, and
+// the append then recreates it; the foreign key cannot object, because by then
+// the row exists again.
+//
+// The duplicate must share the original's owner, or AddResource refuses it at
+// the OwnerId check and never reaches the association code at all — which is
+// how the first draft of this test passed against the very defect it names.
 func TestPhantomGroupIsNotCreatedByADuplicateUpload(t *testing.T) {
 	ctx := newWALTestContext(t, 0)
+
+	owner := &models.Group{Name: "phantom-owner"}
+	if err := ctx.db.Create(owner).Error; err != nil {
+		t.Fatalf("create owner group: %v", err)
+	}
 
 	payload := make([]byte, 4096)
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatalf("generate payload: %v", err)
 	}
 	if _, err := ctx.AddResource(newBytesFile(payload), "original.bin", &query_models.ResourceCreator{
-		ResourceQueryBase: query_models.ResourceQueryBase{Name: "original"},
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "original", OwnerId: owner.ID},
 	}); err != nil {
 		t.Fatalf("seed upload: %v", err)
 	}
@@ -664,12 +675,15 @@ func TestPhantomGroupIsNotCreatedByADuplicateUpload(t *testing.T) {
 
 	_, err := ctx.AddResource(newBytesFile(payload), "duplicate.bin", &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
-			Name:   "duplicate",
-			Groups: []uint{ghostID},
+			Name:    "duplicate",
+			OwnerId: owner.ID,
+			Groups:  []uint{ghostID},
 		},
 	})
-	if err == nil {
-		t.Fatal("appending an association to a group that does not exist must be refused")
+
+	var exists *ResourceExistsError
+	if err == nil || errors.As(err, &exists) {
+		t.Fatalf("appending to a group that does not exist must be refused, got: %v", err)
 	}
 
 	var ghosts int64
