@@ -256,3 +256,105 @@ func TestLintUnquotedSiblingDifferential(t *testing.T) {
 		}
 	}
 }
+
+// TestLintRawBreakoutDifferential is the independent oracle for the raw= rules
+// (round 22). For each context it substitutes a CONTEXT-SPECIFIC real breakout
+// (a single-quote closer for a single-quoted value, a <frame> for a frameset,
+// …) — deliberately NOT the linter's own combined probe string — parses both
+// scripting modes, and asserts the linter warns raw= exactly when that breakout
+// reaches a live element. A probe that is incomplete for some context (as the
+// round-21 probe was for single quotes) shows up here as a mismatch.
+func TestLintRawBreakoutDifferential(t *testing.T) {
+	marker := "zqrawimg"
+	live := func(src string) bool {
+		for _, scripting := range []bool{true, false} {
+			opts := []html.ParseOption{}
+			if !scripting {
+				opts = append(opts, html.ParseOptionEnableScripting(false))
+			}
+			doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
+			if err != nil {
+				continue
+			}
+			found := false
+			var walk func(*html.Node)
+			walk = func(n *html.Node) {
+				if n.Type == html.ElementNode {
+					if n.Data == marker {
+						found = true
+					}
+					for _, a := range n.Attr {
+						if a.Key == marker {
+							found = true
+						}
+					}
+				}
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
+			}
+			walk(doc)
+			if found {
+				return true
+			}
+		}
+		return false
+	}
+	warnsRaw := func(src string) bool {
+		// The raw= hazard is reported by whichever message fits where the value
+		// landed: "becomes real elements" (text/dropped), "close the attribute"
+		// (an attribute value), or "can close the <script>/<style>" (a raw-text
+		// program body). Any of them means the raw= danger was caught.
+		return lintSaysAny(src, "becomes real elements") ||
+			lintSaysAny(src, "close the attribute") ||
+			lintSaysAny(src, "can close the <")
+	}
+
+	tokens := []string{
+		"<div>", "</div>", "<svg>", "</svg>", "<desc>", "<template>", "</template>",
+		"<frameset>", "</frameset>", "<textarea>", "</textarea>", "<title>", "</title>",
+		"<noscript>", "</noscript>", "<p>", "</p>", "<b>", "<style>", "</style>",
+		"<math>", "<foreignObject>", "<span>", "</span>", "<table>", "<a>", "</a>",
+	}
+	// A real raw= attacker writes an unescaped value that closes whatever
+	// contains it. This is that value — raw-text closers, both quote closers, a
+	// tag closer, then a marker element and a frameset frame — substituted into
+	// each context. It is the worst case a value could actually take, so the
+	// linter (which must warn iff SOME value is live) should agree with it.
+	attack := `'"></title></textarea></style></script></xmp></noscript></noframes><` +
+		marker + `></` + marker + `><frame ` + marker + ` src=x>`
+	shapes := []struct{ lint, oracle string }{
+		{`<x>[property path='Name' raw='true']</x>`, `<x>` + attack + `</x>`},
+		{`<x title="[property path='Name' raw='true']">`, `<x title="` + attack + `">`},
+		{`<x title='[property path="Name" raw="true"]'>`, `<x title='` + attack + `'>`},
+		{`<x title=fixed title='[property path="Name" raw="true"]'>`, `<x title=fixed title='` + attack + `'>`},
+		{`<x>y</x data-z="[property path='Name' raw='true']">`, `<x>y</x data-z="` + attack + `">`},
+		{`[property path='Name' raw='true']`, attack},
+	}
+	fails := 0
+	for _, seed := range []int64{3, 14, 15, 92} {
+		rng := rand.New(rand.NewSource(seed))
+		for c := 0; c < 2500 && fails < 12; c++ {
+			n := rng.Intn(7)
+			var sb strings.Builder
+			for i := 0; i < n; i++ {
+				sb.WriteString(tokens[rng.Intn(len(tokens))])
+			}
+			before := sb.String()
+			for _, sh := range shapes {
+				lintSrc := before + sh.lint
+				oracleSrc := before + sh.oracle
+				isLive := live(oracleSrc)
+				warned := warnsRaw(lintSrc)
+				switch {
+				case warned && !isLive:
+					fails++
+					t.Errorf("FALSE POSITIVE: raw= warned but no breakout is live: %q -> %q", lintSrc, lintWarnings(lintSrc))
+				case isLive && !warned:
+					fails++
+					t.Errorf("MISSED: raw= breakout is live yet no warning: %q (oracle %q) -> %q", lintSrc, oracleSrc, lintWarnings(lintSrc))
+				}
+			}
+		}
+	}
+}

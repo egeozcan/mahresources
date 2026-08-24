@@ -100,6 +100,11 @@ type attrContext struct {
 	// unescaped value there can close the attribute and write markup, but only
 	// where the parser builds anything at all.
 	rawReachesLive bool
+	// rawReachesOnlyOff narrows rawReachesLive to a breakout the parser builds
+	// only with scripting DISABLED (a <noscript> reading that differs). The
+	// raw= warning is then qualified and describes markup injection, not script
+	// — nothing runs in the mode that builds it.
+	rawReachesOnlyOff bool
 	// unquotedSibling marks an UNQUOTED attribute value the parser dropped from
 	// the tree — a repeated attribute (discarded), or a duplicate-named one on
 	// a re-opened <body>/<html> that merges onto the singleton — yet whose
@@ -144,21 +149,34 @@ var lintProbePrefix = "mahprobe" + lintSentinelNonce + "x"
 
 func lintProbe(i int) string { return lintProbePrefix + strconv.Itoa(i) }
 
-// rawBreakoutReachesLive reports whether a raw= value at the occurrence whose
-// sentinel occupies substituted[at:at+n] could reach live markup. A raw= value
-// is unescaped, so its worst case closes any attribute and tag and opens an
-// element; the probe substitutes exactly that (`"><…elem>`) right after the
-// sentinel and asks html.Parse, in EITHER scripting mode, whether the probe
-// element survives. A position the parser dropped — past a <frameset>, or past
-// x/net's foreign-<template> surrender — builds nothing there, so the element
-// never appears and the raw value reaches nothing. One occurrence is probed at
-// a time so a breakout cannot perturb another occurrence's answer.
-func rawBreakoutReachesLive(substituted string, at, n int) bool {
+// rawBreakoutReachesLive reports, per scripting mode, whether a raw= value at
+// the occurrence whose sentinel occupies substituted[at:at+n] could reach live
+// markup. A raw= value is unescaped, so its worst case closes whatever contains
+// it and opens an element. The probe substitutes that worst case right after
+// the sentinel and asks html.Parse whether a probe node survives:
+//
+//   - `'"` closes a single- OR double-quoted attribute value (the inactive one
+//     is a harmless literal), then `>` closes the tag;
+//   - the raw-text terminators close a <title>/<textarea>/<style>/<script>/
+//     <xmp>/<noscript>/<noframes> body the value might sit in;
+//   - `<...elem>` is a plain element for ordinary contexts, and `<frame ...elem>`
+//     is the one element a <frameset> accepts, so a value dropped as frameset
+//     TEXT is still caught.
+//
+// A probe node is the marker element OR any element carrying the marker
+// attribute (the frame). A position the parser truly drops — past x/net's
+// foreign-<template> surrender — builds none of them. Returned per mode so a
+// breakout live only with scripting disabled (a <noscript> reading that differs)
+// is warned as markup injection, qualified, not as script. One occurrence is
+// probed at a time so a breakout cannot perturb another occurrence's answer.
+func rawBreakoutReachesLive(substituted string, at, n int) (reachesOn, reachesOff bool) {
 	if at < 0 || at+n > len(substituted) {
-		return false
+		return false, false
 	}
 	elem := lintProbePrefix + "elem"
-	src := substituted[:at+n] + `"><` + elem + `>` + substituted[at+n:]
+	breakout := `'"></title></textarea></style></script></xmp></noscript></noframes><` +
+		elem + `></` + elem + `><frame ` + elem + ` src=x>`
+	src := substituted[:at+n] + breakout + substituted[at+n:]
 	reaches := func(scripting bool) bool {
 		opts := []html.ParseOption{}
 		if !scripting {
@@ -171,8 +189,15 @@ func rawBreakoutReachesLive(substituted string, at, n int) bool {
 		found := false
 		var walk func(*html.Node)
 		walk = func(nd *html.Node) {
-			if nd.Type == html.ElementNode && nd.Data == elem {
-				found = true
+			if nd.Type == html.ElementNode {
+				if nd.Data == elem {
+					found = true
+				}
+				for _, a := range nd.Attr {
+					if a.Key == elem {
+						found = true
+					}
+				}
 			}
 			for c := nd.FirstChild; c != nil; c = c.NextSibling {
 				walk(c)
@@ -181,7 +206,7 @@ func rawBreakoutReachesLive(substituted string, at, n int) bool {
 		walk(doc)
 		return found
 	}
-	return reaches(true) || reaches(false)
+	return reaches(true), reaches(false)
 }
 
 // unquotedSiblingInjectors reports, per span, whether an UNQUOTED attribute
@@ -363,12 +388,17 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 			primary.unquotedSibling = true
 		}
 		// A value the parser dropped may still be a live raw= breakout site (a
-		// merge-dropped <body>/<html> attribute) rather than a truly dead one
-		// (past a <frameset> or foreign-<template> surrender). The breakout
-		// probe decides which; read only by the raw= rules.
-		if lex[i].inValue && (on[i].kind == kAbsent || off[i].kind == kAbsent) {
-			if rawBreakoutReachesLive(substituted, sentinelAt[i], len(lintSentinel(i))) {
+		// merge-dropped <body>/<html> attribute, a <frame> a <frameset> accepts,
+		// an end-tag attribute the value closes) rather than a truly dead one
+		// (past a foreign-<template> surrender). The breakout probe decides
+		// which, per scripting mode; read only by the raw= rules. Run for ANY
+		// dropped occurrence, not only attribute values, so frameset TEXT and
+		// end-tag-attribute positions are covered too.
+		if on[i].kind == kAbsent || off[i].kind == kAbsent {
+			reachOn, reachOff := rawBreakoutReachesLive(substituted, sentinelAt[i], len(lintSentinel(i)))
+			if reachOn || reachOff {
 				primary.rawReachesLive = true
+				primary.rawReachesOnlyOff = !reachOn && reachOff
 			}
 		}
 		out[sp.start] = primary
@@ -388,6 +418,12 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 			if offInjects {
 				sc.unquotedSibling = true
 			}
+			// The raw= breakout verdict is the occurrence's, not a mode's, so
+			// the scripting-off reading carries it too — a value live only with
+			// scripting off (a <textarea> body a surrender hid with it on) warns
+			// as markup, qualified, through this context rather than as script.
+			sc.rawReachesLive = primary.rawReachesLive
+			sc.rawReachesOnlyOff = primary.rawReachesOnlyOff
 			if sc != primary {
 				alt[sp.start] = sc
 			}
@@ -1107,6 +1143,15 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		}
 		return s
 	}
+	// rawDrop qualifies a raw= dropped-position message: when the breakout is
+	// one the parser builds only with scripting disabled, it is reachable in
+	// that mode alone, so the message carries the scripting-disabled note.
+	rawDrop := func(s string) string {
+		if ctx.rawReachesOnlyOff {
+			return s + noscriptQualifier
+		}
+		return s
+	}
 	// A <noscript> body reaches nothing that needs a script to run: with
 	// scripting enabled the body is inert raw text, and with it disabled the
 	// handler and the "javascript:" link are real and do nothing. Reporting
@@ -1138,10 +1183,10 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// The parser drops this duplicate, but the raw= bytes still pass
 			// the tokenizer and — where the tag is live (a re-opened <body>, a
 			// still-open element) — can close the attribute and add their own.
-			// Gated on rawReachesLive so a duplicate past a <frameset> or a
-			// foreign-<template> surrender, whose tag the parser ignores
-			// entirely, is not warned about a breakout that reaches nothing.
-			msgs = append(msgs, label+` with raw= is not escaped at all, so placing it in the "`+ctx.attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
+			// Gated on rawReachesLive so a duplicate past a foreign-<template>
+			// surrender, whose tag the parser ignores entirely, is not warned
+			// about a breakout that reaches nothing.
+			msgs = append(msgs, rawDrop(label+` with raw= is not escaped at all, so placing it in the "`+ctx.attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`))
 		}
 		if ctx.unquotedSibling {
 			msgs = append(msgs, qualify(label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`))
@@ -1200,19 +1245,28 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 			// A raw= value the merge dropped (its name duplicated the
 			// singleton's) but whose tag is live: the unescaped bytes still
 			// close the attribute and add their own onto the merged element.
-			return []string{label + ` with raw= is not escaped at all, so placing it in the "` + ctx.attr + `" attribute lets the value close the attribute and add its own. Drop raw= here.`}
+			return []string{rawDrop(label + ` with raw= is not escaped at all, so placing it in the "` + ctx.attr + `" attribute lets the value close the attribute and add its own. Drop raw= here.`)}
 		}
-		if raw && ctx.inertText && ctx.element != "plaintext" {
-			// raw= disables escaping outright, so it is unsafe wherever it
-			// lands in LIVE text: a Meta value of "<img src=x onerror=...>"
-			// becomes a real element. inertText is the parser confirming the
-			// occurrence reached a text node at all — a position the parser
-			// DROPPED (kAbsent: after a <frameset>, past x/net's foreign
-			// <template> surrender) builds nothing, so raw markup there is
-			// dropped with everything else and the warning would be false. The
-			// one live-text position raw cannot inject is a <plaintext> body,
-			// whose tokenizer state runs to EOF: a "<" there starts nothing.
-			return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
+		if raw && (ctx.inertText || ctx.rawReachesLive) && ctx.element != "plaintext" {
+			// raw= disables escaping outright, so it is unsafe wherever it can
+			// reach live markup: a Meta value of "<img src=x onerror=...>"
+			// becomes a real element. inertText is the parser confirming a live
+			// text node; rawReachesLive is the breakout probe confirming a
+			// dropped position the value can still reach (frameset TEXT via a
+			// <frame>, an end-tag attribute the value closes). A truly dead
+			// position — past a foreign-<template> surrender — is neither, so
+			// the warning is not false. The one live-text position raw cannot
+			// inject is a <plaintext> body, whose tokenizer runs to EOF.
+			inject := ` Anyone who can edit the entity can then inject script.`
+			if ctx.rawReachesOnlyOff {
+				// The breakout is built only with scripting disabled (the probe
+				// found it in that mode alone), where no injected handler runs:
+				// markup injection, not script. This is NOT the same as being in
+				// a <noscript> body, where a raw= value can write "</noscript>"
+				// and go on in markup under BOTH readings — that stays unqualified.
+				inject = ` Anyone who can edit the entity can then inject markup — no script runs with scripting disabled, but it can still deface the page or add phishing content.` + noscriptQualifier
+			}
+			return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page.` + inject + ` Drop raw= unless the value is authored by someone you would trust with the template itself.`}
 		}
 		return nil
 	}
@@ -1250,17 +1304,19 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	}
 	if urlBearingAttrs[attr] && scriptCanRun {
 		// A sentinel in the prefix is ANOTHER occurrence in the same value,
-		// whose text is unknown — it could be empty, so the scheme is not yet
-		// fixed and this occurrence could still start a "javascript:" URL. But
-		// the LITERAL text after that other occurrence is fixed: a "/", "?" or
-		// "#" there makes the URL relative, and a ":" terminates the scheme,
-		// before this occurrence — so it can no longer choose it. Only warn
-		// when the run after the last prior occurrence still leaves the scheme
-		// open.
+		// whose text is unknown. The LITERAL run after that other occurrence
+		// decides what is still open: a "/", "?" or "#" makes the URL RELATIVE
+		// before this occurrence, which is safe; but a bare ":" does NOT — it
+		// only names a scheme whose text is the earlier unknown occurrence,
+		// which could be "javascript", leaving this occurrence inside an
+		// executable URL. So suppress only on a relative fix (a fixed scheme
+		// whose name resolved to ""), and warn otherwise — whether this
+		// occurrence could still CHOOSE the scheme (the earlier one is empty)
+		// or sits in a scheme the earlier one chose.
 		if strings.Contains(ctx.valueSoFar, lintSentinelPrefix) {
 			last := strings.LastIndex(ctx.valueSoFar, lintSentinelPrefix)
-			if _, fixed := urlSchemeBefore(ctx.valueSoFar[last:]); !fixed {
-				out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+			if scheme, fixed := urlSchemeBefore(ctx.valueSoFar[last:]); !(fixed && scheme == "") {
+				out = append(out, label+` shares the "`+attr+`" URL with an earlier interpolation, so its scheme is not fixed to a safe one — the earlier value could make it "javascript:", and escaping does not stop that. Put a fixed path or a complete scheme at the start of the URL, e.g. href="/x/[meta ...]".`)
 			}
 		} else {
 			scheme, fixed := urlSchemeBefore(ctx.valueSoFar)

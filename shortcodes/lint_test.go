@@ -3000,15 +3000,18 @@ func TestLintAttributeContextRoundSixteen(t *testing.T) {
 
 	t.Run("a second occurrence in one URL can still choose the scheme", func(t *testing.T) {
 		// The first could be empty, so the second could start a javascript: URL.
+		// The first occurrence reports "can still choose the scheme"; the second,
+		// which shares the URL with an earlier one, reports the shares-the-URL
+		// form — both name the scheme as unsafe.
 		msgs := lintWarnings(`<a href="[property path='A'][property path='B']">go</a>`)
 		count := 0
 		for _, m := range msgs {
-			if strings.Contains(m, "can still choose the scheme") {
+			if strings.Contains(m, "scheme") {
 				count++
 			}
 		}
 		if count != 2 {
-			t.Errorf("both occurrences can choose the scheme, got %d: %q", count, msgs)
+			t.Errorf("both occurrences warn about the scheme, got %d: %q", count, msgs)
 		}
 	})
 
@@ -3300,7 +3303,10 @@ func TestLintAttributeContextRoundTwentyOne(t *testing.T) {
 	countScheme := func(src string) int {
 		n := 0
 		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-			if strings.Contains(issue.Message, "choose the scheme") {
+			// Two message forms name the scheme as unsafe: "can still choose the
+			// scheme" (an occurrence that could start it) and the shares-the-URL
+			// form (an occurrence sharing the URL with an earlier one).
+			if strings.Contains(issue.Message, "scheme") {
 				n++
 			}
 		}
@@ -3393,6 +3399,87 @@ func TestLintAttributeContextRoundTwentyOne(t *testing.T) {
 		src := `<svg><![CDATA[ <a href="javascript:[property path='P']"> ]]></svg>`
 		if warns(src, "javascript") || warns(src, "choose the scheme") {
 			t.Errorf("CDATA content is character data, not a live link, got %q", lintWarnings(src))
+		}
+	})
+}
+
+func TestLintAttributeContextRoundTwentyTwo(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	countScheme := func(src string) int {
+		n := 0
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "scheme") {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("a raw= value dropped as frameset text can still build a frame", func(t *testing.T) {
+		// A <frameset> drops TEXT but accepts <frame>, so a raw= value there is
+		// live even though the sentinel is kAbsent. The breakout probe's <frame>
+		// vector catches it.
+		src := `<frameset>[property path='Name' raw='true']</frameset>`
+		if !warns(src, "becomes real elements") {
+			t.Errorf("a raw= <frame> in a frameset is live, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a raw= value in an end-tag attribute can break out", func(t *testing.T) {
+		// End-tag attributes are ignored, but raw= can close the end tag and
+		// inject markup after it.
+		src := `<div>x</div data-x="[property path='Name' raw='true']"><p>ok</p>`
+		if !warns(src, "becomes real elements") {
+			t.Errorf("raw= closes the end tag and injects, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("the breakout probe closes a single-quoted attribute too", func(t *testing.T) {
+		// The probe leads with both quote characters, so a single-quoted raw=
+		// value on a merge-dropped attribute is detected.
+		src := `<div title="fixed" title='[property path="Name" raw="true"]'>x</div>`
+		if !warns(src, "close the attribute") {
+			t.Errorf("a single-quoted raw= breakout is live, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("a colon after an earlier occurrence does not make a later one safe", func(t *testing.T) {
+		// href="[A]:[B]": ":" names a scheme whose text is A — which could be
+		// "javascript" — so B is inside a possibly-executable URL and must warn,
+		// unlike href="[A]/[B]" where "/" makes it relative.
+		if got := countScheme(`<a href="[property path='A']:[property path='B']">x</a>`); got != 2 {
+			t.Errorf(`[A]:[B] leaves the scheme unsafe for both, got %d`, got)
+		}
+		if got := countScheme(`<a href="[property path='A']/[property path='B']">x</a>`); got != 1 {
+			t.Errorf(`[A]/[B] is relative after the slash, only A warns, got %d`, got)
+		}
+	})
+
+	t.Run("a raw= breakout live only with scripting off is qualified as markup", func(t *testing.T) {
+		// The foreign-template surrender differs by scripting mode here: the
+		// breakout builds only with scripting disabled, where no handler runs,
+		// so the warning is markup injection, qualified — not script injection.
+		src := `<noscript><textarea></noscript><svg><desc><template><div title="[property path='Name' raw='true']">`
+		if !warns(src, "reachable only with scripting disabled") {
+			t.Errorf("an off-only raw= breakout must be qualified, got %q", lintWarnings(src))
+		}
+		if warns(src, "inject script") {
+			t.Error("no script runs with scripting disabled; the message must say markup")
+		}
+	})
+
+	t.Run("a raw= value truly past the surrender stays silent", func(t *testing.T) {
+		// Control: neither mode builds anything here, so no breakout warning.
+		src := `<svg><desc><template>[property path='Name' raw='true']<script>alert(1)</script>`
+		if warns(src, "becomes real elements") {
+			t.Errorf("a dead position builds nothing, got %q", lintWarnings(src))
 		}
 	})
 }
