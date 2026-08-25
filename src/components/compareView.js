@@ -9,10 +9,6 @@ export function compareView(initialState) {
     r2: initialState.r2,
     v2: initialState.v2,
 
-    init() {
-      // Component initialized with state from URL params passed via template
-    },
-
     /**
      * Updates the URL with current comparison state and navigates to it.
      * This triggers a full page reload to fetch new comparison data.
@@ -27,69 +23,75 @@ export function compareView(initialState) {
     },
 
     /**
-     * Fetches available versions for a given resource.
-     * @param {number|string} resourceId - The resource ID to fetch versions for
-     * @returns {Promise<Array>} Array of version objects
+     * Handles a selection in a resource picker.
+     *
+     * The new side's version is left at 0 rather than resolved here: the server
+     * fills a missing version in and redirects, and it picks the version matching
+     * `CurrentVersionID` rather than the highest number, because a merge can
+     * transfer versions whose numbers are higher but describe different files.
+     * Resolving it a second time in the browser is the same decision made twice,
+     * and the two would drift — which is how a picker could land on a version the
+     * server would not have chosen.
+     *
+     * Only the side that changed moves. Changing one side of a same-resource
+     * comparison turns it into a cross-resource one, which is deliberate: it is
+     * how you start one from a version panel, and the page now says so — the
+     * heading, the breadcrumb and both pane labels name the two resources, and
+     * the summary carries the cross-resource badge.
+     *
+     * @param {'left'|'right'} side - which picker fired
+     * @param {object} change - the selector's change record
      */
-    async fetchVersions(resourceId) {
-      const response = await fetch(`/v1/resource/versions?resourceId=${resourceId}`);
-      if (!response.ok) {
-        console.error('Failed to fetch versions:', response.statusText);
-        return [];
+    onSideSelected(side, change) {
+      const added = change && change.added && change.added[0];
+      if (!added || !added.raw) return;
+
+      const resourceId = added.raw.ID;
+      const currentId = side === 'left' ? this.r1 : this.r2;
+      if (String(resourceId) === String(currentId)) return;
+
+      if (side === 'left') {
+        this.r1 = resourceId;
+        this.v1 = 0;
+      } else {
+        this.r2 = resourceId;
+        this.v2 = 0;
       }
-      return response.json();
-    },
 
-    /**
-     * Handles resource 1 selection change.
-     * Fetches versions for the new resource and auto-selects the first version.
-     * @param {number|string} resourceId - The newly selected resource ID
-     */
-    async onResource1Change(resourceId) {
-      this.r1 = resourceId;
-      const versions = await this.fetchVersions(resourceId);
-      if (versions.length > 0) {
-        this.v1 = versions[0].versionNumber;
+      // A version number only means something relative to its own resource. If
+      // the pick has made both sides the same resource, the number still sitting
+      // on the other side was counted against a different one — at best it names
+      // a different file, at worst no file at all.
+      if (String(this.r1) === String(this.r2)) {
+        this.v1 = 0;
+        this.v2 = 0;
       }
+
       this.updateUrl();
     },
 
-    /**
-     * Handles resource 2 selection change.
-     * Fetches versions for the new resource and auto-selects the first version.
-     * @param {number|string} resourceId - The newly selected resource ID
-     */
-    async onResource2Change(resourceId) {
-      this.r2 = resourceId;
-      const versions = await this.fetchVersions(resourceId);
-      if (versions.length > 0) {
-        this.v2 = versions[0].versionNumber;
-      }
-      this.updateUrl();
+    onResource1Selected(change) {
+      this.onSideSelected('left', change);
     },
 
-    /**
-     * Handles version 1 selection change.
-     * @param {number|string} versionNumber - The newly selected version number
-     */
-    onVersion1Change(versionNumber) {
-      this.v1 = versionNumber;
-      this.updateUrl();
-    },
-
-    /**
-     * Handles version 2 selection change.
-     * @param {number|string} versionNumber - The newly selected version number
-     */
-    onVersion2Change(versionNumber) {
-      this.v2 = versionNumber;
-      this.updateUrl();
+    onResource2Selected(change) {
+      this.onSideSelected('right', change);
     },
 
     swapSides() {
       [this.r1, this.r2] = [this.r2, this.r1];
       [this.v1, this.v2] = [this.v2, this.v1];
       this.updateUrl();
-    }
+    },
+
+    /** Best-effort clipboard write. Reports whether it landed. */
+    async copyText(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
   };
 }

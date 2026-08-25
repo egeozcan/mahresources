@@ -17,11 +17,15 @@ the code wins. For how the system is actually put together see
 - [2026-07-08-schema-editor-scalar-meta-edit-bug.md](2026-07-08-schema-editor-scalar-meta-edit-bug.md)
 - [2026-07-26-headless-selector-core-refactor.md](2026-07-26-headless-selector-core-refactor.md)
 - [2026-07-27-headless-selector-handover.md](2026-07-27-headless-selector-handover.md)
+- [2026-07-28-application-context-decomposition.md](2026-07-28-application-context-decomposition.md)
+- [2026-08-06-lightbox-bug-hunt.md](2026-08-06-lightbox-bug-hunt.md)
 - [2026-08-15-plugin-invocation-and-hook-integrity.md](2026-08-15-plugin-invocation-and-hook-integrity.md)
+- [2026-08-16-plugin-package-format.md](2026-08-16-plugin-package-format.md)
+- [2026-08-25-compare-page-teardown.md](2026-08-25-compare-page-teardown.md)
 
 ## Archive
 
-Shipped or abandoned work, kept for the reasoning. 187 documents.
+Shipped or abandoned work, kept for the reasoning. 188 documents.
 
 ### MRQL (16)
 
@@ -35,10 +39,11 @@ Shipped or abandoned work, kept for the reasoning. 187 documents.
 - `2026-04-11` **mrql-scope-filter** — [design](archive/2026-04-11-mrql-scope-filter-design.md) [impl](archive/2026-04-11-mrql-scope-filter-impl.md)
 - `2026-04-09` **mrql-shortcodes** — [design](archive/2026-04-09-mrql-shortcodes-design.md) [impl](archive/2026-04-09-mrql-shortcodes-impl.md)
 
-### Selectors & pickers (9)
+### Selectors & pickers (10)
 
 - `2026-01-29` **gallery-resource-picker** — [design](archive/2026-01-29-gallery-resource-picker-design.md) [impl](archive/2026-01-29-gallery-resource-picker-impl.md)
 - `2026-01-30` **generic-entity-picker** — [design](archive/2026-01-30-generic-entity-picker-design.md) [impl](archive/2026-01-30-generic-entity-picker-impl.md)
+- `2026-07-26` **headless-selector-todo** — [plan](archive/2026-07-26-headless-selector-todo.md)
 - `2026-03-22` **multi-tag-quick-slots** — [design](archive/2026-03-22-multi-tag-quick-slots-design.md) [impl](archive/2026-03-22-multi-tag-quick-slots-impl.md)
 - `2026-03-23` **quick-slot-expansion** — [design](archive/2026-03-23-quick-slot-expansion-design.md) [impl](archive/2026-03-23-quick-slot-expansion-impl.md)
 - `2026-07-01` **tier2-chip-input** — [plan](archive/2026-07-01-tier2-chip-input.md)

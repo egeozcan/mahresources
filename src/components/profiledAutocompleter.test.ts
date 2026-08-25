@@ -381,9 +381,26 @@ describe('profiled autocompleter bridge', () => {
             'utf8',
         );
 
+        // The resource page reaches the profile through the shared field partial,
+        // which supplies the chips and the combobox pattern; the group page still
+        // declares it inline. Either way it is the single-entity profile with a
+        // local change callback, never the withdrawn window-event approach.
+        expect(resourceCompare).toMatch(/autocompleter\.tpl.*profile='single'/);
+        expect(resourceCompare).toMatch(/onChange='onResource[12]Selected'/);
+        expect(groupCompare).toContain('singleEntitySelector({');
+        expect(groupCompare).toContain('onChange: (change) =>');
+
+        // The partial wires the callback through an arrow, so the method name is
+        // resolved when the change happens rather than while the x-data is being
+        // evaluated — which is before the enclosing scope is necessarily on
+        // Alpine's data stack, and a bare identifier silently reads undefined there.
+        const fieldPartial = readFileSync(
+            new URL('../../templates/partials/form/autocompleter.tpl', import.meta.url),
+            'utf8',
+        );
+        expect(fieldPartial).toContain('onChange: (change) => {{ onChange }}(change)');
+
         for (const markup of [resourceCompare, groupCompare]) {
-            expect(markup).toContain('singleEntitySelector({');
-            expect(markup).toContain('onChange: (change) =>');
             expect(markup).not.toContain('standalone:');
             expect(markup).not.toContain('dispatchOnSelect');
             expect(markup).not.toMatch(/@[a-z0-9-]+\.window=/);

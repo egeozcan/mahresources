@@ -65,14 +65,55 @@ func TestCompareContextProvider_CanMerge(t *testing.T) {
 		assert.Equal(t, false, canMerge, "canMerge should be false when comparing same resource")
 	})
 
-	t.Run("cross-resource labels are Left/Right", func(t *testing.T) {
+	// Across two resources the name is the only thing that distinguishes the two
+	// panes; "Left" and "Right" restate the side the reader is already looking at.
+	t.Run("cross-resource labels name the resources", func(t *testing.T) {
 		reqURL := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
 			res1.ID, latestV1, res2.ID, latestV2)
 		req := httptest.NewRequest("GET", reqURL, nil)
 		ctx := provider(req)
 
-		assert.Equal(t, "Left", ctx["label1"])
-		assert.Equal(t, "Right", ctx["label2"])
+		assert.Equal(t, "Resource One", ctx["label1"])
+		assert.Equal(t, "Resource Two", ctx["label2"])
+	})
+
+	// The section is always rendered, so an unavailable merge has to say why
+	// rather than removing itself from the page.
+	t.Run("an unavailable merge carries a reason", func(t *testing.T) {
+		sameResource := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
+			res1.ID, latestV1, res1.ID, latestV1)
+		ctx := provider(httptest.NewRequest("GET", sameResource, nil))
+		assert.Equal(t, false, ctx["canMerge"])
+		assert.Contains(t, ctx["mergeBlockedReason"], "two different resources")
+
+		crossResource := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
+			res1.ID, latestV1, res2.ID, latestV2)
+		ctx = provider(httptest.NewRequest("GET", crossResource, nil))
+		assert.Equal(t, true, ctx["canMerge"])
+		assert.Equal(t, "", ctx["mergeBlockedReason"])
+	})
+
+	// The layout reserves a 400px sidebar for any page that does not opt out,
+	// and this page has nothing to put in it.
+	t.Run("the layout sidebar is suppressed", func(t *testing.T) {
+		reqURL := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
+			res1.ID, latestV1, res2.ID, latestV2)
+		ctx := provider(httptest.NewRequest("GET", reqURL, nil))
+		assert.Equal(t, true, ctx["hideSidebar"])
+	})
+
+	// A constant title left every tab, bookmark and history entry saying the same
+	// thing whatever was being compared.
+	t.Run("the page title names what is being compared", func(t *testing.T) {
+		cross := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
+			res1.ID, latestV1, res2.ID, latestV2)
+		ctx := provider(httptest.NewRequest("GET", cross, nil))
+		assert.Equal(t, "Resource One vs Resource Two", ctx["pageTitle"])
+
+		same := fmt.Sprintf("/resource/compare?r1=%d&v1=%d&r2=%d&v2=%d",
+			res1.ID, latestV1, res1.ID, latestV1)
+		ctx = provider(httptest.NewRequest("GET", same, nil))
+		assert.Contains(t, ctx["pageTitle"], "Resource One")
 	})
 
 	t.Run("same-resource current vs old labels are Current/vN", func(t *testing.T) {

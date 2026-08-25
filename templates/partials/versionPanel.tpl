@@ -63,8 +63,11 @@
                         <span x-text="compareMode ? 'Cancel Compare' : 'Compare'"></span>
                     </button>
 
+                    {# Sorted, so the diff always reads older-to-newer. Built from click #}
+                    {# order, ticking the newer version first rendered every addition as a #}
+                    {# removal with nothing to say so. #}
                     <template x-if="compareMode && selected.length === 2">
-                        <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + selected[0] + '&v2=' + selected[1]"
+                        <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + Math.min(...selected) + '&v2=' + Math.max(...selected)"
                            class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800 whitespace-nowrap">
                             Compare Selected
                         </a>

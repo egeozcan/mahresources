@@ -2388,9 +2388,9 @@ html {
     width: 2rem;
     height: 2rem;
     border-radius: 9999px;
-    border: 1px solid #d6d3d1;
+    border: 1px solid #a8a29e;
     background: #fff;
-    color: #78716c;
+    color: #57534e;
     cursor: pointer;
     flex-shrink: 0;
     transition: transform var(--transition-normal), border-color var(--transition-fast), color var(--transition-fast);
@@ -2410,9 +2410,10 @@ html {
     padding: 0.375rem 0.625rem;
     font-size: 0.8125rem;
     font-weight: 500;
-    color: #78716c;
+    /* #78716c on #f5f5f4 measures 4.39:1, under the 4.5:1 minimum. */
+    color: #57534e;
     background: #f5f5f4;
-    border: 1px solid #d6d3d1;
+    border: 1px solid #a8a29e;
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: color var(--transition-fast), border-color var(--transition-fast);
@@ -2438,7 +2439,7 @@ html {
 }
 
 .compare-empty-state svg {
-    color: #78716c;
+    color: #57534e;
 }
 
 .compare-bucket-grid {
@@ -2489,6 +2490,431 @@ html {
     color: #44403c;
 }
 
+/* Page shell — the compare page opts out of the layout sidebar, so it sets its
+   own reading width rather than inheriting the main column's. */
+.compare-page {
+    max-width: 90rem;
+    margin: 0 auto;
+}
+
+.compare-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.75rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    color: #57534e;
+}
+
+.compare-breadcrumb a {
+    color: #115e59;
+    text-decoration: none;
+}
+
+.compare-breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+/* Picker toolbar — each side is one block, so the two wrap as units. */
+.compare-toolbar {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    background: #fff;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));
+}
+
+.compare-toolbar-side {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.375rem;
+}
+
+.compare-toolbar-side > .compare-side-label--old,
+.compare-toolbar-side > .compare-side-label--new {
+    align-self: flex-start;
+}
+
+.compare-toolbar .compare-swap-btn {
+    margin-bottom: 0.25rem;
+}
+
+.compare-version-select {
+    width: 100%;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.8125rem;
+    border: 1px solid #d6d3d1;
+    border-radius: var(--radius-md);
+    background: #fff;
+    color: #292524;
+}
+
+/* The shared autocompleter is built for a stacked form field; inside the
+   toolbar its label is redundant with the side chip above it. */
+.compare-toolbar-side [data-selector-field] > label,
+.compare-toolbar-side [data-selector-field] > span[id$="-required"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+.compare-notice {
+    padding: 0.625rem 0.875rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    color: #713f12;
+    background: #fefce8;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius-md);
+}
+
+.compare-stat--flag {
+    background: #fef3c7;
+    color: #78350f;
+}
+
+.compare-hash {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    margin-left: 0.25rem;
+}
+
+.compare-hash code {
+    font-size: 0.6875rem;
+    color: #57534e;
+    word-break: break-all;
+}
+
+.compare-copy-btn {
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #115e59;
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    border-radius: var(--radius-sm, 0.25rem);
+    cursor: pointer;
+}
+
+.compare-copy-btn:hover {
+    background: #ccfbf1;
+}
+
+/* Merge */
+.compare-merge-blocked {
+    padding: 0.625rem 0.875rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    color: #57534e;
+    background: #fafaf9;
+    border: 1px solid #e7e5e4;
+    border-radius: var(--radius-md);
+}
+
+.compare-merge-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.compare-merge-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #fff;
+    background: #b45309;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.compare-merge-btn:hover:not(:disabled) {
+    background: #92400e;
+}
+
+.compare-merge-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Overlay modes — both images share one box built from the larger of the two in
+   each axis, so a pair with different proportions still lines up. */
+.compare-overlay-box {
+    position: relative;
+    background: #fafaf9;
+}
+
+.compare-overlay-img {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.compare-overlay-box:not([style*="aspect-ratio"]) .compare-overlay-img {
+    position: static;
+    height: auto;
+}
+
+.compare-slider-handle:focus-visible {
+    outline: 3px solid #0f766e;
+    outline-offset: 1px;
+}
+
+/* Diff views */
+.compare-diff-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #e7e5e4;
+}
+
+.compare-diff-toolbar-end {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+}
+
+.compare-diff-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.compare-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75rem;
+    height: 1.75rem;
+    padding: 0 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #44403c;
+    background: #fff;
+    border: 1px solid #a8a29e;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.compare-nav-btn:hover {
+    border-color: #0f766e;
+    color: #0f766e;
+}
+
+.compare-nav-btn--text {
+    padding: 0 0.5rem;
+}
+
+.compare-nav-count {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    color: #57534e;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.compare-diff-stats {
+    font-size: 0.875rem;
+    color: #44403c;
+    white-space: nowrap;
+}
+
+.compare-stat-added {
+    color: #15803d;
+    font-weight: 600;
+}
+
+.compare-stat-removed {
+    margin-left: 0.5rem;
+    color: #b91c1c;
+    font-weight: 600;
+}
+
+/* Grid rows rather than a table: every row is a fixed height, so a padding row
+   with no text still occupies a line. As table cells they collapsed to nothing,
+   which is what pulled the two split columns out of alignment. */
+.compare-diff {
+    display: grid;
+    overflow-x: auto;
+}
+
+.compare-diff--unified {
+    grid-template-columns: 3.5rem 3.5rem minmax(0, 1fr);
+}
+
+.compare-diff--split {
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+}
+
+.compare-diff-line {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    min-height: 1.25rem;
+    line-height: 1.25rem;
+    align-items: start;
+}
+
+.compare-diff-line.is-fold {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.compare-diff-line.is-fold > .compare-diff-num,
+.compare-diff-line.is-fold > .compare-diff-content {
+    display: none;
+}
+
+.compare-diff-num {
+    padding-right: 0.5rem;
+    text-align: right;
+    user-select: none;
+    /* #a6a09b on #fafaf9 measures 2.47:1. These are the wayfinding for the
+       whole comparison, so they need to be readable. */
+    color: #57534e;
+    font-variant-numeric: tabular-nums;
+}
+
+.compare-diff-num--right {
+    border-right: 1px solid #e7e5e4;
+}
+
+.compare-diff-content {
+    padding-left: 0.5rem;
+    white-space: pre;
+}
+
+.compare-diff-prefix--removed {
+    color: #b91c1c;
+}
+
+.compare-diff-prefix--added {
+    color: #15803d;
+}
+
+.compare-diff-row--removed {
+    background: #fef2f2;
+}
+
+.compare-diff-row--added {
+    background: #f0fdf4;
+}
+
+.compare-diff-row--context {
+    background: #fafaf9;
+}
+
+.compare-diff-row--blank {
+    background: #f5f5f4;
+}
+
+.compare-diff-row--active {
+    box-shadow: inset 3px 0 0 #0f766e;
+}
+
+.compare-word--removed {
+    background: #fecaca;
+    border-radius: 0.125rem;
+}
+
+.compare-word--added {
+    background: #bbf7d0;
+    border-radius: 0.125rem;
+}
+
+.compare-fold-cell {
+    display: block;
+    background: #f5f5f4;
+    border-top: 1px solid #e7e5e4;
+    border-bottom: 1px solid #e7e5e4;
+}
+
+.compare-fold-btn {
+    width: 100%;
+    padding: 0.25rem 0.75rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    color: #115e59;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+.compare-fold-btn:hover {
+    background: #e7e5e4;
+}
+
+.compare-diff-gate {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1.25rem;
+    background: #fefce8;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius-md);
+    color: #713f12;
+    font-size: 0.9375rem;
+}
+
+.compare-gate-btn {
+    padding: 0.375rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+    background: #b45309;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.compare-gate-btn:hover {
+    background: #92400e;
+}
+
+.compare-binary-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 6rem;
+    height: 6rem;
+    margin: 0 auto 0.75rem;
+    padding: 0.5rem;
+    background: #f5f5f4;
+    border-radius: var(--radius-md);
+    font-size: 0.6875rem;
+    color: #57534e;
+    text-align: center;
+    word-break: break-word;
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     .compare-seg-btn .compare-seg-label {
@@ -2501,6 +2927,32 @@ html {
 
     .compare-bucket-grid {
         grid-template-columns: 1fr;
+    }
+
+    /* Stack the two sides. Letting them wrap field by field breaks the
+       left/right symmetry the control depends on. */
+    .compare-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .compare-toolbar .compare-swap-btn {
+        align-self: center;
+        margin-bottom: 0;
+    }
+
+    .compare-merge-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .compare-merge-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .compare-diff-toolbar-end {
+        margin-left: 0;
     }
 }
 

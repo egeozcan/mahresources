@@ -1,97 +1,132 @@
+{# `lead` is whichever image is currently on the old-coloured side and `trail` #}
+{# the new-coloured one. Swapping flips which version each names, so the header #}
+{# colour, the label and the alt text always describe the same file. #}
 <div class="bg-white shadow rounded-lg p-4" x-data="imageCompare({
     leftUrl: '/v1/resource/version/file?versionId={{ comparison.Version1.ID }}',
     rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}',
-    leftLabel: '{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}',
-    rightLabel: '{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}'
+    leftLabel: '{{ label1|escapejs }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}',
+    rightLabel: '{{ label2|escapejs }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}',
+    leftSize: { w: {{ comparison.Version1.Width }}, h: {{ comparison.Version1.Height }} },
+    rightSize: { w: {{ comparison.Version2.Width }}, h: {{ comparison.Version2.Height }} }
 })">
     <!-- Mode selector -->
     <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
+        {# Each button carries an aria-label as well as its visible one: the visible #}
+        {# label is hidden below 768px, which would otherwise leave the button with #}
+        {# nothing but an aria-hidden icon and no accessible name. #}
         <div class="compare-segmented-control" role="radiogroup" aria-label="Comparison mode"
              @keydown="onRadiogroupKeydown($event, 'mode', ['side-by-side', 'slider', 'onion', 'toggle'])">
-            <button @click="mode = 'side-by-side'" role="radio" :aria-checked="mode === 'side-by-side'"
+            <button @click="mode = 'side-by-side'" role="radio" :aria-checked="mode === 'side-by-side'" aria-label="Side by side"
                     :tabindex="mode === 'side-by-side' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
                 <span class="compare-seg-label">Side by side</span>
             </button>
-            <button @click="mode = 'slider'" role="radio" :aria-checked="mode === 'slider'"
+            <button @click="mode = 'slider'" role="radio" :aria-checked="mode === 'slider'" aria-label="Slider"
                     :tabindex="mode === 'slider' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="8 6 12 2 16 6"/><polyline points="8 18 12 22 16 18"/></svg>
                 <span class="compare-seg-label">Slider</span>
             </button>
-            <button @click="mode = 'onion'" role="radio" :aria-checked="mode === 'onion'"
+            <button @click="mode = 'onion'" role="radio" :aria-checked="mode === 'onion'" aria-label="Onion skin"
                     :tabindex="mode === 'onion' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/></svg>
                 <span class="compare-seg-label">Onion skin</span>
             </button>
-            <button @click="mode = 'toggle'" role="radio" :aria-checked="mode === 'toggle'"
+            <button @click="mode = 'toggle'" role="radio" :aria-checked="mode === 'toggle'" aria-label="Toggle"
                     :tabindex="mode === 'toggle' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="16" cy="12" r="4"/></svg>
                 <span class="compare-seg-label">Toggle</span>
             </button>
         </div>
-        <button @click="swapSides()" class="compare-swap-btn-sm" aria-label="Swap sides">
+        {# Named for what it does. The toolbar's swap reloads the page with the two #}
+        {# sides exchanged; this one only flips the images, so calling both "Swap #}
+        {# sides" gave two controls one name and two behaviours. #}
+        <button type="button" @click="swapSides()" class="compare-swap-btn-sm"
+                :aria-pressed="swapped" aria-label="Flip which image is shown first">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
-            Swap
+            Flip
         </button>
     </div>
 
     <!-- Side-by-side mode -->
-    <div x-show="mode === 'side-by-side'" class="grid grid-cols-2 gap-4">
+    <div x-show="mode === 'side-by-side'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {# The header colour follows the version, not the slot: after a flip the #}
+        {# left pane holds the newer file, and a red "older" bar over it would #}
+        {# contradict its own caption. #}
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--old" x-text="leftLabel"></div>
-            <img :src="leftUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
+            <div :class="swapped ? 'compare-panel-header--new' : 'compare-panel-header--old'" x-text="leadLabel"></div>
+            <img :src="leadUrl" :alt="leadAlt" class="max-w-full h-auto">
         </div>
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--new" x-text="rightLabel"></div>
-            <img :src="rightUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
+            <div :class="swapped ? 'compare-panel-header--old' : 'compare-panel-header--new'" x-text="trailLabel"></div>
+            <img :src="trailUrl" :alt="trailAlt" class="max-w-full h-auto">
         </div>
     </div>
 
     <!-- Slider mode -->
-    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none" x-ref="sliderContainer">
-        <img :src="rightUrl" class="w-full h-auto pointer-events-none" alt="Version {{ comparison.Version2.VersionNumber }}">
+    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none compare-overlay-box"
+         x-ref="sliderContainer" :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''">
+        <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale">
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
-            <img :src="leftUrl" class="w-full h-auto"
-                 alt="Version {{ comparison.Version1.VersionNumber }}">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
         </div>
-        <div class="absolute inset-y-0 bg-white w-1 cursor-ew-resize z-10"
+        {# A real slider: focusable, announced, and driven by its own arrow keys. #}
+        {# The handle used to be an unlabelled div reachable only through a #}
+        {# document-level shortcut nothing advertised. #}
+        <div class="absolute inset-y-0 bg-white w-1 cursor-ew-resize z-10 compare-slider-handle"
+             role="slider"
+             tabindex="0"
+             aria-label="Reveal position"
+             aria-valuemin="1"
+             aria-valuemax="99"
+             :aria-valuenow="Math.round(sliderPos)"
+             :aria-valuetext="Math.round(sliderPos) + '% of ' + leadLabel"
              :style="'left: ' + sliderPos + '%'"
              @mousedown="startSliderDrag"
-             @touchstart.prevent="startSliderDrag">
+             @touchstart.prevent="startSliderDrag"
+             @keydown.arrow-left.prevent="nudgeSlider($event.shiftKey ? -10 : -2)"
+             @keydown.arrow-right.prevent="nudgeSlider($event.shiftKey ? 10 : 2)"
+             @keydown.home.prevent="sliderPos = 1"
+             @keydown.end.prevent="sliderPos = 99">
             <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-12 bg-white rounded shadow flex items-center justify-center">
-                <span class="text-stone-400">&#x22EE;</span>
+                <span class="text-stone-500" aria-hidden="true">&#x22EE;</span>
             </div>
         </div>
-        <div class="absolute top-2 left-2"><span class="compare-side-label--old" x-text="leftLabel"></span></div>
-        <div class="absolute top-2 right-2"><span class="compare-side-label--new" x-text="rightLabel"></span></div>
+        <div class="absolute top-2 left-2"><span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span></div>
+        <div class="absolute top-2 right-2"><span :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span></div>
     </div>
 
     <!-- Onion skin mode -->
     <div x-show="mode === 'onion'">
-        <div class="relative border rounded overflow-hidden">
-            <img :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
-            <img :src="rightUrl" class="absolute inset-0 w-full h-auto"
-                 :style="'opacity: ' + (opacity / 100)"
-                 alt="Version {{ comparison.Version2.VersionNumber }}">
+        <div class="relative border rounded overflow-hidden compare-overlay-box"
+             :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
+            <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img"
+                 :style="trailScale + 'opacity: ' + (opacity / 100)">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
-            <span class="compare-side-label--old" x-text="leftLabel"></span>
-            <input type="range" min="0" max="100" x-model="opacity" class="w-48" aria-label="Onion skin opacity">
-            <span class="compare-side-label--new" x-text="rightLabel"></span>
+            <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
+            <input type="range" min="0" max="100" x-model.number="opacity" class="w-48" aria-label="Onion skin opacity">
+            <span :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
         </div>
     </div>
 
     <!-- Toggle mode -->
-    <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
-        <div class="absolute top-2 right-2 z-10">
-            <span x-show="showLeft" class="compare-side-label--old" x-text="leftLabel"></span>
-            <span x-show="!showLeft" class="compare-side-label--new" x-text="rightLabel"></span>
-        </div>
-        <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
-        <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
-    </div>
+    {# A real button, so Enter and Space both work. As a div with role="button" it #}
+    {# only bound Space, and Enter is the key most people reach for. #}
+    <button type="button" x-show="mode === 'toggle'"
+            class="relative border rounded overflow-hidden cursor-pointer block w-full p-0 compare-overlay-box"
+            :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''"
+            :aria-label="'Showing ' + (showLeft ? leadLabel : trailLabel) + '. Activate to show the other.'"
+            @click="toggleSide()">
+        <span class="absolute top-2 right-2 z-10">
+            <span x-show="showLeft" :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
+            <span x-show="!showLeft" :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
+        </span>
+        <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
+        <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale">
+    </button>
 </div>

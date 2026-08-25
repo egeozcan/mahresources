@@ -1,61 +1,68 @@
+{# The frames live behind `x-if`, not `x-show`: rendered up front and merely #}
+{# hidden, both PDFs were requested the moment the page opened, and the response #}
+{# is an attachment — so opening a PDF comparison downloaded two files before #}
+{# anyone clicked anything. `?disposition=inline` is what makes them render at #}
+{# all; without it the frame is served an attachment and stays blank. #}
 <div class="bg-white shadow rounded-lg p-4" x-data="{ loaded: false }">
     <div class="flex items-center justify-between mb-4 border-b pb-4">
-        <h3 class="text-lg font-medium">PDF Comparison</h3>
-        <button @click="loaded = true" x-show="!loaded"
-                class="px-4 py-2 bg-teal-700 text-white rounded hover:bg-teal-800 text-sm font-medium">
-            Load in viewer
+        <h2 class="text-lg font-medium">PDF Comparison</h2>
+        <button type="button" @click="loaded = !loaded"
+                class="px-4 py-2 bg-teal-800 text-white rounded hover:bg-teal-900 text-sm font-medium">
+            <span x-text="loaded ? 'Close viewer' : 'Load in viewer'"></span>
         </button>
     </div>
 
     <!-- Thumbnails before loading -->
-    <div x-show="!loaded" class="grid grid-cols-2 gap-6">
+    <div x-show="!loaded" class="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <div class="border rounded p-4 text-center">
-            <div class="compare-panel-header--old rounded-t -mx-4 -mt-4 mb-3">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</div>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
+            <div class="compare-panel-header--old rounded-t -mx-4 -mt-4 mb-3">{{ panelTitle1 }}</div>
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#57534e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 00-2 2v20a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/>
                 <polyline points="14 2 14 8 20 8"/>
                 <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="21" x2="12" y2="21"/>
             </svg>
-            <p class="text-sm text-stone-500 font-mono">{{ comparison.Version1.FileSize|humanReadableSize }}</p>
+            <p class="text-sm text-stone-600 font-mono">{{ comparison.Version1.FileSize|humanReadableSize }}</p>
             <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}"
                class="inline-block mt-3 px-4 py-2 bg-stone-200 rounded hover:bg-stone-300 text-sm">
-                Download
+                Download {{ panelTitle1 }}
             </a>
         </div>
         <div class="border rounded p-4 text-center">
-            <div class="compare-panel-header--new rounded-t -mx-4 -mt-4 mb-3">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</div>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
+            <div class="compare-panel-header--new rounded-t -mx-4 -mt-4 mb-3">{{ panelTitle2 }}</div>
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#57534e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 00-2 2v20a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/>
                 <polyline points="14 2 14 8 20 8"/>
                 <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="21" x2="12" y2="21"/>
             </svg>
-            <p class="text-sm text-stone-500 font-mono">{{ comparison.Version2.FileSize|humanReadableSize }}</p>
+            <p class="text-sm text-stone-600 font-mono">{{ comparison.Version2.FileSize|humanReadableSize }}</p>
             <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}"
                class="inline-block mt-3 px-4 py-2 bg-stone-200 rounded hover:bg-stone-300 text-sm">
-                Download
+                Download {{ panelTitle2 }}
             </a>
         </div>
     </div>
 
     <!-- Iframes after loading -->
-    <div x-show="loaded" class="grid grid-cols-2 gap-4">
-        <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--old flex justify-between items-center">
-                <span>{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</span>
-                <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}" class="text-red-900/60 hover:underline text-xs">Download</a>
+    <template x-if="loaded">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="border rounded overflow-hidden">
+                <div class="compare-panel-header--old flex justify-between items-center">
+                    <span>{{ panelTitle1 }}</span>
+                    <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}" class="text-red-900 hover:underline text-xs">Download</a>
+                </div>
+                <iframe src="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}&amp;disposition=inline"
+                        class="w-full h-[600px]"
+                        title="{{ panelTitle1 }} PDF viewer"></iframe>
             </div>
-            <iframe src="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}"
-                    class="w-full h-[600px]"
-                    title="{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %} PDF viewer"></iframe>
-        </div>
-        <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--new flex justify-between items-center">
-                <span>{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</span>
-                <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}" class="text-green-900/60 hover:underline text-xs">Download</a>
+            <div class="border rounded overflow-hidden">
+                <div class="compare-panel-header--new flex justify-between items-center">
+                    <span>{{ panelTitle2 }}</span>
+                    <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}" class="text-green-900 hover:underline text-xs">Download</a>
+                </div>
+                <iframe src="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}&amp;disposition=inline"
+                        class="w-full h-[600px]"
+                        title="{{ panelTitle2 }} PDF viewer"></iframe>
             </div>
-            <iframe src="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}"
-                    class="w-full h-[600px]"
-                    title="{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %} PDF viewer"></iframe>
         </div>
-    </div>
+    </template>
 </div>

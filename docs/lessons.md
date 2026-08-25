@@ -1837,3 +1837,24 @@ more hand model.
 
 When N rounds deep polishing an approximation, stop and re-verify the constraint that made you
 approximate instead of calling the oracle directly. Your own later work may have dissolved it.
+
+## Comments explain the code, not the review that produced it
+
+Fixing thirty-three review findings in one pass, the comments went in as
+"Finding B12: the layout reserves a 400px sidebar column..." — every one of them
+carrying its ticket number and a paragraph of the defect's history. Corrected
+mid-task: keep comments tidy and on point, and do not reference findings.
+
+The reason it is wrong is not length. A finding id is a pointer into a document
+the next reader does not have, and it dates the comment to a review rather than
+to the code. "Finding B15: a dimension of 0 was reported as a measurement" reads
+as archaeology; "A dimension of 0 means *this file has no dimensions*, not a
+measurement" reads as the rule the branch below it enforces, and stays true when
+the review is forgotten.
+
+The test is whether the comment would still earn its place if the bug had never
+existed. Keep the *why* — the constraint, the trap, the thing that is not
+obvious from the code. Drop the provenance, the measurement narrative, and the
+before-and-after. Where the history genuinely matters (an approach that was
+tried and withdrawn), it belongs in `docs/todo.md` alongside the plan, which is
+where the review's own record lives.

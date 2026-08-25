@@ -5,81 +5,62 @@
 {# that lived here said a second, different thing about the same failure. #}
 {% if errorMessage %}
 {% else %}
-<div class="max-w-7xl mx-auto" x-data="compareView({
+<div class="compare-page" x-data="compareView({
     r1: {{ query.Resource1ID }},
     v1: {{ query.Version1|default:0 }},
     r2: {{ query.Resource2ID }},
     v2: {{ query.Version2|default:0 }}
 })">
+    {# Names what is being compared and gives a route back to it; nothing else on #}
+    {# the page does either. #}
+    <nav class="compare-breadcrumb" aria-label="Breadcrumb">
+        <a href="/resources">Resources</a>
+        <span aria-hidden="true">/</span>
+        <a href="/resource?id={{ resource1.ID }}">{{ name1 }}</a>
+        {% if crossResource %}
+        <span aria-hidden="true">/</span>
+        <a href="/resource?id={{ resource2.ID }}">{{ name2 }}</a>
+        {% endif %}
+    </nav>
+
     <!-- Picker Toolbar -->
-    <div class="bg-white shadow rounded-lg p-3 mb-4">
-        <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">
-            <!-- Left (OLD) side -->
-            <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                <span class="compare-side-label--old" aria-label="{{ label1 }}">{{ label1 }}</span>
-                <div x-data="singleEntitySelector({
-                    entity: 'resource',
-                    selected: [{{ resource1|json }}],
-                    onChange: (change) => change.added[0] && onResource1Change(change.added[0].raw.ID)
-                })" class="relative flex-1 min-w-[140px]">
-                    <input type="text" x-ref="autocompleter" x-bind="inputEvents"
-                           class="w-full border rounded px-3 py-1.5 text-sm"
-                           placeholder="Search resources..."
-                           aria-label="Search left resource">
-                    <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
-                        <template x-for="(item, index) in results" :key="item.ID">
-                            <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"
-                                 class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
-                                 :class="{ 'bg-amber-100': selectedIndex === index }"
-                                 x-text="item.Name"></div>
-                        </template>
-                    </div>
-                </div>
-                <select x-model="v1" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm" aria-label="Left version">
-                    {% for v in versions1 %}
-                    <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>
-                        v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
+    {# Each side is one block so the two wrap as units. Wrapping them field by field #}
+    {# breaks the left/right symmetry the control depends on. #}
+    <div class="compare-toolbar">
+        <div class="compare-toolbar-side">
+            <span class="compare-side-label--old">{{ label1 }}</span>
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r1' selectedItems=resource1Picker max=1 id='compare-left-resource' title='Left resource' placeholder='Search resources...' onChange='onResource1Selected' %}
+            <select x-model.number="v1" @change="updateUrl()" class="compare-version-select" aria-label="Left version">
+                {% for v in versions1 %}
+                <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>{{ v.Label }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-            <!-- Swap button -->
-            <button class="compare-swap-btn self-center" @click="swapSides()" aria-label="Swap sides">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
-            </button>
+        <button type="button" class="compare-swap-btn" @click="swapSides()"
+                aria-label="Swap the two sides and reload">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+        </button>
 
-            <!-- Right (NEW) side -->
-            <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                <span class="compare-side-label--new" aria-label="{{ label2 }}">{{ label2 }}</span>
-                <div x-data="singleEntitySelector({
-                    entity: 'resource',
-                    selected: [{{ resource2|json }}],
-                    onChange: (change) => change.added[0] && onResource2Change(change.added[0].raw.ID)
-                })" class="relative flex-1 min-w-[140px]">
-                    <input type="text" x-ref="autocompleter" x-bind="inputEvents"
-                           class="w-full border rounded px-3 py-1.5 text-sm"
-                           placeholder="Search resources..."
-                           aria-label="Search right resource">
-                    <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
-                        <template x-for="(item, index) in results" :key="item.ID">
-                            <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"
-                                 class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
-                                 :class="{ 'bg-amber-100': selectedIndex === index }"
-                                 x-text="item.Name"></div>
-                        </template>
-                    </div>
-                </div>
-                <select x-model="v2" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm" aria-label="Right version">
-                    {% for v in versions2 %}
-                    <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>
-                        v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
+        <div class="compare-toolbar-side">
+            <span class="compare-side-label--new">{{ label2 }}</span>
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r2' selectedItems=resource2Picker max=1 id='compare-right-resource' title='Right resource' placeholder='Search resources...' onChange='onResource2Selected' %}
+            <select x-model.number="v2" @change="updateUrl()" class="compare-version-select" aria-label="Right version">
+                {% for v in versions2 %}
+                <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>{{ v.Label }}</option>
+                {% endfor %}
+            </select>
         </div>
     </div>
+
+    {# The picker can put the same version on both sides, which otherwise renders a #}
+    {# full "Files are identical" report of a file against itself. #}
+    {% if comparison and not crossResource and query.Version1 == query.Version2 %}
+    <p class="compare-notice" role="status">
+        Both sides are showing v{{ query.Version1 }}, so there is nothing to compare.
+        Pick a different version on one side.
+    </p>
+    {% endif %}
 
     {% if comparison %}
     <!-- Summary Banner -->
@@ -105,14 +86,16 @@
             {% elif comparison.SizeDelta > 0 %}+{{ comparison.SizeDelta|humanReadableSize }}
             {% else %}{{ comparison.SizeDelta|humanReadableSize }}{% endif %}
         </span>
-        {% if comparison.DimensionsDiff %}
+        {# A dimension of 0 means "this file has no dimensions", not a measurement: #}
+        {# "0x0 -> 800x600" reports a resize that never happened. #}
+        {% if comparison.DimensionsDiff and comparison.Version1.Width > 0 and comparison.Version2.Width > 0 %}
         <span class="compare-stat">
             <span class="compare-stat-label">Dimensions</span>
             {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} &rarr; {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
         </span>
         {% endif %}
         {% if crossResource %}
-        <span class="compare-stat" style="background: #fef3c7; color: #92400e;">
+        <span class="compare-stat compare-stat--flag">
             <span class="compare-stat-label">Cross-resource</span>
         </span>
         {% endif %}
@@ -141,42 +124,64 @@
                         {{ comparison.Version1.FileSize|humanReadableSize }}
                     {% else %}
                         {{ comparison.Version1.FileSize|humanReadableSize }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.FileSize|humanReadableSize }}
-                        <span class="text-xs text-amber-700">
+                        <span class="text-xs text-amber-800">
                             ({% if comparison.SizeDelta > 0 %}+{% endif %}{{ comparison.SizeDelta|humanReadableSize }})
                         </span>
                     {% endif %}
                 </div>
             </div>
-            <!-- Dimensions -->
+            <!-- Dimensions (only for files that have them) -->
+            {% if comparison.Version1.Width > 0 or comparison.Version2.Width > 0 %}
             <div class="compare-meta-card{% if comparison.DimensionsDiff %} compare-meta-card--diff{% endif %}"{% if comparison.DimensionsDiff %} aria-label="Changed: Dimensions"{% endif %}>
                 <div class="compare-meta-card-label">Dimensions</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.DimensionsDiff %}
-                        {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
+                        {% if comparison.Version1.Width > 0 %}{{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }}{% else %}&mdash;{% endif %}
+                        <span class="text-stone-400" aria-hidden="true">&rarr;</span>
+                        {% if comparison.Version2.Width > 0 %}{{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}{% else %}&mdash;{% endif %}
                     {% else %}
                         {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }}
                     {% endif %}
                 </div>
             </div>
+            {% endif %}
             <!-- Hash -->
             <div class="compare-meta-card{% if not comparison.SameHash %} compare-meta-card--diff{% endif %}"{% if not comparison.SameHash %} aria-label="Changed: Hash"{% endif %}>
                 <div class="compare-meta-card-label">Hash</div>
                 <div class="compare-meta-card-value">
+                    {# Shown whole: a truncated hash cannot be checked against anything, #}
+                    {# which is what the copy control is for. #}
                     {% if comparison.SameHash %}
-                        <span class="text-amber-700 font-medium">Match</span>
-                        <span class="text-xs font-mono text-stone-500 ml-1">{{ comparison.Version1.Hash|truncatechars:16 }}...</span>
+                        <span class="text-amber-800 font-medium">Match</span>
+                        <span class="compare-hash" x-data="{ copied: false }">
+                            <code>{{ comparison.Version1.Hash }}</code>
+                            <button type="button" class="compare-copy-btn"
+                                    @click="copied = await copyText('{{ comparison.Version1.Hash }}'); setTimeout(() => copied = false, 1600)"
+                                    :aria-label="copied ? 'Hash copied' : 'Copy hash'">
+                                <span x-text="copied ? 'Copied' : 'Copy'"></span>
+                            </button>
+                        </span>
                     {% else %}
-                        <span class="text-red-700 font-medium">Different</span>
+                        <span class="text-red-800 font-medium">Different</span>
+                        <span class="compare-hash">
+                            <code>{{ comparison.Version1.Hash }}</code>
+                            <span class="text-stone-400" aria-hidden="true">&rarr;</span>
+                            <code>{{ comparison.Version2.Hash }}</code>
+                        </span>
                     {% endif %}
                 </div>
             </div>
             <!-- Created -->
+            {# Compare the rendered strings, not the raw times: to-the-minute formatting #}
+            {# otherwise prints the same value twice with an arrow between them. #}
             <div class="compare-meta-card">
                 <div class="compare-meta-card-label">Created</div>
                 <div class="compare-meta-card-value">
                     {{ comparison.Version1.CreatedAt|date:"Jan 02, 2006 15:04" }}
-                    {% if comparison.Version1.CreatedAt != comparison.Version2.CreatedAt %}
+                    {% if comparison.Version1.CreatedAt|date:"Jan 02, 2006 15:04" != comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" %}
                         <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" }}
+                    {% elif comparison.Version1.CreatedAt != comparison.Version2.CreatedAt %}
+                        <span class="text-xs text-stone-500">(less than a minute apart)</span>
                     {% endif %}
                 </div>
             </div>
@@ -185,9 +190,9 @@
             <div class="compare-meta-card compare-meta-card--diff" aria-label="Changed: Resource">
                 <div class="compare-meta-card-label">Resource</div>
                 <div class="compare-meta-card-value">
-                    <a href="/resource?id={{ resource1.ID }}" class="text-teal-700 hover:underline">{{ resource1.Name }}</a>
+                    <a href="/resource?id={{ resource1.ID }}" class="text-teal-800 hover:underline">{{ resource1.Name }}</a>
                     <span class="text-stone-400" aria-hidden="true">&rarr;</span>
-                    <a href="/resource?id={{ resource2.ID }}" class="text-teal-700 hover:underline">{{ resource2.Name }}</a>
+                    <a href="/resource?id={{ resource2.ID }}" class="text-teal-800 hover:underline">{{ resource2.Name }}</a>
                 </div>
             </div>
             {% endif %}
@@ -197,9 +202,9 @@
                 <div class="compare-meta-card-label">Comment</div>
                 <div class="compare-meta-card-value italic text-stone-600">
                     {% if comparison.Version1.Comment == comparison.Version2.Comment %}
-                        "{{ comparison.Version1.Comment }}"
+                        &ldquo;{{ comparison.Version1.Comment }}&rdquo;
                     {% else %}
-                        "{{ comparison.Version1.Comment }}" <span class="text-stone-400 not-italic" aria-hidden="true">&rarr;</span> "{{ comparison.Version2.Comment }}"
+                        &ldquo;{{ comparison.Version1.Comment }}&rdquo; <span class="text-stone-400 not-italic" aria-hidden="true">&rarr;</span> &ldquo;{{ comparison.Version2.Comment }}&rdquo;
                     {% endif %}
                 </div>
             </div>
@@ -218,19 +223,26 @@
         {% include "/partials/compareBinary.tpl" %}
     {% endif %}
 
-    {% if canMerge %}
+    {# Always rendered, disabled with the reason attached when merging is unavailable: #}
+    {# a control that disappears when you pick an older version explains nothing. #}
     <details class="mt-6 bg-white shadow rounded-lg" x-data="{ keepAsVersion: false }">
         <summary class="cursor-pointer text-sm font-medium text-stone-600 p-4 select-none font-mono">Merge</summary>
         <div class="p-4 pt-0">
+            {% if not canMerge %}
+            <p class="compare-merge-blocked" id="compare-merge-blocked">{{ mergeBlockedReason }}</p>
+            {% endif %}
             <div class="mb-4">
                 <label class="flex items-center gap-2 text-sm text-stone-600 cursor-pointer">
-                    <input type="checkbox" x-model="keepAsVersion" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                    Keep loser as older version of winner
+                    <input type="checkbox" x-model="keepAsVersion" {% if not canMerge %}disabled{% endif %}
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Keep the other file as an earlier version
                 </label>
             </div>
-            <div class="flex justify-between items-center gap-4">
+            {# Both the buttons and the confirmation name the resources. An irreversible #}
+            {# merge phrased as "Left Wins" never says what it is about to destroy. #}
+            <div class="compare-merge-actions">
                 <form
-                    x-data="confirmAction({ message: 'Resource on the right will be merged into the left resource. Are you sure?' })"
+                    x-data="confirmAction({ message: 'Merge {{ resource2.Name|escapejs }} into {{ resource1.Name|escapejs }}? {{ resource2.Name|escapejs }} will no longer exist as its own resource. This cannot be undone.' })"
                     action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource1.ID }}"
                     method="post"
                     x-bind="events"
@@ -238,10 +250,12 @@
                     <input type="hidden" name="winner" value="{{ resource1.ID }}">
                     <input type="hidden" name="losers" value="{{ resource2.ID }}">
                     <input type="hidden" name="KeepAsVersion" :value="keepAsVersion">
-                    {% include "/partials/form/searchButton.tpl" with text="← Left Wins" %}
+                    <button type="submit" class="compare-merge-btn" {% if not canMerge %}disabled aria-describedby="compare-merge-blocked"{% endif %}>
+                        &larr; Keep {{ label1 }}
+                    </button>
                 </form>
                 <form
-                    x-data="confirmAction({ message: 'Resource on the left will be merged into the right resource. Are you sure?' })"
+                    x-data="confirmAction({ message: 'Merge {{ resource1.Name|escapejs }} into {{ resource2.Name|escapejs }}? {{ resource1.Name|escapejs }} will no longer exist as its own resource. This cannot be undone.' })"
                     action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource2.ID }}"
                     method="post"
                     x-bind="events"
@@ -249,12 +263,13 @@
                     <input type="hidden" name="winner" value="{{ resource2.ID }}">
                     <input type="hidden" name="losers" value="{{ resource1.ID }}">
                     <input type="hidden" name="KeepAsVersion" :value="keepAsVersion">
-                    {% include "/partials/form/searchButton.tpl" with text="Right Wins →" %}
+                    <button type="submit" class="compare-merge-btn" {% if not canMerge %}disabled aria-describedby="compare-merge-blocked"{% endif %}>
+                        Keep {{ label2 }} &rarr;
+                    </button>
                 </form>
             </div>
         </div>
     </details>
-    {% endif %}
 
     {% else %}
     <!-- Empty State -->

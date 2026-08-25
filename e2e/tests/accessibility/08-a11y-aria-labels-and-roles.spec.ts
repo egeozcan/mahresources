@@ -123,8 +123,9 @@ test.describe('Compare Page - Missing accessible labels', () => {
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Find the search inputs with placeholder "Search resources..."
-    const searchInputs = page.locator('input[placeholder="Search resources..."]');
+    // The two pickers are the shared autocompleter, which supplies the whole
+    // combobox pattern. A placeholder is not an accessible name.
+    const searchInputs = page.locator('.compare-toolbar input[role="combobox"]');
     const count = await searchInputs.count();
     expect(count).toBe(2);
 
@@ -136,9 +137,14 @@ test.describe('Compare Page - Missing accessible labels', () => {
       const hasAccessibleName = !!ariaLabel || !!ariaLabelledby;
       expect(
         hasAccessibleName,
-        `Resource search input ${i + 1} relies only on placeholder="Search resources..." ` +
-        'which is not an accessible name. It needs aria-label or aria-labelledby. WCAG 1.3.1 / 4.1.2.'
+        `Resource search input ${i + 1} has no accessible name. ` +
+        'It needs aria-label or aria-labelledby. WCAG 1.3.1 / 4.1.2.'
       ).toBe(true);
+
+      // A bare input next to a div of results announces nothing when the list
+      // opens, which is what the copied markup on this page used to ship.
+      await expect(input).toHaveAttribute('aria-controls', /listbox/);
+      await expect(input).toHaveAttribute('aria-expanded', /true|false/);
     }
   });
 

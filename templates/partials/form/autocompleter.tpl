@@ -16,6 +16,11 @@
         {# JS list expression, evaluated per search — the bulk toolbar's winner      #}
         {# picker has to exclude whatever rows are ticked right now.                 #}
         {% if excludeIds %}excludeValues: () => ([{{ excludeIds }}]),{% endif %}
+        {# `onChange` names a method on an enclosing x-data, called with the change record. #}
+        {# Wrapped in an arrow so the name is resolved when the change happens rather than #}
+        {# while this x-data is being evaluated, which is before the enclosing scope is #}
+        {# necessarily on Alpine's data stack. A field on a form omits it. #}
+        {% if onChange %}onChange: (change) => {{ onChange }}(change),{% endif %}
     })"
         data-selector-field="{{ elName }}"
         data-selector-profile="{{ profile }}"
@@ -44,6 +49,9 @@
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
                     autocomplete="off"
+                    {# A hint, never the accessible name — that is the label above. Useful #}
+                    {# where the field carries no visible label of its own. #}
+                    {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
                     role="combobox"
                     aria-autocomplete="list"
                     :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"

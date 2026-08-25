@@ -640,6 +640,9 @@ func registerVersionRoutes(r *openapi.Registry) {
 		Tags:         []string{"versions"},
 		IDQueryParam: "versionId",
 		IDRequired:   true,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "disposition", Type: "string", Description: "Set to \"inline\" to render the file in place rather than download it. Honoured for application/pdf only."},
+		},
 	})
 
 	r.Register(openapi.RouteInfo{

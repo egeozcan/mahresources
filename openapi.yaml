@@ -6411,6 +6411,11 @@ paths:
                   required: true
                   schema:
                     type: integer
+                - description: Set to "inline" to render the file in place rather than download it. Honoured for application/pdf only.
+                  in: query
+                  name: disposition
+                  schema:
+                    type: string
             responses:
                 "200":
                     description: Successful response

@@ -811,6 +811,7 @@ GET /v1/resource/version/file?versionId={versionId}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `versionId` | integer | **Required.** The version ID |
+| `disposition` | string | Optional. `inline` asks the browser to render the file in place instead of downloading it, and relaxes `X-Frame-Options` to `SAMEORIGIN` so it can be framed. Honoured for `application/pdf` only; every other content type is served as an attachment whatever this says, because a version file is an arbitrary upload and rendering one inline and same-origin would execute whatever it contains. |
 
 #### Example
 

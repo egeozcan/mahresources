@@ -1,0 +1,131 @@
+# Resource compare page: 33 findings from the 2026-08-25 review
+
+A code-and-browser review of `/resource/compare` turned up seventeen defects and
+sixteen usability gaps. This is the record of what was changed and what was
+deliberately left alone.
+
+## Defects
+
+- [x] **PDF comparison downloaded both files on load and could never render.**
+  Both `<iframe>`s were server-rendered and hidden with `x-show`, so the browser
+  fetched them immediately — and `/v1/resource/version/file` answers with
+  `Content-Disposition: attachment`, so the fetches became downloads. The frames
+  were blocked anyway by the primary server's blanket `X-Frame-Options: DENY`.
+  Fixed with `x-if` plus an opt-in `?disposition=inline` on the version-file
+  route, **safelisted to `application/pdf`**: version files are arbitrary
+  uploads, and serving one inline and same-origin-framable is stored XSS for
+  anything the browser executes in a document context. The button also toggles
+  now, instead of removing itself and stranding the reader in the viewer.
+- [x] **The side-by-side text diff did not align its columns.** The padding rows
+  were emitted correctly but rendered in empty table cells, which collapse to
+  zero height. Rows are CSS grid lines now, so a padding row still occupies a
+  line.
+- [x] **The panel Swap inverted the old/new colour coding.** It exchanged the two
+  URLs and labels in place, leaving the pink "older" panel holding the newer file
+  and the server-rendered `alt` describing whichever side had originally been
+  there. Everything that varies is derived from one `swapped` flag now. Renamed
+  **Flip**, because the toolbar's own Swap does something different.
+- [x] **`?r1=<id>` alone dead-ended.** The redirect that fills in version numbers
+  ran for cross-resource comparisons only, so a same-resource URL rendered the
+  empty state while both selects displayed a version, and picking one wrote
+  `v1=0`. Same-resource now resolves to previous-versus-current.
+- [x] **Mismatched content types were diffed as text.** The comparator was chosen
+  from the left-hand version alone, so a JSON-versus-PNG comparison fetched the
+  PNG in full and printed its bytes as added lines. Both sides have to agree, and
+  the binary panel says the types differ.
+- [x] **Slider and onion skin ignored aspect ratio.** Both images filled the
+  container width and took their own height, so a pair with different proportions
+  overlaid nothing. One shared box built from the larger of the two in each axis,
+  with both `object-fit: contain` inside it.
+- [x] **The page never named what it was comparing.** The pickers were a copy of
+  the shared autocompleter with the selected-item chips left out, and the heading
+  and `<title>` were the constant "Compare Versions". Now the shared partial, a
+  breadcrumb, and a title that names the resources and versions.
+- [x] **The pickers had no combobox semantics.** Same copy, same fix — the shared
+  partial brings `role="combobox"`, `aria-expanded`, `aria-controls`,
+  `aria-activedescendant` and the listbox/option roles.
+- [x] **Toggle mode ignored Enter.** It was a `<div role="button">` binding only
+  `@keydown.space`. It is a real `<button>` now.
+- [x] **Arrow keys fired twice.** The image shortcut listened on `document` and
+  the radiogroup handler did not stop propagation, so one ArrowRight changed the
+  mode *and* moved the new mode's control. Scoped to the container, and events
+  from inside the radiogroup are skipped.
+- [x] **The image slider had no keyboard-operable control.** The handle was an
+  unlabelled `<div>` reachable only through that undiscoverable shortcut. It is
+  `role="slider"` with `aria-valuenow`, `aria-valuetext` and its own arrow keys.
+- [x] **Every compare page reserved an empty 400px sidebar.** Neither compare
+  provider set `hideSidebar`, so a third of the viewport went to an empty
+  `<aside>` on the page that most wants the width — and on mobile that aside
+  rendered as a "Filters and details" disclosure revealing nothing. Both
+  providers set it now.
+- [x] **Three contrast failures.** The diff line-number gutter measured 2.47:1,
+  `.compare-swap-btn-sm` 4.39:1, and the PDF panel used `<h3>` under the page
+  `<h1>`. A full-page axe scan across all six page states now returns nothing.
+- [x] **Merge disappeared when either side was not the current version.** The
+  section is always rendered, disabled, and carries the reason — following
+  `bulkCompareAction.tpl`, which already argues that case for its own rule.
+- [x] **"Dimensions 0×0" for every file without dimensions.** The card renders
+  only when either side has a non-zero width.
+- [x] **The binary panel's thumbnail came from the resource, not the version**, so
+  a same-resource comparison would have rendered the same picture twice. Replaced
+  with the content-type placeholder, which is at least true of both.
+- [x] **A matching hash rendered six trailing dots** — a literal `...` after
+  `truncatechars`' own ellipsis. The hash is shown whole with a copy button; a
+  truncated hash cannot be checked against anything.
+
+## UX gaps
+
+- [x] Prev/next change navigation with a count.
+- [x] Unchanged context collapses to an expandable "Show N unchanged lines" row
+  (three lines of context either side, runs of six or more folded).
+- [x] Only the visible diff view is built. Both were in the DOM at once, so every
+  line of a large file was materialised three times over.
+- [x] A size guard: above 2 MB combined the diff asks before loading, and the
+  fetches carry an `AbortSignal` so leaving the page cancels them.
+- [x] Word-level highlighting inside a changed line, when the two lines still
+  share enough to make it meaningful.
+- [x] Merge names both resources, in the buttons and in the confirmation, and the
+  checkbox says "Keep the other file as an earlier version".
+- [x] Cross-resource panes are labelled with the resource names.
+- [x] "Created" no longer prints the same string twice; sub-minute gaps read
+  "less than a minute apart".
+- [x] Version dropdowns carry the current marker, the size and the comment, and
+  fall back to a time when two versions share a date.
+- [x] Comparing a version with itself says so instead of reporting a file
+  identical to itself.
+- [x] The version panel sorts the two ticked versions, so the diff always reads
+  older-to-newer whatever order they were clicked in.
+- [x] The picker leaves the changed side's version to the server, which resolves
+  `CurrentVersionID` rather than the highest number.
+- [x] "Copy diff" puts the comparison on the clipboard as a patch.
+- [x] The toolbar stacks as two blocks on narrow screens instead of wrapping
+  field by field and losing its symmetry.
+- [x] A breadcrumb links back to both resources.
+
+## Deliberately not changed
+
+- **Picking a resource on one side still turns a same-resource comparison into a
+  cross-resource one.** That is how you start one from a version panel, and
+  making both sides follow would discard the selection the reader already made.
+  What was actually wrong was that nothing said it had happened; the heading, the
+  breadcrumb, both pane labels and the cross-resource badge now do.
+- **No per-version thumbnail for binary files.** `/v1/resource/preview` is keyed
+  on the resource, and adding a version-scoped preview route is a larger change
+  than this pass. The placeholder is honest in the meantime.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./...`
+- `npx vitest run src/components/textDiff.test.ts`
+- `./scripts/css-scan-test.sh`
+- `cd e2e && npm run test:with-server:all`
+- Postgres: `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...`
+  and `cd e2e && npm run test:with-server:postgres`
+- axe-core over all six compare states (image, text, PDF, binary, cross-resource,
+  folded log) at 1440×1000.
+
+New coverage: `server/api_tests/compare_context_versions_test.go`,
+`src/components/textDiff.test.ts`,
+`e2e/tests/regressions/compare-page-teardown.spec.ts`. The two provider tests
+that matter were verified failing against the old behaviour before the fix went
+in.

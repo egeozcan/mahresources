@@ -196,7 +196,7 @@ test.describe.serial('Version Compare UI', () => {
     await expect(page.locator('.compare-seg-btn:has-text("Slider")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toBeVisible();
-    await expect(page.locator('.compare-swap-btn-sm')).toBeVisible();
+    await expect(page.locator('.compare-swap-btn-sm')).toContainText('Flip');
 
     // Click different modes and verify they activate via aria-checked
     await page.locator('.compare-seg-btn:has-text("Slider")').click();
@@ -211,20 +211,24 @@ test.describe.serial('Version Compare UI', () => {
     await page.locator('.compare-seg-btn:has-text("Toggle")').click();
     await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toHaveAttribute('aria-checked', 'true');
 
-    // Toggle mode container should be focusable and respond to space key
-    const toggleContainer = page.locator('[role="button"][tabindex="0"]');
+    // Toggle mode is a real button, so both Space and Enter activate it. As a
+    // div with role="button" it bound Space only, and Enter is the key most
+    // people reach for first.
+    const toggleContainer = page.locator('button:has(img)').filter({ hasText: /—|Older|Newer|Current|v\d/ }).first();
     await expect(toggleContainer).toBeVisible();
 
-    // Focus the toggle container and verify space key works
     await toggleContainer.focus();
     const oldLabel = toggleContainer.locator('.compare-side-label--old');
     const newLabel = toggleContainer.locator('.compare-side-label--new');
-    // Initially showLeft is true, so OLD label should be visible
     await expect(oldLabel).toBeVisible();
+
     await page.keyboard.press('Space');
-    // After toggle, NEW label should be visible and OLD hidden
     await expect(newLabel).toBeVisible();
     await expect(oldLabel).not.toBeVisible();
+
+    await page.keyboard.press('Enter');
+    await expect(oldLabel).toBeVisible();
+    await expect(newLabel).not.toBeVisible();
 
     await page.locator('.compare-seg-btn:has-text("Side by side")').click();
     await expect(page.locator('.compare-seg-btn:has-text("Side by side")')).toHaveAttribute('aria-checked', 'true');
@@ -273,9 +277,14 @@ test.describe.serial('Version Compare UI', () => {
     // Wait for image compare component to load — swap in toolbar (circular) or inline
     await expect(page.locator('.compare-swap-btn').first()).toBeVisible({ timeout: 10000 });
 
-    // Note which image is on which side by checking the img src attributes
-    const images = page.locator('img[alt^="Version"]');
+    // Images are described by the side they are on, so the alt text stays true
+    // when the panel's own Flip control exchanges them. A server-rendered
+    // "Version 1" did not move with the image and told a screen reader the
+    // opposite of the truth.
+    const images = page.locator('.compare-page img');
     await expect(images.first()).toBeVisible();
+    const altBefore = await images.first().getAttribute('alt');
+    expect(altBefore).toBeTruthy();
 
     // Click swap sides (the circular toolbar button)
     await page.locator('.compare-swap-btn').first().click();
@@ -305,20 +314,17 @@ test.describe.serial('Version Compare UI', () => {
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Find the right side (NEW) autocompleter input — second input in the picker toolbar
-    const searchInputs = page.locator('input[placeholder*="Search"]');
-    const rightAutocompleter = searchInputs.nth(1);
+    const rightAutocompleter = page.getByRole('combobox', { name: 'Right resource' });
     await expect(rightAutocompleter).toBeVisible({ timeout: 5000 });
 
     // Click to focus - this should trigger the autocompleter to fetch and display results
     await rightAutocompleter.click();
 
     // Wait for dropdown to appear
-    const dropdown = rightAutocompleter.locator('..').locator('div.absolute.z-10.bg-white');
+    const dropdown = page.locator('#compare-right-resource-listbox');
     await expect(dropdown).toBeVisible({ timeout: 10000 });
 
-    // Dropdown should contain at least one item with cursor-pointer class
-    const items = dropdown.locator('div.cursor-pointer');
+    const items = dropdown.locator('[role="option"]');
     await expect(items.first()).toBeVisible({ timeout: 5000 });
 
     // Count items - there should be at least one resource available
@@ -333,9 +339,7 @@ test.describe.serial('Version Compare UI', () => {
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Find the left side (OLD) autocompleter input — first input in the picker toolbar
-    const searchInputs = page.locator('input[placeholder*="Search"]');
-    const leftAutocompleter = searchInputs.first();
+    const leftAutocompleter = page.getByRole('combobox', { name: 'Left resource' });
     await expect(leftAutocompleter).toBeVisible({ timeout: 5000 });
 
     // Click and type to search for resource2
@@ -343,7 +347,7 @@ test.describe.serial('Version Compare UI', () => {
     await leftAutocompleter.pressSequentially(`Compare Resource 2`, { delay: 30 });
 
     // Wait for dropdown to appear with filtered results
-    const dropdown = leftAutocompleter.locator('..').locator('div.absolute.z-10.bg-white');
+    const dropdown = page.locator('#compare-left-resource-listbox');
     await expect(dropdown).toBeVisible({ timeout: 10000 });
 
     // Verify the specific suggestion is visible
@@ -351,12 +355,12 @@ test.describe.serial('Version Compare UI', () => {
     await expect(dropdown.locator(`text=${suggestionText}`)).toBeVisible({ timeout: 5000 });
   });
 
-  test('profile callbacks update each resource while preserving the opposite side', async ({ page }) => {
+  test('changing one side moves that side, and re-resolves versions when both converge', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    const firstVersionFor = async (resourceId: number) => {
+    const currentVersionFor = async (resourceId: number) => {
       const versions = await page.evaluate(async (id) => {
         const response = await fetch(`/v1/resource/versions?resourceId=${id}`);
         if (!response.ok) throw new Error(`Failed to load versions for resource ${id}`);
@@ -368,45 +372,52 @@ test.describe.serial('Version Compare UI', () => {
 
     const resource1Name = `Compare Resource 1 ${testRunId}`;
     const resource2Name = `Compare Resource 2 ${testRunId}`;
-    const leftFirstVersion = await firstVersionFor(resource2Id);
 
-    const leftInput = page.getByLabel('Search left resource');
+    // Picking the resource the other side already shows collapses this to a
+    // same-resource comparison. Both versions are re-resolved: the number left on
+    // the other side was counted against a different resource, so at best it
+    // names a different file and at worst no file at all.
+    const leftInput = page.getByRole('combobox', { name: 'Left resource' });
     await leftInput.fill(resource2Name);
-    const leftOption = leftInput.locator('..').locator('div.cursor-pointer').filter({ hasText: resource2Name }).first();
+    const leftOption = page.locator('#compare-left-resource-listbox [role="option"]').filter({ hasText: resource2Name }).first();
     await expect(leftOption).toBeVisible({ timeout: 10000 });
     await Promise.all([
       page.waitForURL(url =>
         url.searchParams.get('r1') === String(resource2Id)
-        && url.searchParams.get('v1') === String(leftFirstVersion)
         && url.searchParams.get('r2') === String(resource2Id)
+        && Number(url.searchParams.get('v1')) > 0
+        && Number(url.searchParams.get('v2')) > 0
       ),
       leftOption.click(),
     ]);
 
     let currentUrl = new URL(page.url());
-    expect(currentUrl.searchParams.get('r1')).toBe(String(resource2Id));
-    expect(currentUrl.searchParams.get('v1')).toBe(String(leftFirstVersion));
-    expect(currentUrl.searchParams.get('r2')).toBe(String(resource2Id));
+    const resource2Current = await currentVersionFor(resource2Id);
+    expect(currentUrl.searchParams.get('v2')).toBe(String(resource2Current));
+    expect(Number(currentUrl.searchParams.get('v1'))).toBeLessThanOrEqual(resource2Current);
 
-    const rightFirstVersion = await firstVersionFor(resource1Id);
-    const rightInput = page.getByLabel('Search right resource');
+    // Changing the other side leaves this one exactly where it was.
+    const leftVersion = currentUrl.searchParams.get('v1');
+    const rightInput = page.getByRole('combobox', { name: 'Right resource' });
     await rightInput.fill(resource1Name);
-    const rightOption = rightInput.locator('..').locator('div.cursor-pointer').filter({ hasText: resource1Name }).first();
+    const rightOption = page.locator('#compare-right-resource-listbox [role="option"]').filter({ hasText: resource1Name }).first();
     await expect(rightOption).toBeVisible({ timeout: 10000 });
     await Promise.all([
       page.waitForURL(url =>
         url.searchParams.get('r1') === String(resource2Id)
         && url.searchParams.get('r2') === String(resource1Id)
-        && url.searchParams.get('v2') === String(rightFirstVersion)
+        && Number(url.searchParams.get('v2')) > 0
       ),
       rightOption.click(),
     ]);
 
     currentUrl = new URL(page.url());
     expect(currentUrl.searchParams.get('r1')).toBe(String(resource2Id));
-    expect(currentUrl.searchParams.get('v1')).toBe(String(leftFirstVersion));
+    expect(currentUrl.searchParams.get('v1')).toBe(leftVersion);
     expect(currentUrl.searchParams.get('r2')).toBe(String(resource1Id));
-    expect(currentUrl.searchParams.get('v2')).toBe(String(rightFirstVersion));
+    // The server resolves the new side to the version the resource actually
+    // points at, not simply the highest number.
+    expect(currentUrl.searchParams.get('v2')).toBe(String(await currentVersionFor(resource1Id)));
   });
 
   test('should update URL when changing left version via dropdown', async ({ page }) => {
@@ -588,63 +599,84 @@ test.describe.serial('Version Compare API', () => {
     await expect(page.locator('.compare-stat:has-text("Cross-resource")')).toBeVisible();
   });
 
-  test('cross-resource compare shows Left/Right labels instead of OLD/NEW', async ({ page }) => {
+  test('cross-resource compare labels each side with its resource name', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    // Wait for comparison to load
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Picker toolbar should show Left/Right labels
+    // The name is the only thing that tells the two panes apart; "Left" and
+    // "Right" only restate the side the reader is already looking at.
     const oldLabel = page.locator('.compare-side-label--old').first();
     const newLabel = page.locator('.compare-side-label--new').first();
-    await expect(oldLabel).toContainText('Left');
-    await expect(newLabel).toContainText('Right');
-
-    // Should NOT contain OLD/NEW text
-    await expect(oldLabel).not.toContainText('OLD');
-    await expect(newLabel).not.toContainText('NEW');
+    await expect(oldLabel).toContainText(`Compare API Resource 1 ${testRunId}`);
+    await expect(newLabel).toContainText(`Compare API Resource 2 ${testRunId}`);
   });
 
-  test('same-resource compare shows version-aware labels and no merge panel', async ({ page }) => {
-    // v1=1 (older), v2=2 (current/latest) — labels should be "v1" and "Current"
+  test('the page names what is being compared', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
+    await page.waitForLoadState('load');
+
+    // A constant "Compare Versions" title left every tab, bookmark and history
+    // entry saying the same thing whatever was on screen.
+    await expect(page).toHaveTitle(new RegExp(`Compare API Resource 1 ${testRunId}`));
+    await expect(page.locator('h1')).toContainText(`Compare API Resource 1 ${testRunId}`);
+
+    // And there is a route back to the resource.
+    await expect(
+      page.locator('.compare-breadcrumb a').filter({ hasText: `Compare API Resource 1 ${testRunId}` }),
+    ).toHaveAttribute('href', `/resource?id=${resource1Id}`);
+  });
+
+  test('same-resource compare shows version-aware labels and an explained merge', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
     await page.waitForLoadState('load');
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Left side (v1) should show "v1", right side (v2=current) should show "Current"
     const leftLabel = page.locator('.compare-side-label--old').first();
     const rightLabel = page.locator('.compare-side-label--new').first();
     await expect(leftLabel).toContainText('v1');
     await expect(rightLabel).toContainText('Current');
 
-    // Merge panel should NOT be visible (same resource)
-    await expect(page.locator('summary:has-text("Merge")')).toHaveCount(0);
+    // The merge section stays, disabled and explained. Removing it left the
+    // reader with a control that vanished for reasons nothing stated.
+    const mergeSummary = page.locator('summary:has-text("Merge")');
+    await expect(mergeSummary).toBeVisible();
+    await mergeSummary.click();
+    await expect(page.locator('#compare-merge-blocked')).toContainText('two different resources');
+    await expect(page.locator('.compare-merge-btn').first()).toBeDisabled();
   });
 
-  test('merge panel appears for cross-resource compare with correct buttons', async ({ page }) => {
-    // canMerge requires both versions to be latest: resource1 has v1+v2 (latest=v2), resource2 has v1 (latest=v1)
+  test('merge is offered only at current versions, and says so otherwise', async ({ page }) => {
+    // resource1 has v1+v2 (current=v2), resource2 has v1 (current=v1).
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Merge panel should be visible (collapsed)
     const mergeSummary = page.locator('summary:has-text("Merge")');
     await expect(mergeSummary).toBeVisible();
-
-    // Expand merge panel
     await mergeSummary.click();
 
-    // Verify Left Wins and Right Wins buttons exist
-    await expect(page.getByRole('button', { name: /Left Wins/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Right Wins/ })).toBeVisible();
+    // Both buttons name the resource they keep, because a merge is irreversible
+    // and "Left Wins" never says what it is about to destroy.
+    const keepLeft = page.getByRole('button', { name: new RegExp(`Keep Compare API Resource 1 ${testRunId}`) });
+    const keepRight = page.getByRole('button', { name: new RegExp(`Keep Compare API Resource 2 ${testRunId}`) });
+    await expect(keepLeft).toBeVisible();
+    await expect(keepRight).toBeVisible();
+    await expect(keepLeft).toBeEnabled();
 
-    // Verify keepAsVersion checkbox exists and is unchecked by default
     const checkbox = page.locator('details:has(summary:has-text("Merge")) input[type="checkbox"]');
     await expect(checkbox).toBeVisible();
     await expect(checkbox).not.toBeChecked();
+
+    // Stepping either side back to an older version disables it with a reason.
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
+    await page.waitForLoadState('load');
+    await page.locator('summary:has-text("Merge")').click();
+    await expect(page.locator('#compare-merge-blocked')).toContainText('not the current');
+    await expect(page.locator('.compare-merge-btn').first()).toBeDisabled();
   });
 
   test.afterAll(async ({ apiClient }) => {

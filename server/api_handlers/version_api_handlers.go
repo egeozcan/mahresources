@@ -216,7 +216,15 @@ func GetVersionFileHandler(ctx contracts.VersionFileServer) func(http.ResponseWr
 		w.Header().Set("Content-Type", version.ContentType)
 		// Keep the extension: a downloaded file named "v3_a3bf2ae2" has no type
 		// for the OS to dispatch on and will not open by double-click.
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", versionDownloadFilename(version)))
+		disposition := "attachment"
+		if inlineVersionDisposition(r, version.ContentType) {
+			// A framed attachment is not a viewer: the browser downloads it instead.
+			// Inline is opt-in per request, safelisted by content type, and the only
+			// case that relaxes the primary server's blanket X-Frame-Options: DENY.
+			disposition = "inline"
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, versionDownloadFilename(version)))
 
 		http.ServeContent(w, r, "", version.CreatedAt, file)
 	}
@@ -328,4 +336,25 @@ func GetCompareVersionsHandler(ctx contracts.VersionComparer) func(http.Response
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(comparison)
 	}
+}
+
+// inlineVersionDisposition reports whether this request asked for the version to
+// be rendered in place, and whether its type is one we are willing to render.
+//
+// The safelist is the whole of the security argument. Version files are arbitrary
+// user uploads, so serving one inline and same-origin-framable is stored XSS for
+// anything the browser executes in a document context — text/html above all, and
+// image/svg+xml, which is a document. That is why every version file is an
+// attachment. PDFs are the exception worth making: the browser renders them in
+// its own sandboxed viewer, which cannot reach the embedding origin's DOM. Do not
+// add a type here without making that argument again for it.
+func inlineVersionDisposition(r *http.Request, contentType string) bool {
+	if r.URL.Query().Get("disposition") != "inline" {
+		return false
+	}
+	// Strip any parameters ("application/pdf; charset=..."), and compare
+	// case-insensitively, because the stored value came from sniffing or from
+	// an upload header.
+	base, _, _ := strings.Cut(contentType, ";")
+	return strings.EqualFold(strings.TrimSpace(base), "application/pdf")
 }
