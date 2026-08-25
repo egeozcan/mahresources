@@ -56,20 +56,17 @@ export function compareView(initialState) {
       const currentId = side === 'left' ? this.r1 : this.r2;
       if (String(resourceId) === String(currentId)) return;
 
+      // Only the side that changed loses its version. A version number means
+      // something relative to its own resource, and the other side's resource has
+      // not moved — so its number is as valid as it was, including when the pick
+      // has brought both sides onto one resource. Clearing both there threw away
+      // a choice the reader had already made and answered with the page's default
+      // instead.
       if (side === 'left') {
         this.r1 = resourceId;
         this.v1 = 0;
       } else {
         this.r2 = resourceId;
-        this.v2 = 0;
-      }
-
-      // A version number only means something relative to its own resource. If
-      // the pick has made both sides the same resource, the number still sitting
-      // on the other side was counted against a different one — at best it names
-      // a different file, at worst no file at all.
-      if (String(this.r1) === String(this.r2)) {
-        this.v1 = 0;
         this.v2 = 0;
       }
 

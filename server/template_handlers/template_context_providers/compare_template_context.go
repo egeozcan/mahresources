@@ -79,6 +79,13 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 				cur := currentVersionNumber(resource1, versions1)
 				if v2 == 0 {
 					v2 = cur
+					// A URL naming the current version and nothing else would
+					// otherwise fill the empty side with the version already on the
+					// other one, and answer "there is nothing to compare" for a
+					// resource with two partners available.
+					if v2 == v1 {
+						v2 = previousVersionNumber(versions1, v1)
+					}
 				}
 				if v1 == 0 {
 					v1 = previousVersionNumber(versions1, v2)

@@ -273,3 +273,27 @@ func TestCompareContextProvider_CurrentIsLowestStillFindsAPartner(t *testing.T) 
 	assert.False(t, loops)
 	assert.False(t, settled["sameVersion"].(bool), "the two sides must not name one version")
 }
+
+// A URL naming one version and leaving the other empty filled the empty side
+// with the current version — and when the one named was the current version,
+// that produced a comparison of it with itself.
+func TestCompareContextProvider_NamingTheCurrentVersionStillFindsAPartner(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := newCompareResource(t, tc, "Partner Search", "compare-partner-v1")
+	addCompareVersion(t, tc, res.ID, 2, "text/plain", "")
+	addCompareVersion(t, tc, res.ID, 3, "text/plain", "")
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d&v1=3", res.ID), nil))
+
+	redirect, ok := ctx["_redirect"].(string)
+	assert.True(t, ok, "the empty side has to be filled in")
+	assert.Contains(t, redirect, "v1=3", "the version the URL named stays where it was put")
+	assert.Contains(t, redirect, "v2=2", "the empty side takes the nearest other version, not v3 again")
+
+	settled := provider(httptest.NewRequest("GET", redirect, nil))
+	_, loops := settled["_redirect"]
+	assert.False(t, loops)
+	assert.False(t, settled["sameVersion"].(bool))
+}

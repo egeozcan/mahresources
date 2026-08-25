@@ -131,6 +131,9 @@ export function textDiff({
 
         if (!leftRes.ok || !rightRes.ok) {
           const failed = !leftRes.ok ? leftRes : rightRes;
+          // The sibling's body is still streaming, and nothing is going to read
+          // it: one side missing means there is no diff to build.
+          this._abort.abort();
           throw new Error(`Could not load the file to compare (HTTP ${failed.status}).`);
         }
 

@@ -335,3 +335,40 @@ Declined: **the merge buttons are drawn for a principal who cannot write.** True
 them is drawn and refused at submit. Gating merge alone would make it the only
 such check in the codebase and would not be the doctrine it half-implements.
 That belongs to a change that does it everywhere.
+
+## Review round 6
+
+- **Converging both pickers on one resource discarded the other side's
+  version.** Round 1 cleared both numbers when a pick made `r1 == r2`, reasoning
+  that a version number counted against a different resource means nothing here.
+  That is true of the side that changed, which is already cleared, and false of
+  the side that did not: its resource has not moved, so its number is as valid
+  as it was. Comparing A v1 against B v5 and then picking A on the right threw
+  away the v1 the reader had chosen and answered with the page's default. Only
+  the picked side moves now.
+- **Naming the current version and nothing else compared it with itself.**
+  `?r1=42&v1=3` with v3 current filled the empty side with the current version —
+  the one already named — and reported "nothing to compare" for a resource with
+  two partners available. The empty side takes the nearest other version when
+  the fill would collide.
+- **An HTTP error left the sibling transfer running.** One side missing means
+  there is no diff to build, so the other multi-megabyte body was streaming for
+  nobody. The controller is aborted before the error is raised.
+
+Declined:
+
+- **`?disposition=inline` trusts the declared type** — third raising, answered
+  with the experiment recorded under round 3. `nosniff` is not a "remaining
+  browser-dependent defense", it is the mechanism the safelist is built on, and
+  the payload was measured not executing.
+- **`escapejs` mangles an astral character in the version panel's delete
+  confirmation.** True, and it is one of the twenty remaining `escapejs` uses
+  under `templates/`. Fixing it the way the compare page's were fixed means
+  building the sentence in a provider, which for a partial shared by another
+  page is that change's work, not this one's.
+- **Dimensionless images are not registered against each other.** They overlay
+  at one origin, which is what round 1 restored; registering two images of
+  different shapes needs both intrinsic sizes, and the point of that branch is
+  that neither is recorded. Reading them from the images once they load, and
+  filling `_sizes` from that, would remove the branch entirely — worth doing,
+  and it is new capability rather than a defect in what is here.
