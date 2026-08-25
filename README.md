@@ -90,7 +90,7 @@ go test ./...
 cd e2e && npm run test:with-server
 ```
 
-See the [docs](https://egeozcan.github.io/mahresources/getting-started/installation#e2e-tests) for more test commands and options.
+See `e2e/package.json` for the full set of test scripts (headed, debug, accessibility, CLI, auth and Postgres runs).
 
 ## Documentation
 

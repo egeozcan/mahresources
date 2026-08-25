@@ -1,5 +1,5 @@
 ---
-outputShape: Array of saved MRQL query objects with id, name, query, description, createdAt, updatedAt
+outputShape: Array of saved MRQL query objects with id, name, query, description, params, createdAt, updatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: mrql save, mrql run, mrql delete
 ---

@@ -45,7 +45,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of setting objects with key, label, group, type, current, bootDefault, overridden, updatedAt, reason
+Array of setting objects with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason
 
 ## Exit Codes
 

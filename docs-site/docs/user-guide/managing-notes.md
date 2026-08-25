@@ -36,7 +36,7 @@ Create notes directly owned by a group:
 
 1. Navigate to a group's detail page
 2. In the **Own Entities** section, find **Notes**
-3. Click **Add New**
+3. Click **New**
 4. The owner is pre-filled with the current group
 
 ## Viewing Notes
@@ -100,7 +100,11 @@ Note types add custom templates and styling to notes.
 | `customSidebar` | HTML template displayed in the sidebar |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for Note avatars |
+| `customDetailFooter` | HTML template rendered at the bottom of the note detail page, below every built-in section |
+| `customHoverCard` | HTML template for the hover card shown when a note link is hovered; falls back to `customSummary` when empty |
 | `customListHeader` | HTML template rendered at the top of note list pages filtered to this one type |
+| `customListFooter` | HTML template rendered at the bottom of note list pages filtered to this one type, below the results |
+| `applyTemplatesToShares` | Render this type's `customHeader` and `customCSS` on public `/s/<token>` share pages |
 | `customMRQLResult` | HTML template for rendering notes of this type in `[mrql]` query results |
 | `customCSS` | Page-level `<style>` block injected on pages that render this type's templates |
 | `metaSchema` | JSON Schema for the metadata of notes of this type |
@@ -116,12 +120,14 @@ For fuller descriptions of the template slots and metadata schema, see [Notes](.
 
 ### Custom Templates
 
-Note type templates are rendered server-side using Pongo2 (Django-like syntax). The `note` variable holds all note fields:
+Note type templates are processed server-side with the shortcode language, not with a general-purpose template engine. Read a note's fields with `[property]`:
 
 ```html
-<h2>{{ note.Name }}</h2>
-<p>{{ note.Description }}</p>
+<h2>[property path="Name"]</h2>
+<p>[property path="Description"]</p>
 ```
+
+See [Shortcodes](../features/shortcodes.md) for the full set.
 
 Templates also have access to Alpine.js for client-side interactivity via the `entity` JavaScript object:
 
@@ -160,7 +166,7 @@ Link resources (files) to notes for reference:
 ### From Note Detail
 
 1. Navigate to the note detail page
-2. In the **Resources** section, click **Add New**
+2. In the **Resources** section, click **New**
 3. Upload or import a new resource
 4. The resource is automatically linked to the note
 
@@ -318,7 +324,7 @@ Some blocks have interactive features available in view mode:
 
 **Todos**: Click checkboxes to mark items as complete or incomplete. Completed items show strikethrough text. Checkbox state is saved automatically.
 
-**Tables**: Click column headers to sort the table by that column. Click again to toggle between ascending and descending order. Sort state is preserved during your session.
+**Tables**: Click column headers to sort the table by that column. Click again to toggle between ascending and descending order. The sort is saved on the block, so it survives a reload and applies for everyone who views the note.
 
 **Gallery**: Click thumbnails to open the lightbox viewer.
 
@@ -331,6 +337,8 @@ The note's **Description** field (shown in the main content area and note lists)
 - When you edit the first text block, the Description field updates to match
 - When you create a new text block and it becomes the first one, its content becomes the Description
 - If you delete the first text block, the next text block's content becomes the Description
+- If you delete the last text block, the Description is cleared
+- A new empty text block that becomes the first one is pre-filled from the current Description, rather than clearing it
 - This ensures backward compatibility with notes that do not use the block editor
 
 ## Notes in Context

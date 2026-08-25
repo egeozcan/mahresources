@@ -7,9 +7,10 @@ sidebar_label: delete
 # mr resource-category delete
 
 Delete a resource category by ID. Destructive: removes the resource
-category row. Resources that reference this category remain but lose
-their category association. Deleting a nonexistent ID may still return
-success at the server level.
+category row. Resources that referenced this category are reassigned to
+the default resource category. Deleting an ID that does not exist fails
+with HTTP 404 and exit code 1, and the default resource category itself
+cannot be deleted.
 
 ## Usage
 

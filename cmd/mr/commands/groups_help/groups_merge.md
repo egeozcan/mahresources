@@ -6,9 +6,11 @@ relatedCmds: group get, groups delete, groups list
 # Long
 
 Merge one or more "loser" Groups into a single "winner". The winner's
-ID and fields are preserved; tags, owned resources, owned notes, and
-m2m relations from the losers are moved onto the winner; the loser
-records are then deleted. Use to consolidate duplicates after manual
+ID survives, and its own Meta keys win on conflict; tags, owned child
+groups, owned resources, owned notes, and m2m relations from the losers
+are moved onto the winner; the loser records are then deleted, with a
+JSON snapshot of each one stored on the winner under
+`Meta.backups.group_<id>`. Use to consolidate duplicates after manual
 review or deduplication.
 
 Both flags are required: `--winner <id>` is a single ID, and

@@ -46,6 +46,10 @@ Control whether the archive embeds full definitions for schema objects reference
 
 When a schema definition toggle is off, entities still carry the referenced name (e.g. `category_name`), so the importer can match by name. Including the full definition allows the importer to create an identical copy when no match exists on the destination.
 
+### Related depth and shell groups
+
+`--related-depth N` (default 0, off) runs a breadth-first walk that follows many-to-many edges N hops past the owned scope. Groups discovered that way are recorded as **shell groups**: they carry `shell: true` in the manifest, are counted separately in `counts.shell_groups`, and their own owned resources and notes are deliberately not collected. The import plan carries the same flag per item.
+
 ### Dangling References
 
 When an entity inside the export scope references an entity outside the scope (e.g. a group relation pointing to a group that was not selected for export), the export records a **dangling reference** in the manifest. Dangling references carry the original source ID, name, kind, and reason. During import, the user can choose to drop each dangling reference or map it to a local entity.
@@ -73,7 +77,7 @@ This is useful for large exports where you want to verify scope before waiting f
 ### CLI Export Examples
 
 ```bash
-# Export a single group (waits for completion, writes to stdout)
+# Export a single group (waits for completion, writes to the file given with -o)
 mr group export 42 -o backup.tar
 
 # Export multiple groups with gzip
@@ -93,6 +97,9 @@ mr group export 42 --no-wait
 
 # Custom polling and timeout
 mr group export 42 --poll-interval 5s --timeout 1h -o large.tar
+
+# Follow m2m relationships two hops out (discovered groups become shells)
+mr group export 42 --related-depth 2 -o wide.tar
 ```
 
 All scope and fidelity toggles support `--include-X` and `--no-X` flag pairs:
@@ -109,12 +116,26 @@ mr group export 42 --no-tag-defs --no-group-relation-type-defs -o cats-only.tar
 
 Import is a multi-step workflow: upload the tar, review the parsed plan, supply decisions, then apply.
 
+Group-limited users and guests cannot import; every import route refuses them. Export is unaffected and works within their subtree.
+
 ### Workflow
 
 1. **Upload and parse** -- Upload the tar file to the server. A background job extracts the manifest and entity JSON, identifies hash collisions with existing resources, builds schema definition mappings, and produces a plan.
 2. **Review** -- The plan lists every entity that will be created, highlights resource hash conflicts, shows schema definition mapping suggestions, and flags dangling references. The web UI renders this as an interactive review screen; the CLI prints a summary.
 3. **Decide** -- Supply decisions: resource collision policy, schema definition mappings, dangling reference handling, optional parent group, and any items to exclude.
 4. **Apply** -- A background job creates entities in dependency order (schema defs, then groups top-down, then resources, then notes), wiring up all cross-references by export ID.
+
+### GUID Collision Policy
+
+Groups, notes, and resources each carry a stable GUID assigned on create and written into the archive. On import, a GUID that already exists on the destination is checked **before** the content hash, and `guid_collision_policy` decides what happens:
+
+| Policy | Behavior |
+|--------|----------|
+| `merge` (default) | Update the existing row from the archive payload |
+| `skip` | Leave the existing row untouched, including its many-to-many links |
+| `replace` | Replace the existing row's content from the archive payload |
+
+GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item and `guid_conflict` per schema mapping. The CLI flag is `--guid-collision-policy`.
 
 ### Resource Collision Policy
 
@@ -169,6 +190,9 @@ mr group import backup.tar --parent-group 10
 # Duplicate resources instead of skipping hash matches
 mr group import backup.tar --on-resource-conflict duplicate
 
+# Leave rows that already exist by GUID untouched
+mr group import backup.tar --guid-collision-policy skip
+
 # Supply explicit decisions from a file
 mr group import backup.tar --decisions decisions.json
 
@@ -211,6 +235,8 @@ Export and import jobs run through the shared [job system](./job-system). Poll `
 | `-export-retention` | `EXPORT_RETENTION` | `24h` | How long a completed export tar stays on disk before cleanup. Once it expires, `GET /v1/exports/{jobId}/download` returns **410 Gone** |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | `10 GB` | Maximum size of an import tar uploaded to `POST /v1/groups/import/parse` |
 
+Both settings are runtime-editable at `/admin/settings`, so neither needs a restart: the import size limit is read on every parse upload and the export retention on every cleanup sweep.
+
 ## Archive Format
 
 The export produces a standard tar (optionally gzipped). The first entry is always `manifest.json`.
@@ -251,10 +277,11 @@ There is no separate `versions/` directory. Version file bytes are content-addre
 
 The manifest (`manifest.json`) is schema version 1. It contains:
 
-- **Export options** -- The exact scope, fidelity, and schema-def toggles used
+- **Creation metadata**: `created_at`, `created_by`, and an optional `source_instance_id`
+- **Export options** -- The exact scope, fidelity, and schema-def toggles used, plus `gzip` and `related_depth`
 - **Roots** -- The export IDs of the root groups
-- **Counts** -- Totals for groups, notes, resources, series, blobs, previews, versions
-- **Entries** -- An index of every entity with its export ID, name, source ID, and path in the tar
+- **Counts** -- Totals for groups, shell groups, notes, resources, series, blobs, previews, versions
+- **Entries** -- An index of every entity with its export ID, optional GUID, name, source ID, and path in the tar (group entries also carry `shell`)
 - **Schema defs** -- An index of every schema definition with its export ID, name, and path
 - **Dangling references** -- References that point outside the export scope
 - **Warnings** -- Non-fatal issues encountered during export

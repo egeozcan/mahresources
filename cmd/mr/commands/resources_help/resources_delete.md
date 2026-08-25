@@ -5,8 +5,10 @@ relatedCmds: resource delete, resources merge, resources list
 
 # Long
 
-Bulk-delete Resources. Destructive: removes both the database rows and
-the stored file bytes. Target Resources are selected via `--ids` (CSV
+Bulk-delete Resources. Destructive: removes the database rows. The file
+is copied to `/deleted/` first, and the original is removed only when no
+other Resource references the same content hash, so a delete does not by
+itself reclaim disk space. Target Resources are selected via `--ids` (CSV
 of unsigned ints). The current CLI has no dry-run; pipe
 `resources list --json` first if you need to preview targets.
 
@@ -16,7 +18,7 @@ of unsigned ints). The current CLI has no dry-run; pipe
   mr resources delete --ids 42,43,44
 
   # Delete the output of a filter query
-  mr resources list --tags 7 --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources delete --ids {}
+  mr resources list --tags 7 --json | jq -r 'map(.ID) | join(",")' | xargs -I {} mr resources delete --ids {}
 
   # mr-doctest: upload, delete, assert follow-up get fails
   GRP=$(mr group create --name "doctest-bulkdel-$$-$RANDOM" --json | jq -r '.ID')

@@ -9,10 +9,13 @@ sidebar_label: note-block
 Note blocks are ordered, typed content units attached to a single Note
 (similar to Notion's blocks). Each block has a type (`text`, `heading`,
 `todos`, `gallery`, `references`, `table`, `calendar`, `divider`, plus
-any plugin-registered types), a free-form `content` JSON payload whose
-shape depends on the type, a free-form `state` JSON payload for runtime
-UI/view state, and a fractional `position` string that defines its
-order within the parent note.
+any plugin-registered types), a `content` JSON payload validated
+against that type, a `state` JSON payload for runtime UI/view state,
+and a fractional `position` string that defines its order within the
+parent note. Validation is per type and some types accept anything:
+`divider` places no requirements on content, a plugin type that
+declares no schema places none either, and most types validate no
+state at all.
 
 Use the `note-block` subcommands to operate on a single block by ID:
 fetch it, create a new one on a note, update its content or state,

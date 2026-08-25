@@ -71,7 +71,7 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created Category object with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/CSS, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

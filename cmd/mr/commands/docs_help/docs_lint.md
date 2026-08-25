@@ -6,9 +6,9 @@ relatedCmds: docs dump, docs check-examples
 # Long
 
 Validate every user-facing command's help against the template rules defined
-in the spec: Short, Long, ≥2 Examples per leaf, rich flag descriptions,
-required Annotations (outputShape where applicable, exitCodes), and sensible
-Short length. Missing `# mr-doctest:` examples emit warnings, not errors. A
+in the spec: Short, Long, ≥2 Examples per leaf, a description on every flag,
+the `exitCodes` annotation, and sensible Short length. Missing
+`# mr-doctest:` examples emit warnings, not errors. A
 doctest whose body is *empty* is an error rather than a warning: the runner
 hands the body to `bash -c`, an empty one exits 0, and it reports PASS having
 executed nothing. The usual cause is a stray `#` line inside a block, since
@@ -22,9 +22,8 @@ the block silently stops half way. Doctests therefore come last in every
 command's Example, and an illustrative example that is deliberately not
 runnable has to be moved above the doctest rather than left at the end.
 
-Lint is allowlist-gated during migration: only command groups explicitly added
-to the allowlist are subject to the strict rules, so partial migrations do not
-block CI.
+Every command in the tree is linted; the allowlist that gated this during the
+help-text migration is empty and survives only as a test hook.
 
 # Example
 

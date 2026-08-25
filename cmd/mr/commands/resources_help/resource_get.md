@@ -1,5 +1,5 @@
 ---
-outputShape: Resource object with id (uint), name (string), tags ([]Tag), groups ([]Group), meta (object)
+outputShape: Resource object with ID (uint), Name (string), Tags ([]Tag), Groups ([]Group), Meta (object)
 exitCodes: 0 on success; 1 on any error
 relatedCmds: resource edit, resource versions, resource download
 ---

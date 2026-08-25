@@ -10,7 +10,9 @@ Disable an installed plugin by name. Once disabled, the plugin stops
 contributing shortcodes, hooks, and UI injections, but its stored
 settings values and persisted KV data are preserved (use `plugin
 purge-data` to remove the KV data). Disabling a plugin that is
-already disabled is idempotent and returns `ok`.
+already disabled is idempotent and returns `ok`. A disable is
+refused while another enabled plugin declares this one as a
+dependency; disable the dependent first.
 
 # Example
 

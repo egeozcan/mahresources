@@ -6,7 +6,7 @@ relatedCmds: resources versions-cleanup, jobs list, logs list
 
 # Long
 
-Show administrative statistics about the running server and its data. By default the command fetches three sections — server health (uptime, memory, DB connections), data counts (entity totals), and expensive stats that require full-table scans (hash collisions, dangling references). Together they give a one-page picture of instance size and health.
+Show administrative statistics about the running server and its data. By default the command fetches three sections: server health (uptime, memory, DB connections), data counts (entity totals), and expensive stats that require full-table scans (storage by content type, top tags and categories, orphan counts, similarity totals, log counts). Together they give a one-page picture of instance size and health.
 
 Use `--server-only` to fetch just the server health block, or `--data-only` to fetch just the data counts — useful for lightweight monitoring that skips the expensive scans. Neither flag is required; when both are unset the command fetches all three sections.
 

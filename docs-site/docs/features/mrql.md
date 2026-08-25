@@ -27,13 +27,13 @@ Navigate to `/mrql` in the web UI. The page provides:
 - **Run** button or `Ctrl+Enter` to execute
 - **Save** to persist a query for later reuse
 - **Saved Queries** panel listing all stored queries
-- **Recent Queries** history (session-local)
+- **Recent Queries** history (the last 20, saved to your account and shared across browsers)
 
 ## Natural-Language Generation
 
 When `DEEPSEEK_API_KEY` is configured, the `/mrql` editor can draft MRQL from a "Describe results" prompt. The server sends only the text you type and syntax-only MRQL instructions to DeepSeek. It does not send local tag lists, category names, note types, resource categories, saved queries, or database contents.
 
-Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled.
+Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled. `DEEPSEEK_MODEL` (default `deepseek-v4-pro`) and `DEEPSEEK_TIMEOUT` (default 20s) tune the call, and generation is limited to 10 requests per minute per client address, beyond which the editor reports HTTP 429.
 
 ## Filtering List Pages
 
@@ -45,7 +45,9 @@ notes IS EMPTY AND fileSize > 10mb
 descendants.category = "Archive"
 ```
 
-Submitting sets `?mrql=<expr>` on the same list URL and ANDs the filter with every sidebar filter, the current sort, and pagination. The bar accepts the filter (WHERE-clause) grammar only. `ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, and `$name` parameters are rejected, and you do not write `type` (the page sets it). The `SIMILAR TO resource(N)` predicate is allowed.
+Submitting sets `?mrql=<expr>` on the same list URL and ANDs the filter with every sidebar filter, the current sort, and pagination. The bar accepts the filter (WHERE-clause) grammar only. `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, and `$name` parameters are rejected, and you do not write `type` (the page sets it). The `SIMILAR TO resource(N)` predicate is allowed.
+
+The bar additionally accepts a trailing `ORDER BY`, which it applies as the list's own sort rather than passing to the filter; a sort key the list cannot express is dropped. `ORDER BY` is rejected on the `mrql=` API parameter and on `--mrql`.
 
 An invalid expression fails closed: the page renders an error banner and zero results, never the unfiltered list, so a broken filter cannot widen a following bulk action.
 
@@ -87,7 +89,7 @@ Use `type = "<value>"` anywhere in the query to target a specific entity type:
 ```
 type = resource AND name ~ "photo"
 type = note AND tags = "todo"
-type = group AND category = "3"
+type = group AND category = 3
 ```
 
 Valid values: `resource`, `note`, `group`.
@@ -348,7 +350,11 @@ type = resource ORDER BY created DESC LIMIT 20
 type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100
 ```
 
-The default sort order when `ORDER BY` is omitted is implementation-defined (typically insertion order).
+With no `ORDER BY`, no ordering is sent to the database and the row order is undefined. Paging with `OFFSET` is only stable when the query names an `ORDER BY`.
+
+A query with no `LIMIT` does not return everything. The server applies a default limit, set by `-mrql-default-limit` / `MRQL_DEFAULT_LIMIT` (500 by default) and editable at runtime as `mrql_default_limit`, and reports that it did so in the response as `default_limit_applied` and `applied_limit`. Write an explicit `LIMIT` when the count matters.
+
+Each MRQL statement runs under a deadline set by `-mrql-query-timeout` / `MRQL_QUERY_TIMEOUT`, 10 seconds by default and editable at runtime as `mrql_query_timeout`. A query that exceeds it fails and is recorded as a warning at `/logs` with entity type `mrql`. In cross-entity mode a timed-out entity branch is reported as a warning in the response instead of failing the whole query.
 
 ### Random Order — `RANDOM()`
 
@@ -511,7 +517,7 @@ MRQL supports filtering by properties of related groups through dotted field pat
 ```
 type = resource AND owner.name = "Project Alpha"
 type = resource AND owner.tags = "active"
-type = resource AND owner.category = "3"
+type = resource AND owner.category = 3
 type = group AND parent.name = "Acme Corp"
 type = group AND children.name ~ "Q*"
 ```
@@ -532,11 +538,13 @@ Maximum traversal depth is 8 parts (7 traversal steps + 1 leaf field).
 
 ### Valid Traversal Subfields
 
-At the end of a traversal chain, you can access any group field:
+At the end of a traversal chain, you can access these group fields:
 
-- **Scalar:** `name`, `description`, `category`, `id`, `created`, `updated`
-- **Relation:** `tags` (match by tag name), `parent`, `children`
+- **Scalar:** `name`, `description`, `category`, `url`, `id`, `guid`, `created`, `updated`
+- **Relation:** `tags` (match by tag name)
 - **Meta:** `meta.<key>` (e.g., `owner.meta.region`)
+
+`parent`, `children` and `owner` are valid as a traversal leaf only under `IS NULL` / `IS NOT NULL`, as in `owner.parent IS NULL` or `parent.parent IS NOT NULL`. Comparing them is an error.
 
 Traversal fields follow the same operators as regular fields. Traversal deeper than 8 parts is not supported.
 
@@ -582,7 +590,7 @@ tags = "urgent" LIMIT 30                      # across all types
 TEXT ~ "quarterly review" LIMIT 30            # full-text across all types
 ```
 
-Results are returned grouped by entity type (resources, then notes, then groups). `ORDER BY`, `LIMIT`, and `OFFSET` apply globally across the merged result set. Cross-entity sorting supports the common fields: `name`, `created`, `updated`.
+Results are returned grouped by entity type (resources, then notes, then groups). `ORDER BY`, `LIMIT`, and `OFFSET` apply globally across the merged result set. Cross-entity sorting supports `name`, `created`, `updated`, and `RANDOM()`, which draws a sample proportional to how many of each type matched. Any other `ORDER BY` field is accepted but has no effect on the merged order.
 
 ## Saved Queries
 
@@ -669,7 +677,7 @@ type = note AND TEXT ~ "budget forecast" AND created >= -90d ORDER BY created DE
 ### Groups in a specific category added this year
 
 ```
-type = group AND category = "5" AND created >= START_OF_YEAR()
+type = group AND category = 5 AND created >= START_OF_YEAR()
 ```
 
 ### Resources with metadata rating above threshold
@@ -818,7 +826,7 @@ mr mrql run monthly-report --param month=2026-07
 
 Via the API, `POST /v1/mrql` accepts a `params` object; `POST /v1/mrql/saved/run`
 also accepts `param.<name>=<value>` query parameters. In `[mrql]` shortcodes and
-plugin `mah.db.mrql`, supply `param-<name>` attributes / a `params` table.
+plugin `mah.db.mrql_query`, supply `param-<name>` attributes / a `params` table.
 
 ## EXPLAIN
 

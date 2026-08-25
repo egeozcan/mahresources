@@ -6,8 +6,9 @@ sidebar_label: rotate
 
 # mr resource rotate
 
-Rotate an image Resource by the given number of degrees. Only image
-Resources are supported; the rotation creates a new version on success
+Rotate an image Resource by the given number of degrees. Only raster
+image Resources are supported (jpeg, png, gif, webp, bmp, tiff, heic,
+heif, avif), not SVG; the rotation creates a new version on success
 so the original is preserved. The `--degrees` flag is required and
 typically takes 90, 180, or 270 (negative values rotate counter-
 clockwise).

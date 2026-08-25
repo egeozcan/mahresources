@@ -20,7 +20,21 @@ Three perceptual hashes are computed from a single decode:
 | **Difference Hash (dHash)** | Secondary. Compares brightness gradients between adjacent pixels |
 | **Average Hash (aHash)** | Secondary. Compares the average brightness of image blocks |
 
-The **pHash** drives similarity matching. For each newly hashed image the database finds candidates that share an indexed pHash chunk, then verifies each candidate with a full-width Hamming distance. The dHash and aHash distances are recorded alongside every stored pair; the aHash distance also feeds a secondary check (see `-hash-ahash-threshold`) that suppresses solid-color false positives.
+The **pHash** drives similarity matching. For each newly hashed image the database finds candidates that share an indexed pHash chunk, then verifies each candidate with a full-width Hamming distance. The dHash and aHash distances are recorded alongside every stored pair; the aHash distance also feeds a secondary guard (see `-hash-ahash-threshold`) against solid-color false positives.
+
+Before hashing, the image is normalized: EXIF orientation is applied, and any alpha channel is flattened onto white, so a rotated or transparent copy hashes like its upright or white-matted twin.
+
+### Hash Status
+
+Every hashed row carries one of three statuses:
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | Hashed successfully and eligible for matching |
+| `flat` | Near-zero pixel variance (solid color, blank scan) |
+| `failed` | The file could not be decoded (corrupt, missing, unsupported) |
+
+`flat` and `failed` rows are excluded from v2 matching entirely: neither is returned as a candidate, and a `flat` probe is never matched at all. That exclusion, rather than the aHash check, is what keeps solid-color images out of v2 results.
 
 ### Hamming Distance
 
@@ -104,14 +118,17 @@ The `-hash-similarity-threshold` setting controls how similar images must be to 
 |-----------|--------|
 | 5 | Strict - only near-identical images match |
 | 10 (default) | Balanced - finds similar images with variations |
-| 15 | Loose - includes more distant matches |
-| 20+ | Very loose - may include false positives |
+| 11 (maximum) | Loosest, every stored v2 pair matches |
+
+v2 perceptual-hash pairs are stored only up to distance 11, so values above that find nothing further.
 
 **Choose based on your use case:**
 
 - **Deduplication** - Use a low threshold (5-8) to find true duplicates
 - **Related images** - Use default (10) for variations like crops, resizes
-- **Broad discovery** - Use higher threshold (12-15) to find related content
+- **Broad discovery** - Use a higher threshold, up to the maximum of 11, to find related content
+
+Neither threshold gates what is stored. Both are read-time filters over the stored pairs, editable at `/admin/settings` as `hash_similarity_threshold` and `hash_ahash_threshold`, and a change takes effect on the next comparison with no restart and no recompute.
 
 ## Viewing Similar Images
 
@@ -160,7 +177,19 @@ The cache size is controlled by `-hash-cache-size` (default: 100,000 entries). I
 
 ## Failed Hash Handling
 
-If hashing fails for a Resource (corrupt image, unsupported encoding), the worker stores an empty hash record. This prevents the Resource from being retried on every batch cycle.
+If hashing fails for a Resource (corrupt image, unsupported encoding), the worker stores a placeholder hash record marked `failed`. This prevents the Resource from being retried on every batch cycle. Clearing that marker re-queues the row: see [Operator actions](#operator-actions).
+
+## Operator Actions
+
+Three controls maintain the hash data without a restart.
+
+**Recompute similarity pairs** (`POST /v1/admin/similarity/recompute`, or `mr admin similarity recompute`) deletes every v2 similarity pair and rebuilds it from the stored hashes. It decodes no images, so it is cheap enough to run after an algorithm or threshold change. A second request while one is already running is refused.
+
+**Retry failed hashes** (`POST /v1/admin/similarity/retry-failed`, or `mr admin similarity retry-failed`) clears the `failed` marker so the backfill attempts those rows again, and reports how many rows it reset.
+
+**Pause the backfill** by setting the `hash_backfill_paused` runtime setting to `1`. It stops the incremental v2 backfill without disabling the whole hash worker; `0` resumes it.
+
+See [`mr admin similarity`](../cli/admin/similarity/index.md) and [Runtime Settings](../configuration/runtime-settings.md).
 
 ## Memory Considerations
 
@@ -194,6 +223,8 @@ If you have images that were uploaded before hash calculation was available, the
 
 The worker also handles migration of hash format changes transparently. The current storage format uses int64 for efficient Hamming distance calculation. Legacy string-format hashes are still supported and migrated automatically.
 
+A second migration runs alongside it: the v2 backfill re-hashes existing rows that have no `hash_version` yet, filling in the int64 pHash and the four indexed chunk columns that drive candidate lookup. It processes one batch per cycle, newest resources first, and is fully resumable, because the "no `hash_version`" predicate is its own cursor. Pause it with the `hash_backfill_paused` runtime setting (see [Operator actions](#operator-actions)).
+
 ## Troubleshooting
 
 ### Similar images not appearing
@@ -214,7 +245,7 @@ Lower the similarity threshold:
 
 Raise the similarity threshold:
 ```bash
-./mahresources -hash-similarity-threshold=15 ...
+./mahresources -hash-similarity-threshold=11 ...
 ```
 
 ### High memory usage

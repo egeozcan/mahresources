@@ -18,7 +18,7 @@ sudo useradd -r -s /bin/false -d /opt/mahresources mahresources
 
 ## Install the Binary
 
-Download or build the binary and install it:
+Build the binary (see [Installation](../getting-started/installation.md)) and install it, together with the `templates/` and `public/` directories it needs at runtime:
 
 ```bash
 # Create directories
@@ -27,9 +27,14 @@ sudo mkdir -p /opt/mahresources/{bin,data,files}
 # Copy the binary
 sudo cp mahresources /opt/mahresources/bin/
 
+# Copy the runtime assets
+sudo cp -r templates public /opt/mahresources/
+
 # Set ownership
 sudo chown -R mahresources:mahresources /opt/mahresources
 ```
+
+The server loads its Pongo2 templates from `templates/` and serves static assets from `public/`, both resolved against `WorkingDirectory`. Neither is embedded in the binary, so both directories must be deployed alongside it and updated with it.
 
 ## Create Environment File
 
@@ -153,9 +158,10 @@ To update to a new version:
 # Stop the service
 sudo systemctl stop mahresources
 
-# Replace the binary
+# Replace the binary and the runtime assets
 sudo cp mahresources-new /opt/mahresources/bin/mahresources
-sudo chown mahresources:mahresources /opt/mahresources/bin/mahresources
+sudo cp -r templates public /opt/mahresources/
+sudo chown -R mahresources:mahresources /opt/mahresources
 
 # Start the service
 sudo systemctl start mahresources

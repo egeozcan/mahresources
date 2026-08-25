@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY src/ ./src/
-COPY index.css vite.config.js postcss.config.js ./
+COPY index.css vite.config.js ./
 RUN npm run build-css && npm run build-js
 
 # Stage 2: Build Go binary

@@ -7,11 +7,15 @@ sidebar_label: list
 # mr resources list
 
 List Resources, optionally filtered. Filter flags combine with AND.
-Comma-separated ID lists on `--tags`, `--groups`, `--notes` use the
-`?Add` query parameter to match any of the given IDs. Date flags
-(`--created-before`, `--created-after`) expect `YYYY-MM-DD`. Sort with
-`--sort-by=field1,-field2` (prefix with `-` for descending). Pagination
-via the global `--page` flag (default page size 50).
+Comma-separated ID lists on `--tags`, `--groups`, `--notes` are
+conjunctive: a resource must carry every ID in the list. Pass a single
+ID to match on one. Date flags (`--created-before`, `--created-after`)
+accept `YYYY-MM-DD` or an RFC 3339 timestamp. Sort with
+`--sort-by=created_at,name`; append ` desc` or ` asc` to an entry to
+set its direction (`--sort-by='name desc'`). Names are lowercase
+database columns, and an entry the server does not recognise is
+ignored. Pagination via the global `--page` flag (default page
+size 50).
 
 `--include-subgroups` widens `--owner-id` to the whole group subtree:
 resources owned by the given group or by any of its descendant

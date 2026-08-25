@@ -8,8 +8,9 @@ relatedCmds: relation-type edit, relation-type edit-name, relation-types list
 
 Replace a RelationType's `Description` field. Takes the relation-type
 ID and the new description as positional arguments; pass an empty
-string to clear. Shorthand for `mr relation-type edit --id <id>
---description <value>`. Sends `POST /v1/relationType/editDescription`
+string to clear. It is the only way to clear one:
+`relation-type edit --description ""` sends nothing and leaves the
+stored description alone. Sends `POST /v1/relationType/editDescription`
 and returns `{id, ok}`. There is no `relation-type get`: to verify,
 re-read with `mr relation-types list --name <substring>` and inspect
 the `.Description` field in jq.

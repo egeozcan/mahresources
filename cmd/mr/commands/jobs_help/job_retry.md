@@ -9,7 +9,9 @@ relatedCmds: job submit, jobs list, job cancel
 Re-queue a failed or cancelled download job for another attempt.
 Retry only works against jobs in the `failed` or `cancelled` state;
 the server rejects retry on jobs that are still active, paused, or
-already completed. The existing job's ID is reused — progress, error
+already completed. A retry is also refused with HTTP 409 while any queued
+or running job is already fetching the same URL, so one URL is never
+transferred twice. The existing job's ID is reused: progress, error
 message, and completion times are cleared, then the worker re-runs the
 original URL fetch.
 

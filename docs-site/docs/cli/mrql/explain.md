@@ -73,7 +73,7 @@ mr mrql explain --saved my-report --json
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Human-readable label headers plus interpolated SQL, or with --json the raw explain response &#123;entityType, statements[], warnings, default_limit_applied, applied_limit&#125;
+Human-readable label headers plus interpolated SQL, or with --json the raw explain response &#123;entityType, queryFingerprint, executionShape, statements[], warnings, default_limit_applied, applied_limit&#125;
 
 ## Exit Codes
 

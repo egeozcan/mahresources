@@ -6,7 +6,8 @@ sidebar_label: meta-keys
 
 # mr notes meta-keys
 
-List every distinct `meta` key observed across the entire Note corpus.
+List every distinct top-level `meta` key observed across the entire
+Note corpus. Keys nested inside a meta object are not enumerated.
 Useful for discovering the vocabulary of an evolving meta schema. The
 response is a JSON array of objects each shaped `{"key": "..."}`. The
 command has no filter flags in the current CLI; pair it with
@@ -47,7 +48,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of objects with key (string), one per distinct meta key observed across the entire Note corpus
+Array of objects with key (string), one per distinct top-level meta key observed across the entire Note corpus
 
 ## Exit Codes
 

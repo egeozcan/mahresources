@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Core Concepts Overview
 
-Mahresources organizes data around eleven entity types connected by ownership and many-to-many relationships.
+Mahresources organizes data around twelve entity types connected by ownership and many-to-many relationships.
 
 ![Dashboard overview](/img/dashboard.png)
 
@@ -14,6 +14,7 @@ Mahresources organizes data around eleven entity types connected by ownership an
 |--------|---------|--------------|
 | **Resource** | Files with metadata and thumbnails | Photos, documents, videos, PDFs |
 | **Note** | Text content with optional dates | Meeting notes, journal entries, research |
+| **Note Block** | Typed content blocks that make up a Note's body | Text, headings, todos, galleries, tables, calendars |
 | **Group** | Hierarchical containers | Projects, people, organizations, events |
 | **Tag** | Flat labels for cross-cutting concerns | Topics, status markers, priorities |
 | **Category** | Types of Groups with custom presentation | Person, Company, Project templates |
@@ -66,7 +67,7 @@ Photo.jpg (Resource)
 |--------------------|------------------------|
 | Entity belongs to exactly one parent | Entity connects to multiple contexts |
 | You want hierarchical organization | You want cross-references |
-| Deletion should cascade | Connections are associative, not structural |
+| Deleting the parent should orphan, not remove | Connections are associative, not structural |
 
 ## Common Features
 
@@ -142,9 +143,9 @@ These bulk operations apply to Resources, Groups, and Notes. The available opera
 | Entity | Deletion Behavior |
 |--------|-------------------|
 | **Tag** | Removed from all associated entities (cascade) |
-| **Group** | Owned Notes, Resources, and child Groups have their owner set to NULL (preserved) |
+| **Group** | Owned Notes, Resources, and child Groups have their owner set to NULL (preserved); typed Relations to and from the Group are deleted |
 | **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
-| **Category** | Groups are preserved; CategoryId set to NULL |
+| **Category** | Groups are preserved; CategoryId set to NULL. Relation Types bound to the Category on either side are deleted, along with every Relation of those types. |
 | **Note Type** | Notes are preserved; NoteTypeId set to NULL |
 | **Resource Category** | Resources are reassigned to the default resource category (preserved) |

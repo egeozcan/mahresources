@@ -23,6 +23,12 @@ existing parent. Use `--on-resource-conflict=skip|duplicate` and
 `--guid-collision-policy=merge|skip|replace` to steer conflict
 resolution. For full manual control over every mapping/dangling/shell
 decision, pass `--decisions <json-file>` produced from a prior dry-run.
+Mappings are otherwise resolved from the plan's own suggestions, which is
+what `--auto-map` (on by default) does, falling back to `create` where
+the plan suggests nothing. `--auto-map=false` leaves every mapping
+unresolved and then requires `--decisions`. An entry the plan marks
+ambiguous is left unresolved either way, so it always needs a decisions
+file.
 
 When the server plan reports resources without bytes in the tar,
 `--acknowledge-missing-hashes` is required to proceed.

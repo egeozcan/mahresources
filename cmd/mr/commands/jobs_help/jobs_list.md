@@ -1,5 +1,5 @@
 ---
-outputShape: Object with a jobs array; each entry has id, url, status, progress, totalSize, progressPercent, createdAt, and optional error, startedAt, completedAt, resourceId, source
+outputShape: Object with a jobs array; each entry has id, url, status, progress, totalSize, progressPercent, createdAt, source, and optional error, startedAt, completedAt, resourceId, phase, phaseCount, phaseTotal, resultPath, warnings
 exitCodes: 0 on success; 1 on any error
 relatedCmds: job submit, job cancel, job retry
 ---

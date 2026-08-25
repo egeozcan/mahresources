@@ -9,7 +9,7 @@ description: Securely deploy the share server for public access
 Deploy the note sharing feature for public access while keeping the main instance private.
 
 :::danger Security Implications
-The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their name, description, and block content (including embedded resources). A references block also exposes the referenced groups' name, description, and category, and a table block backed by a saved query executes that query and publishes its rows. Metadata is not exposed by default, but a note type that opts into applying templates to shares can surface `[meta]` values onto the public page. Only share notes you are comfortable making public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
+The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their name, description, and block content (including embedded resources). A references block also exposes the referenced groups' name, description, and category, and a table block backed by a saved query executes that query and publishes its rows. Metadata is not exposed by default, but a note type that opts into applying templates to shares can surface `[meta]` values onto the public page. Only share notes you are comfortable making public. A todos block on a shared note is also writable by any visitor holding the URL (`POST /s/<token>/block/<id>/state`); no other block type accepts writes. See [Interactive Blocks](../features/note-sharing.md#interactive-blocks-on-shared-notes). The share URL contains an unguessable token, but anyone who obtains it can view the note.
 :::
 
 ## Architecture Overview
@@ -17,14 +17,19 @@ The share server makes shared notes accessible to **anyone with the URL** -- no 
 The recommended architecture:
 
 ```
-Internet → HTTPS Reverse Proxy → Share Server (:8383)
-                                      ↓
-Private Network → Main Server (:8181) → Database
+                              Mahresources process
+                        ┌──────────────────────────────┐
+Internet → HTTPS Proxy →│ Share Server (:8383)         │
+                        │                              │→ Database
+Private Network ───────→│ Main Server  (:8181)         │
+                        └──────────────────────────────┘
 ```
 
+The share server is a second listener inside the same process rather than a separately deployable component, so the isolation comes from binding and firewalling ports, not from running it elsewhere.
+
 Key principles:
-- Main Mahresources instance stays on private network
-- Only the share server is exposed publicly
+- The main listener stays bound to the private network
+- Only the share listener is exposed publicly
 - HTTPS termination at reverse proxy
 - Rate limiting on public endpoint
 
@@ -53,8 +58,11 @@ Enable the share server by specifying a port:
   -file-save-path=./data/files \
   -bind-address=127.0.0.1:8181 \
   -share-port=8383 \
-  -share-bind-address=127.0.0.1
+  -share-bind-address=127.0.0.1 \
+  -share-public-url=https://share.example.com
 ```
+
+`-share-public-url` is the URL the reverse proxy serves. Leave it unset and the note sidebar and `/admin/shares` show a warning and the relative `/s/<token>` path instead of a link anyone can open.
 
 This starts:
 - Main server on `127.0.0.1:8181` (private)
@@ -72,6 +80,7 @@ FILE_SAVE_PATH=/data/files
 BIND_ADDRESS=127.0.0.1:8181
 SHARE_PORT=8383
 SHARE_BIND_ADDRESS=127.0.0.1
+SHARE_PUBLIC_URL=https://share.example.com
 ```
 
 ## Docker Deployment
@@ -99,6 +108,7 @@ services:
       - BIND_ADDRESS=:8181
       - SHARE_PORT=8383
       - SHARE_BIND_ADDRESS=0.0.0.0
+      - SHARE_PUBLIC_URL=https://share.example.com
 ```
 
 Note: `SHARE_BIND_ADDRESS=0.0.0.0` inside the container allows connections from the Docker host, while the port mapping `127.0.0.1:8383:8383` keeps it local to the host.
@@ -118,11 +128,6 @@ server {
     ssl_certificate /etc/letsencrypt/live/share.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/share.example.com/privkey.pem;
 
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
     # Rate limiting
     limit_req zone=share burst=20 nodelay;
     limit_conn addr 10;
@@ -139,12 +144,15 @@ server {
         proxy_buffering off;
     }
 
-    # Block access to non-share paths
-    location ~ ^/(?!s/) {
+    # Block access to non-share paths. /public/ must stay open: the shared
+    # note page loads its stylesheets, favicons and JavaScript from there.
+    location ~ ^/(?!s/|public/) {
         return 404;
     }
 }
 ```
+
+The share server already sends `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` (so the share token does not leak in a `Referer`), a `default-src 'self'` CSP with `frame-ancestors 'none'`, and HSTS on every response. Do not add these at the proxy: nginx appends rather than replaces, so an `add_header X-Frame-Options "SAMEORIGIN"` puts a second, contradicting value on the same response.
 
 Add rate limiting zone in `nginx.conf`:
 
@@ -173,8 +181,8 @@ share.example.com {
         }
     }
 
-    # Only allow /s/ paths
-    @notshare not path /s/*
+    # Only allow /s/ paths, plus the static assets the shared page loads
+    @notshare not path /s/* /public/*
     respond @notshare 404
 }
 ```
@@ -203,7 +211,7 @@ services:
     labels:
       - "traefik.enable=true"
       # Share server
-      - "traefik.http.routers.share.rule=Host(`share.example.com`) && PathPrefix(`/s/`)"
+      - "traefik.http.routers.share.rule=Host(`share.example.com`) && (PathPrefix(`/s/`) || PathPrefix(`/public/`))"
       - "traefik.http.routers.share.entrypoints=websecure"
       - "traefik.http.routers.share.tls.certresolver=letsencrypt"
       - "traefik.http.routers.share.service=share"
@@ -280,15 +288,24 @@ curl -I https://share.example.com/s/abc123...
 # Verify non-share paths are blocked
 curl -I https://share.example.com/v1/notes
 # Should return 404
+
+# Verify static assets are reachable
+curl -I https://share.example.com/public/tailwind.css
+# Should return 200 OK
 ```
 
 ## Troubleshooting
 
 ### Share Server Not Starting
 
-Check logs for errors:
+A share-port bind failure aborts startup entirely: the process logs `Failed to start share server: ...` and exits, so the main server on :8181 does not come up either. Check the logs for that line:
+
 ```bash
-./mahresources -share-port=8383 2>&1 | grep -i share
+./mahresources \
+  -db-type=SQLITE \
+  -db-dsn=./data/mahresources.db \
+  -file-save-path=./data/files \
+  -share-port=8383 2>&1 | grep -i share
 ```
 
 Common issues:
@@ -313,3 +330,5 @@ openssl s_client -connect share.example.com:443 -servername share.example.com
 ## Performance Considerations
 
 The share server is lightweight. For shared notes with large embedded resources, consider adding reverse proxy caching for static assets.
+
+The share server writes every response under a fixed 15-second timeout that no flag changes, so a response still being written after that is cut off mid-stream. Keep shared notes carrying large embedded resources small, or front them with a caching proxy that serves the bytes itself.

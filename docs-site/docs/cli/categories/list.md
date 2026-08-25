@@ -56,7 +56,7 @@ mr categories list --json | jq -r '.[].Name'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of Category objects with ID, Name, Description, CreatedAt, UpdatedAt
+Array of Category objects with ID, Name, Description, MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/CSS, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

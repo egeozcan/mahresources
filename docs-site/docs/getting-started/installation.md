@@ -14,7 +14,8 @@ Authentication is **off by default**. Never expose the server directly to the pu
 
 ### Building from Source
 - **Go 1.26+** - [Download Go](https://go.dev/dl/)
-- **Node.js 20+** - [Download Node.js](https://nodejs.org/)
+- **Node.js 20.19+ or 22.12+** - [Download Node.js](https://nodejs.org/). This is Vite 8's supported range; older 20.x and 22.x releases fail `npm install` with `EBADENGINE`
+- **A C compiler** - the SQLite driver is cgo-based, so it needs one: Xcode command line tools on macOS, `build-essential` on Debian or Ubuntu. Do not set `CGO_ENABLED=0`, or the binary builds without working SQLite
 
 ### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)
@@ -30,6 +31,23 @@ npm run build
 
 `npm run build` compiles Tailwind CSS, bundles JavaScript with Vite, and builds the Go binary with `json1` and `fts5` build tags.
 
+:::note Run it from the repository root
+
+The binary is not self-contained. It loads Pongo2 templates from `./templates` and serves static assets from `./public`, both relative to the process working directory. Start `./mahresources` from the repository root, or copy the binary together with those two directories and start it from there.
+
+:::
+
+### The `mr` CLI
+
+The `mr` command-line client is a separate binary:
+
+```bash
+npm run build-cli     # produces ./mr
+make install-cli      # optional: installs it onto your PATH
+```
+
+When the server runs with `-auth`, authenticate once with `mr auth login`, or set `MR_TOKEN` to an API token.
+
 ## Option 2: Docker
 
 No pre-built image is published. Build it locally from the repository:
@@ -44,8 +62,8 @@ docker run -p 8181:8181 mahresources ./mahresources -ephemeral
 
 # Run with persistent storage
 docker run -p 8181:8181 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/files:/app/files \
+  -v mahresources-data:/app/data \
+  -v mahresources-files:/app/files \
   mahresources
 ```
 

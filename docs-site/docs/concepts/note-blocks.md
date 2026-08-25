@@ -141,7 +141,7 @@ The `queryId` references a saved Query by ID. The `queryParams` object provides 
 
 **State:**
 ```json
-{"sortColumn": "Name", "sortDir": "asc"}
+{"sortColumn": "Name", "sortDirection": "asc"}
 ```
 
 ### Calendar
@@ -188,9 +188,12 @@ Calendar view from iCal sources (URL or stored Resource) with optional custom ev
 }
 ```
 
-- `state.view`: `month`, `week`, or `agenda`
+- `state.view`: `month` or `agenda`
 - `state.customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`). Each event can include optional `location` (string) and `description` (string) fields.
 - ICS files are capped at 10MB. Recurring events (RRULE) are not supported.
+- Every calendar needs a non-empty `id`, and `color`, when given, must match `#rgb` or `#rrggbb`.
+- A `url` source must use `http` or `https`, checked when the block is saved and again when it is fetched.
+- A URL resolving to a loopback, link-local, RFC1918 or CGNAT address is denied unless the operator listed it in `-allow-private-fetch`.
 
 ## Position Ordering
 
@@ -202,7 +205,7 @@ Blocks use lexicographic string positions for ordering. Insert between existing 
 | `b` | Second block |
 | `am` | Inserted between first and second |
 
-When position strings grow too long from repeated insertions, call the rebalance endpoint to reassign evenly distributed positions.
+Positions are rebalanced automatically after a block is created and after a reorder commits, whenever any position string has grown past 8 characters. The rebalance endpoint triggers the same redistribution on demand.
 
 ## Description Synchronization
 

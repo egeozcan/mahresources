@@ -27,8 +27,13 @@ http://localhost:8181/v1/groups
 Most API endpoints under `/v1/` return JSON, with a few important exceptions:
 
 - `GET /v1/resource/view` returns a `302` redirect to the stored file
+- `GET /v1/resource/preview` returns image bytes, or a `307` redirect to `/public/placeholders/file.jpg` when no thumbnail can be produced
+- `GET /v1/resource/version/file` returns the version's file
+- `GET|POST /v1/mrql/export` returns a CSV or JSON attachment
+- `GET /v1/exports/{jobId}/download` returns a tar archive
 - `GET /v1/download/events` and `GET /v1/jobs/events` return Server-Sent Events streams
 - `GET /v1/plugins/{pluginName}/block/render` returns an HTML fragment
+- `POST /v1/plugins/{pluginName}/display/render` returns an HTML fragment
 
 Template routes (without the `/v1/` prefix) return HTML by default and support two suffixes:
 
@@ -36,6 +41,8 @@ Template routes (without the `/v1/` prefix) return HTML by default and support t
 |--------|--------|
 | `.json` | Returns JSON instead of HTML |
 | `.body` | Returns the HTML body without the layout wrapper |
+
+A template route also returns JSON when the request carries `Accept: application/json`, so the `.json` suffix is a convenience rather than the only mechanism.
 
 ```bash
 # API route: always JSON
@@ -47,6 +54,9 @@ curl http://localhost:8181/resources
 # Template route: JSON via suffix
 curl http://localhost:8181/resources.json
 
+# Template route: JSON via the Accept header
+curl -H "Accept: application/json" http://localhost:8181/resources
+
 # Template route: body only (useful for HTMX-style updates)
 curl http://localhost:8181/resources.body
 ```
@@ -54,6 +64,10 @@ curl http://localhost:8181/resources.body
 :::note
 The `.json` and `.body` suffixes do **not** work on `/v1/` API routes. Use `/v1/` paths directly for JSON responses.
 :::
+
+### Redirects on Write Endpoints
+
+`/v1` write endpoints answer `303 See Other` when the request's `Accept` header includes `text/html`. A `?redirect=<relative path>` query parameter overrides the destination and applies to every client regardless of `Accept`; only same-origin relative paths are accepted. Send `Accept: application/json` and omit `redirect` to get the JSON body.
 
 ## Request Content Types
 
@@ -90,7 +104,7 @@ curl http://localhost:8181/v1/resources?page=2
 curl http://localhost:8181/v1/resources?page=3
 ```
 
-The default page size depends on the endpoint. The `MaxResults` parameter on Resource queries can override the page size.
+The default page size is 50 items. The `MaxResults` parameter on Resource queries can override the page size. List responses carry the `X-Page` and `X-Per-Page` headers.
 
 ## Common Query Parameters
 
@@ -148,9 +162,13 @@ Common HTTP status codes:
 | 202 | Accepted (async plugin actions, download submissions) |
 | 204 | No Content (block deletion, reorder, rebalance) |
 | 400 | Bad Request - Invalid parameters |
+| 401 | Unauthorized - Missing or invalid credential under `-auth` |
+| 403 | Forbidden - The acting role lacks the capability, for example relation and taxonomy writes |
 | 404 | Not Found - Entity does not exist |
-| 409 | Conflict - Duplicate file on a multipart `POST /v1/resource` upload (JSON body includes `details[].existingResourceId`). A duplicate URL download via `POST /v1/resource/remote` returns 400, and `POST /v1/resource/local` is idempotent (200 with the existing resource) |
+| 409 | Conflict - Duplicate file on a multipart `POST /v1/resource` upload (JSON body includes `details[].existingResourceId`). A duplicate URL download via `POST /v1/resource/remote` returns 400, and `POST /v1/resource/local` is idempotent (200 with the existing resource). Also returned when deleting a group that is assigned as a user's scope group, and when deleting a resource's current or last version |
+| 415 | Unsupported Media Type - The resource's stored bytes are not a decodable image |
 | 500 | Internal Server Error |
+| 503 | Service Unavailable - ffmpeg is not configured, so video thumbnails and trimming are unavailable |
 
 ## ID Parameters
 

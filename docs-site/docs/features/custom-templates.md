@@ -60,7 +60,7 @@ For the same reason, the Own Entities section auto-opens whenever `CustomOwnEnti
 Custom template content is processed in two ways:
 
 - **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, and plugin shortcodes) are expanded server-side.
-- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult` or `CustomCell`, which the shortcode engine renders server-side into a table cell or card -- use shortcodes (`[meta]`, `[property]`, `[conditional]`) instead.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first two the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first two, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
 
 :::caution Pongo2 expressions do not work
 
@@ -386,13 +386,15 @@ Categories, Resource Categories, and Note Types each have a `CustomCSS` field. U
 
 ### Where It Is Injected
 
-A category's `CustomCSS` is emitted on every page that renders that category's templates:
+A category's `CustomCSS` is emitted on:
 
 - the entity detail page,
 - its list pages, and
 - `[mrql]` result cards that use a [Custom MRQL Result](#custom-mrql-result-templates) template.
 
 Each distinct category emits its block at most once per page render, so list and MRQL pages get one `<style>` block per category rather than one per card.
+
+Two surfaces render category templates and emit no `CustomCSS` at all: the dashboard, which draws `CustomSummary` and `CustomAvatar` on its recent-items cards, and the timeline list views, which render `CustomListHeader` and `CustomListFooter`. Markup that depends on `CustomCSS` renders unstyled there.
 
 ### Raw Injection
 
@@ -456,6 +458,7 @@ Every field has a **Generate** button (natural-language drafting) and a live **P
    - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this note type
    - **Custom MRQL Result** - result cards in `[mrql]` queries
    - **Custom CSS** - one CSS block styling all of the above
+   - **Apply templates to public share pages** - opts Custom Header and Custom CSS into the public `/s/<token>` page. Off by default, and on that surface the templates run restricted: `[mrql]` and plugin shortcodes do not run, and `[meta]` is read-only. See [Note Sharing](./note-sharing.md)
 5. Click **Submit**
 
 Note Types carry the shared slots only. The four carrier-specific slots (Custom Preview, Custom Lightbox, Custom Table Cell, Custom Own Entities) have no surface on a note.
@@ -798,7 +801,7 @@ The partial expands with the including entity's context, so its own `[meta]`, `[
 
 The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit):
 
-- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (all seven slots -- Header, Sidebar, Summary, Avatar, List Header, MRQL Result, and CSS -- plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
+- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (the ten slots every carrier has: Header, Detail Footer, Sidebar, Summary, Avatar, Hover Card, List Header, List Footer, MRQL Result and CSS, plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
 - **Export bundle** downloads the current editor contents as a `.json` bundle (schema version 1). It exports unsaved edits, so it doubles as a backup before experimenting.
 - **Import bundle** loads a bundle back into the form, warning on a carrier mismatch (then filling shared fields only) and rejecting a newer bundle schema version.
 

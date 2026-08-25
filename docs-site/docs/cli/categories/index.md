@@ -9,7 +9,7 @@ sidebar_label: categories
 Discover and inspect Categories. The `categories` subcommands operate
 across multiple categories: `list` for filtered queries (with pagination
 via the global `--page` flag) and `timeline` for an ASCII histogram of
-category creation activity.
+category creation and update activity.
 
 The CLI has no bulk-mutate variants for categories; use the singular
 `category` commands (`create`, `delete`, `edit-name`, `edit-description`)

@@ -16,6 +16,13 @@ import (
 
 var authExitCodes = map[string]string{"exitCodes": "0 success; 1 error (login failed, network error, or not authenticated)"}
 
+// authWhoamiAnnotations carries whoami's own outputShape beside the shared exit
+// codes, rather than widening authExitCodes, which login and logout also use.
+var authWhoamiAnnotations = map[string]string{
+	"exitCodes":   authExitCodes["exitCodes"],
+	"outputShape": "Username, Role, IsAdmin, CanWrite and ScopeGroupId lines; --json emits the full /v1/auth/me object (authEnabled, userId, username, role, scopeGroupId, isAdmin, canWrite, superUser, csrfToken)",
+}
+
 // NewAuthCmd builds the `mr auth` command group.
 func NewAuthCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -35,7 +42,7 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate and store an API token",
-		Long:  "Authenticate with a username and password, mint a personal API token, and store it in the credentials file. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.",
+		Long:  "Authenticate with a username and password, mint a personal API token, and store it in the credentials file. The server must be running with `-auth`; with authentication disabled every caller is already an implicit administrator with no account of its own, and the mint step answers HTTP 400. The token is written to `$MR_TOKEN_FILE`, or `$XDG_CONFIG_HOME/mahresources/token`, or `~/.config/mahresources/token`, mode 0600 and keyed by the server's origin, so a token stored for one server is never sent to another. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.",
 		Example: strings.Join([]string{
 			"  # Log in to the default server",
 			"  mr auth login --username alice --password password1",
@@ -113,7 +120,7 @@ func newAuthLogoutCmd(c *client.Client) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the stored API token",
-		Long:  "Delete the locally stored API token for the current --server so this machine is no longer authenticated to it. Tokens stored for other servers are left intact. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.",
+		Long:  "Delete the locally stored API token for the current --server so this machine is no longer authenticated to it. Tokens stored for other servers are left intact. It does not affect MR_TOKEN; while that is set it overrides the stored credential and the CLI stays authenticated. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.",
 		Example: strings.Join([]string{
 			"  # Forget the stored credentials for the current server",
 			"  mr auth logout",
@@ -150,7 +157,7 @@ func newAuthWhoamiCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # mr-doctest: whoami reports an administrator in either auth mode",
 			"  mr auth whoami --json | jq -e '.isAdmin and .canWrite and (.username | length > 0)' > /dev/null",
 		}, "\n"),
-		Annotations: authExitCodes,
+		Annotations: authWhoamiAnnotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var me map[string]any
 			if err := c.Get("/v1/auth/me", nil, &me); err != nil {

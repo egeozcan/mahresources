@@ -6,7 +6,7 @@ sidebar_label: list
 
 # mr user list
 
-Show all user accounts with their id, username, role, scope group, and disabled state. Password hashes are never returned.
+Show all user accounts with their id, username, role, scope group, and disabled state. Password hashes are never returned. Pagination is --offset and --limit; the global --page flag does not apply to this command.
 
 ## Usage
 
@@ -34,7 +34,7 @@ mr user list --json
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--offset` | int | `0` | Number of users to skip |
-| `--limit` | int | `0` | Maximum users to return (0 = server default) |
+| `--limit` | int | `0` | Maximum users to return (0 = no limit) |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

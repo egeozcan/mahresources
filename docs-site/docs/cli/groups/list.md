@@ -7,14 +7,17 @@ sidebar_label: list
 # mr groups list
 
 List Groups, optionally filtered. Filter flags combine with AND.
-Comma-separated ID lists on `--tags` and `--groups` match any of the
-given IDs via the `?Add` query parameter. Date flags
-(`--created-before`, `--created-after`) expect `YYYY-MM-DD`. Pagination
-via the global `--page` flag (default page size 50).
+Comma-separated ID lists on `--tags` and `--groups` require all of the
+given IDs to match, not any of them: a group must carry every listed
+tag, and be related to or owned by every listed group. Date flags
+(`--created-before`, `--created-after`) expect `YYYY-MM-DD` or an
+RFC 3339 timestamp. Pagination via the global `--page` flag (default
+page size 50).
 
-Use `--owner-id=0` to restrict to root groups (no parent). The JSON
-output is a flat array — use `group children <id>` for tree-structured
-traversal.
+A zero `--owner-id` is ignored rather than treated as "no parent", so
+there is no root-group filter here; use `group children 0` to list
+top-level groups. The JSON output is a flat array. Use
+`group children <id>` for tree-structured traversal.
 
 `--mrql` applies an MRQL filter expression, with `type = "group"`
 implied (the same expression the list-page filter bar accepts). It uses

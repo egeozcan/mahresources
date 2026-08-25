@@ -9,6 +9,8 @@ Manage plugins, execute actions, and monitor jobs through the REST API.
 
 ## Plugin Management
 
+With `-auth` enabled, every endpoint in this section is admin-only.
+
 ### List Plugins
 
 ```
@@ -28,12 +30,27 @@ curl http://localhost:8181/v1/plugins/manage
     "version": "1.0.0",
     "description": "Processes images using external APIs",
     "enabled": true,
+    "legacy": false,
+    "api_version": 1,
+    "capabilities": ["db:read", "http", "image"],
+    "capability_labels": {
+      "db:read": "Read your library (resources, notes, groups, tags)",
+      "http": "Make outbound network requests",
+      "image": "Transform images"
+    },
+    "network": ["api.example.com"],
+    "allow_private_hosts": false,
+    "dependencies": ["shared-utils"],
+    "min_app_version": "1.2.0",
     "settings": [
       { "name": "api_key", "type": "password", "label": "API Key", "required": true }
-    ]
+    ],
+    "values": { "api_key": "sk-abc123" }
   }
 ]
 ```
+
+`capabilities` is the effective set (`db:write` implies `db:read`), and `capability_labels` gives the human sentence for each one. `legacy` is true for a plugin that declares no manifest at all, which keeps the full `mah` surface. An empty `network` means any public host, the broadest policy rather than the absence of network access. `values` holds the saved setting values.
 
 ### Enable Plugin
 
@@ -51,7 +68,7 @@ curl -X POST http://localhost:8181/v1/plugin/enable \
   -d "name=image-processor"
 ```
 
-Required settings must be saved before enabling. Returns an error if required settings are missing.
+Required settings must be saved before enabling. Returns an error if required settings are missing. Enabling also records the plugin's declared capabilities as consent, so a plugin that later widens its manifest will not load until an operator enables it again. See [Plugin Permissions](../features/plugin-permissions.md).
 
 ### Disable Plugin
 
@@ -69,7 +86,7 @@ curl -X POST http://localhost:8181/v1/plugin/disable \
   -d "name=image-processor"
 ```
 
-Disabling removes all hooks, injections, pages, menus, and actions. In-flight async actions are awaited before the Lua VM is closed.
+Disabling removes all hooks, injections, pages, menus, and actions. In-flight async actions are awaited before the Lua VM is closed. Disable is refused when another enabled plugin depends on this one; the error names the dependents, which must be disabled first.
 
 ### Save Plugin Settings
 
@@ -93,7 +110,9 @@ curl -X POST "http://localhost:8181/v1/plugin/settings?name=image-processor" \
   }'
 ```
 
-Settings are validated against the plugin's declared setting definitions. Unknown keys are ignored. Boolean settings must be native JSON booleans (`true`/`false`, not strings). Number settings must be native JSON numbers (`2048`, not `"2048"`).
+Settings are validated against the plugin's declared setting definitions. Unknown keys are ignored. Boolean settings must be native JSON booleans (`true`/`false`, not strings). Number settings must be native JSON numbers (`2048`, not `"2048"`). A validation failure answers `422 Unprocessable Entity` with `{"errors": [...]}`.
+
+The body replaces the whole settings object rather than merging into it, so send every setting on each save: a declared setting omitted from the request is cleared. The request body is limited to 64 KB.
 
 ### Purge Plugin Data
 
@@ -125,6 +144,103 @@ curl -X POST http://localhost:8181/v1/plugin/purge-data \
 :::warning
 Purging deletes all KV store entries for the plugin. This action is irreversible. The plugin must be disabled first; attempting to purge an enabled plugin returns an error.
 :::
+
+### Set Scoped Access
+
+Open one plugin to group-limited accounts, or close it again.
+
+```
+POST /v1/plugin/scopedAccess
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Plugin name |
+| `allowed` | string | `1`, `true`, `on` or `yes` opens the plugin; anything else, including an absent value, closes it |
+
+```bash
+curl -X POST http://localhost:8181/v1/plugin/scopedAccess \
+  -d "name=image-processor" \
+  -d "allowed=true"
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "name": "image-processor",
+  "allow_scoped_principals": true
+}
+```
+
+Group-limited users and guests are refused a plugin's pages, JSON endpoints, block and display rendering, and action runs until this is turned on for that plugin. See [Plugin Permissions](../features/plugin-permissions.md).
+
+### List Schedules
+
+```
+GET /v1/plugin/schedules?name={pluginName}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Plugin name |
+
+```bash
+curl "http://localhost:8181/v1/plugin/schedules?name=image-processor"
+```
+
+```json
+[
+  {
+    "scheduleId": "nightly-rollup",
+    "pluginName": "image-processor",
+    "everySeconds": 3600,
+    "overlap": "skip",
+    "nextDueAt": "2025-03-01T11:00:00Z",
+    "runs": 12,
+    "lastStatus": "completed",
+    "lastError": "",
+    "lastRunAt": "2025-03-01T10:00:04Z",
+    "owned": true,
+    "registered": true
+  }
+]
+```
+
+`lastRunAt` is present once the schedule has run. `lastStatus` is `completed` or `failed`. `registered` is false when the row exists but the plugin no longer declares that id, which is what a disabled plugin, a renamed schedule and a removed `mah.schedule` call all look like. `owned` is false when the row carries no creator, at which point the schedule has stopped rather than merely lost its label.
+
+### Run a Schedule
+
+```
+POST /v1/plugin/schedule/run
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Plugin name |
+| `scheduleId` | string | The id the plugin passed to `mah.schedule` |
+
+```bash
+curl -X POST http://localhost:8181/v1/plugin/schedule/run \
+  -d "name=image-processor" \
+  -d "scheduleId=nightly-rollup"
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "name": "image-processor",
+  "scheduleId": "nightly-rollup",
+  "started": true
+}
+```
+
+The response is sent once the run has *started*, not when it has finished; the run then reports itself through the `action_*` events on the SSE stream. `404` means there is no such row. `409` means the plugin no longer declares that id, the row has no owner, or the claim is already held by a run in progress.
 
 ## Plugin Actions
 
@@ -209,6 +325,13 @@ The `bulk_max` limit on the action registration is enforced, as is the
 deployment-wide `-max-action-entities` cap (default 1000). Exceeding either is a
 `400`.
 
+Parameter validation, `entity_ref` resolution and the action's own entity filters
+each answer `400` with `{"errors": [...]}` rather than the generic error shape, and
+a filter mismatch on any one entity vetoes the whole batch. A group-limited caller
+gets `403` when the plugin has not been opened to scoped accounts, or when any
+named entity lies outside its subtree. See
+[Plugin Permissions](../features/plugin-permissions.md).
+
 ### Get Action Job Status
 
 ```
@@ -278,6 +401,8 @@ Renders a plugin-defined display type as an HTML fragment. The schema-driven met
 | `schema` | object | No | The JSON Schema of the property |
 | `field_path` | string | No | Dot-notation path of the field |
 | `field_label` | string | No | Display label of the field |
+| `entity_type` | string | No | Entity the metadata belongs to, passed to the renderer as `ctx.entity_type` |
+| `entity_id` | integer | No | Id of that entity, passed as `ctx.entity_id`; a value above 2^53-1 is rejected with `400` |
 
 ```bash
 curl -X POST "http://localhost:8181/v1/plugins/my-plugin/display/render" \
@@ -296,6 +421,8 @@ GET|POST /plugins/{pluginName}/{path}
 ```
 
 Plugin-registered pages are served at this path. The response is HTML generated by the plugin's page handler.
+
+Two first segments under `/plugins/` are reserved and cannot be a plugin page path: `manage` is the plugin management page, and `public` serves a plugin's own static assets while that plugin is enabled. See [Static Assets](../features/plugin-hooks.md#static-assets).
 
 ```bash
 curl http://localhost:8181/plugins/image-processor/dashboard
@@ -332,9 +459,11 @@ curl -X POST http://localhost:8181/v1/plugins/my-plugin/webhook \
 
 | Status | Condition | Body |
 |--------|-----------|------|
-| 400 | Handler called `mah.abort()` | `{"error": "reason"}` |
+| 204 | Handler set no response body | (no content) |
+| 400 | Handler called `mah.abort()`, unless it had already called `ctx.status()`, in which case that code is used | `{"error": "reason"}` |
 | 404 | Plugin not found or path not registered | `{"error": "plugin not found"}` or `{"error": "endpoint not found"}` |
 | 405 | Path exists but method not registered | `{"error": "method not allowed"}` |
+| 413 | Request body exceeds 1 MB | `{"error": "request body too large"}` |
 | 500 | Handler runtime error | `{"error": "internal plugin error"}` |
 | 504 | Handler exceeded timeout | `{"error": "handler timed out after <duration>"}` (for example `handler timed out after 5s`) |
 
@@ -342,9 +471,9 @@ See [Plugin Lua API Reference](../features/plugin-lua-api.md) for the `mah.api()
 
 ## Unified Job Endpoints
 
-The queue endpoint returns download jobs only. Plugin action jobs appear in the SSE event stream alongside download events.
+The queue endpoint returns every job the download manager runs: downloads, group exports and imports, and admin similarity recomputes. Plugin action jobs are not among them; they appear in the SSE event stream alongside download events.
 
-### List Download Jobs
+### List Jobs
 
 ```
 GET /v1/jobs/queue
@@ -354,7 +483,7 @@ GET /v1/jobs/queue
 curl http://localhost:8181/v1/jobs/queue
 ```
 
-Returns the retained download jobs currently held in the queue manager, including completed, failed, cancelled, or paused jobs until their retention window expires. Plugin action jobs are not included here; they are available only via the SSE event stream below.
+Returns the retained jobs currently held in the queue manager, including completed, failed, cancelled, or paused jobs until their retention window expires. Plugin action jobs are not included here; they are available only via the SSE event stream below.
 
 ### SSE Event Stream
 

@@ -9,8 +9,10 @@ sidebar_label: job
 A download job fetches a remote URL and stores the result as a new
 Resource. Each submission creates one job per URL; the server downloads
 in the background while the queue tracks progress, pause/resume, and
-retry state. Jobs are ephemeral — they live in server memory and do not
-persist across restarts.
+retry state. Queue entries are ephemeral: they live in server memory and
+do not persist across restarts. A finished download additionally leaves a
+durable history row, readable at `/downloads` until its retention window
+expires; exports and imports leave none.
 
 Use the `job` subcommands to operate on a single job by ID: `submit`
 new URLs, `cancel` an active job, `pause` / `resume` an in-flight

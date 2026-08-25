@@ -5,7 +5,7 @@ title: Plugin Lua API Reference
 
 # Plugin Lua API Reference
 
-The `mah` module is available to all enabled plugins and provides database read/write access, HTTP requests, JSON encoding, key-value storage, settings, logging, job control, and operation management.
+The `mah` module is assembled from the capabilities the plugin's manifest declares. A module or function the plugin was not granted is absent rather than stubbed: reaching into an ungranted module fails with `attempt to index a non-table object(nil)`, and calling an ungranted function with `attempt to call a non-function object`. Only `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc` and `mah.get_setting` are always installed. [Plugin Permissions](./plugin-permissions.md) lists which capability installs which module.
 
 ## VM Sandboxing
 
@@ -15,7 +15,7 @@ Each plugin runs in an isolated Lua VM.
 
 **Blocked libraries**: `os`, `io`, `debug`, `package`
 
-**Removed base functions**: `dofile`, `loadfile`, `load`
+**Removed base functions**: `dofile`, `loadfile`, `load`, `loadstring`
 
 Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) acquire this mutex, ensuring single-threaded execution within a single plugin. Different plugins run in separate VMs and can execute concurrently.
 
@@ -36,7 +36,7 @@ answers rather than errors, so handle them like any other refusal:
 - **Role.** Taxonomy operations require the triggering user's own role to carry
   them, exactly as the equivalent HTTP endpoint does.
   `create_category`, `update_category`, `delete_category` and their
-  resource-category equivalents need **admin**; `create_note_type`, the
+  resource-category equivalents need **admin**; the note-type functions, the
   relation-type functions and the group-relation functions need **editor**. A plugin that creates a category
   from a hook fired by an ordinary user's upload gets
   `nil, "creating a category: your role does not have permission to perform this operation"`.
@@ -147,21 +147,26 @@ as absent clears an owner or widens a filter. This applies to a positional ID
 
 #### Tag Fields
 
-`id` (number), `name` (string)
+`id` (number), `name` (string). `list_tags` additionally returns
+`description`, which `get_tag` does not.
 
 #### Category Fields
 
 `id` (number), `name` (string), `description` (string), `custom_header`,
-`custom_sidebar`, `custom_summary`, `custom_avatar`, `custom_list_header`,
-`custom_mrql_result`, `custom_css`, `meta_schema` (all strings)
+`custom_detail_footer`, `custom_sidebar`, `custom_summary`, `custom_avatar`,
+`custom_hover_card`, `custom_own_entities`, `custom_list_header`,
+`custom_list_footer`, `custom_mrql_result`, `custom_css`, `meta_schema` (all
+strings)
 
 #### Note Type Fields
 
-The Category fields above, plus `section_config` (string, JSON-encoded).
+The Category fields above except `custom_own_entities`, plus `section_config`
+(string, JSON-encoded).
 
 #### Resource Category Fields
 
-The Category fields above, plus `auto_detect_rules` (string).
+The Category fields above except `custom_own_entities`, plus `custom_preview`,
+`custom_lightbox`, `custom_cell` and `auto_detect_rules` (all strings).
 
 ### Taxonomy Listing
 
@@ -209,6 +214,10 @@ end, so pass a `limit` when you expect many near-matches.
 
 Filter field types: `tags` and `groups` accept arrays of numeric IDs. `sort_by` accepts an array of sort strings (e.g., `{"created_at desc", "name"}`).
 
+`name` and `content_type` are substring matches, and `%` and `_` are escaped before the query runs, so a SQL wildcard written into one matches as a literal character: `content_type = "image/%"` finds nothing, while `content_type = "image/"` finds every image.
+
+`limit` takes effect only when it is positive. `limit = 0` selects the default of 20 rather than lifting the cap, and there is no way to ask for an unbounded result: use the count functions when you need a total.
+
 ```lua
 local images = mah.db.query_resources({
     content_type = "image/jpeg",
@@ -235,7 +244,7 @@ Return the total number of matching entities as a number, or `nil, error_string`
 | `mah.db.count_groups(filter)` | Count groups matching filter |
 
 ```lua
-local total = mah.db.count_resources({ owner_id = 5, content_type = "image/%" })
+local total = mah.db.count_resources({ owner_id = 5, content_type = "image/" })
 local tagged = mah.db.count_notes({ tags = {1} })
 ```
 
@@ -252,7 +261,7 @@ local result, err = mah.db.mrql_query("type=resource AND name ~ $needle", {
 })
 ```
 
-Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode, items|rows|groups}`) or `nil, error_string`. The `params` table binds `$name` placeholders; values are stringified and coerced like typed literals. Every placeholder must be supplied or the call errors. Results are cached per `(query, resolved scope owner id, limit, buckets, params)`, where the scope owner id is the group id that `scope` resolves to for this entity, not the literal scope string.
+Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode, items|rows|groups}`) or `nil, error_string`. The `params` table binds `$name` placeholders; values are stringified and coerced like typed literals. Every placeholder must be supplied or the call errors. Results are cached per `(query, resolved scope owner id, limit, buckets, params, acting user)`, where the scope owner id is the group id that `scope` resolves to for this entity, not the literal scope string. The cache lives for the duration of one request, so nothing is reused between requests.
 
 ### Resource File Access
 
@@ -283,6 +292,8 @@ resource are all reported, where previously all three arrived as the same bare
 ```lua
 local resource, err = mah.db.create_resource_from_url(url, options)
 ```
+
+Requires both `db:write` and `http`, because the URL is fetched by the application's own downloader. It goes through the plugin's declared `network` rules, so a host outside them comes back as `nil, error_string`. `create_resource_from_data` needs `db:write` only.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -377,7 +388,7 @@ Returns `true` on success, or `nil, error_string` on failure.
 local version, err = mah.db.add_resource_version_from_url(resource_id, url, comment)
 ```
 
-Downloads the content at `url` and appends it as a new version of an existing resource.
+Downloads the content at `url` and appends it as a new version of an existing resource. Like `create_resource_from_url`, this requires both `db:write` and `http`, and the URL goes through the plugin's declared `network` rules.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -495,7 +506,9 @@ Most entity types follow the `(id, opts)` pattern for update/patch:
 
 **Exceptions:** `group_relation` and `relation_type` use `(opts)` for update/patch with `id` embedded in opts (e.g., `mah.db.update_group_relation({ id = 1, name = "new" })`).
 
-Supported entity types: `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (delete only).
+Supported entity types: `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (no `create_resource`; use `create_resource_from_url` or `create_resource_from_data`).
+
+Create, update and patch return a compact table rather than the getter shape: a resource comes back as `id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `owner_id`; a group as `id`, `name`, `description`, `meta`, `owner_id`, `category_id`; a note as `id`, `name`, `description`, `meta`, `owner_id`, `note_type_id`. None of them carries tags, and the group and note carry a numeric id where the getter returns the category or note type name. Re-fetch with the getter when you need associations.
 
 ### Transactions
 
@@ -671,6 +684,8 @@ bound to the acting principal's subtree.
 | `mah.kv.delete(key)` | `nil` | Delete a stored key |
 | `mah.kv.list([prefix])` | table of strings | List keys, optionally filtered by prefix |
 
+Every `mah.kv` failure raises rather than returning an error, so wrap the call in `pcall` when the handler has to survive one. A revoked plugin is the exception: its `get` returns `nil` and its `list` returns an empty table, so neither can tell "no such key" from "plugin disabled", while `set`, `delete` and `compare_and_set` raise `kv store not available`.
+
 | Constant | Description |
 |----------|-------------|
 | `mah.kv.ABSENT` | The expectation "nothing is stored under this key yet" |
@@ -795,7 +810,11 @@ local job_id = mah.start_job("Import data", function(jid)
 end)
 ```
 
-The job appears in the job system and is tracked via SSE events.
+The job appears in the job system and is tracked via SSE events. Three limits apply:
+
+- The callback runs under a 5 minute deadline, after which its context is cancelled. The same bound applies to a `mah.schedule` run.
+- At most 3 plugin async jobs run at a time across the whole process, so a submitted job may sit waiting behind other plugins' work.
+- The call raises `plugin has been disabled` instead of returning a job id when the plugin was disabled between the call and the registration.
 
 ## mah.schedule -- Recurring Work
 
@@ -817,7 +836,7 @@ retention policy or a nightly rollup cannot be written without it.
 | `handler` | function | Callback receiving `job_id`, exactly as `mah.start_job` does. |
 | `overlap` | string | `"skip"` (default) or `"allow"`. What to do when a run is still going at the next due time. |
 
-Requires the `schedule` capability.
+`schedule` installs `mah.schedule` and nothing else. The handler's own body needs whatever it calls, so the example below also needs `jobs` (or `actions`) for the `job_*` reporters and `http` for `get_sync`.
 
 ```lua
 function init()
@@ -979,6 +998,8 @@ Action handlers MUST use sync HTTP functions. An async callback cannot fire whil
 
 Sync functions block the Lua execution until the response arrives.
 
+The `timeout` option is a ceiling on what a plugin may ask for, not a promise that the caller will wait that long. Whenever the caller has a budget, and every plugin surface does, the timeout is lowered to whatever is left of it minus 250 ms. The budgets are 5 seconds for hooks, injections, shortcode, block and display renders and drained callbacks; 30 seconds for pages; and 5 minutes for async jobs and schedule runs. So a `get_sync` asking for the 10 second default inside a hook ends at about 4.75 seconds, and a budget already spent yields a response table with `error` set immediately.
+
 #### mah.http.get_sync(url, [options])
 
 ```lua
@@ -1124,7 +1145,7 @@ return response.body
 
 ## mah.api -- JSON API Endpoints
 
-Register custom JSON API endpoints accessible at `/v1/plugins/{pluginName}/{path}`.
+Register custom JSON API endpoints accessible at `/v1/plugins/{pluginName}/{path}`. A request body is capped at 1 MB, checked before the handler runs.
 
 ### mah.api(method, path, handler, [opts])
 
@@ -1146,9 +1167,12 @@ The handler receives a single `ctx` table:
 | `ctx.query` | table | URL query parameters |
 | `ctx.params` | table | Always empty for `mah.api` handlers; parse `ctx.body` instead |
 | `ctx.headers` | table | Request headers (lowercase keys) |
-| `ctx.body` | string | Raw request body |
+| `ctx.body` | string | Raw request body. `nil` when the request carries no body |
+| `ctx.principal` | table | The authenticated caller: `userId`, `username`, `role`, `isAdmin`, `scopeGroupId`, `superUser`. Absent when the request carries no principal |
 | `ctx.json(data)` | function | Set the JSON response body |
 | `ctx.status(code)` | function | Set the HTTP status code (default: 200) |
+
+`ctx.headers` omits `authorization`, `proxy-authorization`, `cookie` and `x-csrf-token`, so a plugin never sees the caller's credential, and a header sent more than once arrives as an array of strings rather than one string. `ctx.query` omits `csrf_token` for the same reason. An endpoint that needs to authenticate its own callers should use a header name of its own or a signature over the body, and `ctx.principal` is what tells it who the application already authenticated.
 
 ### Response Behavior
 
@@ -1161,6 +1185,9 @@ The handler receives a single `ctx` table:
 | `mah.abort()` called | 400 (or a custom code set via `ctx.status()`) | `{"error": "reason"}` |
 | Path not found | 404 | `{"error": "endpoint not found"}` |
 | Wrong HTTP method | 405 | `{"error": "method not allowed"}` |
+| Request body over 1 MB | 413 | `{"error": "request body too large"}` |
+| Request body could not be read | 400 | `{"error": "failed to read request body"}` |
+| Caller went away while the plugin's VM was busy | 503 | `{"error": "plugin was busy and the request was abandoned before its VM became free"}` |
 
 ### Example
 
@@ -1168,8 +1195,8 @@ The handler receives a single `ctx` table:
 function init()
     -- GET endpoint returning JSON
     mah.api("GET", "stats", function(ctx)
-        local notes = mah.db.query_notes({ limit = 0 })
-        ctx.json({ total_notes = #notes, query = ctx.query })
+        local total = mah.db.count_notes({})
+        ctx.json({ total_notes = total, query = ctx.query })
     end)
 
     -- POST endpoint with custom status
@@ -1402,6 +1429,12 @@ Usage in a Custom field: `[plugin:my-plugin:rating max="5"]`
 | `name` | string | Yes | Shortcode name (lowercase kebab-case, max 50 chars). Automatically prefixed as `plugin:<pluginName>:<name>` |
 | `label` | string | Yes | Human-readable display label |
 | `render` | function | Yes | Lua function that returns an HTML string |
+| `description` | string | No | Feature description, parsed exactly as the `mah.doc` field of the same name |
+| `attrs` | table | No | Array of `{name, type, required, description, default}` parameter docs |
+| `examples` | table | No | Array of `{title, code, notes, example_data}` usage examples |
+| `notes` | table | No | Array of note strings |
+
+A shortcode carrying a non-empty `description` is documented in place, so it needs no separate `mah.doc` entry.
 
 ### Render Context
 
@@ -1628,6 +1661,7 @@ end
 ## Related Pages
 
 - [Plugin System](./plugin-system.md) -- discovery, lifecycle, settings, and management
+- [Plugin Permissions](./plugin-permissions.md): the capabilities a manifest declares, and which module each one installs
 - [Plugin Actions](./plugin-actions.md) -- action registration, parameters, filters, and execution
 - [Plugin Hooks, Injections, Pages & Menus](./plugin-hooks.md) -- hooks, HTML injections, custom pages, and menu items
 - [Custom Block Types](./custom-block-types.md) -- adding new block types (built-in and plugin-based)

@@ -12,7 +12,9 @@ note that is already shared is idempotent: it returns the existing
 token rather than minting a new one, so previously issued share URLs
 keep working. To rotate the token, run `note unshare` first and then
 `share` again. The response contains both the raw token and the
-relative share URL for convenience.
+relative share URL for convenience. The deployment must be running the
+share server (`-share-port` / `SHARE_PORT`); without it the command
+fails with HTTP 503 and no token is minted.
 
 ## Usage
 

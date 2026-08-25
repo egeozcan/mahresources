@@ -6,7 +6,7 @@ sidebar_label: token
 
 # mr token
 
-List, create, and revoke the API tokens for the authenticated account. Tokens are bearer credentials used by the CLI and other non-browser clients.
+List, create, and revoke the API tokens for the authenticated account. Tokens are bearer credentials used by the CLI and other non-browser clients. They require a server running with -auth: with authentication disabled there is no account to hold a token, and every one of them answers HTTP 400.
 
 ## Usage
 

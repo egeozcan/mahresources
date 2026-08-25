@@ -55,12 +55,17 @@ func NewSearchCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			q.Set("limit", strconv.Itoa(limit))
 
 			if typesStr != "" {
-				parts := strings.Split(typesStr, ",")
-				for _, p := range parts {
-					p = strings.TrimSpace(p)
-					if p != "" {
-						q.Add("types", p)
+				// One comma-joined value, not a repeated parameter: the handler
+				// reads `types` with url.Values.Get, which returns only the first
+				// value, so repeating it applied just the first type named.
+				var parts []string
+				for _, p := range strings.Split(typesStr, ",") {
+					if p = strings.TrimSpace(p); p != "" {
+						parts = append(parts, p)
 					}
+				}
+				if len(parts) > 0 {
+					q.Set("types", strings.Join(parts, ","))
 				}
 			}
 
@@ -91,7 +96,7 @@ func NewSearchCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&typesStr, "types", "", "Comma-separated entity types to search (e.g. resources,notes)")
+	cmd.Flags().StringVar(&typesStr, "types", "", "Comma-separated entity types to search (e.g. resource,note)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of results")
 
 	return cmd

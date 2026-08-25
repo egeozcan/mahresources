@@ -7,8 +7,10 @@ relatedCmds: category get, category create, categories list
 
 Delete a Category by ID. Destructive: removes the category row. Groups
 previously assigned to this category become uncategorized (the group
-records themselves are preserved). Deleting a nonexistent ID is a no-op
-on the server but still returns success.
+records themselves are preserved). Every group relation type naming this
+category on either side is deleted with it, and so is every relation edge
+of those types, across the whole database. Deleting an ID that does not
+exist fails with `HTTP 404: record not found` and exit code 1.
 
 # Example
 

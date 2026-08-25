@@ -66,6 +66,8 @@ Use the `-alt-fs` flag with `key:path` format:
   -db-type=SQLITE -db-dsn=./db.sqlite
 ```
 
+A malformed `-alt-fs` value, or one with an empty key, fails startup: an empty key is how every create path spells the main filesystem. The `FILE_ALT_*` variables below behave differently and skip an incomplete pair silently.
+
 ### Using Environment Variables
 
 ```bash
@@ -165,7 +167,7 @@ files/
           1234567890abcdef.png
 ```
 
-Files are stored under a `resources/` prefix, split into three directory levels derived from the content hash, and retain their original extension. This structure:
+Files are stored under a `resources/` prefix, split into three directory levels derived from the content hash, and carry the extension of the detected content type. This structure:
 - Prevents duplicate storage of identical files
 - Distributes files across directories for filesystem efficiency
 - Enables fast lookup by content hash

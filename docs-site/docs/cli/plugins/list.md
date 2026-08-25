@@ -7,8 +7,9 @@ sidebar_label: list
 # mr plugins list
 
 Return every plugin installed on the server, regardless of whether it
-is currently enabled. The response is a single array ordered by plugin
-name. Each entry includes the plugin's `name`, `version`,
+is currently enabled. The response is a single array ordered by the
+plugin's directory name, which is usually but not necessarily its
+declared `name`. Each entry includes the plugin's `name`, `version`,
 `description`, an `enabled` boolean, and a `settings` descriptor
 array (or `null` when the plugin declares no settings). When a plugin
 has stored configuration values, a `values` object is also present

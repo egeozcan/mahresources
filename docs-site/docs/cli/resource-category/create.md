@@ -9,7 +9,7 @@ sidebar_label: create
 Create a new resource category. `--name` is required; all other flags
 are optional, including a plain `--description`, a `--custom-*` flag for
 every template slot, and structural fields (`--meta-schema`,
-`--section-config`). Resource categories carry four slots the other
+`--section-config`). Resource categories carry three slots the other
 carriers do not: `--custom-preview` (above the built-in preview image),
 `--custom-lightbox` (the lightbox details panel), and `--custom-cell`
 (an extra column in the resources details table). Run
@@ -72,7 +72,7 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created ResourceCategory object with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/CSS, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

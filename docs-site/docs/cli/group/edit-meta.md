@@ -9,9 +9,10 @@ sidebar_label: edit-meta
 Edit a single metadata field by JSON path. Takes three positional
 arguments: the Group ID, a dot-separated path (e.g. `address.city`),
 and a JSON-literal value (e.g. `'"Berlin"'`, `42`, `'[1,2,3]'`,
-`'{"nested":true}'`). The server deep-merges the value at the given
-path onto the existing Meta object and returns the full merged Meta
-in the response.
+`'{"nested":true}'`). The server replaces whatever sits at that path,
+creating intermediate objects as needed and leaving siblings at every
+level untouched, so writing an object at `address` drops the keys
+`address` already held. The response carries the full updated Meta.
 
 Values must be valid JSON literals — string values need to be quoted
 twice (bash single quotes around a JSON-quoted string), as in the

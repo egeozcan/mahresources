@@ -90,6 +90,8 @@ Retrieve details for a specific group.
 GET /v1/group?id={id}
 ```
 
+Preloaded associations are truncated: owned and related resources to 5 rows, and the other collection associations to 50. To enumerate a group's contents, use `GET /v1/resources?OwnerId={id}` (or `?Groups={id}`) rather than this payload.
+
 ### Example
 
 ```bash
@@ -213,7 +215,7 @@ curl -X POST http://localhost:8181/v1/group \
 
 ## Delete Group
 
-Delete a group.
+Delete a group. Deleting a group that is assigned as a user's scope group returns `409 Conflict` with `group is assigned as a user scope`; reassign or clear that user's scope first.
 
 ```
 POST /v1/group/delete?Id={id}
@@ -279,8 +281,10 @@ curl http://localhost:8181/v1/groups/meta/keys
 
 ### Response
 
+Each key is returned as an object with a `key` field:
+
 ```json
-["status", "priority", "deadline", "budget"]
+[{"key": "status"}, {"key": "priority"}, {"key": "deadline"}, {"key": "budget"}]
 ```
 
 ## Bulk Operations
@@ -336,7 +340,7 @@ POST /v1/groups/addMeta
 
 ### Bulk Delete
 
-Delete multiple groups.
+Delete multiple groups. If any of them is assigned as a user's scope group, the request returns `409 Conflict` with `group is assigned as a user scope`; reassign or clear that user's scope first.
 
 ```
 POST /v1/groups/delete
@@ -431,15 +435,18 @@ POST /v1/group/editMeta?id={id}
 
 #### Errors
 
-- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments)
+- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments), or corrupt existing meta
 - 404: Group not found
-- 500: Corrupt existing meta
 
 ---
 
 # Group Relations API
 
 Relations define typed, directional connections between groups (e.g., "Person works at Company").
+
+:::note
+With `-auth` enabled, every relation and relation-type write requires the admin or editor role and returns `403 Forbidden` otherwise. Listing relation types is open to any authenticated role.
+:::
 
 ## List Relation Types
 
@@ -477,14 +484,21 @@ curl "http://localhost:8181/v1/relationTypes?FromCategory=1&ToCategory=2"
 [
   {
     "ID": 1,
+    "CreatedAt": "2024-01-15T10:00:00Z",
+    "UpdatedAt": "2024-01-15T10:00:00Z",
     "Name": "works at",
-    "ReverseName": "employs",
     "Description": "Employment relationship",
-    "FromCategory": 1,
-    "ToCategory": 2
+    "FromCategory": null,
+    "FromCategoryId": 1,
+    "ToCategory": null,
+    "ToCategoryId": 2,
+    "BackRelation": null,
+    "BackRelationId": 3
   }
 ]
 ```
+
+`FromCategory` and `ToCategory` are associations that this endpoint does not preload, so they serialize as `null`; the IDs are in `FromCategoryId` and `ToCategoryId`. The reverse relation type is a separate row, reached through `BackRelationId`.
 
 ## Create Relation Type
 
@@ -498,11 +512,11 @@ POST /v1/relationType
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Name` | string | Relation name (e.g., "works at") |
-| `ReverseName` | string | Reverse relation name (e.g., "employs") |
+| `Name` | string | **Required.** Relation name (e.g., "works at") |
+| `ReverseName` | string | Creates (or links to) a second relation type with the categories swapped, joined to this one through `BackRelationId`. Setting it equal to `Name` requires `FromCategory` and `ToCategory` to be the same category |
 | `Description` | string | Description |
-| `FromCategory` | integer | Source group category ID |
-| `ToCategory` | integer | Target group category ID |
+| `FromCategory` | integer | **Required.** Source group category ID |
+| `ToCategory` | integer | **Required.** Target group category ID |
 
 ### Example
 
@@ -556,6 +570,14 @@ POST /v1/relation
 | `GroupRelationTypeId` | integer | **Required.** Relation type ID |
 | `Name` | string | Optional relation instance name |
 | `Description` | string | Optional description |
+
+### Constraints
+
+- A group cannot be related to itself: `FromGroupId == ToGroupId` is rejected with `cannot relate to self`.
+- Both groups and the relation type must have categories assigned.
+- Each group's category must match the relation type's: the source group's category must equal `FromCategory`, and the target group's must equal `ToCategory`. A mismatch returns 400 with a message naming both sides.
+
+When the relation type carries a `BackRelationId`, the reverse edge is created in the same transaction, so one POST can produce two rows. Only the forward relation is returned.
 
 ### Example
 

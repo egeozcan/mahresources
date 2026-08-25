@@ -22,7 +22,7 @@ mr note-block types
 
 ## Examples
 
-**List all block types as a table (default)**
+**List all block types (this command only ever prints JSON)**
 
 ```bash
 mr note-block types
@@ -49,7 +49,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of block type descriptors, each with type (string), defaultContent (object), defaultState (object), and optional plugin metadata (label, icon, description, plugin, pluginName)
+Array of block type descriptors, each with type (string), defaultContent (object), defaultState (object), and optional plugin metadata (label, icon, description, plugin, pluginName, filters)
 
 ## Exit Codes
 

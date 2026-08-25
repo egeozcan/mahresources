@@ -1,5 +1,5 @@
 ---
-outputShape: Array of NoteType objects with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+outputShape: Array of NoteType objects with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type get, note-type create, notes list
 ---

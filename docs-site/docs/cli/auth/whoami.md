@@ -41,6 +41,10 @@ This command has no local flags.
 | `--page` | int | `1` | Page number for list commands (default page size: 50) |
 | `--quiet` | bool | `false` | Only output IDs |
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
+## Output
+
+Username, Role, IsAdmin, CanWrite and ScopeGroupId lines; --json emits the full /v1/auth/me object (authEnabled, userId, username, role, scopeGroupId, isAdmin, canWrite, superUser, csrfToken)
+
 ## Exit Codes
 
 0 success; 1 error (login failed, network error, or not authenticated)

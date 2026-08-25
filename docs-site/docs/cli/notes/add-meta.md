@@ -7,11 +7,11 @@ sidebar_label: add-meta
 # mr notes add-meta
 
 Add metadata keys to every Note listed in `--ids` by passing a JSON
-string via `--meta`. The server-side endpoint at
-`POST /v1/notes/addMeta` determines whether this merges on top of
-existing meta or replaces it — see the admin interface docs for exact
-semantics. For single-note single-key edits, use `note edit-meta`
-(dot-path syntax).
+string via `--meta`. The keys are merged into each Note's existing meta,
+so a key named in `--meta` is overwritten and a key that is not is left
+alone. On SQLite the merge is recursive and a `null` value removes the
+key; on Postgres it replaces a top-level key's whole value. For
+single-note single-key edits, use `note edit-meta` (dot-path syntax).
 
 ## Usage
 

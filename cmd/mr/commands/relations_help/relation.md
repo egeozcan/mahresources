@@ -15,5 +15,6 @@ Use the `relation` subcommands to operate on a single relation by ID:
 `create` links two groups, `edit-name` and `edit-description` update
 its labels, and `delete` removes the link. There is no `relation list`
 or `relation get`: to read a relation back, fetch a participating group
-with `mr group get <id> --json` and inspect its `Relationships` array,
-or query via `mr mrql`.
+with `mr group get <id> --json` and inspect its `Relationships` array.
+MRQL cannot query relations; its entity types are resources, notes and
+groups.

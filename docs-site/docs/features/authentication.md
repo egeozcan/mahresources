@@ -43,11 +43,19 @@ You cannot log in until at least one account exists. Create the first administra
   -db-type=SQLITE -db-dsn=./mahresources.db -file-save-path=./files
 ```
 
-This step is idempotent: on each startup it creates the account if it is missing, or resets the named account to an enabled administrator if it already exists -- overwriting its password and clearing any group scope each time. `-create-admin-user` requires `-create-admin-password`, or startup fails.
+This step is idempotent: on each startup it creates the account if it is missing, or resets the named account to an enabled administrator if it already exists, overwriting its password, re-enabling it if it was disabled, clearing any group scope, and revoking all of its sessions and API tokens each time. `-create-admin-user` requires `-create-admin-password`, or startup fails.
+
+The bootstrap runs whether or not `-auth` is set, so you can seed an administrator on a running no-auth instance before turning authentication on.
 
 :::tip Rotate the bootstrap credentials out of your launch command
 Once the admin account exists and you have logged in, remove `-create-admin-password` from your start command (and your shell history / process list) and manage further accounts through the UI or the [`mr user`](../cli/user/index.md) CLI commands.
 :::
+
+### The root administrator
+
+Startup guarantees that an enabled administrator exists, in both auth modes. If none does, Mahresources creates one named `root` with a crypto-random password. That password is never printed and nobody knows it, so it does not let anyone in; it exists so the instance is never left with no administrator at all. An existing non-admin account named `root` is not hijacked: the name is suffixed to `root2`, `root3` and so on until an unused one is found.
+
+Under `-auth`, if every enabled administrator still holds an auto-generated password, a warning is logged on every boot naming `-create-admin-user` and `-create-admin-password` as the remedy. It repeats until an operator sets a real admin password.
 
 ## The four roles
 
@@ -55,18 +63,20 @@ Every account has exactly one role. Capabilities are cumulative from guest up to
 
 | Role | Can do | Cannot do |
 |------|--------|-----------|
-| **admin** | Everything: full CRUD, plus system settings, plugin management, Categories and Resource Categories, and user administration (`/admin/users`). | -- |
-| **editor** | Full CRUD on entities (resources, notes, groups, tags, note types, series, relations, saved queries). | Create or edit Categories and Resource Categories; change system settings; manage users or plugins. |
-| **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions. May optionally be confined to a single Group's subtree. | Edit Categories or Resource Categories; edit note types, relations, series, or saved queries; system administration. |
+| **admin** | Everything: full CRUD, plus system settings, plugin management, Categories, Resource Categories and Template Partials, and user administration (`/admin/users`). | -- |
+| **editor** | Full CRUD on entities (resources, notes, groups, tags, note types, series, relations, saved queries). | Create or edit Categories, Resource Categories or Template Partials; change system settings; manage users or plugins. |
+| **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions (for a group-limited user, only for plugins an operator has opened to scoped accounts). May optionally be confined to a single Group's subtree. | Edit Categories or Resource Categories; edit note types, relations, series, or saved queries; system administration. |
 | **guest** | Read-only access. Always confined to a single Group's subtree. | Any write. Anything outside its scope group. |
 
 ### Group-subtree scoping
 
 Accounts with the **user** or **guest** role can be confined to a single Group and everything beneath it. A guest is *always* scoped; a user is scoped *optionally*. The scope is set per account via the `ScopeGroupId` field on the user.
 
-Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. A scoped account can never see or touch an entity that lives outside its scope group's subtree.
+Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. What it confines are the entities that carry an owner, Groups, Resources and Notes, and every path that reads them.
 
-Scoped accounts are also denied every **plugin endpoint** (the `/v1/plugins/...` API, block and display rendering, and plugin pages). Plugin code runs with full, unscoped database access, so a confined account is blocked from invoking it rather than allowed to reach data outside its subtree through a plugin. Unscoped roles (admin, editor, and an unscoped user) are unaffected.
+Tags, Categories, Note Types, Series, Saved Queries and Relation Types carry no owner. They are global, and every authenticated account can read them; what limits a scoped account there is its role, not its scope group.
+
+Group-limited accounts are also refused a plugin's own surfaces by default: its pages, its `/v1/plugins/...` endpoints, and block and display rendering. An operator opens one plugin at a time with **Allow limited users** on `/plugins/manage`, or `mr plugin scoped-access <name> --allowed=true`. Opening a plugin does not widen it, because a confined caller's `mah.db` stays bound to that caller's own subtree and role. Unscoped roles (admin, editor, and an unscoped user) are unaffected. See [Plugin Permissions](./plugin-permissions.md).
 
 ## How to authenticate
 
@@ -107,7 +117,7 @@ You normally do not need to think about CSRF. It is handled for you. It matters 
 
 To slow down password guessing, you can throttle failed logins:
 
-- **`LOGIN_MAX_ATTEMPTS`** (`-login-max-attempts`) is the number of failed attempts allowed within the window before further attempts are answered with HTTP 429. The default is `0`, which **disables** rate-limiting.
+- **`LOGIN_MAX_ATTEMPTS`** (`-login-max-attempts`) is the number of failed attempts allowed within the window before further attempts are refused: API callers get HTTP 429, and the browser form is redirected to `/login?error=rate`. The default is `0`, which **disables** rate-limiting. Only a real credential rejection counts against the limit; contention answers HTTP 503 with `Retry-After` and any other failure answers HTTP 500, and neither is charged.
 - **`LOGIN_ATTEMPT_WINDOW`** (`-login-attempt-window`) is the sliding window for counting attempts, and also the lockout duration once the limit is hit. The default is `15m`.
 
 Throttling is keyed on **both** the client IP **and** the target username, so neither a single IP nor a single account can be brute-forced past the limit. Counters are in-memory and per-process: they reset when the server restarts.
@@ -137,7 +147,7 @@ Passwords must contain at least **8 Unicode code points** and occupy at most **7
 - **Administrators** manage all accounts from `/admin/users`. Each row links to `/admin/users/edit?id=N`, where an existing account's username, display name, role, scope group and disabled state can be changed, and its password reset. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
 - The user-update API is partial: omitted properties are preserved. Send JSON `scopeGroupId: null` (or an empty/zero `scopeGroupId` in form or query input) to explicitly clear an optional user scope; omitting `scopeGroupId` leaves it unchanged. JSON `password: null` is rejected. Omitting `password`, or leaving the HTML password field blank, keeps the current password.
 - Saving a disabled account revokes all of that account's browser sessions and API tokens. An administrator password reset also revokes all of the target account's sessions and tokens. Changing your own password signs out other browser sessions while keeping the browser session that submitted the change active; existing API tokens remain valid.
-- The last enabled administrator cannot be demoted or disabled: the save is refused with `409 Conflict`, and the edit page comes back with the message and the values you typed. Renaming that account or setting a new password is allowed.
+- The last enabled administrator cannot be deleted, demoted, or disabled: the save is refused with `409 Conflict`, and the edit page comes back with the message and the values you typed. Renaming that account or setting a new password is allowed.
 - A group that is still used as an account scope cannot be deleted. The delete is refused with `409 Conflict`; move or clear each affected account scope first. This prevents a scoped account from becoming unrestricted because its scope disappeared.
 - Both `/admin/users` and `/admin/users/edit` are admin-only. Editors, users and guests receive `403`.
 - **Every signed-in user** has a self-service account page at `/account` where they can change their own password and manage their own API tokens.

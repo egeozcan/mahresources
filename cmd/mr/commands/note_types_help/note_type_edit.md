@@ -1,5 +1,5 @@
 ---
-outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type edit-name, note-type edit-description, note-type get
 ---
@@ -18,7 +18,9 @@ and list pages.
 
 Because only explicitly-passed flags are sent, passing a `--custom-*`
 flag with an empty string is how a slot is cleared; omitting it leaves
-the stored value alone.
+the stored value alone. `--section-config ""` is the exception: an empty
+section config is ignored rather than stored, so a section config cannot
+be cleared from the CLI.
 
 # Example
 
@@ -30,6 +32,6 @@ the stored value alone.
   mr note-type edit --id 1 --custom-summary "<div>{{ Note.Name }}</div>"
   mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 
-  # mr-doctest: create, edit meta-schema, verify via list (get omits MetaSchema)
+  # mr-doctest: create, edit the meta schema, verify from the edit response
   ID=$(mr note-type create --name "doctest-nt-edit-$$-$RANDOM" --json | jq -r '.ID')
   mr note-type edit --id $ID --meta-schema '{"type":"object"}' --json | jq -e '.MetaSchema == "{\"type\":\"object\"}"'

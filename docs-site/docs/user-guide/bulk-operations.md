@@ -14,7 +14,7 @@ Click the checkbox next to any item in a list view to select it.
 
 | Action | Method |
 |--------|--------|
-| Toggle selection | Click checkbox or press Space |
+| Toggle selection | Click checkbox, or press Space or Enter |
 | Range select | Shift+Click or Right-click |
 | Select text range then toggle | Select text with mouse, press Space |
 
@@ -51,8 +51,14 @@ When you select one or more items, the bulk editor appears inline above the list
 | Add Groups | Yes | Yes | - | - |
 | Update Dimensions | Yes | - | - | - |
 | Compare | Yes (2 only) | - | Yes (2 only) | - |
-| Merge | Detail page only | - | Detail page only | Yes |
+| Merge | Detail page or compare view | - | Detail page only | Yes |
+| Export | - | - | Yes | - |
+| Plugin actions | Yes | Yes | Yes | - |
 | Delete | Yes | Yes | Yes | Yes |
+
+**Export** sends the selected group IDs to `/admin/export`, where the export is configured and run; see [Export & Import](../features/export-import.md).
+
+**Plugin actions** appear in the bulk editor for every enabled plugin action declared for that entity type; see [Plugin Actions](../features/plugin-actions.md).
 
 ## Adding Tags
 
@@ -108,7 +114,7 @@ Select image resources and click **Update Dimensions** to re-read each file and 
 Compare two resources side-by-side:
 
 1. Select exactly 2 resources
-2. The **Compare** button appears
+2. The **Compare** button becomes enabled. It is always visible; with any other number selected it stays disabled and a hint says why.
 3. Click **Compare**
 4. A comparison view opens
 
@@ -116,7 +122,19 @@ The comparison view shows metadata differences between the two Resources: size d
 
 For image resources, four visual comparison modes are available: side-by-side, slider, onion skin, and toggle. For text-based resources, a unified or split diff view highlights line-level changes. Cross-resource version comparison is also supported.
 
-When comparing two different resources (not two versions of the same resource) and both are at their current version, a **Merge** panel appears at the bottom of the compare view. Select which resource wins, optionally keep the loser as an older version of the winner, then confirm. This is equivalent to the merge operation available on resource detail pages.
+A collapsed **Merge** panel is always present at the bottom of the compare view. Its controls are enabled only when the two resources are different (not two versions of the same resource) and both are at their current version; otherwise they are disabled and the panel states the reason. When it is available, select which resource wins, optionally keep the loser as an older version of the winner, then confirm. This is equivalent to the merge operation available on resource detail pages.
+
+## Comparing Groups
+
+Compare two groups side-by-side:
+
+1. Select exactly 2 groups
+2. Click **Compare**, which becomes enabled at exactly two selections
+3. The group comparison page opens
+
+The page reports same or different for the core fields (name, category, owner, URL, created and updated timestamps), and shows inline text diffs for the description and Meta JSON. Tags, owned groups, notes and resources, related groups, notes and resources, and forward and reverse relations are each split into left-only, shared and right-only lists; each section heading shows the number of items compared. A summary strip at the top reports how many sections differ and how many core fields differ.
+
+Either side can be re-picked on the page itself: each has its own group picker, so you can walk through a set of groups without going back to the list.
 
 ## Bulk Deletion
 
@@ -144,7 +162,7 @@ Merge two resources from either of two places:
 
 **From the compare view**, reached by bulk-selecting exactly 2 resources and clicking **Compare** (see [Comparing Resources](#comparing-resources)):
 
-1. When both resources are at their current version, a **Merge** panel appears at the bottom of the compare view
+1. Open the **Merge** panel at the bottom of the compare view; its controls are enabled when both resources are at their current version
 2. Select which resource wins, optionally keep the loser as an older version of the winner
 3. Confirm the merge
 
@@ -193,4 +211,5 @@ The merge operation:
 | Click checkbox | Toggle single selection |
 | Shift + Click | Select range |
 | Right-click | Select range (alternative) |
+| Space or Enter | Toggle the focused item |
 | Space (with text selected) | Toggle selected checkboxes |

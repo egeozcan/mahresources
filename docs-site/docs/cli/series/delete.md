@@ -7,9 +7,12 @@ sidebar_label: delete
 # mr series delete
 
 Delete a series by ID. Destructive: removes the series row. Resources
-previously attached to the series keep their bytes but have their
-`SeriesId` cleared (the foreign key uses `ON DELETE SET NULL`). Deleting
-a nonexistent ID returns exit code 1.
+previously attached to the series keep their bytes and have their
+`SeriesId` cleared (the foreign key uses `ON DELETE SET NULL`). Before
+the row goes, the series meta is merged into each member's stored
+metadata, with the resource's own values winning, so what the series
+contributed survives on the resources it held. Deleting a nonexistent ID
+returns exit code 1.
 
 ## Usage
 

@@ -12,6 +12,7 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 
 | Property | Description |
 |----------|-------------|
+| `guid` | Stable UUIDv7 identity, unique and assigned on create; used to match entities across export and import |
 | `name` | Display name for the resource |
 | `originalName` | Original filename when uploaded |
 | `originalLocation` | Source URL or path if imported |
@@ -134,7 +135,7 @@ Upload deduplication is hash-based (SHA1). If a file with the same hash already 
 
 ## Deletion Behavior
 
-Deleted files are backed up to the `/deleted/` directory before the database record is removed. The backup file is named using the format `{hash}__{id}__{ownerId}___{basename}` to prevent collisions and preserve context. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
+Deleted files are backed up before the database record is removed, to `/deleted/<storage-location>/{hash}__{id}__{ownerId}___{basename}`, which prevents collisions and preserves context. `<storage-location>` is the resource's alternative-filesystem key, or the literal `deleted` for the default filesystem, and `{ownerId}` is `nil` when the resource had no owner. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
 
 ## Relationships
 

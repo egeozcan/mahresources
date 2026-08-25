@@ -5,8 +5,10 @@ relatedCmds: resource get, resources list, resources delete
 
 # Long
 
-Delete a resource by ID. Destructive: removes both the database row and
-the stored file bytes. Deleting a nonexistent ID returns exit code 1.
+Delete a resource by ID. Destructive: removes the database row. The file
+is first copied into the server's `/deleted` folder, and the original is
+removed only when no other resource or version shares its content hash.
+Deleting a nonexistent ID returns exit code 1.
 
 # Example
 

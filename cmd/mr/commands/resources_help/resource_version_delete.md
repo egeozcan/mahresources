@@ -6,8 +6,9 @@ relatedCmds: resource versions, resource versions-cleanup
 # Long
 
 Delete a specific version by ID. The parent Resource is untouched. Both
-`--resource-id` and `--version-id` are required. Fails if deleting would
-leave the Resource with zero versions.
+`--resource-id` and `--version-id` are required. Fails on the Resource's
+current version, so restore or upload a different one first, and fails if
+deleting would leave the Resource with zero versions.
 
 # Example
 

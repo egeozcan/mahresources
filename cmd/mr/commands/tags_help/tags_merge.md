@@ -8,8 +8,11 @@ relatedCmds: tags delete, tags list, resources merge
 Merge one or more "loser" tags into a single "winner". The winner's ID
 and name are preserved; Resources, Notes, and Groups previously tagged
 with any loser are re-tagged with the winner; the loser tag rows are
-then deleted. Use to consolidate duplicate or redundant tags (e.g.,
-`photo` and `photos`) without losing associations.
+then deleted. Each loser's Meta is folded into the winner's, with the
+winner's own keys winning on conflict, and a JSON backup of every loser
+is stored under `backups` in the winner's Meta. Use to consolidate
+duplicate or redundant tags (e.g., `photo` and `photos`) without losing
+associations.
 
 # Example
 

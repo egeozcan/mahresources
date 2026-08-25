@@ -32,10 +32,12 @@ MRQL applies fixed safety limits before translation or execution:
 | Interactive `OFFSET` | 10,000 |
 | Export `LIMIT` | 10,000 |
 | Export `OFFSET` | 10,000 |
+| Buckets (bucketed `GROUP BY`) | 1,000 |
 
 Queries exactly at a limit are accepted. Larger explicit execution limits are
-rejected rather than silently truncated. A query without `LIMIT` continues to
-use the runtime-configurable MRQL default limit.
+rejected rather than silently truncated. A query without `LIMIT` uses the MRQL
+default limit: `-mrql-default-limit` / `MRQL_DEFAULT_LIMIT`, 500 by default,
+editable at runtime as `mrql_default_limit`.
 
 ## Operators
 
@@ -72,7 +74,7 @@ Relation fields (`tags`, `groups`/`group`, `notes`, `resources`, `children`) mat
 Two derived fields behave differently from the rest:
 
 - `similarImages` is a derived relation over resources sharing an exact DHash. Query it as `similarImages IS [NOT] EMPTY`.
-- `shared` (notes) is a derived boolean backed by share-token presence. It accepts only `= true` / `!= false` and their inverses; any other operator, or a non-boolean value, is an error.
+- `shared` (notes) is a derived boolean backed by share-token presence. As a comparison it accepts only `= true` / `!= false` and their inverses; any other comparison operator, or a non-boolean value, is an error. `shared IS EMPTY` and `shared IS NOT EMPTY` also work, and mean not shared and shared.
 
 ## Metadata Fields
 
@@ -180,7 +182,7 @@ Note: when `GROUP BY` includes a junction relation (e.g. `tags`), `COUNT()` coun
 
 ### Date Buckets
 
-Group datetime fields (`created`, `updated`) by calendar period with a dotted suffix: `.day` (`YYYY-MM-DD`), `.week` (`YYYY-MM-DD`, Monday of the week), `.month` (`YYYY-MM`), `.year` (`YYYY`). Bucket labels sort chronologically. Valid only in `GROUP BY` (both modes) and as its `ORDER BY` key — use date ranges in the filter expression instead.
+Group a datetime field (`created`, `updated`, and on notes `startDate`, `endDate`) by calendar period with a dotted suffix: `.day` (`YYYY-MM-DD`), `.week` (`YYYY-MM-DD`, Monday of the week), `.month` (`YYYY-MM`), `.year` (`YYYY`). Bucket labels sort chronologically. Valid only in `GROUP BY` (both modes) and as its `ORDER BY` key. Use date ranges in the filter expression instead.
 
 ```
 type = note GROUP BY created.month COUNT() ORDER BY created.month ASC
@@ -216,7 +218,7 @@ type = group AND parent.parent.name = "Root"
 type = note AND owner.children.name ~ "Sprint*"
 ```
 
-Valid leaf fields after traversal: group scalars (`name`, `description`, `category`, `id`, `created`, `updated`), relations (`tags`, `parent`, `children`), and meta (`meta.<key>`).
+Valid leaf fields after traversal: group scalars (`name`, `description`, `category`, `url`, `id`, `guid`, `created`, `updated`), `tags`, and meta (`meta.<key>`). `parent`, `children` and `owner` are valid as a leaf only with `IS NULL` / `IS NOT NULL` (`owner.parent IS NULL`); comparing them is an error.
 
 ### Recursive Traversal — `ancestors.` / `descendants.`
 
@@ -270,7 +272,7 @@ tags = "urgent" LIMIT 30
 TEXT ~ "quarterly review"
 ```
 
-- Only the fields common to all three types are allowed: `id`, `name`, `description`, `created`, `updated`, `tags`, `meta.<key>`, `TEXT`.
+- Only the fields common to all three types are allowed: `id`, `name`, `description`, `created`, `updated`, `tags`, `guid`, `meta.<key>`, `TEXT`.
 - `ORDER BY` accepts `name`, `created`, `updated`.
 - `GROUP BY` is rejected.
 - Results are grouped by entity type in the response: resources, then notes, then groups.
@@ -311,7 +313,7 @@ mr mrql 'type = resource AND created > $since' --param since=-7d
 mr mrql run monthly --param month=2026-07
 ```
 
-API: `params` object on `POST /v1/mrql`; `param.<name>=value` query params on `POST /v1/mrql/saved/run`. Shortcodes: `param-<name>` attrs. `POST /v1/mrql/validate` returns a `params` array; saved-query responses carry a derived `params` array.
+API: a `params` object in the JSON body, or `param.<name>=value` query parameters. Both are accepted on `POST /v1/mrql`, `/v1/mrql/explain`, `/v1/mrql/export` and `/v1/mrql/saved/run`; query parameters win on collision. Shortcodes: `param-<name>` attrs. `POST /v1/mrql/validate` returns a `params` array; saved-query responses carry a derived `params` array.
 
 ## EXPLAIN
 
@@ -329,7 +331,9 @@ Web: **Explain** button / `Mod-Shift-Enter`.
 `GET|POST /v1/mrql/export` / `mr mrql export` — stream results as `format=csv` (default) or `format=json`. Same inputs as execution.
 
 - CSV aggregated: group keys + aggregate aliases. Flat: fixed scalar columns per entity (`meta` as JSON string); single entity type only. Bucketed: bucket-key columns + flat item columns.
-- JSON: the exact `/v1/mrql` body. Default-limit signalled via the `X-MRQL-Default-Limit-Applied` header.
+- JSON: the exact `/v1/mrql` body.
+
+When no explicit `LIMIT` was given, the applied default is reported in the `X-MRQL-Default-Limit-Applied` response header, on CSV and JSON alike.
 
 ```bash
 mr mrql export 'type = resource' --format csv -o out.csv
@@ -356,7 +360,7 @@ notes IS EMPTY AND fileSize > 10mb
 descendants.category = "Archive"
 ```
 
-- Filter grammar only. No `ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, `$name` params, or `type`. `SIMILAR TO resource(N)` is allowed.
+- Filter grammar only. No `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, `$name` params, or `type`. `SIMILAR TO resource(N)` is allowed. The web bar additionally accepts a trailing `ORDER BY` and applies it as the list's sort; `ORDER BY` is rejected on `mrql=` and `--mrql`.
 - Web: type in the bar above the list; submitting sets `?mrql=<expr>`. An invalid expression fails closed (error banner, zero results). The **Edit in MRQL editor** link opens `/mrql?q=type = <entity> AND (<expr>)`.
 - API: `mrql=<expr>` on `GET /v1/resources`, `/v1/notes`, `/v1/groups`. Invalid returns HTTP 400 with a positioned error.
 - CLI: `--mrql "<expr>"` on `mr resources list`, `mr notes list`, `mr groups list`.

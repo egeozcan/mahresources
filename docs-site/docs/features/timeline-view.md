@@ -24,10 +24,12 @@ Each entity list page includes a view switcher in the navigation area. Click **T
 
 ## How It Works
 
-The chart displays a series of vertical bars. Each bar represents a time bucket. Two bar types appear per bucket:
+The chart displays a series of vertical bars. Each bar represents a time bucket and shows one activity type at a time. An **Activity type** toggle above the chart selects which timestamp is charted:
 
-- **Created** (darker) -- entities whose `CreatedAt` falls within the bucket
-- **Updated** (lighter) -- entities whose `UpdatedAt` falls within the bucket
+- **Created** -- entities whose `CreatedAt` falls within the bucket
+- **Updated** -- entities whose `UpdatedAt` falls within the bucket
+
+Switching the toggle redraws the chart against the other timestamp. The two are never drawn side by side.
 
 Bar heights scale proportionally to the maximum count in the visible window. Empty buckets show a thin placeholder line.
 
@@ -87,7 +89,7 @@ GET /v1/queries/timeline
 |-----------|------|---------|-------------|
 | `granularity` | string | `monthly` | Bucket size: `yearly`, `monthly`, or `weekly` |
 | `anchor` | string | today | End date for the window (`YYYY-MM-DD` format) |
-| `columns` | int | `15` | Number of buckets to return (max 60) |
+| `columns` | int | `15` | Number of buckets to return. A value outside 1 to 60 is ignored and the default is used |
 
 All standard entity filter parameters are also accepted and restrict which entities are counted.
 
@@ -143,7 +145,7 @@ mr queries timeline
 |------|---------|-------------|
 | `--granularity` | `monthly` | Bucket granularity: `yearly`, `monthly`, or `weekly` |
 | `--anchor` | today | Anchor date (`YYYY-MM-DD`) |
-| `--columns` | `15` | Number of buckets (max 60) |
+| `--columns` | `15` | Number of buckets. A value outside 1 to 60 is ignored and the default is used |
 | `--json` | | Output raw JSON instead of the ASCII chart |
 
 `--json` is a global `mr` flag available on every command, not specific to timeline. All entity-specific filter flags are also available. For example, `mr resources timeline --name="sunset"` restricts the chart to resources matching "sunset".

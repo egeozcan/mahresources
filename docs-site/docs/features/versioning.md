@@ -105,11 +105,19 @@ For text files (plain text, code, markdown, etc.):
 | **Unified** | Single view with additions (green) and deletions (red) marked |
 | **Side-by-side** | Two columns showing each version with changes highlighted |
 
-The comparison also shows statistics: lines added and lines removed.
+The comparison also shows statistics: lines added and lines removed. The toolbar carries three further controls:
+
+- **Previous change** and **Next change**, which jump between changed regions and report the position as "n of m changes"
+- **Expand all**, which opens the unchanged regions the diff folds away by default
+- **Copy diff**, which puts the diff on the clipboard as a patch
+
+#### PDF Comparison
+
+PDFs get their own panel. It shows a document icon, the file size and a download link for each side, with a **Load in viewer** button that swaps in two inline frames rendering the two documents side by side.
 
 #### Binary and Other Files
 
-For files without visual comparison support, you can:
+For files that are neither image, text, nor PDF, you can:
 - See thumbnails (if available)
 - View file metadata
 - Download both versions for local comparison
@@ -224,6 +232,8 @@ On startup, a background migration automatically creates actual v1 records for R
 2. Processes in batches of 500 (with 10ms sleep between batches)
 3. Creates a v1 record from the current Resource state
 4. Logs progress every 10,000 Resources
+
+A second pass then syncs each Resource's hash, location, content type, dimensions and size from its current version, in batches of 100, repairing Resources whose fields have drifted. `-skip-version-migration` skips both passes.
 
 The migration does not block startup. For databases with millions of Resources, skip it and run during a maintenance window:
 

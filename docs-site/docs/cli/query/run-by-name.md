@@ -7,8 +7,10 @@ sidebar_label: run-by-name
 # mr query run-by-name
 
 Execute a saved query by its unique `Name` instead of its numeric
-ID. Same semantics as `query run`: read-only handle, 400 on SQL
-errors, 404 when the name does not resolve, and the same
+ID. Same semantics as `query run`: the query runs on the connection
+`-db-readonly-dsn` names, `400` when the statement fails to prepare
+or execute, `500` when it fails part-way through the result rows,
+`404` when the name does not resolve, and the same
 `{"columns": [...], "rows": [[...], ...]}` response. Useful in
 scripts where the ID is not known ahead of time but the name is a
 stable contract.

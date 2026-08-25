@@ -33,7 +33,7 @@ mr group export 42 85 -o backup-multi.tar
 
 #### Web UI
 
-You can also start an export from the group detail page in the web UI. The Admin section provides export controls with scope and fidelity options. The resulting tar is downloadable from the job status page.
+An export can also be started from **Admin** > **Export** (`/admin/export`), which carries the group picker and the scope and fidelity options, or from the groups list by selecting groups and choosing **Export selected**. When the job completes, a **Download tar** link appears on that page, and the jobs panel carries the same link.
 
 ### Full fidelity export (versions + previews)
 
@@ -67,7 +67,7 @@ The import process:
 2. Builds a plan (schema mappings, conflict detection)
 3. Applies the plan with `--auto-map` (maps categories, tags, etc. to existing definitions by name)
 
-Resources with identical hashes on the destination are skipped, so re-importing is safe.
+Re-importing is not a no-op. Every exported group, note and resource carries a GUID, and a row already present under that GUID is matched on it before the resource hash is consulted at all. Under the default `merge` policy the existing row's scalar fields are overwritten from the archive and its meta is deep-merged, so restoring an old backup onto a live instance reverts renames and re-parents groups. A resource whose hash already exists but whose GUID does not is skipped. See [GUID collisions](#guid-collisions) for the other two policies.
 
 ### Manifest-only backup (metadata only)
 
@@ -106,6 +106,10 @@ mr --server http://destination:8181 group import transfer.tar --parent-group 10
 ```
 
 The `--parent-group` flag places the imported top-level groups under group ID 10 on the destination.
+
+#### Web UI
+
+**Admin** > **Import** (`/admin/import`) runs the same parse, review and apply flow with the mapping choices as dropdowns, which is usually easier than authoring a decisions file by hand.
 
 ### Scripted migration (dry-run, plan, decisions, apply)
 
@@ -180,6 +184,20 @@ To create duplicate records instead (separate resource entries pointing to the s
 mr group import transfer.tar --on-resource-conflict duplicate
 ```
 
+### GUID collisions
+
+Every exported group, note and resource carries a GUID, and the apply step matches on it before anything else. The plan reports how many rows already exist under a GUID it is about to import as `conflicts.guid_matches`.
+
+`--guid-collision-policy` decides what happens to those rows:
+
+- `merge` (the default when the flag and the decisions file both leave it unset) overwrites the existing row's scalars from the archive and deep-merges its meta, keys the archive does not carry surviving
+- `skip` leaves the existing row exactly as it is
+- `replace` overwrites the scalars and meta entirely and resets tags to the incoming set
+
+```bash
+mr group import transfer.tar --guid-collision-policy skip
+```
+
 ### Schema definition mismatches
 
 During parsing, the import engine matches source schema definitions (categories, tags, note types, resource categories, group relation types) to destination definitions by name.
@@ -188,14 +206,14 @@ During parsing, the import engine matches source schema definitions (categories,
 - **No match**: suggested action is `create` (a new definition will be created)
 - **Ambiguous**: multiple destination candidates match; requires explicit resolution
 
-To disable auto-mapping and force manual resolution of all schema definitions:
+`--decisions` supersedes `--auto-map` and the other mapping flags: the file replaces the decisions the CLI would have built, and a schema definition the file does not name takes the default create path, so it is created new on the destination.
 
 ```bash
 mr group import transfer.tar --auto-map=false --decisions decisions.json
 ```
 
 :::warning
-`--auto-map=false` requires a `--decisions` file. Without it, the import will refuse to proceed because all mappings are unresolved.
+The CLI refuses `--auto-map=false` without `--decisions`, because that combination leaves every mapping unresolved. Independently of that flag, the server refuses an apply that leaves an **ambiguous** mapping unresolved, so an ambiguous entry always needs a decisions file.
 :::
 
 ### Dangling references

@@ -12,6 +12,10 @@ parsed examples, and Annotations (outputShape, exitCodes, relatedCmds). JSON
 output is intended for agents and tooling; Markdown output is intended for the
 docs-site (`docs-site/docs/cli/`).
 
+Markdown output owns its target directory. Any `.md` file under `--output`
+that is not part of the freshly generated tree is deleted, along with
+directories left empty afterwards. Files that are not Markdown are untouched.
+
 Cobra's built-in `help` and `completion` subcommands are skipped: they are not
 user-facing and are excluded from the documented contract.
 

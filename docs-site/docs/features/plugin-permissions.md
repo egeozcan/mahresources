@@ -219,7 +219,7 @@ A plugin never receives its caller's credentials. The `Authorization` header, se
 
 Credential-bearing entity fields are withheld too. The entity handed to a shortcode is built by walking every exported field, so a credential added to a model would be exposed by default; `ShareToken`, `TokenHash`, `CsrfToken` and `PasswordHash` are withheld by name. A note's share token is a bearer credential granting anonymous read of that note, and `render` — the least privileged capability that sees an entity at all — would otherwise be handed one.
 
-The application's own remote-fetch endpoints (`POST /v1/resource/remote`, the download queue) are unchanged and apply no address filtering. They are operator paths, reachable by any authenticated user with the rights to use them, and constraining them belongs with the application's download surface rather than with the plugin system.
+The application's own remote-fetch endpoints (`POST /v1/resource/remote`, the download queue) apply the same dial-time deny, governed by `-allow-private-fetch` rather than by any plugin's manifest. What they do not apply is an allowlist: a plugin's `network` list bounds only that plugin's own requests. They are operator paths, reachable by any authenticated user with the rights to use them, and which public hosts they may reach belongs with the application's download surface rather than with the plugin system.
 
 ## Dependencies
 

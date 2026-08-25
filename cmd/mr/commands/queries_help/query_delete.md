@@ -6,9 +6,9 @@ relatedCmds: query get, query create, queries list
 # Long
 
 Delete a saved query by ID. Destructive: removes the database row
-for the query. Any downstream references (saved dashboards, bookmarks)
-should be updated separately. Deleting a nonexistent ID returns exit
-code 1.
+for the query. Any downstream references (a note table block that
+uses the query via `queryId`) should be updated separately. Deleting
+a nonexistent ID returns exit code 1.
 
 # Example
 

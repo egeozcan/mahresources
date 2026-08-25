@@ -50,7 +50,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with a jobs array; each entry has id, url, status, progress, totalSize, progressPercent, createdAt, and optional error, startedAt, completedAt, resourceId, source
+Object with a jobs array; each entry has id, url, status, progress, totalSize, progressPercent, createdAt, source, and optional error, startedAt, completedAt, resourceId, phase, phaseCount, phaseTotal, resultPath, warnings
 
 ## Exit Codes
 

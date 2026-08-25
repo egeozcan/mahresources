@@ -6,10 +6,13 @@ relatedCmds: resource edit, series get, resources list
 # Long
 
 Remove a resource from its series. Takes the resource ID as a single
-positional argument and clears the resource's `SeriesId`; the series
-itself and the resource's bytes are preserved. To move a resource to a
-different series instead of detaching it, use `resource edit
---series-id` on the resource.
+positional argument and clears the resource's `SeriesId`. The series
+meta is merged into the resource's effective Meta first (the resource's
+own values win), so values the series contributed stay on the detached
+resource. The resource's bytes are preserved; the series is deleted when
+the detached resource was its last member. A resource that is not in a
+series is refused. To move a resource to a different series instead of
+detaching it, use `resource edit --series-id` on the resource.
 
 # Example
 

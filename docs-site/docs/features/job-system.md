@@ -5,16 +5,20 @@ title: Job System
 
 # Job System
 
-The job system aggregates download queue jobs and plugin action jobs into a single SSE event stream.
+The job system aggregates download queue jobs, group export and import jobs, admin maintenance jobs, and plugin action jobs into a single SSE event stream.
 
 ## Job Sources
 
 | Source | Origin | ID Format | Max Concurrent |
 |--------|--------|-----------|---------------|
-| `download` | Download queue | Random 8-char hex | 3 |
+| `download` | Download queue | Random 16-char hex | `-max-job-concurrency` (default 6), shared with export/import |
+| `group-export` | [Group export](./export-import.md) | Random 16-char hex | Same shared budget |
+| `group-import-parse` | [Group import](./export-import.md), manifest parse | Random 16-char hex | Same shared budget |
+| `group-import-apply` | [Group import](./export-import.md), apply | Random 16-char hex | Same shared budget |
+| `recompute-similarities` | Admin [image similarity](./image-similarity.md) recompute | Random 16-char hex | Same shared budget |
 | `plugin` | Async plugin actions and `mah.start_job()` | Random 16-char hex | 3 |
 
-Both job types share the same SSE infrastructure. Download jobs are also available via a dedicated listing endpoint (`/v1/jobs/queue`), while plugin action jobs appear only in the SSE event stream (via the `init` payload and subsequent `action_*` events).
+All job types share the same SSE infrastructure. Every job the download manager holds, downloads, group export and import, and admin maintenance jobs, is also available via a dedicated listing endpoint (`/v1/jobs/queue`), filtered to what the caller may see; plugin action jobs appear only in the SSE event stream (via the `init` payload and subsequent `action_*` events).
 
 ## Download Jobs
 
@@ -113,7 +117,7 @@ data: {"job":{"id":"a1b2c3d4e5f6g7h8","source":"plugin","status":"running","prog
 |---------------|--------|---------|
 | `added` | Download | New download job created |
 | `updated` | Download | Download status, progress, or message changed |
-| `removed` | Download | Download job cleaned up after retention period |
+| `removed` | Download | Download job removed: retention sweep, eviction when the queue is full, `clearCompleted`, or a history delete |
 | `action_added` | Plugin | New action job created |
 | `action_updated` | Plugin | Action status, progress, or message changed |
 | `action_removed` | Plugin | Action job cleaned up after retention period |
@@ -127,7 +131,7 @@ SSE notifications are rate-limited to prevent flooding clients:
 | Plugin actions | 200ms |
 | Downloads | 500ms |
 
-Progress updates at 100% are always sent immediately regardless of throttling.
+For plugin actions, progress updates at 100% are always sent immediately regardless of throttling. On the download side there is no percentage bypass, but the status change to `processing` at the end of a transfer is sent immediately.
 
 Subscribers receive events through a buffered channel (capacity 100). Slow subscribers that fall behind are skipped (non-blocking send).
 
@@ -137,7 +141,7 @@ Subscribers receive events through a buffered channel (capacity 100). Slow subsc
 GET /v1/jobs/queue
 ```
 
-Returns the retained download jobs currently held by the queue manager. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
+Returns every job the download manager holds, downloads, group export and import, and admin maintenance jobs, filtered to what the caller may see. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
 
 ```bash
 curl http://localhost:8181/v1/jobs/queue
@@ -151,7 +155,8 @@ Completed and failed jobs are removed automatically:
 |---------|-------|
 | Cleanup interval | Every 5 minutes |
 | Action job retention | 1 hour |
-| Download job retention (completed/failed/cancelled) | 1 hour |
+| Completed group-export job retention | `-export-retention` (default 24h) |
+| Every other terminal job retention (completed/failed/cancelled) | 1 hour |
 | Download job retention (paused) | 24 hours |
 
 Removed jobs trigger `"removed"` SSE events so clients can update their UI.
@@ -161,6 +166,7 @@ Removed jobs trigger `"removed"` SSE events so clients can update their UI.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/jobs/queue` | List download jobs |
+| `GET` | `/v1/jobs/get?id={id}` | Get a single job by ID (polling alternative to SSE) |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
 | `POST` | `/v1/jobs/action/run` | Run a plugin action |
 | `GET` | `/v1/jobs/action/job?id={id}` | Get plugin action job status |

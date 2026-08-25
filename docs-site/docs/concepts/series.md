@@ -51,7 +51,7 @@ A Series is automatically deleted when its last Resource is removed or deleted.
 
 ## Concurrent Safety
 
-Series creation uses `INSERT OR IGNORE` (SQLite) or `ON CONFLICT DO NOTHING` (PostgreSQL) to prevent duplicate slugs during concurrent uploads. An optimistic lock (`WHERE meta = '{}' OR meta IS NULL`) prevents two concurrent Resources from both claiming the "first Resource" role.
+Series creation uses `INSERT OR IGNORE` (SQLite) or `ON CONFLICT DO NOTHING` (PostgreSQL) to prevent duplicate slugs during concurrent uploads. An optimistic lock (`WHERE meta = '{}' OR meta IS NULL OR meta = 'null'`) prevents two concurrent Resources from both claiming the "first Resource" role.
 
 ## API Endpoints
 
@@ -75,7 +75,7 @@ GET /v1/seriesList
 GET /v1/series?ID={id}
 ```
 
-Also accepts `slug` as a query parameter.
+A slug is resolved only at upload time, through `SeriesSlug`; this endpoint takes an ID.
 
 ### Create Series
 
@@ -83,7 +83,7 @@ Also accepts `slug` as a query parameter.
 POST /v1/series/create
 ```
 
-Parameter: `Name` (string).
+Parameters: `Name` (string, required) and `Slug` (string, optional, defaults to the name).
 
 ### Update Series
 

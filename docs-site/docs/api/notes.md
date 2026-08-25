@@ -114,8 +114,8 @@ POST /v1/note
 | `Tags` | integer[] | Tag IDs |
 | `Resources` | integer[] | Associated resource IDs |
 | `Meta` | string | JSON metadata object |
-| `StartDate` | string | Start date (ISO 8601) |
-| `EndDate` | string | End date (ISO 8601) |
+| `StartDate` | string | Start date (`YYYY-MM-DDTHH:MM`) |
+| `EndDate` | string | End date (`YYYY-MM-DDTHH:MM`) |
 
 ### Example - Create
 
@@ -129,7 +129,7 @@ curl -X POST http://localhost:8181/v1/note \
     "OwnerId": 5,
     "NoteTypeId": 1,
     "Tags": [1, 2],
-    "StartDate": "2024-01-15T10:00:00Z"
+    "StartDate": "2024-01-15T10:00"
   }'
 ```
 
@@ -145,6 +145,8 @@ curl -X POST http://localhost:8181/v1/note \
     "Description": "Updated content..."
   }'
 ```
+
+An update is partial: fields you leave out keep their stored values, and an absent `Tags`, `Groups` or `Resources` array keeps the existing associations. Send an explicit empty array to clear an association, and an explicit empty value to clear `Description`, `StartDate` or `EndDate`.
 
 ### Response
 
@@ -356,6 +358,8 @@ curl -X POST http://localhost:8181/v1/notes/delete \
 
 Share notes publicly via a unique token. Shared notes are accessible on the share server without authentication. See the [Note Sharing feature docs](../features/note-sharing.md) for details.
 
+Sharing requires a running share server (`-share-port` / `SHARE_PORT`). Without one, `POST /v1/note/share` answers `503 Service Unavailable`, and the check runs before the note is looked up. A missing `noteId` answers 400, and a note that does not exist answers 404.
+
 ## Share a Note
 
 Generate a public share token for a note.
@@ -415,6 +419,41 @@ curl -X DELETE "http://localhost:8181/v1/note/share?noteId=123"
 }
 ```
 
+## Bulk Unshare
+
+Revoke several share tokens at once. Requires the editor role under `-auth`.
+
+```
+POST /v1/admin/shares/bulk-revoke
+Content-Type: application/x-www-form-urlencoded
+```
+
+### Form Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ids` | integer | The note ID to unshare. Repeat the field once per note. Non-numeric and zero values are skipped |
+
+### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/admin/shares/bulk-revoke \
+  -H "Accept: application/json" \
+  -d "ids=123" -d "ids=124"
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "revoked": 2,
+  "attempts": 2
+}
+```
+
+Without `Accept: application/json` the request redirects to `/admin/shares`.
+
 ---
 
 # Note Blocks API
@@ -446,10 +485,18 @@ List all block types with their default content and state.
 GET /v1/note/block/types
 ```
 
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `noteId` | integer | Optional. Adds an `allowed` flag to every plugin-registered type, saying whether that note may have a block of this type added. A note ID that does not exist answers 404 |
+
+Built-in types never carry `allowed`, and without `noteId` the flag is absent everywhere. Plugin-registered types also carry `label`, `icon`, `description`, `plugin`, `pluginName` and `filters`.
+
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/note/block/types
+curl "http://localhost:8181/v1/note/block/types?noteId=123"
 ```
 
 ### Response
@@ -465,6 +512,17 @@ curl http://localhost:8181/v1/note/block/types
     "type": "heading",
     "defaultContent": {"text": "", "level": 2},
     "defaultState": {}
+  },
+  {
+    "type": "plugin:my-plugin:chart",
+    "defaultContent": {},
+    "defaultState": {},
+    "label": "Chart",
+    "icon": "chart-bar",
+    "description": "Renders a chart from a saved query",
+    "plugin": true,
+    "pluginName": "my-plugin",
+    "allowed": true
   }
 ]
 ```
@@ -611,6 +669,7 @@ PUT /v1/note/block?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
+| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
 
 ### Request Body (JSON)
 
@@ -658,6 +717,7 @@ PATCH /v1/note/block/state?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
+| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
 
 ### Request Body (JSON)
 
@@ -688,7 +748,7 @@ Returns the updated block.
   "noteId": 123,
   "type": "todos",
   "position": "a2",
-  "content": {"items": [{"id": "item-1", "text": "Task 1"}, {"id": "item-2", "text": "Task 2"}]},
+  "content": {"items": [{"id": "item-1", "label": "Task 1"}, {"id": "item-2", "label": "Task 2"}]},
   "state": {"checked": ["item-1", "item-2"]}
 }
 ```
@@ -712,6 +772,7 @@ POST /v1/note/block/delete?id={id}
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | integer | **Required.** The block ID |
+| `noteId` | integer | Optional ownership guard. When present, a block belonging to a different note is refused with 400 |
 
 ### Example
 
@@ -1014,12 +1075,14 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 
 - `view`: `"month"` or `"agenda"`
 - `currentDate`: ISO date string for the current view position
-- `customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`)
+- `customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`, plus optional `location` and `description`)
 
 Limitations:
 - ICS responses are cached with a 30-minute TTL
 - Maximum ICS file size: 10 MB
 - No RRULE (recurring event) support -- only the first occurrence of recurring events is shown
+- A `url` source must use http or https, because the server fetches it
+- An event whose well-formed RFC 3339 `end` precedes its `start` is rejected
 
 ---
 
@@ -1083,6 +1146,15 @@ POST /v1/note/noteType
 | `CustomSidebar` | string | Custom sidebar template |
 | `CustomSummary` | string | Custom summary template |
 | `CustomAvatar` | string | Custom avatar template |
+| `CustomListHeader` | string | Custom list-page header template |
+| `CustomDetailFooter` | string | Template rendered at the bottom of the detail page |
+| `CustomListFooter` | string | Custom list-page footer template (carrier-bound, like `CustomListHeader`) |
+| `CustomHoverCard` | string | Hover-card template; falls back to `CustomSummary` when empty |
+| `ApplyTemplatesToShares` | boolean | Apply this note type's `CustomHeader` and `CustomCSS` to shared-note pages |
+| `CustomMRQLResult` | string | Custom MRQL result-card template |
+| `CustomCSS` | string | Custom CSS injected on note type pages |
+| `MetaSchema` | string | JSON schema for metadata validation |
+| `SectionConfig` | string | JSON section layout configuration |
 
 ### Example
 

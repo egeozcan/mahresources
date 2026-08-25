@@ -6,9 +6,10 @@ relatedCmds: resource versions, resource version-download, resource version-rest
 
 # Long
 
-Fetch metadata for a single version by its version ID. Returns the same
-fields as `versions` but as a single key/value record. Useful when you
-know the version ID and need its size or comment without a list call.
+Fetch metadata for a single version by its version ID. Returns a single
+key/value record, adding the resource ID, hash and dimensions that the
+`versions` table omits. Useful when you know the version ID and need its
+size or comment without a list call.
 
 # Example
 
@@ -16,7 +17,7 @@ know the version ID and need its size or comment without a list call.
   mr resource version 17
 
   # Extract size via jq
-  mr resource version 17 --json | jq -r .size
+  mr resource version 17 --json | jq -r .fileSize
 
   # mr-doctest: upload, version-upload, fetch second version, assert it exists
   GRP=$(mr group create --name "doctest-version-$$-$RANDOM" --json | jq -r '.ID')

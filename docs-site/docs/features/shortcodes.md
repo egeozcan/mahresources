@@ -5,7 +5,7 @@ title: Shortcodes
 
 # Shortcodes
 
-Shortcodes are bracket-delimited expressions embedded in custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, and CustomMRQLResult) that expand into dynamic HTML at render time. They provide schema-aware metadata display, inline query results, and entity property access without writing Alpine.js or Pongo2 code.
+Shortcodes are bracket-delimited expressions embedded in the custom template slots of a Category, Resource Category, or Note Type, which expand into dynamic HTML at render time. See [Custom Templates](./custom-templates.md) for the full slot list. They provide schema-aware metadata display, inline query results, and entity property access without writing Alpine.js or Pongo2 code.
 
 ## Syntax
 
@@ -52,7 +52,7 @@ Block shortcodes can be nested. The inner content is processed after the outer s
 
 ## Processing
 
-Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. The five custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) process shortcodes automatically. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
+Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. Every `Custom*` slot processes shortcodes automatically: `CustomLightbox` is expanded before the JSON detail response is serialized, and `CustomCSS` is expanded by the `custom_css` tag. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
 
 ### Failure markers
 
@@ -242,9 +242,11 @@ The shortcode never triggers database loads by design (list pages render many ca
 
 ### Available Fields by Entity Type
 
+`[property]` reflects over the model, so any exported field resolves. These are the commonly used ones rather than an allow-list.
+
 **Group:** `ID`, `Name`, `Description`, `URL`, `CreatedAt`, `UpdatedAt`, `CategoryId`, `OwnerId`, `Meta`
 
-**Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `FileSize`, `Width`, `Height`, `Meta`
+**Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `OriginalLocation`, `FileSize`, `Width`, `Height`, `Hash`, `ResourceCategoryId`, `OwnerId`, `Meta`
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
 
@@ -814,7 +816,7 @@ A button that re-renders content on the server and swaps it into the page. Which
 Walking up from the button, the first of these wins:
 
 1. **The innermost enclosing `[lazy]` or `[details]` block.** It already carries a sealed token for its own body, so only that block is re-rendered.
-2. **Otherwise the whole custom-content slot the button was written in** (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, or a description). The `process_shortcodes` tag wraps such a slot in `<div class="shortcode-region" data-shortcode-region="TOKEN">`, where the token seals the whole raw slot body the same way `[lazy]` seals its own. The wrapper is emitted only when the rendered slot actually contains a reload button and the slot is rendering against a group, resource, or note, so slots without a `[reload]` are byte-for-byte unchanged. It is `display: contents`, so it adds no layout box.
+2. **Otherwise the whole custom-content slot the button was written in**, which is any slot the `process_shortcodes` tag renders against a group, resource, or note: CustomHeader, CustomDetailFooter, CustomSidebar, CustomPreview, CustomOwnEntities, CustomSummary, CustomAvatar, CustomHoverCard, CustomCell, or a description. The `process_shortcodes` tag wraps such a slot in `<div class="shortcode-region" data-shortcode-region="TOKEN">`, where the token seals the whole raw slot body the same way `[lazy]` seals its own. The wrapper is emitted only when the rendered slot actually contains a reload button and the slot is rendering against a group, resource, or note, so slots without a `[reload]` are byte-for-byte unchanged. It is `display: contents`, so it adds no layout box.
 3. **Otherwise the page** (`window.location.reload()`). Anywhere the walk finds neither a deferred block nor a region, the button falls straight through to a page reload without attempting a request. That covers every surface whose slots are rendered outside the `process_shortcodes` tag or without a signer: the public share server, the category-template live preview, the JSON rendering of the `Custom*` slots, and `CustomMRQLResult` cards on `/mrql`. It also covers the `CustomListHeader` and `CustomListFooter` carrier slots, whose `category` / `resource_category` / `note_type` context the deferred endpoint cannot load by id.
 
 Cases 1 and 2 fetch `POST /v1/shortcodes/deferred`, the endpoint `[lazy]` and `[details]` use. `TEMPLATE_SIGNING_KEY` applies to region tokens exactly as it does to `[lazy]`/`[details]` tokens.

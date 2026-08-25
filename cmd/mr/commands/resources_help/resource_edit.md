@@ -7,8 +7,10 @@ relatedCmds: resource get, resource upload, resource versions
 
 Edit fields on an existing resource. Any flag left unset keeps the
 existing value (partial update). Collection flags (`--tags`, `--groups`,
-`--notes`) take comma-separated ID lists and replace the current set;
-`--meta` takes a JSON string merged onto existing meta.
+`--notes`) take comma-separated ID lists and replace the current set. An
+empty value is ignored, so these flags can change a set but not empty
+one. `--meta` takes a JSON string that replaces the whole meta object;
+use `resource edit-meta` to change one field without touching the rest.
 
 # Example
 

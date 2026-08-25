@@ -7,9 +7,12 @@ sidebar_label: edit
 # mr series edit
 
 Edit a series. `--name` is required on every call; `--meta` is optional
-and takes a JSON string merged into the series meta. The slug is derived
-from the original name at creation time and is not updated by this
-command, so changing the name here leaves the slug untouched.
+and takes a JSON string that replaces the series meta outright. When it
+changes, every resource in the series has its effective meta recomputed
+as the new series meta with the resource's own meta layered on top. The
+slug is derived from the original name at creation time and is not
+updated by this command, so changing the name here leaves the slug
+untouched.
 
 ## Usage
 

@@ -6,8 +6,9 @@ sidebar_label: list
 
 # mr series list
 
-List Series, optionally filtered by name or slug. The `--name` and
-`--slug` flags do substring matching on the server. Results are
+List Series, optionally filtered by name or slug. `--name` does
+substring matching on the server; `--slug` is an exact match, since
+slugs are unique. Results are
 paginated via the global `--page` flag (default page size 50). Default
 output is a table with ID, NAME, SLUG, and CREATED columns; pass
 `--json` for the full array.

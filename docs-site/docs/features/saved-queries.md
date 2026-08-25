@@ -71,7 +71,7 @@ The query runner escapes casts automatically before named-parameter binding.
 2. Fill in parameter values
 3. Click **Run** (or press Enter in any parameter field)
 
-Results display as a sortable table with clickable ID links and JSON formatting for complex fields. Results are also available as `window.results` in the browser console.
+Results display as a table with JSON formatting for complex fields, collapsible nested objects, clickable URLs, and copy-on-click cells. Results are also available as `window.results` in the browser console.
 
 ## Custom Result Templates
 
@@ -163,6 +163,8 @@ This returns table and column definitions for the database.
 
 :::warning
 For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection or user. Otherwise saved queries run through a secondary connection, but that connection is not inherently read-only.
+
+On SQLite the read-only DSN must contain `mode=ro` for the server to treat it as enforced. On PostgreSQL any `DB_READONLY_DSN` that differs from `DB_DSN` counts as enforced, so point it at a role that is genuinely read-only: the server does not check.
 :::
 
 ### List Queries
@@ -173,6 +175,18 @@ GET /v1/queries
 
 ```bash
 curl http://localhost:8181/v1/queries
+```
+
+`GET /v1/queries/timeline` returns per-bucket created and updated counts for Queries, not the Query records themselves.
+
+### Get a Query
+
+```
+GET /v1/query?id={id}
+```
+
+```bash
+curl http://localhost:8181/v1/query?id=3
 ```
 
 ### Create or Update a Query
@@ -186,6 +200,8 @@ curl -X POST http://localhost:8181/v1/query \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "Name=Recent+Resources&Text=SELECT+id,name+FROM+resources+ORDER+BY+created_at+DESC+LIMIT+50"
 ```
+
+Include `ID` to update an existing Query. In a partial JSON update, fields you omit keep their stored values; a form submission can clear `Template` and `Description`.
 
 ### Delete a Query
 
@@ -308,3 +324,4 @@ Returns table and column definitions for constructing Queries.
 
 - Read-only enforcement requires `DB_READONLY_DSN` to point to a database-enforced read-only connection or user. Without that, saved queries execute through a secondary connection that is not inherently read-only.
 - Results may expose any data in the database; restrict access to the Mahresources instance accordingly
+- With `-auth` enabled, group-limited users and guests cannot run saved queries at all: the runner refuses fail-closed, because arbitrary SQL cannot be confined to a group subtree. Every unscoped principal (admin, editor, or an unscoped user) can run them, and the results are not group-scoped. Creating, editing and deleting a Query requires the editor role.

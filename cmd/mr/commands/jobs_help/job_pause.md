@@ -9,8 +9,9 @@ relatedCmds: job resume, job cancel, jobs list
 Suspend an in-flight download without cancelling it. Pause only works
 while the job is pending or downloading; the server rejects pause
 requests against finished, cancelled, or already-paused jobs. The
-background goroutine stops after the current chunk and the job stays
-in the queue with status `paused` until you call `job resume`.
+background goroutine is cancelled, discarding the bytes transferred so
+far, and the job stays in the queue with status `paused` until you call
+`job resume`.
 
 Generic jobs (group exports, imports) cannot be paused — their runners
 are not re-entrant. Pause is intended for long URL fetches.

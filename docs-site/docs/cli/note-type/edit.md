@@ -18,7 +18,9 @@ and list pages.
 
 Because only explicitly-passed flags are sent, passing a `--custom-*`
 flag with an empty string is how a slot is cleared; omitting it leaves
-the stored value alone.
+the stored value alone. `--section-config ""` is the exception: an empty
+section config is ignored rather than stored, so a section config cannot
+be cleared from the CLI.
 
 ## Usage
 
@@ -73,7 +75,7 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

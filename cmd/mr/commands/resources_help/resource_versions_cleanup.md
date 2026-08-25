@@ -5,9 +5,15 @@ relatedCmds: resource versions, resource version-delete, resources versions-clea
 
 # Long
 
-Bulk-delete old versions of a single Resource. Retains either the N most
-recent versions (`--keep`) or deletes versions older than N days
-(`--older-than-days`). Pass `--dry-run` to preview without deleting.
+Bulk-delete old versions of a single Resource. Retains the N most recent
+versions (`--keep`), deletes versions older than N days
+(`--older-than-days`), or both together: a version must satisfy every
+filter given to be deleted. Pass `--dry-run` to preview without
+deleting.
+
+The current version is never a candidate, and the last remaining version
+of a resource is never deleted, so a cleanup always leaves at least one
+version in place.
 
 # Example
 

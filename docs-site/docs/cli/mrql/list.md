@@ -50,7 +50,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of saved MRQL query objects with id, name, query, description, createdAt, updatedAt
+Array of saved MRQL query objects with id, name, query, description, params, createdAt, updatedAt
 
 ## Exit Codes
 

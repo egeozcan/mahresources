@@ -25,13 +25,15 @@ Groups form a **nested hierarchy**. Each Group can contain Resources, Notes, and
 
 **Full-text search** via FTS5 (SQLite) or tsvector (PostgreSQL) covers all content, accessible via Cmd/Ctrl+K. **Saved queries** let you store and re-run raw SQL. For database-level write protection, configure `DB_READONLY_DSN` as a read-only connection.
 
+**MRQL** is a SQL-like query language for Resources, Notes, and Groups. It has its own page at `/mrql`, a filter bar on every list page, saved queries of its own, and an `[mrql]` shortcode for embedding results in Category templates. See [MRQL](./features/mrql.md).
+
 Optional **user accounts and role-based access control** (admin, editor, user, guest) can be turned on with `-auth` -- off by default, with group-subtree scoping for limited users. See [Authentication & RBAC](./features/authentication.md).
 
 **Perceptual hashing** finds visually similar images automatically across your library. Resources support **versioning** to track changes over time. A **series** groups Resources with shared metadata (e.g., pages of a scanned document).
 
 The **download queue** accepts remote URLs and tracks progress via the Download Cockpit UI. An **activity log** records create, update, delete, and plugin operations across all entities.
 
-Categories and Note Types support **custom templates**: HTML fragments (header, sidebar, summary, avatar) rendered with Pongo2. **Meta schemas** define JSON Schemas on Categories and Resource Categories to validate and generate structured metadata forms.
+Categories, Resource Categories, and Note Types support **custom templates**: HTML fragments with server-side shortcodes, rendered into slots on detail pages, cards, hover cards, and list pages (see [Custom Templates](./features/custom-templates.md)). All three also carry a **meta schema**, a JSON Schema that validates metadata and generates a structured form for it.
 
 A Lua **plugin system** can intercept create/update/delete operations, add custom pages, run background jobs, perform full entity CRUD (`mah.db.create_*`, `mah.db.update_*`, `mah.db.delete_*`), and store per-plugin data via a key-value store (`mah.kv.*`).
 

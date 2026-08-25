@@ -32,7 +32,7 @@ Create groups nested under a parent:
 
 1. Navigate to the parent group's detail page
 2. In **Own Entities**, find **Sub-Groups**
-3. Click **Add New**
+3. Click **New**
 4. The owner is pre-filled with the parent group
 5. Fill in remaining fields and save
 
@@ -99,7 +99,7 @@ Example: "John Smith" --[works at]--> "Acme Corp"
 ### Creating Relations
 
 1. Navigate to a group's detail page
-2. In the **Relations** section, click **Add New**
+2. In the **Relations** section, click **New**
 3. Select:
    - **Type** - The relation type
    - **From Group** - Source (may be pre-filled)
@@ -120,13 +120,13 @@ Each relation links to the connected group.
 
 Define relation types before creating relations:
 
-1. Navigate to **Relation Types** > **New Relation Type**
+1. Navigate to **Relation Types** and click **Add**
 2. Enter:
    - **Name** - Describes the relationship (e.g., "works at", "parent of")
    - **Description** (optional) - Details about this relation type
-   - **From Category** - Restrict which category the source group must have
-   - **To Category** - Restrict which category the target group must have
-   - **Reverse Relation Name** (optional) - If provided, automatically creates a matching reverse relation type (e.g., "employed by" as the reverse of "works at")
+   - **From Category** (required) - The category the source group must have
+   - **To Category** (required) - The category the target group must have
+   - **Reverse Relation Name** (optional) - If a relation type with that name and the categories swapped already exists, it is linked as the reverse (e.g., "employed by" as the reverse of "works at"); otherwise a new one is created. The save is refused when the existing type is already linked to another relation type.
 3. Click **Save**
 
 ## Merging Groups
@@ -141,11 +141,13 @@ Combine multiple groups into one:
 The merge operation:
 - Moves all owned content to the winner group
 - Updates all relations to point to the winner
+- Merges the losers' metadata into the winner's, with the winner's own keys winning on conflict and the lowest-id loser winning among losers
+- Stores a JSON snapshot of each loser in the winner's metadata under `backups`, keyed `group_<id>`
 - Deletes the merged ("loser") groups
 
 :::warning
 
-Merging is irreversible. The merged groups are permanently deleted.
+Merging is irreversible. The merged group rows are permanently deleted, though their data survives in the winner's `backups` metadata key.
 
 :::
 
@@ -160,6 +162,7 @@ Create a copy of a group:
 Cloning creates a new Group with:
 - The same name, description, metadata, URL, owner, and Category
 - Copies of all association references (related Resources, Notes, Groups, and Tags)
+- Copies of the group's typed relations, incoming and outgoing, pointing at the same far-end groups (relations reaching outside a scope-limited user's subtree are skipped)
 - A new unique ID
 
 Cloning does not copy owned entities -- only relationship references.
@@ -186,7 +189,7 @@ From a group's detail page:
 
 1. Expand **Own Entities**
 2. Find the section (Notes, Sub-Groups, or Resources)
-3. Click **Add New**
+3. Click **New**
 4. Complete the creation form (owner is pre-filled)
 
 ### Viewing All Owned Items

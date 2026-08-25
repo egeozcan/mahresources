@@ -105,7 +105,7 @@ as an ordinary error whose message was scanned for familiar phrases, so
 
 ### Complete Hook Reference
 
-These 30 names are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
+These 30 entity events, plus the three job events below, are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
 
 A refusal takes the whole load with it. Everything the plugin registered before the error is swept, so a plugin reported as failed is never half-installed.
 
@@ -121,8 +121,9 @@ The hooks, organized by entity type:
 
 ### Job lifecycle events
 
-Three events fire when a background job reaches a terminal state — a download, a
-group export or import, or a plugin action run:
+Three events fire when a job the download queue runs reaches a terminal state,
+which is a download, a group export or import, or an admin maintenance job such
+as the similarity recompute:
 
 | Event | When |
 |-------|------|
@@ -145,8 +146,8 @@ function init()
 end
 ```
 
-The handler receives `job_id`, `source`, `status`, `name`, `url`, `error`, and
-`resource_id` when the job produced one.
+The handler receives `job_id`, `source`, `status`, `name`, `url`, `error`, plus
+`resource_id` and `total_size` when the job produced them.
 
 :::note These need the `job_events` capability, not `hooks`
 
@@ -155,6 +156,10 @@ An entity hook fires on a write the caller just made. A job event fires when
 capability. A plugin holding only `hooks` is refused at load, with an error
 naming the capability it needs.
 :::
+
+A plugin's own action, and a job it starts with `mah.start_job`, does not fire
+one: those run on the plugin job system and report through `mah.job_complete` and
+`mah.job_fail`.
 
 They are **after-only**: a job that has already finished cannot be vetoed, and
 returning a modified table changes nothing. Delivery is best-effort — the queue
@@ -272,7 +277,7 @@ The handler receives a context table:
 | `body` | string | Request body (for POST requests) |
 | `principal` | table | The acting user: `userId`, `username`, `role`, `isAdmin`, `scopeGroupId`, `superUser`. With auth disabled it reflects the root admin (`superUser = true`). |
 
-Group-scoped principals (a group-confined user, any guest) are denied every plugin-code endpoint with HTTP 403 before the handler runs, because plugin `mah.db.*` access uses the unscoped database handle. A request that reaches your page handler therefore never carries a scope, so `scopeGroupId` is never populated here. Do not rely on it for subtree enforcement inside a plugin page.
+By default a group-confined user or guest is refused every plugin-code endpoint with HTTP 403 before the handler runs, so `scopeGroupId` is unset on the requests that reach you. An operator can open one plugin to those accounts (Allow limited users on `/plugins/manage`), and a confined caller then does reach your page with `scopeGroupId` carrying its scope group. See [Plugin Permissions](./plugin-permissions.md). What enforces the subtree either way is `mah.db` being bound to the acting principal, not that field, so do not rely on it for subtree enforcement inside a plugin page.
 
 ```lua
 mah.page("search", function(ctx)
@@ -299,10 +304,12 @@ plugins/
 ```
 
 ```lua
-mah.inject("head", [[
-  <link rel="stylesheet" href="/plugins/my-plugin/public/app.css">
-  <script src="/plugins/my-plugin/public/app.js"></script>
-]])
+mah.inject("head", function(ctx)
+    return [[
+      <link rel="stylesheet" href="/plugins/my-plugin/public/app.css">
+      <script src="/plugins/my-plugin/public/app.js"></script>
+    ]]
+end)
 ```
 
 This is what replaces embedding browser code in Lua long strings, where every
@@ -331,10 +338,10 @@ document.addEventListener('alpine:init', () => {
 **No capability is required.** Serving a file grants the plugin nothing — the Lua
 VM has no filesystem access at all, so your plugin cannot read these files; the
 host reads them, from a directory whoever installed the plugin already wrote.
-The power that matters, running script in the application's origin, is `inject`,
-and you need it to put the `<script>` tag on the page in the first place. A
-plugin with no `inject` can have a `public/` directory served and nothing will
-ever point at it.
+An asset matters only when something references it, and every surface that can
+(`inject`, `pages`, and the render surfaces: shortcodes, block types and display
+types) is capability-gated already. A plugin holding none of them can have a
+`public/` directory served with nothing pointing at it.
 
 **Access follows the plugin.** The URL carries the plugin's name in its first
 segment, so these files are governed by the same per-plugin "allow group-limited

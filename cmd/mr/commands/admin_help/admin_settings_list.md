@@ -1,5 +1,5 @@
 ---
-outputShape: Array of setting objects with key, label, group, type, current, bootDefault, overridden, updatedAt, reason
+outputShape: Array of setting objects with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason
 exitCodes: 0 on success; 1 on any error
 relatedCmds: admin settings get, admin settings set, admin settings reset
 ---

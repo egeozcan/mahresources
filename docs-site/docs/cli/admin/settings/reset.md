@@ -52,7 +52,7 @@ mr admin settings reset mrql_query_timeout --reason "back to default after testi
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Setting object after reset with key, label, group, type, current (equals bootDefault), bootDefault, overridden (false), updatedAt, reason
+Setting object after reset with key, label, description, group, type, current (equals bootDefault), bootDefault, overridden (false); updatedAt and reason are absent, because the override that carried them is gone
 
 ## Exit Codes
 

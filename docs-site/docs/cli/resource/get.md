@@ -51,7 +51,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Resource object with id (uint), name (string), tags ([]Tag), groups ([]Group), meta (object)
+Resource object with ID (uint), Name (string), Tags ([]Tag), Groups ([]Group), Meta (object)
 
 ## Exit Codes
 

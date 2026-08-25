@@ -12,7 +12,7 @@ Thumbnails are generated on demand and cached in the database. The system handle
 When a thumbnail is requested for a Resource:
 
 1. **Lock** -- Acquires a per-Resource lock to prevent duplicate generation
-2. **Dimension capping** -- Requested width and height are capped at internal maximums
+2. **Dimension capping** -- Requested width and height are each capped at 600px. When you request only one axis, the other is derived from the resource's aspect ratio and is not capped
 3. **Null thumbnail check** -- Looks for a canonical full-size preview (stored at width=0, height=0). If one exists it becomes the resize source for every size and the automatic pipeline is bypassed. This is how an uploaded custom thumbnail takes precedence (see [Custom Thumbnails](#custom-thumbnails)); it also drives the target-dimension calculation from the resource's aspect ratio.
 4. **Cache check** -- Looks for an existing thumbnail at the exact target dimensions and returns it if present
 5. **Generate** -- Creates the thumbnail based on content type. Images and SVGs always decode from the original file; videos and office documents extract or render a full-size frame once and cache it as their own null thumbnail (width=0, height=0) so later sizes resize from it without re-running FFmpeg or LibreOffice
@@ -133,14 +133,18 @@ The upload body is bounded by the per-upload size limit:
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `-max-upload-size` | `MAX_UPLOAD_SIZE` | `2 GB` | Maximum per-upload body size in bytes for resource and version uploads |
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | `2 GB` | Maximum per-upload body size in bytes for resource and version uploads. Runtime-editable at `/admin/settings` |
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/v1/resource/preview?id={resourceId}` | Fetch the thumbnail (optional `width` and `height`) |
 | `POST` | `/v1/resource/preview?id={resourceId}` | Upload a custom thumbnail (multipart form field `thumbnail`) |
 | `DELETE` | `/v1/resource/preview?id={resourceId}` | Clear stored thumbnails so the next request regenerates from source |
+| `POST` | `/v1/resource/preview/clear?id={resourceId}` | Alias of the DELETE above, for form clients that cannot issue DELETE |
 
 Uploading a custom thumbnail does not create a new resource version -- it only changes the stored preview.
+
+The reverse does not hold: a custom thumbnail is cleared whenever the resource's file changes, that is by a new version upload, a version restore, or an in-place rotate, crop, or trim. Re-upload it afterwards.
 
 ## Troubleshooting
 
@@ -160,4 +164,4 @@ Uploading a custom thumbnail does not create a new resource version -- it only c
 
 ### Thumbnails appear but are wrong size
 
-The pipeline caps dimensions at internal maximums. Requesting dimensions larger than the cap returns the maximum size. The cache stores exact dimensions, so different sizes are generated and cached independently.
+The pipeline caps each requested axis at 600px, so requesting more returns 600px on that axis. When you request only one axis, the other is derived from the aspect ratio and is not capped, so an extreme aspect ratio can exceed 600px on that side. The cache stores exact dimensions, so different sizes are generated and cached independently.

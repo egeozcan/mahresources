@@ -6,10 +6,15 @@ sidebar_label: preview
 
 # mr resource preview
 
-Download a server-rendered thumbnail preview of a Resource. Width and
-height can be capped via `-w, --width` and `--height`; without caps the
-server returns its default preview size. Not every content type supports
-previews (e.g., some binary formats or failed decodes).
+Download a server-rendered thumbnail preview of a Resource. `-w, --width`
+and `--height` set the target size, each capped at 600. Give both and the
+thumbnail is exactly that many pixels, so the aspect ratio is not
+preserved; give one and the other is derived from the resource's aspect
+ratio; give neither and the image is scaled to fit 600x600 and never
+upscaled. Not every content type supports previews (e.g., some binary
+formats or failed decodes). A Resource with no available preview redirects
+to the server's generic placeholder image, which the CLI follows, so the
+command still writes a file and exits 0.
 
 ## Usage
 
@@ -30,7 +35,7 @@ Positional arguments:
 mr resource preview 42 -o preview.jpg
 ```
 
-**Constrained to 256x256 max**
+**Exactly 256x256**
 
 ```bash
 mr resource preview 42 -o preview.jpg -w 256 --height 256

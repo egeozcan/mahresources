@@ -17,9 +17,12 @@ Scope and fidelity are controlled by paired `--include-*` / `--no-*`
 flags (subtree, resources, notes, related, group-relations, blobs,
 versions, previews, series). Schema-definition inclusion (categories,
 tag defs, group-relation types) can be toggled individually or via the
-`--schema-defs=all|none|selected` shortcut. Use `--gzip` to compress
-the output and `--output <path>` (or `-o`) to write to a file rather
-than stdout.
+`--schema-defs=all|none|selected` shortcut. `--related-depth N` widens
+the set further by following many-to-many edges N hops out from the
+roots; the groups it discovers are added as shells, carrying no owned
+resources or notes of their own. It is off by default. Use `--gzip` to
+compress the output and `--output <path>` (or `-o`) to write to a file
+rather than stdout.
 
 By default the command waits for the server-side job to finish before
 downloading; pass `--no-wait` to print the job ID and exit immediately

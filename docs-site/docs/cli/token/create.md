@@ -6,7 +6,7 @@ sidebar_label: create
 
 # mr token create
 
-Create a new API token for the authenticated account and print the secret once. Store it securely; it cannot be retrieved again.
+Create a new API token for the authenticated account and print the secret once. Store it securely; it cannot be retrieved again. An account may hold at most -max-user-tokens tokens (100 by default; 0 disables the cap), and minting past it fails with HTTP 409, so revoke one first.
 
 ## Usage
 
@@ -44,6 +44,10 @@ mr token create --name temp --expires-in 720h
 | `--page` | int | `1` | Page number for list commands (default page size: 50) |
 | `--quiet` | bool | `false` | Only output IDs |
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
+## Output
+
+ID, Name and Token lines; --json emits &#123;token, id, name, prefix&#125;, where id is lower case while the list array uses ID
+
 ## Exit Codes
 
 0 success; 1 error (not authenticated, network error, or token not found)

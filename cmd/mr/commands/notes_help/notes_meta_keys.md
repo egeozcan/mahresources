@@ -1,12 +1,13 @@
 ---
-outputShape: Array of objects with key (string), one per distinct meta key observed across the entire Note corpus
+outputShape: Array of objects with key (string), one per distinct top-level meta key observed across the entire Note corpus
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note edit-meta, notes add-meta
 ---
 
 # Long
 
-List every distinct `meta` key observed across the entire Note corpus.
+List every distinct top-level `meta` key observed across the entire
+Note corpus. Keys nested inside a meta object are not enumerated.
 Useful for discovering the vocabulary of an evolving meta schema. The
 response is a JSON array of objects each shaped `{"key": "..."}`. The
 command has no filter flags in the current CLI; pair it with

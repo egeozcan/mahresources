@@ -7,12 +7,21 @@ sidebar_label: create
 # mr note-block create
 
 Create a new block attached to a Note. `--note-id` and `--type` are
-required. Use `--content` to supply the block's content JSON (the exact
-shape depends on the chosen type — see `note-block types` for the
-default content schema of each built-in type). `--position` is optional;
-when omitted the server assigns a position after the current last block.
-The created record is returned; capture `.id` from JSON output for use
-in follow-up commands.
+required, and `--content` matters more than its default suggests: the
+CLI sends `{}` when the flag is omitted, so the server validates and
+stores that rather than substituting the type's own default content.
+`text` and `heading` reject an empty object (`text block content must
+have a 'text' field`, `heading level must be 1-6`); the other built-in
+types accept it and are then created empty. The exact content shape
+depends on the chosen type; see `note-block types` for the default
+content schema of each built-in type.
+
+`--position` is optional; when omitted the server assigns a position
+after the current last block. A `text` block that sorts first on the
+note is kept in sync with the note's description: creating one rewrites
+the description, and creating an empty one adopts the description as its
+text. The created record is returned; capture `.id` from JSON output for
+use in follow-up commands.
 
 ## Usage
 
@@ -54,7 +63,7 @@ mr note-block create --note-id 42 --type heading --content '{"text":"Intro","lev
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object)
+Created NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object), createdAt (RFC3339), updatedAt (RFC3339)
 
 ## Exit Codes
 

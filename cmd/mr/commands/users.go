@@ -56,7 +56,7 @@ func newUserListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List user accounts",
-		Long:  "Show all user accounts with their id, username, role, scope group, and disabled state. Password hashes are never returned.",
+		Long:  "Show all user accounts with their id, username, role, scope group, and disabled state. Password hashes are never returned. Pagination is --offset and --limit; the global --page flag does not apply to this command.",
 		Example: strings.Join([]string{
 			"  # List all users",
 			"  mr user list",
@@ -118,7 +118,7 @@ func newUserListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&offset, "offset", 0, "Number of users to skip")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum users to return (0 = server default)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum users to return (0 = no limit)")
 	return cmd
 }
 
@@ -181,7 +181,7 @@ func newUserCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a user account",
-		Long:  "Create a new user account with a username, password, and role (admin, editor, user, or guest). Guests require a scope group; users may optionally have one; admins and editors must not.",
+		Long:  "Create a new user account with a username, password, and role (admin, editor, user, or guest). Guests require a scope group; users may optionally have one; a scope group passed for an admin or editor is dropped rather than refused. Passwords must be at least 8 characters and at most 72 bytes.",
 		Example: strings.Join([]string{
 			"  # Create an editor",
 			"  mr user create --username alice --password password1 --role editor",
@@ -250,7 +250,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Update a user account",
-		Long:  "Update an existing user account. Only the flags you pass are sent and changed; omitted fields are preserved by the server. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.",
+		Long:  "Update an existing user account. Only the flags you pass are sent and changed; omitted fields are preserved by the server. Use --disabled to lock an account and --enable to unlock it; disabling an account or setting a new password revokes its sessions and API tokens. --disabled and --enable cannot be combined. Passwords must be at least 8 characters and at most 72 bytes. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.",
 		Example: strings.Join([]string{
 			"  # Promote user 4 to editor",
 			"  mr user update 4 --role editor",
@@ -323,7 +323,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&username, "username", "", "New username")
-	cmd.Flags().StringVar(&password, "password", "", "New password (omit to keep the current one)")
+	cmd.Flags().StringVar(&password, "password", "", "New password (omit to keep the current one; setting one revokes the account's sessions and tokens)")
 	cmd.Flags().StringVar(&role, "role", "", "New role: admin, editor, user, or guest")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "New display name")
 	cmd.Flags().UintVar(&scopeGroup, "scope-group", 0, "New scope group id (use 0 to clear)")

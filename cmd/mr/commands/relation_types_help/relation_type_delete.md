@@ -7,10 +7,10 @@ relatedCmds: relation-type create, relation-types list, relation delete
 # Long
 
 Delete a RelationType by ID. Destructive: removes the type row
-entirely. Existing Relations that reference this type may be orphaned
-or cascade-deleted depending on the server's foreign-key configuration;
-inspect affected groups with `mr group get <id> --json` after a
-delete. Deleting a nonexistent ID returns exit code 1.
+entirely. Every Relation of this type is deleted with it, along with the
+Relations of its paired back-relation type, in one transaction; inspect
+affected groups with `mr group get <id> --json` after a delete. Deleting
+a nonexistent ID returns exit code 1.
 
 # Example
 

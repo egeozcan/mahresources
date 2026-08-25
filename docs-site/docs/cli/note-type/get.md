@@ -7,9 +7,12 @@ sidebar_label: get
 # mr note-type get
 
 Get a note type by ID and print its fields. The server has no
-single-NoteType GET endpoint, so the CLI fetches the full list and
-filters in-process; this is slower than a direct lookup on large
-instances. The table output shows five core fields (ID, Name, Description,
+single-NoteType GET endpoint, so the CLI fetches the note type listing
+and filters in-process. Only the first page (50 rows) is fetched, so a
+note type beyond it reports `note type <id> not found`; use
+`mr note-types list --name <substring>` to locate it instead.
+
+The table output shows five core fields (ID, Name, Description,
 Created, Updated). The `--json` flag emits the full server response,
 including MetaSchema, SectionConfig, CustomHeader, CustomCSS, and other
 Custom* fields.

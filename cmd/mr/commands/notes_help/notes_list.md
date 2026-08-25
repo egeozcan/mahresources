@@ -7,9 +7,10 @@ relatedCmds: note get, notes timeline, mrql
 # Long
 
 List Notes, optionally filtered. Filter flags combine with AND.
-Comma-separated ID lists on `--tags` and `--groups` match any of the
-given IDs. Date flags (`--created-before`, `--created-after`) expect
-`YYYY-MM-DD`. The `--name` and `--description` flags match substrings.
+Comma-separated ID lists on `--tags` and `--groups` match only notes
+carrying every ID given. Date flags (`--created-before`,
+`--created-after`) accept `YYYY-MM-DD` or RFC 3339. The `--name` and
+`--description` flags match substrings.
 Use `--owner-id` and `--note-type-id` to scope by owner group or note
 type. Pagination is via the global `--page` flag (default page size 50).
 

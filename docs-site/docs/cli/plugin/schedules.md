@@ -16,11 +16,14 @@ false when the row exists but the plugin no longer declares that id,
 which is what a disabled plugin, a renamed schedule and a deleted
 `mah.schedule` call all look like; none of them run, and the row is kept
 so that re-enabling or restoring the call resumes it with its history.
-`owned` is false when the operator who enabled the plugin has since been
-deleted, at which point the schedule has stopped rather than merely lost
-its attribution, because every run executes as that operator and there
-is no safe identity to fall back to. Naming a plugin the server does not
-have returns an empty list rather than an error.
+`owned` is false when the row carries no operator: either the operator
+who enabled the plugin has since been deleted, or the row was written by
+a sync with no principal, which is what a schedule id first recorded at a
+boot under `-auth` looks like. Either way the schedule has stopped rather
+than merely lost its attribution, because every run executes as that
+operator and there is no safe identity to fall back to; enabling the
+plugin again records whoever does it as the owner. Naming a plugin the
+server does not have returns an empty list rather than an error.
 
 ## Usage
 
@@ -62,7 +65,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of schedule objects with scheduleId, everySeconds, overlap, nextDueAt, runs, lastStatus, owned and registered
+Array of schedule objects with scheduleId, pluginName, everySeconds, overlap, nextDueAt, runs, lastStatus, lastError, owned, registered, and lastRunAt once it has run, in JSON mode; a table in human mode whose STATE column collapses owned and registered into active, stopped (no owner) or not declared
 
 ## Exit Codes
 

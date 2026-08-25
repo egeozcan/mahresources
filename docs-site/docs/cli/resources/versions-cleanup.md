@@ -11,8 +11,10 @@ same retention rules as the singular `resource versions-cleanup`:
 `--keep N` retains the N most recent versions per resource;
 `--older-than-days N` removes versions older than N days. Both filters
 may be combined. Scope the operation to a single owner group with
-`--owner-id`. Pass `--dry-run` to preview the count of versions that
-would be removed without committing any deletes.
+`--owner-id`. Pass `--dry-run` to compute the deletions without
+committing them, and add `--json` to see the result, which carries
+`totalDeleted` and a `deletedByResource` map; without `--json` the
+command reports only that the dry run completed.
 
 ## Usage
 

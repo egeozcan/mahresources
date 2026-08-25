@@ -84,28 +84,38 @@ Generate PNG images using pure Python (struct + zlib, no PIL needed):
 import struct, zlib, math, random
 
 def create_png(filepath, width, height, c1, c2, seed_str):
-    """Create gradient PNG with semi-transparent circles."""
+    """Create a gradient PNG with soft circles. No PIL needed.
+
+    Accumulate into a bytearray. Writing this as `raw = b''` plus a per-pixel
+    `raw += ...` is quadratic, because bytes is immutable and every append
+    copies the whole buffer: a 1280x720 image then spends 15+ minutes doing
+    memcpy instead of well under a second. Circle geometry is hoisted out of
+    the pixel loop, and the distance test compares squared distances so
+    sqrt runs only for pixels actually inside a circle.
+    """
     rng = random.Random(seed_str)
-    circles = [(rng.randint(0,100), rng.randint(0,100), rng.randint(10,30), rng.randint(20,60)) for _ in range(6)]
-    raw = b''
+    scale = min(width, height) / 100
+    circles = [(rng.randint(0,100)*width/100, rng.randint(0,100)*height/100,
+                rng.randint(10,30)*scale, rng.randint(20,60)/100) for _ in range(6)]
+    raw = bytearray()
     for y in range(height):
-        raw += b'\x00'
+        raw.append(0)  # PNG per-row filter byte: none
+        ty = y/height*0.4
         for x in range(width):
-            t = x/width*0.6 + y/height*0.4
-            r,g,b = [int(c1[i]+(c2[i]-c1[i])*t) for i in range(3)]
-            for cx_p,cy_p,rad_p,alpha in circles:
-                cx,cy = cx_p*width/100, cy_p*height/100
-                radius = rad_p*min(width,height)/100
-                dist = math.sqrt((x-cx)**2+(y-cy)**2)
-                if dist < radius:
-                    blend = (alpha/100)*(1-dist/radius)
-                    r,g,b = [int(v*(1-blend)+255*blend) for v in (r,g,b)]
-            raw += struct.pack('BBB', max(0,min(255,r)), max(0,min(255,g)), max(0,min(255,b)))
+            t = x/width*0.6 + ty
+            r,g,b = [c1[i]+(c2[i]-c1[i])*t for i in range(3)]
+            for cx,cy,radius,alpha in circles:
+                dx, dy = x-cx, y-cy
+                d2 = dx*dx + dy*dy
+                if d2 < radius*radius:
+                    blend = alpha*(1-math.sqrt(d2)/radius)
+                    r,g,b = [v*(1-blend)+255*blend for v in (r,g,b)]
+            raw += bytes((max(0,min(255,int(r))), max(0,min(255,int(g))), max(0,min(255,int(b)))))
     def chunk(t,d): c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xFFFFFFFF)
     with open(filepath,'wb') as f:
         f.write(b'\x89PNG\r\n\x1a\n')
         f.write(chunk(b'IHDR', struct.pack('>IIBBBBB',width,height,8,2,0,0,0)))
-        f.write(chunk(b'IDAT', zlib.compress(raw,9)))
+        f.write(chunk(b'IDAT', zlib.compress(bytes(raw),6)))
         f.write(chunk(b'IEND', b''))
 ```
 
@@ -233,6 +243,8 @@ Update `docs-site/static/img/screenshot-manifest.json` with the current date for
 
 ## Gotchas
 
+- **Resource create returns an ARRAY**: `POST /v1/resource` accepts many files per request and answers with a JSON array even for a single file. Read the id from `[0].ID`, not `.ID`, or every downstream step keyed on the new id (version uploads, cross-links) silently skips.
+- **Share server port**: if `.env` sets `SHARE_PORT` and that port is already bound, the server exits at startup instead of degrading. Pass `-share-port=` to run without it.
 - **Resource upload field**: Use `resource` not `file` for the multipart field name
 - **Version upload field**: Use `file` not `resource` for version uploads
 - **Version endpoint**: `POST /v1/resource/versions?resourceId=ID` (plural "versions")

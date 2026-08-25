@@ -7,9 +7,10 @@ sidebar_label: edit-name
 # mr resource-category edit-name
 
 Update the name of an existing resource category. Takes two positional
-arguments: the resource category ID and the new name. The name should
-remain unique across resource categories. To rename and verify in one
-step, chain with `mr resource-category get <id> --json`.
+arguments: the resource category ID and the new name. The name must
+remain unique across resource categories; the server rejects
+duplicates. To rename and verify in one step, chain with
+`mr resource-category get <id> --json`.
 
 ## Usage
 

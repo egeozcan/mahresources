@@ -6,7 +6,7 @@ sidebar_label: logout
 
 # mr auth logout
 
-Delete the locally stored API token for the current --server so this machine is no longer authenticated to it. Tokens stored for other servers are left intact. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.
+Delete the locally stored API token for the current --server so this machine is no longer authenticated to it. Tokens stored for other servers are left intact. It does not affect MR_TOKEN; while that is set it overrides the stored credential and the CLI stays authenticated. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.
 
 ## Usage
 

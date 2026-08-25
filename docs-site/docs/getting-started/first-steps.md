@@ -57,11 +57,12 @@ Add files to your Group.
 2. Click the **Create** button
 3. Select one or more files to upload
 4. Add a name and description
-5. Under **Groups**, select "Research Project"
-6. Under **Tags**, select "In Progress"
-7. Click **Save**
+5. Under **Owner**, select "Research Project" so the Group owns the files
+6. Under **Groups**, add any further Groups the files should be linked to
+7. Under **Tags**, select "In Progress"
+8. Click **Save**
 
-Each Resource can belong to multiple Groups and have multiple Tags.
+**Owner** is the single Group that owns the Resource: a single-file upload lands on the new Resource, and a multi-file upload lands on that Group. **Groups** is the separate many-to-many link, so each Resource can also belong to multiple Groups and have multiple Tags.
 
 ## Step 5: Create a Note
 

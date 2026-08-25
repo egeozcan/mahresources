@@ -58,8 +58,9 @@ server {
     auth_basic "Mahresources";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
-    # Increase body size for file uploads
-    client_max_body_size 2G;
+    # Body size: must cover -max-upload-size (2 GiB default) and
+    # -max-import-size (10 GiB default)
+    client_max_body_size 10G;
 
     location / {
         proxy_pass http://127.0.0.1:8181;
@@ -84,6 +85,15 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+:::warning Basic auth at the proxy blocks the `mr` CLI and every API client
+
+The `mr` CLI and the JSON API authenticate with `Authorization: Bearer <token>`, and a request carrying a Bearer value does not satisfy nginx, Caddy or Traefik basic auth, which want `Authorization: Basic ...` in that same header. There is no way to send both.
+
+Use the built-in [Authentication and RBAC](../features/authentication.md) with `-auth` instead, or exempt `/v1/` from `auth_basic` and enable `-auth` so those requests are still authenticated.
+:::
+
+The same applies to the Caddy and Traefik examples below, which put basic auth in front of every path as well.
+
 ## Caddy
 
 Caddy handles HTTPS certificates automatically.
@@ -105,9 +115,10 @@ mahresources.example.com {
         }
     }
 
-    # Increase request body limit for uploads
+    # Request body limit: must cover -max-upload-size (2 GiB default) and
+    # -max-import-size (10 GiB default)
     request_body {
-        max_size 2GB
+        max_size 10GiB
     }
 }
 ```
@@ -206,11 +217,16 @@ Caddy passes SSE events without buffering by default. No extra configuration is 
 
 ### Traefik
 
-Add response buffering middleware to the SSE routes:
+Declaring the middleware is not enough; a router has to attach it. Add a second router matching the two SSE paths and point it at the middleware:
 
 ```yaml
 labels:
   - "traefik.http.middlewares.sse-buffering.buffering.maxResponseBodyBytes=0"
+  - "traefik.http.routers.mahresources-sse.rule=Host(`mahresources.example.com`) && (PathPrefix(`/v1/jobs/events`) || PathPrefix(`/v1/download/events`))"
+  - "traefik.http.routers.mahresources-sse.entrypoints=websecure"
+  - "traefik.http.routers.mahresources-sse.tls.certresolver=letsencrypt"
+  - "traefik.http.routers.mahresources-sse.service=mahresources"
+  - "traefik.http.routers.mahresources-sse.middlewares=mahresources-auth,sse-buffering"
 ```
 
 ## Alternative Authentication Methods

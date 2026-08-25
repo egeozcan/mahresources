@@ -10,6 +10,7 @@ List every distinct `meta` key observed across the entire Resource
 corpus. Useful for discovering the vocabulary of an evolving meta
 schema. The command has no filter flags in the current CLI; pair it
 with client-side `jq` filtering if you only want a subset of keys.
+Output is JSON in both modes, an array of `{"key": ...}` objects.
 
 ## Usage
 
@@ -28,7 +29,7 @@ mr resources meta-keys
 **Filter client-side with jq**
 
 ```bash
-mr resources meta-keys --json | jq '.[] | select(startswith("image_"))'
+mr resources meta-keys --json | jq -r '.[].key | select(startswith("image_"))'
 ```
 
 
@@ -46,7 +47,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of distinct meta key strings across the entire resource corpus
+Array of objects, each with a single `key` field, one per distinct meta key across the entire resource corpus
 
 ## Exit Codes
 

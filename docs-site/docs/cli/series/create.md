@@ -6,11 +6,13 @@ sidebar_label: create
 
 # mr series create
 
-Create a new series. `--name` is required. The server derives the slug
-from the name at creation time; the slug never changes when the name is
-later edited, so pick a name with care. On success prints a confirmation
-line with the new ID; pass the global `--json` flag to emit the full
-record for scripting (e.g., piping the new ID into follow-up commands).
+Create a new series. `--name` is required. The server uses the trimmed
+name verbatim as the slug at creation time, and slugs are unique, so
+creating a second series with the same name fails. The slug never
+changes when the name is later edited, so pick a name with care. On
+success prints a confirmation line with the new ID; pass the global
+`--json` flag to emit the full record for scripting (e.g., piping the
+new ID into follow-up commands).
 
 ## Usage
 

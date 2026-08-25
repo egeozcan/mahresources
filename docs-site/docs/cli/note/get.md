@@ -9,9 +9,10 @@ sidebar_label: get
 Get a note by ID and print its metadata. Fetches the full record
 including name, description, meta JSON, attached tags/groups/resources,
 owner group, note type, optional start/end dates, and the share token
-(when the note is currently shared). Output is a key/value table by
-default; pass the global `--json` flag to get the full record for
-scripting.
+(when the note is currently shared). The default key/value table prints
+ID, name, description and the created and updated timestamps, plus owner,
+note type and share token when they are set; pass the global `--json`
+flag for the full record.
 
 ## Usage
 

@@ -8,6 +8,21 @@ Common issues and how to resolve them.
 
 ## Common Issues
 
+The server prints to stdout and also records warnings and errors in the application log at `/logs`, where entries can be filtered by level and entity type. A single entry is at `/log?id=N`, and `GET /v1/logs` returns the same data as JSON. Retention there is controlled by `-cleanup-logs-days`.
+
+### Server Won't Start
+
+Three startup failures abort the process before it binds a port.
+
+**`panic: stat <working-directory>/templates: no such file or directory`**
+- The server loads its templates from `./templates`, resolved against the working directory. Start it from the directory that holds `templates/` and `public/`, not from an arbitrary path.
+
+**`File save path is empty (use -memory-fs for ephemeral mode)`**
+- Pass `-file-save-path=/path/to/files`, or run without persistence using `-ephemeral` or `-memory-fs`.
+
+**`please set the DB_TYPE env var to SQLITE or POSTGRES`**
+- `-db-type` (or `DB_TYPE`) is unset or not one of the two values. The comparison is case-sensitive, so `sqlite` fails where `SQLITE` works.
+
 ### "Database is locked" (SQLite)
 
 This error occurs when multiple processes or connections attempt to write to the SQLite database simultaneously.
@@ -78,6 +93,12 @@ Common causes of upload failure:
 - If behind Apache, adjust `LimitRequestBody`
 - Check proxy timeout settings for large file uploads
 
+**Server size limit:**
+- `-max-upload-size` / `MAX_UPLOAD_SIZE` (default 2 GB) bounds one request, and exceeding it is answered with HTTP 400. A native multi-file form post is capped as a whole, while the browser-side bulk upload widget sends one file per request and is therefore capped per file. Raise the limit, or send fewer files per request.
+
+**Duplicate content:**
+- HTTP 409 with `a resource with identical content already exists (#N)` means the file's hash is already stored. Open resource `#N` instead of re-uploading.
+
 **Permission issues:**
 - Verify the application has write access to the file save path
 - Check directory ownership and permissions
@@ -97,7 +118,7 @@ The image similarity feature uses perceptual hashing to find visually similar im
 **Possible causes:**
 - **Hash worker disabled:** Check if `-hash-worker-disabled` flag or `HASH_WORKER_DISABLED=1` is set
 - **Still processing:** The hash worker processes images in batches. New uploads may take time to be indexed.
-- **Threshold too strict:** Adjust `-hash-similarity-threshold` (default: 10, higher = more matches)
+- **Threshold too strict:** Adjust `-hash-similarity-threshold` (default: 10, maximum 11; higher values match more, up to that ceiling)
 
 **Check hash worker status:**
 - Look for hash worker log messages during startup
@@ -107,7 +128,9 @@ The image similarity feature uses perceptual hashing to find visually similar im
 
 ### Can multiple users access the same instance?
 
-Yes, multiple users can connect simultaneously. However, there is **no user isolation** -- all users see and can modify the same data. The application is designed for personal use or trusted environments, not multi-tenant deployments.
+Yes. With auth off, which is the default, every request runs as an implicit administrator and there is **no user isolation**: all users see and can modify the same data.
+
+With `-auth` enabled, each user logs in and holds one of four roles, and group-limited users and guests are confined to a single Group's subtree across lists, reads, search, MRQL and file serving. See [Authentication & RBAC](./features/authentication.md).
 
 ### How do I migrate from SQLite to PostgreSQL?
 
@@ -128,9 +151,9 @@ Consider using third-party tools like `pgloader` for the data migration.
 
 Any file type can be stored. Special handling is provided for:
 
-- **Images:** JPEG, PNG, GIF, WebP, BMP - thumbnails generated automatically
+- **Images:** JPEG, PNG, GIF, WebP, BMP, TIFF, SVG - thumbnails generated automatically. HEIC and AVIF also work, but require ImageMagick.
 - **Videos:** MP4, WebM, MOV, AVI, MKV - thumbnails via FFmpeg
-- **Documents:** DOCX, XLSX, PPTX, ODT, ODS, ODP - thumbnails via LibreOffice
+- **Documents:** DOCX, XLSX, PPTX, DOC, XLS, PPT, ODT, ODS, ODP - thumbnails via LibreOffice
 
 Files without special handling are stored and served without processing.
 
@@ -144,9 +167,9 @@ Disk usage depends on the number of *unique* file contents across all versions. 
 
 ### Can I run multiple instances?
 
-**With PostgreSQL:** Yes, multiple Mahresources instances can connect to the same PostgreSQL database.
+**With PostgreSQL:** Yes, multiple Mahresources instances can connect to the same PostgreSQL database. Two things need attention across processes. Set `TEMPLATE_SIGNING_KEY` to the same value on every process, or deferred `[lazy]`, `[details]` and `[reload]` blocks fail to open when a reveal lands on a different process than the page render (see [Shortcodes](./features/shortcodes.md)). Upload deduplication is enforced per process, so two processes uploading byte-identical, not-yet-stored content at the same moment can each create a resource.
 
-**With SQLite:** Only one instance should write to a SQLite database at a time. Concurrent writes cause "database is locked" errors. You can run a read-only instance with `-db-readonly-dsn` for queries while another instance handles writes.
+**With SQLite:** Only one instance should write to a SQLite database at a time. Concurrent writes cause "database is locked" errors. `-db-readonly-dsn` does not change this: it supplies a separate connection used only to run saved raw-SQL queries, so a query cannot write to the database. It does not turn an instance read-only, and it does not make a second SQLite writer safe.
 
 ### How do I perform a factory reset?
 

@@ -21,25 +21,33 @@ GET /v1/resources
 | `page` | integer | Page number (default: 1) |
 | `Name` | string | Filter by name (partial match) |
 | `Description` | string | Filter by description (partial match) |
-| `ContentType` | string | Filter by MIME type (e.g., `image/jpeg`) |
+| `ContentType` | string | Filter by MIME type (partial match, e.g., `image/jpeg`) |
+| `ContentTypes` | string[] | Filter by MIME type (exact match, repeatable) |
 | `OwnerId` | integer | Filter by owner group ID |
+| `IncludeSubgroups` | boolean | Widen `OwnerId` to the owner group and all of its descendants |
 | `Groups` | integer[] | Filter by associated group IDs |
 | `Tags` | integer[] | Filter by tag IDs |
 | `Notes` | integer[] | Filter by associated note IDs |
 | `Ids` | integer[] | Filter by specific resource IDs |
 | `CreatedBefore` | string | Filter by creation date (ISO 8601) |
 | `CreatedAfter` | string | Filter by creation date (ISO 8601) |
+| `UpdatedBefore` | string | Filter by last-updated date (ISO 8601) |
+| `UpdatedAfter` | string | Filter by last-updated date (ISO 8601) |
 | `OriginalName` | string | Filter by original filename |
 | `OriginalLocation` | string | Filter by original file path/URL |
 | `Hash` | string | Filter by file hash |
 | `ShowWithoutOwner` | boolean | Only show resources without an owner |
 | `ShowWithSimilar` | boolean | Only show resources with similar images |
+| `ShowDhashZero` | boolean | Only show resources whose perceptual DHash is zero |
+| `Untagged` | boolean | Only show resources with no tags |
 | `MinWidth` | integer | Minimum image width in pixels |
 | `MaxWidth` | integer | Maximum image width in pixels |
 | `MinHeight` | integer | Minimum image height in pixels |
 | `MaxHeight` | integer | Maximum image height in pixels |
 | `ResourceCategoryId` | integer | Filter by resource category ID |
+| `SeriesId` | integer | Filter by series ID |
 | `MetaQuery` | string[] | Filter by metadata conditions (`key:value` or `key:OP:value`) |
+| `MRQL` | string | Filter with an [MRQL](/features/mrql) expression (type `resource` is implied) |
 | `MaxResults` | integer | Limit the number of results returned |
 | `SortBy` | string[] | Sort order |
 
@@ -82,8 +90,8 @@ curl "http://localhost:8181/v1/resources?MinWidth=1920&MinHeight=1080"
     "UpdatedAt": "2024-01-15T10:30:00Z",
     "Tags": [...],
     "Owner": {...},
-    "ResourceCategory": {...},
-    "Series": {...}
+    "resourceCategory": {...},
+    "series": {...}
   }
 ]
 ```
@@ -132,6 +140,7 @@ Content-Type: multipart/form-data
 | `Height` | integer | Manual height override |
 | `SeriesSlug` | string | Assign to Series by slug (creates if needed) |
 | `SeriesId` | integer | Assign to Series by ID |
+| `PathName` | string | Storage location key configured via `-alt-fs` or `FILE_ALT_NAME_N`. Omit it, or send an empty string, to store into the main filesystem |
 
 ### Example
 
@@ -155,23 +164,16 @@ curl -X POST http://localhost:8181/v1/resource \
 
 ### Response
 
-For a single file upload:
-```json
-{
-  "ID": 124,
-  "Name": "My Photo",
-  "ContentType": "image/jpeg",
-  ...
-}
-```
+A file upload always answers with an array, one element per uploaded file, even when a single file was sent:
 
-For multiple file uploads:
 ```json
 [
   {"ID": 124, "Name": "file1.jpg", ...},
   {"ID": 125, "Name": "file2.jpg", ...}
 ]
 ```
+
+This handler also accepts a `URL` field. When it is non-empty the request behaves as `POST /v1/resource/remote` described below, and the response is a single resource object rather than an array.
 
 ## Upload Resource (URL)
 
@@ -192,11 +194,18 @@ POST /v1/resource/remote
 | `OwnerId` | integer | Owner group ID |
 | `Groups` | integer[] | Associated group IDs |
 | `Tags` | integer[] | Tag IDs |
+| `Notes` | integer[] | Note IDs to associate |
 | `Meta` | string | JSON metadata |
+| `Category` | string | Legacy category string |
+| `ContentCategory` | string | High-level content category label |
+| `ResourceCategoryId` | integer | Resource Category ID |
+| `SeriesSlug` | string | Assign to Series by slug (creates if needed) |
 | `GroupCategoryName` | string | Auto-create owner group with this category |
 | `GroupName` | string | Auto-create owner group with this name |
 | `GroupMeta` | string | Metadata for auto-created group |
 | `PathName` | string | Alternative filesystem key to store into (empty = default filesystem) |
+
+`OriginalName` and `OriginalLocation` are set from the source URL on this endpoint, so supplying them has no effect, and `SeriesId` is ignored here (use `SeriesSlug`).
 
 ### Example
 
@@ -213,7 +222,7 @@ curl -X POST http://localhost:8181/v1/resource/remote \
   }'
 ```
 
-Pass `background=true` (query or form field) to queue the download instead of blocking. The request then returns `202 Accepted` with `{"queued": true, "jobs": [...]}` rather than the created resource. `POST /v1/jobs/download/submit` always queues in the background. The URL field accepts multiple URLs separated by newlines for batch imports. Legacy alias: `POST /v1/download/submit`.
+Pass `background=true` (query or form field) to queue the download instead of blocking. The request then returns `202 Accepted` with `{"queued": true, "jobs": [...]}` rather than the created resource. `POST /v1/jobs/download/submit` always queues in the background. The URL field accepts multiple URLs separated by newlines for batch imports; a synchronous multi-URL request returns only the first created resource, so use `background=true` when you need a per-URL result. Legacy alias: `POST /v1/download/submit`.
 
 ## Add Local Resource
 
@@ -240,6 +249,12 @@ POST /v1/resource/local
 | `OwnerId` | integer | Owner group ID |
 | `Groups` | integer[] | Associated group IDs |
 | `Tags` | integer[] | Tag IDs |
+| `Notes` | integer[] | Note IDs to associate |
+| `Category` | string | Legacy category string |
+| `ContentCategory` | string | High-level content category label |
+| `ResourceCategoryId` | integer | Resource Category ID |
+| `OriginalName` | string | Original filename. Defaults to `Name`, or to the file's base name when `Name` is omitted |
+| `OriginalLocation` | string | Original URL/path |
 
 ### Example
 
@@ -612,6 +627,13 @@ Content-Type: multipart/form-data
 | `ID` | integer | **Required.** Resource ID (query param) |
 | `thumbnail` | file | **Required.** Image file to use as the thumbnail |
 
+On success the response is `204 No Content`.
+
+#### Errors
+
+- 400: Missing or invalid ID, a body that is not multipart, no `thumbnail` field, or an image that cannot be decoded
+- 404: Resource not found, or outside the caller's scope
+
 ### Clear Custom Thumbnail
 
 Remove stored thumbnails so the next preview request regenerates them from the source file.
@@ -621,6 +643,8 @@ DELETE /v1/resource/preview?ID={id}
 ```
 
 Or using POST: `POST /v1/resource/preview/clear?ID={id}`.
+
+On success the response is `204 No Content`.
 
 ### Suggested Tags
 
@@ -798,6 +822,18 @@ POST /v1/resource/version/delete?resourceId={resourceId}&versionId={versionId}
 | `resourceId` | integer | **Required.** The resource ID |
 | `versionId` | integer | **Required.** The version ID |
 
+#### Response
+
+```json
+{"status": "deleted"}
+```
+
+#### Errors
+
+- 409: The version is the resource's current version, or its last remaining version
+- 400: The version belongs to a different resource
+- 404: The version does not exist
+
 ### Get Version File
 
 Download the file content of a specific version.
@@ -908,10 +944,14 @@ Cross-resource comparison is available through the UI at `/resource/compare`, no
 /resource/compare?r1=123&v1=1&r2=456&v2=1
 ```
 
+On `/resource/compare`, `v1` and `v2` are per-resource version numbers rather than the version IDs the `/v1/` endpoint takes, and `r2` defaults to `r1` when omitted.
+
 #### Response
 
 ```json
 {
+  "version1": { ... },
+  "version2": { ... },
   "sizeDelta": -1024,
   "sameHash": false,
   "sameType": true,
@@ -922,6 +962,10 @@ Cross-resource comparison is available through the UI at `/resource/compare`, no
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `version1` | object | The full version record for the first side |
+| `version2` | object | The full version record for the second side |
+| `resource1` | object | The first resource, present only when `crossResource` is true |
+| `resource2` | object | The second resource, present only when `crossResource` is true |
 | `sizeDelta` | integer | Size difference in bytes (version2 - version1) |
 | `sameHash` | boolean | Whether file hashes match |
 | `sameType` | boolean | Whether content types match |

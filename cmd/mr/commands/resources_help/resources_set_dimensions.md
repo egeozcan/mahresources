@@ -12,13 +12,16 @@ known to be stale. Does not transform the file bytes; only updates the
 database record. All three flags (`--ids`, `--width`, `--height`) are
 required.
 
+Each ID is sent as its own request and the command stops at the first
+failure, so IDs already processed keep their new dimensions.
+
 # Example
 
   # Set dimensions on a single resource
   mr resources set-dimensions --ids 7 --width 1920 --height 1080
 
   # Batch update from a tag filter
-  IDS=$(mr resources list --tags 5 --json | jq -r 'map(.id) | join(",")')
+  IDS=$(mr resources list --tags 5 --json | jq -r 'map(.ID) | join(",")')
   mr resources set-dimensions --ids $IDS --width 800 --height 600
 
   # mr-doctest: upload, force known dimensions, assert via get

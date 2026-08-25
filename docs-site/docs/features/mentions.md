@@ -22,7 +22,7 @@ Examples:
 
 ## Autocomplete
 
-Typing `@` followed by 2+ characters in a description textarea opens an autocomplete dropdown. Results are grouped by entity type with icons and description previews.
+Typing `@` followed by 2+ characters in a description textarea or a note text block opens an autocomplete dropdown. Results are grouped by entity type with icons and description previews.
 
 | Key | Action |
 |-----|--------|
@@ -37,6 +37,7 @@ Available entity types vary by context:
 | Note | resources, groups, tags |
 | Group | resources, notes, groups, tags |
 | Resource | notes, groups, tags |
+| Note text block | resources, groups, tags |
 
 ## Relation Syncing
 

@@ -6,11 +6,17 @@ relatedCmds: group create, group edit-name, group parents, group children
 
 # Long
 
-Get a group by ID and print its metadata. Fetches the full record
-including the owner chain, category, tags, and any custom Meta JSON
+Get a group by ID and print its metadata. Fetches the record
+including its immediate owner, category, tags, and any custom Meta JSON
 object. Output is a key/value table by default; pass the global `--json`
-flag to get the full record for scripting (related collections such as
+flag to get the record for scripting (related collections such as
 `Tags`, `OwnResources`, `OwnNotes`, and `OwnGroups` are included).
+
+The preloaded collections are truncated, `OwnResources` and
+`RelatedResources` to 5 entries and `OwnGroups`, `OwnNotes`,
+`RelatedNotes` and `RelatedGroups` to 50, so use
+`resources list --owner-id <id>` or `group children <id>` when you need
+the whole set.
 
 # Example
 

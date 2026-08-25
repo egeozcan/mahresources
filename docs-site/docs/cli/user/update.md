@@ -6,7 +6,7 @@ sidebar_label: update
 
 # mr user update
 
-Update an existing user account. Only the flags you pass are sent and changed; omitted fields are preserved by the server. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.
+Update an existing user account. Only the flags you pass are sent and changed; omitted fields are preserved by the server. Use --disabled to lock an account and --enable to unlock it; disabling an account or setting a new password revokes its sessions and API tokens. --disabled and --enable cannot be combined. Passwords must be at least 8 characters and at most 72 bytes. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.
 
 ## Usage
 
@@ -39,7 +39,7 @@ mr user update 4 --disabled --password password2
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--username` | string | `` | New username |
-| `--password` | string | `` | New password (omit to keep the current one) |
+| `--password` | string | `` | New password (omit to keep the current one; setting one revokes the account's sessions and tokens) |
 | `--role` | string | `` | New role: admin, editor, user, or guest |
 | `--display-name` | string | `` | New display name |
 | `--scope-group` | uint | `0` | New scope group id (use 0 to clear) |

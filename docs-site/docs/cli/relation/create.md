@@ -8,11 +8,15 @@ sidebar_label: create
 
 Create a new Relation linking two Groups with a typed relationship.
 `--from-group-id`, `--to-group-id`, and `--relation-type-id` are all
-required. The referenced relation-type's `FromCategory` and
-`ToCategory` must match the categories of the two groups; otherwise
-the server rejects the request. `--name` and `--description` are
-optional labels stored on the relation itself. Sends `POST /v1/relation`
-and returns the persisted record.
+required. A group cannot be related to itself. The referenced
+relation-type's `FromCategory` and `ToCategory` must match the
+categories of the two groups; otherwise the server rejects the request.
+`--name` and `--description` are optional labels stored on the relation
+itself. Sends `POST /v1/relation` and returns the persisted record. When
+the relation type has a paired back-relation type (see
+`relation-type create --reverse-name`), a matching reverse relation is
+created on the target group at the same time; only the forward relation
+is returned.
 
 ## Usage
 

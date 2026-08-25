@@ -279,32 +279,35 @@ Create a new file in `src/components/blocks/`:
 
 ```javascript
 // src/components/blocks/blockQuote.js
-export function blockQuote() {
+// The callbacks arrive as constructor arguments, and edit mode as a thunk, which
+// is the convention every built-in block follows.
+export function blockQuote(block, saveFn, stateFn, getEditMode) {
   return {
-    // Getters for content properties
-    get text() {
-      return this.block?.content?.text || '';
-    },
-    get author() {
-      return this.block?.content?.author || '';
-    },
-    get sourceUrl() {
-      return this.block?.content?.sourceUrl || '';
+    block,
+    saveFn,
+    stateFn,
+    getEditMode,
+
+    // Plain data properties, so x-model can write to them
+    text: block?.content?.text || '',
+    author: block?.content?.author || '',
+    sourceUrl: block?.content?.sourceUrl || '',
+    collapsed: block?.state?.collapsed || false,
+
+    // Reading the thunk here keeps the template's `editMode` reactive
+    get editMode() {
+      return this.getEditMode ? this.getEditMode() : false;
     },
 
-    // Getters for state properties
-    get collapsed() {
-      return this.block?.state?.collapsed || false;
-    },
-
-    // Methods to update content
+    // Persist content
     updateQuote(text, author, sourceUrl) {
-      this.$dispatch('update-content', { text, author, sourceUrl });
+      this.saveFn(this.block.id, { text, author, sourceUrl });
     },
 
-    // Methods to update state
+    // Persist state
     toggleCollapsed() {
-      this.$dispatch('update-state', { collapsed: !this.collapsed });
+      this.collapsed = !this.collapsed;
+      this.stateFn(this.block.id, { collapsed: this.collapsed });
     }
   };
 }
@@ -312,49 +315,30 @@ export function blockQuote() {
 
 ### Step 2: Export from index.js
 
-Add your component to `src/components/blocks/index.js`:
+Add one line to `src/components/blocks/index.js`; the existing exports stay as they are.
 
 ```javascript
 // src/components/blocks/index.js
-export { blockText } from './blockText.js';
-export { blockHeading } from './blockHeading.js';
-export { blockDivider } from './blockDivider.js';
-export { blockTodos } from './blockTodos.js';
-export { blockGallery } from './blockGallery.js';
-export { blockReferences } from './blockReferences.js';
-export { blockTable } from './blockTable.js';
-export { blockQuote } from './blockQuote.js';  // Add this line
+export { blockQuote } from './blockQuote.js';
 ```
 
 ### Step 3: Register in main.js
 
-Import and register your component in `src/main.js`:
+In `src/main.js`, add `blockQuote` to the existing import from `./components/blocks/index.js`, then register it:
 
 ```javascript
-// In the import section:
-import {
-  blockText,
-  blockHeading,
-  blockDivider,
-  blockTodos,
-  blockGallery,
-  blockReferences,
-  blockTable,
-  blockQuote  // Add this
-} from './components/blocks/index.js';
-
 // In the Alpine.data registration section:
 Alpine.data('blockQuote', blockQuote);
 ```
 
-### Step 4: Update blockEditor.js
+### Step 4 (optional): Update the blockEditor.js fallbacks
 
-Add default content and type metadata in `src/components/blockEditor.js`:
+Neither edit below is required. `GET /v1/note/block/types` returns every registered type's `defaultContent`, `defaultState`, label, icon and description, and the editor replaces its whole `blockTypes` array with that response, so your Go `DefaultContent()` already reaches the browser. The maps in `src/components/blockEditor.js` are a pre-load fallback only, used before the API call returns.
 
 ```javascript
-// In getDefaultContent method:
+// In getDefaultContent method, the fallback map:
 getDefaultContent(type) {
-  const defaults = {
+  const fallbackDefaults = {
     text: { text: '' },
     heading: { text: '', level: 2 },
     divider: {},
@@ -364,7 +348,7 @@ getDefaultContent(type) {
     table: { columns: [], rows: [] },
     quote: { text: '', author: '', sourceUrl: '' }  // Add this
   };
-  return defaults[type] || {};
+  return fallbackDefaults[type] || {};
 }
 
 // In blockTypes array (showing built-in types plus your addition):
@@ -388,7 +372,7 @@ Add the rendering template in `templates/partials/blockEditor.tpl`:
 ```html
 {# Quote block #}
 <template x-if="block.type === 'quote'">
-    <div x-data="blockQuote(block, editMode, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state))">
+    <div x-data="blockQuote(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)">
         <template x-if="!editMode">
             <blockquote class="border-l-4 border-gray-300 pl-4 italic">
                 <p x-text="text" class="text-lg"></p>
@@ -584,8 +568,8 @@ func (q QuoteBlockType) ValidateContent(content json.RawMessage) error {
 - [ ] Create `src/components/blocks/blockYourType.js` component
 - [ ] Export from `src/components/blocks/index.js`
 - [ ] Register in `src/main.js` with `Alpine.data()`
-- [ ] Add default content in `blockEditor.js` `getDefaultContent()`
-- [ ] Add type metadata in `blockEditor.js` `blockTypes` array
+- [ ] Optional: add a pre-load fallback in `blockEditor.js` `getDefaultContent()`
+- [ ] Optional: add a pre-load entry in the `blockEditor.js` `blockTypes` array
 - [ ] Add template in `templates/partials/blockEditor.tpl`
 - [ ] Write backend tests in `models/block_types/registry_test.go`
 - [ ] Write E2E tests in `e2e/tests/blocks/`

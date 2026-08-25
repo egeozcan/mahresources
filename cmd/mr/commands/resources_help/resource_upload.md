@@ -1,5 +1,5 @@
 ---
-outputShape: Resource object with id, name
+outputShape: Array of Resource objects, one per uploaded file, each with ID and Name
 exitCodes: 0 on success; 1 on any error
 relatedCmds: resource edit, resource from-url, resource from-local, resources list
 ---

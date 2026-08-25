@@ -8,8 +8,9 @@ sidebar_label: note-type
 
 Note Types are typed schemas for Notes. A NoteType defines the shape of
 a Note's metadata via a JSON Schema (`MetaSchema`) and may carry custom
-rendering bits: `CustomHeader`, `CustomCSS`, `CustomSidebar`,
-`CustomSummary`, `CustomAvatar`, `CustomMRQLResult`, and a `SectionConfig`
+rendering bits: `CustomHeader`, `CustomDetailFooter`, `CustomSidebar`,
+`CustomSummary`, `CustomAvatar`, `CustomHoverCard`, `CustomListHeader`,
+`CustomListFooter`, `CustomMRQLResult`, `CustomCSS`, and a `SectionConfig`
 JSON toggle for which sections appear on note detail pages. Typical examples are
 "Meeting Minutes", "Code Review", or "Bug Report".
 

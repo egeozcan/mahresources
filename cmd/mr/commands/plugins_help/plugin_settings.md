@@ -11,7 +11,10 @@ a JSON object via the required `--data` flag; keys must match the
 `name` fields declared in the plugin's settings descriptor (see the
 `settings` array on `plugins list`). The server stores the decoded
 object as the plugin's persisted values and returns `ok=true` on
-success.
+success. A value that fails the descriptor's validation is refused with
+a non-zero exit and the server's per-field errors; a key the plugin does
+not declare is dropped rather than refused, so a misspelled name fails
+quietly.
 
 This command replaces the stored values wholesale — keys omitted from
 the `--data` payload are not preserved. Run `plugins list --json` to

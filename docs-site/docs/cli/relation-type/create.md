@@ -7,12 +7,20 @@ sidebar_label: create
 # mr relation-type create
 
 Create a new RelationType defining a typed link between two Categories.
-`--name` is required. `--from-category` and `--to-category` take
-Category IDs (not names); when set, the server enforces that relations
-of this type link groups of those categories. `--description` is
-free-form text shown in UIs. `--reverse-name` stores a readable label
-for traversing the link in the opposite direction. Sends `POST
-/v1/relationType` and returns the persisted record.
+`--name`, `--from-category` and `--to-category` are all required in
+practice: the two category flags take Category IDs (not names), and the
+server rejects a missing category outright, and on SQLite rejects one
+that does not resolve to an existing Category; nothing is persisted
+either way. It then enforces that relations of this type link groups of
+those categories. `--description` is free-form text shown in UIs.
+
+`--reverse-name` is not a label. It creates a second RelationType of that
+name with the categories swapped and links the pair, so each is the
+other's back relation; an existing unlinked reverse type of that name and
+category pair is adopted rather than duplicated. Passing the same value
+as `--name` self-links the type, which requires `--from-category` and
+`--to-category` to be equal. Sends `POST /v1/relationType` and returns
+the persisted record.
 
 ## Usage
 

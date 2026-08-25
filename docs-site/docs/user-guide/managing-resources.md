@@ -26,10 +26,26 @@ Resources are files of any type: images, documents, videos, or anything else you
    - **Owner** - The group that owns this resource
    - **Resource Category** - Classify the resource type
    - **Series** - Group related resources into a series
+   - **Storage** - Which filesystem to save the file to. Shown only when alternative file systems are configured (`-alt-fs`)
    - **Meta** - Custom key-value metadata
 5. Click **Save** to upload
 
 You can upload multiple files at once by selecting them in the file picker.
+
+### Bulk Uploads
+
+A small selection is posted as one request, exactly as it always was. A large one is not: above `upload_widget_file_threshold` files (10 by default) or `upload_widget_size_threshold` bytes (1 GiB by default), the page sends one request per file, `upload_concurrency` at a time (3 by default). A line under the file picker tells you before you click **Save** that the selection has crossed the threshold. See [Runtime Settings](../configuration/runtime-settings.md#bulk-resource-uploads) to change the three values.
+
+While the batch runs, a progress panel replaces the form:
+
+- Progress is aggregated over **bytes**, not files, so one large file among many small ones does not sit at zero and then jump
+- Only files that are in flight or have failed get a row of their own; completed files collapse to a count
+- **Cancel** stops the batch, leaving the files already uploaded in place
+- **Retry failed** re-sends the failures that are worth re-sending. A 409 duplicate, a file the browser refused on size, and any other deterministic 4xx are excluded, because the same bytes would fail the same way; a duplicate's row links to the resource it collided with instead
+
+`max_upload_size` bounds one request, so under this widget it becomes a per-file limit rather than a limit on the batch. Each file is checked against it in the browser before anything is sent.
+
+When every file succeeds, a single-file upload opens that resource and a batch opens the owning group, or the resource list when no owner was chosen. A batch that partially failed stays on the page so you can retry.
 
 ### URL Import
 
@@ -67,6 +83,8 @@ The paste upload modal supports:
 - **Duplicate detection** -- if a file with the same hash already exists, the modal shows the existing resource ID
 - **Context awareness** -- when pasting on a group or note detail page, or a list view filtered by a single owner, the uploaded resource is associated with that entity automatically
 - **Auto-close** -- the modal closes and the page refreshes after a successful upload
+
+Pasted text is uploaded too: rich text becomes an `.html` resource and plain text a `.txt` resource, each named after the moment it was pasted and previewed in the modal as a text snippet rather than a thumbnail.
 
 ## Viewing Resources
 
@@ -205,7 +223,7 @@ Rotation creates a new version with the rotated content and clears cached thumbn
 Crop an image to a rectangular region. Cropping is available for raster image files.
 
 1. Navigate to the image resource
-2. In the sidebar, under **Image Operations**, click the **Crop** button to open the crop dialog
+2. In the sidebar, find **Crop** and click **Crop…** to open the crop dialog
 3. Under **Save as**, choose **New version** (the default) or **New resource**
 4. Drag on the image to select the crop area, or type exact pixel values for **X**, **Y**, **Width**, and **Height**
 5. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**

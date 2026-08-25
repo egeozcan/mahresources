@@ -9,8 +9,9 @@ sidebar_label: relation-type
 A RelationType (`GroupRelationType`) defines the typed link allowed
 between two Categories of Groups. Each relation-type has a `Name`
 (e.g., "references", "contains", "depends-on"), an optional
-`Description`, an optional `ReverseName` for reading the link
-backwards, and references to `FromCategory` and `ToCategory`. When a
+`Description`, an optional `BackRelationId` pointing at the relation
+type that reads the link backwards (set with `relation-type create
+--reverse-name`), and references to `FromCategory` and `ToCategory`. When a
 Relation is created with `mr relation create --relation-type-id <id>`,
 the server enforces that the source group belongs to `FromCategory`
 and the target group belongs to `ToCategory`.

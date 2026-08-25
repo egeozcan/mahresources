@@ -13,6 +13,7 @@ Lua-based plugins extend Mahresources with custom actions, hooks, pages, JSON AP
 |------|-------------|---------|-------------|
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Directory to scan for plugin subdirectories |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable the plugin system entirely |
+| `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | `30s` | How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule |
 
 ## Plugin Discovery
 
@@ -42,7 +43,7 @@ plugin = {
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Plugin identifier (displayed in management UI) |
+| `name` | Yes | Plugin identifier (displayed in management UI). Must match `^[a-z][a-z0-9_-]{0,49}$` |
 | `version` | No | Version string |
 | `description` | No | Short description |
 | `settings` | No | Array of setting definitions |
@@ -53,6 +54,8 @@ plugin = {
 | `dependencies` | No | Plugin names that must be enabled first. Requires `api_version` |
 | `min_app_version` | No | Recorded and displayed, never enforced. Requires `api_version` |
 
+The name is validated at discovery: lower case, starting with a letter, up to 50 characters of `a-z`, `0-9`, `-` and `_`. It is a URL segment in every menu href and the prefix of every shortcode the plugin registers, so a name outside that grammar is skipped with a warning rather than loaded. Two directories declaring the same name are both skipped, because the name is what a plugin's enabled state, settings and KV namespace belong to.
+
 A plugin that declares `api_version` receives only the capabilities it lists — plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
 
 ## Plugin Lifecycle
@@ -61,7 +64,7 @@ A plugin that declares `api_version` receives only the capabilities it lists —
 2. **State check** -- The database is queried for previously enabled plugins. Those plugins are enabled automatically.
 3. **Enable** -- A full Lua VM is created with safe libraries. `plugin.lua` is executed, then `init()` is called (if defined). Hooks, actions, injections, pages, menus, and API endpoints registered during `init()` become active.
 4. **Run** -- The plugin responds to hooks, serves pages, and executes actions.
-5. **Disable** -- All hooks, injections, pages, menus, actions, and API endpoints are removed. In-flight async actions are awaited. The Lua VM is closed.
+5. **Disable** -- All hooks, injections, block types, pages, menus, actions, and API endpoints are removed. In-flight async work is waited for, bounded at 5 seconds, after which the VM is closed once that work stops. Disabling is refused while another enabled plugin depends on this one.
 
 ## Plugin Settings
 
@@ -116,7 +119,11 @@ Navigate to the plugin management page to see all discovered plugins with their 
 
 - Enable or disable individual plugins
 - Configure plugin settings
-- View registered actions, hooks, and pages
+- Review the capabilities, network allowlist, and dependencies the plugin declares
+- Open or close the plugin to group-limited accounts
+- Inspect its schedules and run one now
+- Purge its stored data
+- Open its generated documentation page
 
 ## Management API
 
@@ -127,6 +134,9 @@ Navigate to the plugin management page to see all discovered plugins with their 
 | `POST` | `/v1/plugin/disable` | Disable a plugin (form: `name`) |
 | `POST` | `/v1/plugin/settings` | Save settings (query: `name`, JSON body: key-value pairs) |
 | `POST` | `/v1/plugin/purge-data` | Purge all KV store data for a disabled plugin (form: `name`) |
+| `POST` | `/v1/plugin/scopedAccess` | Allow or refuse group-limited accounts per plugin (form: `name`, `allowed`). See [Plugin Permissions](./plugin-permissions.md) |
+| `GET` | `/v1/plugin/schedules` | List recorded plugin schedules. See [`mah.schedule`](./plugin-lua-api.md#mahschedule----recurring-work) |
+| `POST` | `/v1/plugin/schedule/run` | Run one schedule now |
 
 ### Enable a Plugin
 
@@ -182,8 +192,8 @@ Each enabled plugin runs in an isolated Lua VM with restricted libraries.
 
 **Blocked**: `os`, `io`, `debug`, `package`
 
-**Removed base functions**: `dofile`, `loadfile`, `load`
+**Removed base functions**: `dofile`, `loadfile`, `load`, `loadstring`
 
-The above hardening applies to the enable-time VM. The discovery-time VM (used at startup to read metadata from every `plugin.lua` on disk) is less hardened: it opens `base`, `table`, `string`, and `math` but does **not** remove `dofile`, `loadfile`, or `load`, and it executes the top-level code of every discovered `plugin.lua`. Only place trusted `plugin.lua` files in the plugin directory.
+Every VM that executes a `plugin.lua` opens the same libraries and removes the same base functions: the discovery-time one that reads metadata at startup, the enable-time one, and the one that parses settings. That is deliberate, so a plugin cannot tell which run it is in and declare a different manifest to each. Discovery still executes the top-level code of every `plugin.lua` on disk, enabled or not, so only place trusted files in the plugin directory.
 
 Each VM has a mutex ensuring single-threaded access. All calls into the VM (hooks, actions, page handlers) acquire this lock.

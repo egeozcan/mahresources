@@ -66,6 +66,8 @@ Start with a copy of an existing database (useful for testing or demos):
 
 Changes are made to the in-memory copy and lost when the server stops.
 
+`-seed-db` requires `-memory-db` or `-ephemeral`, and is SQLite-only. Combining it with `-db-type=POSTGRES`, or naming a file that does not exist, fails at startup.
+
 ### Connection Pool Limits
 
 For concurrent access scenarios (like parallel E2E tests), limit connections to reduce lock contention:
@@ -96,9 +98,9 @@ DB_TYPE=POSTGRES
 DB_DSN="host=db.example.com port=5432 user=app password=secret dbname=mahresources sslmode=require"
 ```
 
-### Read Replica
+### Read-Only Connection for Saved Queries
 
-For high-read workloads, configure a read-only connection to a replica:
+Point saved SQL Queries at a replica or a read-only role so their arbitrary SQL never runs on the primary:
 
 ```bash
 ./mahresources \
@@ -107,7 +109,7 @@ For high-read workloads, configure a read-only connection to a replica:
   -db-readonly-dsn="host=replica.db user=app password=secret dbname=mahresources"
 ```
 
-Read operations will use the replica, reducing load on the primary.
+This connection is used by exactly one code path: executing a saved SQL Query at `/query`. Ordinary reads (lists, single-item fetches, search, MRQL) all go through the `-db-dsn` connection, so this setting offloads no general read traffic.
 
 ## Database Logging
 
@@ -152,7 +154,7 @@ On large databases with millions of resources, certain startup operations can be
 ./mahresources -skip-fts -db-type=SQLITE -db-dsn=./large.db -file-save-path=./files
 ```
 
-Skips FTS index creation/update at startup. Use this if you do not need text search.
+Skips FTS index creation and update at startup. Search still works: it falls back to LIKE (ILIKE on PostgreSQL) matching, which is slower on large tables and has no relevance ranking or tokenization.
 
 ### Skip Version Migration
 
@@ -168,7 +170,7 @@ Skips the resource version migration that runs at startup. Safe to use after the
 |------|--------------|-------------|
 | `-db-type` | `DB_TYPE` | Database type: `SQLITE` or `POSTGRES` |
 | `-db-dsn` | `DB_DSN` | Database connection string |
-| `-db-readonly-dsn` | `DB_READONLY_DSN` | Read-only connection (PostgreSQL) |
+| `-db-readonly-dsn` | `DB_READONLY_DSN` | Connection that saved SQL Queries execute on |
 | `-db-log-file` | `DB_LOG_FILE` | Query log destination |
 | `-db-slow-query-threshold` | `DB_SLOW_QUERY_THRESHOLD` | Log queries slower than this duration (e.g. `200ms`) to the DB log and the application log; `0` disables |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite |

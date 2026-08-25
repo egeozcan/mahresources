@@ -33,7 +33,7 @@ mr resource recalculate-dimensions 42
 **Pipe from a list query to bulk-recalculate**
 
 ```bash
-mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
+mr resources list --content-type image/jpeg --json | jq -r '.[].ID' | xargs -I {} mr resource recalculate-dimensions {}
 ```
 
 

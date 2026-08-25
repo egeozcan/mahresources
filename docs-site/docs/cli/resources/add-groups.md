@@ -27,7 +27,7 @@ mr resources add-groups --ids 1,2 --groups 2,3
 **Bulk from a list query**
 
 ```bash
-mr resources list --content-type image/jpeg --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
+mr resources list --content-type image/jpeg --json | jq -r 'map(.ID) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
 ```
 
 

@@ -53,17 +53,19 @@ Content-Type: application/json
 }
 ```
 
+Posting a name that already exists returns the existing Tag rather than an error, so the endpoint is safe to call repeatedly.
+
 #### Applying Tags
 
 Tags are added through entity update operations:
 
 ```
-POST /v1/resource
+POST /v1/resource/edit
 Content-Type: application/json
 
 {
-  "id": 123,
-  "tags": [1, 2, 3]
+  "ID": 123,
+  "Tags": [1, 2, 3]
 }
 ```
 
@@ -153,10 +155,16 @@ Categories define types of Groups with custom presentation and optional metadata
 | `name` | Unique category name |
 | `description` | Explanation of the category |
 | `customHeader` | HTML template for group page headers |
+| `customDetailFooter` | HTML template rendered at the bottom of the group detail page |
 | `customSidebar` | HTML template for group page sidebars |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for group avatars/icons |
+| `customHoverCard` | HTML template for the hover card, falling back to `customSummary` when empty |
+| `customOwnEntities` | HTML template replacing the body of the "Own Entities" section |
+| `customListHeader` | HTML template rendered above a group list filtered to this category |
+| `customListFooter` | HTML template rendered below a group list filtered to this category |
 | `customMRQLResult` | HTML template for rendering Groups of this category in MRQL query results |
+| `customCSS` | CSS injected as a page-level `<style>` block, so the other slots can be styled |
 | `metaSchema` | JSON Schema for metadata validation |
 | `sectionConfig` | JSON config controlling which sections are visible on group detail pages |
 | `createdAt` | Creation timestamp |
@@ -181,69 +189,9 @@ Categories define types of Groups with custom presentation and optional metadata
 
 ### Custom Templates
 
-Categories can include HTML templates rendered with Pongo2 (Django-like) syntax.
+A slot body is HTML plus server-side shortcodes (`[meta]`, `[property]`, `[conditional]`, `[mrql]`, and the rest). It is **not** evaluated as a Pongo2 template, so `{{ group.name }}` and `{% if %}` appear as literal text. Alpine.js directives work in the detail-page and card slots, where the full entity is bound as `entity`.
 
-#### Template Context
-
-Templates have access to:
-- `group` - The current group object
-- `meta` - The group's metadata (parsed JSON)
-- `category` - The category object
-
-#### Custom Header Example
-
-```html
-<div class="person-header">
-  {% if meta.avatar %}
-    <img src="{{ meta.avatar }}" alt="{{ group.name }}" class="avatar">
-  {% endif %}
-  <div class="info">
-    <h1>{{ group.name }}</h1>
-    {% if meta.title %}
-      <span class="title">{{ meta.title }}</span>
-    {% endif %}
-  </div>
-</div>
-```
-
-#### Custom Sidebar Example
-
-```html
-<div class="contact-info">
-  {% if meta.email %}
-    <a href="mailto:{{ meta.email }}">{{ meta.email }}</a>
-  {% endif %}
-  {% if meta.phone %}
-    <a href="tel:{{ meta.phone }}">{{ meta.phone }}</a>
-  {% endif %}
-  {% if group.url %}
-    <a href="{{ group.url }}" target="_blank">Website</a>
-  {% endif %}
-</div>
-```
-
-#### Custom Summary Example
-
-For list views:
-
-```html
-<div class="company-summary">
-  <span class="name">{{ group.name }}</span>
-  {% if meta.industry %}
-    <span class="industry">{{ meta.industry }}</span>
-  {% endif %}
-</div>
-```
-
-#### Custom Avatar Example
-
-```html
-{% if meta.logo %}
-  <img src="{{ meta.logo }}" alt="{{ group.name }}">
-{% else %}
-  <span class="initials">{{ group.name|first|upper }}</span>
-{% endif %}
-```
+See [Custom Templates](../features/custom-templates.md) for the slot list, the shortcode syntax, and worked examples.
 
 ### Meta Schema
 
@@ -312,7 +260,7 @@ Content-Type: application/json
 
 #### Deleting Categories
 
-Deleting a Category preserves all Groups; their CategoryId is set to NULL.
+Deleting a Category preserves all Groups; their CategoryId is set to NULL. Deletion also cascades to any RelationType constrained to that Category (as either `fromCategoryId` or `toCategoryId`): every such RelationType is deleted along with all of its Relations, and `backRelationId` pointers on other RelationTypes that referenced them are cleared.
 
 ```
 POST /v1/category/delete
@@ -341,10 +289,18 @@ Resource Categories work like Categories but apply to Resources instead of Group
 | `name` | Unique resource category name |
 | `description` | Explanation of the category |
 | `customHeader` | HTML template for resource page headers |
+| `customDetailFooter` | HTML template rendered at the bottom of the resource detail page |
 | `customSidebar` | HTML template for resource page sidebars |
+| `customPreview` | HTML template rendered above the built-in preview image (Resource Categories only) |
+| `customLightbox` | HTML template replacing `customSidebar` in the lightbox panel (Resource Categories only) |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for resource avatars/icons |
+| `customHoverCard` | HTML template for the hover card, falling back to `customSummary` when empty |
+| `customCell` | HTML template for one extra column in the details table view (Resource Categories only) |
+| `customListHeader` | HTML template rendered above a resource list filtered to this category |
+| `customListFooter` | HTML template rendered below a resource list filtered to this category |
 | `customMRQLResult` | HTML template for rendering Resources of this category in MRQL query results |
+| `customCSS` | CSS injected as a page-level `<style>` block, so the other slots can be styled |
 | `metaSchema` | JSON Schema for metadata validation |
 | `autoDetectRules` | JSON rules for auto-assigning this category on upload (see [Auto-Detect Rules](./resources.md#auto-detect-rules)) |
 | `sectionConfig` | JSON config controlling which sections are visible on resource detail pages |
@@ -358,6 +314,7 @@ Resource Categories work like Categories but apply to Resources instead of Group
 - **One-to-many**: A resource category can have multiple resources, but each resource has at most one resource category
 - **Custom presentation**: Templates customize how resources appear (same system as Categories for Groups)
 - **Deletion behavior**: Deleting a resource category reassigns all its resources to the default resource category
+- **Default is undeletable**: The default resource category itself cannot be deleted; the attempt is refused
 
 ### Use Cases
 
@@ -410,4 +367,4 @@ GET /v1/resources?resourceCategoryId=1
 | Presentation | None | Custom templates | Custom templates | Custom templates |
 | Validation | None | JSON Schema | JSON Schema | JSON Schema |
 | Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
-| On delete | Removed from entities | Groups preserved (CategoryId -> NULL) | Resources reassigned to default category | Notes preserved (NoteTypeId -> NULL) |
+| On delete | Removed from entities | Groups preserved (CategoryId -> NULL); constrained RelationTypes and their Relations deleted | Resources reassigned to default category | Notes preserved (NoteTypeId -> NULL) |

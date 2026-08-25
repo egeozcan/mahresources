@@ -8,7 +8,7 @@ sidebar_label: get
 
 Show a single runtime setting by key. The output includes the effective current value, the boot-time default, whether an override is active, and when it was last changed.
 
-Pass `--json` to emit the raw JSON object for scripting.
+Pass `--json` to emit the setting as a JSON object for scripting. It always carries `key`, `label`, `description`, `group`, `type`, `current`, `bootDefault` and `overridden`, adds `updatedAt` while an override is active and `reason` when the override recorded one, and carries nothing else: the numeric bounds `minNumeric`, `maxNumeric` and `allowZero` are dropped here, while `admin settings list`, `set` and `reset` print the server's response unchanged and keep them.
 
 ## Usage
 
@@ -50,7 +50,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Single setting object with key, label, group, type, current, bootDefault, overridden, updatedAt, reason
+Single setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason
 
 ## Exit Codes
 

@@ -1,5 +1,5 @@
 ---
-outputShape: Object with buckets (array of {label, start, end, created, updated}) and hasMore (bool)
+outputShape: Object with buckets (array of {label, start, end, created, updated}) and hasMore ({left, right} booleans)
 exitCodes: 0 on success; 1 on any error
 relatedCmds: groups list, resources timeline
 ---
@@ -7,16 +7,17 @@ relatedCmds: groups list, resources timeline
 # Long
 
 Display a timeline of Group creation and update activity as an ASCII
-bar chart. Each bar represents a time bucket (yearly, monthly, or
-weekly, controlled by `--granularity`), and the bar height reflects
-the count of Groups created in that bucket.
+bar chart. Each bucket is a time span (yearly, monthly, or weekly,
+controlled by `--granularity`), and each bucket prints two bars, `█` for
+Groups created in it and `▓` for Groups updated, both scaled against the
+largest count on the chart.
 
 The chart is anchored at the `--anchor` date (default: today) and shows
-`--columns` buckets backward from the anchor. All group-list filter
-flags (`--name`, `--tags`, `--groups`, `--owner-id`, etc.) apply the
-same way to the timeline aggregation. Pass the global `--json` flag to
-get the raw bucket data for scripting — the top-level response has a
-`buckets` array and a `hasMore` flag.
+`--columns` buckets backward from the anchor. The `groups list` filter
+flags apply the same way to the timeline aggregation, with one exception:
+`--mrql` is not available here. Pass the global `--json` flag to get the
+raw bucket data for scripting: the top-level response has a `buckets`
+array and a `hasMore` object with `left` and `right` booleans.
 
 # Example
 

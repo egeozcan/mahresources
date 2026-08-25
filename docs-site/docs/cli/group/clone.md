@@ -7,10 +7,12 @@ sidebar_label: clone
 # mr group clone
 
 Create a copy of an existing Group. The clone receives a new ID and
-GUID but inherits the source Group's `Name`, `Description`, `Meta`,
-`OwnerId`, `CategoryId`, and tag associations. Related resources,
-notes, and sub-groups are NOT cloned — use `group export` + `group
-import` for a deep subtree copy.
+GUID but inherits the source Group's `Name`, `Description`, `URL`,
+`Meta`, `OwnerId`, `CategoryId`, its tag associations, its many-to-many
+links to related Resources, Notes and Groups, and its typed group
+relations in both directions. What it does not copy is the owned side:
+child groups, owned resources and owned notes stay with the original.
+Use `group export` + `group import` for a deep subtree copy.
 
 ## Usage
 

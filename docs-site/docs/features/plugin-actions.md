@@ -324,9 +324,9 @@ Same as sync, plus:
 
 If the handler returns without calling `mah.job_complete` or `mah.job_fail`, an async job is always marked completed with progress 100. Only a returned `message` string is read from the table; a `success = false` field is ignored on the async path (unlike the sync path, which honors it). To fail an async action, call `mah.job_fail` or `mah.abort`.
 
-A job that has already been marked failed or cancelled keeps that outcome: a
-handler that calls `mah.job_fail` and then returns a diagnostic table meant to
-fail, and the returned table no longer overwrites the decision it already made.
+A job already marked failed or cancelled keeps that outcome. A handler that
+calls `mah.job_fail` and then returns a diagnostic table is not overruled by
+that table: it is ignored, and the failure stands.
 
 ### Abort
 

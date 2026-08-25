@@ -90,12 +90,12 @@ services:
     ports:
       - "8181:8181"
     volumes:
-      - ./data/files:/data/files    # uploaded files (bind mount)
+      - app-files:/app/files        # uploaded files
       - ./plugins:/app/plugins      # plugin scripts (optional)
     environment:
       - DB_TYPE=POSTGRES
       - DB_DSN=host=postgres user=mahresources password=secretpassword dbname=mahresources sslmode=disable
-      - FILE_SAVE_PATH=/data/files
+      - FILE_SAVE_PATH=/app/files
       - BIND_ADDRESS=:8181
     depends_on:
       postgres:
@@ -118,6 +118,7 @@ services:
       retries: 5
 
 volumes:
+  app-files:     # persist uploaded files across restarts
   postgres-data:
 ```
 
@@ -136,6 +137,10 @@ All configuration options can be set via environment variables. The most common 
 | `SKIP_FTS` | Skip full-text search init | `1` |
 | `HASH_WORKER_DISABLED` | Disable hash worker | `1` |
 
+:::note
+The runtime image ships neither ffmpeg nor LibreOffice, so video and office-document thumbnails are unavailable until those packages are added to the runtime `apk add` line. Setting `FFMPEG_PATH` or `LIBREOFFICE_PATH` to a binary that is not in the image does not change that.
+:::
+
 ## Volume Mounts
 
 Two volumes must persist across container restarts:
@@ -147,7 +152,7 @@ Use named volumes (as shown above) or bind mounts.
 
 If using plugins, mount the plugin directory as well:
 
-3. **Plugins volume** (`/app/plugins`) -- Lua plugin scripts (optional, bind mount recommended so you can edit plugins on the host)
+3. **Plugins volume** (`/app/plugins`) -- Lua plugin scripts. The runtime image contains no plugins, so this mount is what supplies both the bundled plugins and your own; a container started without it runs with none available. Use a bind mount so you can edit plugins on the host.
 
 ## Updating
 
@@ -170,12 +175,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY src/ ./src/
-COPY index.css vite.config.js postcss.config.js ./
+COPY templates/ ./templates/
+COPY index.css vite.config.js ./
 RUN npm run build-css && npm run build-js
 
 # Stage 2: Build Go binary
 FROM golang:1.26-alpine AS go-builder
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+RUN apk add --no-cache gcc musl-dev
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -186,7 +192,7 @@ RUN CGO_ENABLED=1 go build --tags 'json1 fts5' -o mahresources
 
 # Stage 3: Runtime
 FROM alpine:3.19
-RUN apk add --no-cache sqlite-libs ca-certificates
+RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=go-builder /app/mahresources .
 COPY --from=go-builder /app/templates ./templates
@@ -203,5 +209,5 @@ CMD ["./mahresources"]
 ```
 
 :::note
-The `gcc`, `musl-dev`, and `sqlite-dev` packages are required in the Go build stage because SQLite support requires CGO. The runtime stage only needs `sqlite-libs`.
+`gcc` and `musl-dev` are required in the Go build stage because the SQLite driver compiles the bundled SQLite amalgamation through cgo, which is why the build sets `CGO_ENABLED=1`. SQLite is then linked into the binary, so the runtime stage needs only `ca-certificates`.
 :::

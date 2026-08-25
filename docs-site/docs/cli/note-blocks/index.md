@@ -15,8 +15,8 @@ spaced values (useful after many reorders cause position strings to
 grow long).
 
 All commands require `--note-id` to scope to a single note. To mutate
-an individual block's content, state, or type, use the singular
-`note-block` subcommands.
+an individual block's content or state, use the singular `note-block`
+subcommands.
 
 ## Usage
 

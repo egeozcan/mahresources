@@ -7,9 +7,10 @@ sidebar_label: get
 # mr series get
 
 Get a series by ID and print its fields. Fetches the full record
-including the slug, meta JSON, and the list of resources currently
-attached to the series. Output is a key/value table by default; pass the
-global `--json` flag to emit the raw record for scripting.
+including the slug, meta JSON, and the first 50 resources attached to
+the series. The key/value table shows ID, name, slug, meta and
+timestamps; pass the global `--json` flag for the raw record, which is
+where the resource list appears.
 
 ## Usage
 

@@ -16,7 +16,7 @@ itself; only updates the database record.
   mr resource recalculate-dimensions 42
 
   # Pipe from a list query to bulk-recalculate
-  mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
+  mr resources list --content-type image/jpeg --json | jq -r '.[].ID' | xargs -I {} mr resource recalculate-dimensions {}
 
   # mr-doctest: upload a known-dimension fixture and verify dimensions populate
   GRP=$(mr group create --name "doctest-recalc-$$-$RANDOM" --json | jq -r '.ID')

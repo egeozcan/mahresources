@@ -47,9 +47,13 @@ Most create, update, and delete operations are recorded, and request-driven writ
 
 ## Viewing Logs
 
+:::note Administrator only
+With `-auth` enabled, the activity log page and the `/v1/log*` endpoints are administrator-only. Editors, users and guests receive `403`.
+:::
+
 ### In the UI
 
-Navigate to the activity log page to see a chronological list of all logged operations. Each entry shows the level, action, entity link, message, and timestamp.
+Navigate to `/logs` to see a chronological list of all logged operations. Each entry shows the level, action, entity link, message, and timestamp, and links to `/log?id=N` for the full entry.
 
 Entity detail pages also display recent log entries for that specific entity.
 
@@ -104,6 +108,7 @@ GET /v1/logs
 | `CreatedBefore` | timestamp | Entries before this time |
 | `CreatedAfter` | timestamp | Entries after this time |
 | `SortBy` | string[] | Sort field(s) |
+| `page` | int | Page number, 1-based (default 1). 50 entries per page. |
 
 ```bash
 curl "http://localhost:8181/v1/logs?level=error"
@@ -156,12 +161,13 @@ GET /v1/logs/entity
 |-----------|------|-------------|
 | `entityType` | string | Entity kind (e.g., `resource`, `note`) |
 | `entityId` | uint | Entity ID |
+| `page` | int | Page number, 1-based (default 1). 50 entries per page. |
 
 ```bash
 curl "http://localhost:8181/v1/logs/entity?entityType=resource&entityId=123"
 ```
 
-Returns all log entries related to the specified entity, ordered by most recent first.
+Returns log entries for the specified entity, most recent first, 50 per page. The response carries `totalCount`, `page` and `perPage`.
 
 ## Troubleshooting
 

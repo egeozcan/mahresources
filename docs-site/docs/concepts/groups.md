@@ -46,6 +46,7 @@ Company (Group)
 - Each Group can have one owner (parent)
 - Root Groups have no owner
 - Deleting a parent Group sets `ownerId` to NULL on all owned entities (child Groups, Notes, and Resources are preserved as unowned)
+- Deleting a Group also deletes every typed Relation in which it is either endpoint, whatever the far endpoint is, and removes its id from any note `references` block
 
 ### Ancestor Chain
 
@@ -65,13 +66,14 @@ The `GET /v1/group/tree/children` endpoint returns child Groups with counts, sup
 | Related Groups | many-to-many | Independent lifecycle |
 | Related Notes | many-to-many | Independent lifecycle |
 | Related Resources | many-to-many | Independent lifecycle |
+| Typed Relations | one-to-many (both directions) | Deleted with the Group |
 
 ## Categories
 
 Categories define types of Groups with custom presentation. See [Tags and Categories](./tags-categories.md) for details.
 
 Categories support:
-- Custom HTML templates (header, sidebar, summary, avatar)
+- Custom HTML template slots for the detail page, cards, hover cards, list pages and MRQL results, plus a `CustomCSS` slot (see [Custom Templates](../features/custom-templates.md))
 - JSON Schema metadata validation via `metaSchema`
 - Category-based filtering in queries
 
@@ -89,7 +91,7 @@ Without quotes, `Name` performs a LIKE (partial) match.
 
 ## Cloning
 
-`POST /v1/group/clone` creates a new Group with identical name, description, meta, URL, owner, and Category. It also copies all association references: related Resources, Notes, Groups, and Tags.
+`POST /v1/group/clone` creates a new Group with identical name, description, meta, URL, owner, and Category. It also copies all association references: related Resources, Notes, Groups, and Tags. Typed Relations are copied too, in both directions, so the clone participates in the same relations as the original; for a group-limited caller, relations whose far endpoint is outside the subtree are skipped.
 
 ## Merging
 
@@ -122,6 +124,9 @@ Filter Groups with these parameters on `GET /v1/groups`:
 | `URL` | string | LIKE search on URL |
 | `CreatedBefore` | string | Date upper bound |
 | `CreatedAfter` | string | Date lower bound |
+| `UpdatedBefore` | string | Update-date upper bound |
+| `UpdatedAfter` | string | Update-date lower bound |
+| `MRQL` | string | MRQL filter expression, as sent by the list-page filter bar |
 | `RelationTypeId` | integer | Filter Groups matching a Relation Type's category |
 | `RelationSide` | integer | 0 = from side, non-zero = to side |
 | `SearchParentsForName` | boolean | Also search parent Group names |

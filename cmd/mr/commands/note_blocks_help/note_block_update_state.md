@@ -1,5 +1,5 @@
 ---
-outputShape: Updated NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object)
+outputShape: Updated NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object), createdAt (RFC3339), updatedAt (RFC3339)
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-block update, note-block get, note-block types
 ---

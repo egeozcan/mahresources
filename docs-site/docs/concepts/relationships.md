@@ -63,7 +63,7 @@ When creating a Relation with a back Relation Type defined, both directions are 
 - The forward Relation is created (A "works at" B)
 - The inverse Relation is automatically created (B "employs" A)
 
-When the `ReverseName` parameter equals the `Name` (e.g., "sibling of"), the Relation Type becomes its own inverse -- a single self-referencing back relation.
+When the `ReverseName` parameter equals the `Name` (e.g., "sibling of"), the Relation Type becomes its own inverse -- a single self-referencing back relation. This requires `fromCategoryId` and `toCategoryId` to be the same Category; the create is refused otherwise.
 
 ## Relations
 
@@ -128,11 +128,11 @@ On a group page, relations are displayed in both directions:
 
 **Incoming Relations** (to this group):
 - Shows all relations where this group is the target
-- Uses the back relation name if defined
+- Each one is labelled with its own Relation Type. A defined inverse produces a separate Relation, which appears under the other group's outgoing relations rather than renaming this one
 
 ### Querying Relations
 
-Find Groups by their Relation Type. Use `RelationSide` to specify the direction (0 = from side, non-zero = to side):
+Find Groups whose Category is a Relation Type's from-side or to-side Category, that is Groups eligible for that side of the relation. It does not select Groups that actually participate in a relation, so a Group with no relations at all still matches. Use `RelationSide` to pick the side (0 = from side, non-zero = to side):
 
 ```
 GET /v1/groups?RelationTypeId=1&RelationSide=0

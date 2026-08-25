@@ -115,7 +115,7 @@ http://your-share-server:8383/s/{token}
 | `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
 | `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
 
-The share server runs on a separate port and only serves these routes. Resource access is validated -- the server checks that the requested Resource belongs to the shared Note (either through direct associations or gallery block references).
+The share server runs on a separate port and serves only these routes plus the static assets under `/public/` that the shared page needs. Resource access is validated -- the server checks that the requested Resource belongs to the shared Note (either through direct associations or gallery block references).
 
 ## Note Type Templates on Shared Pages
 
@@ -177,6 +177,12 @@ Filter your notes list to show only shared notes:
 3. Click **Search**
 
 This shows all notes that currently have a share token.
+
+## Auditing Shares
+
+`/admin/shares` lists every note currently holding a share token, with four columns: Name, Public URL, Created and Revoke. Rows are ordered newest share first; a share minted before the creation timestamp was recorded shows **(unknown)** there rather than a back-filled date. The Public URL column renders an absolute link when `-share-public-url` is set, and the relative `/s/<token>` path otherwise.
+
+Select several rows and revoke them in one request. The dashboard and its bulk revocation both require the editor role under `-auth`, unlike per-note sharing.
 
 ## Unsharing Notes
 
@@ -247,6 +253,25 @@ Response:
   "success": true
 }
 ```
+
+### Bulk Unshare
+
+```
+POST /v1/admin/shares/bulk-revoke
+```
+
+Form-encoded, with the `ids` field repeated once per note. Non-numeric and zero values are skipped. Requires the editor role under `-auth`.
+
+Response:
+```json
+{
+  "success": true,
+  "revoked": 2,
+  "attempts": 2
+}
+```
+
+Without `Accept: application/json` the request redirects to `/admin/shares`.
 
 ### List Shared Notes
 

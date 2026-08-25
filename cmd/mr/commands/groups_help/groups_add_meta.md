@@ -8,9 +8,14 @@ relatedCmds: group edit-meta, groups meta-keys, group get
 
 Merge a Meta JSON object onto multiple Groups at once. Both arguments
 are required: `--ids` selects the target Groups (comma-separated) and
-`--meta` is a JSON object string that is deep-merged onto each target's
-existing Meta. Existing keys are overwritten by the incoming value;
-keys not present in `--meta` are preserved.
+`--meta` is a JSON object string that is merged onto each target's
+existing Meta. Top-level keys named in `--meta` replace the stored
+value; keys not named are preserved.
+
+How nested objects merge depends on the database. PostgreSQL replaces a
+nested object wholesale, while SQLite merges into it recursively and
+removes any key whose value is `null`. Pass whole top-level values when
+the two must agree.
 
 To edit a single path on a single group, prefer `group edit-meta` which
 takes a dotted path + JSON literal. This bulk variant is best for

@@ -6,17 +6,18 @@ sidebar_label: timeline
 
 # mr notes timeline
 
-Display a timeline of Note activity as an ASCII bar chart. Each bar
-represents a time bucket (yearly, monthly, or weekly, controlled by
-`--granularity`), and the bar height reflects the count of Notes
-created in that bucket.
+Display a timeline of Note activity as an ASCII bar chart. Each bucket
+(yearly, monthly, or weekly, controlled by `--granularity`) prints two
+bars: a solid bar for the Notes created in it and a shaded bar for the
+Notes updated in it, followed by a legend.
 
 The chart is anchored at the `--anchor` date (default: today) and
-shows `--columns` buckets backward from the anchor (default 15, max
-60). All note-list filter flags (`--name`, `--tags`, `--groups`,
-`--owner-id`, `--note-type-id`) apply the same way to the timeline
-aggregation. Pass the global `--json` flag to get the raw bucket data
-for scripting.
+shows `--columns` buckets backward from the anchor (default 15; a value
+outside 1 to 60 is ignored and 15 is used). The `--name`,
+`--description`, `--tags`, `--groups`, `--owner-id`, `--note-type-id`,
+`--created-before` and `--created-after` filter flags apply the same way
+to the timeline aggregation; `--mrql` is not available here. Pass the
+global `--json` flag to get the raw bucket data for scripting.
 
 ## Usage
 

@@ -7,8 +7,8 @@ relatedCmds: tags delete, tag get, tag create
 
 Delete a tag by ID. Destructive: removes the tag row and detaches it
 from any Resources, Notes, or Groups it was attached to (the related
-entities themselves are preserved). Deleting a nonexistent ID is a
-no-op on the server but still returns success.
+entities themselves are preserved). Deleting an ID that does not exist
+fails with `HTTP 404: record not found` and exit code 1.
 
 # Example
 

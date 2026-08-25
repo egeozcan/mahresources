@@ -9,8 +9,10 @@ sidebar_label: children
 List the direct children of a Group as lightweight tree-node records.
 Each node returns `id`, `name`, `categoryName`, `childCount` (the
 number of grandchildren under that child), and `ownerId`. Returns
-a JSON array ordered alphabetically by name. A group with no children
-returns an empty array.
+a JSON array ordered alphabetically by name, capped at the first 50
+children; the command exposes no flag to raise that, so use
+`groups list --owner-id <id>` for a paged listing of a large child set.
+A group with no children returns an empty array.
 
 Field names on tree-node responses are lowercase (`id`, `name`), not
 PascalCase — unlike full Group objects returned by `group get`.

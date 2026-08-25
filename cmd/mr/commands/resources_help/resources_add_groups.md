@@ -15,7 +15,7 @@ and are required.
   mr resources add-groups --ids 1,2 --groups 2,3
 
   # Bulk from a list query
-  mr resources list --content-type image/jpeg --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
+  mr resources list --content-type image/jpeg --json | jq -r 'map(.ID) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
 
   # mr-doctest: create group, upload, add-groups, assert membership
   GRP=$(mr group create --name "doctest-addgroups-$$-$RANDOM" --json | jq -r '.ID')

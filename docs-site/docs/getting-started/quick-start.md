@@ -8,11 +8,13 @@ Get up and running in under a minute.
 
 ## Ephemeral Mode (Try It Out)
 
-Ephemeral mode uses transient storage. Uploaded files stay in memory, and the SQLite database is created as temporary scratch storage and discarded when the server stops.
+Ephemeral mode uses transient storage. Uploaded files stay in memory and are lost when the server stops, and the SQLite database is a scratch file at `/tmp/mahresources_ephemeral_<pid>.db` that is never read again after the process exits (it is deleted at the start of the next run that reuses that PID, not at shutdown).
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8181
 ```
+
+`-bind-address` (or `BIND_ADDRESS`) has no default: without it the server listens on port 80, which normally fails for a non-root user.
 
 Open [http://localhost:8181](http://localhost:8181) in your browser.
 
@@ -20,7 +22,7 @@ Open [http://localhost:8181](http://localhost:8181) in your browser.
 
 1. Navigate to **Resources** in the top navigation bar
 2. Click the **Create** button
-3. Select one or more files to upload
+3. Select a file to upload
 4. Add a name and optional description
 5. Click **Save**
 

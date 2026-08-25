@@ -6,7 +6,7 @@ sidebar_label: login
 
 # mr auth login
 
-Authenticate with a username and password, mint a personal API token, and store it in the credentials file. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.
+Authenticate with a username and password, mint a personal API token, and store it in the credentials file. The server must be running with `-auth`; with authentication disabled every caller is already an implicit administrator with no account of its own, and the mint step answers HTTP 400. The token is written to `$MR_TOKEN_FILE`, or `$XDG_CONFIG_HOME/mahresources/token`, or `~/.config/mahresources/token`, mode 0600 and keyed by the server's origin, so a token stored for one server is never sent to another. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.
 
 ## Usage
 

@@ -41,6 +41,10 @@ This command has no local flags.
 | `--page` | int | `1` | Page number for list commands (default page size: 50) |
 | `--quiet` | bool | `false` | Only output IDs |
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
+## Output
+
+Table with ID, Name, Prefix and LastUsed columns; --json emits the stored records (ID, CreatedAt, UpdatedAt, userId, name, prefix, disabled, plus expiresAt and lastUsedAt when set)
+
 ## Exit Codes
 
 0 success; 1 error (not authenticated, network error, or token not found)

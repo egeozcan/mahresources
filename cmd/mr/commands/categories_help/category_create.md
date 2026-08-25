@@ -1,5 +1,5 @@
 ---
-outputShape: Created Category object with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+outputShape: Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/CSS, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: category get, category edit-name, categories list
 ---

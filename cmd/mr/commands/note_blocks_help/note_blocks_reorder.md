@@ -9,9 +9,11 @@ Move specific blocks to new positions on their parent note. `--note-id`
 and `--positions` are both required. `--positions` takes a JSON object
 mapping block ID (as a string key) to its new fractional `position`
 string. Only the listed blocks are moved; every other block on the
-note keeps its current position. Fractional positions sort
-lexicographically, so `"a" < "m" < "z"` — pick new values that slot
-into the desired order.
+note keeps its current position. Positions must be non-empty, distinct
+within the map, and must not collide with a block on the note that the
+map does not name; each is refused with an HTTP 400 and no block moves.
+Fractional positions sort lexicographically, so `"a" < "m" < "z"`.
+Pick new values that slot into the desired order.
 
 After many reorders, positions can grow long; run `note-blocks
 rebalance` to normalize them.

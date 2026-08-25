@@ -8,7 +8,8 @@ relatedCmds: log get, log entity, admin
 
 List log entries across the whole system, optionally filtered. Filter
 flags combine with AND. `--level` accepts `info`, `warning`, or
-`error`; `--action` accepts `create`, `update`, `delete`, or `system`.
+`error`; `--action` accepts `create`, `update`, `delete`, `system`,
+`reset`, `plugin`, or `progress`.
 `--entity-type` and `--entity-id` scope results to a single entity
 kind or row, while `--message` does a substring match. Date filters
 (`--created-before`, `--created-after`) expect RFC3339 strings such

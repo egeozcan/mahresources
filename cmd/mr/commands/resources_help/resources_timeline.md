@@ -6,15 +6,18 @@ relatedCmds: resources list, groups timeline
 # Long
 
 Display a timeline of Resource activity as an ASCII bar chart. Each
-bar represents a time bucket (yearly, monthly, or weekly, controlled by
-`--granularity`), and the bar height reflects the count of Resources
-created in that bucket.
+bucket prints two bars, created above updated, with the count beside
+each and a legend below the chart, and `--granularity` selects yearly,
+monthly or weekly buckets. Both bars are scaled against the largest
+count in the range.
 
 The chart is anchored at the `--anchor` date (default: today) and shows
-`--columns` buckets backward from the anchor (default 15, max 60). All
-resource-list filter flags (`--name`, `--tags`, `--groups`, etc.) apply
-the same way to the timeline aggregation. Pass the global `--json` flag
-to get the raw bucket data for scripting.
+`--columns` buckets backward from the anchor (default 15, max 60; a
+value outside that range falls back to 15). The resource-list filter
+flags (`--name`, `--tags`, `--groups`, etc.) apply the same way to the
+timeline aggregation, though `--mrql` and `--sort-by` are not available
+here. Pass the global `--json` flag to get the raw bucket data for
+scripting.
 
 # Example
 

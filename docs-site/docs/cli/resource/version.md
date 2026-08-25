@@ -6,9 +6,10 @@ sidebar_label: version
 
 # mr resource version
 
-Fetch metadata for a single version by its version ID. Returns the same
-fields as `versions` but as a single key/value record. Useful when you
-know the version ID and need its size or comment without a list call.
+Fetch metadata for a single version by its version ID. Returns a single
+key/value record, adding the resource ID, hash and dimensions that the
+`versions` table omits. Useful when you know the version ID and need its
+size or comment without a list call.
 
 ## Usage
 
@@ -32,7 +33,7 @@ mr resource version 17
 **Extract size via jq**
 
 ```bash
-mr resource version 17 --json | jq -r .size
+mr resource version 17 --json | jq -r .fileSize
 ```
 
 

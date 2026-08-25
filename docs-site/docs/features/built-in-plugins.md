@@ -7,7 +7,20 @@ title: Built-in Plugins
 
 Mahresources ships with six plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
-The data-views, meta-editors, and widgets plugins register shortcodes for use in custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
+The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
+
+All six ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
+
+| Plugin | Declared capabilities | Network |
+|--------|-----------------------|---------|
+| data-views | `db:read`, `inject`, `render` | none |
+| meta-editors | `inject`, `render` | none |
+| widgets | `db:read`, `render` | none |
+| example-blocks | `render` | none |
+| example-plugin | `hooks`, `inject`, `pages` | none |
+| fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
+
+fal-ai is the only one that reaches the network.
 
 ## data-views
 

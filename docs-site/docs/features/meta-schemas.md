@@ -223,6 +223,8 @@ Each field renders according to its schema type:
 | `array` of scalars | Inline pills |
 | Nested `object` | Flattened with a labeled path (e.g., "Address › City") |
 
+Nested objects are flattened up to four levels deep; properties below that do not appear in the structured panel and remain visible only in the sidebar JSON table.
+
 ### Labels and Tooltips
 
 - If a property has a `title` field, it is used as the display label (falling back to the raw key name)
@@ -238,8 +240,8 @@ Object values are automatically detected and rendered as smart widgets when they
 |-------|---------------|---------|
 | **URL / Location** | `href` + `host` or `hostname` | Clickable link with host subtitle |
 | **GeoLocation** | `latitude` + `longitude` (or `lat` + `lng`) | Coordinates with OpenStreetMap link |
-| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 - Apr 1, 2024" |
-| **Dimensions** | `width` + `height` (both numbers) | "1920 x 1080" |
+| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 — Apr 1, 2024" |
+| **Dimensions** | `width` + `height` (both numbers) | "1920 × 1080" |
 
 Shape detection runs automatically. To override it, use the `x-display` annotation (see below).
 
@@ -287,6 +289,21 @@ Add `x-display` to any schema property to control how it renders in the detail v
 ```
 
 When `x-display` is set on an object property, the object is NOT flattened into individual fields. Instead, the entire object is passed to the renderer as a whole.
+
+### The `x-color` Schema Annotation
+
+A labeled-enum entry (`oneOf` plus `const` plus `title`) may carry `x-color`, a CSS color, to set the color of its pill in the structured metadata panel. The visual editor writes and round-trips it through a color picker, so hand-written values should be hex.
+
+```json
+{
+  "status": {
+    "oneOf": [
+      { "const": "active", "title": "Active", "x-color": "#16a34a" },
+      { "const": "archived", "title": "Archived", "x-color": "#78716c" }
+    ]
+  }
+}
+```
 
 ### Sidebar JSON Table
 

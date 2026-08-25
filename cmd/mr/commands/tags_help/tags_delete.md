@@ -9,7 +9,9 @@ Bulk-delete Tags. Destructive: removes the tag rows and detaches them
 from any Resources, Notes, or Groups they were attached to (the related
 entities themselves are preserved). Target tags are selected via
 `--ids` (CSV of unsigned ints). The current CLI has no dry-run; pipe
-`tags list --json` first if you need to preview targets.
+`tags list --json` first if you need to preview targets. The batch runs
+as a single transaction: if any ID no longer exists the call fails with
+`HTTP 404: record not found` and nothing is deleted.
 
 # Example
 

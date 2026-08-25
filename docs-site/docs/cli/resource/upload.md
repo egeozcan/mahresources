@@ -60,7 +60,7 @@ mr resource upload ./photo.jpg --owner-id 3 --meta '{"camera":"Pixel"}'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Resource object with id, name
+Array of Resource objects, one per uploaded file, each with ID and Name
 
 ## Exit Codes
 

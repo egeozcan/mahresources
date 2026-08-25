@@ -20,6 +20,7 @@ A Note stores text content with optional start and end dates, a type classificat
 | `endDate` | datetime | Optional end date for temporal filtering |
 | `noteTypeId` | integer | Optional FK to a Note Type for categorization |
 | `shareToken` | string (nullable) | Optional 32-character token for public sharing, generated on demand (unique across all Notes) |
+| `shareCreatedAt` | datetime (nullable) | When the current share token was minted; NULL for tokens created before this was recorded |
 | `ownerId` | integer | FK to owning Group |
 | `createdAt` | datetime | Creation timestamp |
 | `updatedAt` | datetime | Last update timestamp |
@@ -36,7 +37,7 @@ Notes have optional `startDate` and `endDate` fields for temporal filtering and 
 
 ## Note Types
 
-Note Types classify Notes and apply consistent styling. Each Note Type has custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2 syntax.
+Note Types classify Notes and apply consistent styling. Each Note Type carries a set of custom HTML slots, processed server-side for shortcodes, with Alpine.js directives available against an `entity` variable in the detail-page and card slots. See [Custom Templates](../features/custom-templates.md).
 
 :::info Note Type deletion sets NULL
 
@@ -49,20 +50,26 @@ Deleting a Note Type **sets `noteTypeId` to NULL** on all Notes of that type. Th
 | `name` | Type identifier (e.g., "Meeting Notes") |
 | `description` | Optional description of the note type |
 | `customHeader` | HTML template for the Note display header |
+| `customDetailFooter` | HTML template rendered at the bottom of the Note detail page body |
 | `customSidebar` | HTML template for the sidebar |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for Note avatars |
+| `customHoverCard` | HTML template for the hover card shown on a Note link; falls back to `customSummary` when empty |
+| `customListHeader` | HTML template rendered at the top of a Note list filtered to this one type |
+| `customListFooter` | HTML template rendered at the bottom of a Note list filtered to this one type |
+| `customCSS` | CSS injected as a page-level `<style>` block on pages that render this type's templates |
 | `customMRQLResult` | HTML template for rendering Notes of this type in MRQL query results |
+| `applyTemplatesToShares` | Opt this type's `customHeader` and `customCSS` into the public `/s/<token>` share page. Default `false`, so existing shares keep their appearance until an author enables it. See [Note Sharing](../features/note-sharing.md). |
 | `metaSchema` | JSON Schema for metadata validation on Notes of this type |
 | `sectionConfig` | JSON config controlling which sections are visible on Note detail pages |
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last update timestamp |
 
-Templates have access to the `note` object and its metadata via Pongo2 (Django-like) syntax:
+Slot content is expanded server-side for shortcodes, so read the Note's own fields with `[property]` and `[meta]`:
 
 ```html
 <div class="meeting-header">
-  <span class="date">{{ note.startDate }}</span>
+  <span class="date">[property path="StartDate"]</span>
   <span class="type-badge">Meeting</span>
 </div>
 ```
@@ -127,15 +134,19 @@ Filter Notes with these parameters on `GET /v1/notes`:
 | `Tags` | integer[] | Filter by Tag IDs (AND logic) |
 | `Ids` | integer[] | Filter by specific Note IDs |
 | `NoteTypeId` | integer | Filter by Note Type |
+| `NoteTypeIds` | integer[] | Filter by several Note Types |
 | `Shared` | boolean | Filter Notes that have a share token |
 | `CreatedBefore` | string | Date upper bound |
 | `CreatedAfter` | string | Date lower bound |
+| `UpdatedBefore` | string | Update-time upper bound |
+| `UpdatedAfter` | string | Update-time lower bound |
 | `StartDateBefore` | string | Filter on start date |
 | `StartDateAfter` | string | Filter on start date |
 | `EndDateBefore` | string | Filter on end date |
 | `EndDateAfter` | string | Filter on end date |
 | `MetaQuery` | string[] | JSON metadata queries (`key:value` or `key:OP:value`) |
 | `SortBy` | string[] | Sort columns (e.g., `created_at desc`, `meta->>'key'`) |
+| `MRQL` | string | MRQL filter expression, with `type = "note"` implied. See [MRQL](../features/mrql.md). |
 
 ## API Operations
 

@@ -7,9 +7,11 @@ sidebar_label: versions-compare
 # mr resource versions-compare
 
 Compare two versions of a Resource and report the size delta, whether
-the content hashes match, whether the content types match, and the
-dimension differences. Both `--v1` and `--v2` are required and must be
-version IDs of the same Resource.
+the content hashes match, whether the content types match, and whether
+the stored dimensions differ. The content-type check compares base
+types, so a difference in case or in parameters is not reported as a
+type change. Both `--v1` and `--v2` are required and must be version IDs
+of the same Resource.
 
 ## Usage
 

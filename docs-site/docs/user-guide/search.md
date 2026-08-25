@@ -5,7 +5,7 @@ title: Search
 
 # Search
 
-Four ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, and saved Queries for raw SQL.
+Five ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, MRQL for structured queries, and saved Queries for raw SQL.
 
 ## Global Search
 
@@ -48,6 +48,8 @@ When full-text search is unavailable, results are ranked by LIKE-based scoring:
 
 The extra-field tiers apply only where an entity has additional searchable columns beyond name and description. Currently that is the Resource original filename.
 
+The tiers are tested in the order name-exact, name-prefix, name-contains, extra fields, description, and the first match wins. Because that is not the same as descending score order, an extra-field match scores only when the name does not match at all: a Resource whose name merely contains the term scores 60 even when its original filename is an exact match.
+
 ### Caching
 
 - Server-side LRU cache with 60-second TTL
@@ -77,10 +79,15 @@ Each entity list page has filtering controls in the sidebar.
 | **Original Name** | Search original filename |
 | **Original Location** | Search source URL |
 | **Hash** | Find by content hash |
+| **Notes** | Filter by associated Notes |
+| **Include subgroups** | Widens the **Owner** filter to that Group's whole subtree; it does nothing on its own |
+| **Resource Category** | Filter by Resource Category, and reveal that category's schema-driven meta fields |
 | **Min/Max Width** | Image dimension filters |
 | **Min/Max Height** | Image dimension filters |
-| **Show Without Owner** | Only Resources with no owner |
 | **Show With Similar** | Only images with perceptual hash matches |
+| **Only Untagged** | Only Resources carrying no Tags |
+
+`ShowWithoutOwner=true` restricts results to Resources with no owner. There is no control for it in the sidebar, so it is available as a URL parameter only.
 
 ### MetaQuery Filters
 
@@ -160,6 +167,8 @@ SortBy=meta->>'priority' desc
 
 `->>'key'` is PostgreSQL jsonb syntax. On SQLite it is translated internally to `json_extract(meta, '$.key')`, so the same `SortBy` string works on both database engines.
 
+The metadata key may contain only lowercase letters and underscores. A key with digits, uppercase letters or hyphens fails validation, and the sort term is then dropped silently rather than reported: `meta->>'priority2'`, `meta->>'Priority'` and `meta->>'due-date'` are all ignored.
+
 ### Multi-Field Sorting
 
 Pass multiple `SortBy` parameters. The first is primary; others break ties:
@@ -186,6 +195,7 @@ Full-text search indexes all searchable entity types: Resource names, descriptio
 | `word` | Prefix (default for terms with 3+ characters) | Matches words starting with the term |
 | `word*` | Explicit prefix | Matches words starting with the term |
 | `~word` | Fuzzy | Trigram matching in PostgreSQL, LIKE fallback in SQLite |
+| `~2word` | Fuzzy with an explicit edit distance | The digit sets the distance, clamped to the range 1 to 3. A bare `~word` uses 1 |
 | `=word` or `"word"` | Exact | Matches the exact term only |
 
 Both engines fall back to LIKE-based search when full-text search is disabled.
@@ -196,16 +206,25 @@ Both engines fall back to LIKE-based search when full-text search is disabled.
 ./mahresources -skip-fts
 ```
 
+## MRQL
+
+MRQL is a query language of its own, covering Resources, Notes and Groups with filters, traversals, aggregation and grouping. Two surfaces expose it:
+
+- The **MRQL** entry in the navigation bar opens `/mrql`, a full editor with results, saved queries and export.
+- Every Resource, Note and Group list page carries an MRQL filter bar above the results. A query entered there is preserved when you refine the sidebar filters, so the two combine.
+
+See [MRQL](../features/mrql.md) for the language, and [MRQL Reference](../features/mrql-reference.md) for the full field list.
+
 ## Saved Queries
 
 Saved Queries execute raw SQL through the query runner. For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection.
 
 ### Creating a Query
 
-1. Navigate to **Queries** > **New Query**
+1. Navigate to **Queries** and click **Add**
 2. Enter a **Name** (unique)
-3. Write SQL in the **Text** field
-4. Optionally add a **Template** for result display
+3. Write SQL in the **Query** field
+4. Optionally add a **Description** and a **Template** for result display
 5. Click **Save**
 
 ### Named Parameters

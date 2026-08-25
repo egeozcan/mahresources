@@ -53,7 +53,7 @@ mr admin settings set mrql_query_timeout 30s
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated setting object with key, label, group, type, current, bootDefault, overridden, updatedAt, reason
+Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true
 
 ## Exit Codes
 

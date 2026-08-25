@@ -6,11 +6,13 @@ relatedCmds: relation create, relation edit-name, group get
 
 # Long
 
-Delete a Relation by ID. Destructive: removes the link row entirely.
-The two groups and the relation-type are unaffected. Deleting a
-nonexistent ID returns exit code 1. To confirm the removal, re-fetch
-either participating group with `mr group get <id> --json` and check
-that the relation no longer appears in its `Relationships` array.
+Delete a Relation by ID. Destructive: removes the link row entirely,
+along with its auto-created reverse relation when the relation type has
+a paired back-relation type. The two groups and the relation-type are
+unaffected. Deleting a nonexistent ID returns exit code 1. To confirm
+the removal, re-fetch either participating group with `mr group get
+<id> --json` and check that the relation no longer appears in its
+`Relationships` array.
 
 # Example
 

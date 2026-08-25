@@ -95,7 +95,7 @@ A background worker calculates perceptual hashes for images, enabling visual sim
 The `-hash-similarity-threshold` controls how similar images must be to be considered matches:
 
 - **Lower values** (e.g., 5): Stricter matching, finds near-duplicates only
-- **Higher values** (e.g., 15): Looser matching, finds more variations
+- **Higher values** (up to the maximum of 11): Looser matching, finds more variations. Pairs are only stored up to distance 11, so a larger value has no additional effect and the runtime setting refuses it
 - **Default (10)**: Good balance for finding similar images
 
 ## Thumbnail Worker Configuration
@@ -204,7 +204,19 @@ DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_TIMEOUT=20s
 ```
 
-The server sends only the prompt text entered in the `/mrql` editor plus syntax-only MRQL instructions. It does not send local tag lists, categories, saved queries, or database contents to the provider.
+For the `/mrql` editor the server sends only the prompt text entered there plus syntax-only MRQL instructions. It does not send local tag lists, categories, saved queries, or database contents to the provider.
+
+`DEEPSEEK_API_KEY` also enables template generation in the Category, Resource Category and Note Type editors, which additionally sends the Meta JSON Schema being authored and one sample entity's metadata. See [Custom Templates](../features/custom-templates.md).
+
+## Deferred Render Signing Key
+
+The `[lazy]`, `[details]` and `[reload]` shortcodes defer part of a template and hand the browser a sealed token to open it with. The key that seals those tokens is configured with an environment variable only.
+
+| Env Variable | Default | Description |
+|--------------|---------|-------------|
+| `TEMPLATE_SIGNING_KEY` | (per-boot random) | Secret used to seal the `[lazy]`, `[details]` and `[reload]` deferred-render tokens |
+
+When it is unset, each process generates a random key at boot, so a deferred region rendered by one process cannot be opened by another. Set it to a shared value across every process in a multi-process or load-balanced deployment. See [Shortcodes](../features/shortcodes.md).
 
 ## Upload and Request Size Limits
 

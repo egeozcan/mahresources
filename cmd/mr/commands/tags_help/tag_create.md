@@ -8,9 +8,11 @@ relatedCmds: tag get, tag edit-name, tags list
 
 Create a new tag. `--name` is required; `--description` is optional
 free-form text. Creating with a name that already exists is idempotent:
-it returns the existing tag rather than failing. On success prints a
-confirmation line with the ID; pass the global `--json` flag to emit the
-full record for scripting (e.g., piping the ID into follow-up commands).
+it returns the existing tag rather than failing. A `--description`
+passed with an existing name is ignored; use `tag edit-description` to
+change it. On success prints a confirmation line with the ID; pass the
+global `--json` flag to emit the full record for scripting (e.g.,
+piping the ID into follow-up commands).
 
 # Example
 

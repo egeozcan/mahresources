@@ -9,8 +9,8 @@ sidebar_label: delete
 Delete a note type by ID. Destructive: removes the note type row. Notes
 that referenced it keep their rows but lose the typed schema link, so
 use with care on instances where Notes depend on the type's MetaSchema
-for rendering. Deleting a nonexistent ID is a no-op on the server but
-still returns success.
+for rendering. Deleting a nonexistent ID returns exit code 1 with an
+HTTP 404 error.
 
 ## Usage
 

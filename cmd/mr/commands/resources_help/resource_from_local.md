@@ -14,7 +14,9 @@ deploying pre-staged assets.
 `--path` is required and is resolved inside the server's storage root, not
 on the host: a file staged at `$FILE_SAVE_PATH/incoming/photo.jpg` is
 `--path /incoming/photo.jpg` here. The name defaults to the file's base
-name.
+name. Re-running with a path a Resource already records returns that
+Resource unchanged rather than creating a second one, so a bulk import
+can be repeated safely.
 
 # Example
 

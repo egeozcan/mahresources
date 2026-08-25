@@ -5,7 +5,7 @@ title: Admin Overview
 
 # Admin Overview
 
-The Admin Overview page (`/admin/overview`) provides a real-time dashboard of your mahresources instance's health, configuration, and data statistics. It is accessible from the **Admin** dropdown in the navigation bar.
+The Admin Overview page (`/admin/overview`) provides a real-time dashboard of your mahresources instance's health, configuration, and data statistics. It is accessible from the **Admin** dropdown in the navigation bar. With authentication enabled, this page and the endpoints behind it are administrator-only; every other role receives 403, including through `mr admin`.
 
 ## Server Health
 
@@ -30,7 +30,7 @@ The section uses `aria-live="polite"` so screen readers announce updates automat
 The Configuration section (part of the data stats response at `/v1/admin/data-stats`) shows the active runtime configuration:
 
 - Bind address and storage path
-- Database type and DSN
+- Database type and DSN (credentials redacted)
 - Whether a read-only database replica is configured
 - Availability of optional integrations (FFmpeg, LibreOffice)
 - Full-text search status
@@ -43,6 +43,7 @@ The Configuration section (part of the data stats response at `/v1/admin/data-st
 The Data Overview section shows entity counts and storage totals, also from `/v1/admin/data-stats`:
 
 - **Total Storage** and **Version Storage**: formatted byte sizes for all files and version history
+- **Storage Locations**: one row per configured filesystem, with its label, kind and path, the app data it holds split into current and version bytes, resource and version counts, free space with its share of the total, and a disk-used bar. A location whose path cannot be read reads **Unavailable** with the reason
 - Entity count cards for Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Series, Queries, Relations, Relation Types, Template Partials, Log Entries, and Resource Versions
 - Most entity cards are clickable links to the corresponding list page; the Series and Resource Versions cards are non-linked counts, since neither has a standalone list page
 - Growth indicators (7-day) appear below resource, note, and group counts

@@ -7,10 +7,11 @@ relatedCmds: category create, category edit-name, categories list
 # Long
 
 Get a category by ID and print its fields. The server has no single-category
-GET endpoint, so the CLI fetches the full category list and filters
-in-process; on large instances this is slower than a direct lookup would be.
-Output is a key/value table by default; pass the global `--json` flag to
-emit the raw record for scripting.
+GET endpoint, so the CLI fetches the first page of the category list, the 50
+most recently created, and filters in-process; a category outside that window
+is reported as not found, and the global `--page` flag does not move the
+window. Output is a key/value table by default; pass the global `--json` flag
+to emit the raw record for scripting.
 
 # Example
 

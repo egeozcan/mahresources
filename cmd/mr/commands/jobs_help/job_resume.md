@@ -9,8 +9,9 @@ relatedCmds: job pause, job cancel, jobs list
 Restart a previously paused download job. Resume only works against
 jobs currently in the `paused` state — jobs that are pending, running,
 finished, or cancelled return an error. The server opens a fresh HTTP
-request, resets the progress counters, and marks the job `pending`;
-the background worker picks it up on the next scheduler tick.
+request, resets the progress counters, and marks the job `pending`; the
+worker starts immediately, queueing behind the concurrency limit if the
+queue is busy.
 
 Because the server does not keep partial bytes across pauses, resume
 effectively restarts the download from the beginning.

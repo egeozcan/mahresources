@@ -56,7 +56,7 @@ mr note-block update-state 42 --state '{"checked":["task-1"]}'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object)
+Updated NoteBlock object with id (uint), noteId (uint), type (string), position (string), content (object), state (object), createdAt (RFC3339), updatedAt (RFC3339)
 
 ## Exit Codes
 

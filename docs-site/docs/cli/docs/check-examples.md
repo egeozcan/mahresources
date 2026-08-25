@@ -14,8 +14,9 @@ environment or a `|`-separated list of them (`skip-on=ephemeral|auth`), so an
 example that cannot run in more than one environment can say so.
 
 The runner pipes each block through `bash -e -o pipefail -c`, with cwd set to
-`cmd/mr/` so examples can reference `./testdata/*` fixtures. Requires
-`MAHRESOURCES_URL`, `bash`, and `jq` on PATH.
+`cmd/mr/` so examples can reference `./testdata/*` fixtures. Requires `bash` and
+`jq` on PATH. The target server comes from `--server`, then `MAHRESOURCES_URL`,
+then `http://localhost:8181`.
 
 `--files` switches the source from the command tree to markdown outside it:
 files, globs, or directories, repeatable, and each `.md` file's fenced

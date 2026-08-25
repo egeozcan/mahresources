@@ -8,8 +8,9 @@ sidebar_label: delete
 
 Delete a note block by ID. Destructive: removes the database row.
 Deleting a nonexistent ID returns exit code 1 with an HTTP 404 error.
-Deleting a block does not affect its parent Note or sibling blocks;
-to remove every block on a note, delete the note itself.
+Sibling blocks are untouched, but deleting a `text` block re-syncs the
+parent Note's description to whatever text block now sorts first. To
+remove every block on a note, delete the note itself.
 
 ## Usage
 
@@ -30,10 +31,10 @@ Positional arguments:
 mr note-block delete 42
 ```
 
-**Delete and pipe the response to jq to confirm**
+**Delete**
 
 ```bash
-mr note-block delete 42 --json | jq .
+mr note-block delete 42 && mr note-blocks list --note-id 7
 ```
 
 

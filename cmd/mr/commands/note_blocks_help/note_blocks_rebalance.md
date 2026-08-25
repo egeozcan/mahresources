@@ -12,6 +12,10 @@ have grown long (e.g. `"aaamzzz"`), or when you want a predictable
 position layout before a batch of reorders. The block IDs, types,
 content, and state are untouched.
 
+The server rebalances on its own once a position string grows past its
+internal threshold, so this command is for forcing the cleanup rather
+than for preventing runaway positions.
+
 # Example
 
   # Rebalance all block positions on note 42

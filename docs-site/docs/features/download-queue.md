@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Download Queue
 
-Queue up to 100 URLs for background download. Three run concurrently, with real-time progress via Server-Sent Events.
+Queue up to 100 URLs for background download. Concurrency is the shared background-job budget set by `-max-job-concurrency` (default 6), with real-time progress via Server-Sent Events.
 
 ![Download queue on dashboard](/img/download-queue.png)
 
@@ -13,7 +13,7 @@ Queue up to 100 URLs for background download. Three run concurrently, with real-
 When you submit a URL for download:
 
 1. A job is created and added to the queue
-2. The download starts in the background (up to 3 concurrent downloads)
+2. The download starts in the background (once a slot in the shared job concurrency budget is free)
 3. Progress is tracked and broadcast via Server-Sent Events (SSE)
 4. On completion, a Resource is created from the downloaded file
 
@@ -21,12 +21,23 @@ When you submit a URL for download:
 
 | Setting | Value |
 |---------|-------|
-| Max concurrent downloads | 3 |
-| Max queue size | 100 |
+| Max concurrent jobs | `-max-job-concurrency` (default 6, shared with group export and import) |
+| Max queue size | 100 (counts export and import jobs too) |
 | Job retention (completed) | 1 hour |
 | Job retention (paused) | 24 hours |
 
 When the queue is full, completed jobs are evicted first (oldest first), then failed/cancelled jobs. Active and paused jobs are never evicted.
+
+## Download history
+
+A finished job whose source is `download` is also written to a durable history row, listed at `/downloads`. That row survives the 100-job cap, the one-hour eviction sweep and a restart. Group export, import and plugin action jobs stay memory-only: they have no URL to retry and their artifacts have their own retention.
+
+- Every non-admin principal sees only the rows it submitted.
+- **Retry** re-runs the row in place when its job is still in the queue, and otherwise resubmits it from the stored payload, re-validated against the retrying principal's own scope. It is refused for a completed row, and while any queued or running job is already fetching the same URL.
+- **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
+- A restart records whatever was downloading or paused as cancelled, so it stays retryable afterwards.
+
+See [Downloads page](../user-guide/managing-resources.md#downloads-page) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
 ## Job Lifecycle
 
@@ -44,7 +55,7 @@ Each download job goes through these statuses:
 
 ## Job Operations
 
-- **Cancel** -- Stop an active download
+- **Cancel** -- Stop a pending, downloading, processing or paused job
 - **Pause** -- Pause a pending or downloading job (can be resumed later)
 - **Resume** -- Resume a paused job (restarts the download from the beginning)
 - **Retry** -- Retry a failed or cancelled job
@@ -80,6 +91,18 @@ Remote download timeouts are configurable via command-line flags or environment 
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | 30s | Timeout for establishing a connection |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | 60s | Timeout when the remote server stops sending data |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | 30m | Maximum total time for a download |
+
+The same three values are also runtime-editable at `/admin/settings`, and the queue reads them at the start of every download, so a change applies without a restart.
+
+### History retention
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-download-failed-retention` | `DOWNLOAD_FAILED_RETENTION` | 168h | How long a failed or cancelled download stays in the download history |
+| `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | 24h | How long a completed download stays in the download history |
+| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | 10 | How many finished downloads the jobs panel renders |
+
+All three are editable at runtime via `/admin/settings`. A zero value falls back to the default rather than expiring on write.
 
 ## Where downloads may point
 
@@ -124,8 +147,17 @@ These are the canonical routes. Plugin action jobs appear only in the SSE event 
 | `POST` | `/v1/jobs/pause` | Pause a download |
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
+| `GET` | `/v1/jobs/get` | Return one job snapshot by id |
 | `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
+
+### Download history
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/downloads` | List persisted download history rows |
+| `POST` | `/v1/downloads/retry` | Retry history rows by id |
+| `POST` | `/v1/downloads/delete` | Delete history rows by id, and their queue entries |
 
 ## SSE Event Format
 

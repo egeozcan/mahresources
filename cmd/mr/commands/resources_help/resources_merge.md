@@ -6,9 +6,12 @@ relatedCmds: resource get, resources delete, search
 # Long
 
 Merge one or more "loser" Resources into a single "winner". The
-winner's bytes and ID are preserved; tags, groups, notes, and relations
-from the losers are moved onto the winner; the loser records and their
-file bytes are then deleted. Use to consolidate duplicates after
+winner's bytes and ID are preserved. Tags, notes and related groups move
+onto the winner, as does each loser's owner group; the losers' versions
+are reassigned to the winner and renumbered, and their `meta` is merged
+into the winner's. A JSON copy of each loser row is kept under the
+winner's `meta.backups`, and the loser files follow the same `/deleted/`
+backup path as `resources delete`. Use to consolidate duplicates after
 perceptual-hash detection or manual review.
 
 # Example
@@ -17,7 +20,7 @@ perceptual-hash detection or manual review.
   mr resources merge --winner 1 --losers 2,3
 
   # Pipe duplicate IDs from a search
-  mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.id) | join(",")')
+  mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.ID) | join(",")')
 
   # mr-doctest: create winner + 2 losers with distinct tags, merge, assert winner has all tags
   T1=$(mr tag create --name "merge-t1-$$-$RANDOM" --json | jq -r '.ID')

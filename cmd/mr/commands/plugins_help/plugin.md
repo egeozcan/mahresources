@@ -15,7 +15,8 @@ will read at runtime).
 Use the `plugin` subcommands to operate on one plugin at a time by
 name: `enable` / `disable` toggle activation, `scoped-access` decides
 whether group-limited users and guests may reach the plugin at all,
-`settings` writes the plugin's configuration values, and `purge-data`
-wipes the plugin's persisted state. Use `plugins list` to discover the
-names of installed plugins and inspect their current enablement and
-stored settings.
+`schedules` lists the recurring work the plugin has registered,
+`schedule-run` runs one of those straight away, `settings` writes the
+plugin's configuration values, and `purge-data` wipes the plugin's
+persisted state. Use `plugins list` to discover the names of installed
+plugins and inspect their current enablement and stored settings.

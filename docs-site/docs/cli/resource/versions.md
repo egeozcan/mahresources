@@ -7,9 +7,10 @@ sidebar_label: versions
 # mr resource versions
 
 List every stored version of a Resource, newest first. Columns are the
-version ID, version number, size in bytes, content type, an optional
-author comment, and the creation timestamp. Pass the global `--json`
-flag to get the full records for scripting.
+version ID, version number, human-readable size, content type, an
+optional author comment, and the creation timestamp; the raw byte count
+is available under `--json` as `fileSize`. Pass the global `--json` flag
+to get the full records for scripting.
 
 ## Usage
 

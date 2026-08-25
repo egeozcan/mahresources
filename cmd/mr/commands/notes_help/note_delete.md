@@ -5,9 +5,9 @@ relatedCmds: note get, notes delete, notes list
 
 # Long
 
-Delete a note by ID. Destructive: removes the database row and all of
-its tag/group/resource associations. Deleting a nonexistent ID returns
-exit code 1 with an HTTP 404 error message.
+Delete a note by ID. Destructive: removes the database row, the note's
+blocks, and all of its tag/group/resource associations. Deleting a
+nonexistent ID returns exit code 1 with an HTTP 404 error message.
 
 # Example
 

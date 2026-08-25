@@ -7,10 +7,11 @@ sidebar_label: get
 # mr tag get
 
 Get a tag by ID and print its fields. The server has no single-tag GET
-endpoint, so the CLI fetches the full tag list and filters in-process;
-on large instances this is slower than a direct lookup would be. Output
-is a key/value table by default; pass the global `--json` flag to emit
-the raw record for scripting.
+endpoint, so the CLI fetches the first page of the tag list, the 50 most
+recently created, and filters in-process; a tag outside that window is
+reported as not found, and the global `--page` flag does not move the
+window. Output is a key/value table by default; pass the global `--json`
+flag to emit the raw record for scripting.
 
 ## Usage
 

@@ -1,5 +1,5 @@
 ---
-outputShape: Human-readable label headers plus interpolated SQL, or with --json the raw explain response {entityType, statements[], warnings, default_limit_applied, applied_limit}
+outputShape: Human-readable label headers plus interpolated SQL, or with --json the raw explain response {entityType, queryFingerprint, executionShape, statements[], warnings, default_limit_applied, applied_limit}
 exitCodes: 0 on success; 1 on any error
 relatedCmds: mrql, mrql run, mrql export
 ---

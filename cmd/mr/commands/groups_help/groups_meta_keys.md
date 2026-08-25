@@ -12,7 +12,7 @@ for building UI dropdowns of known keys. The command has no filter
 flags in the current CLI; pair it with client-side `jq` filtering if
 you only want a subset of keys.
 
-The JSON shape is an array of objects with a `key` field
+Output is JSON in both modes: an array of objects with a `key` field
 (`[{"key":"status"}, {"key":"owner"}]`), not a flat string array.
 
 # Example

@@ -12,8 +12,9 @@ CLI, or the `/v1/admin/settings` HTTP API — no restart required.
 
 1. Boot flag / env var supplies the initial value.
 2. If the `runtime_settings` table has a row for the key, that override wins.
-3. When a flag is set *and* an override differs from it, one WARN line is
-   logged at startup so operators are not silently surprised.
+3. When an override differs from the boot value (flag, env var, or built-in
+   default), one WARN line is logged at startup so operators are not silently
+   surprised.
 
 Reset via the UI (Reset button), CLI (`mr admin settings reset <key>`), or API
 (`DELETE /v1/admin/settings/<key>`) removes the override and returns to the
@@ -35,7 +36,10 @@ boot value.
 | `remote_connect_timeout` | duration | 1s–10m | `-remote-connect-timeout` | next remote download |
 | `remote_idle_timeout` | duration | 1s–1h | `-remote-idle-timeout` | next remote download |
 | `remote_overall_timeout` | duration | 10s–24h | `-remote-overall-timeout` | next remote download |
-| `share_public_url` | string (http/https URL) | absolute; non-empty host | `-share-public-url` | next share link render |
+| `download_failed_retention` | duration | 1h–365d | `-download-failed-retention` | next history sweep |
+| `download_history_retention` | duration | 1h–365d | `-download-history-retention` | next history sweep |
+| `download_cockpit_limit` | int | 1–200 | `-download-cockpit-limit` | next jobs-panel render |
+| `share_public_url` | string (http/https URL) | absolute http/https URL; empty = relative `/s/<token>` only | `-share-public-url` | next share link render |
 | `docs_site_base_url` | string (http/https URL) | absolute; non-empty host | `-docs-site-base-url` | next page render |
 | `docs_links_disabled` | int | 0–1; 1 hides links | `-docs-links-disabled` | next page render |
 | `hash_similarity_threshold` | int | 0–11 (v2 pairs stored up to distance 11) | `-hash-similarity-threshold` | next hash comparison |
@@ -67,7 +71,8 @@ about 3 buys little there; Postgres tolerates more.
 
 Every change writes a row to `log_entries` with `entity_type=runtime_setting`,
 the key as `entity_name`, old→new values in `message`, and the request IP in
-`ip_address`. Visible in the admin log view at `/admin/overview`.
+`ip_address`. Visible at `/logs` (filter entity type `runtime_setting`), or via
+`GET /v1/logs`.
 
 ## CLI reference
 

@@ -1,5 +1,5 @@
 ---
-outputShape: Updated setting object with key, label, group, type, current, bootDefault, overridden, updatedAt, reason
+outputShape: Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true
 exitCodes: 0 on success; 1 on unknown key, invalid value, or error
 relatedCmds: admin settings reset, admin settings get, admin settings list
 ---

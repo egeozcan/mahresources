@@ -15,6 +15,25 @@ import (
 
 var tokenExitCodes = map[string]string{"exitCodes": "0 success; 1 error (not authenticated, network error, or token not found)"}
 
+// Each subcommand carries its own outputShape beside the shared exit codes,
+// rather than widening tokenExitCodes, which the group also uses. The shapes
+// differ: create builds its response map by hand, while list encodes the stored
+// records, so the two disagree on the casing of the id.
+var tokenListAnnotations = map[string]string{
+	"exitCodes":   tokenExitCodes["exitCodes"],
+	"outputShape": "Table with ID, Name, Prefix and LastUsed columns; --json emits the stored records (ID, CreatedAt, UpdatedAt, userId, name, prefix, disabled, plus expiresAt and lastUsedAt when set)",
+}
+
+var tokenCreateAnnotations = map[string]string{
+	"exitCodes":   tokenExitCodes["exitCodes"],
+	"outputShape": "ID, Name and Token lines; --json emits {token, id, name, prefix}, where id is lower case while the list array uses ID",
+}
+
+var tokenRevokeAnnotations = map[string]string{
+	"exitCodes":   tokenExitCodes["exitCodes"],
+	"outputShape": "Prints \"Token revoked.\"",
+}
+
 type apiTokenView struct {
 	ID         uint   `json:"id"`
 	Name       string `json:"name"`
@@ -29,7 +48,7 @@ func NewTokensCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "token",
 		Short:       "Manage your API tokens",
-		Long:        "List, create, and revoke the API tokens for the authenticated account. Tokens are bearer credentials used by the CLI and other non-browser clients.",
+		Long:        "List, create, and revoke the API tokens for the authenticated account. Tokens are bearer credentials used by the CLI and other non-browser clients. They require a server running with -auth: with authentication disabled there is no account to hold a token, and every one of them answers HTTP 400.",
 		Annotations: tokenExitCodes,
 	}
 	cmd.AddCommand(newTokenListCmd(c, opts))
@@ -80,7 +99,7 @@ func newTokenListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  mr token create --name \"$N\" --json > /dev/null",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 1' > /dev/null",
 		}, "\n"),
-		Annotations: tokenExitCodes,
+		Annotations: tokenListAnnotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/account/tokens", nil, &raw); err != nil {
@@ -103,7 +122,7 @@ func newTokenCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Mint a new API token",
-		Long:  "Create a new API token for the authenticated account and print the secret once. Store it securely; it cannot be retrieved again.",
+		Long:  "Create a new API token for the authenticated account and print the secret once. Store it securely; it cannot be retrieved again. An account may hold at most -max-user-tokens tokens (100 by default; 0 disables the cap), and minting past it fails with HTTP 409, so revoke one first.",
 		Example: strings.Join([]string{
 			"  # Create a token labelled 'ci'",
 			"  mr token create --name ci",
@@ -128,7 +147,7 @@ func newTokenCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  trap cleanup EXIT",
 			"  mr token create --name \"$N\" --json | jq -e '.token | length > 0' > /dev/null",
 		}, "\n"),
-		Annotations: tokenExitCodes,
+		Annotations: tokenCreateAnnotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"name": name}
 			if expiresIn != "" {
@@ -187,7 +206,7 @@ func newTokenRevokeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  mr token revoke $ID",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 0' > /dev/null",
 		}, "\n"),
-		Annotations: tokenExitCodes,
+		Annotations: tokenRevokeAnnotations,
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)

@@ -6,7 +6,7 @@ sidebar_label: create
 
 # mr user create
 
-Create a new user account with a username, password, and role (admin, editor, user, or guest). Guests require a scope group; users may optionally have one; admins and editors must not.
+Create a new user account with a username, password, and role (admin, editor, user, or guest). Guests require a scope group; users may optionally have one; a scope group passed for an admin or editor is dropped rather than refused. Passwords must be at least 8 characters and at most 72 bytes.
 
 ## Usage
 

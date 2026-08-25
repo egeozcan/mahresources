@@ -1,5 +1,5 @@
 ---
-outputShape: Array of block type descriptors, each with type (string), defaultContent (object), defaultState (object), and optional plugin metadata (label, icon, description, plugin, pluginName)
+outputShape: Array of block type descriptors, each with type (string), defaultContent (object), defaultState (object), and optional plugin metadata (label, icon, description, plugin, pluginName, filters)
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-block create, note-block update, note-block update-state
 ---
@@ -16,7 +16,7 @@ expects before calling `note-block create` or `note-block update`.
 
 # Example
 
-  # List all block types as a table (default)
+  # List all block types (this command only ever prints JSON)
   mr note-block types
 
   # List types as JSON and extract just the names

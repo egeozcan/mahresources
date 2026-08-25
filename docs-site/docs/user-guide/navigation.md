@@ -39,6 +39,8 @@ On larger screens, the navigation displays as a two-tier horizontal menu:
 - **Logs** - System activity log viewer
 - **Users** - User account administration (admin only, or when auth is disabled)
 
+With authentication enabled, the Admin dropdown is visible to editors and admins only, and the Users entry inside it is admin-only.
+
 **Plugins dropdown** (appears when plugins are enabled):
 - **Manage Plugins** - Plugin enable/disable and settings
 - Plugin-registered menu items appear here
@@ -54,9 +56,19 @@ On smaller screens, the navigation collapses into a hamburger menu. Tap the menu
 The gear icon in the top-right corner opens a settings dropdown with display preferences:
 
 - **Show Descriptions** - Toggle whether entity descriptions appear in list views
-- **Show Hover Previews** - Toggle the popover preview shown when you hover or focus a group, resource, or note link. On by default. The preview reuses the entity type's Custom Avatar and Custom Summary templates, and is dismissible (Escape), hoverable, and keyboard-accessible.
+- **Show Hover Previews** - Toggle the popover preview shown when you hover or focus a group, resource, or note link. On by default. The preview reuses the entity type's Custom Avatar, and its Custom Hover Card template when set, falling back to Custom Summary. The preview is dismissible (Escape), hoverable, and keyboard-accessible.
 
 Both toggles are saved to your account, so they persist across devices and sessions.
+
+### Account Menu
+
+With authentication enabled, an account menu sits to the right of the gear icon, labelled with the signed-in username. It contains:
+
+- The account's role
+- **Account** - Opens `/account`
+- **Sign out** - Ends the session
+
+The menu appears only when a real account is signed in, so it is absent when authentication is disabled.
 
 ## Global Search
 
@@ -65,6 +77,8 @@ Open the search dialog by clicking **Search** in the header or pressing **Cmd+K*
 ![Global search modal showing results](/img/global-search.png)
 
 Type at least 2 characters. Results appear as a flat list ranked by relevance, each showing a type badge (Resource, Note, Group, Tag, etc.), the item name, and a description preview.
+
+When what you typed is a valid MRQL query, a pinned **Run MRQL query** row appears above the results and opens it in the `/mrql` editor. When more matches exist than are shown, a trailing **See all N results** row appears and opens `/search`, which groups every match by entity type. Both rows are reachable with the same arrow keys and Enter.
 
 ### Keyboard Navigation
 
@@ -80,16 +94,17 @@ Results are cached server-side for 60 seconds. The default result limit is 20 (s
 
 ![Resource grid view with thumbnails and tag filters](/img/grid-view.png)
 
-### Table Layout
+### Card Layout
 
-Most list views use a table showing:
+Entity list views render each item as a card showing:
 
 - Checkbox for bulk selection
-- Entity ID
 - Name (links to detail page)
+- Description preview
+- Assigned tags (resources, notes, groups)
 - Preview thumbnail (for resources)
-- Timestamps (created, updated)
-- Entity-specific columns
+
+`/resources/details` is the one entity list that renders a table instead. Its columns are Select, ID, Name, Preview, Size, Created, Updated, Original Name, and Original Location, plus a Custom column when the list is filtered to a single resource category whose Custom Cell template is set.
 
 ### Display Options
 
@@ -107,6 +122,10 @@ List views offer alternative display modes. Use the selector at the top of the l
 - **Tree** - Hierarchical tree visualization
 - **Timeline** - Chronological timeline view
 
+**Notes, Tags, Categories, Queries:**
+- **List** (default) - Standard list view
+- **Timeline** - Chronological timeline view
+
 ### Sidebar Filters
 
 The sidebar on list pages contains filter controls:
@@ -119,6 +138,8 @@ The sidebar on list pages contains filter controls:
 - **Dimension Filters** - Filter images by width/height (resources only)
 
 Click **Search** to apply. The URL updates to reflect your filters, so you can bookmark or share filtered views.
+
+Below 900px the sidebar collapses behind a **Filters and details** disclosure placed above the results. Open it to reach the filters.
 
 ### Multi-Sort Builder
 
@@ -174,16 +195,16 @@ Related entities appear in expandable sections:
 - **Relations** - Custom typed relationships to other groups
 
 Each section includes:
-- A count of related items
 - Thumbnails or previews where applicable
-- A link to view all related items
-- A quick-add button to create new related items
+- A **See All** button that opens the full list
+- A **New** button to create a related item
 
 ## Responsive Design
 
-- **Desktop (1024px+)** - Full layout with sidebar filters and detailed tables
-- **Tablet (768-1024px)** - Condensed navigation, scrollable tables
-- **Mobile (under 768px)** - Hamburger menu, stacked layouts, simplified views
+Navigation and page layout share one breakpoint, 900px.
+
+- **900px and wider** - Horizontal navigation, with the sidebar open beside the content
+- **Below 900px** - Hamburger menu, stacked layout, and the sidebar collapsed behind the **Filters and details** disclosure above the results
 
 ## Keyboard Shortcuts
 
@@ -220,13 +241,16 @@ Each section includes:
 |----------|--------|
 | Arrow Left / Arrow Right | Previous/next image |
 | Page Up / Page Down | Previous/next image |
+| Space | Next image |
 | Enter | Toggle fullscreen |
 | E or F2 | Toggle info panel |
-| T | Toggle quick tag panel |
+| T | Toggle the Edit Tags panel |
 | Double-click | Toggle native resolution zoom |
 | Ctrl + Scroll | Zoom toward cursor position |
-| 1-9 | Toggle tag slot on active tab (requires quick tag panel open) |
-| Z / X / C / V / B | Switch to QUICK 1 / QUICK 2 / QUICK 3 / QUICK 4 / RECENT tab (requires quick tag panel open) |
+| 1-9 | Toggle tag slot on active tab (requires the Edit Tags panel open) |
+| Z / X / C / V / B | Switch to QUICK 1 / QUICK 2 / QUICK 3 / QUICK 4 / RECENT tab (requires the Edit Tags panel open) |
+| R | Apply the previous image's tags (requires the Edit Tags panel open) |
+| U or Cmd/Ctrl + Z | Undo the last tag change |
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
 
@@ -241,6 +265,8 @@ Type `@` in description textareas (on note, group, and resource create/edit form
 | Arrow Up / Arrow Down | Navigate suggestions |
 | Enter | Select highlighted item |
 | Tab | Close dropdown and advance to next field |
+| Backspace | Remove the last selected item when the input is empty |
+| Comma | Commit the typed value |
 | Escape | Close dropdown |
 
 ### Inline Editing
@@ -264,9 +290,9 @@ Click any image or media preview to open the lightbox viewer.
 - **Touch** - Pinch-to-zoom, swipe to navigate, two-finger pan.
 - **Close** - Press Escape or click outside the image.
 
-### Quick Tag Panel
+### Edit Tags Panel
 
-The Quick Tag Panel is a side panel in the lightbox for rapid tag assignment while browsing images.
+The Edit Tags panel is a side panel in the lightbox for rapid tag assignment while browsing images.
 
 The panel has five tabs:
 
@@ -283,9 +309,9 @@ Total configurable capacity: 36 slots across the four QUICK tabs.
 **Setup:**
 
 1. Open the lightbox on any image
-2. Open the Quick Tag Panel via its toggle button
+2. Open the panel with the **Edit Tags** button
 3. On a QUICK tab, assign tags to the 9 slots -- each maps to a number key (1-9)
-4. Slot assignments persist in localStorage across sessions
+4. Slot assignments are saved to your account, so they follow you across browsers and devices
 
 **Usage:**
 

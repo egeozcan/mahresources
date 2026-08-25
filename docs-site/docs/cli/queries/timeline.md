@@ -7,9 +7,10 @@ sidebar_label: timeline
 # mr queries timeline
 
 Display a timeline of saved-Query activity as an ASCII bar chart.
-Each bar represents a time bucket (yearly, monthly, or weekly,
-controlled by `--granularity`), with bar height reflecting the count
-of queries created in that bucket.
+Each time bucket (yearly, monthly, or weekly, controlled by
+`--granularity`) prints two bars: one for the queries created in that
+bucket and one for the queries updated in it, followed by a legend.
+Both bars are scaled against the largest count in the range.
 
 The chart is anchored at the `--anchor` date (default: today) and
 shows `--columns` buckets backward from the anchor (default 15, max

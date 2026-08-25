@@ -7,11 +7,12 @@ sidebar_label: add-meta
 # mr resources add-meta
 
 Add metadata keys to every Resource listed in `--ids` by passing a JSON
-string via `--meta`. The server-side endpoint at
-`POST /v1/resources/addMeta` determines whether this merges on top of
-existing meta or replaces it — see the admin interface docs for exact
-semantics. For single-resource single-key edits, use
-`resource edit-meta` (dot-path syntax).
+string via `--meta`. The given keys are merged over the existing `meta`
+and `own_meta`: a key of the same name is overwritten, keys not named
+are left alone. A blank `--meta` is a no-op, the JSON is validated
+first, and the call fails if any ID in `--ids` does not exist. For
+single-resource single-key edits, use `resource edit-meta` (dot-path
+syntax).
 
 ## Usage
 

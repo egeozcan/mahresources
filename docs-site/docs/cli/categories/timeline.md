@@ -6,10 +6,10 @@ sidebar_label: timeline
 
 # mr categories timeline
 
-Display a timeline of Category activity as an ASCII bar chart. Each bar
-represents a time bucket (yearly, monthly, or weekly, controlled by
-`--granularity`), and the bar height reflects the count of Categories
-created in that bucket.
+Display a timeline of Category activity as an ASCII bar chart. Each time
+bucket (yearly, monthly, or weekly, controlled by `--granularity`) prints
+two bars: `█` for the count of Categories created in that bucket and
+`▓` for the count updated in it.
 
 The chart is anchored at the `--anchor` date (default: today) and shows
 `--columns` buckets backward from the anchor (default 15, max 60). The
@@ -64,7 +64,7 @@ mr categories timeline --granularity yearly --anchor 2020-01-01 --json
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with buckets ([]&#123;label, start, end, created, updated&#125;)
+Object with buckets ([]&#123;label, start, end, created, updated&#125;) and hasMore (&#123;left, right&#125;)
 
 ## Exit Codes
 

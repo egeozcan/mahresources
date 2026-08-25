@@ -8,11 +8,14 @@ relatedCmds: relation-type edit-name, relation-type edit-description, relation-t
 
 Edit fields on an existing RelationType. `--id` is required; any other
 flag left unset keeps the existing value (partial update). `--name`
-and `--description` replace those fields; `--reverse-name` replaces
-the reverse label. `--from-category` and `--to-category` rewire the
-allowed category pairing; use with caution, as existing relations
-using this type may become inconsistent. Sends `POST
-/v1/relationType/edit` and returns the full updated record.
+and `--description` replace those fields; `--reverse-name` is accepted
+but has no effect here, since a reverse type is established at creation
+time (see `relation-type create`). `--from-category` and
+`--to-category` rewire the allowed category pairing. Every existing
+relation of this type whose groups no longer match the new categories
+is deleted, database-wide, along with the matching back-relation edges,
+and that is not reversible. Sends `POST /v1/relationType/edit` and
+returns the full updated record.
 
 # Example
 

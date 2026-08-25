@@ -14,7 +14,7 @@ Data lives in two locations that must both be backed up: the database and the fi
 
 The database contains all metadata: notes, groups, tags, resource metadata, and relationships.
 
-- **SQLite**: Single `.db` file (e.g., `/opt/mahresources/data/mahresources.db`)
+- **SQLite**: The `.db` file plus its write-ahead log sidecars (e.g. `/opt/mahresources/data/mahresources.db`, `mahresources.db-wal` and `mahresources.db-shm`)
 - **PostgreSQL**: The entire database
 
 ### 2. Files
@@ -46,12 +46,16 @@ The safest method is to stop the service first:
 # Stop the service
 sudo systemctl stop mahresources
 
-# Copy the database
-cp /opt/mahresources/data/mahresources.db /backup/mahresources-$(date +%Y%m%d).db
+# Copy the database and its write-ahead log sidecars
+cp /opt/mahresources/data/mahresources.db* /backup/
 
 # Start the service
 sudo systemctl start mahresources
 ```
+
+:::warning
+The `.db` file on its own is not a usable backup. The server runs SQLite in WAL mode and never closes the database handle, so a clean shutdown can leave committed data in the `-wal` sidecar. Copy all three files, or use the online backup below, which writes a single self-contained file.
+:::
 
 ### Online Backup with SQLite CLI
 
@@ -157,7 +161,7 @@ rclone config
 
 ```bash
 # Backup database
-rclone copy /backup/mahresources-$(date +%Y%m%d).db.gz remote:mahresources-backups/db/
+rclone copy /backup/mahresources/ remote:mahresources-backups/db/ --include "db-*.db.gz"
 
 # Sync files
 rclone sync /opt/mahresources/files/ remote:mahresources-backups/files/
@@ -206,8 +210,10 @@ sudo systemctl stop mahresources
 # Decompress if needed
 gunzip /backup/mahresources-20240115.db.gz
 
-# Replace database
+# Replace database, removing the old write-ahead log so it is not replayed
+# against the restored file
 cp /backup/mahresources-20240115.db /opt/mahresources/data/mahresources.db
+rm -f /opt/mahresources/data/mahresources.db-wal /opt/mahresources/data/mahresources.db-shm
 chown mahresources:mahresources /opt/mahresources/data/mahresources.db
 ```
 
@@ -252,12 +258,13 @@ Test your backups regularly by restoring to a test environment:
 # Create test instance with ephemeral mode using backup
 ./mahresources \
   -memory-db \
+  -memory-fs \
   -seed-db=/backup/mahresources-latest.db \
   -seed-fs=/backup/mahresources-files \
   -bind-address=:8182
 ```
 
-This starts a read-only test instance without affecting your production data.
+This starts a throwaway instance seeded from the backup. Writes go to a temporary database and a copy-on-write overlay, so the backup files themselves are never modified. `-seed-fs` requires a writable overlay, which is what `-memory-fs` provides here; without it (or `-file-save-path`) startup aborts.
 
 ## Docker Volume Backup
 
@@ -266,17 +273,23 @@ If you use Docker named volumes, back them up by running a temporary container t
 ### Backup Docker Volumes
 
 ```bash
-# Backup the database volume
+# Stop the app first: this is a plain file copy, not an online backup
+docker compose stop mahresources
+
+# Backup the database volume, including the write-ahead log sidecars
 docker run --rm \
   -v app-data:/data:ro \
   -v $(pwd)/backup:/backup \
-  alpine sh -c "cp /data/*.db /backup/"
+  alpine sh -c "cp /data/mahresources.db* /backup/"
 
 # Backup the files volume
 docker run --rm \
   -v app-files:/files:ro \
   -v $(pwd)/backup:/backup \
   alpine sh -c "cp -r /files /backup/files"
+
+# Start the app again
+docker compose start mahresources
 ```
 
 ### Restore Docker Volumes
@@ -289,7 +302,7 @@ docker compose down
 docker run --rm \
   -v app-data:/data \
   -v $(pwd)/backup:/backup:ro \
-  alpine sh -c "cp /backup/mahresources.db /data/"
+  alpine sh -c "rm -f /data/mahresources.db-wal /data/mahresources.db-shm && cp /backup/mahresources.db* /data/"
 
 # Restore files
 docker run --rm \

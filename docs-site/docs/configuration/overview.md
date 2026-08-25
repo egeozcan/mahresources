@@ -64,6 +64,11 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-max-user-tokens` | `MAX_USER_TOKENS` | Max API tokens a single user may hold; `0` disables the cap | `100` |
 | `-max-job-concurrency` | `MAX_JOB_CONCURRENCY` | Concurrency budget for the shared background job manager | `6` |
 | `-export-retention` | `EXPORT_RETENTION` | How long completed group-export tars stay on disk | `24h` |
+| `-download-failed-retention` | `DOWNLOAD_FAILED_RETENTION` | How long a failed or cancelled download stays in the download history | `168h` |
+| `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | How long a completed download stays in the download history (the resource it created is unaffected) | `24h` |
+| `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many finished downloads the jobs panel renders, newest first | `10` |
+| `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule | `30s` |
+| `-max-action-entities` | `MAX_ACTION_ENTITIES` | Maximum entities one plugin-action run may name; `0` selects the default rather than meaning unlimited | `1000` |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash workers | `4` |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources per batch | `500` |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles | `1m` |
@@ -129,6 +134,7 @@ So by default the server refuses to fetch from any **private** address:
 - link-local (`169.254.0.0/16`, including the metadata endpoint)
 - private ranges (`10/8`, `172.16/12`, `192.168/16`, `fd00::/8`)
 - carrier-grade NAT (`100.64/10`), multicast and broadcast
+- benchmarking (`198.18.0.0/15`), reserved (`240.0.0.0/4`), this-network (`0.0.0.0/8`), NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`) and deprecated IPv6 site-local (`fec0::/10`), which Docker Desktop, VPN clients, some Kubernetes CNIs and NAT64 translators hand out
 
 **Public hosts are unaffected, with one exception.** Downloading from the
 internet, the reason these features exist, works exactly as before with no

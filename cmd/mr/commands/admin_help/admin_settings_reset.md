@@ -1,5 +1,5 @@
 ---
-outputShape: Setting object after reset with key, label, group, type, current (equals bootDefault), bootDefault, overridden (false), updatedAt, reason
+outputShape: Setting object after reset with key, label, description, group, type, current (equals bootDefault), bootDefault, overridden (false); updatedAt and reason are absent, because the override that carried them is gone
 exitCodes: 0 on success; 1 on unknown key or error
 relatedCmds: admin settings set, admin settings get, admin settings list
 ---
