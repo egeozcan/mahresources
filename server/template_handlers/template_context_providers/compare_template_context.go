@@ -41,14 +41,14 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
-		versions1, _ := context.GetVersions(query.Resource1ID)
+		versions1 := persistedVersions(context.GetVersions(query.Resource1ID))
 
 		// Get resource 2 and its versions
 		resource2, err := context.GetResource(query.Resource2ID)
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
-		versions2, _ := context.GetVersions(query.Resource2ID)
+		versions2 := persistedVersions(context.GetVersions(query.Resource2ID))
 
 		// Fill in missing version numbers and redirect, so the URL always names what is
 		// on screen — otherwise the selects render a version the Alpine state does not
@@ -180,6 +180,18 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 		current1 := currentVersionNumber(resource1, versions1)
 		current2 := currentVersionNumber(resource2, versions2)
 
+		compareUnavailableReason := ""
+		if comparison == nil {
+			switch {
+			case len(versions1) == 0 && len(versions2) == 0:
+				compareUnavailableReason = "Neither of these resources has a version history yet, so there is nothing to compare."
+			case len(versions1) == 0:
+				compareUnavailableReason = fmt.Sprintf("%s has no version history yet, so there is nothing to compare it against.", shortResourceName(resource1))
+			case len(versions2) == 0:
+				compareUnavailableReason = fmt.Sprintf("%s has no version history yet, so there is nothing to compare it against.", shortResourceName(resource2))
+			}
+		}
+
 		return baseContext.Update(pongo2.Context{
 			// A constant title left every tab, bookmark and history entry saying the
 			// same thing whatever was being compared.
@@ -191,18 +203,21 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			// The shared autocompleter takes its initial selection as a list. Passing
 			// the model itself would serialise every association it preloaded into the
 			// page for a control that only ever shows a name.
-			"resource1Picker":    comparePickerItems(resource1),
-			"resource2Picker":    comparePickerItems(resource2),
-			"versions1":          versionOptions(versions1, current1),
-			"versions2":          versionOptions(versions2, current2),
-			"comparison":         comparison,
-			"query":              query,
-			"contentCategory":    contentCategory,
-			"crossResource":      crossResource,
-			"canMerge":           canMerge,
-			"mergeBlockedReason": mergeBlockedReason,
-			"label1":             label1,
-			"label2":             label2,
+			"resource1Picker": comparePickerItems(resource1),
+			"resource2Picker": comparePickerItems(resource2),
+			"versions1":       versionOptions(versions1, current1),
+			"versions2":       versionOptions(versions2, current2),
+			// Set when a side has nothing to offer, so the empty state says why
+			// rather than inviting a pick from a dropdown with no options in it.
+			"compareUnavailableReason": compareUnavailableReason,
+			"comparison":               comparison,
+			"query":                    query,
+			"contentCategory":          contentCategory,
+			"crossResource":            crossResource,
+			"canMerge":                 canMerge,
+			"mergeBlockedReason":       mergeBlockedReason,
+			"label1":                   label1,
+			"label2":                   label2,
 			// Pane headers. Every comparator renders the same two strings, so they are
 			// built once rather than assembled from label + version in four templates.
 			"panelTitle1": comparePanelTitle(label1, comparison, crossResource, true),
@@ -214,6 +229,22 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			"hideSidebar": true,
 		})
 	}
+}
+
+// persistedVersions drops the version GetVersions synthesises for a resource
+// whose history has not been migrated. That row stands in for the current file
+// in a version panel, but it has no id, so no file route can serve it and
+// GetVersionByNumber — which reads the table — cannot find it. Offering it here
+// fills a dropdown with an option that answers "version 1 not found", and
+// defaulting to it redirects straight there.
+func persistedVersions(versions []models.ResourceVersion, _ error) []models.ResourceVersion {
+	kept := make([]models.ResourceVersion, 0, len(versions))
+	for _, v := range versions {
+		if v.ID != 0 {
+			kept = append(kept, v)
+		}
+	}
+	return kept
 }
 
 // currentVersionNumber returns the version number that matches the resource's

@@ -129,3 +129,46 @@ New coverage: `server/api_tests/compare_context_versions_test.go`,
 `e2e/tests/regressions/compare-page-teardown.spec.ts`. The two provider tests
 that matter were verified failing against the old behaviour before the fix went
 in.
+
+## Review round 1
+
+An independent review of the commit turned up four things. All four are fixed.
+
+- **A resource whose versions were never migrated redirected into an error
+  page.** `GetVersions` synthesises a v1 for one, so a version panel has
+  something to show, but that row has no id: no file route can serve it and
+  `GetVersionByNumber` reads the table, so the new previous-versus-current
+  default resolved to it and landed on "version 1 not found". The provider now
+  drops the synthesised row (`persistedVersions`), which leaves the version
+  select with nothing to offer and the comparison unbuilt, so the empty state
+  carries the reason and the select renders disabled instead of empty. Reachable
+  with `-skip-version-migration`, where it covers every legacy resource; the
+  cross-resource half of it was already broken before this branch.
+
+  Making the comparison *work* for such a resource was considered and is
+  separate: it needs a file route that can serve a version with no id, which
+  means a second `?disposition=inline` surface and the safelist argument made
+  again for it. An explicit `?v1=1` on a legacy resource still errors, the same
+  way `?v1=99` errors anywhere.
+
+- **Onion skin stopped overlaying when neither version had stored dimensions.**
+  With no ratio the overlay box has no height of its own, so the fallback puts
+  the images back in the flow — and it put *both* of them there, which is two
+  images stacked with the lower one faded. The image that is meant to sit over
+  the other is marked (`compare-overlay-img--over`) and stays out of the flow.
+  A class rather than a sibling selector, because toggle mode swaps its two
+  images with `x-show` and whichever is visible has to give the box its height.
+
+- **Clearing a picker left it empty over the comparison it still described.**
+  A removal names nothing to navigate to, so the handler returned; the page
+  always compares two resources, so the side is reloaded back to what it holds.
+
+- **"Copy diff" produced no patch.** Prefixed lines with no file or hunk headers
+  read as a patch and apply as nothing. It is `createTwoFilesPatch` now, named
+  with the pane titles — folded to ASCII first, because the library escapes a
+  non-ASCII name to octal the way git does.
+
+New coverage: `TestCompareContextProvider_UnmigratedResourceHasNothingToCompare`,
+the two patch-export vitests, and an e2e that compares two icons — the one image
+format in reach that Chromium renders and no decoder in the binary can measure,
+so the version rows carry no dimensions. Both were verified failing first.

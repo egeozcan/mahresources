@@ -104,7 +104,7 @@
         <div class="relative border rounded overflow-hidden compare-overlay-box"
              :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''">
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
-            <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img"
+            <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over"
                  :style="trailScale + 'opacity: ' + (opacity / 100)">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">

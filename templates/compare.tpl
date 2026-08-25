@@ -30,11 +30,20 @@
         <div class="compare-toolbar-side">
             <span class="compare-side-label--old">{{ label1 }}</span>
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r1' selectedItems=resource1Picker max=1 id='compare-left-resource' title='Left resource' placeholder='Search resources...' onChange='onResource1Selected' %}
+            {# A resource whose history has not been migrated has no version rows to #}
+            {# offer. An empty select is a control that cannot be used and does not #}
+            {# say so. #}
+            {% if versions1 %}
             <select x-model.number="v1" @change="updateUrl()" class="compare-version-select" aria-label="Left version">
                 {% for v in versions1 %}
                 <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>{{ v.Label }}</option>
                 {% endfor %}
             </select>
+            {% else %}
+            <select class="compare-version-select" aria-label="Left version" disabled>
+                <option>No version history</option>
+            </select>
+            {% endif %}
         </div>
 
         <button type="button" class="compare-swap-btn" @click="swapSides()"
@@ -45,11 +54,17 @@
         <div class="compare-toolbar-side">
             <span class="compare-side-label--new">{{ label2 }}</span>
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r2' selectedItems=resource2Picker max=1 id='compare-right-resource' title='Right resource' placeholder='Search resources...' onChange='onResource2Selected' %}
+            {% if versions2 %}
             <select x-model.number="v2" @change="updateUrl()" class="compare-version-select" aria-label="Right version">
                 {% for v in versions2 %}
                 <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>{{ v.Label }}</option>
                 {% endfor %}
             </select>
+            {% else %}
+            <select class="compare-version-select" aria-label="Right version" disabled>
+                <option>No version history</option>
+            </select>
+            {% endif %}
         </div>
     </div>
 
@@ -279,8 +294,13 @@
             <rect x="14" y="7" width="8" height="14" rx="1"/>
             <path d="M12 10l2-2m0 0l-2-2m2 2H8"/>
         </svg>
+        {% if compareUnavailableReason %}
+        <p class="text-lg font-medium text-stone-700">Nothing to compare</p>
+        <p class="text-sm max-w-xs">{{ compareUnavailableReason }}</p>
+        {% else %}
         <p class="text-lg font-medium text-stone-700">Ready to Compare</p>
         <p class="text-sm max-w-xs">Select resources and versions above to see a detailed comparison.</p>
+        {% endif %}
         <div class="flex items-center gap-2 text-xs mt-1">
             <span class="compare-side-label--old">{{ label1 }}</span>
             <span class="text-stone-400" aria-hidden="true">&harr;</span>

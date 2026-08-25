@@ -118,8 +118,31 @@ describe('wordSegments', () => {
 });
 
 describe('textDiff patch export', () => {
-  it('emits a prefixed line per diff row', () => {
-    const d = diffOf('a\nb\n', 'a\nc\n');
-    expect(d.asUnifiedText().split('\n')).toEqual([' a', '-b', '+c']);
+  // Prefixed lines alone read as a patch and apply as nothing: `git apply` needs
+  // the file headers to know what it is patching and the hunk header to know
+  // where.
+  it('emits a patch with file and hunk headers', () => {
+    const component: any = textDiff({
+      leftText: 'a\nb\n',
+      rightText: 'a\nc\n',
+      leftName: 'Older \u2014 v1',
+      rightName: 'Current \u2014 v2',
+    });
+    component.computeDiff();
+
+    const lines = component.asUnifiedText().split('\n');
+    // The em dash is folded to a hyphen so the header stays readable: the patch
+    // library escapes a non-ASCII name to octal, the way git does.
+    expect(lines).toContain('--- Older - v1');
+    expect(lines).toContain('+++ Current - v2');
+    expect(lines.some((l: string) => /^@@ -\d+,\d+ \+\d+,\d+ @@/.test(l))).toBe(true);
+    expect(lines).toContain('-b');
+    expect(lines).toContain('+c');
+  });
+
+  it('names the sides generically when the caller supplies none', () => {
+    const d = diffOf('a\n', 'b\n');
+    expect(d.asUnifiedText()).toContain('--- left');
+    expect(d.asUnifiedText()).toContain('+++ right');
   });
 });

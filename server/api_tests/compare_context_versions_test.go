@@ -163,3 +163,48 @@ func TestCompareContextProvider_PanelTitlesNameTheVersion(t *testing.T) {
 	assert.Equal(t, "Panel Source", ctx["panelTitle1"])
 	assert.Equal(t, "Panel Other", ctx["panelTitle2"])
 }
+
+// A resource whose versions have not been migrated has no version rows at all;
+// GetVersions synthesises a v1 for it so a version panel has something to show.
+// That row has no id, so no file route can serve it and no comparison can load
+// it — defaulting to it redirected straight to "version 1 not found".
+func TestCompareContextProvider_UnmigratedResourceHasNothingToCompare(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Inserted directly: AddResource writes an initial version row, which is the
+	// state this test needs the absence of.
+	legacy := models.Resource{
+		Name:        "Never Migrated",
+		Hash:        "compare-unmigrated-hash",
+		HashType:    "SHA1",
+		FileSize:    128,
+		ContentType: "text/plain",
+		Location:    "/fake/unmigrated",
+	}
+	assert.NoError(t, tc.DB.Create(&legacy).Error)
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d", legacy.ID), nil))
+
+	_, redirects := ctx["_redirect"]
+	assert.False(t, redirects, "there is no version to redirect to")
+	assert.Nil(t, ctx["errorMessage"], "a resource with no version history is not an error")
+	assert.Nil(t, ctx["comparison"])
+
+	options, ok := ctx["versions1"].([]template_context_providers.CompareVersionOption)
+	assert.True(t, ok)
+	assert.Empty(t, options, "a version no route can serve must not be offered")
+
+	assert.NotEmpty(t, ctx["compareUnavailableReason"],
+		"the empty state has to say why there is nothing to pick")
+
+	// The same holds with the unmigrated resource on the far side of a
+	// cross-resource comparison, which redirected into the error page too.
+	other := newCompareResource(t, tc, "Migrated", "compare-unmigrated-other")
+	cross := fmt.Sprintf("/resource/compare?r1=%d&r2=%d", other.ID, legacy.ID)
+	ctx = provider(httptest.NewRequest("GET", cross, nil))
+	_, redirects = ctx["_redirect"]
+	assert.False(t, redirects, "half a comparison is not a comparison")
+	assert.Nil(t, ctx["errorMessage"])
+	assert.NotEmpty(t, ctx["compareUnavailableReason"])
+}

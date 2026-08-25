@@ -27,12 +27,29 @@ function formatBytes(bytes) {
 }
 
 /**
+ * Names one side of the patch. The pane titles are typeset with an em dash and a
+ * middle dot, and the patch library follows git in escaping a non-ASCII filename
+ * to octal, which turns a readable header into `\342\200\224`. Only the
+ * decoration this page adds is folded down; a name written in another script is
+ * left for the library to quote, which is lossless.
+ */
+function patchName(value) {
+  const name = String(value || '')
+    .replace(/[\u2013\u2014\u00b7]/g, '-')
+    .replace(/\u2026/g, '...')
+    .trim();
+  return name || 'file';
+}
+
+/**
  * @param {object} options
  * @param {string|null} [options.leftUrl] fetched when the text is not supplied inline
  * @param {string|null} [options.rightUrl]
  * @param {string|null} [options.leftText] supplied inline by the group comparison
  * @param {string|null} [options.rightText]
  * @param {number} [options.totalBytes] combined size, used to decide whether to ask first
+ * @param {string} [options.leftName] names the two sides in the copied patch's headers
+ * @param {string} [options.rightName]
  */
 export function textDiff({
   leftUrl = null,
@@ -40,6 +57,8 @@ export function textDiff({
   leftText = null,
   rightText = null,
   totalBytes = 0,
+  leftName = 'left',
+  rightName = 'right',
 }) {
   return {
     mode: 'unified',
@@ -274,10 +293,12 @@ export function textDiff({
 
     /**
      * The diff as a patch, so it can leave the page. Selecting thousands of
-     * rendered table rows is the only alternative.
+     * rendered rows is the only alternative. Built by the diff library rather
+     * than from the rendered rows, which carry no file or hunk headers and so
+     * produce something that reads as a patch but applies as nothing.
      */
     asUnifiedText() {
-      return this.unifiedDiff.map((line) => line.prefix + line.content).join('\n');
+      return Diff.createTwoFilesPatch(patchName(leftName), patchName(rightName), this.leftText, this.rightText);
     },
 
     async copyPatch() {

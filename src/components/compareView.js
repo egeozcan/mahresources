@@ -44,7 +44,13 @@ export function compareView(initialState) {
      */
     onSideSelected(side, change) {
       const added = change && change.added && change.added[0];
-      if (!added || !added.raw) return;
+      if (!added || !added.raw) {
+        // The page always compares two resources, so a side cannot be emptied.
+        // Clearing the chip left an empty picker sitting over the comparison it
+        // still described; reloading puts back what the page is actually showing.
+        if (change && change.removed && change.removed.length) window.location.reload();
+        return;
+      }
 
       const resourceId = added.raw.ID;
       const currentId = side === 'left' ? this.r1 : this.r2;

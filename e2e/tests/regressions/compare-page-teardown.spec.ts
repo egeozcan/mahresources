@@ -19,6 +19,7 @@ test.describe.serial('compare page teardown fixes', () => {
   let pdfResourceId: number;
   let imageResourceId: number;
   let imageVersionedId: number;
+  let dimensionlessId: number;
 
   const CONFIG_V1 = [
     '{',
@@ -122,6 +123,28 @@ test.describe.serial('compare page teardown fixes', () => {
     return (~c) >>> 0;
   }
 
+  /**
+   * The same PNG wrapped as an icon. The server sniffs the type and stores
+   * `image/x-icon`, which reaches the image comparator, but no decoder in the
+   * binary can read an icon's header — so the version rows carry no width or
+   * height. That is the state the overlay modes have to survive, and it is not
+   * reachable with any format Go can measure.
+   */
+  function pngIcon(width: number, height: number, rgb: [number, number, number]): Buffer {
+    const png = solidPng(width, height, rgb);
+    const dir = Buffer.alloc(6);
+    dir.writeUInt16LE(1, 2); // type: icon
+    dir.writeUInt16LE(1, 4); // one image
+    const entry = Buffer.alloc(16);
+    entry[0] = width >= 256 ? 0 : width;
+    entry[1] = height >= 256 ? 0 : height;
+    entry.writeUInt16LE(1, 4);  // colour planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(22, 12); // payload offset
+    return Buffer.concat([dir, entry, png]);
+  }
+
   /** Writes a fixture and hands back its path, since createResource takes a path. */
   function fixture(name: string, body: Buffer | string): string {
     const target = path.join(fixtureDir, name);
@@ -203,10 +226,23 @@ test.describe.serial('compare page teardown fixes', () => {
       request, baseURL!, imageVersionedId, 'versioned-v2.png', 'image/png',
       solidPng(160, 50, [190, 60, 30]), 'Second image version',
     );
+
+    // A third image resource whose versions carry no dimensions at all.
+    const dimensionless = await apiClient.createResource({
+      filePath: fixture('iconless-v1.ico', pngIcon(80, 60, [40, 140, 90])),
+      exactBytes: true,
+      name: `Teardown Iconless ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    dimensionlessId = dimensionless.ID;
+    await uploadVersion(
+      request, baseURL!, dimensionlessId, 'iconless-v2.ico', 'image/x-icon',
+      pngIcon(120, 40, [200, 80, 40]), 'Second icon version',
+    );
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [textResourceId, pdfResourceId, imageResourceId, imageVersionedId]) {
+    for (const id of [textResourceId, pdfResourceId, imageResourceId, imageVersionedId, dimensionlessId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -470,6 +506,36 @@ test.describe.serial('compare page teardown fixes', () => {
 
     await page.keyboard.press('Home');
     await expect(handle).toHaveAttribute('aria-valuenow', '1');
+  });
+
+  // Without stored dimensions the overlay box has no aspect ratio, and the
+  // fallback that gives it a height by putting the images back in the flow put
+  // *both* of them there — so onion skin stopped overlaying and became two
+  // images stacked with the lower one faded.
+  test('onion skin overlays its two images when neither has stored dimensions', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${dimensionlessId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+    await page.getByRole('radio', { name: 'Onion skin' }).click();
+
+    // Located by visibility, not by any class the fix introduced: onion skin is
+    // the only overlay box on screen in this mode, so the assertion below is
+    // about the layout rather than about the markup having changed.
+    const box = page.locator('[x-data^="imageCompare"] .compare-overlay-box:visible');
+    await expect(box).toHaveCount(1);
+
+    const images = box.locator('.compare-overlay-img');
+    await expect(images).toHaveCount(2);
+
+    const under = await images.nth(0).boundingBox();
+    const over = await images.nth(1).boundingBox();
+    expect(under).not.toBeNull();
+    expect(over).not.toBeNull();
+
+    // Stacked, the second image starts below the first. Overlaid, they share a
+    // top edge and the same origin.
+    expect(Math.abs(over!.y - under!.y)).toBeLessThan(2);
+    expect(Math.abs(over!.x - under!.x)).toBeLessThan(2);
+    expect(over!.y).toBeLessThan(under!.y + under!.height);
   });
 
   // The visible mode label is hidden below 768px, which would leave the button

@@ -2673,8 +2673,29 @@ html {
     object-fit: contain;
 }
 
+/* With no stored dimensions there is no ratio to size the box with, so the box
+   has no height of its own and images taken out of the flow would collapse it to
+   nothing. The first image goes back in the flow to give the box its height. */
 .compare-overlay-box:not([style*="aspect-ratio"]) .compare-overlay-img {
     position: static;
+    height: auto;
+}
+
+/* Except the one that is meant to sit over the other, which is what makes onion
+   skin a mode rather than two images stacked with the lower one faded. Marked
+   with a class instead of a sibling selector because toggle mode swaps its two
+   images with x-show: whichever is visible has to be the one giving the box its
+   height. */
+.compare-overlay-box:not([style*="aspect-ratio"]) .compare-overlay-img--over {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    /* Not `inset: 0`: pinning both edges against `height: auto` leaves the box
+       over-constrained, and the `margin: auto` above then centres the image
+       against an image that starts at the top. */
+    bottom: auto;
+    margin: 0;
     height: auto;
 }
 
