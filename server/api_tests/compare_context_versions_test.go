@@ -323,20 +323,22 @@ func TestCompareContextProvider_SameDayOptionsKeepTheYear(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	res := newCompareResource(t, tc, "Same Day", "compare-same-day-v1")
-	second := addCompareVersion(t, tc, res.ID, 2, "text/plain", "")
-	// Both on one day, which is what switches the layout.
-	assert.NoError(t, tc.DB.Model(&models.ResourceVersion{}).Where("id = ?", second.ID).
-		Update("created_at", time.Now()).Error)
+	addCompareVersion(t, tc, res.ID, 2, "text/plain", "")
+
+	// Both stamped to one fixed instant. Two live clock reads either side of
+	// midnight would stop colliding and the layout would never switch.
+	sameDay := time.Date(2021, time.March, 14, 9, 26, 0, 0, time.UTC)
+	assert.NoError(t, tc.DB.Model(&models.ResourceVersion{}).Where("resource_id = ?", res.ID).
+		Update("created_at", sameDay).Error)
 
 	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
 	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d&v1=1&v2=2", res.ID), nil))
 
 	options, ok := ctx["versions1"].([]template_context_providers.CompareVersionOption)
 	assert.True(t, ok)
-	assert.NotEmpty(t, options)
-	year := fmt.Sprintf("%d", time.Now().Year())
+	assert.Len(t, options, 2)
 	for _, option := range options {
-		assert.Contains(t, option.Label, year, "every option carries its year")
+		assert.Contains(t, option.Label, "2021", "every option carries its year")
 		assert.Regexp(t, `\d{2}:\d{2}`, option.Label, "and the time that tells same-day uploads apart")
 	}
 }

@@ -82,11 +82,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // new mode's control was.
       this._keyHandler = (e) => {
         if (e.defaultPrevented) return;
+        // Anything focusable answers its own arrow keys. Without this the
+        // reveal position moved while Flip had focus, which is a control that
+        // has nothing to do with it.
         const target = e.target;
-        if (target instanceof HTMLElement) {
-          const tag = target.tagName;
-          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-          if (target.closest('[role="radiogroup"]')) return;
+        if (target instanceof HTMLElement
+          && target.closest('button, a[href], input, select, textarea, [role="radiogroup"], [tabindex]')) {
+          return;
         }
         const step = e.shiftKey ? 10 : 2;
         if (this.mode === 'slider') {

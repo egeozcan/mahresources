@@ -323,14 +323,20 @@ export function textDiff({
      */
     rowLabel(line, side) {
       if (!line || line.fold || line.blank) return '';
-      // Split rows carry `num`; a unified row carries whichever of the two its
-      // side has, and null on the other.
-      const number = line.num ?? line.leftNum ?? line.rightNum;
-      const where = number ? ` line ${number}` : '';
-      const changed = side ? line.changed : line.type !== 'context';
-      if (!changed) return `Unchanged${where}`;
-      const added = side ? side === 'right' : line.type === 'added';
-      return `${added ? 'Added' : 'Removed'}${where}`;
+
+      if (side) {
+        const where = line.num ? ` line ${line.num}` : '';
+        if (!line.changed) return `Unchanged${where}`;
+        return `${side === 'right' ? 'Added' : 'Removed'}${where}`;
+      }
+
+      // The unified view has two gutters and one of them is hidden, so a row is
+      // announced once. Both numbers when they have drifted apart, which is the
+      // whole reason there are two.
+      if (line.type === 'added') return `Added line ${line.rightNum}`;
+      if (line.type === 'removed') return `Removed line ${line.leftNum}`;
+      if (line.leftNum === line.rightNum) return `Unchanged line ${line.leftNum}`;
+      return `Unchanged, old line ${line.leftNum}, new line ${line.rightNum}`;
     },
 
     /**

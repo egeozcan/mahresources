@@ -436,3 +436,26 @@ No majors. All four minors fixed; three are defects in code this branch wrote.
   overwrote `_abort`, so an HTTP error in the first aborted the second's
   transfer. A load supersedes its predecessor, and the error path aborts the
   controller it was given rather than whatever is current.
+
+## Review round 10
+
+No majors. Three of four minors fixed.
+
+- **A unified row was announced twice.** The gutter carries the state and the
+  second gutter announced its number again, so an added line read as "Added line
+  5" and then "5". The label carries both numbers when they have drifted apart —
+  which is the whole reason there are two — and the second gutter is hidden from
+  the accessibility tree.
+- **Arrow keys moved the reveal position while another control had focus.** The
+  container-wide handler skipped form fields and the mode radiogroup but not
+  buttons, so pressing Right on Flip moved the slider. Anything focusable
+  answers its own arrow keys now.
+- **The same-day formatting test read the clock twice**, so a run straddling
+  midnight would stop the two versions colliding and the layout would never
+  switch. Both are stamped to one fixed instant.
+
+Declined: **the attachment branch never sets `X-Frame-Options: DENY`, so the
+test asserting it cannot pass.** The handler does not set it because
+`withPrimarySecurityHeaders` already has, on every primary-server response, and
+the test asserts against the real stack rather than the handler — it passes, and
+has in every run since it was written.

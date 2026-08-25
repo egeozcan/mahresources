@@ -40,7 +40,10 @@
                 {# colour is not read at all, so a diff was announced as line numbers #}
                 {# and text with no indication of what had changed. #}
                 <span class="compare-diff-num" role="cell" :aria-label="rowLabel(line, null)" x-text="line.leftNum || ''"></span>
-                <span class="compare-diff-num compare-diff-num--right" role="cell" x-text="line.rightNum || ''"></span>
+                {# Hidden from the accessibility tree: the label on the gutter beside #}
+                {# it already carries both numbers, and announcing this one again read #}
+                {# as a second row. #}
+                <span class="compare-diff-num compare-diff-num--right" role="cell" aria-hidden="true" x-text="line.rightNum || ''"></span>
                 {# One line, deliberately: the container is `white-space: pre`, so a #}
                 {# newline between these tags renders as a blank line in the diff. #}
                 <span class="compare-diff-content" role="cell"><span class="compare-diff-prefix" :class="{ 'compare-diff-prefix--removed': line.type === 'removed', 'compare-diff-prefix--added': line.type === 'added' }" x-text="line.prefix" aria-hidden="true"></span><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? (line.type === 'added' ? 'compare-word--added' : 'compare-word--removed') : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span><span class="compare-no-newline" x-show="line.noNewline" x-cloak title="No newline at end of file">\ No newline at end of file</span></span>
