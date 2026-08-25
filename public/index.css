@@ -3645,3 +3645,12 @@ progress.export-progress-bar::-moz-progress-bar {
   background-color: #b45309; /* amber-700 */
   border-radius: 9999px;
 }
+
+/* A file that ends without a newline differs from one that does, and the row
+   would otherwise be identical to the row opposite it. */
+.compare-no-newline {
+    margin-left: 0.75rem;
+    color: #57534e;
+    font-style: italic;
+    user-select: none;
+}

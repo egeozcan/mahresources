@@ -306,3 +306,32 @@ which is how it surfaced.
 Declined again: **the end-of-file newline is not marked**. `"a"` against `"a\n"`
 reads as one line added rather than as a missing final newline. Real, and it
 predates this branch — the line splitter is unchanged.
+
+## Review round 5
+
+- **The previous-versus-current default could pick one version twice.** A merge
+  renumbers the loser's history above the winner's highest and leaves the
+  winner's own current version where it was, so a winner whose current version
+  is v1 can hold v2 and v3 as history. `previousVersionNumber` answered "nothing
+  is earlier" and the page defaulted to comparing v1 with itself while two other
+  versions sat in the dropdown. It falls back to the nearest version *above*
+  when there is none below, and returns its argument only when the resource
+  genuinely has one version.
+- **A self-comparison still ran the comparator**, which fetched one file twice
+  to diff it against itself, and offered two identical PDF viewers directly
+  under a notice saying there was nothing to compare. One flag now decides both.
+- **`SameType` was raw string equality**, so two versions the page routes to the
+  same comparator could be reported as a type change. It normalises the way
+  `contentCategoryFor` and the file route already do.
+- **An end-of-file newline change was invisible.** Splitting on `\n` turns both
+  `"a"` and `"a\n"` into `["a"]`, so the pair rendered as an identical removed
+  and added row with nothing to say why. The last row of the affected side
+  carries the marker, the way a patch does. Raised in three consecutive rounds;
+  it predates the branch, and the row model absorbed it without touching the
+  fold ranges.
+
+Declined: **the merge buttons are drawn for a principal who cannot write.** True
+— and no template in this tree gates a write control on capability; every one of
+them is drawn and refused at submit. Gating merge alone would make it the only
+such check in the codebase and would not be the doctrine it half-implements.
+That belongs to a change that does it everywhere.

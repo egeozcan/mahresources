@@ -78,7 +78,7 @@
 
     {# The picker can put the same version on both sides, which otherwise renders a #}
     {# full "Files are identical" report of a file against itself. #}
-    {% if comparison and not crossResource and query.Version1 == query.Version2 %}
+    {% if sameVersion %}
     <p class="compare-notice" role="status">
         Both sides are showing v{{ query.Version1 }}, so there is nothing to compare.
         Pick a different version on one side.
@@ -240,6 +240,10 @@
     </details>
 
     <!-- Content Comparison Area -->
+    {# Skipped when both sides name one version: the notice above has already said #}
+    {# there is nothing to compare, and the comparator would fetch the same file #}
+    {# twice to prove it. The metadata stays — it describes the version. #}
+    {% if not sameVersion %}
     {% if contentCategory == "image" %}
         {% include "/partials/compareImage.tpl" %}
     {% elif contentCategory == "text" %}
@@ -248,6 +252,7 @@
         {% include "/partials/comparePdf.tpl" %}
     {% else %}
         {% include "/partials/compareBinary.tpl" %}
+    {% endif %}
     {% endif %}
 
     {# Always rendered, disabled with the reason attached when merging is unavailable: #}

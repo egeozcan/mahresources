@@ -146,3 +146,26 @@ describe('textDiff patch export', () => {
     expect(d.asUnifiedText()).toContain('+++ right');
   });
 });
+
+describe('textDiff end-of-file newline', () => {
+  // Splitting on '\n' turns both "a" and "a\n" into ["a"], so a pair differing
+  // only in the closing newline rendered as an identical removed and added row.
+  it('marks the side that has no closing newline', () => {
+    const d = diffOf('a\n', 'a');
+
+    const left = d.splitLeft.filter((r: any) => !r.blank);
+    const right = d.splitRight.filter((r: any) => !r.blank);
+    expect(left[left.length - 1].noNewline).toBeUndefined();
+    expect(right[right.length - 1].noNewline).toBe(true);
+
+    const removed = d.unifiedDiff.filter((r: any) => r.type !== 'added');
+    const added = d.unifiedDiff.filter((r: any) => r.type !== 'removed');
+    expect(removed[removed.length - 1].noNewline).toBeUndefined();
+    expect(added[added.length - 1].noNewline).toBe(true);
+  });
+
+  it('marks nothing when both sides end cleanly', () => {
+    const d = diffOf('a\nb\n', 'a\nc\n');
+    expect([...d.splitLeft, ...d.splitRight, ...d.unifiedDiff].some((r: any) => r.noNewline)).toBe(false);
+  });
+});

@@ -208,6 +208,11 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			"Merge %s into %s? %s will no longer exist as its own resource. This cannot be undone.",
 			resource1.Name, resource2.Name, resource1.Name)
 
+		// Two names for one file. The comparators would fetch it twice to diff it
+		// against itself, and the PDF panel would offer two identical viewers
+		// directly under a notice saying there is nothing to compare.
+		sameVersion := comparison != nil && !crossResource && query.Version1 == query.Version2
+
 		current1 := currentVersionNumber(resource1, versions1)
 		current2 := currentVersionNumber(resource2, versions2)
 
@@ -245,6 +250,7 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			"query":                    query,
 			"contentCategory":          contentCategory,
 			"crossResource":            crossResource,
+			"sameVersion":              sameVersion,
 			"canMerge":                 canMerge,
 			"mergeBlockedReason":       mergeBlockedReason,
 			"mergeConfirm1":            mergeConfirm1,
@@ -292,14 +298,32 @@ func currentVersionNumber(resource *models.Resource, versions []models.ResourceV
 	return 0
 }
 
-// previousVersionNumber returns the highest version number strictly below `than`,
-// or `than` itself when there is no earlier version. `versions` is ordered by
-// version number descending (see GetVersions).
+// previousVersionNumber returns the version to set the current one against: the
+// highest number below `than`, or the lowest above it when there is nothing
+// below. `than` itself only when the resource has no other version.
+//
+// The second case is not a curiosity. A merge renumbers the loser's history
+// above the winner's highest, and leaves the winner's own current version where
+// it was — so a winner whose current version is v1 can hold v2 and v3 as
+// history. Answering "there is nothing earlier" there defaulted the page to
+// comparing v1 with itself while two other versions sat in the dropdown.
+//
+// `versions` is ordered by version number descending (see GetVersions).
 func previousVersionNumber(versions []models.ResourceVersion, than int) int {
 	for _, v := range versions {
 		if v.VersionNumber < than {
 			return v.VersionNumber
 		}
+	}
+	// Descending, so the last one above `than` is the nearest one above it.
+	nearestAbove := 0
+	for _, v := range versions {
+		if v.VersionNumber > than {
+			nearestAbove = v.VersionNumber
+		}
+	}
+	if nearestAbove > 0 {
+		return nearestAbove
 	}
 	return than
 }

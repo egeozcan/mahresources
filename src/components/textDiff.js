@@ -164,6 +164,14 @@ export function textDiff({
       let removed = 0;
       let changeIndex = 0;
 
+      // A file that does not end in a newline differs from one that does, and
+      // splitting on '\n' throws that away: "a" and "a\n" both become ["a"], so
+      // the pair rendered as an identical removed and added row with nothing to
+      // say why. Marked on the last row of the side it applies to, the way a
+      // patch marks it.
+      const leftEndsClean = this.leftText === '' || this.leftText.endsWith('\n');
+      const rightEndsClean = this.rightText === '' || this.rightText.endsWith('\n');
+
       // Pair each removal with the addition opposite it, so the split view puts
       // the two halves of one change on the same row and a single changed token
       // can be marked instead of the whole line being struck out and rewritten.
@@ -242,6 +250,11 @@ export function textDiff({
 
         changeIndex++;
       }
+
+      markLastRow(this.splitLeft, (row) => !row.blank, leftEndsClean);
+      markLastRow(this.splitRight, (row) => !row.blank, rightEndsClean);
+      markLastRow(this.unifiedDiff, (row) => row.type !== 'added', leftEndsClean);
+      markLastRow(this.unifiedDiff, (row) => row.type !== 'removed', rightEndsClean);
 
       // Each view gets its own fold pass because a change occupies one split row
       // and two unified ones, so a single index-based map would fold the two at
@@ -425,6 +438,20 @@ function foldRows(rows, expanded) {
     }
   }
   return out;
+}
+
+/**
+ * Flags the last row a side contributed as having no closing newline. `matches`
+ * picks the rows belonging to that side, since the unified view interleaves both.
+ */
+function markLastRow(rows, matches, endsClean) {
+  if (endsClean) return;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (matches(rows[i])) {
+      rows[i].noNewline = true;
+      return;
+    }
+  }
 }
 
 function applyFolds(rows, ranges) {

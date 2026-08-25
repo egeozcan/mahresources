@@ -572,11 +572,16 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*m
 	}
 
 	comparison := &models.VersionComparison{
-		Version1:       version1,
-		Version2:       version2,
-		SizeDelta:      version2.FileSize - version1.FileSize,
-		SameHash:       version1.Hash == version2.Hash,
-		SameType:       version1.ContentType == version2.ContentType,
+		Version1:  version1,
+		Version2:  version2,
+		SizeDelta: version2.FileSize - version1.FileSize,
+		SameHash:  version1.Hash == version2.Hash,
+		// Normalised: a stored type is whatever was sniffed or whatever an imported
+		// manifest declared, so "Application/PDF" and "application/pdf" name the
+		// same thing — and the page that reads this already picks its comparator
+		// that way, so raw equality had the summary reporting a type change under
+		// two panes rendering the same format.
+		SameType:       models.BaseContentType(version1.ContentType) == models.BaseContentType(version2.ContentType),
 		DimensionsDiff: version1.Width != version2.Width || version1.Height != version2.Height,
 	}
 
@@ -601,11 +606,16 @@ func (ctx *MahresourcesContext) CompareVersionsCross(r1ID uint, v1Num int, r2ID 
 	}
 
 	comparison := &models.VersionComparison{
-		Version1:       version1,
-		Version2:       version2,
-		SizeDelta:      version2.FileSize - version1.FileSize,
-		SameHash:       version1.Hash == version2.Hash,
-		SameType:       version1.ContentType == version2.ContentType,
+		Version1:  version1,
+		Version2:  version2,
+		SizeDelta: version2.FileSize - version1.FileSize,
+		SameHash:  version1.Hash == version2.Hash,
+		// Normalised: a stored type is whatever was sniffed or whatever an imported
+		// manifest declared, so "Application/PDF" and "application/pdf" name the
+		// same thing — and the page that reads this already picks its comparator
+		// that way, so raw equality had the summary reporting a type change under
+		// two panes rendering the same format.
+		SameType:       models.BaseContentType(version1.ContentType) == models.BaseContentType(version2.ContentType),
 		DimensionsDiff: version1.Width != version2.Width || version1.Height != version2.Height,
 		CrossResource:  r1ID != r2ID,
 	}

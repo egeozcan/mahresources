@@ -235,3 +235,41 @@ func TestCompareContextProvider_RedirectKeepsTheRequestedSuffix(t *testing.T) {
 		assert.False(t, loops, "the resolved URL must not redirect again")
 	}
 }
+
+// A merge renumbers the loser's history above the winner's highest and leaves
+// the winner's own current version where it was, so a winner whose current
+// version is v1 can hold v2 and v3 as history. Answering "nothing is earlier"
+// there defaulted the page to comparing v1 with itself.
+func TestCompareContextProvider_CurrentIsLowestStillFindsAPartner(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := newCompareResource(t, tc, "Merge Winner", "compare-merge-winner-v1")
+
+	// The versions a merge transfers: numbered above, and not current.
+	for _, number := range []int{2, 3} {
+		version := models.ResourceVersion{
+			ResourceID:    res.ID,
+			VersionNumber: number,
+			Hash:          fmt.Sprintf("compare-transferred-%d", number),
+			HashType:      "SHA1",
+			FileSize:      int64(50 * number),
+			ContentType:   "text/plain",
+			Location:      fmt.Sprintf("/fake/transferred/v%d", number),
+			Comment:       "Merged from: Loser",
+		}
+		assert.NoError(t, tc.DB.Create(&version).Error)
+	}
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d", res.ID), nil))
+
+	redirect, ok := ctx["_redirect"].(string)
+	assert.True(t, ok, "a resource with three versions has something to compare")
+	assert.Contains(t, redirect, "v2=1", "the current version stays on the right")
+	assert.Contains(t, redirect, "v1=2", "the nearest other version is the partner, not v1 again")
+
+	settled := provider(httptest.NewRequest("GET", redirect, nil))
+	_, loops := settled["_redirect"]
+	assert.False(t, loops)
+	assert.False(t, settled["sameVersion"].(bool), "the two sides must not name one version")
+}
