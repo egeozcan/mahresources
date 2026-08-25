@@ -84,12 +84,21 @@ export function textDiff({
     expandedFolds: [],
     copied: false,
     _abort: null,
+    _copiedTimer: null,
+    // The component's own root element, captured while `init` is running, which
+    // is the only time `$el` names it. Read from a method, `$el` is whichever
+    // element's expression made the call — the toolbar button for change
+    // navigation, the fold control for an expansion — and searching inside one
+    // of those finds none of the diff.
+    _root: null,
 
     get sizeLabel() {
       return formatBytes(this.totalBytes);
     },
 
     async init() {
+      this._root = this.$el;
+
       if (leftText !== null && rightText !== null) {
         this.computeDiff();
         this.loading = false;
@@ -138,6 +147,7 @@ export function textDiff({
 
     destroy() {
       if (this._abort) this._abort.abort();
+      clearTimeout(this._copiedTimer);
     },
 
     computeDiff() {
@@ -255,11 +265,38 @@ export function textDiff({
       this.splitRightRows = foldRows(this.splitRight, this.expandedFolds);
     },
 
+    /**
+     * Opens one fold. Focus lands on the first line it revealed: activating the
+     * control removes it from the page, and without this the reader is returned
+     * to the document with several thousand lines between them and their place.
+     */
     expandFold(id) {
-      if (id && !this.expandedFolds.includes(id)) {
-        this.expandedFolds.push(id);
-        this.rebuildDisplay();
+      if (!id || this.expandedFolds.includes(id)) return;
+      this.expandedFolds.push(id);
+      this.rebuildDisplay();
+      // Only once mounted: without a root there is nothing to search and no
+      // focus to move, which is the state the unit tests drive this in.
+      if (this._root) this.$nextTick(() => this.focusRevealed(id));
+    },
+
+    /**
+     * The revealed rows are not in the DOM by the next tick — `x-for` rebuilds a
+     * list this size across more than one frame — so this waits for them rather
+     * than looking once and giving up.
+     */
+    focusRevealed(id, attempt = 0) {
+      const revealed = this._root.querySelector(`[data-fold="${id}"]`);
+      if (revealed instanceof HTMLElement) {
+        revealed.setAttribute('tabindex', '-1');
+        revealed.focus({ preventScroll: true });
+        // Confirmed, not assumed: a render still in flight can replace the node
+        // this just focused, which puts the reader back on the document.
+        if (document.activeElement === revealed) {
+          revealed.scrollIntoView({ block: 'center', behavior: 'auto' });
+          return;
+        }
       }
+      if (attempt < 30) requestAnimationFrame(() => this.focusRevealed(id, attempt + 1));
     },
 
     expandAll() {
@@ -286,7 +323,7 @@ export function textDiff({
       if (next >= this.changeCount) next = 0;
       this.activeChange = next;
       this.$nextTick(() => {
-        const target = this.$el.querySelector(`[data-change="${this.activeChange}"]`);
+        const target = this._root.querySelector(`[data-change="${this.activeChange}"]`);
         if (target) target.scrollIntoView({ block: 'center', behavior: 'auto' });
       });
     },
@@ -305,7 +342,10 @@ export function textDiff({
       try {
         await navigator.clipboard.writeText(this.asUnifiedText());
         this.copied = true;
-        setTimeout(() => { this.copied = false; }, 1600);
+        // Cleared, or a second copy inside the window is reported as finished by
+        // the first one's timer.
+        clearTimeout(this._copiedTimer);
+        this._copiedTimer = setTimeout(() => { this.copied = false; }, 1600);
       } catch (e) {
         this.copied = false;
       }
@@ -316,14 +356,18 @@ export function textDiff({
      * See imageCompare.onRadiogroupKeydown — same contract.
      */
     onRadiogroupKeydown(e, stateKey, values) {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') {
+      // Down and Up as well as Right and Left: the pattern specifies both pairs,
+      // and which one a reader reaches for depends on how they read the control.
+      const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+      const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+      if (!forward && !back && e.key !== 'Home' && e.key !== 'End') {
         return;
       }
       e.preventDefault();
       const currentIdx = values.indexOf(this[stateKey]);
       let nextIdx = currentIdx;
-      if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % values.length;
-      else if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + values.length) % values.length;
+      if (forward) nextIdx = (currentIdx + 1) % values.length;
+      else if (back) nextIdx = (currentIdx - 1 + values.length) % values.length;
       else if (e.key === 'Home') nextIdx = 0;
       else if (e.key === 'End') nextIdx = values.length - 1;
       this[stateKey] = values[nextIdx];

@@ -15,7 +15,10 @@ func GroupCompareContextProvider(context GroupComparePageContext) func(request *
 
 func groupCompareContextProviderImpl(context contracts.GroupComparer) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := StaticTemplateCtx(request)
+		// On the base, so every state this provider returns opts out: nothing goes in
+		// the layout's 400px sidebar on this page, error page included, and it would
+		// otherwise reserve a third of the viewport for an empty <aside>.
+		baseContext := StaticTemplateCtx(request).Update(pongo2.Context{"hideSidebar": true})
 
 		var query query_models.CrossGroupCompareQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -47,9 +50,6 @@ func groupCompareContextProviderImpl(context contracts.GroupComparer) func(reque
 			"group2Picker": buildGroupComparePicker(comparison.Group2),
 			"label1":       "Left",
 			"label2":       "Right",
-			// Nothing goes in the layout's 400px sidebar on this page either, so it
-			// would reserve a third of the viewport for an empty <aside>.
-			"hideSidebar": true,
 		})
 	}
 }

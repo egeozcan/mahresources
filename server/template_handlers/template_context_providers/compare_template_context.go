@@ -15,7 +15,13 @@ import (
 
 func CompareContextProvider(context ComparePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := StaticTemplateCtx(request)
+		// Set on the base rather than on the success path alone, because the layout
+		// reserves the sidebar for every state this provider can return: an error
+		// page has no more to put in it than a comparison does. This page has
+		// nothing to put there, and it is the page that most wants the width — two
+		// panes side by side. On mobile the empty aside would otherwise render as a
+		// "Filters and details" disclosure that reveals nothing.
+		baseContext := StaticTemplateCtx(request).Update(pongo2.Context{"hideSidebar": true})
 
 		var query query_models.CrossVersionCompareQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -249,11 +255,6 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			// built once rather than assembled from label + version in four templates.
 			"panelTitle1": comparePanelTitle(label1, comparison, crossResource, true),
 			"panelTitle2": comparePanelTitle(label2, comparison, crossResource, false),
-			// The layout reserves a 400px sidebar for pages that do not opt out. This
-			// page has nothing to put there, and it is the page that most wants the
-			// width — two panes side by side. On mobile the empty aside would otherwise
-			// render as a "Filters and details" disclosure that reveals nothing.
-			"hideSidebar": true,
 		})
 	}
 }

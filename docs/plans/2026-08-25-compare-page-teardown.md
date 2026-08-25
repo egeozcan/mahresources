@@ -266,3 +266,43 @@ Fixed:
   Compare on a resource with exactly two versions preselects both, and the boxes
   rendered empty over it, so the first click cleared one instead of adding one.
   Pre-existing; one attribute.
+
+## Review round 4
+
+No majors. Six of the seven minors are fixed, and chasing one of them turned up
+a control that did nothing.
+
+**Change navigation never scrolled.** `goToChange` looked for the target row
+inside `this.$el`, and `$el` read from a method is whichever element's
+expression made the call — the toolbar button, which contains no diff. The
+counter advanced, `activeChange` moved, the row highlighted, and the page stayed
+where it was. The component captures its root in `init`, the one place `$el`
+names it, and both lookups go through that. Measured before and after: the first
+change sat 892px below the fold and the window never moved; it now scrolls to
+centre it.
+
+The same call found the same defect in the fold restore that round 4 asked for,
+which is how it surfaced.
+
+- **Opening a fold dropped focus to the document.** Activating the control
+  removes it from the page, and in a four-thousand-line diff that costs the
+  reader their place. Focus lands on the first line the fold revealed. The rows
+  are not in the DOM by the next tick — `x-for` rebuilds a list that size across
+  several frames — so it waits for them rather than looking once.
+- **The error pages regained the sidebar.** `hideSidebar` was set on the success
+  path only, so every early return got the empty 400px column back. Both
+  providers set it on the base context, which is every state they can return.
+- **The radiogroups ignored Down and Up.** The pattern specifies both pairs.
+- **A cancelled drag was never cleaned up.** `touchcancel` now ends it, and
+  `destroy` ends one the page is leaving in the middle of, which otherwise left
+  the whole page with no text selection and a resize cursor.
+- **Two copy timers raced.** A second copy inside the 1.6s window was reported
+  as finished by the first one's timer. Both the patch copy and the hash copy.
+- **A version select could show what the page did not hold.** When one side has
+  no history, the redirect does not run and `v1` stays 0 while the select
+  displayed its first option. It carries an explicit "Select a version" row in
+  that state, which is the only state it can occur in.
+
+Declined again: **the end-of-file newline is not marked**. `"a"` against `"a\n"`
+reads as one line added rather than as a missing final newline. Real, and it
+predates this branch — the line splitter is unchanged.

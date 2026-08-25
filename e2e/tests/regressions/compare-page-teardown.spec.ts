@@ -20,6 +20,7 @@ test.describe.serial('compare page teardown fixes', () => {
   let imageResourceId: number;
   let imageVersionedId: number;
   let dimensionlessId: number;
+  let foldResourceId: number;
 
   const CONFIG_V1 = [
     '{',
@@ -51,6 +52,18 @@ test.describe.serial('compare page teardown fixes', () => {
     '}',
     '',
   ].join('\n');
+
+  /**
+   * A long log with two edits in it, so the unchanged runs between them are long
+   * enough to collapse. Folding only appears above MIN_FOLD_LINES.
+   */
+  function longLog(marker: string, edits: Record<number, string>): string {
+    const lines: string[] = [];
+    for (let i = 1; i <= 200; i++) {
+      lines.push(edits[i] ?? `2026-08-25 12:00:${String(i % 60).padStart(2, '0')} indexed batch ${i} of 200 (${marker})`);
+    }
+    return lines.join('\n') + '\n';
+  }
 
   /** A one-page PDF, hand-assembled so the suite needs no binary fixture. */
   function tinyPdf(text: string): Buffer {
@@ -227,6 +240,21 @@ test.describe.serial('compare page teardown fixes', () => {
       solidPng(160, 50, [190, 60, 30]), 'Second image version',
     );
 
+    // A long log, for the collapsed-context controls.
+    const foldResource = await apiClient.createResource({
+      filePath: fixture('indexer.log', longLog(`run ${runId}`, {})),
+      contentType: 'text/plain',
+      exactBytes: true,
+      name: `Teardown Log ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    foldResourceId = foldResource.ID;
+    await uploadVersion(
+      request, baseURL!, foldResourceId, 'indexer-v2.log', 'text/plain',
+      Buffer.from(longLog(`run ${runId}`, { 40: 'ERROR could not open shard 3', 150: 'WARN retrying shard 7' })),
+      'Second log',
+    );
+
     // A third image resource whose versions carry no dimensions at all.
     const dimensionless = await apiClient.createResource({
       filePath: fixture('iconless-v1.ico', pngIcon(80, 60, [40, 140, 90])),
@@ -242,7 +270,7 @@ test.describe.serial('compare page teardown fixes', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [textResourceId, pdfResourceId, imageResourceId, imageVersionedId, dimensionlessId]) {
+    for (const id of [textResourceId, pdfResourceId, imageResourceId, imageVersionedId, dimensionlessId, foldResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -506,6 +534,65 @@ test.describe.serial('compare page teardown fixes', () => {
 
     await page.keyboard.press('Home');
     await expect(handle).toHaveAttribute('aria-valuenow', '1');
+  });
+
+  // `$el` read from a method is whichever element's expression made the call, so
+  // the toolbar button searched inside itself and found no diff: the counter
+  // advanced and the page never moved.
+  test('next change scrolls the diff to that change', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${foldResourceId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.compare-diff-nav')).toBeVisible();
+
+    const firstChangeTop = async () => page.evaluate(() => {
+      const row = document.querySelector('[data-change]');
+      return row ? Math.round(row.getBoundingClientRect().top) : null;
+    });
+
+    const before = await firstChangeTop();
+    expect(before).not.toBeNull();
+    expect(before!).toBeGreaterThan(400);
+
+    await page.getByRole('button', { name: 'Next change' }).click();
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(0);
+
+    const after = await firstChangeTop();
+    expect(after!).toBeLessThan(before!);
+  });
+
+  // Activating a fold removes the control from the page. Focus fell back to the
+  // document, which in a four-thousand-line diff loses the reader's place.
+  test('opening a fold moves focus to the first line it revealed', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${foldResourceId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+
+    const fold = page.getByRole('button', { name: /Show \d+ unchanged lines/ }).first();
+    await expect(fold).toBeVisible();
+    await fold.focus();
+    await page.keyboard.press('Enter');
+
+    // Polled: the rows arrive over several frames, so the component waits for
+    // them and the assertion has to as well.
+    await expect.poll(() => page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return `${el?.tagName}/${el?.getAttribute('role')}/${el?.getAttribute('data-fold') ? 'fold' : 'none'}`;
+    })).toBe('DIV/row/fold');
+  });
+
+  // Both arrow pairs select in a radiogroup; which one a reader reaches for
+  // depends on how they read the control.
+  test('the mode radiogroup answers Down and Up as well as Right and Left', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${imageVersionedId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+
+    const root = page.locator('[x-data^="imageCompare"]');
+    const mode = () => root.evaluate((el) => (window as any).Alpine.$data(el).mode);
+
+    await page.locator('[role="radiogroup"] [role="radio"][aria-checked="true"]').first().focus();
+    await page.keyboard.press('ArrowDown');
+    expect(await mode()).toBe('slider');
+    await page.keyboard.press('ArrowUp');
+    expect(await mode()).toBe('side-by-side');
   });
 
   // Without stored dimensions the overlay box has no aspect ratio, and the

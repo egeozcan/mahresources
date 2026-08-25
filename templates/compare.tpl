@@ -35,6 +35,10 @@
             {# say so. #}
             {% if versions1 %}
             <select x-model.number="v1" @change="updateUrl()" class="compare-version-select" aria-label="Left version">
+                {# Only reachable when the other side has no history, so the redirect that #}
+                {# fills the numbers in never ran: without this the select displays its #}
+                {# first option while the page holds nothing. #}
+                {% if query.Version1 == 0 %}<option value="0">Select a version</option>{% endif %}
                 {% for v in versions1 %}
                 <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>{{ v.Label }}</option>
                 {% endfor %}
@@ -56,6 +60,10 @@
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r2' selectedItems=resource2Picker max=1 id='compare-right-resource' title='Right resource' placeholder='Search resources...' onChange='onResource2Selected' %}
             {% if versions2 %}
             <select x-model.number="v2" @change="updateUrl()" class="compare-version-select" aria-label="Right version">
+                {# Only reachable when the other side has no history, so the redirect that #}
+                {# fills the numbers in never ran: without this the select displays its #}
+                {# first option while the page holds nothing. #}
+                {% if query.Version2 == 0 %}<option value="0">Select a version</option>{% endif %}
                 {% for v in versions2 %}
                 <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>{{ v.Label }}</option>
                 {% endfor %}
@@ -172,10 +180,10 @@
                         {# expression. A hash arrives from an imported manifest unvalidated, #}
                         {# and an attribute is HTML-decoded before Alpine parses what is left, #}
                         {# so escaping for HTML is not escaping for JavaScript. #}
-                        <span class="compare-hash" x-data="{ copied: false }">
+                        <span class="compare-hash" x-data="{ copied: false, timer: 0 }">
                             <code x-ref="hash">{{ comparison.Version1.Hash }}</code>
                             <button type="button" class="compare-copy-btn"
-                                    @click="copied = await copyText($refs.hash.textContent.trim()); setTimeout(() => copied = false, 1600)"
+                                    @click="copied = await copyText($refs.hash.textContent.trim()); clearTimeout(timer); timer = setTimeout(() => copied = false, 1600)"
                                     :aria-label="copied ? 'Hash copied' : 'Copy hash'">
                                 <span x-text="copied ? 'Copied' : 'Copy'"></span>
                             </button>

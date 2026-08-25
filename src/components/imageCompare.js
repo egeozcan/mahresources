@@ -18,6 +18,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // old behaviour and the best guess available.
     _sizes: [leftSize || null, rightSize || null],
     _keyHandler: null,
+    _endDrag: null,
 
     /** The image drawn on the leading (old-coloured) side, after any swap. */
     get leadUrl() {
@@ -103,6 +104,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     destroy() {
       if (this._keyHandler) this.$el.removeEventListener('keydown', this._keyHandler);
+      if (this._endDrag) this._endDrag();
     },
 
     nudgeSlider(delta) {
@@ -124,14 +126,18 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * so tabindex stays on the active one (roving tabindex invariant).
      */
     onRadiogroupKeydown(e, stateKey, values) {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') {
+      // Down and Up as well as Right and Left: the pattern specifies both pairs,
+      // and which one a reader reaches for depends on how they read the control.
+      const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+      const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+      if (!forward && !back && e.key !== 'Home' && e.key !== 'End') {
         return;
       }
       e.preventDefault();
       const currentIdx = values.indexOf(this[stateKey]);
       let nextIdx = currentIdx;
-      if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % values.length;
-      else if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + values.length) % values.length;
+      if (forward) nextIdx = (currentIdx + 1) % values.length;
+      else if (back) nextIdx = (currentIdx - 1 + values.length) % values.length;
       else if (e.key === 'Home') nextIdx = 0;
       else if (e.key === 'End') nextIdx = values.length - 1;
       this[stateKey] = values[nextIdx];
@@ -161,7 +167,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this.sliderPos = Math.max(1, Math.min(99, ((clientX - rect.left) / rect.width) * 100));
       };
 
+      // Kept on the component so `destroy()` can end a drag the page is leaving
+      // in the middle of, which otherwise leaves the document listeners attached
+      // and the whole page stuck with no text selection and a resize cursor.
       const upHandler = () => {
+        this._endDrag = null;
         this.isDragging = false;
         document.body.style.userSelect = '';
         document.body.style.cursor = '';
@@ -169,12 +179,17 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         document.removeEventListener('mouseup', upHandler);
         document.removeEventListener('touchmove', moveHandler);
         document.removeEventListener('touchend', upHandler);
+        // touchcancel too: the OS takes the gesture away on an incoming call or
+        // a system swipe, and touchend never arrives.
+        document.removeEventListener('touchcancel', upHandler);
       };
+      this._endDrag = upHandler;
 
       document.addEventListener('mousemove', moveHandler);
       document.addEventListener('mouseup', upHandler);
       document.addEventListener('touchmove', moveHandler, { passive: false });
       document.addEventListener('touchend', upHandler);
+      document.addEventListener('touchcancel', upHandler);
     }
   };
 }

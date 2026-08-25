@@ -34,7 +34,8 @@
                     'compare-diff-row--context': line.type === 'context',
                     'compare-diff-row--active': line.changeIndex !== null && line.changeIndex === activeChange
                  }"
-                 :data-change="line.changeIndex">
+                 :data-change="line.changeIndex"
+                 :data-fold="!line.fold ? line.foldId : null">
                 <span class="compare-diff-num" role="cell" x-text="line.leftNum || ''"></span>
                 <span class="compare-diff-num compare-diff-num--right" role="cell" x-text="line.rightNum || ''"></span>
                 {# One line, deliberately: the container is `white-space: pre`, so a #}
@@ -61,7 +62,8 @@
                             'compare-diff-row--blank': line.blank,
                             'compare-diff-row--active': line.changeIndex !== null && line.changeIndex === activeChange
                          }"
-                         :data-change="line.changeIndex">
+                         :data-change="line.changeIndex"
+                 :data-fold="!line.fold ? line.foldId : null">
                         <span class="compare-diff-num" role="cell" x-text="line.num || ''"></span>
                         <span class="compare-diff-content" role="cell"><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? 'compare-word--removed' : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span></span>
                         <template x-if="line.fold">
@@ -82,7 +84,8 @@
                             'compare-diff-row--blank': line.blank,
                             'compare-diff-row--active': line.changeIndex !== null && line.changeIndex === activeChange
                          }"
-                         :data-change="line.changeIndex">
+                         :data-change="line.changeIndex"
+                 :data-fold="!line.fold ? line.foldId : null">
                         <span class="compare-diff-num" role="cell" x-text="line.num || ''"></span>
                         <span class="compare-diff-content" role="cell"><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? 'compare-word--added' : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span></span>
                         <template x-if="line.fold">
