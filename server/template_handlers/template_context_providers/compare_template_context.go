@@ -176,6 +176,14 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 		// panes apart, so it is the label; "Left"/"Right" only restate which side you are
 		// looking at. Truncated because it heads a pane, not a paragraph.
 		label1, label2 := shortResourceName(resource1), shortResourceName(resource2)
+		// Two names sharing a long prefix truncate to one string, and then every
+		// control that carries a name — the pane headers, the breadcrumb, the
+		// merge buttons — says the same thing on both sides. The id is what
+		// distinguishes them when the names no longer do.
+		if crossResource && label1 == label2 {
+			label1 = fmt.Sprintf("%s (#%d)", label1, resource1.ID)
+			label2 = fmt.Sprintf("%s (#%d)", label2, resource2.ID)
+		}
 		if !crossResource && query.Version1 > 0 && query.Version2 > 0 {
 			if query.Version1 == query.Version2 {
 				label1 = fmt.Sprintf("v%d", query.Version1)
@@ -337,11 +345,16 @@ func previousVersionNumber(versions []models.ResourceVersion, than int) int {
 
 // contentCategoryFor maps a content type onto the comparator that can render it.
 //
-// Normalised first, because a stored type is whatever was sniffed or whatever an
+// Parsed first, because a stored type is whatever was sniffed or whatever an
 // imported manifest declared: "Application/PDF" and "application/pdf; charset=binary"
-// name the same thing, and the version file route already treats them that way.
+// name the same thing, while a malformed value names nothing and belongs in the
+// binary panel. The version file route reads it the same way, so the comparator a
+// version is rendered in and the disposition its bytes are served with agree.
 func contentCategoryFor(contentType string) string {
-	base := models.BaseContentType(contentType)
+	base, ok := models.ParseContentType(contentType)
+	if !ok {
+		return "binary"
+	}
 	switch {
 	case strings.HasPrefix(base, "image/") && base != "image/svg+xml":
 		return "image"
@@ -393,9 +406,13 @@ func versionOptions(versions []models.ResourceVersion, current int) []CompareVer
 	options := make([]CompareVersionOption, 0, len(versions))
 	sameDay := versionDatesCollide(versions)
 	for _, v := range versions {
+		// The time is added when a date alone stops identifying a version. The
+		// year stays either way: a resource can hold uploads from several years
+		// and two from one day, and dropping the year to make room for the clock
+		// loses more than it gains.
 		layout := "Jan 02, 2006"
 		if sameDay {
-			layout = "Jan 02, 15:04"
+			layout = "Jan 02, 2006 15:04"
 		}
 		label := fmt.Sprintf("v%d", v.VersionNumber)
 		if v.VersionNumber == current {

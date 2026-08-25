@@ -2,6 +2,7 @@ package models
 
 import (
 	"mahresources/models/types"
+	"mime"
 	"path/filepath"
 	"strings"
 	"time"
@@ -143,6 +144,23 @@ var rasterImageContentTypeSet = func() map[string]struct{} {
 	}
 	return set
 }()
+
+// ParseContentType normalises a stored content type and reports whether it is a
+// well-formed media type at all. A stored type is whatever was sniffed or
+// whatever an imported manifest declared, and an importer writes the column
+// directly — so a caller deciding what to *do* with a file (which comparator to
+// render it in, whether to serve it in place) needs a refusal for input it
+// cannot read, not a best guess at the part before the first semicolon.
+//
+// BaseContentType stays the right tool for comparing two stored values, where
+// there is nothing to fail closed on.
+func ParseContentType(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(mediaType)), true
+}
 
 // BaseContentType strips any parameters and normalises case, so that
 // "text/plain; charset=utf-8" compares as "text/plain".

@@ -14,6 +14,16 @@ const MIN_FOLD_LINES = 6;
  */
 const CONFIRM_ABOVE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Bytes, not code units: the fetched comparator is given a file size, and a
+ * description in a script where every character is three bytes would otherwise
+ * measure at a third of what the label beside it reports.
+ */
+function utf8Length(text) {
+  if (typeof TextEncoder === 'undefined') return text.length;
+  return new TextEncoder().encode(text).length;
+}
+
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -106,7 +116,7 @@ export function textDiff({
       // measured here rather than declared by the caller. The gate is about the
       // comparison, not the transfer.
       if (isInline && !this.totalBytes) {
-        this.totalBytes = leftText.length + rightText.length;
+        this.totalBytes = utf8Length(leftText) + utf8Length(rightText);
       }
 
       if (this.totalBytes > CONFIRM_ABOVE_BYTES) {

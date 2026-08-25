@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"mahresources/models"
@@ -296,4 +297,46 @@ func TestCompareContextProvider_NamingTheCurrentVersionStillFindsAPartner(t *tes
 	_, loops := settled["_redirect"]
 	assert.False(t, loops)
 	assert.False(t, settled["sameVersion"].(bool))
+}
+
+// Two names sharing a long prefix truncate to one string, and then the pane
+// headers, the breadcrumb and both merge buttons say the same thing.
+func TestCompareContextProvider_CollidingNamesAreDistinguished(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	prefix := strings.Repeat("Quarterly Report Archive ", 3)
+	first := newCompareResource(t, tc, prefix+"alpha", "compare-collide-a")
+	second := newCompareResource(t, tc, prefix+"beta", "compare-collide-b")
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+	url := fmt.Sprintf("/resource/compare?r1=%d&v1=1&r2=%d&v2=1", first.ID, second.ID)
+	ctx := provider(httptest.NewRequest("GET", url, nil))
+
+	assert.NotEqual(t, ctx["label1"], ctx["label2"], "the two sides must not carry one label")
+	assert.Contains(t, ctx["label1"], fmt.Sprintf("#%d", first.ID))
+	assert.Contains(t, ctx["label2"], fmt.Sprintf("#%d", second.ID))
+}
+
+// The time is added when two versions share a day. Dropping the year to make
+// room for it hid which year an upload belonged to.
+func TestCompareContextProvider_SameDayOptionsKeepTheYear(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := newCompareResource(t, tc, "Same Day", "compare-same-day-v1")
+	second := addCompareVersion(t, tc, res.ID, 2, "text/plain", "")
+	// Both on one day, which is what switches the layout.
+	assert.NoError(t, tc.DB.Model(&models.ResourceVersion{}).Where("id = ?", second.ID).
+		Update("created_at", time.Now()).Error)
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d&v1=1&v2=2", res.ID), nil))
+
+	options, ok := ctx["versions1"].([]template_context_providers.CompareVersionOption)
+	assert.True(t, ok)
+	assert.NotEmpty(t, options)
+	year := fmt.Sprintf("%d", time.Now().Year())
+	for _, option := range options {
+		assert.Contains(t, option.Label, year, "every option carries its year")
+		assert.Regexp(t, `\d{2}:\d{2}`, option.Label, "and the time that tells same-day uploads apart")
+	}
 }

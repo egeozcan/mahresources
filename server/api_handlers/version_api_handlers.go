@@ -352,9 +352,11 @@ func inlineVersionDisposition(r *http.Request, contentType string) bool {
 	if r.URL.Query().Get("disposition") != "inline" {
 		return false
 	}
-	// Strip any parameters ("application/pdf; charset=..."), and compare
-	// case-insensitively, because the stored value came from sniffing or from
-	// an upload header.
-	base, _, _ := strings.Cut(contentType, ";")
-	return strings.EqualFold(strings.TrimSpace(base), "application/pdf")
+	// Parsed rather than cut at the first semicolon, so a stored value that is
+	// not a media type at all is refused instead of guessed at. An importer
+	// writes this column directly, and a safelist that reads malformed input
+	// leniently is answering a question it was not asked.
+	base, ok := models.ParseContentType(contentType)
+	return ok && base == "application/pdf"
+
 }

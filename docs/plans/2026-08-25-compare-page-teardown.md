@@ -396,3 +396,25 @@ Fixed, all three from the marker and gate that round 5 added:
 - **A drag interrupted by an alt-tab never ended.** A mouse released outside the
   window delivers no `mouseup` to the document, leaving the whole page
   unselectable under a resize cursor until a reload. `window.blur` ends it.
+
+## Review round 8
+
+No majors. All four minors fixed; three are defects in code this branch wrote.
+
+- **The inline safelist read a malformed media type leniently.** Cutting at the
+  first semicolon turns `application/pdf;not-a-parameter` into a PDF, and an
+  importer writes that column directly. `models.ParseContentType` refuses what
+  it cannot parse, and `contentCategoryFor` reads it the same way — so the
+  comparator a version is rendered in and the disposition its bytes are served
+  with cannot disagree. `BaseContentType` stays where two stored values are
+  merely compared, which has nothing to fail closed on. This is hardening, not
+  a hole closed: the experiment under round 3 still stands.
+- **The inline size gate counted UTF-16 code units.** The fetched comparator is
+  given a file size, so a description in a script where every character is three
+  bytes measured at a third of what the label beside it reported.
+- **Two names sharing a long prefix truncated to one string**, and then the pane
+  headers, the breadcrumb and both merge buttons said the same thing on each
+  side. The id distinguishes them when the names no longer do.
+- **The version dropdown dropped the year whenever two uploads shared a day.**
+  The clock was added by replacing the year rather than joining it, so a
+  resource with uploads across several years showed none of them.
