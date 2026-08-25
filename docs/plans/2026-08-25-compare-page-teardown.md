@@ -459,3 +459,36 @@ test asserting it cannot pass.** The handler does not set it because
 `withPrimarySecurityHeaders` already has, on every primary-server response, and
 the test asserts against the real stack rather than the handler — it passes, and
 has in every run since it was written.
+
+## Review round 11
+
+No majors, and none of the three minors is this branch's. Recorded rather than
+fixed, since each is a property of the page as it already was:
+
+- **The size gate trusts the stored `FileSize`.** An imported archive can
+  under-report it, and the two bodies are then fetched and diffed without the
+  confirmation. The gate is a courtesy against a foreseeable freeze, not a
+  bound the page can enforce, and reading the fetched lengths first would mean
+  transferring what it exists to avoid.
+- **`Response.text()` decodes as UTF-8.** A `text/*` version in UTF-16 or
+  Latin-1 renders as mojibake and diffs against itself falsely. The tree assumes
+  UTF-8 for stored text throughout.
+- **Every non-SVG `image/*` type goes to the image comparator.** TIFF and HEIC
+  reach it and no browser renders them, so both panes show a broken image where
+  the binary panel's download links would have been useful.
+
+Two consecutive rounds with no majors ends the loop, at `96c966d9`.
+
+## Known open
+
+Carried out of the eleven rounds, none of them defects this branch introduced:
+
+- `escapejs` mangles astral characters, and twenty uses remain under
+  `templates/`. Each needs its sentence built in a provider, the way the compare
+  page's were.
+- No template gates a write control on the principal's capability; every one is
+  drawn and refused at submit.
+- Dimensionless image pairs overlay at one origin but are not registered
+  against each other. Reading `naturalWidth`/`naturalHeight` on load and filling
+  `_sizes` from that would remove the fallback branch entirely.
+- The three from round 11 above.
