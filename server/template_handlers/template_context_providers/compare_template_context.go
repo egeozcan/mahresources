@@ -41,14 +41,22 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
-		versions1 := persistedVersions(context.GetVersions(query.Resource1ID))
+		versions1, err := context.GetVersions(query.Resource1ID)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+		versions1 = persistedVersions(versions1)
 
 		// Get resource 2 and its versions
 		resource2, err := context.GetResource(query.Resource2ID)
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
-		versions2 := persistedVersions(context.GetVersions(query.Resource2ID))
+		versions2, err := context.GetVersions(query.Resource2ID)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+		versions2 = persistedVersions(versions2)
 
 		// Fill in missing version numbers and redirect, so the URL always names what is
 		// on screen — otherwise the selects render a version the Alpine state does not
@@ -82,14 +90,20 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			// a single-version resource resolves v1 and v2 to the same number, and
 			// redirecting to the URL we are already on would loop.
 			if v1 > 0 && v2 > 0 && (v1 != query.Version1 || v2 != query.Version2) {
-				redirectURL := fmt.Sprintf("/resource/compare?%s", url.Values{
-					"r1": {fmt.Sprintf("%d", query.Resource1ID)},
-					"v1": {fmt.Sprintf("%d", v1)},
-					"r2": {fmt.Sprintf("%d", query.Resource2ID)},
-					"v2": {fmt.Sprintf("%d", v2)},
-				}.Encode())
+				// Built from the request's own URL rather than a literal path, so a
+				// `.json` or `.body` suffix survives the hop and a client that asked
+				// for one is not answered with a page. RequestURI, not String: the
+				// absolute form would let a proxied Host header steer it off-site.
+				target := &url.URL{}
+				*target = *request.URL
+				params := target.Query()
+				params.Set("r1", fmt.Sprintf("%d", query.Resource1ID))
+				params.Set("v1", fmt.Sprintf("%d", v1))
+				params.Set("r2", fmt.Sprintf("%d", query.Resource2ID))
+				params.Set("v2", fmt.Sprintf("%d", v2))
+				target.RawQuery = params.Encode()
 				return baseContext.Update(pongo2.Context{
-					"_redirect": redirectURL,
+					"_redirect": target.RequestURI(),
 				})
 			}
 		}
@@ -237,7 +251,7 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 // GetVersionByNumber — which reads the table — cannot find it. Offering it here
 // fills a dropdown with an option that answers "version 1 not found", and
 // defaulting to it redirects straight there.
-func persistedVersions(versions []models.ResourceVersion, _ error) []models.ResourceVersion {
+func persistedVersions(versions []models.ResourceVersion) []models.ResourceVersion {
 	kept := make([]models.ResourceVersion, 0, len(versions))
 	for _, v := range versions {
 		if v.ID != 0 {

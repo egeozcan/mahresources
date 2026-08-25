@@ -168,10 +168,14 @@
                     {# which is what the copy control is for. #}
                     {% if comparison.SameHash %}
                         <span class="text-amber-800 font-medium">Match</span>
+                        {# The value is read out of the element, never written into the click #}
+                        {# expression. A hash arrives from an imported manifest unvalidated, #}
+                        {# and an attribute is HTML-decoded before Alpine parses what is left, #}
+                        {# so escaping for HTML is not escaping for JavaScript. #}
                         <span class="compare-hash" x-data="{ copied: false }">
-                            <code>{{ comparison.Version1.Hash }}</code>
+                            <code x-ref="hash">{{ comparison.Version1.Hash }}</code>
                             <button type="button" class="compare-copy-btn"
-                                    @click="copied = await copyText('{{ comparison.Version1.Hash }}'); setTimeout(() => copied = false, 1600)"
+                                    @click="copied = await copyText($refs.hash.textContent.trim()); setTimeout(() => copied = false, 1600)"
                                     :aria-label="copied ? 'Hash copied' : 'Copy hash'">
                                 <span x-text="copied ? 'Copied' : 'Copy'"></span>
                             </button>

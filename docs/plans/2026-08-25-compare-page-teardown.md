@@ -172,3 +172,45 @@ New coverage: `TestCompareContextProvider_UnmigratedResourceHasNothingToCompare`
 the two patch-export vitests, and an e2e that compares two icons — the one image
 format in reach that Chromium renders and no decoder in the binary can measure,
 so the version rows carry no dimensions. Both were verified failing first.
+
+## Review round 2
+
+One major, and two of the five minors worth acting on.
+
+- **The hash copy button was stored XSS.** The value was written into the
+  `@click` expression, and an attribute is HTML-decoded before Alpine parses
+  what is left — so `&#39;` becomes `'` and closes the string. A version's hash
+  is not a hash by construction: group import, which a plain user may run,
+  writes it straight from the manifest with no validation
+  (`groupio/apply_import.go`), so a crafted archive runs script in the session
+  of whoever compares those versions and clicks Copy. The control reads the
+  element that renders the hash instead, so the value never reaches script.
+  Introduced by this branch — before it, the hash was truncated with no copy
+  control.
+
+- **A failed version read read as "no version history".** Both `GetVersions`
+  errors were discarded, which was survivable while an empty list only meant
+  the empty state; once `persistedVersions` made an empty list mean "nothing to
+  compare, and here is why", an outage started explaining itself as a fact
+  about the resource. The error is surfaced.
+
+- **The redirect dropped the requested suffix.** `/resource/compare.json` and
+  `.body` are real routes, and a redirect built from a literal path answered a
+  client that asked for one of those with a page. It is built from the
+  request's own URL now, following `maybeRedirectToLastPage`'s shape, so the
+  path and any other query parameters survive and the target stays relative.
+
+Declined, with reasons:
+
+- **`?disposition=inline` accepts `application/pdf;garbage` and does not verify
+  the bytes.** The safelist is about the declared type, and the security
+  argument rests on the browser honouring that type — which `nosniff`, set on
+  every primary-server response, is what guarantees. Bytes are not verified for
+  any content type anywhere in this tree; a PDF that will not parse is a broken
+  viewer, not an escalation.
+- **A single-version resource renders both the "nothing to compare" notice and
+  the identical-file report.** That is the designed answer for that case: the
+  notice is what explains the report.
+- **No "\ No newline at end of file" marker**, and **the slider drag does not
+  clean up on `touchcancel` or from `destroy()`.** Both are real and both
+  predate this branch; neither is what it changed.

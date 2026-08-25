@@ -208,3 +208,30 @@ func TestCompareContextProvider_UnmigratedResourceHasNothingToCompare(t *testing
 	assert.Nil(t, ctx["errorMessage"])
 	assert.NotEmpty(t, ctx["compareUnavailableReason"])
 }
+
+// The route is also served as `.json` and `.body`. A redirect built from a
+// literal path answered a client that asked for one of those with a page.
+func TestCompareContextProvider_RedirectKeepsTheRequestedSuffix(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	res := newCompareResource(t, tc, "Suffix Carrier", "compare-suffix-v1")
+	addCompareVersion(t, tc, res.ID, 2, "text/plain", "")
+
+	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
+
+	for _, suffix := range []string{"", ".json", ".body"} {
+		path := fmt.Sprintf("/resource/compare%s?r1=%d", suffix, res.ID)
+		ctx := provider(httptest.NewRequest("GET", path, nil))
+
+		redirect, ok := ctx["_redirect"].(string)
+		assert.True(t, ok, "%s should redirect", path)
+		assert.True(t, strings.HasPrefix(redirect, "/resource/compare"+suffix+"?"),
+			"redirect from %s should stay on that path, got %q", path, redirect)
+		// Relative, so a forwarded Host header cannot steer it off-site.
+		assert.False(t, strings.Contains(redirect, "//"), "redirect should be relative, got %q", redirect)
+
+		settled := provider(httptest.NewRequest("GET", redirect, nil))
+		_, loops := settled["_redirect"]
+		assert.False(t, loops, "the resolved URL must not redirect again")
+	}
+}
