@@ -7,8 +7,13 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <template x-if="compareMode">
+                        {# Bound, not merely written to: opening Compare on a resource with #}
+                        {# exactly two versions preselects both, and without this the boxes #}
+                        {# rendered empty over a selection that was already made — so the #}
+                        {# first click cleared one instead of adding it. #}
                         <input type="checkbox"
                             :value="{{ version.VersionNumber }}"
+                            :checked="selected.includes({{ version.VersionNumber }})"
                             @change="selected.includes({{ version.VersionNumber }}) ? selected = selected.filter(x => x !== {{ version.VersionNumber }}) : selected.push({{ version.VersionNumber }})"
                             :disabled="selected.length >= 2 && !selected.includes({{ version.VersionNumber }})"
                             :aria-label="'Select version {{ version.VersionNumber }} for comparison'"
@@ -63,9 +68,12 @@
                         <span x-text="compareMode ? 'Cancel Compare' : 'Compare'"></span>
                     </button>
 
-                    {# Sorted, so the diff always reads older-to-newer. Built from click #}
-                    {# order, ticking the newer version first rendered every addition as a #}
-                    {# removal with nothing to say so. #}
+                    {# Sorted by version number, so the direction is the one the rows above #}
+                    {# read in. Built from click order, ticking the newer version first #}
+                    {# rendered every addition as a removal with nothing to say so. Number #}
+                    {# order is not always upload order — a merge renumbers the versions it #}
+                    {# transfers — which is why the compare page labels the current version #}
+                    {# rather than calling either side "newer". #}
                     <template x-if="compareMode && selected.length === 2">
                         <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + Math.min(...selected) + '&v2=' + Math.max(...selected)"
                            class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800 whitespace-nowrap">

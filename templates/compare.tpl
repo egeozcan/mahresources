@@ -6,10 +6,10 @@
 {% if errorMessage %}
 {% else %}
 <div class="compare-page" x-data="compareView({
-    r1: {{ query.Resource1ID }},
-    v1: {{ query.Version1|default:0 }},
-    r2: {{ query.Resource2ID }},
-    v2: {{ query.Version2|default:0 }}
+    r1: {{ query.Resource1ID|json }},
+    v1: {{ query.Version1|default:0|json }},
+    r2: {{ query.Resource2ID|json }},
+    v2: {{ query.Version2|default:0|json }}
 })">
     {# Names what is being compared and gives a route back to it; nothing else on #}
     {# the page does either. #}
@@ -258,10 +258,11 @@
                 </label>
             </div>
             {# Both the buttons and the confirmation name the resources. An irreversible #}
-            {# merge phrased as "Left Wins" never says what it is about to destroy. #}
+            {# merge phrased as "Left Wins" never says what it is about to destroy. The #}
+            {# sentence arrives built, so a name reaches script as one JSON string. #}
             <div class="compare-merge-actions">
                 <form
-                    x-data="confirmAction({ message: 'Merge {{ resource2.Name|escapejs }} into {{ resource1.Name|escapejs }}? {{ resource2.Name|escapejs }} will no longer exist as its own resource. This cannot be undone.' })"
+                    x-data="confirmAction({ message: {{ mergeConfirm1|json }} })"
                     action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource1.ID }}"
                     method="post"
                     x-bind="events"
@@ -274,7 +275,7 @@
                     </button>
                 </form>
                 <form
-                    x-data="confirmAction({ message: 'Merge {{ resource1.Name|escapejs }} into {{ resource2.Name|escapejs }}? {{ resource1.Name|escapejs }} will no longer exist as its own resource. This cannot be undone.' })"
+                    x-data="confirmAction({ message: {{ mergeConfirm2|json }} })"
                     action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource2.ID }}"
                     method="post"
                     x-bind="events"

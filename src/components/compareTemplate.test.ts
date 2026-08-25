@@ -6,6 +6,10 @@ const compareTpl = readFileSync(
     'utf8',
 );
 
+const compareTpls = ['compareImage', 'compareText', 'compareInlineText', 'compareBinary', 'comparePdf'].map(
+    (name) => readFileSync(new URL(`../../templates/partials/${name}.tpl`, import.meta.url), 'utf8'),
+);
+
 describe('compare page template', () => {
     // An attribute is HTML-decoded before Alpine parses what is left, so pongo2's
     // autoescape does not make a value safe inside an event expression: `&#39;`
@@ -25,18 +29,26 @@ describe('compare page template', () => {
         expect(compareTpl).toContain('copyText($refs.hash.textContent.trim())');
     });
 
-    // The confirmation text is a JS string literal, which is the one place a
-    // server value legitimately reaches script — and the only escaping that
-    // survives the attribute decode is escapejs.
-    it('escapes the names in the merge confirmations', () => {
-        const confirms = compareTpl.match(/confirmAction\(\{[\s\S]*?\}\)"/g) || [];
-        expect(confirms).toHaveLength(2);
-        for (const confirm of confirms) {
-            const interpolations = confirm.match(/\{\{[^}]*\}\}/g) || [];
-            expect(interpolations.length).toBeGreaterThan(0);
-            for (const value of interpolations) {
-                expect(value).toMatch(/\|escapejs\s*\}\}/);
+    // Every server value that reaches script goes through `json`, which emits a
+    // complete quoted literal. `escapejs` does not: it writes a bare `\u1F600`
+    // for an astral character, which JavaScript reads as `\u1F60` plus a stray
+    // "0", so an emoji in a resource name comes out mangled.
+    it('passes server values into script through the json filter', () => {
+        const scripted = [
+            ...(compareTpl.match(/x-data="[\s\S]*?"/g) || []),
+            ...compareTpls.flatMap((tpl) => tpl.match(/x-data="[\s\S]*?"/g) || []),
+        ];
+        expect(scripted.length).toBeGreaterThan(0);
+
+        for (const block of scripted) {
+            for (const value of block.match(/\{\{[^{}]*\}\}/g) || []) {
+                expect(value, `${value} must go through |json`).toMatch(/\|json\s*\}\}/);
             }
         }
+    });
+
+    it('carries both merge confirmations as prebuilt sentences', () => {
+        expect(compareTpl).toContain('confirmAction({ message: {{ mergeConfirm1|json }} })');
+        expect(compareTpl).toContain('confirmAction({ message: {{ mergeConfirm2|json }} })');
     });
 });

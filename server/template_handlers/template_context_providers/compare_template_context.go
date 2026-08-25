@@ -191,6 +191,17 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			}
 		}
 
+		// Built here rather than assembled inside an attribute, so the sentence
+		// reaches the page as one JSON string: pongo2's escapejs emits a bare
+		// `\u1F600` for an astral character, which JavaScript reads as `\u1F60`
+		// followed by a stray "0".
+		mergeConfirm1 := fmt.Sprintf(
+			"Merge %s into %s? %s will no longer exist as its own resource. This cannot be undone.",
+			resource2.Name, resource1.Name, resource2.Name)
+		mergeConfirm2 := fmt.Sprintf(
+			"Merge %s into %s? %s will no longer exist as its own resource. This cannot be undone.",
+			resource1.Name, resource2.Name, resource1.Name)
+
 		current1 := currentVersionNumber(resource1, versions1)
 		current2 := currentVersionNumber(resource2, versions2)
 
@@ -230,6 +241,8 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			"crossResource":            crossResource,
 			"canMerge":                 canMerge,
 			"mergeBlockedReason":       mergeBlockedReason,
+			"mergeConfirm1":            mergeConfirm1,
+			"mergeConfirm2":            mergeConfirm2,
 			"label1":                   label1,
 			"label2":                   label2,
 			// Pane headers. Every comparator renders the same two strings, so they are
@@ -291,13 +304,18 @@ func previousVersionNumber(versions []models.ResourceVersion, than int) int {
 }
 
 // contentCategoryFor maps a content type onto the comparator that can render it.
+//
+// Normalised first, because a stored type is whatever was sniffed or whatever an
+// imported manifest declared: "Application/PDF" and "application/pdf; charset=binary"
+// name the same thing, and the version file route already treats them that way.
 func contentCategoryFor(contentType string) string {
+	base := models.BaseContentType(contentType)
 	switch {
-	case strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml":
+	case strings.HasPrefix(base, "image/") && base != "image/svg+xml":
 		return "image"
-	case strings.HasPrefix(contentType, "text/"), contentType == "application/json", contentType == "application/xml":
+	case strings.HasPrefix(base, "text/"), base == "application/json", base == "application/xml":
 		return "text"
-	case contentType == "application/pdf":
+	case base == "application/pdf":
 		return "pdf"
 	default:
 		return "binary"

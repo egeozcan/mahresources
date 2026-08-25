@@ -2,12 +2,12 @@
 {# the new-coloured one. Swapping flips which version each names, so the header #}
 {# colour, the label and the alt text always describe the same file. #}
 <div class="bg-white shadow rounded-lg p-4" x-data="imageCompare({
-    leftUrl: '/v1/resource/version/file?versionId={{ comparison.Version1.ID }}',
-    rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}',
-    leftLabel: '{{ label1|escapejs }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}',
-    rightLabel: '{{ label2|escapejs }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}',
-    leftSize: { w: {{ comparison.Version1.Width }}, h: {{ comparison.Version1.Height }} },
-    rightSize: { w: {{ comparison.Version2.Width }}, h: {{ comparison.Version2.Height }} }
+    leftUrl: '/v1/resource/version/file?versionId={{ comparison.Version1.ID|json }}',
+    rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID|json }}',
+    leftLabel: {{ panelTitle1|json }},
+    rightLabel: {{ panelTitle2|json }},
+    leftSize: { w: {{ comparison.Version1.Width|json }}, h: {{ comparison.Version1.Height|json }} },
+    rightSize: { w: {{ comparison.Version2.Width|json }}, h: {{ comparison.Version2.Height|json }} }
 })">
     <!-- Mode selector -->
     <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">

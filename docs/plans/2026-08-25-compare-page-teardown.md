@@ -214,3 +214,55 @@ Declined, with reasons:
 - **No "\ No newline at end of file" marker**, and **the slider drag does not
   clean up on `touchcancel` or from `destroy()`.** Both are real and both
   predate this branch; neither is what it changed.
+
+## Review round 3
+
+Two findings arrived as majors and neither survived checking. Three minors were
+real.
+
+**Declined: `?disposition=inline` trusts the stored content type.** The claim is
+that a crafted import declaring `application/pdf` over HTML bytes gets served
+inline and same-origin-framable. It does — and nothing happens, because the
+whole safelist rests on the browser honouring the type we declare, which
+`X-Content-Type-Options: nosniff` guarantees on every primary-server response.
+Tested rather than argued: a file beginning `%PDF-1.4` and continuing
+`<html><script>parent.document.title="PWNED"</script>` sniffs as
+`application/pdf` on upload, so it reaches the branch without an import at all.
+Requested inline, the frame's `document.contentType` is `application/pdf`, it
+holds zero scripts and an empty body, and the parent's title is untouched — in
+bundled Chromium and in Chrome with a real PDF viewer. What an attacker can
+produce is a PDF viewer that fails to parse. Bytes are not verified for any
+content type anywhere in this tree, and verifying them would not be what makes
+this safe.
+
+**Declined: sorting the version panel's two picks by number is unreliable.** The
+scenario given is a merge with "keep the other file as an earlier version",
+where the merged-in file takes the highest number while the current version
+keeps a lower one. True — but `MergeResources` creates that row without setting
+`CreatedAt`, so GORM stamps it *now*: sorting by date orders it exactly the same
+way. There is no signal in the schema that says the file is older, so there is
+no ordering that is right in every case, and the previous behaviour it replaced
+was click order. What was wrong is the comment, which claimed the diff "always
+reads older-to-newer" — a promise the code cannot keep. It now says what is
+true, and points at the compare page labelling the *current* version rather than
+calling either side newer.
+
+Fixed:
+
+- **`contentCategoryFor` did not normalise the type**, so a legitimate PDF
+  stored as `application/pdf; charset=binary` was served inline by the file
+  route and classified as binary by the page. It goes through
+  `models.BaseContentType` now, which is what the file route already does.
+- **pongo2's `escapejs` is broken for astral characters.** It emits a bare
+  `ὠ0`, which JavaScript reads as `ὠ` followed by a stray "0", so a
+  resource named with an emoji reached the pane labels, the patch headers and
+  the merge confirmations mangled. Every server value that reaches script in
+  these templates goes through `json` instead, which emits a complete quoted
+  literal; the merge sentences are built in the provider so they can. Not a
+  hole — the fifth character is always a hex digit, never a quote — and the
+  other 20 `escapejs` uses in `templates/` have the same weakness and are left
+  for their own change.
+- **The version panel's checkboxes were not bound to the selection.** Opening
+  Compare on a resource with exactly two versions preselects both, and the boxes
+  rendered empty over it, so the first click cleared one instead of adding one.
+  Pre-existing; one attribute.
