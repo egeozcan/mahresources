@@ -25,6 +25,7 @@ func isMRQLFilterError(err error) bool {
 //   - "not found"             -> 404 (download queue / generic)
 //   - undecodable media       -> 415
 //   - validation-style errors -> 400
+//   - missing ffmpeg          -> 503
 //   - "attempt to write"      -> 400 (readonly DB violation)
 //   - default                 -> the supplied fallback
 func statusCodeForError(err error, fallback int) int {
@@ -58,6 +59,16 @@ func statusCodeForError(err error, fallback int) int {
 		errors.Is(err, application_context.ErrScheduleUnowned) ||
 		errors.Is(err, application_context.ErrScheduleBusy) {
 		return http.StatusConflict
+	}
+
+	// A dependency the deployment does not have. Not the caller's fault and not
+	// a missing resource, so neither 400 nor 404: the request is well formed and
+	// the video is there, and what cannot be done is the operation. Typed for the
+	// same reason as the refusals above -- "ffmpeg not found" is the natural way
+	// to say this, and the scan below would answer it 404, telling the caller
+	// their resource does not exist.
+	if errors.Is(err, application_context.ErrFfmpegUnavailable) {
+		return http.StatusServiceUnavailable
 	}
 
 	// A plugin veto from a before-hook. The status used to come from the scan

@@ -335,7 +335,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-db-log-file` | `DB_LOG_FILE` | DB log: STDOUT, empty, or file path |
 | `-db-slow-query-threshold` | `DB_SLOW_QUERY_THRESHOLD` | Log SQL queries slower than this duration (e.g. `200ms`) to the DB log and the application log (warning entries with entity type `sql` at `/logs`); `0` disables (default). Works standalone (slow queries to STDOUT) or combined with `-db-log-file` |
 | `-bind-address` | `BIND_ADDRESS` | Server address:port |
-| `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails |
+| `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails and video trimming. Auto-detected from `PATH` when unset; when neither finds it, both operations refuse with `ErrFfmpegUnavailable` (HTTP 503) rather than exec-ing an empty command name |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice for office document thumbnails (auto-detects soffice/libreoffice in PATH) |
 | `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for a video thumbnail ffmpeg invocation (default: 30s) |
 | `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | Timeout waiting for the video thumbnail lock (default: 60s) |

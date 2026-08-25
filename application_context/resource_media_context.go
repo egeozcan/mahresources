@@ -944,6 +944,10 @@ func (ctx *MahresourcesContext) createThumbFromVideoAtGivenTime(
 	resultBuffer *bytes.Buffer,
 	secondsIn int,
 ) error {
+	if err := ctx.requireFfmpeg(); err != nil {
+		return fmt.Errorf("cannot create video thumbnail: %w", err)
+	}
+
 	// Construct the ffmpeg command with context support
 	cmd := exec.CommandContext(context, ctx.Config.FfmpegPath,
 		"-i", "pipe:0", // input from stdin
@@ -1051,6 +1055,10 @@ func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
 	resultBuffer *bytes.Buffer,
 	secondsIn int,
 ) error {
+	if err := ctx.requireFfmpeg(); err != nil {
+		return fmt.Errorf("cannot create video thumbnail: %w", err)
+	}
+
 	// Construct ffmpeg command with -ss BEFORE -i for fast seeking
 	cmd := exec.CommandContext(httpContext, ctx.Config.FfmpegPath,
 		"-ss", fmt.Sprintf("%d", secondsIn), // Seek BEFORE input (fast input seeking)
@@ -1876,6 +1884,27 @@ func (ctx *MahresourcesContext) CropResourceToNewResource(
 
 // TrimVideo trims a video resource to the given time range and stores the result
 // as a new ResourceVersion, following the same pattern as CropResource for images.
+// ErrFfmpegUnavailable is returned by the video operations when no ffmpeg was
+// configured and none was auto-detected on PATH, so Config.FfmpegPath is empty.
+//
+// A typed sentinel rather than a message, because statusCodeForError matches
+// typed refusals before it scans wording, and the natural phrasing for this
+// ("ffmpeg not found") contains "not found" -- which that scan answers with
+// 404, telling the caller their resource does not exist when what is actually
+// missing is a binary on the server.
+var ErrFfmpegUnavailable = errors.New("ffmpeg is not available on this server; install ffmpeg on PATH or start the server with -ffmpeg-path")
+
+// requireFfmpeg refuses an operation that would otherwise reach
+// exec.CommandContext with an empty name. Note that ffprobePath degrades to the
+// bare name "ffprobe" when nothing is configured, so it fails with something
+// legible on its own; the ffmpeg path has no such fallback.
+func (ctx *MahresourcesContext) requireFfmpeg() error {
+	if ctx.Config.FfmpegPath == "" {
+		return ErrFfmpegUnavailable
+	}
+	return nil
+}
+
 func (ctx *MahresourcesContext) TrimVideo(
 	httpContext context.Context,
 	resourceId uint,
@@ -1903,6 +1932,14 @@ func (ctx *MahresourcesContext) TrimVideo(
 	}
 	if endSec <= startSec {
 		return fmt.Errorf("end time (%s) must be after start time (%s)", end, start)
+	}
+
+	// Checked here on purpose: below the time validation, so a caller who sent a
+	// bad range is told that whatever the server has installed, and above the
+	// lock and the resource read, so a request that cannot succeed neither reads
+	// the resource nor holds that resource's version lock while failing.
+	if err := ctx.requireFfmpeg(); err != nil {
+		return fmt.Errorf("cannot trim video: %w", err)
 	}
 
 	// Serialize per-resource version operations

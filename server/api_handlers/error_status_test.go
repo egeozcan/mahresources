@@ -75,3 +75,25 @@ func TestStatusCodeForError_LeavesEveryOtherErrorAlone(t *testing.T) {
 		})
 	}
 }
+
+// A server with no ffmpeg is not a caller error and not a missing resource: the
+// resource exists and the request is well formed, but the deployment cannot
+// perform the operation. 503 is the honest answer, and the guard has to be typed
+// to get it -- the natural wording ("ffmpeg not found") lands in the "not found"
+// pattern, which would tell the caller their video does not exist.
+func TestStatusCodeForError_MissingFfmpegIs503(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"bare sentinel", application_context.ErrFfmpegUnavailable},
+		{"wrapped, as TrimVideo returns it", fmt.Errorf("cannot trim video: %w", application_context.ErrFfmpegUnavailable)},
+		{"wrapped in wording that reads as missing", fmt.Errorf("ffmpeg not found: %w", application_context.ErrFfmpegUnavailable)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statusCodeForError(tc.err, http.StatusInternalServerError); got != http.StatusServiceUnavailable {
+				t.Errorf("statusCodeForError(%v) = %d, want %d", tc.err, got, http.StatusServiceUnavailable)
+			}
+		})
+	}
+}
