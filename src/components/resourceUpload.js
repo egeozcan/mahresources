@@ -248,10 +248,11 @@ export function resourceUpload() {
     // ----- submit ---------------------------------------------------------
 
     onSubmit(event) {
-      // schema-form-mode registers its own bubble-phase submit listener and
-      // preventDefault()s when the Meta schema fails validation. stopPropagation
-      // does not stop a sibling listener on the same element, so without this
-      // check the batch would upload past a validation failure.
+      // Not what stops schema-form-mode: init() is, by listening on `document`
+      // so that handler's stopPropagation() keeps a failed Meta validation from
+      // ever reaching here. This is the second line, and it covers the other
+      // shape -- anything that calls preventDefault() without also stopping
+      // propagation, whose event does arrive.
       if (event.defaultPrevented) return;
 
       const form = event.target;
