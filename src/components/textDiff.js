@@ -140,8 +140,13 @@ export function textDiff({
       }
 
       // Leaving the page mid-fetch used to leave two full-size downloads running.
-      this._abort = new AbortController();
-      const signal = this._abort.signal;
+      // A second load supersedes the first rather than joining it, and the local
+      // handle is what the error path aborts — reading `this._abort` there would
+      // cancel whichever load started last, not the one that failed.
+      if (this._abort) this._abort.abort();
+      const controller = new AbortController();
+      this._abort = controller;
+      const signal = controller.signal;
 
       try {
         const [leftRes, rightRes] = await Promise.all([
@@ -153,7 +158,7 @@ export function textDiff({
           const failed = !leftRes.ok ? leftRes : rightRes;
           // The sibling's body is still streaming, and nothing is going to read
           // it: one side missing means there is no diff to build.
-          this._abort.abort();
+          controller.abort();
           throw new Error(`Could not load the file to compare (HTTP ${failed.status}).`);
         }
 
@@ -308,17 +313,42 @@ export function textDiff({
     },
 
     /**
+     * What a screen reader hears in a row's gutter. The +/- is decoration and
+     * the colour is not read at all, so without this a diff is announced as a
+     * list of line numbers and text with no indication of what changed.
+     *
+     * It goes on the gutter cell rather than in a visually-hidden span because
+     * a span is a node per row, and this view exists to keep a four-thousand-line
+     * diff to one element per visible line.
+     */
+    rowLabel(line, side) {
+      if (!line || line.fold || line.blank) return '';
+      // Split rows carry `num`; a unified row carries whichever of the two its
+      // side has, and null on the other.
+      const number = line.num ?? line.leftNum ?? line.rightNum;
+      const where = number ? ` line ${number}` : '';
+      const changed = side ? line.changed : line.type !== 'context';
+      if (!changed) return `Unchanged${where}`;
+      const added = side ? side === 'right' : line.type === 'added';
+      return `${added ? 'Added' : 'Removed'}${where}`;
+    },
+
+    /**
      * Opens one fold. Focus lands on the first line it revealed: activating the
      * control removes it from the page, and without this the reader is returned
      * to the document with several thousand lines between them and their place.
      */
-    expandFold(id) {
+    expandFold(id, event) {
       if (!id || this.expandedFolds.includes(id)) return;
       this.expandedFolds.push(id);
       this.rebuildDisplay();
+      // Scoped to the pane the control was in: the split view gives both columns
+      // the same fold ids, so a search from the root answers the right pane's
+      // control with the left pane's line.
+      const pane = event && event.target instanceof Element ? event.target.closest('.compare-diff') : null;
       // Only once mounted: without a root there is nothing to search and no
       // focus to move, which is the state the unit tests drive this in.
-      if (this._root) this.$nextTick(() => this.focusRevealed(id));
+      if (this._root) this.$nextTick(() => this.focusRevealed(id, 0, pane));
     },
 
     /**
@@ -326,8 +356,9 @@ export function textDiff({
      * list this size across more than one frame — so this waits for them rather
      * than looking once and giving up.
      */
-    focusRevealed(id, attempt = 0) {
-      const revealed = this._root.querySelector(`[data-fold="${id}"]`);
+    focusRevealed(id, attempt = 0, pane = null) {
+      const within = pane && pane.isConnected ? pane : this._root;
+      const revealed = within.querySelector(`[data-fold="${id}"]`);
       if (revealed instanceof HTMLElement) {
         revealed.setAttribute('tabindex', '-1');
         revealed.focus({ preventScroll: true });
@@ -338,7 +369,7 @@ export function textDiff({
           return;
         }
       }
-      if (attempt < 30) requestAnimationFrame(() => this.focusRevealed(id, attempt + 1));
+      if (attempt < 30) requestAnimationFrame(() => this.focusRevealed(id, attempt + 1, pane));
     },
 
     expandAll() {

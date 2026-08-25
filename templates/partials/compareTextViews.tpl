@@ -36,13 +36,16 @@
                  }"
                  :data-change="line.changeIndex"
                  :data-fold="!line.fold ? line.foldId : null">
-                <span class="compare-diff-num" role="cell" x-text="line.leftNum || ''"></span>
+                {# The gutter carries the row's state: the +/- is decoration and the #}
+                {# colour is not read at all, so a diff was announced as line numbers #}
+                {# and text with no indication of what had changed. #}
+                <span class="compare-diff-num" role="cell" :aria-label="rowLabel(line, null)" x-text="line.leftNum || ''"></span>
                 <span class="compare-diff-num compare-diff-num--right" role="cell" x-text="line.rightNum || ''"></span>
                 {# One line, deliberately: the container is `white-space: pre`, so a #}
                 {# newline between these tags renders as a blank line in the diff. #}
                 <span class="compare-diff-content" role="cell"><span class="compare-diff-prefix" :class="{ 'compare-diff-prefix--removed': line.type === 'removed', 'compare-diff-prefix--added': line.type === 'added' }" x-text="line.prefix" aria-hidden="true"></span><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? (line.type === 'added' ? 'compare-word--added' : 'compare-word--removed') : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span><span class="compare-no-newline" x-show="line.noNewline" x-cloak title="No newline at end of file">\ No newline at end of file</span></span>
                 <template x-if="line.fold">
-                    <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
+                    <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId, $event)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
                 </template>
             </div>
         </template>
@@ -64,10 +67,10 @@
                          }"
                          :data-change="line.changeIndex"
                  :data-fold="!line.fold ? line.foldId : null">
-                        <span class="compare-diff-num" role="cell" x-text="line.num || ''"></span>
+                        <span class="compare-diff-num" role="cell" :aria-label="rowLabel(line, 'left')" x-text="line.num || ''"></span>
                         <span class="compare-diff-content" role="cell"><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? 'compare-word--removed' : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span><span class="compare-no-newline" x-show="line.noNewline" x-cloak title="No newline at end of file">\ No newline at end of file</span></span>
                         <template x-if="line.fold">
-                            <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
+                            <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId, $event)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
                         </template>
                     </div>
                 </template>
@@ -86,10 +89,10 @@
                          }"
                          :data-change="line.changeIndex"
                  :data-fold="!line.fold ? line.foldId : null">
-                        <span class="compare-diff-num" role="cell" x-text="line.num || ''"></span>
+                        <span class="compare-diff-num" role="cell" :aria-label="rowLabel(line, 'right')" x-text="line.num || ''"></span>
                         <span class="compare-diff-content" role="cell"><template x-for="(seg, si) in line.segments || []" :key="si"><span :class="seg.changed ? 'compare-word--added' : ''" x-text="seg.text"></span></template><span x-show="!line.segments" x-text="line.content"></span><span class="compare-no-newline" x-show="line.noNewline" x-cloak title="No newline at end of file">\ No newline at end of file</span></span>
                         <template x-if="line.fold">
-                            <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
+                            <span role="cell" class="compare-fold-cell"><button type="button" class="compare-fold-btn" @click="expandFold(line.foldId, $event)" x-text="'Show ' + line.foldLength + ' unchanged lines'"></button></span>
                         </template>
                     </div>
                 </template>

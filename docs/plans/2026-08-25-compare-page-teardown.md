@@ -418,3 +418,21 @@ No majors. All four minors fixed; three are defects in code this branch wrote.
 - **The version dropdown dropped the year whenever two uploads shared a day.**
   The clock was added by replacing the year rather than joining it, so a
   resource with uploads across several years showed none of them.
+
+## Review round 9
+
+- **A screen reader could not tell an added line from a removed one.** The
+  `+`/`-` prefix is `aria-hidden` and the colour is not read at all, so the
+  comparator's whole output was announced as line numbers and text. The gutter
+  cell carries the state — "Added line 12", "Removed line 12", "Unchanged line
+  12" — rather than a visually-hidden span per row, because a span is a node per
+  row and this view exists to keep a four-thousand-line diff to one element per
+  visible line.
+- **A fold opened in the right pane moved focus into the left one.** Both split
+  columns take their fold ids from the same ranges, so a search from the
+  component root answered the right pane's control with the left pane's line.
+  The search is scoped to the pane the control was in.
+- **Two loads racing shared one abort handle.** A second "Compare anyway"
+  overwrote `_abort`, so an HTTP error in the first aborted the second's
+  transfer. A load supersedes its predecessor, and the error path aborts the
+  controller it was given rather than whatever is current.

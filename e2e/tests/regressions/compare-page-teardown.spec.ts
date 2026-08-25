@@ -536,6 +536,45 @@ test.describe.serial('compare page teardown fixes', () => {
     await expect(handle).toHaveAttribute('aria-valuenow', '1');
   });
 
+  // The +/- prefix is aria-hidden and the colour is not read at all, so without
+  // a label in the gutter a diff is announced as line numbers and text with no
+  // indication of what changed.
+  test('diff rows announce whether they were added or removed', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${textResourceId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.compare-diff--unified')).toBeVisible();
+
+    const labels = await page.evaluate(() =>
+      [...document.querySelectorAll('.compare-diff--unified .compare-diff-line')]
+        .map((row) => row.querySelector('.compare-diff-num')?.getAttribute('aria-label'))
+        .filter(Boolean));
+
+    expect(labels.some((l) => /^Added line \d+$/.test(l!))).toBe(true);
+    expect(labels.some((l) => /^Removed line \d+$/.test(l!))).toBe(true);
+    expect(labels.some((l) => /^Unchanged line \d+$/.test(l!))).toBe(true);
+  });
+
+  // Both split columns give their folds the same ids, so a search from the
+  // component root answered the right pane's control with the left pane's line.
+  test('a fold opened in the right pane keeps focus in the right pane', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${foldResourceId}&v1=1&v2=2`);
+    await page.waitForLoadState('load');
+    await page.getByRole('radio', { name: 'Side by side' }).click();
+
+    const rightPane = page.locator('.compare-diff--split').nth(1);
+    const fold = rightPane.getByRole('button', { name: /Show \d+ unchanged lines/ }).first();
+    await expect(fold).toBeVisible();
+    await fold.focus();
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || !el.getAttribute('data-fold')) return 'none';
+      const panes = [...document.querySelectorAll('.compare-diff--split')];
+      return String(panes.indexOf(el.closest('.compare-diff--split')!));
+    })).toBe('1');
+  });
+
   // `$el` read from a method is whichever element's expression made the call, so
   // the toolbar button searched inside itself and found no diff: the counter
   // advanced and the page never moved.
