@@ -16,8 +16,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # ffmpeg, and the ffprobe shipped in the same deb, are not on the runner
+      # image. Without them three Go tests skip themselves -- and because
+      # `go test ./...` prints one line per package, a skip and a pass are
+      # indistinguishable in this job's log, so the trim happy path, the
+      # WebM-source container guard and video thumbnail generation have never
+      # actually run here. See ffmpegAvailable() in resource_trim_test.go and
+      # the FfmpegPath check in resource_context_test.go.
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev ffmpeg
 
       - name: Run tests
         run: go test --tags 'json1 fts5' ./...
@@ -178,8 +185,8 @@ jobs:
       # auto-detects it from PATH (main.go), so without it Config.FfmpegPath
       # stays empty and the trim endpoint execs "" -- surfacing as
       # 'failed to trim video: ffmpeg error: exec: no command' and failing
-      # resource-trim.spec.ts. Only this job needs it: the auth and cli
-      # projects run no video work.
+      # resource-trim.spec.ts. This job and the Go `test` job above are the
+      # two that need it; the auth and cli projects run no video work.
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev ffmpeg
 
