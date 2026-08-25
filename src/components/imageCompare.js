@@ -182,6 +182,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // touchcancel too: the OS takes the gesture away on an incoming call or
         // a system swipe, and touchend never arrives.
         document.removeEventListener('touchcancel', upHandler);
+        window.removeEventListener('blur', upHandler);
       };
       this._endDrag = upHandler;
 
@@ -190,6 +191,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       document.addEventListener('touchmove', moveHandler, { passive: false });
       document.addEventListener('touchend', upHandler);
       document.addEventListener('touchcancel', upHandler);
+      // A mouse released outside the window delivers no mouseup here, so a drag
+      // interrupted by an alt-tab would otherwise leave the whole page
+      // unselectable under a resize cursor until it was reloaded.
+      window.addEventListener('blur', upHandler);
     }
   };
 }

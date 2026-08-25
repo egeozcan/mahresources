@@ -372,3 +372,27 @@ Declined:
   that neither is recorded. Reading them from the images once they load, and
   filling `_sizes` from that, would remove the branch entirely — worth doing,
   and it is new capability rather than a defect in what is here.
+
+## Review round 7
+
+Declined: **an end-of-file-only difference renders as an added or removed second
+line with wrong numbers and statistics.** Measured instead of argued.
+`"a\n"` against `"a"` produces exactly two rows — `-a` at left line 1 and `+a` at
+right line 1, the second carrying the marker — with `+1 −1` and one change,
+which is what `git diff` prints for the same pair. There is no empty second
+line, and line 1 is not reported as unchanged.
+
+Fixed, all three from the marker and gate that round 5 added:
+
+- **The marker was emitted whenever a side lacked a closing newline**, rather
+  than when the two sides disagreed about it. The group comparison feeds this
+  plain description and Meta fields, which never end in a newline, so two
+  identical descriptions showed "No newline at end of file" under an unchanged
+  line with zero changes. It marks a difference or nothing.
+- **Inline comparisons skipped the size gate.** The text is already on the page,
+  but comparing it is what costs, so a multi-megabyte description or Meta blob
+  on `/group/compare` froze the tab with nothing offered. Inline text is
+  measured rather than declared, and "Compare anyway" now covers both paths.
+- **A drag interrupted by an alt-tab never ended.** A mouse released outside the
+  window delivers no `mouseup` to the document, leaving the whole page
+  unselectable under a resize cursor until a reload. `window.blur` ends it.

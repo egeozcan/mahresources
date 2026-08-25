@@ -168,4 +168,34 @@ describe('textDiff end-of-file newline', () => {
     const d = diffOf('a\nb\n', 'a\nc\n');
     expect([...d.splitLeft, ...d.splitRight, ...d.unifiedDiff].some((r: any) => r.noNewline)).toBe(false);
   });
+
+  // The marker explains a difference. The group comparison feeds this plain
+  // fields that never end in a newline, so marking each side independently put
+  // it under an unchanged line of two identical descriptions.
+  it('marks nothing when neither side ends cleanly', () => {
+    const d = diffOf('hello', 'hello');
+    expect([...d.splitLeft, ...d.splitRight, ...d.unifiedDiff].some((r: any) => r.noNewline)).toBe(false);
+  });
+});
+
+describe('textDiff size gate', () => {
+  const big = 'x'.repeat(1024 * 1024 + 1);
+
+  // The text is already on the page, but comparing it is what costs: a
+  // multi-megabyte description froze the tab with nothing offered.
+  it('asks before comparing large inline text', () => {
+    const component: any = textDiff({ leftText: big, rightText: big });
+    component.$el = null;
+    component.init();
+    expect(component.needsConfirmation).toBe(true);
+    expect(component.unifiedDiff).toHaveLength(0);
+  });
+
+  it('compares small inline text without asking', async () => {
+    const component: any = textDiff({ leftText: 'a\n', rightText: 'b\n' });
+    component.$el = null;
+    await component.init();
+    expect(component.needsConfirmation).toBe(false);
+    expect(component.unifiedDiff.length).toBeGreaterThan(0);
+  });
 });

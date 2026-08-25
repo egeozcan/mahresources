@@ -60,6 +60,9 @@ export function textDiff({
   leftName = 'left',
   rightName = 'right',
 }) {
+  /** The group comparison supplies its text directly; nothing is fetched. */
+  const isInline = leftText !== null && rightText !== null;
+
   return {
     mode: 'unified',
     loading: true,
@@ -99,10 +102,11 @@ export function textDiff({
     async init() {
       this._root = this.$el;
 
-      if (leftText !== null && rightText !== null) {
-        this.computeDiff();
-        this.loading = false;
-        return;
+      // Inline text costs nothing to fetch and everything to diff, so it is
+      // measured here rather than declared by the caller. The gate is about the
+      // comparison, not the transfer.
+      if (isInline && !this.totalBytes) {
+        this.totalBytes = leftText.length + rightText.length;
       }
 
       if (this.totalBytes > CONFIRM_ABOVE_BYTES) {
@@ -118,6 +122,12 @@ export function textDiff({
       this.needsConfirmation = false;
       this.loading = true;
       this.error = null;
+
+      if (isInline) {
+        this.computeDiff();
+        this.loading = false;
+        return;
+      }
 
       // Leaving the page mid-fetch used to leave two full-size downloads running.
       this._abort = new AbortController();
@@ -174,6 +184,12 @@ export function textDiff({
       // patch marks it.
       const leftEndsClean = this.leftText === '' || this.leftText.endsWith('\n');
       const rightEndsClean = this.rightText === '' || this.rightText.endsWith('\n');
+      // Only when the two sides disagree about it. The marker explains a
+      // difference, and the group comparison feeds this plain fields that never
+      // end in a newline — an unconditional marker sat under an unchanged line
+      // of two identical descriptions.
+      const markLeft = !leftEndsClean && rightEndsClean;
+      const markRight = !rightEndsClean && leftEndsClean;
 
       // Pair each removal with the addition opposite it, so the split view puts
       // the two halves of one change on the same row and a single changed token
@@ -254,10 +270,10 @@ export function textDiff({
         changeIndex++;
       }
 
-      markLastRow(this.splitLeft, (row) => !row.blank, leftEndsClean);
-      markLastRow(this.splitRight, (row) => !row.blank, rightEndsClean);
-      markLastRow(this.unifiedDiff, (row) => row.type !== 'added', leftEndsClean);
-      markLastRow(this.unifiedDiff, (row) => row.type !== 'removed', rightEndsClean);
+      markLastRow(this.splitLeft, (row) => !row.blank, markLeft);
+      markLastRow(this.splitRight, (row) => !row.blank, markRight);
+      markLastRow(this.unifiedDiff, (row) => row.type !== 'added', markLeft);
+      markLastRow(this.unifiedDiff, (row) => row.type !== 'removed', markRight);
 
       // Each view gets its own fold pass because a change occupies one split row
       // and two unified ones, so a single index-based map would fold the two at
@@ -447,8 +463,8 @@ function foldRows(rows, expanded) {
  * Flags the last row a side contributed as having no closing newline. `matches`
  * picks the rows belonging to that side, since the unified view interleaves both.
  */
-function markLastRow(rows, matches, endsClean) {
-  if (endsClean) return;
+function markLastRow(rows, matches, shouldMark) {
+  if (!shouldMark) return;
   for (let i = rows.length - 1; i >= 0; i--) {
     if (matches(rows[i])) {
       rows[i].noNewline = true;
