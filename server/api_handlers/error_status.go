@@ -71,6 +71,20 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusServiceUnavailable
 	}
 
+	// Resource Reduction refusals, typed for the same reason the ones above are:
+	// "no such Resource Reduction" contains no "not found", and the conflict's
+	// wording matches nothing in the scan below, so both would fall through to
+	// 500 — an outage's status for an answer that is simply no. 409 rather than
+	// 400 for the last two: the request is well formed and what refuses is the
+	// state of the row, which is the shape ErrLastAdmin already uses.
+	if errors.Is(err, application_context.ErrReductionNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, application_context.ErrReductionConflict) ||
+		errors.Is(err, application_context.ErrReductionBusy) {
+		return http.StatusConflict
+	}
+
 	// A plugin veto from a before-hook. The status used to come from the scan
 	// below, over the message "plugin aborted: <the plugin author's own
 	// words>" — so a reason phrased "this cannot be deleted" produced 400 and
