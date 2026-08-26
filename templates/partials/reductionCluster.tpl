@@ -139,7 +139,7 @@
         {% if not member.Resource %}
         <div class="reduction-member" data-testid="reduction-member-withheld">
             <p class="text-xs text-stone-500 max-w-[10rem]">
-                {% if cluster.State == "applied" %}Merged away.{% else %}A Resource outside what you may see.{% endif %}
+                {% if cluster.Merged %}Merged away.{% else %}A Resource outside what you may see.{% endif %}
             </p>
         </div>
         {% else %}

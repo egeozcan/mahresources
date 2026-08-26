@@ -48,13 +48,45 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	}
 	pageClusters := plan.Clusters[start:end]
 
-	// Counted over every Cluster, not the page. Apply acts on the whole plan.
-	checked, checkedLosers := 0, 0
+	// Counted over every Cluster, not the page: apply acts on the whole plan, and
+	// a confirmation that counts only what is on screen understates the blast
+	// radius by however many pages the reviewer has not opened.
+	//
+	// A Cluster reaching a Resource this caller may not see is left out of the
+	// count entirely. It cannot be applied, and counting it would tell them "there
+	// is one more Cluster, with two Resources in it" about Clusters the page
+	// otherwise refuses to describe. Only the checked ones are resolved, so this
+	// costs one lookup over what an apply would actually touch.
+	checkedClusters := make([]*models.ReductionCluster, 0, len(plan.Clusters))
+	var checkedMemberIDs []uint
 	for _, cluster := range plan.Clusters {
 		if cluster.State == models.ReductionClusterOpen && cluster.Checked {
-			checked++
-			checkedLosers += len(cluster.LoserIDs())
+			checkedClusters = append(checkedClusters, cluster)
+			for _, member := range cluster.Members {
+				if !member.Ejected {
+					checkedMemberIDs = append(checkedMemberIDs, member.ResourceID)
+				}
+			}
 		}
+	}
+	visible, err := ctx.loadResourcesByID(checkedMemberIDs)
+	if err != nil {
+		return nil, err
+	}
+	checked, checkedLosers := 0, 0
+	for _, cluster := range checkedClusters {
+		reachable := true
+		for _, member := range cluster.Members {
+			if !member.Ejected && visible[member.ResourceID] == nil {
+				reachable = false
+				break
+			}
+		}
+		if !reachable {
+			continue
+		}
+		checked++
+		checkedLosers += len(cluster.LoserIDs())
 	}
 
 	// One load for the whole page rather than one per Cluster.
@@ -80,8 +112,11 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		for _, member := range cluster.Members {
 			resource := resources[member.ResourceID]
 			// A member that does not come back is one this principal may not see —
-			// except a *Loser* of an applied Cluster, which was destroyed by this
-			// very row moments ago. Counting those as withheld would hide the record
+			// except a *Loser* of a Cluster whose merge is confirmed, which was
+			// destroyed by this very row moments ago. Confirmed, not merely claimed:
+			// apply claims before it merges, so a crash in between leaves Losers
+			// alive, and reading those as gone would show a live Resource the
+			// reviewer may not see. Counting those as withheld would hide the record
 			// of what the Reduction just did, and showing them discloses nothing:
 			// the reviewer performed the deletion.
 			//
@@ -90,7 +125,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 			// everything the Cluster says about it — the criterion, the margin, the
 			// curation warning — is a statement about a Resource that is still there
 			// and is not theirs to know about.
-			mergedAway := cluster.State == models.ReductionClusterApplied && member.ResourceID != cluster.WinnerID
+			mergedAway := cluster.Merged && member.ResourceID != cluster.WinnerID
 			if resource == nil && !mergedAway {
 				view.Withheld++
 			}

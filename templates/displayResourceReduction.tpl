@@ -140,12 +140,21 @@
                         <span x-text="applyResult.stale.length"></span> Cluster(s) were refused and kept in this Reduction:
                     </p>
                     <ul class="list-disc list-inside text-sm text-stone-700">
-                        <template x-for="outcome in applyResult.stale" :key="outcome.clusterId">
+                        <template x-for="(outcome, i) in applyResult.stale" :key="outcome.clusterId || ('withheld-' + i)">
                             <li>
-                                <a :href="'#cluster-' + outcome.clusterId + '-heading'"
-                                   class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700"
-                                   x-text="outcome.clusterId"></a>
-                                &mdash; <span x-text="outcome.reason"></span>
+                                {# A withheld outcome names nothing, because its id is derived  #}
+                                {# from the member ids and would recover them.                  #}
+                                <template x-if="outcome.withheld">
+                                    <span x-text="outcome.reason"></span>
+                                </template>
+                                <template x-if="!outcome.withheld">
+                                    <span>
+                                        <a :href="'#cluster-' + outcome.clusterId + '-heading'"
+                                           class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700"
+                                           x-text="outcome.clusterId"></a>
+                                        &mdash; <span x-text="outcome.reason"></span>
+                                    </span>
+                                </template>
                             </li>
                         </template>
                     </ul>

@@ -136,7 +136,10 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
 		}
-		return nil
+		// The curation warning is about which Losers hold what, so it changes with
+		// the membership. Leaving it stale after an ejection warns about a copy that
+		// is no longer going anywhere.
+		return ctx.refreshLossy(cluster)
 
 	case ReductionActionRestore:
 		member := findMember(cluster, override.ResourceID)
@@ -179,7 +182,10 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 			}
 			member.Distance = &distance
 		}
-		return nil
+		// And after a restore it changes the other way: the member coming back may
+		// be the one holding the description the Winner lacks, and merging it away
+		// with no warning is exactly what D8b exists to prevent.
+		return ctx.refreshLossy(cluster)
 
 	case ReductionActionSkip:
 		cluster.State = models.ReductionClusterSkipped

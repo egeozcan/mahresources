@@ -441,3 +441,36 @@ func TestAnEjectionLandingDuringTheClaimIsHonoured(t *testing.T) {
 	assert.True(t, resourceExists(t, tc, spared.ID),
 		"a member ejected while the batch was running is not destroyed by it")
 }
+
+// A Cluster's identity is not enough to claim it. The id is derived from the tier
+// and the member ids, so a recompute landing mid-batch can replace one with a
+// Cluster of the same membership carrying *different* reviewed hashes — same id,
+// different bytes — and claiming by id alone would merge a proposal this reviewer
+// never saw.
+func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
+	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
+	setDimensions(t, tc, winner.ID, 400, 400)
+
+	red := createReduction(t, tc, "Swapped under it", []uint{winner.ID, loser.ID})
+	plan := computeReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+
+	// The plan is rewritten with the same membership and different reviewed
+	// hashes, exactly as a recompute after a version upload would leave it.
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	swapped, err := application_context.DecodeReductionPlan(current.Plan)
+	require.NoError(t, err)
+	for _, member := range swapped.Clusters[0].Members {
+		member.Hash = "some-other-content"
+	}
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, swapped))
+
+	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, "winner->stale-fingerprint")
+	assert.Nil(t, claimed, "a Cluster that is no longer the one that was validated is not claimable")
+	assert.True(t, resourceExists(t, tc, loser.ID))
+}

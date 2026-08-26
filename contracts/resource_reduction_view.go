@@ -88,6 +88,11 @@ type ReductionApplyOutcome struct {
 	LoserIDs  []uint `json:"loserIds,omitempty"`
 	// Reason is why the Cluster was refused. Empty for one that was applied.
 	Reason string `json:"reason,omitempty"`
+	// Withheld marks an outcome that carries no identifiers at all, because the
+	// Cluster reached a Resource the caller may not see. Naming it would publish
+	// the very facts the render refuses to: the Cluster id is derived from the
+	// member ids, so it recovers them, and the Winner and Loser ids are those ids.
+	Withheld bool `json:"withheld,omitempty"`
 }
 
 // ReductionApplyResult is the report of one apply.

@@ -64,7 +64,9 @@ func TestAScopedReviewersReductionStopsAtTheirSubtree(t *testing.T) {
 	}, owner, restricted)
 	require.NoError(t, err)
 
-	_, err = scoped.RequestReductionCompute(red.ID, owner, restricted, nil)
+	fresh, err := scoped.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = scoped.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
 	require.NoError(t, err)
 	plan := awaitReduction(t, tc, red.ID)
 
@@ -115,7 +117,9 @@ func TestAClusterIsRefusedWhenTheReviewersScopeHasShrunk(t *testing.T) {
 		ResourceIds: []uint{winner.ID, loser.ID},
 	}, owner, restricted)
 	require.NoError(t, err)
-	_, err = wideCtx.RequestReductionCompute(red.ID, owner, restricted, nil)
+	fresh, err := wideCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
 	require.NoError(t, err)
 	plan := awaitReduction(t, tc, red.ID)
 	require.Len(t, plan.Clusters, 1)
@@ -141,4 +145,68 @@ func TestAClusterIsRefusedWhenTheReviewersScopeHasShrunk(t *testing.T) {
 	require.Len(t, result.Stale, 1)
 	assert.True(t, resourceExists(t, tc, loser.ID),
 		"a Resource they may no longer see is not destroyed by a Cluster computed when they could")
+}
+
+// A Cluster reaching outside the reviewer's access is invisible in every place a
+// count or an identifier could carry it: the render, the checked totals that the
+// apply confirmation names, and the apply result itself.
+//
+// The Cluster id is a SHA-1 of the tier and the member ids, and ids here are small
+// integers, so publishing it beside one visible member recovers the hidden one.
+func TestAWithheldClusterIsNeitherCountedNorNamed(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
+	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
+	setDimensions(t, tc, winner.ID, 400, 400)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", winner.ID).Update("owner_id", narrow.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", loser.ID).Update("owner_id", wide.ID).Error)
+
+	wideCtx := scopedTo(t, tc, wide.ID)
+	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name:        "Hidden counts",
+		ResourceIds: []uint{winner.ID, loser.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	fresh, err := wideCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
+	require.NoError(t, err)
+	plan := awaitReduction(t, tc, red.ID)
+	require.Len(t, plan.Clusters, 1)
+	require.True(t, plan.Clusters[0].Checked, "an Identical Cluster arrives checked")
+
+	narrowCtx := scopedTo(t, tc, narrow.ID)
+
+	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 0, review.CheckedCount,
+		"a Cluster they cannot see is not in the total the apply confirmation names")
+	assert.Equal(t, 0, review.CheckedLoserCount)
+
+	current, err := narrowCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	result, err := narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: red.ID, Version: current.Version,
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	require.Len(t, result.Stale, 1)
+	outcome := result.Stale[0]
+	assert.True(t, outcome.Withheld)
+	assert.Empty(t, outcome.ClusterID, "the id is derived from the member ids and would recover them")
+	assert.Zero(t, outcome.WinnerID)
+	assert.Empty(t, outcome.LoserIDs)
+	assert.True(t, resourceExists(t, tc, loser.ID))
+
+	// The admin, who may see both, gets the whole picture.
+	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 0, adminReview.Clusters[0].Withheld)
 }

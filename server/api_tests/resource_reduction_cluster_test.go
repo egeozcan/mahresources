@@ -20,7 +20,9 @@ import (
 func computeReduction(t *testing.T, tc *TestContext, id uint) models.ResourceReductionPlan {
 	t.Helper()
 	owner, restricted := asAdmin()
-	_, err := tc.AppCtx.RequestReductionCompute(id, owner, restricted, nil)
+	current, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.RequestReductionCompute(id, current.Version, owner, restricted, nil)
 	require.NoError(t, err)
 	return awaitReduction(t, tc, id)
 }

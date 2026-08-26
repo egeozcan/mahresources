@@ -380,7 +380,9 @@ func TestAMemberOutsideTheReviewersAccessCannotBePromoted(t *testing.T) {
 		ResourceIds: []uint{visible.ID, hidden.ID},
 	}, owner, restricted)
 	require.NoError(t, err)
-	_, err = wideCtx.RequestReductionCompute(red.ID, owner, restricted, nil)
+	fresh, err := wideCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
 	require.NoError(t, err)
 	plan := awaitReduction(t, tc, red.ID)
 	clusterID := plan.Clusters[0].ID

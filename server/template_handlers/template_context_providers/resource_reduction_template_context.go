@@ -156,16 +156,27 @@ const winnerRuleSlotCount = 5
 // winnerRuleSlots turns the stored rule into the ordered controls the page
 // renders, one per position, with the rest empty.
 func winnerRuleSlots(rule []string) []pongo2.Context {
-	slots := make([]pongo2.Context, 0, winnerRuleSlotCount)
-	ordinals := []string{"First", "Then", "Then", "Then", "Then"}
-	for i := 0; i < winnerRuleSlotCount; i++ {
+	// Never fewer slots than the rule has criteria. A longer rule can arrive
+	// through the API, and rendering the first five would silently truncate it the
+	// moment anybody saved the form — changing which Resource the next recompute
+	// destroys, from a page that showed no sign of it.
+	count := winnerRuleSlotCount
+	if len(rule) >= count {
+		count = len(rule) + 1
+	}
+	slots := make([]pongo2.Context, 0, count)
+	for i := 0; i < count; i++ {
 		selected := ""
 		if i < len(rule) {
 			selected = rule[i]
 		}
+		label := "Then"
+		if i == 0 {
+			label = "First"
+		}
 		slots = append(slots, pongo2.Context{
 			"position": i + 1,
-			"label":    ordinals[i],
+			"label":    label,
 			"selected": selected,
 		})
 	}

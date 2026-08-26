@@ -123,6 +123,15 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 	}
 
 	if reason := ctx.revalidateCluster(cluster); reason != "" {
+		if reason == staleReasonMemberGone {
+			// A member that did not come back is either deleted or outside what this
+			// caller may see, and the two are deliberately indistinguishable here.
+			// So the outcome names nothing: the reason is reported, the identifiers
+			// are not, because in the second case they are exactly what a confined
+			// caller may not be told.
+			ctx.markClusterStale(reductionID, clusterID, reason, clusterFingerprint(cluster))
+			return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{Reason: reason, Withheld: true}}
+		}
 		report.Reason = reason
 		// Marked stale only if the Cluster is still the one that failed. The
 		// refusal was derived from a snapshot, and a reviewer who ejected the
@@ -152,7 +161,7 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 	// costs a file the reviewer had un-approved. It also self-heals — an applied
 	// Cluster's members go back into the pool, so the next recompute re-proposes
 	// them.
-	claimed := ctx.claimClusterForApply(reductionID, clusterID)
+	claimed := ctx.claimClusterForApply(reductionID, clusterID, clusterFingerprint(cluster))
 	if claimed == nil {
 		report.Reason = staleReasonAlreadyMoved
 		return clusterApplyOutcome{Report: report}
@@ -179,7 +188,52 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 		return clusterApplyOutcome{Report: report}
 	}
 
+	ctx.confirmClusterMerged(reductionID, clusterID)
 	return clusterApplyOutcome{Applied: true, Report: report}
+}
+
+// OverwritePlanForTest and ClaimClusterForApplyForTest expose the two halves of
+// the claim so a test can put a Cluster into the one state that has no other
+// seam: the same id over a different proposal, which only a recompute landing
+// inside an apply produces.
+func (ctx *MahresourcesContext) OverwritePlanForTest(reductionID, version uint, plan models.ResourceReductionPlan) error {
+	encoded, err := encodeJSON(plan)
+	if err != nil {
+		return err
+	}
+	ok, err := ctx.casReduction(reductionID, version, map[string]any{"plan": encoded})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrReductionConflict
+	}
+	return nil
+}
+
+func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, clusterID, fingerprint string) *models.ReductionCluster {
+	return ctx.claimClusterForApply(reductionID, clusterID, fingerprint)
+}
+
+// confirmClusterMerged records that the claim's merge actually happened.
+//
+// The claim is taken before the merge, so `applied` on its own means "claimed",
+// and a crash in between leaves a Cluster saying applied over Losers that still
+// exist. Everything that treats an applied Cluster's missing Losers as merged
+// away — which is what stops the record of a completed Reduction reading as a
+// wall of withheld Clusters — needs the stronger statement, or a live Resource
+// the reviewer may not see is shown as though it were gone.
+//
+// A failure here is logged rather than returned: the merge has happened, and the
+// conservative reading of an unconfirmed claim is the safe one.
+func (ctx *MahresourcesContext) confirmClusterMerged(reductionID uint, clusterID string) {
+	_ = ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+		if cluster.State != models.ReductionClusterApplied || cluster.Merged {
+			return false
+		}
+		cluster.Merged = true
+		return true
+	})
 }
 
 // claimClusterForApply takes a Cluster out of play for the merge that is about to
@@ -191,16 +245,24 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 // inside the successful compare-and-set rather than before it, so a decision that
 // landed in the meantime is part of what this apply acts on rather than something
 // it overwrites.
-func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID string) *models.ReductionCluster {
+func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID, fingerprint string) *models.ReductionCluster {
 	var claimed *models.ReductionCluster
 	committed := ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
 		if cluster.State != models.ReductionClusterOpen || !cluster.Checked {
 			claimed = nil
 			return false
 		}
+		// The same id no longer means the same proposal: a recompute can replace a
+		// Cluster with one of identical membership and different reviewed hashes.
+		// What this apply was authorized to destroy is what it validated.
+		if clusterFingerprint(cluster) != fingerprint {
+			claimed = nil
+			return false
+		}
 		cluster.State = models.ReductionClusterApplied
 		cluster.Checked = false
 		cluster.Reviewed = true
+		cluster.Merged = false
 		now := time.Now()
 		cluster.AppliedAt = &now
 		snapshot := *cluster
@@ -343,16 +405,25 @@ func (ctx *MahresourcesContext) revalidateCluster(cluster *models.ReductionClust
 	return ""
 }
 
-// clusterFingerprint is what an outcome was decided about: the Winner and the
-// exact set of Losers. Two Clusters with the same fingerprint would fail or
-// succeed identically, so an outcome is safe to record against one.
+// clusterFingerprint is everything an apply decides about: the Winner, the exact
+// set of Losers, and the content each of them was reviewed as holding.
+//
+// The hashes are in it because the Cluster id is not enough. That id is derived
+// from the tier and the member ids, so a recompute landing mid-batch can replace
+// a Cluster with one of the same membership and *different* reviewed hashes —
+// same id, different bytes. Claiming by id alone would then merge a proposal this
+// reviewer never saw; recording an outcome by id alone would attach a refusal to
+// a Cluster that was never the one that failed.
 func clusterFingerprint(cluster *models.ReductionCluster) string {
-	ids := make([]string, 0, len(cluster.Members))
-	for _, id := range cluster.LoserIDs() {
-		ids = append(ids, strconv.FormatUint(uint64(id), 10))
+	parts := make([]string, 0, len(cluster.Members))
+	for _, member := range cluster.Members {
+		if member.Ejected {
+			continue
+		}
+		parts = append(parts, strconv.FormatUint(uint64(member.ResourceID), 10)+"@"+member.Hash)
 	}
-	sort.Strings(ids)
-	return strconv.FormatUint(uint64(cluster.WinnerID), 10) + "->" + strings.Join(ids, ",")
+	sort.Strings(parts)
+	return strconv.FormatUint(uint64(cluster.WinnerID), 10) + "->" + strings.Join(parts, ",")
 }
 
 func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason, fingerprint string) {

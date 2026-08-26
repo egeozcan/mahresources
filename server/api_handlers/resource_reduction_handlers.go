@@ -161,7 +161,7 @@ func GetResourceReductionComputeHandler(ctx ResourceReductionContext) func(http.
 
 		principal := auth.PrincipalFromContext(request.Context())
 		owner, restricted := reductionScope(principal)
-		reduction, err := ctx.RequestReductionCompute(editor.ID, owner, restricted, actingUserID(principal))
+		reduction, err := ctx.RequestReductionCompute(editor.ID, editor.Version, owner, restricted, actingUserID(principal))
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return

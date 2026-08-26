@@ -53,7 +53,7 @@ var ErrReductionStaleCompute = errors.New("this Resource Reduction changed while
 // subtree and nothing else without this code having to re-derive that. A db
 // handle's statement context is always Background, so the job does not die when
 // the request that started it returns.
-func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *uint, ownerRestricted bool, actorUserID *uint) (*models.ResourceReduction, error) {
+func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, ownerUserID *uint, ownerRestricted bool, actorUserID *uint) (*models.ResourceReduction, error) {
 	reduction, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,11 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *ui
 
 	now := time.Now()
 	deadline := now.Add(ReductionComputeDeadline)
-	ok, err := ctx.casReduction(reduction.ID, reduction.Version, map[string]any{
+	// The caller's version, not the one just read. Recompute replaces the plan,
+	// so a request made from a page that predates somebody else's decisions would
+	// discard them without their author ever seeing a refusal — and "every write
+	// is a compare-and-set" has to mean this write too.
+	ok, err := ctx.casReduction(reduction.ID, version, map[string]any{
 		"status":               models.ReductionStatusComputing,
 		"computing_started_at": now,
 		"compute_deadline":     deadline,

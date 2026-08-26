@@ -17,19 +17,19 @@ import (
 // none anywhere in this system. WinnerCriterionUpdatedAsc is when the row was
 // last edited, which is a different fact and is labelled as one.
 const (
-	WinnerCriterionPixelsDesc      = "pixels_desc"
-	WinnerCriterionPixelsAsc       = "pixels_asc"
-	WinnerCriterionSizeDesc        = "size_desc"
-	WinnerCriterionSizeAsc         = "size_asc"
-	WinnerCriterionCreatedAsc      = "created_asc"
-	WinnerCriterionCreatedDesc     = "created_desc"
-	WinnerCriterionUpdatedAsc      = "updated_asc"
-	WinnerCriterionUpdatedDesc     = "updated_desc"
-	WinnerCriterionNameAsc         = "name_asc"
-	WinnerCriterionNameDesc        = "name_desc"
-	WinnerCriterionContentTypeAsc  = "content_type_asc"
-	WinnerCriterionContentTypeDesc = "content_type_desc"
-	WinnerCriterionHasDescription  = "has_description"
+	WinnerCriterionPixelsDesc       = "pixels_desc"
+	WinnerCriterionPixelsAsc        = "pixels_asc"
+	WinnerCriterionSizeDesc         = "size_desc"
+	WinnerCriterionSizeAsc          = "size_asc"
+	WinnerCriterionCreatedAsc       = "created_asc"
+	WinnerCriterionCreatedDesc      = "created_desc"
+	WinnerCriterionUpdatedAsc       = "updated_asc"
+	WinnerCriterionUpdatedDesc      = "updated_desc"
+	WinnerCriterionNameAsc          = "name_asc"
+	WinnerCriterionNameDesc         = "name_desc"
+	WinnerCriterionContentTypeAsc   = "content_type_asc"
+	WinnerCriterionContentTypeDesc  = "content_type_desc"
+	WinnerCriterionHasDescription   = "has_description"
 	WinnerCriterionAssociationsDesc = "associations_desc"
 	WinnerCriterionAssociationsAsc  = "associations_asc"
 )
@@ -119,54 +119,98 @@ func (c WinnerCandidate) pixels() uint64 {
 }
 
 // compareCriterion returns -1 when a is the better Winner, 1 when b is, and 0
-// when this criterion cannot tell them apart — which includes the case where
-// neither carries the attribute at all.
+// when this criterion cannot tell them apart.
+//
+// "Cannot tell them apart" means *both* sides lack the attribute — never one of
+// them. That distinction is the difference between a total order and a comparator
+// whose answer depends on the order it is asked in, and this comparator sorts the
+// list that decides which files are destroyed.
+//
+// An earlier version returned 0 whenever *either* side was missing a value, to
+// stop a video with no resolution winning "lowest resolution". It bought that at
+// the cost of transitivity: under pixels_asc then name_asc, A=(100,"a"),
+// B=(none,"b") and C=(50,"c") give A<B (by name), B<C (by name) and C<A (by
+// pixels), so the Winner depended on which order sort happened to compare them
+// in. A missing value now simply loses its criterion, which keeps the video out of
+// the lowest-resolution contest — the thing that rule was for — and leaves a
+// genuine tie, both sides missing, to fall through as designed.
 func compareCriterion(criterion string, a, b WinnerCandidate) int {
 	switch criterion {
 	case WinnerCriterionPixelsDesc:
-		return compareUint64(b.pixels(), a.pixels())
+		return preferPresent(a.pixels() > 0, b.pixels() > 0, func() int { return compareUint64(b.pixels(), a.pixels()) })
 	case WinnerCriterionPixelsAsc:
-		// A zero pixel count is "this content type has no resolution", not "this
-		// one is the smallest". Ascending order would otherwise hand every
-		// mixed Cluster to the video file.
-		if a.pixels() == 0 || b.pixels() == 0 {
-			return 0
-		}
-		return compareUint64(a.pixels(), b.pixels())
+		return preferPresent(a.pixels() > 0, b.pixels() > 0, func() int { return compareUint64(a.pixels(), b.pixels()) })
 	case WinnerCriterionSizeDesc:
-		return compareInt64(b.Resource.FileSize, a.Resource.FileSize)
+		return preferPresent(a.Resource.FileSize > 0, b.Resource.FileSize > 0, func() int {
+			return compareInt64(b.Resource.FileSize, a.Resource.FileSize)
+		})
 	case WinnerCriterionSizeAsc:
-		if a.Resource.FileSize == 0 || b.Resource.FileSize == 0 {
-			return 0
-		}
-		return compareInt64(a.Resource.FileSize, b.Resource.FileSize)
+		return preferPresent(a.Resource.FileSize > 0, b.Resource.FileSize > 0, func() int {
+			return compareInt64(a.Resource.FileSize, b.Resource.FileSize)
+		})
 	case WinnerCriterionCreatedAsc:
-		return compareTime(a.Resource.CreatedAt, b.Resource.CreatedAt)
+		return preferPresent(!a.Resource.CreatedAt.IsZero(), !b.Resource.CreatedAt.IsZero(), func() int {
+			return compareTime(a.Resource.CreatedAt, b.Resource.CreatedAt)
+		})
 	case WinnerCriterionCreatedDesc:
-		return compareTime(b.Resource.CreatedAt, a.Resource.CreatedAt)
+		return preferPresent(!a.Resource.CreatedAt.IsZero(), !b.Resource.CreatedAt.IsZero(), func() int {
+			return compareTime(b.Resource.CreatedAt, a.Resource.CreatedAt)
+		})
 	case WinnerCriterionUpdatedAsc:
-		return compareTime(a.Resource.UpdatedAt, b.Resource.UpdatedAt)
+		return preferPresent(!a.Resource.UpdatedAt.IsZero(), !b.Resource.UpdatedAt.IsZero(), func() int {
+			return compareTime(a.Resource.UpdatedAt, b.Resource.UpdatedAt)
+		})
 	case WinnerCriterionUpdatedDesc:
-		return compareTime(b.Resource.UpdatedAt, a.Resource.UpdatedAt)
+		return preferPresent(!a.Resource.UpdatedAt.IsZero(), !b.Resource.UpdatedAt.IsZero(), func() int {
+			return compareTime(b.Resource.UpdatedAt, a.Resource.UpdatedAt)
+		})
 	case WinnerCriterionNameAsc:
-		return compareString(a.Resource.Name, b.Resource.Name)
+		return preferPresent(a.Resource.Name != "", b.Resource.Name != "", func() int {
+			return compareString(a.Resource.Name, b.Resource.Name)
+		})
 	case WinnerCriterionNameDesc:
-		return compareString(b.Resource.Name, a.Resource.Name)
+		return preferPresent(a.Resource.Name != "", b.Resource.Name != "", func() int {
+			return compareString(b.Resource.Name, a.Resource.Name)
+		})
 	case WinnerCriterionContentTypeAsc:
-		return compareString(a.Resource.ContentType, b.Resource.ContentType)
+		return preferPresent(a.Resource.ContentType != "", b.Resource.ContentType != "", func() int {
+			return compareString(a.Resource.ContentType, b.Resource.ContentType)
+		})
 	case WinnerCriterionContentTypeDesc:
-		return compareString(b.Resource.ContentType, a.Resource.ContentType)
+		return preferPresent(a.Resource.ContentType != "", b.Resource.ContentType != "", func() int {
+			return compareString(b.Resource.ContentType, a.Resource.ContentType)
+		})
 	case WinnerCriterionHasDescription:
 		return compareBool(strings.TrimSpace(a.Resource.Description) != "", strings.TrimSpace(b.Resource.Description) != "")
 	case WinnerCriterionAssociationsDesc:
-		return compareInt(b.Associations, a.Associations)
+		return preferPresent(a.Associations > 0, b.Associations > 0, func() int {
+			return compareInt(b.Associations, a.Associations)
+		})
 	case WinnerCriterionAssociationsAsc:
-		if a.Associations == 0 || b.Associations == 0 {
-			return 0
-		}
-		return compareInt(a.Associations, b.Associations)
+		return preferPresent(a.Associations > 0, b.Associations > 0, func() int {
+			return compareInt(a.Associations, b.Associations)
+		})
 	}
 	return 0
+}
+
+// preferPresent resolves the missing-value cases and defers the rest. A candidate
+// carrying the attribute beats one that does not; neither carrying it is a tie.
+//
+// aHas and bHas are always in the *caller's* orientation — a first, b second —
+// even where the comparison it defers to is reversed for a descending criterion.
+// Passing them swapped to match the reversal hands the criterion to whichever
+// candidate lacks the value, which is the opposite of the rule.
+func preferPresent(aHas, bHas bool, both func() int) int {
+	switch {
+	case aHas && !bHas:
+		return -1
+	case bHas && !aHas:
+		return 1
+	case !aHas && !bHas:
+		return 0
+	}
+	return both()
 }
 
 func compareUint64(a, b uint64) int {
@@ -199,8 +243,10 @@ func compareInt(a, b int) int {
 	return 0
 }
 
+// compareTime orders two stamped instants, earliest first. The missing cases are
+// the caller's, through preferPresent, because only the caller knows which way
+// round its criterion runs.
 func compareTime(a, b time.Time) int {
-	// Both zero means neither is stamped, which is not a reason to prefer one.
 	if a.IsZero() || b.IsZero() {
 		return 0
 	}
@@ -213,6 +259,8 @@ func compareTime(a, b time.Time) int {
 	return 0
 }
 
+// compareString orders two non-empty strings. The empty cases are the caller's,
+// for the same reason compareTime's are.
 func compareString(a, b string) int {
 	if a == "" || b == "" {
 		return 0

@@ -232,6 +232,13 @@ type ReductionCluster struct {
 	// StaleReason names what failed revalidation at apply.
 	StaleReason string     `json:"staleReason,omitempty"`
 	AppliedAt   *time.Time `json:"appliedAt,omitempty"`
+
+	// Merged says the claim's merge actually happened. Apply claims a Cluster
+	// before destroying anything, so `applied` alone means "claimed" and a crash
+	// in between leaves one saying applied over Losers that still exist. Anything
+	// reading a missing member as "merged away" rather than "outside your access"
+	// needs this stronger statement.
+	Merged bool `json:"merged,omitempty"`
 }
 
 // ReductionMember is one Resource in a Cluster.
@@ -271,7 +278,7 @@ type ReductionMember struct {
 
 // Ejection reasons.
 const (
-	EjectReasonManual      = "manual"
+	EjectReasonManual         = "manual"
 	EjectReasonNoPairToWinner = "no-pair-to-winner"
 )
 
