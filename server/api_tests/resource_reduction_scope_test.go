@@ -303,3 +303,43 @@ func TestTheExtentCountsShrinkWithTheReviewersAccess(t *testing.T) {
 		"and a confined reviewer sees only what is theirs, not a count of what is not")
 	assert.Equal(t, 0, confined.SelectedGroups)
 }
+
+// The coverage figures are a measurement taken under whatever access the reviewer
+// who computed the plan had. Showing them to somebody who can now reach less of
+// the selection states how much is out there.
+func TestCoverageIsWithheldFromAReviewerWhoSeesLessThanItMeasured(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+
+	visible := addResourceWithBody(t, tc, "visible.txt", "visible")
+	hidden := addResourceWithBody(t, tc, "hidden.txt", "hidden")
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", visible.ID).Update("owner_id", narrow.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", hidden.ID).Update("owner_id", wide.ID).Error)
+
+	wideCtx := scopedTo(t, tc, wide.ID)
+	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name:        "Shrinking coverage",
+		ResourceIds: []uint{visible.ID, hidden.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	fresh, err := wideCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
+	require.NoError(t, err)
+	awaitReduction(t, tc, red.ID)
+
+	wideReview, err := wideCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.True(t, wideReview.CoverageTrusted, "the reviewer who computed it sees its figures")
+	assert.Equal(t, 2, wideReview.Coverage.ExtentSize)
+
+	narrowReview, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.False(t, narrowReview.CoverageTrusted,
+		"and one who can now reach less of the selection does not")
+}

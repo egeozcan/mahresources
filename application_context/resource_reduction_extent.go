@@ -78,6 +78,12 @@ func (ctx *MahresourcesContext) resolveReductionExtent(stored models.ResourceRed
 		if err != nil {
 			return nil, err
 		}
+		if len(ids) == 0 {
+			// GroupVisible short-circuits to true for an unscoped principal, so a
+			// Group deleted since it was selected passes that check and reaches
+			// here. Its own subtree is empty, which is how the deletion shows.
+			continue
+		}
 		for _, id := range ids {
 			extent.GroupIDs[id] = true
 		}

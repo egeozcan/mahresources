@@ -354,12 +354,15 @@ func TestCheckingAnOversizedClusterNeedsAnAcknowledgement(t *testing.T) {
 	assert.True(t, findClusterByID(after, clusterID).Checked)
 }
 
-// Promoting a Resource the reviewer cannot see would make it the Winner — the row
-// that survives and absorbs everything else — so it is refused. Ejecting one is
-// not, because ejection only ever takes a Resource out of harm, and refusing it
-// would leave a confined reviewer holding a Cluster they can neither apply nor
-// defuse.
-func TestAMemberOutsideTheReviewersAccessCannotBePromoted(t *testing.T) {
+// A Cluster reaching a Resource the reviewer cannot see answers every override
+// exactly as an unknown Cluster id does.
+//
+// That identity is the point. The Cluster id is a hash of the tier and the member
+// ids, and ids here are small integers, so an endpoint that distinguished "that
+// Cluster exists" from "no such Cluster" would let a caller guess a hidden id,
+// derive the Cluster id and confirm it — recovering by enumeration exactly what
+// the render refuses to print.
+func TestEveryOverrideOnAWithheldClusterAnswersAsNotFound(t *testing.T) {
 	tc := SetupTestEnv(t)
 	owner, restricted := asAdmin()
 
@@ -388,27 +391,49 @@ func TestAMemberOutsideTheReviewersAccessCannotBePromoted(t *testing.T) {
 	clusterID := plan.Clusters[0].ID
 
 	narrowCtx := scopedTo(t, tc, narrow.ID)
+	for _, action := range []string{
+		application_context.ReductionActionPromote,
+		application_context.ReductionActionEject,
+		application_context.ReductionActionRestore,
+		application_context.ReductionActionCheck,
+		application_context.ReductionActionUncheck,
+		application_context.ReductionActionSkip,
+		application_context.ReductionActionReopen,
+	} {
+		current, err := narrowCtx.GetResourceReduction(red.ID, owner, restricted)
+		require.NoError(t, err)
+		_, err = narrowCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+			ID:         red.ID,
+			Version:    current.Version,
+			ClusterID:  clusterID,
+			Action:     action,
+			ResourceID: hidden.ID,
+		}, owner, restricted)
+		assert.ErrorIs(t, err, application_context.ErrReductionClusterNotFound, "action %q", action)
+	}
+
+	// And a Cluster id that genuinely does not exist answers the same, which is
+	// what makes the refusal above tell a caller nothing.
 	current, err := narrowCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 	_, err = narrowCtx.OverrideReductionCluster(&query_models.ReductionOverride{
-		ID:         red.ID,
-		Version:    current.Version,
-		ClusterID:  clusterID,
-		Action:     application_context.ReductionActionPromote,
-		ResourceID: hidden.ID,
+		ID:        red.ID,
+		Version:   current.Version,
+		ClusterID: "identical-0000000000000000",
+		Action:    application_context.ReductionActionSkip,
 	}, owner, restricted)
-	assert.ErrorIs(t, err, application_context.ErrReductionMemberNotVisible)
+	assert.ErrorIs(t, err, application_context.ErrReductionClusterNotFound)
 
-	current, err = narrowCtx.GetResourceReduction(red.ID, owner, restricted)
+	// The administrator, who can see both Resources, works normally.
+	adminCurrent, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
-	_, err = narrowCtx.OverrideReductionCluster(&query_models.ReductionOverride{
-		ID:         red.ID,
-		Version:    current.Version,
-		ClusterID:  clusterID,
-		Action:     application_context.ReductionActionEject,
-		ResourceID: hidden.ID,
+	_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID:        red.ID,
+		Version:   adminCurrent.Version,
+		ClusterID: clusterID,
+		Action:    application_context.ReductionActionSkip,
 	}, owner, restricted)
-	assert.NoError(t, err, "ejecting one is always allowed: it only ever removes a Resource from harm")
+	assert.NoError(t, err)
 }
 
 // Restore names one Resource and moves one. Running the whole-Cluster

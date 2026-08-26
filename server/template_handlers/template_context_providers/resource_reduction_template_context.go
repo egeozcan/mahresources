@@ -200,6 +200,7 @@ func describeCoverage(review *contracts.ReductionReview) pongo2.Context {
 		hashless = 0
 	}
 	return pongo2.Context{
+		"trusted":            review.CoverageTrusted,
 		"extentSize":         coverage.ExtentSize,
 		"contentHashed":      coverage.ContentHashed,
 		"hashless":           hashless,

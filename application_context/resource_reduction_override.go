@@ -43,9 +43,6 @@ var (
 	// ErrReductionEjectWinner refuses ejecting the Winner, which would leave the
 	// Cluster with nothing to merge into.
 	ErrReductionEjectWinner = errors.New("promote another member first: a Cluster cannot lose its Winner")
-	// ErrReductionMemberNotVisible refuses an override that would make a Resource
-	// the caller cannot see into a Winner, or put one back among the Losers.
-	ErrReductionMemberNotVisible = errors.New("this Resource is outside what you may see")
 	// ErrReductionOversizedUnexpanded refuses checking an unusually large
 	// Near-Identical Cluster that has not been acknowledged.
 	ErrReductionOversizedUnexpanded = errors.New("expand this Cluster and look at it before checking it")
@@ -86,6 +83,23 @@ func (ctx *MahresourcesContext) OverrideReductionCluster(override *query_models.
 		}
 		cluster := findCluster(&plan, override.ClusterID)
 		if cluster == nil {
+			return ErrReductionClusterNotFound
+		}
+		// A Cluster reaching a Resource this caller may not see answers exactly as
+		// an unknown id does, and that identity is the whole point. The Cluster id
+		// is a hash of the tier and the member ids, and ids here are small integers,
+		// so any endpoint that distinguishes "that Cluster exists" from "no such
+		// Cluster" lets a caller guess a hidden id, derive the id, and confirm it —
+		// recovering by enumeration exactly what the render refuses to print.
+		//
+		// It costs the reviewer nothing they could otherwise do: such a Cluster
+		// cannot be applied either. It does mean a Cluster whose member was deleted
+		// outside this Reduction becomes unaddressable, since "deleted" and "outside
+		// your access" are deliberately one answer — and there is nothing left to
+		// decide about it, so a recompute is the right way past it.
+		if reachable, err := txCtx.clusterFullyVisible(cluster); err != nil {
+			return err
+		} else if !reachable {
 			return ErrReductionClusterNotFound
 		}
 		if cluster.State == models.ReductionClusterApplied {
@@ -145,16 +159,6 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		member := findMember(cluster, override.ResourceID)
 		if member == nil {
 			return ErrReductionMemberNotFound
-		}
-		// Putting a member back makes it a Loser again, so the caller has to be
-		// able to see what they are re-arming. Ejection is deliberately the one
-		// member action with no such check: it only ever removes a Resource from
-		// harm, and refusing it would leave a confined reviewer holding a Cluster
-		// they can neither apply nor defuse.
-		if visible, err := ctx.memberVisible(member.ResourceID); err != nil {
-			return err
-		} else if !visible {
-			return ErrReductionMemberNotVisible
 		}
 		member.Ejected = false
 		member.EjectedReason = ""
@@ -244,15 +248,6 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	}
 	if member.ResourceID == cluster.WinnerID {
 		return nil
-	}
-	// A Winner absorbs every Loser's associations and survives the merge, so
-	// making one out of a Resource the caller cannot see would let a Reduction
-	// computed under wider access reach back into what that access no longer
-	// covers.
-	if visible, err := ctx.memberVisible(member.ResourceID); err != nil {
-		return err
-	} else if !visible {
-		return ErrReductionMemberNotVisible
 	}
 
 	// A member outside the Extent may win and may never lose. Promoting past it
@@ -374,17 +369,35 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) e
 	return nil
 }
 
-// memberVisible reports whether the acting principal can read a Cluster member.
+// clusterFullyVisible reports whether every member of a Cluster that still
+// matters is one the acting principal can read.
 //
 // Asked through the scoped handle, so "deleted" and "outside your subtree" are
-// the same answer — which is the answer this file wants: neither is a Resource
-// the caller may promote or re-arm.
-func (ctx *MahresourcesContext) memberVisible(resourceID uint) (bool, error) {
-	var count int64
-	if err := ctx.db.Model(&models.Resource{}).Where("resources.id = ?", resourceID).Count(&count).Error; err != nil {
+// one answer, which is what keeps the refusal from being an oracle. A Loser of a
+// Cluster whose merge is confirmed is exempt: it was destroyed by this very row,
+// so its absence is the record of what happened rather than something withheld —
+// the same rule the render applies.
+func (ctx *MahresourcesContext) clusterFullyVisible(cluster *models.ReductionCluster) (bool, error) {
+	wanted := make([]uint, 0, len(cluster.Members))
+	for _, member := range cluster.Members {
+		if cluster.Merged && member.IsLoser(cluster.WinnerID) {
+			continue
+		}
+		wanted = append(wanted, member.ResourceID)
+	}
+	if len(wanted) == 0 {
+		return true, nil
+	}
+	found, err := ctx.loadResourcesByID(wanted)
+	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	for _, id := range wanted {
+		if found[id] == nil {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func findCluster(plan *models.ResourceReductionPlan, id string) *models.ReductionCluster {

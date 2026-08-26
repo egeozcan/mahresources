@@ -45,7 +45,7 @@
         <p class="text-sm text-stone-600" data-testid="reduction-extent">
             {{ extent.resourceCount }} Resource{% if extent.resourceCount != 1 %}s{% endif %}
             and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected.
-            {% if raw.ComputedAt %}It reached {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} when it was last computed.{% endif %}
+            {% if raw.ComputedAt and coverage.trusted %}It reached {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} when it was last computed.{% endif %}
             {% if extent.groupCount %}A Group's descendants are included, and are resolved each time the Reduction is computed.{% endif %}
         </p>
         {% if extent.enteredSince %}
@@ -78,6 +78,15 @@
 
     <section class="mb-6" aria-labelledby="reduction-coverage-heading">
         <h2 id="reduction-coverage-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">Coverage</h2>
+        {% if not coverage.trusted %}
+        {# These figures were measured under whatever access the reviewer who       #}
+        {# computed the plan had. Printing them to somebody who can now reach less  #}
+        {# of the selection states how much is out there, which is what every other #}
+        {# surface here refuses to state.                                           #}
+        <p class="text-sm text-stone-600" data-testid="reduction-coverage">
+            This Reduction was computed over more than you can currently see, so its coverage figures are not shown.
+        </p>
+        {% else %}
         <p class="text-sm text-stone-600" data-testid="reduction-coverage">
             {{ coverage.contentHashed }} of {{ coverage.extentSize }} Resources in the Extent carry a content hash{% if coverage.hashless %}; {{ coverage.hashless }} do not and cannot be matched byte-identically{% endif %}.
             {{ coverage.perceptualHashed }} of {{ coverage.perceptualEligible }} Resources of a perceptually hashable type have a perceptual hash.
@@ -87,6 +96,7 @@
             {{ coverage.perceptualMissing }} eligible Resource{% if coverage.perceptualMissing != 1 %}s are{% else %} is{% endif %} unhashed or failed, so Near-Identical matching is incomplete.
             <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/admin/overview">Recompute similarity</a> to fix the cause.
         </p>
+        {% endif %}
         {% endif %}
     </section>
 

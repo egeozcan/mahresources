@@ -54,7 +54,13 @@ type ReductionReview struct {
 	// reads as failed and is recomputable.
 	Status   string
 	Coverage models.ReductionCoverage
-	Clusters []ReductionClusterView
+	// CoverageTrusted is false when this principal can reach less of the selection
+	// than the plan was computed over. The coverage figures are a measurement made
+	// under whatever access the computing reviewer had, so showing them to someone
+	// whose subtree has since shrunk states how much is out there — which is the
+	// thing every other surface here refuses to state.
+	CoverageTrusted bool
+	Clusters        []ReductionClusterView
 
 	ClusterCount int
 	// CheckedCount is how many Clusters an apply would act on across the WHOLE

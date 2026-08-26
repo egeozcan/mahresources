@@ -165,6 +165,7 @@ func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, gener
 			Update("compute_job_id", jobID)
 		if res.Error != nil {
 			if isLockContentionError(res.Error) {
+				waitOutContention(attempt)
 				continue
 			}
 			return res.Error
@@ -182,6 +183,7 @@ func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, gener
 		var current models.ResourceReduction
 		if err := ctx.db.Select("compute_job_id").First(&current, reductionID).Error; err != nil {
 			if isLockContentionError(err) {
+				waitOutContention(attempt)
 				continue
 			}
 			return err
@@ -386,6 +388,7 @@ func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID strin
 		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
 			if isLockContentionError(err) {
+				waitOutContention(attempt)
 				continue
 			}
 			return err
@@ -415,6 +418,7 @@ func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID strin
 			// only record that the run succeeded, and losing it would leave the
 			// Reduction reading as failed with a finished plan nobody can see.
 			if isLockContentionError(err) {
+				waitOutContention(attempt)
 				continue
 			}
 			return err
@@ -435,6 +439,7 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 			// up, so losing the read to a lock leaves the row stranded for an hour
 			// — which is the deadline doing the job of a bug rather than its own.
 			if isLockContentionError(err) {
+				waitOutContention(attempt)
 				continue
 			}
 			return err
@@ -454,6 +459,7 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 		})
 		if err != nil {
 			if isLockContentionError(err) {
+				waitOutContention(attempt)
 				continue
 			}
 			return err
@@ -495,4 +501,15 @@ func ensureDistinctClusterIDs(clusters []*models.ReductionCluster) {
 			}
 		}
 	}
+}
+
+// waitOutContention pauses between compare-and-set attempts that lost to a lock.
+//
+// Five immediate retries are five attempts inside a few microseconds, which is no
+// wait at all: a lock held across them is held across all of them, and the writer
+// gives up on a Reduction that is merely busy. Backing off turns the retry budget
+// into an actual window. Deliberately short — this runs on a queue worker, and the
+// alternative to waiting is a row stranded until its deadline.
+func waitOutContention(attempt int) {
+	time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
 }

@@ -169,6 +169,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		Reduction:           reduction,
 		Status:              EffectiveReductionStatus(reduction),
 		Coverage:            plan.Coverage,
+		CoverageTrusted:     len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) && extent.SelectedGroups == len(storedExtent.GroupIDs),
 		Clusters:            views,
 		ClusterCount:        len(plan.Clusters),
 		CheckedCount:        checked,

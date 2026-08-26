@@ -85,13 +85,9 @@ func statusCodeForError(err error, fallback int) int {
 		errors.Is(err, application_context.ErrReductionClusterSettled) {
 		return http.StatusConflict
 	}
-	// Two refusals about what the caller may do rather than about the state of
-	// the row. A Resource outside the caller's subtree is 403 for the same reason
-	// every other scope refusal is; an unacknowledged oversized Cluster is 400,
-	// because the request is simply missing a field it must carry.
-	if errors.Is(err, application_context.ErrReductionMemberNotVisible) {
-		return http.StatusForbidden
-	}
+	// A refusal about the request rather than about the state of the row: an
+	// unacknowledged oversized Cluster, or a restore with no match to put back.
+	// Both are 400, because the request is missing something it must carry.
 	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) ||
 		errors.Is(err, application_context.ErrReductionRestoreUnpaired) {
 		return http.StatusBadRequest
