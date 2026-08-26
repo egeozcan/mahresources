@@ -64,7 +64,7 @@
                        disabled
                        :disabled="busy || {% if cluster.Withheld %}true{% else %}false{% endif %} || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        @change="act('{{ cluster.ID }}', $event.target.checked ? 'check' : 'uncheck')"
-                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                       class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster
             </label>
 
@@ -130,7 +130,7 @@
                          alt="Preview of {{ member.Resource.Name }}" loading="lazy">
                 </a>
                 <p class="text-xs text-stone-700 mt-1 max-w-[10rem] truncate">
-                    <a href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>
+                    <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>
                 </p>
                 <p class="text-xs text-stone-500">
                     {% if member.Resource.Width %}{{ member.Resource.Width }}&times;{{ member.Resource.Height }} &middot; {% endif %}

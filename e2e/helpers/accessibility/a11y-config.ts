@@ -25,6 +25,7 @@ export const STATIC_PAGES = [
   { path: '/templatePartials', name: 'Template partials list' },
   { path: '/logs', name: 'Logs list' },
   { path: '/downloads', name: 'Downloads list' },
+  { path: '/reductions', name: 'Resource Reductions list' },
 
   // Pages the 2026-07-29 UI bug hunt touched that this sweep did not cover.
   // /search was added by Batch 6 (finding 32) and had never been audited at all;

@@ -3770,3 +3770,26 @@ progress.export-progress-bar::-moz-progress-bar {
     padding: 0.125rem 0.5rem;
     font-size: 0.6875rem;
 }
+
+/* WCAG 2.2 SC 2.5.8. A checkbox or radio painted at its browser default is 13-16px
+   square, and every control on this page decides whether files are destroyed or
+   whether the pixels behind them stay recoverable — not a place for a target
+   somebody has to aim at. min-width/min-height rather than width/height, following
+   .remove-target: the control keeps its own visual size and only the target grows. */
+.reduction-control {
+    min-width: 1.5rem;
+    min-height: 1.5rem;
+}
+
+/* The member's own name, which is also the link to it. An 11px line of text is a
+   ~13px tall target; this floors it without changing the strip's layout, because
+   the name already sits on its own line. */
+.reduction-member-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

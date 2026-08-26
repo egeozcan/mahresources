@@ -265,3 +265,38 @@ skeptic thinks it is fine" is not a specification.
   rewrites `resources.hash` but leaves the similarity pairs untouched, so re-checking the pair table
   alone cannot detect that the reviewed bytes are gone. D17's Near-Identical pair re-check stays, but
   it is no longer the thing being relied on.
+
+## Implementation record
+
+Built on `feat/resource-reduction` in six commits. The prerequisite fixes to the
+merge primitive (R1, R5, and the per-location reference count) landed on master
+first, as `47b0d504`.
+
+Everything above is implemented, with these decisions taken during the build that
+the design did not settle:
+
+- **A Cluster holds at most one out-of-Extent member, always as its Winner.** D7
+  says such a member may win and may never lose, which is unsatisfiable for a
+  Cluster holding two — and greedy star produces that from one in-Extent seed with
+  two out-of-Extent neighbours. It is also wrong for one that is *worse* than the
+  best in-Extent member: that is not the better copy elsewhere D7 wanted to
+  surface, and forcing it to win would merge the reviewer's own Resources into
+  something they never selected. Both cases drop the surplus out-of-Extent members
+  from the Cluster entirely, which makes "nothing outside the Extent is ever
+  destroyed" structural rather than a rule apply has to remember.
+- **Ejecting the Winner is refused**, with the instruction that resolves it
+  (promote another member first). D9 did not say what a Cluster with no Winner
+  would mean, and the answer is that it cannot mean anything.
+- **An explicit check or uncheck freezes the Cluster**, as promote, eject and skip
+  do. D15 excludes only *arriving* checked, and ticking a box is a judgement.
+- **Apply takes no outer transaction.** `MergeResources` opens its own and runs its
+  file cleanup after that commits, from a reference count taken inside it; an outer
+  transaction would make "after commit" untrue.
+- **Compute retries on lock contention** and **claims its job id from inside the
+  worker**. `SubmitJobWithOptions` starts the goroutine before it returns, so a
+  fast run could finish, read its own empty `compute_job_id` as "a newer job owns
+  this row", discard its finished plan and strand the Reduction at `computing`.
+  Measured at one run in three of the `api_tests` package before the fix.
+
+R10 is unchanged and still a measurement rather than a design: apply pays
+`ScrubResourcesFromBlocks` once per Cluster, inside each merge's own transaction.

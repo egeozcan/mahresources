@@ -22,7 +22,6 @@
         {% endfor %}
     </section>
 
-    {% include "/partials/pagination.tpl" %}
 {% endblock %}
 
 {% block sidebar %}
@@ -35,7 +34,7 @@
                     {% if status.Link %}
                     <label class="flex items-center gap-2 mt-1 text-sm text-stone-700">
                         <input type="checkbox" name="Status" value="{{ status.Link }}" {% if status.Active %}checked{% endif %}
-                               class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                               class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                         {{ status.Title }}
                     </label>
                     {% endif %}

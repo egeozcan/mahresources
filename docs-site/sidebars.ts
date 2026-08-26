@@ -59,6 +59,7 @@ const sidebars: SidebarsConfig = {
         'features/export-import',
         'features/versioning',
         'features/image-similarity',
+        'features/resource-reduction',
         'features/saved-queries',
         'features/custom-templates',
         'features/meta-schemas',

@@ -107,7 +107,8 @@
                 </div>
             {% endfor %}
         </div>
-        {% include "/partials/pagination.tpl" %}
+        {# No pagination include here: base.tpl already renders one for the page,   #}
+        {# and a second nav with the same label is a duplicate landmark.            #}
 
         {% if review.ClusterCount %}
         <div class="mt-4 flex flex-col gap-2">
@@ -176,12 +177,12 @@
                 <legend class="block text-sm font-medium font-mono text-stone-700">Matching mode</legend>
                 <label class="flex items-center gap-2 mt-1 text-sm text-stone-700">
                     <input type="radio" name="matchingMode" value="both" {% if raw.MatchingMode == "both" %}checked{% endif %}
-                           class="border-stone-300 text-amber-700 focus:ring-amber-600">
+                           class="reduction-control border-stone-300 text-amber-700 focus:ring-amber-600">
                     Identical and Near-Identical Resources
                 </label>
                 <label class="flex items-center gap-2 mt-1 text-sm text-stone-700">
                     <input type="radio" name="matchingMode" value="identical" {% if raw.MatchingMode == "identical" %}checked{% endif %}
-                           class="border-stone-300 text-amber-700 focus:ring-amber-600">
+                           class="reduction-control border-stone-300 text-amber-700 focus:ring-amber-600">
                     Identical Resources only
                 </label>
                 <p class="text-xs text-stone-500 mt-1">
@@ -192,8 +193,22 @@
 
             <fieldset>
                 <legend class="block text-sm font-medium font-mono text-stone-700">Keep a Loser's file as a version of the Winner</legend>
-                {% include "/partials/form/checkboxInput.tpl" with id='keepAsVersionNear' name='keepAsVersionNear' label='For Near-Identical Clusters' value=raw.KeepAsVersionNear %}
-                {% include "/partials/form/checkboxInput.tpl" with id='keepAsVersionIdentical' name='keepAsVersionIdentical' label='For Identical Clusters' value=raw.KeepAsVersionIdentical %}
+                {# Not partials/form/checkboxInput.tpl: that renders a 14px box, which is #}
+                {# under the WCAG 2.2 SC 2.5.8 24px floor. These two govern whether a     #}
+                {# Loser's pixels are recoverable, so they are not controls to make       #}
+                {# fiddly.                                                                #}
+                <label for="keepAsVersionNear" class="flex items-center gap-2 mt-1 text-sm text-stone-700">
+                    <input id="keepAsVersionNear" name="keepAsVersionNear" type="checkbox" value="1"
+                           {% if raw.KeepAsVersionNear %}checked{% endif %}
+                           class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    For Near-Identical Clusters
+                </label>
+                <label for="keepAsVersionIdentical" class="flex items-center gap-2 mt-1 text-sm text-stone-700">
+                    <input id="keepAsVersionIdentical" name="keepAsVersionIdentical" type="checkbox" value="1"
+                           {% if raw.KeepAsVersionIdentical %}checked{% endif %}
+                           class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    For Identical Clusters
+                </label>
                 <p class="text-xs text-stone-500 mt-1">
                     Turning these off does not by itself reclaim disk space. A merge moves every Loser version onto
                     the Winner, and an upload always creates one, so the Loser's file stays referenced either way.
