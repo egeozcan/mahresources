@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -25,12 +26,23 @@ func computeReduction(t *testing.T, tc *TestContext, id uint) models.ResourceRed
 }
 
 // awaitReduction polls until the Reduction leaves `computing`.
+//
+// A read here can lose to the clustering job's own write and come back
+// "database table is locked". That is this fixture's shared cache, not the
+// feature: SQLITE_LOCKED is a shared-cache table lock, which does not go through
+// busy_timeout and does not exist in the WAL configuration the app actually runs
+// under, where a reader never blocks on a writer. The poll retries it; a failure
+// that is not contention still fails the test immediately.
 func awaitReduction(t *testing.T, tc *TestContext, id uint) models.ResourceReductionPlan {
 	t.Helper()
 	owner, restricted := asAdmin()
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		red, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
+		if err != nil && strings.Contains(err.Error(), "is locked") && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
 		require.NoError(t, err)
 		if red.Status != models.ReductionStatusComputing {
 			require.Equal(t, models.ReductionStatusReady, red.Status, "clustering failed: %s", red.ComputeError)
