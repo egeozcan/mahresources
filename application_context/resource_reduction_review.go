@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"strconv"
+
 	"mahresources/contracts"
 	"mahresources/models"
 )
@@ -137,6 +139,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 				Resource:        resource,
 				IsWinner:        member.ResourceID == cluster.WinnerID,
 				IsLoser:         member.IsLoser(cluster.WinnerID),
+				DistanceLabel:   reductionDistanceLabel(member.Distance),
 			})
 		}
 		view.Position = len(views) + 1
@@ -242,6 +245,17 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 		return "Reviewed"
 	}
 	return "Open"
+}
+
+// reductionDistanceLabel renders a member's stored perceptual distance, and
+// nothing at all when it has none. A Winner has no distance to itself and the
+// Identical tier has no distances anywhere, so the empty string is the common
+// case rather than an error one.
+func reductionDistanceLabel(distance *uint8) string {
+	if distance == nil {
+		return ""
+	}
+	return "distance " + strconv.FormatUint(uint64(*distance), 10)
 }
 
 // redactWithheldCluster strips a Cluster the caller may not fully see down to the

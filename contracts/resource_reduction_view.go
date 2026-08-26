@@ -17,6 +17,13 @@ type ReductionMemberView struct {
 	Resource *models.Resource
 	IsWinner bool
 	IsLoser  bool
+	// DistanceLabel is the stored perceptual distance in words, and empty when
+	// there is none — a Winner, or any member of an Identical Cluster. It is a
+	// rendered label for the same reason DecidedByLabel is, and for one more: a
+	// template cannot ask whether Distance is set. Pongo2 has no nil literal, so
+	// `member.Distance != nil` compares a typed nil pointer against an undefined
+	// variable and is true, which put a bare "distance" chip on every Winner.
+	DistanceLabel string
 }
 
 // ReductionClusterView is one Cluster ready to render.

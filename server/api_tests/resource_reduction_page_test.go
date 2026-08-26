@@ -83,3 +83,42 @@ func uintToPath(id uint) string {
 	}
 	return digits
 }
+
+// Only a member that has a stored perceptual distance shows one.
+//
+// A template cannot ask this question for itself: pongo2 has no nil literal, so
+// `member.Distance != nil` compares a typed nil pointer against an undefined
+// variable and is true, which put a bare "distance" chip on every Winner and on
+// every member of every Identical Cluster.
+func TestOnlyAMemberWithAStoredDistanceShowsOne(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	best := addImage(t, tc, "best.jpg", 800, 800)
+	worse := addImage(t, tc, "worse.jpg", 400, 400)
+	pairThem(t, tc, best, worse, 4)
+
+	red := createReduction(t, tc, "Near render", []uint{best.ID, worse.ID})
+	computeReduction(t, tc, red.ID)
+
+	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
+	assert.Contains(t, body, "distance 4", "the Loser's stored distance to the Winner is shown")
+	assert.Equal(t, 1, strings.Count(body, "reduction-badge--distance"),
+		"and nobody else's is: a Winner has no distance to itself")
+}
+
+// The Identical tier has no distances at all — it is a content-hash grouping.
+func TestIdenticalMembersShowNoDistanceAtAll(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	small := addWithHash(t, tc, "small.txt", "small body", "shared-hash")
+	large := addWithHash(t, tc, "large.txt", "large body", "shared-hash")
+	setDimensions(t, tc, small.ID, 100, 100)
+	setDimensions(t, tc, large.ID, 400, 100)
+
+	red := createReduction(t, tc, "Identical render", []uint{small.ID, large.ID})
+	computeReduction(t, tc, red.ID)
+
+	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
+	assert.NotContains(t, body, "reduction-badge--distance",
+		"byte-identity is not a perceptual distance")
+}

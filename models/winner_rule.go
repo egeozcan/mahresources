@@ -366,13 +366,30 @@ func durationMargin(d time.Duration, direction string) string {
 		return ""
 	}
 	switch {
+	case d < time.Second:
+		// "0 seconds earlier" reads as no margin at all, which is the opposite of
+		// what a sub-second lead means. One bulk upload writes many rows inside a
+		// second, and an Identical Cluster falls through to creation order by
+		// construction, so this is the common case there rather than a rare one.
+		// ratioMargin answers the same question with "a hair's breadth".
+		return "less than a second " + direction
 	case d < time.Minute:
-		return fmt.Sprintf("%d seconds %s", int(d.Seconds()), direction)
+		return countedUnit(int(d.Seconds()), "second", direction)
 	case d < time.Hour:
-		return fmt.Sprintf("%d minutes %s", int(d.Minutes()), direction)
+		return countedUnit(int(d.Minutes()), "minute", direction)
 	case d < 48*time.Hour:
-		return fmt.Sprintf("%d hours %s", int(d.Hours()), direction)
+		return countedUnit(int(d.Hours()), "hour", direction)
 	default:
-		return fmt.Sprintf("%d days %s", int(d.Hours()/24), direction)
+		return countedUnit(int(d.Hours()/24), "day", direction)
 	}
+}
+
+// countedUnit renders "1 second earlier" rather than "1 seconds earlier". Every
+// bucket above can produce a count of one — the sub-second case is handled
+// before them, so this is reached with a genuine 1 rather than a rounded 0.
+func countedUnit(count int, unit, direction string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s %s", unit, direction)
+	}
+	return fmt.Sprintf("%d %ss %s", count, unit, direction)
 }

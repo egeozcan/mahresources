@@ -181,8 +181,8 @@
                 {% if not member.InExtent %}
                     <span class="reduction-badge reduction-badge--outside">Outside the Extent</span>
                 {% endif %}
-                {% if member.Distance != nil %}
-                    <span class="reduction-badge reduction-badge--distance">distance {{ member.Distance }}</span>
+                {% if member.DistanceLabel %}
+                    <span class="reduction-badge reduction-badge--distance">{{ member.DistanceLabel }}</span>
                 {% endif %}
             </p>
 

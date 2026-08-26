@@ -98,3 +98,51 @@ func TestZeroAssociationsIsACountNotAMissingValue(t *testing.T) {
 		t.Errorf("most associations: the one with some should win, got %d", got)
 	}
 }
+
+// A lead too short to print as a whole second must not print as none.
+//
+// One bulk upload writes many rows inside a second, so an Identical Cluster —
+// where every earlier criterion ties by construction — routinely falls through to
+// creation order with a sub-second gap. Rendering that as "by 0 seconds earlier"
+// says the opposite of what happened: it reads as no margin at all, on the one
+// tier where the margin is the only thing distinguishing the two copies.
+// ratioMargin already answers this shape of question with "a hair's breadth".
+func TestASubSecondLeadIsNotReportedAsZero(t *testing.T) {
+	base := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	mk := func(id uint, created time.Time) WinnerCandidate {
+		return WinnerCandidate{Resource: &Resource{ID: id, CreatedAt: created}}
+	}
+	rule := []string{WinnerCriterionCreatedAsc}
+
+	criterion, margin, undecided := DecidingCriterion(rule, mk(1, base), mk(2, base.Add(300*time.Millisecond)))
+	if undecided || criterion != WinnerCriterionCreatedAsc {
+		t.Fatalf("expected the creation criterion to decide, got %q undecided=%v", criterion, undecided)
+	}
+	if margin == "" {
+		t.Fatal("a real lead reported no margin at all")
+	}
+	if margin == "0 seconds earlier" {
+		t.Fatalf("a %v lead was reported as %q", 300*time.Millisecond, margin)
+	}
+
+	// A lead that does round to whole seconds still reads as seconds.
+	_, seconds, _ := DecidingCriterion(rule, mk(1, base), mk(2, base.Add(5*time.Second)))
+	if seconds != "5 seconds earlier" {
+		t.Fatalf("expected \"5 seconds earlier\", got %q", seconds)
+	}
+
+	// And a count of one is singular. Every bucket can produce one.
+	for _, c := range []struct {
+		gap  time.Duration
+		want string
+	}{
+		{90 * time.Minute, "1 hour earlier"},
+		{72 * time.Hour, "3 days earlier"},
+		{25 * time.Hour, "25 hours earlier"},
+		{61 * time.Second, "1 minute earlier"},
+	} {
+		if _, got, _ := DecidingCriterion(rule, mk(1, base), mk(2, base.Add(c.gap))); got != c.want {
+			t.Errorf("a %v lead read as %q, want %q", c.gap, got, c.want)
+		}
+	}
+}
