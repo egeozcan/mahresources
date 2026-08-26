@@ -46,6 +46,33 @@
                 </span>
             </div>
         </div>
+
+        {% if cluster.State != "applied" %}
+        <div class="flex items-center gap-2 flex-wrap">
+            <label class="flex items-center gap-2 text-sm text-stone-700">
+                <input type="checkbox"
+                       data-testid="cluster-checkbox"
+                       {% if cluster.Checked %}checked{% endif %}
+                       {% if cluster.Withheld %}disabled{% endif %}
+                       :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       @change="act('{{ cluster.ID }}', $event.target.checked ? 'check' : 'uncheck')"
+                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                Apply this Cluster
+            </label>
+
+            {% if cluster.State == "skipped" %}
+            <button type="button" data-testid="cluster-reopen"
+                    :disabled="busy"
+                    @click="act('{{ cluster.ID }}', 'reopen')"
+                    class="reduction-action">Reopen</button>
+            {% else %}
+            <button type="button" data-testid="cluster-skip"
+                    :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                    @click="act('{{ cluster.ID }}', 'skip')"
+                    class="reduction-action">Skip</button>
+            {% endif %}
+        </div>
+        {% endif %}
     </header>
 
     {% if cluster.Lossy %}
@@ -64,9 +91,17 @@
     <p class="text-sm text-amber-800 px-3" role="note" data-testid="cluster-oversized">
         An unusually large Near-Identical Cluster. Expand it and look before you check it.
     </p>
+    <p class="px-3" x-show="!isExpanded('{{ cluster.ID }}', true)">
+        <button type="button" data-testid="cluster-expand"
+                @click="expand('{{ cluster.ID }}')"
+                aria-controls="cluster-{{ cluster.ID }}-members"
+                class="reduction-action">Expand these {{ cluster.Members|length }} Resources</button>
+    </p>
     {% endif %}
 
-    <div class="reduction-cluster-members flex flex-wrap gap-3 p-3">
+    <div class="reduction-cluster-members flex flex-wrap gap-3 p-3"
+         id="cluster-{{ cluster.ID }}-members"
+         x-show="isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
         {% for member in cluster.Members %}
         <div class="reduction-member{% if member.IsWinner %} reduction-member--winner{% endif %}{% if member.Ejected %} reduction-member--ejected{% endif %}"
              data-testid="reduction-member"
@@ -112,6 +147,28 @@
                     <span class="reduction-badge reduction-badge--distance">distance {{ member.Distance }}</span>
                 {% endif %}
             </p>
+
+            {% if cluster.State != "applied" %}
+            <div class="flex flex-wrap gap-1 mt-1">
+                {% if not member.IsWinner and not member.Ejected %}
+                <button type="button" data-testid="member-promote"
+                        :disabled="busy"
+                        @click="act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})"
+                        class="reduction-action reduction-action--small">Make Winner</button>
+                {% endif %}
+                {% if member.Ejected %}
+                <button type="button" data-testid="member-restore"
+                        :disabled="busy"
+                        @click="act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})"
+                        class="reduction-action reduction-action--small">Put back</button>
+                {% elif not member.IsWinner %}
+                <button type="button" data-testid="member-eject"
+                        :disabled="busy"
+                        @click="act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})"
+                        class="reduction-action reduction-action--small">Eject</button>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>

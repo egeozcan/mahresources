@@ -106,8 +106,9 @@ var downloadIDListRequestType = reflect.TypeOf(struct {
 
 // The bodies the Resource Reduction endpoints take.
 var (
-	reductionCreatorType = reflect.TypeOf(query_models.ResourceReductionCreator{})
-	reductionEditorType  = reflect.TypeOf(query_models.ResourceReductionEditor{})
+	reductionCreatorType  = reflect.TypeOf(query_models.ResourceReductionCreator{})
+	reductionEditorType   = reflect.TypeOf(query_models.ResourceReductionEditor{})
+	reductionOverrideType = reflect.TypeOf(query_models.ReductionOverride{})
 )
 
 var authLoginRequestType = reflect.TypeOf(struct {
@@ -2577,6 +2578,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Description:          "Starts the background clustering job for a Resource Reduction and returns the row with its computing status. Clusters the reviewer has already acted on are carried forward untouched. Refused with 409 while a run is already in flight.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/cluster",
+		OperationID:          "overrideResourceReductionCluster",
+		Summary:              "Record a review decision about one Cluster",
+		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionOverrideType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

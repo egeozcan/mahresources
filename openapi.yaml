@@ -1197,6 +1197,19 @@ components:
                 UpdatedBefore:
                     type: string
             type: object
+        ReductionOverride:
+            properties:
+                action:
+                    type: string
+                clusterId:
+                    type: string
+                id:
+                    type: integer
+                resourceId:
+                    type: integer
+                version:
+                    type: integer
+            type: object
         RelationshipTypeEditorQuery:
             properties:
                 Description:
@@ -5841,6 +5854,27 @@ paths:
                         application/json: {}
                     description: Successful response
             summary: Create a Resource Reduction, or widen an existing one
+            tags:
+                - reductions
+    /v1/reduction/cluster:
+        post:
+            description: Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.
+            operationId: overrideResourceReductionCluster
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReductionOverride'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReductionOverride'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Record a review decision about one Cluster
             tags:
                 - reductions
     /v1/reduction/compute:

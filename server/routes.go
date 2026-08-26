@@ -852,6 +852,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/reduction/compute").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api_handlers.GetResourceReductionComputeHandler(scopedCtx(appContext, r))(w, r)
 	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/cluster").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionOverrideHandler(scopedCtx(appContext, r))(w, r)
+	})
 
 	// Group exports
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportEstimateHandler))

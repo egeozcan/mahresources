@@ -30,4 +30,7 @@ type ResourceReductionWriter interface {
 	// that user's own jobs panel — an ownerless job is invisible to every
 	// non-admin, including the one who asked for it.
 	RequestReductionCompute(id uint, ownerUserID *uint, ownerRestricted bool, actorUserID *uint) (*models.ResourceReduction, error)
+	// OverrideReductionCluster records one review decision — promote, eject,
+	// restore, skip, reopen, check or uncheck.
+	OverrideReductionCluster(override *query_models.ReductionOverride, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
 }

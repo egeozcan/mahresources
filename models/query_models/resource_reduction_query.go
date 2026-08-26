@@ -59,3 +59,25 @@ type ResourceReductionEditor struct {
 	// carrying a stale one is refused rather than merged.
 	Version uint `json:"version" schema:"version"`
 }
+
+// ReductionOverride is one review decision about one Cluster.
+//
+// Version is what the caller last saw. Every override, the recompute and the
+// apply all write the same JSON document, so a decision taken from a stale page
+// is refused rather than merged — merging two judgements about which files to
+// delete is not something that can be done safely.
+type ReductionOverride struct {
+	ID        uint   `json:"id" schema:"id"`
+	Version   uint   `json:"version" schema:"version"`
+	ClusterID string `json:"clusterId" schema:"clusterId"`
+	Action    string `json:"action" schema:"action"`
+	// ResourceID names the member a promote, eject or restore acts on. Unused by
+	// the whole-Cluster actions.
+	ResourceID uint `json:"resourceId" schema:"resourceId"`
+}
+
+// ReductionApply is a request to apply what is checked.
+type ReductionApply struct {
+	ID      uint `json:"id" schema:"id"`
+	Version uint `json:"version" schema:"version"`
+}

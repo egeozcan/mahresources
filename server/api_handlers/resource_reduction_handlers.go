@@ -174,6 +174,35 @@ func GetResourceReductionComputeHandler(ctx ResourceReductionContext) func(http.
 	}
 }
 
+// GetResourceReductionOverrideHandler handles POST /v1/reduction/cluster.
+//
+// One endpoint for every review decision, because they are all the same write:
+// a change to the plan document, guarded by the version the caller last saw. The
+// response carries the new version so the page can make its next decision without
+// a reload.
+func GetResourceReductionOverrideHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var override query_models.ReductionOverride
+		if err := tryFillStructValuesFromRequest(&override, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
+		reduction, err := ctx.OverrideReductionCluster(&override, owner, restricted)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"id":      reduction.ID,
+			"version": reduction.Version,
+		})
+	}
+}
+
 // actingUserID is who a background job belongs to. Nil under auth-off and for the
 // implicit super-user, matching how every other job records its submitter.
 func actingUserID(p *auth.Principal) *uint {

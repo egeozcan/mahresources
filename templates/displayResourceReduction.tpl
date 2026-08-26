@@ -1,7 +1,8 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<div data-testid="reduction-page" data-reduction-id="{{ raw.ID }}" data-reduction-version="{{ raw.Version }}">
+<div data-testid="reduction-page" data-reduction-id="{{ raw.ID }}" data-reduction-version="{{ raw.Version }}"
+     x-data="reductionReview({ reductionId: {{ raw.ID }}, version: {{ raw.Version }} })">
 
     {# Stated plainly and on the page rather than only in a confirm dialog: there #}
     {# is no restore path in this system, so the review is the safety mechanism.  #}
@@ -92,7 +93,8 @@
         <h2 id="reduction-clusters-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">
             Clusters <span class="text-stone-500 font-normal">({{ review.ClusterCount }})</span>
         </h2>
-        <div class="items-container" data-testid="reduction-clusters">
+        <p class="text-sm text-red-700 mb-2" x-show="error" x-cloak x-text="error" role="alert" data-testid="reduction-error"></p>
+        <div class="items-container" data-reduction-clusters data-testid="reduction-clusters">
             {% for cluster in clusters %}
                 {% include "/partials/reductionCluster.tpl" %}
             {% empty %}

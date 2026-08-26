@@ -3740,3 +3740,33 @@ progress.export-progress-bar::-moz-progress-bar {
     color: #166534;
     border-color: #bbf7d0;
 }
+
+.reduction-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.625rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border-radius: 0.375rem;
+    border: 1px solid #d6d3d1;
+    background: #fff;
+    color: #44403c;
+    cursor: pointer;
+}
+
+.reduction-action:hover:not(:disabled) {
+    background: #f5f5f4;
+    border-color: #a8a29e;
+}
+
+.reduction-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.reduction-action--small {
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+}
