@@ -239,6 +239,31 @@ export const navigationMethods = {
     event.preventDefault();
     this.triggerElement = captureTrigger(event);
 
+    // A self-contained gallery: every link inside the marked container, and
+    // nothing else. Used by a Resource Reduction's Clusters, where flicking
+    // through five candidates must not drag in the rest of the page — and where
+    // there is no endpoint to page through, so [data-lightbox-source] below
+    // (which builds a pagination URL out of its own dataset) does not fit.
+    const scopeContainer = event.currentTarget.closest('[data-lightbox-scope]');
+    if (scopeContainer) {
+      const scopedItems = this._extractItemsFromLinks(scopeContainer.querySelectorAll('[data-lightbox-item]'));
+      const scopedIndex = scopedItems.findIndex(item => item.id === resourceId);
+      if (scopedIndex !== -1) {
+        this._itemsBeforeStandalone = this.items;
+        this._paginationBeforeStandalone = this._capturePaginationContext();
+        this.items = scopedItems;
+        this.baseUrl = '';
+        this.currentPage = 1;
+        this.loadedPages = new Set([1]);
+        this.hasNextPage = false;
+        this.hasPrevPage = false;
+        this._previewSeeded = false;
+        this._ownsPageGallery = false;
+        this.open(scopedIndex);
+        return;
+      }
+    }
+
     // Check if inside a container with a lightbox source (multi-section pages)
     const sourceContainer = event.currentTarget.closest('[data-lightbox-source]');
     if (sourceContainer) {

@@ -30,9 +30,7 @@
             </div>
             <div>
                 <dt class="font-mono text-stone-500">Last computed</dt>
-                <dd class="text-stone-800" data-testid="reduction-computed-at">
-                    {% if raw.ComputedAt %}{{ raw.ComputedAt|date:"2006-01-02 15:04" }}{% else %}Never{% endif %}
-                </dd>
+                <dd class="text-stone-800" data-testid="reduction-computed-at">{{ reduction.ComputedAtLabel }}</dd>
             </div>
         </dl>
         {% if raw.ComputeError %}
@@ -44,13 +42,70 @@
         <h2 id="reduction-extent-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">Extent</h2>
         <p class="text-sm text-stone-600" data-testid="reduction-extent">
             {{ extent.resourceCount }} Resource{% if extent.resourceCount != 1 %}s{% endif %}
-            and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected.
+            and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected,
+            reaching {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} right now.
             {% if extent.groupCount %}A Group's descendants are included, and are resolved each time the Reduction is computed.{% endif %}
         </p>
+        {% if extent.enteredSince %}
+        <p class="text-sm text-amber-800 mt-1" data-testid="reduction-drift">
+            {{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s have{% else %} has{% endif %}
+            entered the Extent since it was last computed. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.
+        </p>
+        {% endif %}
         <p class="text-sm text-stone-500 mt-1">
             Add more from the bulk bar on <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/resources">the resources list</a>
             or <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/groups">the groups list</a>.
         </p>
+
+        <form method="post" action="/v1/reduction/compute" class="mt-3 no-ajax">
+            <input type="hidden" name="id" value="{{ raw.ID }}">
+            <input type="hidden" name="version" value="{{ raw.Version }}">
+            <button type="submit"
+                    data-testid="reduction-compute"
+                    {% if reduction.StatusEffective == "computing" %}disabled{% endif %}
+                    class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                {% if raw.ComputedAt %}Recompute{% else %}Compute Clusters{% endif %}
+            </button>
+        </form>
+        {% if reduction.StatusEffective == "computing" %}
+        <p class="text-sm text-stone-600 mt-1" data-testid="reduction-computing">
+            Clustering is running. Its progress is in the jobs panel; this page shows the result when it lands.
+        </p>
+        {% endif %}
+    </section>
+
+    <section class="mb-6" aria-labelledby="reduction-coverage-heading">
+        <h2 id="reduction-coverage-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">Coverage</h2>
+        <p class="text-sm text-stone-600" data-testid="reduction-coverage">
+            {{ coverage.contentHashed }} of {{ coverage.extentSize }} Resources in the Extent carry a content hash{% if coverage.hashless %}; {{ coverage.hashless }} do not and cannot be matched byte-identically{% endif %}.
+            {{ coverage.perceptualHashed }} of {{ coverage.perceptualEligible }} Resources of a perceptually hashable type have a perceptual hash.
+        </p>
+        {% if coverage.poor %}
+        <p class="text-sm text-amber-800 mt-1" data-testid="reduction-coverage-warning">
+            {{ coverage.perceptualMissing }} eligible Resource{% if coverage.perceptualMissing != 1 %}s are{% else %} is{% endif %} unhashed or failed, so Near-Identical matching is incomplete.
+            <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/admin/overview">Recompute similarity</a> to fix the cause.
+        </p>
+        {% endif %}
+    </section>
+
+    <section class="mb-6" aria-labelledby="reduction-clusters-heading">
+        <h2 id="reduction-clusters-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">
+            Clusters <span class="text-stone-500 font-normal">({{ review.ClusterCount }})</span>
+        </h2>
+        <div class="items-container" data-testid="reduction-clusters">
+            {% for cluster in clusters %}
+                {% include "/partials/reductionCluster.tpl" %}
+            {% empty %}
+                <div class="detail-empty">
+                    {% if raw.ComputedAt %}
+                        No Clusters. Nothing in this Extent repeats, as far as what could be examined &mdash; see Coverage above.
+                    {% else %}
+                        Not computed yet. Compute the Clusters to see what repeats.
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        {% include "/partials/pagination.tpl" %}
     </section>
 
     <section class="mb-6" aria-labelledby="reduction-rule-heading">

@@ -15,6 +15,9 @@ type ResourceReductionReader interface {
 	GetResourceReductions(offset, maxResults int, query *query_models.ResourceReductionQuery) ([]models.ResourceReduction, error)
 	GetResourceReductionCount(query *query_models.ResourceReductionQuery) (int64, error)
 	GetResourceReduction(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
+	// GetReductionReview is one page of a Reduction's plan with the Resources
+	// behind it, re-checked against the current principal.
+	GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int) (*ReductionReview, error)
 }
 
 // ResourceReductionWriter provides the mutations the Reduction pages perform.
@@ -22,4 +25,9 @@ type ResourceReductionWriter interface {
 	CreateOrExtendResourceReduction(creator *query_models.ResourceReductionCreator, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
 	UpdateResourceReductionSettings(editor *query_models.ResourceReductionEditor, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
 	DeleteResourceReduction(id uint, ownerUserID *uint, ownerRestricted bool) error
+	// RequestReductionCompute starts the clustering job. actorUserID is the
+	// submitting user, named on the job at construction so its progress reaches
+	// that user's own jobs panel — an ownerless job is invisible to every
+	// non-admin, including the one who asked for it.
+	RequestReductionCompute(id uint, ownerUserID *uint, ownerRestricted bool, actorUserID *uint) (*models.ResourceReduction, error)
 }

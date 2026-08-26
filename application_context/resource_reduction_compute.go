@@ -1,0 +1,316 @@
+package application_context
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"mahresources/download_queue"
+	"mahresources/models"
+)
+
+// ReductionComputeDeadline is how long a clustering job may hold a Reduction at
+// `computing` before the row reads as failed and becomes recomputable.
+//
+// Generic queue jobs are not drained at shutdown — workers.Add exists only on the
+// download path — so a restart mid-clustering leaves the row saying `computing`
+// with nothing alive to move it off, on a table that never expires. The deadline
+// is what prevents a Reduction being stranded there forever, and it is cheaper
+// and safer than teaching the download queue to drain every generic job.
+//
+// A run that legitimately outlives it is not damaged: it still writes its plan,
+// because the write is conditional on the row still naming *this* job. A second
+// compute started in the meantime takes the row's job id with it, and the older
+// run then discards its own result rather than overwriting a newer one.
+const ReductionComputeDeadline = time.Hour
+
+// reductionCASRetries bounds the compare-and-set loop that lands a finished plan.
+// The only writers that can move the version during a compute are a widening of
+// the Extent and a settings edit, neither of which touches the plan, so this loses
+// at most to a burst of those.
+const reductionCASRetries = 5
+
+// ErrReductionComputeSuperseded is what a clustering run reports when the row it
+// was computing for has since been handed to a different run.
+var ErrReductionComputeSuperseded = errors.New("this Resource Reduction is being computed by a newer job")
+
+// RequestReductionCompute puts a Reduction into `computing` and submits the
+// clustering job.
+//
+// Clustering is never synchronous. Even the Identical tier is a GROUP BY over
+// however much of the library the Extent reaches, and the page that asked for it
+// is the page the reviewer is about to work on.
+//
+// The context this is called on is the *request-scoped* one, and the job closure
+// captures it deliberately — the same handoff the group-export job makes. Scope
+// rides inside the db handle, so a confined reviewer's clustering sees their
+// subtree and nothing else without this code having to re-derive that. A db
+// handle's statement context is always Background, so the job does not die when
+// the request that started it returns.
+func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *uint, ownerRestricted bool, actorUserID *uint) (*models.ResourceReduction, error) {
+	reduction, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
+	if err != nil {
+		return nil, err
+	}
+	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
+		return nil, ErrReductionBusy
+	}
+
+	now := time.Now()
+	deadline := now.Add(ReductionComputeDeadline)
+	ok, err := ctx.casReduction(reduction.ID, reduction.Version, map[string]any{
+		"status":               models.ReductionStatusComputing,
+		"computing_started_at": now,
+		"compute_deadline":     deadline,
+		"compute_job_id":       "",
+		"compute_error":        "",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrReductionConflict
+	}
+
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		// No queue in this deployment (the CLI's and the tests' bare contexts).
+		// Running it inline is better than leaving the row at `computing` with
+		// nothing that will ever move it.
+		if runErr := ctx.runReductionCompute(context.Background(), reduction.ID, "", nil); runErr != nil {
+			return nil, runErr
+		}
+		return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
+	}
+
+	// The owner is named at construction rather than set afterwards: under -auth
+	// the SSE stream drops any event whose job the principal may not see, so a
+	// job with no owner yet never reaches its own submitter's jobs panel — which
+	// is the only place the progress of this run is visible.
+	job, err := dm.SubmitJobWithOptions(download_queue.JobOptions{
+		Source:       download_queue.JobSourceResourceReduction,
+		InitialPhase: "clustering",
+		OwnerUserID:  actorUserID,
+	}, func(jobCtx context.Context, j *download_queue.DownloadJob, p download_queue.ProgressSink) error {
+		return ctx.runReductionCompute(jobCtx, reduction.ID, j.ID, p)
+	})
+	if err != nil {
+		// The queue refused it, so nothing is going to compute this. Put the row
+		// back rather than leaving it at `computing` until the deadline.
+		if _, undoErr := ctx.casReduction(reduction.ID, reduction.Version+1, map[string]any{
+			"status":               models.ReductionStatusFailed,
+			"computing_started_at": nil,
+			"compute_deadline":     nil,
+			"compute_error":        truncateRunes(err.Error(), 2000),
+		}); undoErr != nil {
+			ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name, "Could not record a refused clustering job: "+undoErr.Error(), nil)
+		}
+		return nil, err
+	}
+
+	// Bookkeeping, not a decision, so it is written with a plain conditional
+	// UPDATE rather than through the version: it names which job owns the row's
+	// `computing` state, and the guard at write time reads it back.
+	if err := ctx.db.Model(&models.ResourceReduction{}).
+		Where("id = ? AND status = ? AND COALESCE(compute_job_id, '') = ''", reduction.ID, models.ReductionStatusComputing).
+		Update("compute_job_id", job.ID).Error; err != nil {
+		ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name, "Could not record the clustering job id: "+err.Error(), nil)
+	}
+
+	return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
+}
+
+// runReductionCompute is the clustering job's body.
+func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID string, progress download_queue.ProgressSink) error {
+	plan, err := ctx.computeReductionPlan(jobCtx, reductionID, progress)
+	if err != nil {
+		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, err); writeErr != nil {
+			return fmt.Errorf("%w (and the failure could not be recorded: %v)", err, writeErr)
+		}
+		return err
+	}
+	return ctx.storeReductionPlan(reductionID, jobID, plan)
+}
+
+// computeReductionPlan does the work: resolve the Extent, cluster it, and carry
+// forward every judgement already made.
+func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, reductionID uint, progress download_queue.ProgressSink) (models.ResourceReductionPlan, error) {
+	var plan models.ResourceReductionPlan
+
+	// Read unscoped by owner: this runs for the Reduction the request already
+	// authorized, and the principal's *data* scope still applies through the db
+	// handle. Re-applying the owner predicate here would fail under the auth-off
+	// super-user, whose id the job does not carry.
+	reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false)
+	if err != nil {
+		return plan, err
+	}
+
+	storedExtent, err := DecodeReductionExtent(reduction.Extent)
+	if err != nil {
+		return plan, err
+	}
+	previous, err := DecodeReductionPlan(reduction.Plan)
+	if err != nil {
+		return plan, err
+	}
+	rule := DecodeWinnerRule(reduction.WinnerRule)
+
+	if progress != nil {
+		progress.SetPhase("resolving the Extent")
+	}
+	extent, err := ctx.resolveReductionExtent(storedExtent)
+	if err != nil {
+		return plan, err
+	}
+	if err := jobCtx.Err(); err != nil {
+		return plan, err
+	}
+
+	if progress != nil {
+		progress.SetPhase("measuring coverage")
+	}
+	coverage, err := ctx.reductionCoverage(extent)
+	if err != nil {
+		return plan, err
+	}
+	plan.Coverage = coverage
+
+	// A judgement already made is never rearranged by a later compute. Frozen
+	// Clusters carry over whole and their members are held out of the pool, so
+	// growing the Extent can add Clusters but cannot move a Resource out of one
+	// the reviewer has acted on.
+	//
+	// An *applied* Cluster is different, and deliberately: its Losers no longer
+	// exist and its Winner goes back into the pool as an ordinary candidate. What
+	// freezing protects is the judgement, not the Winner's future eligibility —
+	// a duplicate arriving next month has to be catchable.
+	carried := make([]*models.ReductionCluster, 0, len(previous.Clusters))
+	excluded := map[uint]bool{}
+	for _, cluster := range previous.Clusters {
+		if cluster.State == models.ReductionClusterApplied {
+			carried = append(carried, cluster)
+			continue
+		}
+		if !cluster.Frozen() {
+			continue
+		}
+		carried = append(carried, cluster)
+		for _, member := range cluster.Members {
+			excluded[member.ResourceID] = true
+		}
+	}
+
+	if progress != nil {
+		progress.SetPhase("Identical Resources")
+	}
+	identical, err := ctx.clusterIdentical(extent, rule, excluded, func(done, total int64) {
+		if progress != nil {
+			progress.SetPhaseProgress(done, total)
+		}
+	})
+	if err != nil {
+		return plan, err
+	}
+	if err := jobCtx.Err(); err != nil {
+		return plan, err
+	}
+
+	// Every Resource an Identical Cluster claims — Winner and Losers alike —
+	// leaves the pool before the perceptual tier runs. Byte-identical images
+	// decode to identical pixels and are therefore also stored as distance-zero
+	// pairs, so without this the same Resources would appear in two Clusters with
+	// different defaults and possibly different Winners. When both apply, take the
+	// fact.
+	fresh := identical
+	for _, cluster := range identical {
+		for _, member := range cluster.Members {
+			excluded[member.ResourceID] = true
+		}
+	}
+
+	if reduction.MatchingMode != models.MatchingModeIdenticalOnly {
+		if progress != nil {
+			progress.SetPhase("Near-Identical Resources")
+		}
+		near, nearErr := ctx.clusterNearIdentical(jobCtx, extent, rule, excluded, func(done, total int64) {
+			if progress != nil {
+				progress.SetPhaseProgress(done, total)
+			}
+		})
+		if nearErr != nil {
+			return plan, nearErr
+		}
+		fresh = append(fresh, near...)
+	}
+
+	plan.Clusters = append(carried, fresh...)
+	return plan, nil
+}
+
+// storeReductionPlan lands a finished plan.
+//
+// Two guards, doing different jobs. The version compare-and-set is the ordinary
+// one every writer on this row goes through. The job-id check is what makes a run
+// that outlived its own deadline harmless: if a second compute has since claimed
+// the row, this result describes an Extent nobody is waiting for, and writing it
+// would overwrite a newer plan with an older one.
+func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID string, plan models.ResourceReductionPlan) error {
+	encoded, err := encodeJSON(plan)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			return err
+		}
+		if jobID != "" && current.ComputeJobID != jobID {
+			return ErrReductionComputeSuperseded
+		}
+		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
+			"plan":                 encoded,
+			"status":               models.ReductionStatusReady,
+			"computed_at":          now,
+			"computing_started_at": nil,
+			"compute_deadline":     nil,
+			"compute_error":        "",
+		})
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
+	return ErrReductionConflict
+}
+
+func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, jobID string, cause error) error {
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			return err
+		}
+		if jobID != "" && current.ComputeJobID != jobID {
+			// A newer run owns the row. Its own outcome is the one that counts.
+			return nil
+		}
+		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
+			"status":               models.ReductionStatusFailed,
+			"computing_started_at": nil,
+			"compute_deadline":     nil,
+			"compute_error":        truncateRunes(cause.Error(), 2000),
+		})
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
+	return ErrReductionConflict
+}

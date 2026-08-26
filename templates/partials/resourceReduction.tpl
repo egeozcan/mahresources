@@ -20,12 +20,10 @@
                     <span class="card-meta-label">Matching:</span>
                     {{ entity.MatchingLabel }}
                 </span>
-                {% if entity.ComputedAt %}
                 <span class="card-meta-item">
                     <span class="card-meta-label">Last computed:</span>
-                    {{ entity.ComputedAt|date:"2006-01-02 15:04" }}
+                    {{ entity.ComputedAtLabel }}
                 </span>
-                {% endif %}
             </div>
         </div>
     </header>

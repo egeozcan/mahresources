@@ -5843,6 +5843,27 @@ paths:
             summary: Create a Resource Reduction, or widen an existing one
             tags:
                 - reductions
+    /v1/reduction/compute:
+        post:
+            description: Starts the background clustering job for a Resource Reduction and returns the row with its computing status. Clusters the reviewer has already acted on are carried forward untouched. Refused with 409 while a run is already in flight.
+            operationId: computeResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Compute a Resource Reduction's Clusters
+            tags:
+                - reductions
     /v1/reduction/delete:
         post:
             description: Removes a Resource Reduction. Reductions never expire, so this is the only way one goes. The Resources it named are untouched.

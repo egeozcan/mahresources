@@ -113,19 +113,62 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			return addErrContext(err, baseContext)
 		}
 
+		page := http_utils.GetPageParameter(request)
+		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page))
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), int64(review.ClusterCount), review.PageSize, review.Page)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":  reduction.Name,
 			"reduction":  describeReduction(reduction),
 			"raw":        reduction,
+			"review":     review,
+			"clusters":   review.Clusters,
+			"coverage":   describeCoverage(review),
+			"pagination": pagination,
 			"winnerRule": describeWinnerRule(application_context.DecodeWinnerRule(reduction.WinnerRule)),
 			"extent": pongo2.Context{
 				"resourceCount": len(extent.ResourceIDs),
 				"groupCount":    len(extent.GroupIDs),
-				"resourceIds":   extent.ResourceIDs,
-				"groupIds":      extent.GroupIDs,
+				"resolvedSize":  review.ExtentSize,
+				"enteredSince":  review.EnteredSinceCompute,
 			},
 			"winnerCriteria": allWinnerCriteria(),
 		}.Update(baseContext)
+	}
+}
+
+// describeCoverage turns the raw counts into the sentence the page shows, and
+// decides whether to point at the similarity recompute.
+//
+// "No repeats found" and "nothing was hashed" are the two answers this
+// distinguishes, and they call for opposite reactions from the reviewer. The link
+// is offered only when there is something to fix — a library of video and PDFs
+// reads as zero perceptually hashed and that is correct, not a fault.
+func describeCoverage(review *contracts.ReductionReview) pongo2.Context {
+	coverage := review.Coverage
+	missing := coverage.PerceptualEligible - coverage.PerceptualHashed
+	if missing < 0 {
+		missing = 0
+	}
+	hashless := coverage.ExtentSize - coverage.ContentHashed
+	if hashless < 0 {
+		hashless = 0
+	}
+	return pongo2.Context{
+		"extentSize":         coverage.ExtentSize,
+		"contentHashed":      coverage.ContentHashed,
+		"hashless":           hashless,
+		"perceptualEligible": coverage.PerceptualEligible,
+		"perceptualHashed":   coverage.PerceptualHashed,
+		"perceptualMissing":  missing,
+		"poor":               missing > 0,
 	}
 }
 
@@ -140,15 +183,25 @@ type reductionRow struct {
 	StatusLabel     string
 	StatusEffective string
 	MatchingLabel   string
+	// ComputedAtLabel is rendered rather than the column: ComputedAt is a
+	// *time.Time, and pongo2's date filter refuses anything that is not a
+	// time.Time — a nil one takes the whole page down with a 500 rather than
+	// rendering an empty cell.
+	ComputedAtLabel string
 }
 
 func describeReduction(r *models.ResourceReduction) reductionRow {
 	effective := application_context.EffectiveReductionStatus(r)
+	computed := "Never"
+	if r.ComputedAt != nil {
+		computed = r.ComputedAt.Format("2006-01-02 15:04")
+	}
 	return reductionRow{
 		ResourceReduction: r,
 		StatusEffective:   effective,
 		StatusLabel:       reductionStatusLabel(effective),
 		MatchingLabel:     matchingModeLabel(r.MatchingMode),
+		ComputedAtLabel:   computed,
 	}
 }
 

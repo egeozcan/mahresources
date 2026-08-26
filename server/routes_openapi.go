@@ -2569,6 +2569,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/compute",
+		OperationID:          "computeResourceReduction",
+		Summary:              "Compute a Resource Reduction's Clusters",
+		Description:          "Starts the background clustering job for a Resource Reduction and returns the row with its computing status. Clusters the reviewer has already acted on are carried forward untouched. Refused with 409 while a run is already in flight.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	// Jobs routes (canonical paths — aliases for download routes above, plus action routes)
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodPost,

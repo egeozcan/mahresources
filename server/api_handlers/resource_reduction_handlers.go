@@ -145,6 +145,45 @@ func GetResourceReductionDeleteHandler(ctx ResourceReductionContext) func(http.R
 	}
 }
 
+// GetResourceReductionComputeHandler handles POST /v1/reduction/compute.
+//
+// Recompute is always explicit. A Group-scoped Extent drifts as Resources are
+// added to its Groups, and the page reports that drift rather than acting on it:
+// re-clustering is expensive and it is the reviewer who decides when the work
+// restarts.
+func GetResourceReductionComputeHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor query_models.ResourceReductionEditor
+		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		principal := auth.PrincipalFromContext(request.Context())
+		owner, restricted := reductionScope(principal)
+		reduction, err := ctx.RequestReductionCompute(editor.ID, owner, restricted, actingUserID(principal))
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, reductionURL(reduction.ID)) {
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(reduction)
+		}
+	}
+}
+
+// actingUserID is who a background job belongs to. Nil under auth-off and for the
+// implicit super-user, matching how every other job records its submitter.
+func actingUserID(p *auth.Principal) *uint {
+	if p == nil || p.UserID == 0 {
+		return nil
+	}
+	id := p.UserID
+	return &id
+}
+
 func reductionURL(id uint) string {
 	return "/reduction?id=" + strconv.FormatUint(uint64(id), 10)
 }

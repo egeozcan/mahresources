@@ -1661,6 +1661,9 @@
   .max-w-\[6rem\] {
     max-width: 6rem;
   }
+  .max-w-\[10rem\] {
+    max-width: 10rem;
+  }
   .max-w-\[20vw\] {
     max-width: 20vw;
   }
