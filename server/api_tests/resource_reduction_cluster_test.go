@@ -38,7 +38,11 @@ func computeReduction(t *testing.T, tc *TestContext, id uint) models.ResourceRed
 func awaitReduction(t *testing.T, tc *TestContext, id uint) models.ResourceReductionPlan {
 	t.Helper()
 	owner, restricted := asAdmin()
-	deadline := time.Now().Add(20 * time.Second)
+	// Generous, because this waits on a queue worker and the package runs in
+	// parallel with itself: under load a clustering job can sit behind the shared
+	// concurrency budget for a while, and a poll that gives up first reports a
+	// stranded Reduction where there is only a busy machine.
+	deadline := time.Now().Add(90 * time.Second)
 	for {
 		red, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
 		if err != nil && strings.Contains(err.Error(), "is locked") && time.Now().Before(deadline) {

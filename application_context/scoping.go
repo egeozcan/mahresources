@@ -638,3 +638,9 @@ func (ctx *MahresourcesContext) refuseGlobalCascadeWhenScoped(op string) error {
 	}
 	return fmt.Errorf("%s: %w", op, ErrGlobalCascadeScoped)
 }
+
+// DBForProbe hands the scoped handle to the test that pins which GORM finishers
+// the subtree callback actually reaches — Scan does not, and that is a landmine
+// worth a failing test rather than a comment. See
+// TestScanBypassesTheSubtreeScopeCallback. Not for production use.
+func (ctx *MahresourcesContext) DBForProbe() *gorm.DB { return ctx.db }

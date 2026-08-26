@@ -118,6 +118,17 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		// `computing` with nothing alive to move it off. Measured: one run in three
 		// of the whole api_tests package.
 		if claimErr := ctx.claimReductionComputeJob(reduction.ID, generation, j.ID); claimErr != nil {
+			// A superseded run leaves the row alone: the newer request owns it and
+			// will report its own outcome. Every other failure has to be recorded
+			// here, because nothing downstream will — this run never reached
+			// runReductionCompute, and an unrecorded refusal leaves the Reduction at
+			// `computing` with nothing alive to move it until its deadline.
+			if !errors.Is(claimErr, ErrReductionComputeSuperseded) {
+				if writeErr := ctx.recordReductionComputeFailure(reduction.ID, generation, claimErr); writeErr != nil {
+					ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name,
+						"Could not record a clustering job that failed to claim its slot: "+writeErr.Error(), nil)
+				}
+			}
 			return claimErr
 		}
 		return ctx.runReductionCompute(jobCtx, reduction.ID, j.ID, p)
@@ -422,7 +433,10 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 			return err
 		}
 		if jobID != "" && current.ComputeJobID != jobID {
-			// A newer run owns the row. Its own outcome is the one that counts.
+			// A newer run owns the row — the token here is whatever this run last
+			// held, its generation nonce before the claim and its job id after, and
+			// either way a mismatch means somebody else's outcome is the one that
+			// counts.
 			return nil
 		}
 		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{

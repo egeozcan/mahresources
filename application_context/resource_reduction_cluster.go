@@ -270,12 +270,18 @@ func ruleUsesAssociations(rule []string) bool {
 func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]int, error) {
 	counts := map[uint]int{}
 
-	// Each count is taken with the *far* side as the query's model, so the GORM
-	// scope callback filters it. Counting the join table directly would include
-	// Notes and Groups outside the caller's subtree — letting a Winner be chosen
-	// on relationships they cannot see, and then printing the exact totals in the
-	// margin the page renders. Tags carry no owner and are global by design, so
-	// that one is counted on the join table.
+	// Two things make these counts respect the caller's subtree, and both are
+	// necessary. The far side is the query's *model*, so the GORM scope callback
+	// has a table it maps — counting the join table directly would include Notes
+	// and Groups outside the subtree, letting a Winner be chosen on relationships
+	// the reviewer cannot see and then printing the exact totals in the margin the
+	// page renders. And each one finishes with Find rather than Scan: Scan runs
+	// GORM's *Row* callback chain, on which the scope callback is not registered,
+	// so it returns unfiltered rows however the query is built. See
+	// TestScanBypassesTheSubtreeScopeCallback.
+	//
+	// Tags carry no owner and are global by design, so that one is counted on the
+	// join table.
 	sources := []struct {
 		name  string
 		build func(chunk []uint) *gorm.DB
@@ -308,7 +314,7 @@ func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]
 				ResourceID uint
 				Total      int
 			}
-			if err := source.build(chunk).Scan(&rows).Error; err != nil {
+			if err := source.build(chunk).Find(&rows).Error; err != nil {
 				return nil, fmt.Errorf("counting %s associations: %w", source.name, err)
 			}
 			for _, row := range rows {
@@ -376,10 +382,14 @@ func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule [
 			ID   uint
 			Hash string
 		}
+		// Find, not Scan: Scan runs the Row callback chain, which carries no
+		// subtree filter, so this would offer candidates from outside the caller's
+		// subtree. loadClusterCandidates would drop them again — it uses Find — but
+		// a Cluster is not the place to rely on a second line.
 		if err := ctx.db.Model(&models.Resource{}).
 			Select("resources.id, resources.hash").
 			Where("resources.hash IN ?", chunk).
-			Scan(&rows).Error; err != nil {
+			Find(&rows).Error; err != nil {
 			return nil, fmt.Errorf("collecting Identical candidates: %w", err)
 		}
 

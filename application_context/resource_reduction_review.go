@@ -233,9 +233,12 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 // The id goes with the rest: it is a hash of the tier and the member ids, and ids
 // here are small integers, so it recovers them.
 func redactWithheldCluster(view contracts.ReductionClusterView) contracts.ReductionClusterView {
+	// Withheld is flattened to one rather than carried through. The page only ever
+	// asks whether it is set; the number is how many inaccessible Resources take
+	// part, which is a fact about them.
 	return contracts.ReductionClusterView{
 		ReductionCluster: &models.ReductionCluster{},
-		Withheld:         view.Withheld,
+		Withheld:         1,
 		Position:         view.Position,
 	}
 }
