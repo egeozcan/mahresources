@@ -25,16 +25,38 @@ import (
 	"mahresources/models/query_models"
 )
 
-// CountHashReferences counts how many resources and versions reference a given hash
-func (ctx *MahresourcesContext) CountHashReferences(hash string) (int64, error) {
+// CountHashReferences counts how many resources and versions still reference a
+// given hash *on a given filesystem*, which is what decides whether the file
+// behind it may be removed.
+//
+// The storage location is part of the question, not decoration. Storage is
+// content-addressed, so one hash resolves to one path — but only within a single
+// filesystem. The same content held on the main store and on an alternative store
+// is two real files sharing one hash, and counting them together meant deleting
+// either one saw a non-zero count and removed neither, leaving a file on disk with
+// nothing in the database pointing at it.
+//
+// A nil storage location and a pointer to the empty string both mean the main
+// store; that is the same normalisation deleteResourceDBOnly applies when it picks
+// the backup folder.
+func (ctx *MahresourcesContext) CountHashReferences(hash string, storageLocation *string) (int64, error) {
 	var versionCount int64
 	var resourceCount int64
 
-	if err := ctx.db.Model(&models.ResourceVersion{}).Where("hash = ?", hash).Count(&versionCount).Error; err != nil {
+	scopeToStore := func(db *gorm.DB) *gorm.DB {
+		if storageLocation == nil || *storageLocation == "" {
+			return db.Where("storage_location IS NULL OR storage_location = ?", "")
+		}
+		return db.Where("storage_location = ?", *storageLocation)
+	}
+
+	if err := scopeToStore(ctx.db.Model(&models.ResourceVersion{}).Where("hash = ?", hash)).
+		Count(&versionCount).Error; err != nil {
 		return 0, err
 	}
 
-	if err := ctx.db.Model(&models.Resource{}).Where("hash = ?", hash).Count(&resourceCount).Error; err != nil {
+	if err := scopeToStore(ctx.db.Model(&models.Resource{}).Where("hash = ?", hash)).
+		Count(&resourceCount).Error; err != nil {
 		return 0, err
 	}
 
@@ -425,7 +447,7 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 		return fmt.Errorf("failed to delete version: %w", err)
 	}
 
-	refCount, err := ctx.CountHashReferences(hash)
+	refCount, err := ctx.CountHashReferences(hash, storageLocation)
 	if err != nil {
 		ctx.Logger().Warning(models.LogActionDelete, "resource_version", &versionID, "Failed to count hash references", err.Error(), nil)
 	} else if refCount == 0 {

@@ -113,5 +113,6 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		AppCtx: appCtx,
 		Router: serverInstance.Handler,
 		DB:     db,
+		Fs:     fs,
 	}
 }

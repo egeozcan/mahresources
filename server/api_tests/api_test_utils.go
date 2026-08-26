@@ -37,6 +37,11 @@ type TestContext struct {
 	AppCtx *application_context.MahresourcesContext
 	Router http.Handler
 	DB     *gorm.DB
+	// Fs is the same in-memory filesystem the context was built with. Exposed so a
+	// test can assert what a delete or a merge actually did on disk — the backup
+	// copy into /deleted/ and the removal of the source are the only evidence that
+	// those decisions were taken correctly, and they were unobservable here before.
+	Fs afero.Fs
 }
 
 // SetupTestEnv creates a fresh in-memory database and application context for each test
@@ -190,6 +195,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		AppCtx: appCtx,
 		Router: serverInstance.Handler,
 		DB:     db,
+		Fs:     fs,
 	}
 }
 

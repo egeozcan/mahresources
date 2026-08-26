@@ -119,7 +119,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 		// Check if any other resources or versions reference this hash
 		var countErr error
-		refCount, countErr = txCtx.CountHashReferences(resource.Hash)
+		refCount, countErr = txCtx.CountHashReferences(resource.Hash, resource.StorageLocation)
 		if countErr != nil {
 			txCtx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
 			refCount = 1 // Assume referenced to be safe
@@ -457,6 +457,71 @@ type FileCleanupAction struct {
 	ShouldRemoveSource bool
 }
 
+// metaWithoutBackups returns meta with the `backups` key removed. Unparseable or
+// empty meta is returned untouched: this is a hygiene step on a bookkeeping blob,
+// never a reason to fail a merge.
+func metaWithoutBackups(meta types.JSON) types.JSON {
+	if len(meta) == 0 {
+		return meta
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(meta, &decoded); err != nil || decoded == nil {
+		return meta
+	}
+	if _, ok := decoded["backups"]; !ok {
+		return meta
+	}
+	delete(decoded, "backups")
+	stripped, err := json.Marshal(decoded)
+	if err != nil {
+		return meta
+	}
+	return stripped
+}
+
+// runFileCleanupActions performs the after-commit file work for a batch of
+// deletes or a merge.
+//
+// The backup copy is taken ONLY for a source that is actually being removed.
+// It used to be unconditional, which meant a merge wrote a byte-for-byte copy of
+// files it was leaving in place — and because storage is content-addressed, a
+// merge of two resources sharing a hash copied the *surviving* resource's own
+// live file into /deleted/. Nothing reads that directory and nothing sweeps it,
+// so the cost was pure and permanent. Backing up a file that is staying put
+// protects nothing.
+//
+// The removal stays gated on the copy having succeeded, or on the source being
+// unopenable (already gone) — an unbacked-up removal is the one thing worse than
+// a redundant backup.
+func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileCleanupAction) {
+	for _, action := range cleanupActions {
+		if !action.ShouldRemoveSource {
+			continue
+		}
+
+		if err := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); err != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir", err.Error(), nil)
+			continue
+		}
+
+		backupOK := false
+		file, openErr := action.SourceFS.Open(action.SourcePath)
+		if openErr == nil {
+			backup, createErr := ctx.fs.Create(action.BackupPath)
+			if createErr == nil {
+				_, copyErr := io.Copy(backup, file)
+				backup.Close()
+				backupOK = copyErr == nil
+			}
+			file.Close()
+		}
+
+		if backupOK || openErr != nil {
+			_ = action.SourceFS.Remove(action.SourcePath)
+		}
+	}
+}
+
 // deleteResourceDBOnly performs only the database operations of DeleteResource.
 // Returns file cleanup actions to be performed after the transaction commits.
 // resourceDeleteEffect is the after-commit payload for one deleted resource,
@@ -553,7 +618,7 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	}
 
 	// Check hash references for file deletion decision
-	refCount, countErr := ctx.CountHashReferences(resource.Hash)
+	refCount, countErr := ctx.CountHashReferences(resource.Hash, resource.StorageLocation)
 	if countErr != nil {
 		ctx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
 		refCount = 1 // Assume referenced to be safe
@@ -606,30 +671,7 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	}
 
 	// Phase 2: File operations after successful commit
-	for _, action := range cleanupActions {
-		// Create backup
-		if err := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); err != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir", err.Error(), nil)
-			continue
-		}
-
-		backupOK := false
-		file, openErr := action.SourceFS.Open(action.SourcePath)
-		if openErr == nil {
-			backup, createErr := ctx.fs.Create(action.BackupPath)
-			if createErr == nil {
-				_, copyErr := io.Copy(backup, file)
-				backup.Close()
-				backupOK = copyErr == nil
-			}
-			file.Close()
-		}
-
-		// Only remove source file if backup succeeded (or source couldn't be opened, meaning it's already gone)
-		if action.ShouldRemoveSource && (backupOK || openErr != nil) {
-			_ = action.SourceFS.Remove(action.SourcePath)
-		}
-	}
+	ctx.runFileCleanupActions(cleanupActions)
 
 	// After the files, not before: single-item DeleteResource has always
 	// bracketed its hook this way, and the ordering is load-bearing. The
@@ -793,18 +835,37 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 				return err
 			}
 
+			// Same reason as the meta merge below, on the other path in: the
+			// snapshot marshals the whole loser row, `Meta` included, so a loser
+			// that had itself absorbed merges would carry their backups inside its
+			// own. Stripped from the in-memory copy only; nothing else in this
+			// loop reads the loser's Meta.
+			loser.Meta = metaWithoutBackups(loser.Meta)
+
 			backupData, err := json.Marshal(loser)
 			if err != nil {
 				return err
 			}
 			deletedResBackups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
 
-			// Merge meta
+			// Merge meta. The loser's own `backups` key is dropped on the way in:
+			// it is the record of merges the loser itself absorbed, and carrying it
+			// across is one of the two ways backups compound.
+			//
+			// This one bites on SQLite only, and the asymmetry is worth knowing.
+			// json_patch merges objects recursively, so the backups write at the end
+			// of this function merges into whatever came across here and both
+			// generations survive. Postgres's `||` is a shallow merge that replaces
+			// the whole `backups` key, so the carried-in copy is overwritten anyway.
+			// The `- 'backups'` below therefore changes nothing on Postgres today; it
+			// is there so the two branches cannot drift into meaning different
+			// things. Measured: reverting only the SQLite half leaves resource_999
+			// at the top level of the winner's backups.
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = tx.Exec(`UPDATE resources SET meta = coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'::jsonb), '{}'::jsonb) || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error
+				err = tx.Exec(`UPDATE resources SET meta = (coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'::jsonb), '{}'::jsonb) - 'backups') || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = tx.Exec(`UPDATE resources SET meta = json_patch(coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'), '{}'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
+				err = tx.Exec(`UPDATE resources SET meta = json_patch(json_remove(coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'), '{}'), '$.backups'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
@@ -861,28 +922,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 	}
 
 	// Phase 2: File operations after successful commit
-	for _, action := range cleanupActions {
-		if mkdirErr := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); mkdirErr != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir during merge", mkdirErr.Error(), nil)
-			continue
-		}
-
-		backupOK := false
-		file, openErr := action.SourceFS.Open(action.SourcePath)
-		if openErr == nil {
-			backup, createErr := ctx.fs.Create(action.BackupPath)
-			if createErr == nil {
-				_, copyErr := io.Copy(backup, file)
-				backup.Close()
-				backupOK = copyErr == nil
-			}
-			file.Close()
-		}
-
-		if action.ShouldRemoveSource && (backupOK || openErr != nil) {
-			_ = action.SourceFS.Remove(action.SourcePath)
-		}
-	}
+	ctx.runFileCleanupActions(cleanupActions)
 
 	// After the files, for the reason given in BulkDeleteResources.
 	ctx.emitResourceDeleteEffects(deleteEffects)
