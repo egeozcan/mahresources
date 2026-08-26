@@ -21,10 +21,17 @@ const idChunk = 500
 // because a Group's descendants and its contents both change and D23 makes
 // re-scanning an explicit act. This runs once per compute.
 type ReductionExtent struct {
-	// ResourceIDs are the Resources named explicitly.
+	// ResourceIDs are the Resources named explicitly — filtered, like everything
+	// here, to what the current principal may see.
 	ResourceIDs map[uint]bool
 	// GroupIDs are the selected Groups and every descendant of each.
 	GroupIDs map[uint]bool
+	// SelectedGroups is how many of the *named* Groups the principal may see, as
+	// opposed to how many Groups the expansion reached. The page reports what was
+	// selected, and after somebody's subtree shrinks that number has to shrink
+	// with it: an exact count of Groups they can no longer open is a fact about
+	// those Groups.
+	SelectedGroups int
 }
 
 // Empty reports an Extent that names nothing.
@@ -74,6 +81,7 @@ func (ctx *MahresourcesContext) resolveReductionExtent(stored models.ResourceRed
 		for _, id := range ids {
 			extent.GroupIDs[id] = true
 		}
+		extent.SelectedGroups++
 	}
 
 	return extent, nil

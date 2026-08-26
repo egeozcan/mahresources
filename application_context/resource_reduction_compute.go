@@ -430,6 +430,13 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
 		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
+			// Contention is retried rather than returned. This is the only writer
+			// that can move a Reduction off `computing` once its worker has given
+			// up, so losing the read to a lock leaves the row stranded for an hour
+			// — which is the deadline doing the job of a bug rather than its own.
+			if isLockContentionError(err) {
+				continue
+			}
 			return err
 		}
 		if jobID != "" && current.ComputeJobID != jobID {
@@ -446,6 +453,9 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 			"compute_error":        truncateRunes(cause.Error(), 2000),
 		})
 		if err != nil {
+			if isLockContentionError(err) {
+				continue
+			}
 			return err
 		}
 		if ok {

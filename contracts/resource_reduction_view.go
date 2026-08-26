@@ -67,6 +67,13 @@ type ReductionReview struct {
 	Page              int
 	PageSize          int
 
+	// SelectedResources and SelectedGroups are what the reviewer picked, counted
+	// as the *current* principal sees it. The stored Extent is not filtered, so
+	// publishing its raw lengths would state exactly how many Resources and Groups
+	// somebody whose subtree has since shrunk may no longer open.
+	SelectedResources int
+	SelectedGroups    int
+
 	// ExtentSize is how many Resources the Extent holds right now, and
 	// EnteredSinceCompute how many of those arrived after the plan was computed.
 	// Together they are the drift report: a Group-scoped Reduction is re-scanned

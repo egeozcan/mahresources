@@ -108,11 +108,6 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			return addErrContext(err, baseContext)
 		}
 
-		extent, err := application_context.DecodeReductionExtent(reduction.Extent)
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
-
 		page := http_utils.GetPageParameter(request)
 		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page))
 		if err != nil {
@@ -133,9 +128,13 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			"coverage":   describeCoverage(review),
 			"pagination": pagination,
 			"winnerRule": describeWinnerRule(application_context.DecodeWinnerRule(reduction.WinnerRule)),
+			// Counted as this principal sees it, not off the stored Extent: those
+			// lists are unfiltered, and their raw lengths would state how many
+			// Resources and Groups a reviewer whose subtree shrank may no longer
+			// open.
 			"extent": pongo2.Context{
-				"resourceCount": len(extent.ResourceIDs),
-				"groupCount":    len(extent.GroupIDs),
+				"resourceCount": review.SelectedResources,
+				"groupCount":    review.SelectedGroups,
 				"resolvedSize":  review.ExtentSize,
 				"enteredSince":  review.EnteredSinceCompute,
 			},

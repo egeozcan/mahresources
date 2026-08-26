@@ -175,6 +175,8 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		CheckedLoserCount:   checkedLosers,
 		Page:                page,
 		PageSize:            ReductionClustersPerPage,
+		SelectedResources:   len(extent.ResourceIDs),
+		SelectedGroups:      extent.SelectedGroups,
 		ExtentSize:          plan.Coverage.ExtentSize,
 		EnteredSinceCompute: entered,
 	}, nil

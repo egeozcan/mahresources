@@ -263,3 +263,43 @@ func TestAWithheldClusterIsRedactedOnTheJSONSurfaceToo(t *testing.T) {
 	assert.NotContains(t, rendered, "identical", "not even the tier")
 	assert.Contains(t, rendered, `"Withheld":1`)
 }
+
+// The Extent counts the page shows are counted as the current principal sees
+// them. The stored Extent is not filtered, so its raw lengths would state exactly
+// how many Resources and Groups a reviewer whose subtree shrank may no longer
+// open — on the page and on its .json twin alike.
+func TestTheExtentCountsShrinkWithTheReviewersAccess(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+	elsewhere, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Elsewhere"})
+	require.NoError(t, err)
+
+	visible := addResourceWithBody(t, tc, "visible.txt", "visible")
+	hidden := addResourceWithBody(t, tc, "hidden.txt", "hidden")
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", visible.ID).Update("owner_id", narrow.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", hidden.ID).Update("owner_id", elsewhere.ID).Error)
+
+	wideCtx := scopedTo(t, tc, wide.ID)
+	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name:        "Shrinking extent",
+		ResourceIds: []uint{visible.ID, hidden.ID},
+		GroupIds:    []uint{wide.ID, elsewhere.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	admin, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 2, admin.SelectedResources, "an administrator sees the whole selection")
+	assert.Equal(t, 2, admin.SelectedGroups)
+
+	confined, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, confined.SelectedResources,
+		"and a confined reviewer sees only what is theirs, not a count of what is not")
+	assert.Equal(t, 0, confined.SelectedGroups)
+}
