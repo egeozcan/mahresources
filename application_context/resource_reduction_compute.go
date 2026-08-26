@@ -8,6 +8,7 @@ import (
 
 	"mahresources/download_queue"
 	"mahresources/models"
+	"mahresources/models/types"
 )
 
 // ReductionComputeDeadline is how long a clustering job may hold a Reduction at
@@ -64,6 +65,13 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 
 	now := time.Now()
 	deadline := now.Add(ReductionComputeDeadline)
+	// A nonce written before the job exists, and swapped for the job's own id when
+	// the worker starts. Without it the worker's claim asks only "is the slot
+	// empty", which a run delayed past its deadline answers yes to — taking the
+	// slot of the newer run that replaced it, and then computing under the subtree
+	// scope it captured an hour ago while the accepted recompute is turned away as
+	// superseded.
+	generation := "pending:" + string(types.NewUUIDv7())
 	// The caller's version, not the one just read. Recompute replaces the plan,
 	// so a request made from a page that predates somebody else's decisions would
 	// discard them without their author ever seeing a refusal — and "every write
@@ -72,7 +80,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		"status":               models.ReductionStatusComputing,
 		"computing_started_at": now,
 		"compute_deadline":     deadline,
-		"compute_job_id":       "",
+		"compute_job_id":       generation,
 		"compute_error":        "",
 	})
 	if err != nil {
@@ -109,7 +117,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		// row", discard its own finished plan, and leave the Reduction at
 		// `computing` with nothing alive to move it off. Measured: one run in three
 		// of the whole api_tests package.
-		if claimErr := ctx.claimReductionComputeJob(reduction.ID, j.ID); claimErr != nil {
+		if claimErr := ctx.claimReductionComputeJob(reduction.ID, generation, j.ID); claimErr != nil {
 			return claimErr
 		}
 		return ctx.runReductionCompute(jobCtx, reduction.ID, j.ID, p)
@@ -139,10 +147,10 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 // version belongs to the plan. The `compute_job_id = ”` predicate is what makes
 // it idempotent under a retry, and the `status = 'computing'` predicate is what
 // stops a run whose row has since been recomputed from re-claiming it.
-func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, jobID string) error {
+func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, generation, jobID string) error {
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
 		res := ctx.db.Model(&models.ResourceReduction{}).
-			Where("id = ? AND status = ? AND COALESCE(compute_job_id, '') = ''", reductionID, models.ReductionStatusComputing).
+			Where("id = ? AND status = ? AND compute_job_id = ?", reductionID, models.ReductionStatusComputing, generation).
 			Update("compute_job_id", jobID)
 		if res.Error != nil {
 			if isLockContentionError(res.Error) {
@@ -153,13 +161,13 @@ func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, jobID
 		if res.RowsAffected == 1 {
 			return nil
 		}
-		// Zero rows means the slot was not free, and "not free" has two very
-		// different causes. It is already this job's — a retry of this same claim
-		// — which is fine. Or a newer run has taken the row, in which case this
-		// run must stop now rather than compute a plan it would only be told to
-		// discard at the end. Reporting success on both, which an unchecked
-		// Update does, lets a delayed run keep working under somebody else's job
-		// id.
+		// Zero rows means this run's generation is no longer the one the row is
+		// waiting for, and that has two causes. The claim already happened — a
+		// retry of this same claim — which is fine. Or a newer request replaced the
+		// generation, in which case this run must stop now rather than compute a
+		// plan it would only be told to discard at the end. Reporting success on
+		// both, which an unchecked Update does, lets a delayed run keep working
+		// under somebody else's request.
 		var current models.ResourceReduction
 		if err := ctx.db.Select("compute_job_id").First(&current, reductionID).Error; err != nil {
 			if isLockContentionError(err) {

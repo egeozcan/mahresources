@@ -21,6 +21,7 @@ const (
 	staleReasonPairGone     = "the perceptual match between the Winner and a Loser no longer holds"
 	staleReasonNothingToDo  = "every Loser in this Cluster has been ejected, so there is nothing to merge"
 	staleReasonAlreadyMoved = "this Cluster changed while the batch was running"
+	staleReasonReplaced     = "this Cluster was recomputed while the batch was running, so it is no longer the one that was reviewed"
 	staleReasonMergeRefused = "the merge itself was refused"
 )
 
@@ -79,7 +80,12 @@ func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.Red
 		if planned.State != models.ReductionClusterOpen || !planned.Checked {
 			continue
 		}
-		outcome := ctx.applyOneCluster(reduction.ID, planned.ID, reduction)
+		// The reviewed content, as it stood when this request was authorized. Every
+		// Cluster is re-read before it is merged — an ejection landing mid-batch has
+		// to be honoured — but the re-read may not introduce anything: a recompute
+		// can replace a Cluster with one of the same id and different bytes, and
+		// merging that would destroy content this reviewer never saw.
+		outcome := ctx.applyOneCluster(reduction.ID, planned.ID, reduction, approvedContent(planned))
 		switch {
 		case outcome.Applied:
 			result.Applied = append(result.Applied, outcome.Report)
@@ -98,7 +104,41 @@ type clusterApplyOutcome struct {
 
 // applyOneCluster revalidates and merges a single Cluster, then records what
 // happened to it.
-func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID string, reduction *models.ResourceReduction) clusterApplyOutcome {
+// approvedContent is what an apply request was authorized to destroy: each
+// non-ejected member of a Cluster, and the content it was reviewed as holding.
+func approvedContent(cluster *models.ReductionCluster) map[uint]string {
+	approved := make(map[uint]string, len(cluster.Members))
+	for _, member := range cluster.Members {
+		if !member.Ejected {
+			approved[member.ResourceID] = member.Hash
+		}
+	}
+	return approved
+}
+
+// withinApproved reports whether a Cluster is still a subset of what was
+// approved.
+//
+// Members may leave — that is an ejection, which the reviewer is entitled to make
+// while the batch runs and which the batch must honour. Nothing may arrive, and
+// no member's reviewed content may change: both of those mean a recompute
+// substituted a different proposal under the same id, and its bytes were never
+// reviewed by whoever pressed Apply.
+func withinApproved(cluster *models.ReductionCluster, approved map[uint]string) bool {
+	for _, member := range cluster.Members {
+		if member.Ejected {
+			continue
+		}
+		hash, wasApproved := approved[member.ResourceID]
+		if !wasApproved || hash != member.Hash {
+			return false
+		}
+	}
+	_, winnerApproved := approved[cluster.WinnerID]
+	return winnerApproved
+}
+
+func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID string, reduction *models.ResourceReduction, approved map[uint]string) clusterApplyOutcome {
 	// Re-read rather than trusting the copy the batch started with. An earlier
 	// Cluster in this batch may have merged one of these Resources away, and a
 	// concurrent apply may have taken this Cluster already.
@@ -113,6 +153,9 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 	cluster := findCluster(&plan, clusterID)
 	if cluster == nil || cluster.State != models.ReductionClusterOpen || !cluster.Checked {
 		return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{ClusterID: clusterID, Reason: staleReasonAlreadyMoved}}
+	}
+	if !withinApproved(cluster, approved) {
+		return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{ClusterID: clusterID, Reason: staleReasonReplaced}}
 	}
 
 	report := contracts.ReductionApplyOutcome{
@@ -161,7 +204,7 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 	// costs a file the reviewer had un-approved. It also self-heals — an applied
 	// Cluster's members go back into the pool, so the next recompute re-proposes
 	// them.
-	claimed := ctx.claimClusterForApply(reductionID, clusterID, clusterFingerprint(cluster))
+	claimed := ctx.claimClusterForApply(reductionID, clusterID, approved)
 	if claimed == nil {
 		report.Reason = staleReasonAlreadyMoved
 		return clusterApplyOutcome{Report: report}
@@ -180,7 +223,13 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 
 	if err := ctx.MergeResourcesExpecting(claimed.WinnerID, report.LoserIDs, keepAsVersion, ctx.reductionMergePrecondition(claimed)); err != nil {
 		reason := staleReasonMergeRefused + ": " + err.Error()
-		if errors.Is(err, ErrMergeContentChanged) {
+		// Named by what actually failed. Both refusals are safe, but they call for
+		// different things from the reviewer: changed bytes mean look at the
+		// Resource, a vanished pair means the perceptual match is gone.
+		switch {
+		case errors.Is(err, ErrMergePairGone):
+			reason = staleReasonPairGone
+		case errors.Is(err, ErrMergeContentChanged):
 			reason = staleReasonHashChanged
 		}
 		report.Reason = reason
@@ -211,8 +260,8 @@ func (ctx *MahresourcesContext) OverwritePlanForTest(reductionID, version uint, 
 	return nil
 }
 
-func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, clusterID, fingerprint string) *models.ReductionCluster {
-	return ctx.claimClusterForApply(reductionID, clusterID, fingerprint)
+func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, clusterID string, approved map[uint]string) *models.ReductionCluster {
+	return ctx.claimClusterForApply(reductionID, clusterID, approved)
 }
 
 // confirmClusterMerged records that the claim's merge actually happened.
@@ -245,7 +294,7 @@ func (ctx *MahresourcesContext) confirmClusterMerged(reductionID uint, clusterID
 // inside the successful compare-and-set rather than before it, so a decision that
 // landed in the meantime is part of what this apply acts on rather than something
 // it overwrites.
-func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID, fingerprint string) *models.ReductionCluster {
+func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID string, approved map[uint]string) *models.ReductionCluster {
 	var claimed *models.ReductionCluster
 	committed := ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
 		if cluster.State != models.ReductionClusterOpen || !cluster.Checked {
@@ -254,8 +303,9 @@ func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID
 		}
 		// The same id no longer means the same proposal: a recompute can replace a
 		// Cluster with one of identical membership and different reviewed hashes.
-		// What this apply was authorized to destroy is what it validated.
-		if clusterFingerprint(cluster) != fingerprint {
+		// What this apply may destroy is a subset of what the request approved, so
+		// an ejection landing here is accepted and a substitution is not.
+		if !withinApproved(cluster, approved) {
 			claimed = nil
 			return false
 		}
@@ -323,7 +373,7 @@ func (ctx *MahresourcesContext) reductionMergePrecondition(cluster *models.Reduc
 		}
 		for _, id := range cluster.LoserIDs() {
 			if !paired[id] {
-				return fmt.Errorf("%w: resource %d no longer matches the Winner", ErrMergeContentChanged, id)
+				return fmt.Errorf("%w: resource %d", ErrMergePairGone, id)
 			}
 		}
 		return nil

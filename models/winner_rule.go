@@ -183,19 +183,24 @@ func compareCriterion(criterion string, a, b WinnerCandidate) int {
 	case WinnerCriterionHasDescription:
 		return compareBool(strings.TrimSpace(a.Resource.Description) != "", strings.TrimSpace(b.Resource.Description) != "")
 	case WinnerCriterionAssociationsDesc:
-		return preferPresent(a.Associations > 0, b.Associations > 0, func() int {
-			return compareInt(b.Associations, a.Associations)
-		})
+		// No preferPresent here, and the distinction is the whole point of it: an
+		// association count is always known, and zero is an answer rather than a
+		// missing attribute. Treating zero as missing makes "fewest tags, notes and
+		// groups" pick the copy with *more* of them and delete the one the reviewer
+		// asked to keep.
+		return compareInt(b.Associations, a.Associations)
 	case WinnerCriterionAssociationsAsc:
-		return preferPresent(a.Associations > 0, b.Associations > 0, func() int {
-			return compareInt(a.Associations, b.Associations)
-		})
+		return compareInt(a.Associations, b.Associations)
 	}
 	return 0
 }
 
 // preferPresent resolves the missing-value cases and defers the rest. A candidate
 // carrying the attribute beats one that does not; neither carrying it is a tie.
+//
+// Only for attributes a Resource can genuinely lack: a resolution, a file size, a
+// name, a timestamp. A count is not one of those — zero is an answer — so the
+// association criteria compare their integers directly.
 //
 // aHas and bHas are always in the *caller's* orientation — a first, b second —
 // even where the comparison it defers to is reversed for a descending criterion.

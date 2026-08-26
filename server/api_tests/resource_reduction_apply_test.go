@@ -470,7 +470,25 @@ func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
 	}
 	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, swapped))
 
-	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, "winner->stale-fingerprint")
-	assert.Nil(t, claimed, "a Cluster that is no longer the one that was validated is not claimable")
+	// What the apply request approved: these two Resources holding the content
+	// they were reviewed as holding.
+	approved := map[uint]string{winner.ID: "shared-hash", loser.ID: "shared-hash"}
+	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, approved)
+	assert.Nil(t, claimed, "a Cluster that is no longer the one that was reviewed is not claimable")
 	assert.True(t, resourceExists(t, tc, loser.ID))
+
+	// An ejection is the change that *is* accepted: members may leave what was
+	// approved, they may not arrive in it.
+	shrunk, err := application_context.DecodeReductionPlan(current.Plan)
+	require.NoError(t, err)
+	for _, member := range shrunk.Clusters[0].Members {
+		if member.ResourceID != winner.ID && member.ResourceID != loser.ID {
+			member.Ejected = true
+		}
+	}
+	fresh, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, fresh.Version, shrunk))
+	assert.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, approved),
+		"the original proposal is still claimable")
 }

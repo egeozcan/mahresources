@@ -717,6 +717,11 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 // bytes the caller checked them for.
 var ErrMergeContentChanged = errors.New("the content of a resource in this merge changed since it was checked")
 
+// ErrMergePairGone refuses a merge whose perceptual justification has been
+// removed since the caller checked it. Distinct from ErrMergeContentChanged
+// because the two ask different things of whoever sees them.
+var ErrMergePairGone = errors.New("the perceptual match this merge rests on no longer exists")
+
 // MergePrecondition is a caller's check, run inside the merge's own transaction
 // after its participants have been read and — on Postgres — locked.
 //

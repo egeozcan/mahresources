@@ -39,16 +39,25 @@ func ResourceReductionQuery(query *query_models.ResourceReductionQuery, ignoreSo
 			// ever move it off that status. The filter has to agree with the label,
 			// or the one status a reviewer would search for to find a stranded run
 			// is the one that hides it.
-			wantsFailed := false
+			wantsFailed, wantsComputing := false, false
 			for _, status := range statuses {
-				if status == "failed" {
+				switch status {
+				case "failed":
 					wantsFailed = true
+				case "computing":
+					wantsComputing = true
 				}
 			}
-			if wantsFailed {
-				dbQuery = dbQuery.Where("status IN ? OR (status = ? AND compute_deadline IS NOT NULL AND compute_deadline < ?)",
-					statuses, "computing", time.Now())
-			} else {
+			expired := "status = 'computing' AND compute_deadline IS NOT NULL AND compute_deadline < ?"
+			switch {
+			case wantsFailed && !wantsComputing:
+				dbQuery = dbQuery.Where("status IN ? OR ("+expired+")", statuses, time.Now())
+			case wantsComputing && !wantsFailed:
+				// And out of this one. A run past its deadline reads as failed
+				// everywhere else on the page; leaving it in the Computing filter
+				// would have the two lists disagree with the label each row carries.
+				dbQuery = dbQuery.Where("status IN ? AND NOT ("+expired+")", statuses, time.Now())
+			default:
 				dbQuery = dbQuery.Where("status IN ?", statuses)
 			}
 		}

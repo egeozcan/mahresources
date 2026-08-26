@@ -83,3 +83,18 @@ func TestAMissingValueLosesItsCriterion(t *testing.T) {
 		}
 	}
 }
+
+// An association count is always known, and zero is an answer. Treating it as a
+// missing attribute makes "fewest tags, notes and groups" choose the copy with
+// more of them — deleting the one the reviewer asked to keep.
+func TestZeroAssociationsIsACountNotAMissingValue(t *testing.T) {
+	none := WinnerCandidate{Resource: &Resource{ID: 1}, Associations: 0}
+	one := WinnerCandidate{Resource: &Resource{ID: 2}, Associations: 1}
+
+	if got := compareCriterion(WinnerCriterionAssociationsAsc, none, one); got != -1 {
+		t.Errorf("fewest associations: the one with none should win, got %d", got)
+	}
+	if got := compareCriterion(WinnerCriterionAssociationsDesc, one, none); got != -1 {
+		t.Errorf("most associations: the one with some should win, got %d", got)
+	}
+}
