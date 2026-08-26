@@ -408,3 +408,64 @@ func TestAMemberOutsideTheReviewersAccessCannotBePromoted(t *testing.T) {
 	}, owner, restricted)
 	assert.NoError(t, err, "ejecting one is always allowed: it only ever removes a Resource from harm")
 }
+
+// Restore names one Resource and moves one. Running the whole-Cluster
+// re-justification here would also un-eject every other member whose pair had
+// since reappeared — a similarity recompute is enough to make that happen — so
+// putting one Loser back would quietly re-arm several.
+func TestRestoringOneMemberDoesNotReArmAnother(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	hub := addImage(t, tc, "hub.jpg", 800, 800)
+	promoted := addImage(t, tc, "promoted.jpg", 400, 400)
+	first := addImage(t, tc, "first.jpg", 200, 200)
+	second := addImage(t, tc, "second.jpg", 100, 100)
+	for _, other := range []*models.Resource{promoted, first, second} {
+		pairThem(t, tc, hub, other, 3)
+	}
+
+	red := createReduction(t, tc, "Restore one", []uint{hub.ID, promoted.ID, first.ID, second.ID})
+	plan := computeReduction(t, tc, red.ID)
+	cluster := plan.Clusters[0]
+	require.Equal(t, hub.ID, cluster.WinnerID)
+
+	// Promoting ejects both of the others: neither has a pair to the new Winner.
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, promoted.ID)
+	cluster = plan.Clusters[0]
+	require.True(t, memberOf(cluster, first.ID).Ejected)
+	require.True(t, memberOf(cluster, second.ID).Ejected)
+
+	// A similarity recompute later finds pairs from the new Winner to both.
+	pairThem(t, tc, promoted, first, 4)
+	pairThem(t, tc, promoted, second, 4)
+
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionRestore, first.ID)
+	cluster = plan.Clusters[0]
+
+	assert.False(t, memberOf(cluster, first.ID).Ejected, "the one that was named comes back")
+	assert.True(t, memberOf(cluster, second.ID).Ejected, "and the one that was not stays out")
+	assert.Equal(t, []uint{hub.ID, first.ID}, cluster.LoserIDs())
+}
+
+// Putting back a member with no stored pair to the current Winner would re-create
+// exactly the transitive deletion ADR 0002 forbids, so it is refused rather than
+// silently re-ejected.
+func TestRestoringAMemberWithNoPairToTheWinnerIsRefused(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	hub := addImage(t, tc, "hub.jpg", 800, 800)
+	promoted := addImage(t, tc, "promoted.jpg", 400, 400)
+	orphan := addImage(t, tc, "orphan.jpg", 200, 200)
+	pairThem(t, tc, hub, promoted, 3)
+	pairThem(t, tc, hub, orphan, 3)
+
+	red := createReduction(t, tc, "Refused restore", []uint{hub.ID, promoted.ID, orphan.ID})
+	plan := computeReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+
+	plan = override(t, tc, red.ID, clusterID, application_context.ReductionActionPromote, promoted.ID)
+	require.True(t, memberOf(plan.Clusters[0], orphan.ID).Ejected)
+
+	err := overrideErr(t, tc, red.ID, clusterID, application_context.ReductionActionRestore, orphan.ID)
+	assert.ErrorIs(t, err, application_context.ErrReductionRestoreUnpaired)
+}

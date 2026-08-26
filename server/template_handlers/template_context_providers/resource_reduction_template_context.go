@@ -139,9 +139,37 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 				"resolvedSize":  review.ExtentSize,
 				"enteredSince":  review.EnteredSinceCompute,
 			},
-			"winnerCriteria": allWinnerCriteria(),
+			"winnerCriteria":  allWinnerCriteria(),
+			"winnerRuleSlots": winnerRuleSlots(application_context.DecodeWinnerRule(reduction.WinnerRule)),
 		}.Update(baseContext)
 	}
+}
+
+// winnerRuleSlotCount is how many ordered criteria the editor offers.
+//
+// Five, because the rule is a tie-breaking chain and a fifth tie is already
+// vanishingly rare — the default uses three — while a longer list of selects is
+// more to read and to tab through than it is worth. Nothing stops a longer rule
+// arriving through the API; the editor simply shows the first five.
+const winnerRuleSlotCount = 5
+
+// winnerRuleSlots turns the stored rule into the ordered controls the page
+// renders, one per position, with the rest empty.
+func winnerRuleSlots(rule []string) []pongo2.Context {
+	slots := make([]pongo2.Context, 0, winnerRuleSlotCount)
+	ordinals := []string{"First", "Then", "Then", "Then", "Then"}
+	for i := 0; i < winnerRuleSlotCount; i++ {
+		selected := ""
+		if i < len(rule) {
+			selected = rule[i]
+		}
+		slots = append(slots, pongo2.Context{
+			"position": i + 1,
+			"label":    ordinals[i],
+			"selected": selected,
+		})
+	}
+	return slots
 }
 
 // describeCoverage turns the raw counts into the sentence the page shows, and

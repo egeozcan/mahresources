@@ -163,14 +163,21 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 			// promotion moved the Winner, this member had no pair to the new one, and
 			// restoring it would re-create exactly the transitive deletion the ADR
 			// forbids. Refusing is better than re-ejecting it silently, because the
-			// reviewer asked for something the Cluster cannot honour and should be
-			// told so.
-			if err := ctx.rejustifyAgainstWinner(cluster); err != nil {
+			// reviewer asked for something the Cluster cannot honour.
+			//
+			// Only this member is checked, and only this member is changed. Running
+			// the whole-Cluster re-justification here would also un-eject every
+			// *other* member whose pair has since reappeared — a similarity
+			// recompute is enough to make that happen — so restoring one Loser would
+			// quietly re-arm several. Restore names one Resource and must move one.
+			distance, paired, err := ctx.distanceToWinner(cluster.WinnerID, member.ResourceID)
+			if err != nil {
 				return err
 			}
-			if member.Ejected {
+			if !paired {
 				return ErrReductionRestoreUnpaired
 			}
+			member.Distance = &distance
 		}
 		return nil
 
@@ -316,6 +323,25 @@ func (ctx *MahresourcesContext) rejustifyAgainstWinner(cluster *models.Reduction
 		member.Distance = &d
 	}
 	return nil
+}
+
+// distanceToWinner reports the stored perceptual distance between one member and
+// the Cluster's Winner, and whether there is a stored pair at all.
+func (ctx *MahresourcesContext) distanceToWinner(winnerID, memberID uint) (uint8, bool, error) {
+	pairs, err := ctx.similarWithin(winnerID, ctx.similarityThreshold())
+	if err != nil {
+		return 0, false, err
+	}
+	best, found := uint8(0), false
+	for _, pair := range pairs {
+		if pair.ResourceID != memberID {
+			continue
+		}
+		if !found || pair.Distance < best {
+			best, found = pair.Distance, true
+		}
+	}
+	return best, found, nil
 }
 
 // refreshLossy recomputes the curation warning after a change of Winner: which

@@ -113,12 +113,12 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *ui
 	if err != nil {
 		// The queue refused it, so nothing is going to compute this. Put the row
 		// back rather than leaving it at `computing` until the deadline.
-		if _, undoErr := ctx.casReduction(reduction.ID, reduction.Version+1, map[string]any{
-			"status":               models.ReductionStatusFailed,
-			"computing_started_at": nil,
-			"compute_deadline":     nil,
-			"compute_error":        truncateRunes(err.Error(), 2000),
-		}); undoErr != nil {
+		// Re-read rather than assuming the version is the claim's + 1: a widening
+		// or a settings edit can land between the claim and the queue's refusal, and
+		// a compare-and-set against a guessed version quietly affects zero rows —
+		// leaving the Reduction at `computing` with nothing running, until its
+		// deadline. Retried, and reported when it cannot be done.
+		if undoErr := ctx.recordReductionComputeFailure(reduction.ID, "", err); undoErr != nil {
 			ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name, "Could not record a refused clustering job: "+undoErr.Error(), nil)
 		}
 		return nil, err

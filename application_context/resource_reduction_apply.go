@@ -3,6 +3,9 @@ package application_context
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"mahresources/contracts"
@@ -121,7 +124,12 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 
 	if reason := ctx.revalidateCluster(cluster); reason != "" {
 		report.Reason = reason
-		ctx.markClusterStale(reductionID, clusterID, reason)
+		// Marked stale only if the Cluster is still the one that failed. The
+		// refusal was derived from a snapshot, and a reviewer who ejected the
+		// offending member while this ran has already removed the reason for it —
+		// re-reading and marking it stale anyway would discard their fix and
+		// uncheck a Cluster they had approved.
+		ctx.markClusterStale(reductionID, clusterID, reason, clusterFingerprint(cluster))
 		return clusterApplyOutcome{Report: report}
 	}
 
@@ -243,7 +251,7 @@ func (ctx *MahresourcesContext) reductionMergePrecondition(cluster *models.Reduc
 		if cluster.Tier != models.ReductionTierNear {
 			return nil
 		}
-		pairs, err := txCtx.similarWithin(cluster.WinnerID, txCtx.similarityThreshold())
+		pairs, err := txCtx.similarWithinLocking(cluster.WinnerID, txCtx.similarityThreshold(), true)
 		if err != nil {
 			return err
 		}
@@ -335,9 +343,24 @@ func (ctx *MahresourcesContext) revalidateCluster(cluster *models.ReductionClust
 	return ""
 }
 
-func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason string) {
+// clusterFingerprint is what an outcome was decided about: the Winner and the
+// exact set of Losers. Two Clusters with the same fingerprint would fail or
+// succeed identically, so an outcome is safe to record against one.
+func clusterFingerprint(cluster *models.ReductionCluster) string {
+	ids := make([]string, 0, len(cluster.Members))
+	for _, id := range cluster.LoserIDs() {
+		ids = append(ids, strconv.FormatUint(uint64(id), 10))
+	}
+	sort.Strings(ids)
+	return strconv.FormatUint(uint64(cluster.WinnerID), 10) + "->" + strings.Join(ids, ",")
+}
+
+func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason, fingerprint string) {
 	_ = ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
 		if cluster.State != models.ReductionClusterOpen {
+			return false
+		}
+		if fingerprint != "" && clusterFingerprint(cluster) != fingerprint {
 			return false
 		}
 		cluster.State = models.ReductionClusterStale

@@ -6,14 +6,15 @@
 {#                                                                               #}
 {# data-lightbox-scope makes the members their own gallery: flicking through five #}
 {# candidates must not drag in the rest of the page.                              #}
+{% if cluster.Withheld %}
+{# No id and no tier on this branch. The Cluster id is a hash of the tier and the #}
+{# member ids, and ids here are small integers — published beside one visible     #}
+{# member it is enough to recover the hidden one by enumeration, which is the     #}
+{# disclosure the branch exists to prevent. The heading is anchored on the        #}
+{# Cluster's position on the page instead.                                        #}
 <article class="card reduction-cluster"
          data-testid="reduction-cluster"
-         data-cluster-id="{{ cluster.ID }}"
-         data-cluster-tier="{{ cluster.Tier }}"
-         data-lightbox-scope
-         aria-labelledby="cluster-{{ cluster.ID }}-heading">
-
-{% if cluster.Withheld %}
+         aria-labelledby="cluster-withheld-{{ cluster.Position }}-heading">
     {# A Cluster reaching a Resource this reviewer may not see is not rendered as #}
     {# a proposal at all. Its Winner, the criterion that chose it, the margin, the #}
     {# member count and the curation warning are all statements *about* that       #}
@@ -22,13 +23,21 @@
     {# apply path enforces independently of this.                                  #}
     <header class="card-header card-header--compact">
         <div class="card-title-section">
-            <h3 class="card-title" id="cluster-{{ cluster.ID }}-heading">A Cluster outside your access</h3>
+            <h3 class="card-title" id="cluster-withheld-{{ cluster.Position }}-heading">A Cluster outside your access</h3>
         </div>
     </header>
     <p class="text-sm text-stone-600 px-3 pb-3" data-testid="cluster-withheld">
         This Cluster reaches Resources outside what you may see, so it cannot be reviewed or applied.
     </p>
+</article>
 {% else %}
+<article class="card reduction-cluster"
+         data-testid="reduction-cluster"
+         data-cluster-id="{{ cluster.ID }}"
+         data-cluster-tier="{{ cluster.Tier }}"
+         data-lightbox-scope
+         aria-labelledby="cluster-{{ cluster.ID }}-heading">
+
     <header class="card-header card-header--compact">
         <div class="card-title-section">
             <h3 class="card-title" id="cluster-{{ cluster.ID }}-heading">
@@ -210,5 +219,5 @@
            data-testid="cluster-compare-link">Compare these two side by side</a>
     </p>
     {% endif %}
-{% endif %}
 </article>
+{% endif %}

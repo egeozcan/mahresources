@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 
+	"gorm.io/gorm/clause"
+
+	"mahresources/constants"
 	"mahresources/models"
 )
 
@@ -192,6 +195,20 @@ func (ctx *MahresourcesContext) perceptualExtentIDs(extent *ReductionExtent, exc
 // means the coverage line should say so, not that the clustering should invent
 // edges.
 func (ctx *MahresourcesContext) similarWithin(resourceID uint, threshold int) ([]similarPair, error) {
+	return ctx.similarWithinLocking(resourceID, threshold, false)
+}
+
+// similarWithinLocking is similarWithin with an optional row lock on the pairs it
+// reads.
+//
+// Locking matters in exactly one place: the merge's precondition, where the pair
+// is the justification for a deletion about to happen. Locking the Resource rows
+// does not lock resource_similarities, so a similarity recompute can delete the
+// very edge the precondition just verified and commit before the merge runs — and
+// ADR 0002's guarantee would then be true up to the delete rather than through it.
+// Postgres-only, like every other lock here: SQLite serializes writers and rejects
+// the clause.
+func (ctx *MahresourcesContext) similarWithinLocking(resourceID uint, threshold int, lock bool) ([]similarPair, error) {
 	distance := "COALESCE(resource_similarities.p_distance, resource_similarities.hamming_distance)"
 
 	var out []similarPair
@@ -200,7 +217,13 @@ func (ctx *MahresourcesContext) similarWithin(resourceID uint, threshold int) ([
 		{"resource_id2", "resource_id1"},
 	} {
 		var rows []similarPair
-		if err := ctx.db.Model(&models.ResourceSimilarity{}).
+		query := ctx.db.Model(&models.ResourceSimilarity{})
+		if lock && ctx.Config.DbType != constants.DbTypeSqlite {
+			// OF the pair table specifically: the joined resources rows are already
+			// locked by the merge, and naming them again is noise.
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "resource_similarities"}})
+		}
+		if err := query.
 			Joins("INNER JOIN resources ON resources.id = resource_similarities."+direction.other).
 			Select("resource_similarities."+direction.other+" AS resource_id, "+distance+" AS distance").
 			Where("resource_similarities."+direction.self+" = ?", resourceID).

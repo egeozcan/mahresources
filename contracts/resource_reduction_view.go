@@ -35,6 +35,12 @@ type ReductionClusterView struct {
 	// any is not actionable: applying it would destroy Resources the reviewer was
 	// never shown.
 	Withheld int
+	// Position is this Cluster's place on the rendered page, 1-based. It exists so
+	// a withheld Cluster can be labelled without its own id: that id is a hash of
+	// the tier and the member ids, and ids in this schema are small integers, so
+	// publishing it next to one visible member is enough to recover the hidden one
+	// by enumeration.
+	Position int
 }
 
 // ReductionReview is a page of a Reduction's plan, hydrated and paginated.

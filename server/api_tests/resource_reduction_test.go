@@ -1,6 +1,9 @@
 package api_tests
 
 import (
+	"net/http"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -222,4 +225,72 @@ func TestWinnerRuleIsNormalized(t *testing.T) {
 	}, owner, restricted)
 	require.NoError(t, err)
 	assert.Equal(t, models.DefaultWinnerRule(), application_context.DecodeWinnerRule(empty.WinnerRule))
+}
+
+// The keep-as-version flags can be turned off, not only on.
+//
+// A browser omits an unchecked checkbox entirely, so a native form post decodes to
+// a nil *bool — "leave it as it was" — and a flag that was on could never be
+// turned off. The form carries a hidden 0 in front of each box; this pins the
+// decoding both ways.
+func TestKeepAsVersionFlagsCanBeTurnedOff(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	red := createReduction(t, tc, "Flags", []uint{1})
+	require.True(t, red.KeepAsVersionNear, "on by default")
+
+	form := url.Values{}
+	form.Set("id", strconv.FormatUint(uint64(red.ID), 10))
+	form.Set("version", strconv.FormatUint(uint64(red.Version), 10))
+	// Exactly what the page posts with the box unticked: the hidden field alone.
+	form["keepAsVersionNear"] = []string{"0"}
+	form["keepAsVersionIdentical"] = []string{"0"}
+
+	response := tc.MakeFormRequest(http.MethodPost, "/v1/reduction/edit", form)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	owner, restricted := asAdmin()
+	after, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	assert.False(t, after.KeepAsVersionNear, "unticking turns it off")
+
+	// And ticking it turns it back on: hidden 0 then the box's 1, last wins.
+	form.Set("version", strconv.FormatUint(uint64(after.Version), 10))
+	form["keepAsVersionNear"] = []string{"0", "1"}
+	response = tc.MakeFormRequest(http.MethodPost, "/v1/reduction/edit", form)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	after, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	assert.True(t, after.KeepAsVersionNear)
+}
+
+// The Winner Rule is configurable, which is the whole of story 11 — the page
+// posts one `winnerRule` value per ordered slot and the empty ones drop out.
+func TestTheWinnerRuleCanBeReordered(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	red := createReduction(t, tc, "Rule editor", []uint{1})
+	require.Equal(t, models.DefaultWinnerRule(), application_context.DecodeWinnerRule(red.WinnerRule))
+
+	form := url.Values{}
+	form.Set("id", strconv.FormatUint(uint64(red.ID), 10))
+	form.Set("version", strconv.FormatUint(uint64(red.Version), 10))
+	form["winnerRule"] = []string{
+		models.WinnerCriterionNameAsc,
+		"",
+		models.WinnerCriterionCreatedAsc,
+		"",
+		"",
+	}
+
+	response := tc.MakeFormRequest(http.MethodPost, "/v1/reduction/edit", form)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	owner, restricted := asAdmin()
+	after, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]string{models.WinnerCriterionNameAsc, models.WinnerCriterionCreatedAsc},
+		application_context.DecodeWinnerRule(after.WinnerRule))
 }

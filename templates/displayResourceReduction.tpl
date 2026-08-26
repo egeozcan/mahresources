@@ -194,18 +194,51 @@
             </fieldset>
 
             <fieldset>
+                <legend class="block text-sm font-medium font-mono text-stone-700">Winner Rule</legend>
+                <p class="text-xs text-stone-500 mt-1">
+                    In order. Each criterion breaks the ties the one before it left; leave the rest empty.
+                </p>
+                {# Ordered selects rather than a drag-and-drop list: this has to be   #}
+                {# operable from the keyboard and announced by a screen reader, and a #}
+                {# reorderable list is neither without a great deal of machinery. The #}
+                {# server drops empties and duplicates, so "1st and 3rd only" and     #}
+                {# "the same criterion twice" both resolve to what the reviewer meant.#}
+                {% for slot in winnerRuleSlots %}
+                <div class="mt-1">
+                    <label class="block text-xs font-mono text-stone-600" for="winner-rule-{{ slot.position }}">{{ slot.label }}</label>
+                    <select id="winner-rule-{{ slot.position }}" name="winnerRule"
+                            data-testid="winner-rule-slot"
+                            class="reduction-control mt-1 block w-full rounded-md border-stone-300 shadow-sm text-sm focus:border-amber-600 focus:ring-amber-600">
+                        <option value="">&mdash; none &mdash;</option>
+                        {% for criterion in winnerCriteria %}
+                        <option value="{{ criterion.token }}" {% if criterion.token == slot.selected %}selected{% endif %}>{{ criterion.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endfor %}
+            </fieldset>
+
+            <fieldset>
                 <legend class="block text-sm font-medium font-mono text-stone-700">Keep a Loser's file as a version of the Winner</legend>
                 {# Not partials/form/checkboxInput.tpl: that renders a 14px box, which is #}
                 {# under the WCAG 2.2 SC 2.5.8 24px floor. These two govern whether a     #}
                 {# Loser's pixels are recoverable, so they are not controls to make       #}
                 {# fiddly.                                                                #}
+                {# The hidden 0 in front of each box is what makes unchecking work.  #}
+                {# A browser omits an unchecked checkbox entirely, which decodes to a #}
+                {# nil *bool and therefore "leave it as it was" — so a flag that was  #}
+                {# on could never be turned off. With both present the decoder takes  #}
+                {# the last value, so checked submits 0 then 1 and unchecked submits  #}
+                {# 0 alone. Verified against gorilla/schema, not assumed.             #}
                 <label for="keepAsVersionNear" class="flex items-center gap-2 mt-1 text-sm text-stone-700">
+                    <input type="hidden" name="keepAsVersionNear" value="0">
                     <input id="keepAsVersionNear" name="keepAsVersionNear" type="checkbox" value="1"
                            {% if raw.KeepAsVersionNear %}checked{% endif %}
                            class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                     For Near-Identical Clusters
                 </label>
                 <label for="keepAsVersionIdentical" class="flex items-center gap-2 mt-1 text-sm text-stone-700">
+                    <input type="hidden" name="keepAsVersionIdentical" value="0">
                     <input id="keepAsVersionIdentical" name="keepAsVersionIdentical" type="checkbox" value="1"
                            {% if raw.KeepAsVersionIdentical %}checked{% endif %}
                            class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">

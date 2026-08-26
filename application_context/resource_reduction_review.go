@@ -80,11 +80,18 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		for _, member := range cluster.Members {
 			resource := resources[member.ResourceID]
 			// A member that does not come back is one this principal may not see —
-			// except on an applied Cluster, where the Losers were destroyed by this
+			// except a *Loser* of an applied Cluster, which was destroyed by this
 			// very row moments ago. Counting those as withheld would hide the record
 			// of what the Reduction just did, and showing them discloses nothing:
 			// the reviewer performed the deletion.
-			if resource == nil && cluster.State != models.ReductionClusterApplied {
+			//
+			// The Winner is not exempt. It survived the merge, so a Winner that
+			// cannot be read is one the reviewer's access no longer covers, and
+			// everything the Cluster says about it — the criterion, the margin, the
+			// curation warning — is a statement about a Resource that is still there
+			// and is not theirs to know about.
+			mergedAway := cluster.State == models.ReductionClusterApplied && member.ResourceID != cluster.WinnerID
+			if resource == nil && !mergedAway {
 				view.Withheld++
 			}
 			view.Members = append(view.Members, contracts.ReductionMemberView{
@@ -94,6 +101,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 				IsLoser:         member.IsLoser(cluster.WinnerID),
 			})
 		}
+		view.Position = len(views) + 1
 		views = append(views, view)
 	}
 
