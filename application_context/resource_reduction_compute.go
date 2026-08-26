@@ -88,11 +88,21 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *ui
 	// the SSE stream drops any event whose job the principal may not see, so a
 	// job with no owner yet never reaches its own submitter's jobs panel — which
 	// is the only place the progress of this run is visible.
-	job, err := dm.SubmitJobWithOptions(download_queue.JobOptions{
+	_, err = dm.SubmitJobWithOptions(download_queue.JobOptions{
 		Source:       download_queue.JobSourceResourceReduction,
 		InitialPhase: "clustering",
 		OwnerUserID:  actorUserID,
 	}, func(jobCtx context.Context, j *download_queue.DownloadJob, p download_queue.ProgressSink) error {
+		// The row is told which job owns it here, from inside the worker, and not
+		// by the caller after SubmitJobWithOptions returns. SubmitJobWithOptions
+		// starts the goroutine before it returns, so a fast run could finish and
+		// find compute_job_id still empty — read that as "a newer job owns this
+		// row", discard its own finished plan, and leave the Reduction at
+		// `computing` with nothing alive to move it off. Measured: one run in three
+		// of the whole api_tests package.
+		if claimErr := ctx.claimReductionComputeJob(reduction.ID, j.ID); claimErr != nil {
+			return claimErr
+		}
 		return ctx.runReductionCompute(jobCtx, reduction.ID, j.ID, p)
 	})
 	if err != nil {
@@ -109,21 +119,52 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *ui
 		return nil, err
 	}
 
-	// Bookkeeping, not a decision, so it is written with a plain conditional
-	// UPDATE rather than through the version: it names which job owns the row's
-	// `computing` state, and the guard at write time reads it back.
-	if err := ctx.db.Model(&models.ResourceReduction{}).
-		Where("id = ? AND status = ? AND COALESCE(compute_job_id, '') = ''", reduction.ID, models.ReductionStatusComputing).
-		Update("compute_job_id", job.ID).Error; err != nil {
-		ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name, "Could not record the clustering job id: "+err.Error(), nil)
-	}
-
 	return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
 }
 
+// claimReductionComputeJob records which queue job owns the row's `computing`
+// state.
+//
+// Bookkeeping rather than a decision, so it is a plain conditional UPDATE rather
+// than a write through the version: nothing about the plan changes here, and the
+// version belongs to the plan. The `compute_job_id = ”` predicate is what makes
+// it idempotent under a retry, and the `status = 'computing'` predicate is what
+// stops a run whose row has since been recomputed from re-claiming it.
+func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, jobID string) error {
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		err := ctx.db.Model(&models.ResourceReduction{}).
+			Where("id = ? AND status = ? AND COALESCE(compute_job_id, '') = ''", reductionID, models.ReductionStatusComputing).
+			Update("compute_job_id", jobID).Error
+		if err == nil {
+			return nil
+		}
+		if !isLockContentionError(err) {
+			return err
+		}
+	}
+	return fmt.Errorf("could not record the clustering job id for Resource Reduction %d", reductionID)
+}
+
+// reductionComputeAttempts bounds the retry on lock contention.
+//
+// Clustering is a long read over tables the rest of the deployment is writing —
+// uploads, the hash worker, another Reduction — so losing a lock partway through
+// is transient contention rather than a failure on the run's own merits, and the
+// run has written nothing at that point. Recording it as a failed compute would
+// leave the reviewer looking at a Reduction that needs recomputing for no reason
+// they could act on. The same reasoning AddResource's phase-3 retry gives.
+const reductionComputeAttempts = 3
+
 // runReductionCompute is the clustering job's body.
 func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID string, progress download_queue.ProgressSink) error {
-	plan, err := ctx.computeReductionPlan(jobCtx, reductionID, progress)
+	var plan models.ResourceReductionPlan
+	var err error
+	for attempt := 0; attempt < reductionComputeAttempts; attempt++ {
+		plan, err = ctx.computeReductionPlan(jobCtx, reductionID, progress)
+		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
+			break
+		}
+	}
 	if err != nil {
 		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, err); writeErr != nil {
 			return fmt.Errorf("%w (and the failure could not be recorded: %v)", err, writeErr)
@@ -266,6 +307,9 @@ func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID strin
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
 		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
+			if isLockContentionError(err) {
+				continue
+			}
 			return err
 		}
 		if jobID != "" && current.ComputeJobID != jobID {
@@ -280,6 +324,12 @@ func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID strin
 			"compute_error":        "",
 		})
 		if err != nil {
+			// Contention is retried like a lost compare-and-set: this write is the
+			// only record that the run succeeded, and losing it would leave the
+			// Reduction reading as failed with a finished plan nobody can see.
+			if isLockContentionError(err) {
+				continue
+			}
 			return err
 		}
 		if ok {

@@ -203,6 +203,36 @@ func GetResourceReductionOverrideHandler(ctx ResourceReductionContext) func(http
 	}
 }
 
+// GetResourceReductionApplyHandler handles POST /v1/reduction/apply.
+//
+// The response is a per-Cluster report rather than an ok/not-ok, because applying
+// is partial by design: some Clusters merge, some are refused at revalidation, and
+// the refused ones have to be *named* — "one of your four hundred Clusters went
+// stale" is not something anybody can act on.
+func GetResourceReductionApplyHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var apply query_models.ReductionApply
+		if err := tryFillStructValuesFromRequest(&apply, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
+		result, err := ctx.ApplyResourceReduction(&apply, owner, restricted)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"applied":   result.Applied,
+			"stale":     result.Stale,
+			"destroyed": result.DestroyedCount(),
+		})
+	}
+}
+
 // actingUserID is who a background job belongs to. Nil under auth-off and for the
 // implicit super-user, matching how every other job records its submitter.
 func actingUserID(p *auth.Principal) *uint {

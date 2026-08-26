@@ -1,0 +1,286 @@
+package application_context
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"mahresources/contracts"
+	"mahresources/models"
+	"mahresources/models/query_models"
+)
+
+// Reasons a Cluster is refused at apply. Each names what changed, because the
+// reviewer's next move depends on which one it was.
+const (
+	staleReasonMemberGone   = "a Resource in this Cluster no longer exists, or is no longer one you may see"
+	staleReasonHashChanged  = "the bytes of a Resource in this Cluster changed since it was reviewed"
+	staleReasonPairGone     = "the perceptual match between the Winner and a Loser no longer holds"
+	staleReasonNothingToDo  = "every Loser in this Cluster has been ejected, so there is nothing to merge"
+	staleReasonAlreadyMoved = "this Cluster changed while the batch was running"
+	staleReasonMergeRefused = "the merge itself was refused"
+)
+
+// ApplyResourceReduction merges every checked Cluster.
+//
+// Repeatable and partial by design: it applies what is checked, marks those
+// Clusters applied, and leaves everything else open for tomorrow. A Cluster that
+// fails revalidation is skipped, marked stale, named in the result and kept in
+// the Reduction — never a whole-batch refusal, because one stray edit must not
+// waste a review of four hundred.
+//
+// Three structural decisions, each of which would be a defect the other way:
+//
+//   - There is no transaction around the loop. MergeResources opens its own and
+//     runs its file cleanup *after* that commits, deciding whether to remove each
+//     file from a reference count taken inside it. An outer transaction would make
+//     "after commit" untrue and take that decision on stale numbers.
+//   - Each Cluster's outcome is written the moment it happens, not at the end. A
+//     crash mid-batch then leaves the Clusters that merged marked applied, rather
+//     than leaving them checked and open over Losers that no longer exist.
+//   - Revalidation happens per Cluster immediately before its own merge, not once
+//     up front. Earlier merges in this same batch change the world, and so does
+//     anything else running at the time.
+func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.ReductionApply, ownerUserID *uint, ownerRestricted bool) (*contracts.ReductionApplyResult, error) {
+	if request == nil || request.ID == 0 {
+		return nil, errors.New("no Resource Reduction given")
+	}
+
+	reduction, err := ctx.loadReductionForUpdate(request.ID, ownerUserID, ownerRestricted)
+	if err != nil {
+		return nil, err
+	}
+	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
+		return nil, ErrReductionBusy
+	}
+
+	// The claim, taken before anything is destroyed and in the shape
+	// ClaimDownloadHistoryRetry uses: a reviewer working from a stale page cannot
+	// apply, and a concurrent apply or override loses here rather than
+	// interleaving merges with this one.
+	claimed, err := ctx.casReduction(reduction.ID, request.Version, map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, ErrReductionConflict
+	}
+
+	plan, err := DecodeReductionPlan(reduction.Plan)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &contracts.ReductionApplyResult{}
+	for _, planned := range plan.Clusters {
+		if planned.State != models.ReductionClusterOpen || !planned.Checked {
+			continue
+		}
+		outcome := ctx.applyOneCluster(reduction.ID, planned.ID, reduction)
+		switch {
+		case outcome.Applied:
+			result.Applied = append(result.Applied, outcome.Report)
+		default:
+			result.Stale = append(result.Stale, outcome.Report)
+		}
+	}
+
+	return result, nil
+}
+
+type clusterApplyOutcome struct {
+	Applied bool
+	Report  contracts.ReductionApplyOutcome
+}
+
+// applyOneCluster revalidates and merges a single Cluster, then records what
+// happened to it.
+func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID string, reduction *models.ResourceReduction) clusterApplyOutcome {
+	// Re-read rather than trusting the copy the batch started with. An earlier
+	// Cluster in this batch may have merged one of these Resources away, and a
+	// concurrent apply may have taken this Cluster already.
+	current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
+	if err != nil {
+		return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{ClusterID: clusterID, Reason: err.Error()}}
+	}
+	plan, err := DecodeReductionPlan(current.Plan)
+	if err != nil {
+		return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{ClusterID: clusterID, Reason: err.Error()}}
+	}
+	cluster := findCluster(&plan, clusterID)
+	if cluster == nil || cluster.State != models.ReductionClusterOpen || !cluster.Checked {
+		return clusterApplyOutcome{Report: contracts.ReductionApplyOutcome{ClusterID: clusterID, Reason: staleReasonAlreadyMoved}}
+	}
+
+	report := contracts.ReductionApplyOutcome{
+		ClusterID: cluster.ID,
+		Tier:      cluster.Tier,
+		WinnerID:  cluster.WinnerID,
+		LoserIDs:  cluster.LoserIDs(),
+	}
+
+	if reason := ctx.revalidateCluster(cluster); reason != "" {
+		report.Reason = reason
+		ctx.markClusterStale(reductionID, clusterID, reason)
+		return clusterApplyOutcome{Report: report}
+	}
+
+	// One flag per tier, because the design's defaults are opposite: a
+	// byte-identical Loser has nothing to preserve, while a Near-Identical one
+	// holds pixels the reviewer decided against. MergeResources takes a single
+	// bool, which is exactly why this is easy to get wrong.
+	keepAsVersion := reduction.KeepAsVersionIdentical
+	if cluster.Tier == models.ReductionTierNear {
+		keepAsVersion = reduction.KeepAsVersionNear
+	}
+
+	if err := ctx.MergeResources(cluster.WinnerID, report.LoserIDs, keepAsVersion); err != nil {
+		reason := staleReasonMergeRefused + ": " + err.Error()
+		report.Reason = reason
+		ctx.markClusterStale(reductionID, clusterID, reason)
+		return clusterApplyOutcome{Report: report}
+	}
+
+	ctx.markClusterApplied(reductionID, clusterID)
+	return clusterApplyOutcome{Applied: true, Report: report}
+}
+
+// revalidateCluster answers "is this still the thing that was reviewed", and
+// returns why not when it is not.
+//
+// The content-hash snapshot is what makes this possible at all. A version upload
+// rewrites resources.hash and leaves the similarity pairs untouched, so
+// re-checking the pair table alone could not detect that the reviewed bytes are
+// gone. The pair re-check stays for the Near-Identical tier, but it is no longer
+// the thing being relied on.
+//
+// Ejected members are exempt from every check here. Ejection leaves a Resource
+// completely untouched — that is what makes it a safe action — so a version
+// upload on one must not stale a Cluster it is no longer part of.
+func (ctx *MahresourcesContext) revalidateCluster(cluster *models.ReductionCluster) string {
+	loserIDs := cluster.LoserIDs()
+	if len(loserIDs) == 0 {
+		return staleReasonNothingToDo
+	}
+
+	// Loaded through the scoped handle, so "no longer exists" and "no longer one
+	// this principal may see" are the same answer — which is the apply-side half
+	// of re-checking membership against the *current* principal. A reviewer whose
+	// subtree shrank must not be able to destroy what they can no longer be shown.
+	wanted := append([]uint{cluster.WinnerID}, loserIDs...)
+	resources, err := ctx.loadResourcesByID(wanted)
+	if err != nil {
+		return err.Error()
+	}
+	for _, member := range cluster.Members {
+		if member.Ejected {
+			continue
+		}
+		resource := resources[member.ResourceID]
+		if resource == nil {
+			return staleReasonMemberGone
+		}
+		if resource.Hash != member.Hash {
+			return staleReasonHashChanged
+		}
+	}
+
+	if cluster.Tier != models.ReductionTierNear {
+		return ""
+	}
+	pairs, err := ctx.similarWithin(cluster.WinnerID, ctx.similarityThreshold())
+	if err != nil {
+		return err.Error()
+	}
+	paired := map[uint]bool{}
+	for _, pair := range pairs {
+		paired[pair.ResourceID] = true
+	}
+	for _, id := range loserIDs {
+		if !paired[id] {
+			return staleReasonPairGone
+		}
+	}
+	return ""
+}
+
+func (ctx *MahresourcesContext) markClusterApplied(reductionID uint, clusterID string) {
+	ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+		if cluster.State != models.ReductionClusterOpen {
+			return false
+		}
+		cluster.State = models.ReductionClusterApplied
+		cluster.Checked = false
+		cluster.Reviewed = true
+		now := time.Now()
+		cluster.AppliedAt = &now
+		return true
+	})
+}
+
+func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason string) {
+	ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+		if cluster.State != models.ReductionClusterOpen {
+			return false
+		}
+		cluster.State = models.ReductionClusterStale
+		cluster.StaleReason = reason
+		// Unchecked, so the next apply does not walk into the same refusal, and
+		// frozen, so a recompute leaves it where the reviewer can look at it.
+		cluster.Checked = false
+		cluster.Reviewed = true
+		return true
+	})
+}
+
+// mutateCluster applies one change to one Cluster under the version
+// compare-and-set, re-reading on each attempt.
+//
+// The mutation reports whether it still applies. That is what stops an outcome
+// being written over a newer one: a concurrent apply that reached this Cluster
+// first has already moved it off `open`, and recording "stale" over its "applied"
+// would describe a merge that did happen as one that did not.
+func (ctx *MahresourcesContext) mutateCluster(reductionID uint, clusterID string, mutate func(*models.ReductionCluster) bool) {
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			return
+		}
+		plan, err := DecodeReductionPlan(current.Plan)
+		if err != nil {
+			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			return
+		}
+		cluster := findCluster(&plan, clusterID)
+		if cluster == nil || !mutate(cluster) {
+			return
+		}
+		encoded, err := encodeJSON(plan)
+		if err != nil {
+			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			return
+		}
+		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{"plan": encoded})
+		if err != nil {
+			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			return
+		}
+		if ok {
+			return
+		}
+	}
+	ctx.logReductionWriteFailure(reductionID, clusterID, ErrReductionConflict)
+}
+
+// logReductionWriteFailure records a bookkeeping write that could not land.
+//
+// It is logged rather than returned, because by the time it happens the merge has
+// already run: the Resources are gone either way, and failing the request would
+// tell the reviewer nothing happened when in fact it did. The row is then behind
+// what the database holds, which the next revalidation catches as a stale Cluster
+// rather than as a second deletion — the members no longer exist.
+func (ctx *MahresourcesContext) logReductionWriteFailure(reductionID uint, clusterID string, cause error) {
+	ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, clusterID,
+		fmt.Sprintf("Could not record the outcome of Cluster %s: %s", clusterID, cause.Error()), nil)
+}

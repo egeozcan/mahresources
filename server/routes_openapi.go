@@ -109,6 +109,7 @@ var (
 	reductionCreatorType  = reflect.TypeOf(query_models.ResourceReductionCreator{})
 	reductionEditorType   = reflect.TypeOf(query_models.ResourceReductionEditor{})
 	reductionOverrideType = reflect.TypeOf(query_models.ReductionOverride{})
+	reductionApplyType    = reflect.TypeOf(query_models.ReductionApply{})
 )
 
 var authLoginRequestType = reflect.TypeOf(struct {
@@ -2590,6 +2591,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionOverrideType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/apply",
+		OperationID:          "applyResourceReduction",
+		Summary:              "Apply a Resource Reduction's checked Clusters",
+		Description:          "Merges every checked Cluster's Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale, named in the response and kept. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionApplyType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

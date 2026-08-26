@@ -50,11 +50,19 @@
         {% if cluster.State != "applied" %}
         <div class="flex items-center gap-2 flex-wrap">
             <label class="flex items-center gap-2 text-sm text-stone-700">
+                {# Every reason to disable this lives inside the binding. Alpine removes #}
+                {# the attribute whenever the binding evaluates false, so a *separate*    #}
+                {# static `{% if cluster.Withheld %}disabled{% endif %}` would be         #}
+                {# stripped at init and a Cluster the reviewer cannot fully see would     #}
+                {# become checkable. The real guard is apply's own re-check; this only    #}
+                {# stops the UI lying. The bare `disabled` is the pre-init state: this    #}
+                {# control does nothing until Alpine has wired it, and if Alpine never    #}
+                {# arrives it does nothing at all.                                        #}
                 <input type="checkbox"
                        data-testid="cluster-checkbox"
                        {% if cluster.Checked %}checked{% endif %}
-                       {% if cluster.Withheld %}disabled{% endif %}
-                       :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       disabled
+                       :disabled="busy || {% if cluster.Withheld %}true{% else %}false{% endif %} || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        @change="act('{{ cluster.ID }}', $event.target.checked ? 'check' : 'uncheck')"
                        class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster

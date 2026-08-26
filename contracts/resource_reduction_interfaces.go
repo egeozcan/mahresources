@@ -33,4 +33,8 @@ type ResourceReductionWriter interface {
 	// OverrideReductionCluster records one review decision — promote, eject,
 	// restore, skip, reopen, check or uncheck.
 	OverrideReductionCluster(override *query_models.ReductionOverride, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
+	// ApplyResourceReduction merges every checked Cluster, reporting per Cluster
+	// what happened. Partial and repeatable: what is not checked stays open, and a
+	// Cluster refused at revalidation is named in the result and kept.
+	ApplyResourceReduction(request *query_models.ReductionApply, ownerUserID *uint, ownerRestricted bool) (*ReductionApplyResult, error)
 }

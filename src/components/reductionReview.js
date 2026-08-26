@@ -41,6 +41,58 @@ export function reductionReview({ reductionId, version }) {
       window.mahAnnounce?.('Cluster expanded. Its controls are now available.');
     },
 
+    // The report of the last apply: what merged, and what was refused and why.
+    // Held here rather than re-rendered from the row, because a stale Cluster's
+    // reason is about the batch that just ran and the row only says the Cluster is
+    // stale.
+    applyResult: null,
+
+    checkedCount() {
+      return document.querySelectorAll('[data-testid="cluster-checkbox"]:checked').length;
+    },
+
+    async apply() {
+      if (this.busy) return;
+      const count = this.checkedCount();
+      if (count === 0) {
+        this.error = 'Nothing is checked.';
+        return;
+      }
+      const confirmed = await this.$store.confirmDialog.ask(
+        `${count} Cluster${count === 1 ? '' : 's'} will be merged and their Losers deleted. This cannot be undone.`,
+        { title: 'Apply this Resource Reduction?', confirmLabel: 'Apply' },
+      );
+      if (!confirmed) return;
+
+      this.busy = true;
+      this.error = '';
+      try {
+        const response = await fetch('/v1/reduction/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ id: this.reductionId, version: this.version }),
+        });
+        if (!response.ok) {
+          const message = await window.errorMessageFromResponse(response);
+          throw new Error(message);
+        }
+        this.applyResult = await response.json();
+        await this.refresh();
+        const applied = this.applyResult.applied?.length || 0;
+        const stale = this.applyResult.stale?.length || 0;
+        window.mahAnnounce?.(
+          `${applied} Cluster${applied === 1 ? '' : 's'} applied, ${this.applyResult.destroyed} Resources deleted.` +
+          (stale ? ` ${stale} refused and kept for you to look at.` : ''),
+          { assertive: true },
+        );
+      } catch (err) {
+        this.error = err.message;
+        window.mahAnnounce?.(`Nothing was applied: ${err.message}`, { assertive: true });
+      } finally {
+        this.busy = false;
+      }
+    },
+
     async act(clusterId, action, resourceId = 0) {
       if (this.busy) return;
       this.busy = true;

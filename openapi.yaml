@@ -1197,6 +1197,13 @@ components:
                 UpdatedBefore:
                     type: string
             type: object
+        ReductionApply:
+            properties:
+                id:
+                    type: integer
+                version:
+                    type: integer
+            type: object
         ReductionOverride:
             properties:
                 action:
@@ -5854,6 +5861,27 @@ paths:
                         application/json: {}
                     description: Successful response
             summary: Create a Resource Reduction, or widen an existing one
+            tags:
+                - reductions
+    /v1/reduction/apply:
+        post:
+            description: 'Merges every checked Cluster''s Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale, named in the response and kept. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.'
+            operationId: applyResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReductionApply'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReductionApply'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Apply a Resource Reduction's checked Clusters
             tags:
                 - reductions
     /v1/reduction/cluster:

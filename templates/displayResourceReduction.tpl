@@ -108,6 +108,48 @@
             {% endfor %}
         </div>
         {% include "/partials/pagination.tpl" %}
+
+        {% if review.ClusterCount %}
+        <div class="mt-4 flex flex-col gap-2">
+            <button type="button"
+                    data-testid="reduction-apply"
+                    :disabled="busy"
+                    @click="apply()"
+                    class="self-start inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                Apply the checked Clusters
+            </button>
+            <p class="text-xs text-stone-600">
+                Only the Clusters checked on this page and every other page are applied. The rest stay open.
+            </p>
+        </div>
+
+        {# The report of the last apply. A refused Cluster is named here as well as #}
+        {# marked on the row, because "one of your four hundred went stale" is not   #}
+        {# something anybody can act on.                                             #}
+        <div class="mt-4" x-show="applyResult" x-cloak data-testid="reduction-apply-result" role="status">
+            <p class="text-sm text-stone-800">
+                <span x-text="applyResult?.applied?.length || 0"></span> Cluster(s) applied,
+                <span x-text="applyResult?.destroyed || 0"></span> Resource(s) deleted.
+            </p>
+            <template x-if="applyResult?.stale?.length">
+                <div class="mt-2">
+                    <p class="text-sm text-amber-800">
+                        <span x-text="applyResult.stale.length"></span> Cluster(s) were refused and kept in this Reduction:
+                    </p>
+                    <ul class="list-disc list-inside text-sm text-stone-700">
+                        <template x-for="outcome in applyResult.stale" :key="outcome.clusterId">
+                            <li>
+                                <a :href="'#cluster-' + outcome.clusterId + '-heading'"
+                                   class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700"
+                                   x-text="outcome.clusterId"></a>
+                                &mdash; <span x-text="outcome.reason"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </template>
+        </div>
+        {% endif %}
     </section>
 
     <section class="mb-6" aria-labelledby="reduction-rule-heading">

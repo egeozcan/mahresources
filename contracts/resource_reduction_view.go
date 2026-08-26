@@ -62,3 +62,36 @@ type ReductionReview struct {
 	ExtentSize          int
 	EnteredSinceCompute int
 }
+
+// ReductionApplyOutcome is what happened to one Cluster in an apply.
+//
+// A refused Cluster is named here as well as marked on the row, because the
+// reviewer has to be able to find it: "one of your four hundred Clusters went
+// stale" is not something anybody can act on.
+type ReductionApplyOutcome struct {
+	ClusterID string `json:"clusterId"`
+	Tier      string `json:"tier,omitempty"`
+	WinnerID  uint   `json:"winnerId,omitempty"`
+	LoserIDs  []uint `json:"loserIds,omitempty"`
+	// Reason is why the Cluster was refused. Empty for one that was applied.
+	Reason string `json:"reason,omitempty"`
+}
+
+// ReductionApplyResult is the report of one apply.
+//
+// Applying is partial by design, so this is never "it worked" or "it did not":
+// it is what merged and what was refused, and the Reduction keeps everything in
+// the second list.
+type ReductionApplyResult struct {
+	Applied []ReductionApplyOutcome `json:"applied"`
+	Stale   []ReductionApplyOutcome `json:"stale"`
+}
+
+// DestroyedCount is how many Resources this apply actually merged away.
+func (r *ReductionApplyResult) DestroyedCount() int {
+	total := 0
+	for _, outcome := range r.Applied {
+		total += len(outcome.LoserIDs)
+	}
+	return total
+}
