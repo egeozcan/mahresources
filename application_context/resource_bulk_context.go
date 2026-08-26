@@ -457,9 +457,10 @@ type FileCleanupAction struct {
 	ShouldRemoveSource bool
 }
 
-// metaBackupsKey is the meta key holding snapshots of merged-away losers. Named
-// once because it is spelled three more times in engine-specific SQL below, where
-// a typo would silently stop stripping rather than fail.
+// metaBackupsKey is the meta key holding snapshots of merged-away losers. Every
+// site that reads, writes or strips it derives the name from here, including the
+// engine-specific SQL, which would otherwise carry two more spellings that could
+// stop stripping without failing.
 const metaBackupsKey = "backups"
 
 // metaWithoutBackups returns meta with the backups key removed. Unparseable or
@@ -862,9 +863,9 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 			// anyway so the two cannot come to mean different things.
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = tx.Exec(`UPDATE resources SET meta = (coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'::jsonb), '{}'::jsonb) - 'backups') || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error
+				err = tx.Exec(fmt.Sprintf(`UPDATE resources SET meta = (coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'::jsonb), '{}'::jsonb) - '%s') || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, metaBackupsKey), loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = tx.Exec(`UPDATE resources SET meta = json_patch(json_remove(coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'), '{}'), '$.backups'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
+				err = tx.Exec(fmt.Sprintf(`UPDATE resources SET meta = json_patch(json_remove(coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'), '{}'), '$.%s'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, metaBackupsKey), loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
@@ -892,7 +893,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 
 		// Save backups to winner's meta
 		backupObj := make(map[string]any)
-		backupObj["backups"] = deletedResBackups
+		backupObj[metaBackupsKey] = deletedResBackups
 		backups, err := json.Marshal(&backupObj)
 		if err != nil {
 			return err

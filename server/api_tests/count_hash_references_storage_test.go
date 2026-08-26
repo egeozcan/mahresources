@@ -29,12 +29,16 @@ func TestCountHashReferencesIsPerStorageLocation(t *testing.T) {
 		ResourceCategoryId: 1,
 	}).Error)
 
-	// An unrelated row on the main store. If the storage-location predicate is not
-	// parenthesised, `hash = ? AND storage_location IS NULL OR storage_location = ''`
-	// binds the OR looser than the AND and sweeps this row into every count.
+	// An unrelated row on the main store, and its storage_location must be the empty
+	// string rather than NULL. If the predicate is not parenthesised, the OR binds
+	// looser than the AND and `storage_location = ''` sweeps this row into every
+	// count — but only if it can match, and NULL = '' never does. With NULL here the
+	// assertion below holds whether or not the parentheses are present.
+	blank := ""
 	assert.NoError(t, tc.DB.Create(&models.Resource{
 		Name: "unrelated, different hash", Hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		HashType: "SHA1", Location: "/resources/bb/bb/bb/b", ResourceCategoryId: 1,
+		HashType: "SHA1", Location: "/resources/bb/bb/bb/b", StorageLocation: &blank,
+		ResourceCategoryId: 1,
 	}).Error)
 
 	mainCount, err := tc.AppCtx.CountHashReferences(sharedHash, nil)

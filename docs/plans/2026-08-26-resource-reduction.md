@@ -209,9 +209,11 @@ skeptic thinks it is fine" is not a specification.
     Loser's resource-level file; it does not govern retention and never did. Verified by
     `TestMergeRetainsALoserFileItsVersionStillReferences`.
 
-  So a merge **never reclaims bytes**, in any tier, under any flag. Reclaiming requires pruning the
-  transferred versions as well, which is a separate existing operation and an open scope question for
-  this feature.
+  So a merge reclaims no bytes **whenever the Loser has versions**, which is every Resource created
+  through the normal upload path. The exception is a versionless legacy Resource — possible under
+  `-skip-version-migration` — where a `keepAsVersion=false` merge does free the file. Reclaiming in the
+  ordinary case requires pruning the transferred versions too, which is a separate existing operation
+  and an open scope question for this feature.
 
   So the reclaim behaviour is right and only **one** thing is actually broken: the `/deleted/` backup
   copy is written **unconditionally**, including for files that are not being removed — which for the

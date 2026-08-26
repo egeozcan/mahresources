@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"mahresources/models"
 )
 
@@ -61,4 +62,38 @@ func TestMergeDoesNotBackUpAFileItIsNotRemovingPG(t *testing.T) {
 
 	assert.Empty(t, deletedFiles(t, tc.Fs),
 		"a file that is not being removed must not be copied into /deleted")
+}
+
+// TestCountHashReferencesIsPerStorageLocationPG runs the two-store discrimination
+// against Postgres. The predicate is GORM-built and the NULL-versus-empty-string
+// handling is where the engines are most likely to differ.
+func TestCountHashReferencesIsPerStorageLocationPG(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	const sharedHash = "cccccccccccccccccccccccccccccccccccccccc"
+	alt := "photos"
+	blank := ""
+
+	require.NoError(t, tc.DB.Create(&models.Resource{
+		Name: "on the main store", Hash: sharedHash, HashType: "SHA1",
+		Location: "/resources/cc/cc/cc/" + sharedHash, ResourceCategoryId: 1,
+	}).Error)
+	require.NoError(t, tc.DB.Create(&models.Resource{
+		Name: "on the alt store", Hash: sharedHash, HashType: "SHA1",
+		Location: "/resources/cc/cc/cc/" + sharedHash, StorageLocation: &alt,
+		ResourceCategoryId: 1,
+	}).Error)
+	require.NoError(t, tc.DB.Create(&models.Resource{
+		Name: "unrelated, different hash", Hash: "dddddddddddddddddddddddddddddddddddddddd",
+		HashType: "SHA1", Location: "/resources/dd/dd/dd/d", StorageLocation: &blank,
+		ResourceCategoryId: 1,
+	}).Error)
+
+	mainCount, err := tc.AppCtx.CountHashReferences(sharedHash, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), mainCount)
+
+	altCount, err := tc.AppCtx.CountHashReferences(sharedHash, &alt)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), altCount)
 }

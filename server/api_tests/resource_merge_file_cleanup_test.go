@@ -159,3 +159,58 @@ func TestMergeDoesNotCarryLoserAccumulatedBackupsOntoWinner(t *testing.T) {
 	assert.NotContains(t, metaStr, "resource_999",
 		"the loser's accumulated backups must not compound onto the winner")
 }
+
+// TestMergeOfIdenticalContentKeepsTheSharedFile is the case the whole conditional
+// backup exists for, and it could not be reached through AddResource, which dedupes
+// on hash. Storage is content-addressed, so two rows with one hash name one file:
+// the Winner is still serving it after the merge, and a backup taken here would be
+// a copy of live bytes.
+func TestMergeOfIdenticalContentKeepsTheSharedFile(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	winner := addResourceWithBody(t, tc, "winner.txt", "shared-content")
+	sharedLocation := winner.GetCleanLocation()
+
+	// A second row over the same bytes — the shape a version upload can leave behind.
+	twin := &models.Resource{
+		Name: "twin", Hash: winner.Hash, HashType: winner.HashType,
+		Location: winner.Location, ContentType: winner.ContentType,
+		ResourceCategoryId: 1,
+	}
+	require.NoError(t, tc.DB.Create(twin).Error)
+
+	require.NoError(t, tc.AppCtx.MergeResources(winner.ID, []uint{twin.ID}, false))
+
+	exists, err := afero.Exists(tc.Fs, sharedLocation)
+	assert.NoError(t, err)
+	assert.True(t, exists, "the winner is still serving these bytes; the file must survive")
+
+	assert.Empty(t, deletedFiles(t, tc.Fs),
+		"backing up here would copy the winner's own live file")
+}
+
+// TestBulkDeleteDoesNotBackUpAFileItIsNotRemoving pins the same rule on the other
+// caller of the shared cleanup helper. Bulk delete predates the Fs handle, so no
+// existing test could observe what it wrote.
+func TestBulkDeleteDoesNotBackUpAFileItIsNotRemoving(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	kept := addResourceWithBody(t, tc, "kept.txt", "shared-by-two")
+	sharedLocation := kept.GetCleanLocation()
+
+	twin := &models.Resource{
+		Name: "twin", Hash: kept.Hash, HashType: kept.HashType,
+		Location: kept.Location, ContentType: kept.ContentType,
+		ResourceCategoryId: 1,
+	}
+	require.NoError(t, tc.DB.Create(twin).Error)
+
+	require.NoError(t, tc.AppCtx.BulkDeleteResources(&query_models.BulkQuery{ID: []uint{twin.ID}}))
+
+	exists, err := afero.Exists(tc.Fs, sharedLocation)
+	assert.NoError(t, err)
+	assert.True(t, exists, "the surviving resource still references these bytes")
+
+	assert.Empty(t, deletedFiles(t, tc.Fs),
+		"a bulk delete must not back up a file it leaves in place either")
+}
