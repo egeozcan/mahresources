@@ -4,27 +4,52 @@
     "dashboard.png": {
       "page": "/dashboard",
       "description": "Dashboard showing recent resources with colorful thumbnails, descriptions, owner groups, and download FAB",
-      "seedDependencies": ["categories", "groups", "resources", "notes", "tags"],
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "notes",
+        "tags"
+      ],
       "seedDetails": "12 groups with hierarchy, 13 resources with generated images, 8 notes with blocks, 12 tags",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "grid-view.png": {
       "page": "/resources",
       "description": "Resource grid view with thumbnails, tag filter pills (FAVORITE, LANDSCAPE), sort/filter sidebar, and Select All button",
-      "seedDependencies": ["categories", "groups", "resources", "tags"],
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "tags"
+      ],
       "seedDetails": "13 resources with generated gradient images, owner groups, and tags",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "resource-detail.png": {
       "page": "/resource?id=1",
       "description": "Resource detail page showing breadcrumb, metadata cards, image preview, tags, groups, and owner",
-      "seedDependencies": ["categories", "groups", "resources", "tags"],
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "tags"
+      ],
       "seedDetails": "Sunset at Golden Gate Bridge resource with owner Landscapes, tags favorite/landscape, Photography group",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
@@ -33,252 +58,513 @@
       "description": "Create resource form with file upload, URL download, tags/groups/notes relation fields, and owner picker",
       "seedDependencies": [],
       "seedDetails": "Empty form, no data needed",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "note-blocks.png": {
       "page": "/note?id=1",
       "description": "Note detail page with heading block (Weekly Standup), text paragraph, and todo list with 1 checked item. Shows tags, owner, note type, and Share button",
-      "seedDependencies": ["notes", "note-blocks", "tags", "groups"],
+      "seedDependencies": [
+        "notes",
+        "note-blocks",
+        "tags",
+        "groups"
+      ],
       "seedDetails": "Weekly Team Standup note with 3 blocks: heading, text, todos (3 items, 1 checked). Tags: important, in-progress. Group: Web App Redesign",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "group-tree.png": {
       "page": "/group/tree",
       "description": "Hierarchical group tree with 5 root groups (Family, Photography, Research Papers, Travel 2025, Work Projects) showing category labels and child counts",
-      "seedDependencies": ["categories", "groups"],
+      "seedDependencies": [
+        "categories",
+        "groups"
+      ],
       "seedDetails": "5 root groups with categories, Photography/Research Papers/Work Projects have children",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "group-detail.png": {
       "page": "/group?id=1",
       "description": "Photography group detail showing description, owned notes (Landscape Photography Tips), tags (FAVORITE, REFERENCE), and merge tools",
-      "seedDependencies": ["categories", "groups", "resources", "notes", "tags"],
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "notes",
+        "tags"
+      ],
       "seedDetails": "Photography group (Media category) with note, tags, and Show in Tree link",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "search-results.png": {
       "page": "/resources?name=sunset",
       "description": "Filtered resource search results matching 'sunset' with thumbnail and metadata",
-      "seedDependencies": ["resources"],
+      "seedDependencies": [
+        "resources"
+      ],
       "seedDetails": "Resources with 'sunset' in name (Sunset at Golden Gate Bridge, Costa Rica Beach Sunset)",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "query-editor.png": {
       "page": "/query?id=1",
       "description": "Saved query detail page showing SQL query for Recent Large Resources with Run button",
-      "seedDependencies": ["queries"],
+      "seedDependencies": [
+        "queries"
+      ],
       "seedDetails": "3 saved queries: Recent Large Resources, Notes This Week, Resources by Content Type",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "activity-log.png": {
       "page": "/logs",
       "description": "Activity log table showing timestamped entries for resource uploads, note creation, and group operations",
-      "seedDependencies": ["resources", "notes", "groups", "tags"],
+      "seedDependencies": [
+        "resources",
+        "notes",
+        "groups",
+        "tags"
+      ],
       "seedDetails": "Log entries auto-generated from seeding 13 resources, 8 notes, 12 groups",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "tag-list.png": {
       "page": "/tags",
       "description": "Tags listing page with 12 tags including needs-review, published, in-progress, tutorial, portrait, landscape, archived, important",
-      "seedDependencies": ["tags"],
+      "seedDependencies": [
+        "tags"
+      ],
       "seedDetails": "12 tags with descriptive names and descriptions",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "note-list.png": {
       "page": "/notes",
       "description": "Notes listing page showing 8 notes with tags, note types, and descriptions",
-      "seedDependencies": ["notes", "tags"],
+      "seedDependencies": [
+        "notes",
+        "tags"
+      ],
       "seedDetails": "8 notes: Weekly Team Standup, Photography Tips, Q1 Roadmap, ML Paper Review, Travel Planning, API Migration Spec, Sprint Retrospective, Object Detection Survey",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "group-list.png": {
       "page": "/groups",
       "description": "Groups listing page with List/Text/Tree view tabs, category labels (Media, Document, Location, Project, Person), and filter sidebar",
-      "seedDependencies": ["categories", "groups"],
+      "seedDependencies": [
+        "categories",
+        "groups"
+      ],
       "seedDetails": "12 groups across 5 categories with parent-child hierarchy",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "resource-detail-view.png": {
       "page": "/resources/details",
       "description": "Resources in table/detail view showing ID, name, preview thumbnail, file size, and creation date columns",
-      "seedDependencies": ["resources"],
+      "seedDependencies": [
+        "resources"
+      ],
       "seedDetails": "13 resources with varied names, sizes (74KB-241KB), and generated gradient images",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "note-edit.png": {
       "page": "/note/edit?id=1",
       "description": "Note edit form with populated title, text, tags chips (important, in-progress), groups chip (Web App Redesign), and owner (Work Projects)",
-      "seedDependencies": ["notes", "tags", "groups"],
+      "seedDependencies": [
+        "notes",
+        "tags",
+        "groups"
+      ],
       "seedDetails": "Weekly Team Standup note with existing tags, group, and owner to show populated form",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "group-edit.png": {
       "page": "/group/edit?id=1",
       "description": "Group edit form with populated name, description, tags, category selector, and meta editor",
-      "seedDependencies": ["categories", "groups", "tags"],
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "tags"
+      ],
       "seedDetails": "Photography group with tags, category, and description pre-filled",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "category-list.png": {
       "page": "/categories",
       "description": "Category management page with 6 categories: Person, Location, Business, Project, Media, Document",
-      "seedDependencies": ["categories"],
+      "seedDependencies": [
+        "categories"
+      ],
       "seedDetails": "6 categories: 3 default (Person, Location, Business) + 3 custom (Project, Media, Document)",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "global-search.png": {
       "page": "/resources",
       "description": "Global search modal (Cmd/Ctrl+K) showing results for 'arch' across notes, resources, tags, and note types with keyboard navigation hints",
-      "seedDependencies": ["resources", "notes", "tags"],
+      "seedDependencies": [
+        "resources",
+        "notes",
+        "tags"
+      ],
       "seedDetails": "Search for 'arch' matches Architecture Diagram, ML Paper Review (Transformer Architecture), archived tag, Technical Spec",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Press Cmd+K to open search modal", "Type 'arch' to filter results"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Press Cmd+K to open search modal",
+        "Type 'arch' to filter results"
+      ],
       "capturedDate": "2026-08-25"
     },
     "bulk-selection.png": {
       "page": "/resources",
-      "description": "Bulk selection toolbar showing Deselect All, Add Tag, Remove Tag, Add Field, Add Groups, Update Dimensions, and Delete operations with selected resources",
-      "seedDependencies": ["resources"],
-      "seedDetails": "Resources selected via Select All button to show bulk operations toolbar",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Click 'Select All' button to activate bulk toolbar"],
-      "capturedDate": "2026-08-25"
+      "description": "Bulk selection toolbar with tag, group, compare and delete operations, and the Resource Reduction handoff added by the Resource Reduction feature",
+      "seedDependencies": [
+        "resources"
+      ],
+      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Click 'Select All' button to activate bulk toolbar"
+      ],
+      "capturedDate": "2026-08-26"
     },
     "plugin-management.png": {
       "page": "/plugins/manage",
       "description": "Plugin management page showing per-plugin cards with version, enabled state, enable/disable and scoped-access controls, the granted capability list, outbound network policy, plugin API version, and settings forms",
-      "seedDependencies": ["plugins"],
+      "seedDependencies": [
+        "plugins"
+      ],
       "seedDetails": "bundled plugins as discovered on a fresh ephemeral server; each card carries an Access panel, so only the first two fit the 1200x800 frame",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "version-compare.png": {
       "page": "/resource/compare?r1=1&v1=1&r2=1&v2=3",
       "description": "Version comparison showing v1 vs v3 with diff summary (Files differ, Type Match, Size/Dimensions delta), metadata cards, and side-by-side preview with compare modes",
-      "seedDependencies": ["resources", "versions"],
+      "seedDependencies": [
+        "resources",
+        "versions"
+      ],
       "seedDetails": "Sunset at Golden Gate resource with 3 versions (800x600, 800x600, 900x675) for comparison",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "download-queue.png": {
       "page": "/dashboard",
       "description": "Dashboard page showing the download queue FAB button in bottom-right corner",
-      "seedDependencies": ["resources", "groups"],
+      "seedDependencies": [
+        "resources",
+        "groups"
+      ],
       "seedDetails": "Same as dashboard; download FAB is always visible",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "resource-versions.png": {
       "page": "/resource?id=1",
       "description": "Resource detail page scrolled to show Versions (3) panel with Photography group, tags, and version management controls",
-      "seedDependencies": ["resources", "versions"],
+      "seedDependencies": [
+        "resources",
+        "versions"
+      ],
       "seedDetails": "Sunset at Golden Gate with 3 versions: initial, warmer color grading, final color correction",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Scroll down to Versions section"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Scroll down to Versions section"
+      ],
       "capturedDate": "2026-08-25"
     },
     "note-sharing.png": {
       "page": "/note?id=1",
       "description": "Note detail page showing the Share Note button in the sidebar alongside tags, note type, and owner",
-      "seedDependencies": ["notes", "note-blocks", "tags", "groups"],
+      "seedDependencies": [
+        "notes",
+        "note-blocks",
+        "tags",
+        "groups"
+      ],
       "seedDetails": "Weekly Team Standup note with blocks, Share Note button visible in sidebar",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "relation-list.png": {
       "page": "/relations",
       "description": "Relations page showing typed relationships between groups (e.g., Family -> Travel 2025 via Address)",
-      "seedDependencies": ["groups", "relations", "relation-types"],
+      "seedDependencies": [
+        "groups",
+        "relations",
+        "relation-types"
+      ],
       "seedDetails": "Relation between Family (Person) and Travel 2025 (Location) via Address relation type",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "relation-types.png": {
       "page": "/relationTypes",
       "description": "Relation types listing showing Address (Person->Location) and Employer (Person->Business) types",
-      "seedDependencies": ["relation-types", "categories"],
+      "seedDependencies": [
+        "relation-types",
+        "categories"
+      ],
       "seedDetails": "2 default relation types: Address (Person->Location), Employer (Person->Business)",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": "2026-08-25"
     },
     "timeline-view.png": {
       "page": "/resources/timeline",
       "description": "Timeline view showing resource creation and update activity over time",
-      "seedDependencies": ["categories", "tags", "groups", "resources"],
+      "seedDependencies": [
+        "categories",
+        "tags",
+        "groups",
+        "resources"
+      ],
       "seedDetails": "Resources with CreatedAt dates spanning 2020-2026. Some resources updated after creation.",
-      "viewport": { "width": 1200, "height": 800 },
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
       "interactions": [],
       "capturedDate": ""
     },
     "schema-editor-modal.png": {
       "page": "/category?id=1",
       "description": "Schema editor modal showing tree panel with 5 properties and detail panel editing a string property",
-      "seedDependencies": ["categories"],
+      "seedDependencies": [
+        "categories"
+      ],
       "seedDetails": "Person category with rich MetaSchema (name, email, status enum, age, address object)",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Click Visual Editor button to open modal"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Click Visual Editor button to open modal"
+      ],
       "capturedDate": "2026-04-04"
     },
     "schema-editor-preview.png": {
       "page": "/category?id=1",
       "description": "Schema editor modal on Preview Form tab showing rendered form fields for the Person schema",
-      "seedDependencies": ["categories"],
+      "seedDependencies": [
+        "categories"
+      ],
       "seedDetails": "Same as schema-editor-modal",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Click Visual Editor, switch to Preview Form tab"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Click Visual Editor, switch to Preview Form tab"
+      ],
       "capturedDate": "2026-04-04"
     },
     "schema-editor-composition.png": {
       "page": "/category?id=2",
       "description": "Schema editor modal showing a oneOf composition node with two variants in the detail panel",
-      "seedDependencies": ["categories"],
+      "seedDependencies": [
+        "categories"
+      ],
       "seedDetails": "Location category with schema containing oneOf contact (Email Contact or Phone Contact)",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Click Visual Editor, select the oneOf node in tree"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Click Visual Editor, select the oneOf node in tree"
+      ],
       "capturedDate": "2026-04-04"
     },
     "schema-search-fields.png": {
       "page": "/groups?categories=1",
       "description": "Groups list page with schema-driven search fields showing enum checkboxes, text input with operator, and boolean radio",
-      "seedDependencies": ["categories", "groups"],
+      "seedDependencies": [
+        "categories",
+        "groups"
+      ],
       "seedDetails": "Person category selected, schema fields rendered in search sidebar",
-      "viewport": { "width": 1200, "height": 800 },
-      "interactions": ["Select Person category in sidebar"],
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "Select Person category in sidebar"
+      ],
       "capturedDate": "2026-04-04"
+    },
+    "reduction-overview.png": {
+      "page": "/reduction?id=1",
+      "description": "Resource Reduction review page, top: the \"cannot be undone\" banner, State, Extent (2 Resources and 1 Group, reaching 6), the coverage line, and the first Cluster",
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "tags",
+        "reductions"
+      ],
+      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [],
+      "capturedDate": "2026-08-26"
+    },
+    "reduction-review.png": {
+      "page": "/reduction?id=1",
+      "description": "Two Clusters under review: an Identical Cluster arriving checked, chosen by \"created first\", and a Near-Identical Cluster arriving unchecked, chosen by \"highest resolution, by 4x the pixels\", with per-member Make Winner, Compare and Eject controls",
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "tags",
+        "reductions"
+      ],
+      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "scrolled to the Clusters heading, clear of the sticky header"
+      ],
+      "capturedDate": "2026-08-26"
+    },
+    "reduction-list.png": {
+      "page": "/reductions",
+      "description": "The Resource Reductions list: three Reductions with their creation date, status (two ready to review, one not computed yet) and matching mode, beside the status filter",
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "reductions"
+      ],
+      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [],
+      "capturedDate": "2026-08-26"
+    },
+    "reduction-bulk-action.png": {
+      "page": "/resources",
+      "description": "The resources bulk bar with the Resource Reduction panel open: start a new Reduction or add to an existing one, a name field, and the selected count",
+      "seedDependencies": [
+        "categories",
+        "groups",
+        "resources",
+        "tags"
+      ],
+      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "viewport": {
+        "width": 1200,
+        "height": 800
+      },
+      "interactions": [
+        "clicked Select All",
+        "clicked Resource Reduction",
+        "typed a Reduction name"
+      ],
+      "capturedDate": "2026-08-26"
     }
   }
 }

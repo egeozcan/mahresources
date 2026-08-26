@@ -1,12 +1,12 @@
 ---
 name: retake-screenshots
-description: Retake all docs-site screenshots with richly seeded data. Builds the app, starts an ephemeral server, seeds realistic data, captures 26 screenshots via Playwright, and updates the manifest.
+description: Retake all docs-site screenshots with richly seeded data. Builds the app, starts an ephemeral server, seeds realistic data, captures 30 screenshots via Playwright, and updates the manifest.
 argument-hint: "[--skip-seed] [--only=dashboard,grid-view,...] [--port=8181]"
 ---
 
 # Retake Docs-Site Screenshots
 
-Captures all 26 screenshots for the docs-site with realistic, populated seed data. The process is fully automated: build, seed, screenshot, cleanup.
+Captures all 30 screenshots for the docs-site with realistic, populated seed data. The process is fully automated: build, seed, screenshot, cleanup.
 
 ## Usage
 
@@ -178,6 +178,57 @@ Create via `POST /v1/query` with `--data-urlencode "name=..."` and `--data-urlen
 - Add resources to groups: `POST /v1/resources/addGroups` with `ID=<resource_id>&EditedId=<group_id>`
 - Add groups to notes: `POST /v1/notes/addGroups` with `ID=<note_id>&EditedId=<group_id>`
 
+#### 3k. Duplicates and a Resource Reduction (4 screenshots)
+
+The Resource Reduction shots need repeats, which the ordinary seed cannot produce:
+
+**Byte-identical pair** — `POST /v1/resource` deduplicates on content hash at
+create time and hands back the Resource that already exists, so uploading one
+file twice gives one row. Create the twin from a *different* image, then make the
+keeper's file its current version:
+
+```bash
+curl -X POST "$API_URL/resource/versions?resourceId=$TWIN" \
+  -F "file=@$TMPDIR/sunset-golden-gate.png" -F "comment=Same shot, off the phone"
+```
+
+The version upload syncs `hash`, `file_size`, `width` and `height` onto the
+resource row, so the two rows end up identical in everything the review shows.
+Re-send the **local** file: `/v1/resource/view?id=N` answers a 302 to `/files/...`,
+so a plain `curl -o` writes 93 bytes of redirect HTML and the version silently
+becomes that.
+
+**Near-identical pairs** — render one image and upload it twice, at full size and
+as a genuine box-average **downscale** of the same pixels (not a redraw at another
+size). pHash is scale-invariant, so the pair is near-certain, and the Cluster then
+reads "highest resolution, by 4x the pixels". Give the images bands and hard-edged
+blocks: pHash on a smooth gradient is degenerate and the ahash secondary check
+suppresses it.
+
+**Wait for the hash worker before computing.** The Near-Identical tier reads the
+stored pair table and hashes nothing itself, so a Reduction computed too early
+silently contains only the Identical tier. Start the server with
+`-hash-poll-interval=2s` and poll `GET /v1/admin/data-stats/expensive` until
+`.similarity.totalHashes` covers the uploads and `.similarity.similarPairsFound`
+is at least the number of pairs seeded; `POST /v1/admin/similarity/recompute`
+kicks it.
+
+**Space the twin's creation** by ~8 seconds. Every earlier criterion ties on a
+byte-identical pair, so the Cluster falls through to creation order, and a
+sub-second gap reads as "by less than a second earlier".
+
+Then create three Reductions so the list page shows more than one state:
+
+```bash
+curl -X POST "$API_URL/reduction" -H "Content-Type: application/json" \
+  -d '{"name":"Photo library cleanup","resourceIds":[1,14],"groupIds":[3]}'
+# then POST /v1/reduction/compute with {"id":N,"version":V}, where V comes from
+# GET /v1/reductions — every write is optimistic-concurrency checked — and poll
+# that same endpoint until status is "ready".
+```
+
+Leave one uncomputed ("Not computed yet") and give one `"matchingMode":"identical"`.
+
 ### Step 4: Take screenshots with Playwright
 
 Write a temporary `e2e/take-screenshots.mjs` script and run it with `npx tsx`:
@@ -190,7 +241,7 @@ const page = await context.newPage();
 // waitUntil: 'load' (NOT 'networkidle' — causes timeouts)
 ```
 
-#### Screenshot inventory (26 total)
+#### Screenshot inventory (30 here; the manifest also carries 5 schema-editor and timeline shots)
 
 | # | File | URL | Interactions |
 |---|------|-----|-------------|
@@ -220,6 +271,10 @@ const page = await context.newPage();
 | 24 | download-queue.png | /dashboard | — |
 | 25 | relation-list.png | /relations | — |
 | 26 | relation-types.png | /relationTypes | — |
+| 27 | reduction-overview.png | /reduction?id=1 | — |
+| 28 | reduction-review.png | /reduction?id=1 | Scroll to the Clusters heading, clear of the 36px sticky `<header>` |
+| 29 | reduction-list.png | /reductions | — |
+| 30 | reduction-bulk-action.png | /resources | Click "Select All", click `bulk-reduction-action`, fill `bulk-reduction-name` |
 
 All screenshots go to `docs-site/static/img/`.
 
@@ -238,7 +293,7 @@ Update `docs-site/static/img/screenshot-manifest.json` with the current date for
 ### Step 7: Verify
 
 - Run `cd docs-site && npm run build` to verify all image references resolve
-- Confirm all 26 PNGs exist in `docs-site/static/img/`
+- Confirm all 30 PNGs exist in `docs-site/static/img/`
 - Confirm `screenshot-manifest.json` is valid JSON
 
 ## Gotchas
@@ -253,4 +308,6 @@ Update `docs-site/static/img/screenshot-manifest.json` with the current date for
 - **Relation types**: Default types (Address, Employer) have category constraints. Custom types with `fromCategoryId=0` may not persist due to an FTS trigger bug.
 - **Page load**: Use `waitUntil: 'load'` in Playwright, NOT `'networkidle'` — the latter causes timeouts with the download queue polling.
 - **Duplicate hash**: If two generated images happen to produce the same SHA1 hash, the upload silently returns empty. Ensure images have distinct color palettes.
+- **Alpine wiring**: the reduction cluster controls carry a bare `disabled` until Alpine binds them. Wait for `[data-testid="cluster-checkbox"]:not([disabled])` or the shot is a page of greyed-out buttons.
+- **macOS ships bash 3.2**: no `declare -A`. A seed script written in bash needs plain variables.
 - **Selector syntax**: Don't use `:has-text()` pseudo-selectors inside `page.evaluate()` — they're Playwright-only, not valid CSS. Use `querySelectorAll` + JS filtering instead.

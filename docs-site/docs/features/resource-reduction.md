@@ -8,9 +8,17 @@ A **Resource Reduction** is a named, durable workspace for collapsing repeated R
 
 The review is the product. There is no undo, and the page says so.
 
+![A Resource Reduction named "Photo library cleanup": a banner reading "A Resource Reduction cannot be undone", the State and Extent sections, the coverage line, and the first of three Clusters](/img/reduction-overview.png)
+
 ## Making one
 
-Select Resources on `/resources`, or Groups on `/groups`, and use **Resource Reduction** in the bulk bar. You can start a new Reduction or add the selection to one you already have. Reductions are listed at `/reductions` with their creation date and time, and never expire — they stay until you delete them.
+Select Resources on `/resources`, or Groups on `/groups`, and use **Resource Reduction** in the bulk bar. You can start a new Reduction or add the selection to one you already have.
+
+![The resources bulk bar with the Resource Reduction panel open, offering "Start a new Resource Reduction" or "Add to one I already have", a name field, and the count of selected Resources](/img/reduction-bulk-action.png)
+
+Reductions are listed at `/reductions` with their creation date and time, and never expire — they stay until you delete them.
+
+![The Resource Reductions list: three Reductions, each with its creation date, status — two ready to review, one not computed yet — and matching mode](/img/reduction-list.png)
 
 The set of Resources a Reduction considers is its **Extent**: the Resources you named, plus every Resource owned by or related to the Groups you named and all of their descendants. Group ids are stored rather than their expansion, so a Group's contents are resolved fresh each time the Reduction is computed.
 
@@ -57,6 +65,8 @@ Each Cluster shows which criterion decided it and by how much — "highest resol
 There is no filesystem modification time anywhere in this system. `updated_at` is when the row was last edited.
 
 ## Reviewing
+
+![Two Clusters under review: an Identical Cluster of two byte-identical copies, checked, chosen by "created first, by 8 seconds earlier"; and a Near-Identical Cluster, unchecked, chosen by "highest resolution, by 4x the pixels", its Loser marked "Will be deleted" with a distance of 0](/img/reduction-review.png)
 
 | Action | Effect |
 |--------|--------|

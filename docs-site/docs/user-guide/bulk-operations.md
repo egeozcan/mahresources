@@ -52,11 +52,14 @@ When you select one or more items, the bulk editor appears inline above the list
 | Update Dimensions | Yes | - | - | - |
 | Compare | Yes (2 only) | - | Yes (2 only) | - |
 | Merge | Detail page or compare view | - | Detail page only | Yes |
+| Resource Reduction | Yes | - | Yes | - |
 | Export | - | - | Yes | - |
 | Plugin actions | Yes | Yes | Yes | - |
 | Delete | Yes | Yes | Yes | Yes |
 
 **Export** sends the selected group IDs to `/admin/export`, where the export is configured and run; see [Export & Import](../features/export-import.md).
+
+**Resource Reduction** hands the selection to a named workspace that groups repeated Resources into Clusters for review before anything is deleted. Selected Groups contribute their contents and their descendants rather than themselves; see [Resource Reduction](../features/resource-reduction.md).
 
 **Plugin actions** appear in the bulk editor for every enabled plugin action declared for that entity type; see [Plugin Actions](../features/plugin-actions.md).
 
