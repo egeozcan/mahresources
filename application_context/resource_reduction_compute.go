@@ -216,6 +216,11 @@ func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, redu
 		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
 			break
 		}
+		// Backing off, like the bookkeeping loops. Three immediate attempts are
+		// three attempts inside a few microseconds, so a lock held across them
+		// consumes the whole budget and records a compute that was only unlucky as
+		// one that failed.
+		waitOutContention(attempt)
 	}
 	if err != nil {
 		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, err); writeErr != nil {

@@ -165,11 +165,24 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		}
 	}
 
+	// Redacted here, not in the template. The template is not the only reader:
+	// every server-rendered page also answers `.json` and an
+	// `Accept: application/json` request by serialising its whole context, so
+	// hiding these in the HTML would leave the pre-shrink extent size and the hash
+	// totals one URL suffix away — the same mistake the withheld Cluster made.
+	coverage := plan.Coverage
+	coverageTrusted := len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) && extent.SelectedGroups == len(storedExtent.GroupIDs)
+	extentSize := plan.Coverage.ExtentSize
+	if !coverageTrusted {
+		coverage = models.ReductionCoverage{}
+		extentSize = 0
+	}
+
 	return &contracts.ReductionReview{
 		Reduction:           reduction,
 		Status:              EffectiveReductionStatus(reduction),
-		Coverage:            plan.Coverage,
-		CoverageTrusted:     len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) && extent.SelectedGroups == len(storedExtent.GroupIDs),
+		Coverage:            coverage,
+		CoverageTrusted:     coverageTrusted,
 		Clusters:            views,
 		ClusterCount:        len(plan.Clusters),
 		CheckedCount:        checked,
@@ -178,7 +191,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		PageSize:            ReductionClustersPerPage,
 		SelectedResources:   len(extent.ResourceIDs),
 		SelectedGroups:      extent.SelectedGroups,
-		ExtentSize:          plan.Coverage.ExtentSize,
+		ExtentSize:          extentSize,
 		EnteredSinceCompute: entered,
 	}, nil
 }

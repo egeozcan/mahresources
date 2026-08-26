@@ -342,4 +342,18 @@ func TestCoverageIsWithheldFromAReviewerWhoSeesLessThanItMeasured(t *testing.T) 
 	require.NoError(t, err)
 	assert.False(t, narrowReview.CoverageTrusted,
 		"and one who can now reach less of the selection does not")
+
+	// Redacted in the value, not only in the page. Every server-rendered page also
+	// answers `.json` by serialising its whole template context, and this review is
+	// what goes into it — so a figure hidden by a template condition would still be
+	// one URL suffix away.
+	assert.Zero(t, narrowReview.Coverage.ExtentSize)
+	assert.Zero(t, narrowReview.Coverage.ContentHashed)
+	assert.Zero(t, narrowReview.Coverage.PerceptualEligible)
+	assert.Zero(t, narrowReview.ExtentSize)
+
+	body, err := json.Marshal(narrowReview)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), `"extentSize":2`)
+	assert.NotContains(t, string(body), `"contentHashed":2`)
 }
