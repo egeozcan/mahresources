@@ -1,10 +1,12 @@
 package api_tests
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/contracts"
 	"mahresources/models"
@@ -334,18 +336,22 @@ func TestTheMergeRefusesContentThatChangedUnderIt(t *testing.T) {
 	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
 	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
 
-	err := tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, map[uint]string{
-		winner.ID: "shared-hash",
-		loser.ID:  "what-it-used-to-be",
-	})
+	refuse := func(*application_context.MahresourcesContext) error {
+		return fmt.Errorf("%w: resource %d", application_context.ErrMergeContentChanged, loser.ID)
+	}
+	err := tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, refuse)
 	require.ErrorIs(t, err, application_context.ErrMergeContentChanged)
 	assert.True(t, resourceExists(t, tc, loser.ID), "the transaction rolled back before deleting anything")
 
-	// The same call with the hashes the rows actually hold goes through.
-	require.NoError(t, tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, map[uint]string{
-		winner.ID: "shared-hash",
-		loser.ID:  "shared-hash",
-	}))
+	// A precondition that holds lets the merge through, and it runs inside the
+	// transaction — it can read the rows the merge has already locked.
+	ran := false
+	accept := func(txCtx *application_context.MahresourcesContext) error {
+		ran = true
+		return nil
+	}
+	require.NoError(t, tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, accept))
+	assert.True(t, ran, "the precondition runs on the way through, not only on refusal")
 	assert.False(t, resourceExists(t, tc, loser.ID))
 }
 
@@ -377,4 +383,61 @@ func TestApplyClaimsAClusterBeforeMergingIt(t *testing.T) {
 		Action:    application_context.ReductionActionUncheck,
 	}, owner, restricted)
 	assert.ErrorIs(t, err, application_context.ErrReductionClusterSettled)
+}
+
+// An ejection landing between the batch reading a Cluster and claiming it is part
+// of what the apply acts on, not something it overwrites.
+//
+// The interleave is injected rather than raced for: a GORM callback fires the
+// ejection on the very statement the claim uses to re-read the plan, which is the
+// only way to land it inside a window measured in microseconds.
+func TestAnEjectionLandingDuringTheClaimIsHonoured(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
+	doomed := addWithHash(t, tc, "doomed.txt", "doomed body", "shared-hash")
+	spared := addWithHash(t, tc, "spared.txt", "spared body", "shared-hash")
+	setDimensions(t, tc, winner.ID, 400, 400)
+
+	red := createReduction(t, tc, "Racing eject", []uint{winner.ID, doomed.ID, spared.ID})
+	plan := computeReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+	require.ElementsMatch(t, []uint{doomed.ID, spared.ID}, plan.Clusters[0].LoserIDs())
+
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+
+	// Fire the ejection on the third read of the reduction row after the apply
+	// starts: the entry read, then applyOneCluster's, then the claim's own. The
+	// claim's is the one that matters — an ejection landing there is inside the
+	// window between the batch reading a Cluster and freezing it.
+	reads := 0
+	fired := false
+	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:eject_mid_apply", func(db *gorm.DB) {
+		if fired || db.Statement.Table != "resource_reductions" {
+			return
+		}
+		reads++
+		if reads < 3 {
+			return
+		}
+		fired = true
+		override(t, tc, red.ID, clusterID, application_context.ReductionActionEject, spared.ID)
+	}))
+	t.Cleanup(func() {
+		_ = tc.DB.Callback().Query().Remove("test:eject_mid_apply")
+	})
+
+	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: red.ID, Version: current.Version,
+	}, owner, restricted)
+	require.NoError(t, err)
+	require.True(t, fired, "the injected ejection never ran, so this proves nothing")
+
+	if len(result.Applied) == 1 {
+		assert.NotContains(t, result.Applied[0].LoserIDs, spared.ID)
+	}
+	assert.True(t, resourceExists(t, tc, spared.ID),
+		"a member ejected while the batch was running is not destroyed by it")
 }

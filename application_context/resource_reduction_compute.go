@@ -332,6 +332,7 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	}
 
 	plan.Clusters = append(carried, fresh...)
+	ensureDistinctClusterIDs(plan.Clusters)
 	return plan, version, nil
 }
 
@@ -426,4 +427,36 @@ func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, 
 		}
 	}
 	return ErrReductionConflict
+}
+
+// ensureDistinctClusterIDs guarantees no two Clusters in one plan answer to the
+// same id.
+//
+// The id is derived from the tier and the member ids, which is what keeps a
+// frozen Cluster addressable across recomputes — and it means a *carried* Cluster
+// and a *fresh* one over the same members collide exactly. That is not
+// hypothetical: an applied Cluster is carried forward while its members return to
+// the pool, so a crash between an apply's claim and its merge leaves the Losers
+// alive to re-cluster into the same set. findCluster takes the first match, so
+// every override and every apply on the fresh Cluster would be refused as already
+// settled, permanently.
+//
+// Numbering the collision rather than changing the derivation keeps the ordinary
+// case stable, which is the property the derivation exists for.
+func ensureDistinctClusterIDs(clusters []*models.ReductionCluster) {
+	seen := make(map[string]bool, len(clusters))
+	for _, cluster := range clusters {
+		if !seen[cluster.ID] {
+			seen[cluster.ID] = true
+			continue
+		}
+		for suffix := 2; ; suffix++ {
+			candidate := fmt.Sprintf("%s-%d", cluster.ID, suffix)
+			if !seen[candidate] {
+				cluster.ID = candidate
+				seen[candidate] = true
+				break
+			}
+		}
+	}
 }

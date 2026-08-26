@@ -13,6 +13,22 @@
          data-lightbox-scope
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
 
+{% if cluster.Withheld %}
+    {# A Cluster reaching a Resource this reviewer may not see is not rendered as #}
+    {# a proposal at all. Its Winner, the criterion that chose it, the margin, the #}
+    {# member count and the curation warning are all statements *about* that       #}
+    {# Resource — "there is a higher-resolution copy over there" is precisely what #}
+    {# a confined account may not be told. It cannot be applied either, which the  #}
+    {# apply path enforces independently of this.                                  #}
+    <header class="card-header card-header--compact">
+        <div class="card-title-section">
+            <h3 class="card-title" id="cluster-{{ cluster.ID }}-heading">A Cluster outside your access</h3>
+        </div>
+    </header>
+    <p class="text-sm text-stone-600 px-3 pb-3" data-testid="cluster-withheld">
+        This Cluster reaches Resources outside what you may see, so it cannot be reviewed or applied.
+    </p>
+{% else %}
     <header class="card-header card-header--compact">
         <div class="card-title-section">
             <h3 class="card-title" id="cluster-{{ cluster.ID }}-heading">
@@ -52,17 +68,16 @@
             <label class="flex items-center gap-2 text-sm text-stone-700">
                 {# Every reason to disable this lives inside the binding. Alpine removes #}
                 {# the attribute whenever the binding evaluates false, so a *separate*    #}
-                {# static `{% if cluster.Withheld %}disabled{% endif %}` would be         #}
-                {# stripped at init and a Cluster the reviewer cannot fully see would     #}
-                {# become checkable. The real guard is apply's own re-check; this only    #}
-                {# stops the UI lying. The bare `disabled` is the pre-init state: this    #}
-                {# control does nothing until Alpine has wired it, and if Alpine never    #}
-                {# arrives it does nothing at all.                                        #}
+                {# static one would be stripped at init and the control would come back   #}
+                {# to life. The bare `disabled` is the pre-init state: this does nothing  #}
+                {# until Alpine has wired it, and nothing at all if Alpine never arrives. #}
+                {# A Cluster reaching outside the reviewer's access renders no controls   #}
+                {# whatever, above.                                                       #}
                 <input type="checkbox"
                        data-testid="cluster-checkbox"
                        {% if cluster.Checked %}checked{% endif %}
                        disabled
-                       :disabled="busy || {% if cluster.Withheld %}true{% else %}false{% endif %} || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        @change="check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster
@@ -89,12 +104,6 @@
     </p>
     {% endif %}
 
-    {% if cluster.Withheld %}
-    <p class="text-sm text-red-700 px-3" role="note" data-testid="cluster-withheld">
-        {{ cluster.Withheld }} of these Resources are outside what you may see, so this Cluster cannot be applied.
-    </p>
-    {% endif %}
-
     {% if cluster.Oversized %}
     <p class="text-sm text-amber-800 px-3" role="note" data-testid="cluster-oversized">
         An unusually large Near-Identical Cluster. Expand it and look before you check it.
@@ -111,13 +120,18 @@
          id="cluster-{{ cluster.ID }}-members"
          x-show="isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
         {% for member in cluster.Members %}
-        {# A member the reviewer may not see is rendered as a placeholder and       #}
-        {# nothing else — no id, no role, no distance, no controls. Printing any of #}
-        {# those would answer "what is over there?" for somebody whose whole        #}
-        {# confinement is that they may not ask.                                    #}
+        {# A member with no Resource behind it is one of two things, and they read  #}
+        {# very differently. On an applied Cluster it is a Loser this Reduction just #}
+        {# merged away, which is the record of what happened. Anywhere else it is a  #}
+        {# Resource outside what this reviewer may see, and it is rendered as a      #}
+        {# placeholder and nothing else — no id, no role, no distance, no controls,  #}
+        {# because printing any of those answers "what is over there?" for somebody  #}
+        {# whose whole confinement is that they may not ask.                         #}
         {% if not member.Resource %}
         <div class="reduction-member" data-testid="reduction-member-withheld">
-            <p class="text-xs text-stone-500 max-w-[10rem]">A Resource outside what you may see.</p>
+            <p class="text-xs text-stone-500 max-w-[10rem]">
+                {% if cluster.State == "applied" %}Merged away.{% else %}A Resource outside what you may see.{% endif %}
+            </p>
         </div>
         {% else %}
         <div class="reduction-member{% if member.IsWinner %} reduction-member--winner{% endif %}{% if member.Ejected %} reduction-member--ejected{% endif %}"
@@ -196,4 +210,5 @@
            data-testid="cluster-compare-link">Compare these two side by side</a>
     </p>
     {% endif %}
+{% endif %}
 </article>

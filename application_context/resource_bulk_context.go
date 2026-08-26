@@ -717,21 +717,34 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 // bytes the caller checked them for.
 var ErrMergeContentChanged = errors.New("the content of a resource in this merge changed since it was checked")
 
-// MergeResourcesExpecting is MergeResources with an optional precondition: a map
-// of resource id to the content hash the caller last saw, verified as the first
-// statement inside the merge's own transaction.
+// MergePrecondition is a caller's check, run inside the merge's own transaction
+// after its participants have been read and — on Postgres — locked.
 //
-// Checking outside the transaction is not the same thing, and the difference is
-// destructive. A Resource Reduction validates a Cluster and then calls this; a
-// version upload landing between those two moments changes a Loser's bytes, and
-// the merge would delete content nobody reviewed. That window is small, but the
-// entire promise of the review is that it cannot happen — so the check belongs
-// where the rows are actually locked.
+// The context it receives is the transaction's, so anything it reads through it
+// is read under the same lock the delete will hold. Reading through any other
+// handle defeats the point.
+type MergePrecondition func(txCtx *MahresourcesContext) error
+
+// MergeResourcesExpecting is MergeResources with a precondition verified inside
+// the transaction that performs the deletion.
+//
+// Checking beforehand is not the same thing, and the difference is destructive. A
+// Resource Reduction validates a Cluster — the reviewed content hashes, and on the
+// perceptual tier the stored Winner-to-Loser pair — and then calls this. Anything
+// landing between those two moments (a version upload, a similarity recompute)
+// leaves the merge deleting content or dissolving a match nobody reviewed. The
+// window is small, and the entire promise of the review is that it cannot happen.
+//
+// The participants are locked before the precondition runs, which is what makes
+// the check hold rather than merely be timed well: on Postgres a plain read under
+// READ COMMITTED sees a committed change the instant it lands, so validating
+// without a row lock closes nothing. SQLite serializes writers already and rejects
+// the clause.
 //
 // nil means no precondition, which is what every existing caller passes: the
-// resource-detail merge form and `mr resources merge` are a person naming a
-// winner they are looking at, with no earlier snapshot to be stale against.
-func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds []uint, keepAsVersion bool, expectedHashes map[uint]string) error {
+// resource-detail merge form and `mr resources merge` are a person naming a winner
+// they are looking at, with no earlier snapshot to be stale against.
+func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds []uint, keepAsVersion bool, precondition MergePrecondition) error {
 	if len(loserIds) == 0 || winnerId == 0 {
 		return errors.New("incorrect parameters")
 	}
@@ -755,7 +768,14 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 
 		// Load losers WITHOUT associations — we only need their basic fields for backup
 		var losers []*models.Resource
-		if loadResourcesErr := tx.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
+		loserQuery := tx
+		if precondition != nil && ctx.Config.DbType != constants.DbTypeSqlite {
+			// Locked because a precondition follows. Without this the check would be
+			// check-then-act against a concurrent committer, which is the thing the
+			// precondition exists to prevent.
+			loserQuery = loserQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if loadResourcesErr := loserQuery.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
 			return loadResourcesErr
 		}
 
@@ -766,21 +786,20 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 
 		// Load winner WITHOUT associations
 		var winner models.Resource
-		if err := tx.First(&winner, winnerId).Error; err != nil {
+		winnerQuery := tx
+		if precondition != nil && ctx.Config.DbType != constants.DbTypeSqlite {
+			winnerQuery = winnerQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := winnerQuery.First(&winner, winnerId).Error; err != nil {
 			return err
 		}
 
-		// The precondition, checked here and not by the caller: these are the rows
-		// the merge is about to delete, read inside the transaction that deletes
-		// them.
-		if len(expectedHashes) > 0 {
-			if expected, named := expectedHashes[winner.ID]; named && expected != winner.Hash {
-				return fmt.Errorf("%w: resource %d", ErrMergeContentChanged, winner.ID)
-			}
-			for _, loser := range losers {
-				if expected, named := expectedHashes[loser.ID]; named && expected != loser.Hash {
-					return fmt.Errorf("%w: resource %d", ErrMergeContentChanged, loser.ID)
-				}
+		// The caller's check, here and not before the call: these are the rows the
+		// merge is about to delete, read inside the transaction that deletes them
+		// and behind the lock taken above.
+		if precondition != nil {
+			if err := precondition(transactionCtx); err != nil {
+				return err
 			}
 		}
 

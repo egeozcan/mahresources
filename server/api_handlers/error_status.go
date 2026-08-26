@@ -92,7 +92,8 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrReductionMemberNotVisible) {
 		return http.StatusForbidden
 	}
-	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) {
+	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) ||
+		errors.Is(err, application_context.ErrReductionRestoreUnpaired) {
 		return http.StatusBadRequest
 	}
 

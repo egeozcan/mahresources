@@ -49,6 +49,9 @@ var (
 	// ErrReductionOversizedUnexpanded refuses checking an unusually large
 	// Near-Identical Cluster that has not been acknowledged.
 	ErrReductionOversizedUnexpanded = errors.New("expand this Cluster and look at it before checking it")
+	// ErrReductionRestoreUnpaired refuses putting back a member that has no stored
+	// perceptual pair to the Cluster's current Winner.
+	ErrReductionRestoreUnpaired = errors.New("this Resource has no stored match to the Cluster's Winner, so it cannot be put back")
 )
 
 // OverrideReductionCluster records one review decision.
@@ -153,6 +156,22 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		member.Ejected = false
 		member.EjectedReason = ""
 		cluster.Reviewed = true
+		if cluster.Tier == models.ReductionTierNear {
+			// Putting a member back proposes deleting it again, and ADR 0002 says
+			// that proposal has to rest on a stored pair to *this* Winner. The
+			// ordinary way to reach here is undoing an automatic ejection: a
+			// promotion moved the Winner, this member had no pair to the new one, and
+			// restoring it would re-create exactly the transitive deletion the ADR
+			// forbids. Refusing is better than re-ejecting it silently, because the
+			// reviewer asked for something the Cluster cannot honour and should be
+			// told so.
+			if err := ctx.rejustifyAgainstWinner(cluster); err != nil {
+				return err
+			}
+			if member.Ejected {
+				return ErrReductionRestoreUnpaired
+			}
+		}
 		return nil
 
 	case ReductionActionSkip:
