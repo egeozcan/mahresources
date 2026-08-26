@@ -49,5 +49,6 @@
         </button>
     </div>
     {% include "/partials/form/bulkCompareAction.tpl" with comparePath="/group/compare" p1="g1" p2="g2" noun="groups" hintId="bulk-compare-groups-hint" %}
+    {% include "/partials/form/bulkReductionAction.tpl" with entity="group" noun="Groups" panelId="bulk-reduction-groups" %}
     {% include "partials/pluginActionsBulk.tpl" with entityType="group" %}
 </div>

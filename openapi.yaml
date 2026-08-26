@@ -1197,6 +1197,28 @@ components:
                 UpdatedBefore:
                     type: string
             type: object
+        ReductionApply:
+            properties:
+                id:
+                    type: integer
+                version:
+                    type: integer
+            type: object
+        ReductionOverride:
+            properties:
+                acknowledgeOversized:
+                    type: boolean
+                action:
+                    type: string
+                clusterId:
+                    type: string
+                id:
+                    type: integer
+                resourceId:
+                    type: integer
+                version:
+                    type: integer
+            type: object
         RelationshipTypeEditorQuery:
             properties:
                 Description:
@@ -1594,6 +1616,54 @@ components:
                     type: integer
                 Name:
                     type: string
+            type: object
+        ResourceReductionCreator:
+            properties:
+                groupIds:
+                    items:
+                        type: integer
+                    type: array
+                id:
+                    type: integer
+                keepAsVersionIdentical:
+                    nullable: true
+                    type: boolean
+                keepAsVersionNear:
+                    nullable: true
+                    type: boolean
+                matchingMode:
+                    type: string
+                name:
+                    type: string
+                resourceIds:
+                    items:
+                        type: integer
+                    type: array
+                winnerRule:
+                    items:
+                        type: string
+                    type: array
+            type: object
+        ResourceReductionEditor:
+            properties:
+                id:
+                    type: integer
+                keepAsVersionIdentical:
+                    nullable: true
+                    type: boolean
+                keepAsVersionNear:
+                    nullable: true
+                    type: boolean
+                matchingMode:
+                    type: string
+                name:
+                    type: string
+                version:
+                    type: integer
+                winnerRule:
+                    items:
+                        type: string
+                    type: array
             type: object
         ResourceSearchQuery:
             properties:
@@ -5774,6 +5844,166 @@ paths:
             summary: Get database table and column names
             tags:
                 - queries
+    /v1/reduction:
+        post:
+            description: Creates a Resource Reduction over a selection of Resources or Groups. Passing the id of an existing Reduction adds the selection to its Extent instead. Groups are expanded through their descendants at compute time, not here.
+            operationId: createResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionCreator'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionCreator'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Create a Resource Reduction, or widen an existing one
+            tags:
+                - reductions
+    /v1/reduction/apply:
+        post:
+            description: 'Merges every checked Cluster''s Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale, named in the response and kept. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.'
+            operationId: applyResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReductionApply'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReductionApply'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Apply a Resource Reduction's checked Clusters
+            tags:
+                - reductions
+    /v1/reduction/cluster:
+        post:
+            description: Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.
+            operationId: overrideResourceReductionCluster
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReductionOverride'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReductionOverride'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Record a review decision about one Cluster
+            tags:
+                - reductions
+    /v1/reduction/compute:
+        post:
+            description: Starts the background clustering job for a Resource Reduction and returns the row with its computing status. Clusters the reviewer has already acted on are carried forward untouched. Refused with 409 while a run is already in flight.
+            operationId: computeResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Compute a Resource Reduction's Clusters
+            tags:
+                - reductions
+    /v1/reduction/delete:
+        post:
+            description: Removes a Resource Reduction. Reductions never expire, so this is the only way one goes. The Resources it named are untouched.
+            operationId: deleteResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Delete a Resource Reduction
+            tags:
+                - reductions
+    /v1/reduction/edit:
+        post:
+            description: Renames a Reduction or changes its matching mode, Winner Rule or keep-as-version flags. The request carries the version the caller last saw; a stale one is refused with 409 rather than merged.
+            operationId: editResourceReduction
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceReductionEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Change a Resource Reduction's settings
+            tags:
+                - reductions
+    /v1/reductions:
+        get:
+            description: Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.
+            operationId: listResourceReductions
+            parameters:
+                - description: Substring match over the Reduction's name.
+                  in: query
+                  name: name
+                  schema:
+                    type: string
+                - description: Filter by status (draft, computing, ready, failed). Repeat for several.
+                  in: query
+                  name: status
+                  schema:
+                    type: string
+                - description: Sort column, e.g. `created_at desc`. Repeat for several.
+                  in: query
+                  name: sortBy
+                  schema:
+                    type: string
+                - description: Page number for pagination
+                  in: query
+                  name: page
+                  schema:
+                    default: 1
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List Resource Reductions
+            tags:
+                - reductions
     /v1/relation:
         post:
             operationId: createOrUpdateRelation
@@ -8195,6 +8425,8 @@ tags:
       name: plugins
     - description: Operations related to queries
       name: queries
+    - description: Operations related to reductions
+      name: reductions
     - description: Operations related to relations
       name: relations
     - description: Operations related to resourceCategories

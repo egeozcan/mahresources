@@ -18,8 +18,10 @@ var (
 	_ contracts.TemplatePartialDeleter = (*MahresourcesContext)(nil)
 
 	// Download history (the durable record behind /downloads)
-	_ contracts.DownloadHistoryReader = (*MahresourcesContext)(nil)
-	_ contracts.DownloadHistoryWriter = (*MahresourcesContext)(nil)
+	_ contracts.DownloadHistoryReader   = (*MahresourcesContext)(nil)
+	_ contracts.DownloadHistoryWriter   = (*MahresourcesContext)(nil)
+	_ contracts.ResourceReductionReader = (*MahresourcesContext)(nil)
+	_ contracts.ResourceReductionWriter = (*MahresourcesContext)(nil)
 
 	// Granular Resource interfaces
 	_ contracts.ResourceCreator         = (*MahresourcesContext)(nil)

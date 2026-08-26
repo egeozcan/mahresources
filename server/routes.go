@@ -153,6 +153,13 @@ var templates = map[string]templateInformation{
 	"/admin/settings":   {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
 
 	"/mrql": {adaptTemplate(template_context_providers.MRQLContextProvider), "mrql.tpl", http.MethodGet},
+
+	// Not /admin/reductions, for the same reason /downloads is not: every role
+	// owns Reductions and each principal sees only its own, and an /admin path
+	// would have to be listed in isSystemPath, whose exact-match table is the
+	// footgun documented there.
+	"/reductions": {adaptTemplate(template_context_providers.ResourceReductionListContextProvider), "listResourceReductions.tpl", http.MethodGet},
+	"/reduction":  {adaptTemplate(template_context_providers.ResourceReductionContextProvider), "displayResourceReduction.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
@@ -824,6 +831,33 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		api_handlers.GetDownloadHistoryRetryHandler(scopedCtx(appContext, r))(w, r)
 	})
 	router.Methods(http.MethodPost).Path("/v1/downloads/delete").HandlerFunc(api_handlers.GetDownloadHistoryDeleteHandler(appContext))
+
+	// Resource Reductions. Every one of these runs on a request-scoped context:
+	// a Reduction's Extent, its plan and its apply all reach Resources, and a
+	// subtree-confined principal must see and act on only its own — re-checked
+	// against the *current* principal, because a scoped user's subtree can change
+	// after a Reduction is created.
+	router.Methods(http.MethodGet).Path("/v1/reductions").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionListHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionCreateHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/edit").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionEditHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/delete").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionDeleteHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/compute").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionComputeHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/cluster").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionOverrideHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/reduction/apply").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceReductionApplyHandler(scopedCtx(appContext, r))(w, r)
+	})
 
 	// Group exports
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportEstimateHandler))

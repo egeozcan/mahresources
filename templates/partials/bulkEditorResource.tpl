@@ -40,6 +40,7 @@
         </div>
     </form>
     {% include "/partials/form/bulkCompareAction.tpl" with comparePath="/resource/compare" p1="r1" p2="r2" noun="resources" hintId="bulk-compare-resources-hint" %}
+    {% include "/partials/form/bulkReductionAction.tpl" with entity="resource" noun="Resources" panelId="bulk-reduction-resources" %}
     <form
             class="px-4 no-ajax"
             method="post"

@@ -104,6 +104,14 @@ var downloadIDListRequestType = reflect.TypeOf(struct {
 	IDs []uint `json:"ids"`
 }{})
 
+// The bodies the Resource Reduction endpoints take.
+var (
+	reductionCreatorType  = reflect.TypeOf(query_models.ResourceReductionCreator{})
+	reductionEditorType   = reflect.TypeOf(query_models.ResourceReductionEditor{})
+	reductionOverrideType = reflect.TypeOf(query_models.ReductionOverride{})
+	reductionApplyType    = reflect.TypeOf(query_models.ReductionApply{})
+)
+
 var authLoginRequestType = reflect.TypeOf(struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -2501,6 +2509,100 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Description:          "Removes one or more download history rows, and the matching queue entries. A download that is still running or paused is refused, as is one whose retry is still running; cancel it first. Reports an outcome per id.",
 		Tags:                 []string{"downloads"},
 		RequestType:          downloadIDListRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	// Resource Reductions — named, durable proposals to collapse Clusters of
+	// Identical and Near-Identical Resources down to one Winner each.
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/reductions",
+		OperationID: "listResourceReductions",
+		Summary:     "List Resource Reductions",
+		Description: "Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.",
+		Tags:        []string{"reductions"},
+		// Spelled out rather than derived from ResourceReductionQuery, which also
+		// carries the two owner fields — those are the visibility decision and are
+		// overwritten from the principal after decoding, so deriving them would
+		// document inputs a caller cannot set.
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Description: "Substring match over the Reduction's name."},
+			{Name: "status", Type: "string", Description: "Filter by status (draft, computing, ready, failed). Repeat for several."},
+			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},
+		},
+		Paginated:            true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction",
+		OperationID:          "createResourceReduction",
+		Summary:              "Create a Resource Reduction, or widen an existing one",
+		Description:          "Creates a Resource Reduction over a selection of Resources or Groups. Passing the id of an existing Reduction adds the selection to its Extent instead. Groups are expanded through their descendants at compute time, not here.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionCreatorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/edit",
+		OperationID:          "editResourceReduction",
+		Summary:              "Change a Resource Reduction's settings",
+		Description:          "Renames a Reduction or changes its matching mode, Winner Rule or keep-as-version flags. The request carries the version the caller last saw; a stale one is refused with 409 rather than merged.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/delete",
+		OperationID:          "deleteResourceReduction",
+		Summary:              "Delete a Resource Reduction",
+		Description:          "Removes a Resource Reduction. Reductions never expire, so this is the only way one goes. The Resources it named are untouched.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/compute",
+		OperationID:          "computeResourceReduction",
+		Summary:              "Compute a Resource Reduction's Clusters",
+		Description:          "Starts the background clustering job for a Resource Reduction and returns the row with its computing status. Clusters the reviewer has already acted on are carried forward untouched. Refused with 409 while a run is already in flight.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/cluster",
+		OperationID:          "overrideResourceReductionCluster",
+		Summary:              "Record a review decision about one Cluster",
+		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionOverrideType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/apply",
+		OperationID:          "applyResourceReduction",
+		Summary:              "Apply a Resource Reduction's checked Clusters",
+		Description:          "Merges every checked Cluster's Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale, named in the response and kept. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionApplyType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

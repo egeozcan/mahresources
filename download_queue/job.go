@@ -26,6 +26,11 @@ const (
 	JobSourceGroupExport      = "group-export"
 	JobSourceGroupImportParse = "group-import-parse"
 	JobSourceGroupImportApply = "group-import-apply"
+	// JobSourceResourceReduction is a Resource Reduction's clustering run. Its
+	// own source rather than a reuse of one above, so the jobs panel can label it
+	// and so recordTerminal keeps excluding it from the download history — a
+	// history row's Retry button has no URL to press.
+	JobSourceResourceReduction = "resource-reduction"
 )
 
 // DownloadJob represents a single remote URL download task

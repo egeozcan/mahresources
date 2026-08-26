@@ -50,6 +50,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.ApiToken{},
 		&models.DownloadHistoryEntry{},
 		&models.PluginSchedule{},
+		&models.ResourceReduction{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -39,6 +39,11 @@ func stampedModels() []any {
 		// to a run binding an account that no longer exists. Nulling the column
 		// does exactly that, because a row with no owner is never claimed.
 		&models.PluginSchedule{},
+		// A Reduction is a pending proposal to delete files, and its visibility is
+		// owner-restricted. Nulling the column on user deletion is what makes it
+		// nobody's — which is the fail-closed arm of the visibility predicate, so
+		// the sweep is load-bearing here rather than tidy.
+		&models.ResourceReduction{},
 	}
 }
 

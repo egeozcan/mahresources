@@ -73,6 +73,14 @@ var baseTemplateContext = pongo2.Context{
 			Name: "MRQL",
 			Url:  "/mrql",
 		},
+		// Not in the admin menu, for the same reason /downloads is not an admin
+		// page: every role owns Resource Reductions and each principal sees only
+		// its own, so putting it behind the editor-gated dropdown would hide a
+		// plain user's own pending work from them.
+		{
+			Name: "Reductions",
+			Url:  "/reductions",
+		},
 	},
 	"adminMenu": []template_entities.Entry{
 		{
@@ -165,6 +173,9 @@ var navSectionByFirstSegment = map[string]string{
 	"tags": "/tags",
 
 	"mrql": "/mrql",
+
+	"reduction":  "/reductions",
+	"reductions": "/reductions",
 
 	"query":   "/queries",
 	"queries": "/queries",

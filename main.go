@@ -448,6 +448,11 @@ func main() {
 		// No FK association either; plugin_name/schedule_id is its own key and
 		// created_by_user_id is a scalar.
 		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar
+		// Likewise associationless: the Extent and the plan are JSON documents of
+		// ids, deliberately not foreign keys — a Cluster naming a Resource that has
+		// since been deleted is a staleness the apply revalidation must detect and
+		// report, not a row the database quietly rewrites.
+		&models.ResourceReduction{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category
