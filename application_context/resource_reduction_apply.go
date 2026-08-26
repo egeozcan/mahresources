@@ -104,13 +104,19 @@ type clusterApplyOutcome struct {
 
 // applyOneCluster revalidates and merges a single Cluster, then records what
 // happened to it.
-// approvedContent is what an apply request was authorized to destroy: each
-// non-ejected member of a Cluster, and the content it was reviewed as holding.
-func approvedContent(cluster *models.ReductionCluster) map[uint]string {
-	approved := make(map[uint]string, len(cluster.Members))
+// approvedProposal is what an apply request was authorized to perform: which
+// Resource survives, which may be destroyed, and the content each was reviewed as
+// holding.
+type approvedProposal struct {
+	WinnerID uint
+	Hashes   map[uint]string
+}
+
+func approvedContent(cluster *models.ReductionCluster) approvedProposal {
+	approved := approvedProposal{WinnerID: cluster.WinnerID, Hashes: make(map[uint]string, len(cluster.Members))}
 	for _, member := range cluster.Members {
 		if !member.Ejected {
-			approved[member.ResourceID] = member.Hash
+			approved.Hashes[member.ResourceID] = member.Hash
 		}
 	}
 	return approved
@@ -124,21 +130,29 @@ func approvedContent(cluster *models.ReductionCluster) map[uint]string {
 // no member's reviewed content may change: both of those mean a recompute
 // substituted a different proposal under the same id, and its bytes were never
 // reviewed by whoever pressed Apply.
-func withinApproved(cluster *models.ReductionCluster, approved map[uint]string) bool {
+func withinApproved(cluster *models.ReductionCluster, approved approvedProposal) bool {
+	// The Winner is not merely "one of the approved members". A promotion swaps it
+	// without changing the membership or a single hash, so a subset check alone
+	// accepts it — and then the merge destroys the Resource this request was told
+	// to keep. Ejections are honoured because they only ever spare something; a
+	// promotion changes which file dies, and that is not a change an apply already
+	// in flight may pick up.
+	if cluster.WinnerID != approved.WinnerID {
+		return false
+	}
 	for _, member := range cluster.Members {
 		if member.Ejected {
 			continue
 		}
-		hash, wasApproved := approved[member.ResourceID]
+		hash, wasApproved := approved.Hashes[member.ResourceID]
 		if !wasApproved || hash != member.Hash {
 			return false
 		}
 	}
-	_, winnerApproved := approved[cluster.WinnerID]
-	return winnerApproved
+	return true
 }
 
-func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID string, reduction *models.ResourceReduction, approved map[uint]string) clusterApplyOutcome {
+func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID string, reduction *models.ResourceReduction, approved approvedProposal) clusterApplyOutcome {
 	// Re-read rather than trusting the copy the batch started with. An earlier
 	// Cluster in this batch may have merged one of these Resources away, and a
 	// concurrent apply may have taken this Cluster already.
@@ -260,8 +274,8 @@ func (ctx *MahresourcesContext) OverwritePlanForTest(reductionID, version uint, 
 	return nil
 }
 
-func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, clusterID string, approved map[uint]string) *models.ReductionCluster {
-	return ctx.claimClusterForApply(reductionID, clusterID, approved)
+func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, clusterID string, winnerID uint, approved map[uint]string) *models.ReductionCluster {
+	return ctx.claimClusterForApply(reductionID, clusterID, approvedProposal{WinnerID: winnerID, Hashes: approved})
 }
 
 // confirmClusterMerged records that the claim's merge actually happened.
@@ -294,7 +308,7 @@ func (ctx *MahresourcesContext) confirmClusterMerged(reductionID uint, clusterID
 // inside the successful compare-and-set rather than before it, so a decision that
 // landed in the meantime is part of what this apply acts on rather than something
 // it overwrites.
-func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID string, approved map[uint]string) *models.ReductionCluster {
+func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID string, approved approvedProposal) *models.ReductionCluster {
 	var claimed *models.ReductionCluster
 	committed := ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
 		if cluster.State != models.ReductionClusterOpen || !cluster.Checked {

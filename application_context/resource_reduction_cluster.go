@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"mahresources/hash_worker"
 	"mahresources/models"
 )
@@ -267,23 +269,47 @@ func ruleUsesAssociations(rule []string) bool {
 // asked to prefer.
 func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]int, error) {
 	counts := map[uint]int{}
-	tables := []struct{ table, column string }{
-		{"resource_tags", "resource_id"},
-		{"resource_notes", "resource_id"},
-		{"groups_related_resources", "resource_id"},
+
+	// Each count is taken with the *far* side as the query's model, so the GORM
+	// scope callback filters it. Counting the join table directly would include
+	// Notes and Groups outside the caller's subtree — letting a Winner be chosen
+	// on relationships they cannot see, and then printing the exact totals in the
+	// margin the page renders. Tags carry no owner and are global by design, so
+	// that one is counted on the join table.
+	sources := []struct {
+		name  string
+		build func(chunk []uint) *gorm.DB
+	}{
+		{"tags", func(chunk []uint) *gorm.DB {
+			return ctx.db.Table("resource_tags").
+				Select("resource_id, count(*) AS total").
+				Where("resource_id IN ?", chunk).
+				Group("resource_id")
+		}},
+		{"notes", func(chunk []uint) *gorm.DB {
+			return ctx.db.Model(&models.Note{}).
+				Joins("INNER JOIN resource_notes rn ON rn.note_id = notes.id").
+				Select("rn.resource_id AS resource_id, count(*) AS total").
+				Where("rn.resource_id IN ?", chunk).
+				Group("rn.resource_id")
+		}},
+		{"groups", func(chunk []uint) *gorm.DB {
+			return ctx.db.Model(&models.Group{}).
+				Joins("INNER JOIN groups_related_resources grr ON grr.group_id = groups.id").
+				Select("grr.resource_id AS resource_id, count(*) AS total").
+				Where("grr.resource_id IN ?", chunk).
+				Group("grr.resource_id")
+		}},
 	}
-	for _, t := range tables {
+
+	for _, source := range sources {
 		for _, chunk := range chunkUints(ids, idChunk) {
 			var rows []struct {
 				ResourceID uint
 				Total      int
 			}
-			if err := ctx.db.Table(t.table).
-				Select(t.column+" AS resource_id, count(*) AS total").
-				Where(t.column+" IN ?", chunk).
-				Group(t.column).
-				Scan(&rows).Error; err != nil {
-				return nil, fmt.Errorf("counting associations on %s: %w", t.table, err)
+			if err := source.build(chunk).Scan(&rows).Error; err != nil {
+				return nil, fmt.Errorf("counting %s associations: %w", source.name, err)
 			}
 			for _, row := range rows {
 				counts[row.ResourceID] += row.Total

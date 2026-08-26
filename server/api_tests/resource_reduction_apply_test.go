@@ -473,7 +473,7 @@ func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
 	// What the apply request approved: these two Resources holding the content
 	// they were reviewed as holding.
 	approved := map[uint]string{winner.ID: "shared-hash", loser.ID: "shared-hash"}
-	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, approved)
+	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, winner.ID, approved)
 	assert.Nil(t, claimed, "a Cluster that is no longer the one that was reviewed is not claimable")
 	assert.True(t, resourceExists(t, tc, loser.ID))
 
@@ -489,6 +489,55 @@ func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
 	fresh, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, fresh.Version, shrunk))
-	assert.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, approved),
+	assert.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, winner.ID, approved),
 		"the original proposal is still claimable")
+}
+
+// A promotion landing after Apply was pressed swaps which Resource survives
+// without touching the membership or a single hash. Ejections are honoured while a
+// batch runs because they only ever spare something; a promotion changes which
+// file dies, and an apply already in flight was told to keep the other one.
+func TestAPromotionAfterApplyWasPressedDoesNotSwapTheVictim(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	keep := addWithHash(t, tc, "keep.txt", "keep body", "shared-hash")
+	drop := addWithHash(t, tc, "drop.txt", "drop body", "shared-hash")
+	setDimensions(t, tc, keep.ID, 400, 400)
+
+	red := createReduction(t, tc, "Swapped winner", []uint{keep.ID, drop.ID})
+	plan := computeReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+	require.Equal(t, keep.ID, plan.Clusters[0].WinnerID)
+
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+
+	// Promote on the third read of the reduction row after the apply starts — the
+	// claim's own — which is the window a subset check on membership alone accepts.
+	reads := 0
+	fired := false
+	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:promote_mid_apply", func(db *gorm.DB) {
+		if fired || db.Statement.Table != "resource_reductions" {
+			return
+		}
+		reads++
+		if reads < 3 {
+			return
+		}
+		fired = true
+		override(t, tc, red.ID, clusterID, application_context.ReductionActionPromote, drop.ID)
+	}))
+	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove("test:promote_mid_apply") })
+
+	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: red.ID, Version: current.Version,
+	}, owner, restricted)
+	require.NoError(t, err)
+	require.True(t, fired, "the injected promotion never ran, so this proves nothing")
+
+	assert.Empty(t, result.Applied, "the proposal is no longer the one that was approved")
+	assert.True(t, resourceExists(t, tc, keep.ID),
+		"the Resource this apply was told to keep is still here")
+	assert.True(t, resourceExists(t, tc, drop.ID))
 }

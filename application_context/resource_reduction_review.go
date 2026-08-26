@@ -125,7 +125,10 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 			// everything the Cluster says about it — the criterion, the margin, the
 			// curation warning — is a statement about a Resource that is still there
 			// and is not theirs to know about.
-			mergedAway := cluster.Merged && member.ResourceID != cluster.WinnerID
+			// A Loser, specifically. An ejected member was never destroyed — that is
+			// what ejection means — so one that later leaves the caller's scope is a
+			// live Resource outside their access, not a merged-away one.
+			mergedAway := cluster.Merged && member.IsLoser(cluster.WinnerID)
 			if resource == nil && !mergedAway {
 				view.Withheld++
 			}
@@ -137,6 +140,9 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 			})
 		}
 		view.Position = len(views) + 1
+		if view.Withheld > 0 {
+			view = redactWithheldCluster(view)
+		}
 		views = append(views, view)
 	}
 
@@ -212,4 +218,24 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 		return "Reviewed"
 	}
 	return "Open"
+}
+
+// redactWithheldCluster strips a Cluster the caller may not fully see down to the
+// fact that it exists.
+//
+// Done here rather than in the template, because the template is not the only
+// reader. Every server-rendered page also answers `.json` and an
+// `Accept: application/json` request by serialising its whole context
+// (RenderTemplate), so a placeholder in the HTML leaves the Cluster's id, tier,
+// Winner, member ids, reviewed hashes and justification available one URL suffix
+// away. Redacting the view is what makes the rule hold on both.
+//
+// The id goes with the rest: it is a hash of the tier and the member ids, and ids
+// here are small integers, so it recovers them.
+func redactWithheldCluster(view contracts.ReductionClusterView) contracts.ReductionClusterView {
+	return contracts.ReductionClusterView{
+		ReductionCluster: &models.ReductionCluster{},
+		Withheld:         view.Withheld,
+		Position:         view.Position,
+	}
 }

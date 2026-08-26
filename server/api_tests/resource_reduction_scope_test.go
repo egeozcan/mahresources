@@ -1,6 +1,8 @@
 package api_tests
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -209,4 +211,55 @@ func TestAWithheldClusterIsNeitherCountedNorNamed(t *testing.T) {
 	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
 	require.NoError(t, err)
 	assert.Equal(t, 0, adminReview.Clusters[0].Withheld)
+}
+
+// The withheld rule holds on the JSON surface too.
+//
+// Every server-rendered page also answers `.json` by serialising its whole
+// template context, so a placeholder in the HTML would leave the Cluster's id,
+// tier, Winner, member ids and reviewed hashes one URL suffix away.
+func TestAWithheldClusterIsRedactedOnTheJSONSurfaceToo(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "hidden-content-hash")
+	loser := addWithHash(t, tc, "loser.txt", "loser body", "hidden-content-hash")
+	setDimensions(t, tc, winner.ID, 400, 400)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", winner.ID).Update("owner_id", narrow.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", loser.ID).Update("owner_id", wide.ID).Error)
+
+	wideCtx := scopedTo(t, tc, wide.ID)
+	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name:        "JSON leak",
+		ResourceIds: []uint{winner.ID, loser.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	fresh, err := wideCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, fresh.Version, owner, restricted, nil)
+	require.NoError(t, err)
+	plan := awaitReduction(t, tc, red.ID)
+	require.Len(t, plan.Clusters, 1)
+	hiddenClusterID := plan.Clusters[0].ID
+
+	narrowCtx := scopedTo(t, tc, narrow.ID)
+	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	require.Len(t, review.Clusters, 1)
+
+	// Whatever serialises this view — the HTML, or the .json twin of the same page
+	// — finds nothing in it.
+	body, err := json.Marshal(review.Clusters)
+	require.NoError(t, err)
+	rendered := string(body)
+	assert.NotContains(t, rendered, hiddenClusterID, "not the derived Cluster id")
+	assert.NotContains(t, rendered, "hidden-content-hash", "not the reviewed content hash")
+	assert.NotContains(t, rendered, fmt.Sprintf(`"resourceId":%d`, loser.ID), "not the member ids")
+	assert.NotContains(t, rendered, "identical", "not even the tier")
+	assert.Contains(t, rendered, `"Withheld":1`)
 }
