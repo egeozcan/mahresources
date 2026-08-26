@@ -457,7 +457,12 @@ type FileCleanupAction struct {
 	ShouldRemoveSource bool
 }
 
-// metaWithoutBackups returns meta with the `backups` key removed. Unparseable or
+// metaBackupsKey is the meta key holding snapshots of merged-away losers. Named
+// once because it is spelled three more times in engine-specific SQL below, where
+// a typo would silently stop stripping rather than fail.
+const metaBackupsKey = "backups"
+
+// metaWithoutBackups returns meta with the backups key removed. Unparseable or
 // empty meta is returned untouched: this is a hygiene step on a bookkeeping blob,
 // never a reason to fail a merge.
 func metaWithoutBackups(meta types.JSON) types.JSON {
@@ -468,10 +473,10 @@ func metaWithoutBackups(meta types.JSON) types.JSON {
 	if err := json.Unmarshal(meta, &decoded); err != nil || decoded == nil {
 		return meta
 	}
-	if _, ok := decoded["backups"]; !ok {
+	if _, ok := decoded[metaBackupsKey]; !ok {
 		return meta
 	}
-	delete(decoded, "backups")
+	delete(decoded, metaBackupsKey)
 	stripped, err := json.Marshal(decoded)
 	if err != nil {
 		return meta
@@ -482,17 +487,15 @@ func metaWithoutBackups(meta types.JSON) types.JSON {
 // runFileCleanupActions performs the after-commit file work for a batch of
 // deletes or a merge.
 //
-// The backup copy is taken ONLY for a source that is actually being removed.
-// It used to be unconditional, which meant a merge wrote a byte-for-byte copy of
-// files it was leaving in place — and because storage is content-addressed, a
-// merge of two resources sharing a hash copied the *surviving* resource's own
-// live file into /deleted/. Nothing reads that directory and nothing sweeps it,
-// so the cost was pure and permanent. Backing up a file that is staying put
-// protects nothing.
+// A source that is not being removed is not backed up. Backing one up protects
+// nothing, and storage is content-addressed, so resources sharing a hash share a
+// file: a backup taken for a retained source is a copy of a file some surviving
+// resource is still serving, written into a directory nothing reads and nothing
+// sweeps.
 //
-// The removal stays gated on the copy having succeeded, or on the source being
-// unopenable (already gone) — an unbacked-up removal is the one thing worse than
-// a redundant backup.
+// Removal is gated on the copy having succeeded, or on the source being
+// unopenable and therefore already gone — an unbacked-up removal is the one
+// thing worse than a redundant backup.
 func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileCleanupAction) {
 	for _, action := range cleanupActions {
 		if !action.ShouldRemoveSource {
@@ -835,32 +838,28 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 				return err
 			}
 
-			// Same reason as the meta merge below, on the other path in: the
-			// snapshot marshals the whole loser row, `Meta` included, so a loser
+			// The snapshot marshals the whole loser row, Meta included, so a loser
 			// that had itself absorbed merges would carry their backups inside its
-			// own. Stripped from the in-memory copy only; nothing else in this
-			// loop reads the loser's Meta.
-			loser.Meta = metaWithoutBackups(loser.Meta)
+			// own. Snapshot a copy rather than the loaded row, so stripping cannot
+			// reach anything else holding it.
+			snapshot := *loser
+			snapshot.Meta = metaWithoutBackups(loser.Meta)
 
-			backupData, err := json.Marshal(loser)
+			backupData, err := json.Marshal(&snapshot)
 			if err != nil {
 				return err
 			}
 			deletedResBackups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
 
-			// Merge meta. The loser's own `backups` key is dropped on the way in:
-			// it is the record of merges the loser itself absorbed, and carrying it
-			// across is one of the two ways backups compound.
+			// Merge meta, minus the loser's own backups key: that key records merges
+			// the loser itself absorbed, and carrying it across nests backups one
+			// merge deeper each time.
 			//
-			// This one bites on SQLite only, and the asymmetry is worth knowing.
-			// json_patch merges objects recursively, so the backups write at the end
-			// of this function merges into whatever came across here and both
-			// generations survive. Postgres's `||` is a shallow merge that replaces
-			// the whole `backups` key, so the carried-in copy is overwritten anyway.
-			// The `- 'backups'` below therefore changes nothing on Postgres today; it
-			// is there so the two branches cannot drift into meaning different
-			// things. Measured: reverting only the SQLite half leaves resource_999
-			// at the top level of the winner's backups.
+			// Only SQLite needs the removal. json_patch merges objects recursively,
+			// so the backups write at the end of this function merges into whatever
+			// came across here and both generations survive; Postgres's `||` is a
+			// shallow merge that replaces the whole key. The Postgres branch strips
+			// anyway so the two cannot come to mean different things.
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
 				err = tx.Exec(`UPDATE resources SET meta = (coalesce(nullif((SELECT meta FROM resources WHERE id = ?), 'null'::jsonb), '{}'::jsonb) - 'backups') || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error

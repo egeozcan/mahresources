@@ -37,10 +37,9 @@ type TestContext struct {
 	AppCtx *application_context.MahresourcesContext
 	Router http.Handler
 	DB     *gorm.DB
-	// Fs is the same in-memory filesystem the context was built with. Exposed so a
-	// test can assert what a delete or a merge actually did on disk — the backup
-	// copy into /deleted/ and the removal of the source are the only evidence that
-	// those decisions were taken correctly, and they were unobservable here before.
+	// Fs is the same in-memory filesystem the context was built with. A delete or a
+	// merge decides whether to back a file up and whether to remove it, and the
+	// filesystem is the only place those two decisions are observable.
 	Fs afero.Fs
 }
 

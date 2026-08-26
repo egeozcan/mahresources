@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -38,7 +39,8 @@ func addResourceWithBody(t *testing.T, tc *TestContext, name, body string) *mode
 			ResourceQueryBase: query_models.ResourceQueryBase{Name: name},
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, r)
 	return r
 }
 
