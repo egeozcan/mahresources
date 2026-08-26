@@ -410,7 +410,20 @@ func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule [
 			if err != nil {
 				return nil, err
 			}
-			if cluster := buildCluster(models.ReductionTierIdentical, candidates, rule); cluster != nil {
+			// Re-checked against the rows as loaded, not trusted from the grouping
+			// query above. A version upload landing between the two rewrites
+			// resources.hash, and a Cluster built from the stale grouping would carry
+			// members whose recorded hashes differ — labelled Identical, arriving
+			// checked, and passing apply's revalidation, because each member is
+			// validated against its own snapshot rather than against the others.
+			// Byte-identity is the one thing this tier is allowed to assert.
+			sharing := make([]clusterCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				if candidate.Resource.Hash == hash {
+					sharing = append(sharing, candidate)
+				}
+			}
+			if cluster := buildCluster(models.ReductionTierIdentical, sharing, rule); cluster != nil {
 				clusters = append(clusters, cluster)
 			}
 		}

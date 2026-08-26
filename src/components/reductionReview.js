@@ -92,7 +92,6 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
           throw new Error(message);
         }
         this.applyResult = await response.json();
-        await this.refresh();
         const applied = this.applyResult.applied?.length || 0;
         const stale = this.applyResult.stale?.length || 0;
         window.mahAnnounce?.(
@@ -100,6 +99,15 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
           (stale ? ` ${stale} refused and kept for you to look at.` : ''),
           { assertive: true },
         );
+        // Announced before the re-render, and its failure caught separately. The
+        // merge has already happened by this point; a shared catch would report
+        // "Nothing was applied" over Resources that no longer exist, which is the
+        // one thing a destructive surface must never say.
+        try {
+          await this.refresh();
+        } catch (refreshErr) {
+          this.error = `Applied, but the page could not be refreshed: ${refreshErr.message}. Reload to see the result.`;
+        }
       } catch (err) {
         this.error = err.message;
         window.mahAnnounce?.(`Nothing was applied: ${err.message}`, { assertive: true });

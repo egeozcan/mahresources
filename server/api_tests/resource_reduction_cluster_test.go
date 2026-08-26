@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -464,4 +465,66 @@ func TestAnOutsiderWinnerEjectsMembersItHasNoPairTo(t *testing.T) {
 	require.NotNil(t, ejected)
 	assert.True(t, ejected.Ejected)
 	assert.Equal(t, models.EjectReasonNoPairToWinner, ejected.EjectedReason)
+}
+
+// An Identical Cluster asserts byte-identity, so it may hold only Resources that
+// still share the hash it was grouped on.
+//
+// The grouping query and the candidate load are two statements, and a version
+// upload between them rewrites resources.hash. A Cluster built from the stale
+// grouping records the *new* differing hashes, is labelled Identical, arrives
+// checked, and passes apply's revalidation — because each member is validated
+// against its own snapshot rather than against the others.
+func TestAnIdenticalClusterHoldsOnlyResourcesThatStillShareTheHash(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	stays := addWithHash(t, tc, "stays.txt", "stays body", "shared-hash")
+	moves := addWithHash(t, tc, "moves.txt", "moves body", "shared-hash")
+	third := addWithHash(t, tc, "third.txt", "third body", "shared-hash")
+	setDimensions(t, tc, stays.ID, 400, 400)
+
+	// Fire once, on the grouping query's own read of resources: by the time
+	// loadClusterCandidates runs, `moves` no longer holds that content.
+	fired := false
+	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:rehash_mid_cluster", func(db *gorm.DB) {
+		if fired || db.Statement.Table != "resources" {
+			return
+		}
+		fired = true
+		_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
+	}))
+	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove("test:rehash_mid_cluster") })
+
+	red := createReduction(t, tc, "Racing rehash", []uint{stays.ID, moves.ID, third.ID})
+	plan := computeReduction(t, tc, red.ID)
+
+	for _, cluster := range plan.Clusters {
+		require.Equal(t, models.ReductionTierIdentical, cluster.Tier)
+		for _, member := range cluster.Members {
+			assert.Equal(t, "shared-hash", member.Hash,
+				"every member of an Identical Cluster holds the hash it was grouped on")
+		}
+		assert.NotContains(t, memberIDs(cluster), moves.ID)
+	}
+}
+
+// A stored pair whose endpoint has no perceptual hash describes content that
+// endpoint no longer holds: a version upload deletes the ImageHash row and
+// re-queues the work, while the pairs — which carry no foreign key to
+// image_hashes — survive. A deletion may not rest on one.
+func TestANeighbourWithNoPerceptualHashIsNotClustered(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	seed := addImage(t, tc, "seed.jpg", 800, 800)
+	rehashing := addImage(t, tc, "rehashing.jpg", 400, 400)
+	pairThem(t, tc, seed, rehashing, 3)
+
+	// What OnResourceFileChanged leaves behind between the upload and the worker.
+	require.NoError(t, tc.DB.Where("resource_id = ?", rehashing.ID).Delete(&models.ImageHash{}).Error)
+
+	red := createReduction(t, tc, "Mid-rehash", []uint{seed.ID, rehashing.ID})
+	plan := computeReduction(t, tc, red.ID)
+
+	assert.Empty(t, plan.Clusters,
+		"the only pair available describes content that Resource no longer holds")
 }

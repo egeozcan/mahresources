@@ -194,6 +194,15 @@
                         @click="act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})"
                         class="reduction-action reduction-action--small">Make Winner</button>
                 {% endif %}
+                {% if member.IsLoser and cluster.Winner and not member.Ejected %}
+                {# Story 24 wants the two-up look from *every* Cluster, and the      #}
+                {# compare page takes exactly two Resources — so the pair that is    #}
+                {# worth looking at is this Loser against the Winner that would      #}
+                {# absorb it, offered once per Loser rather than once per Cluster.   #}
+                <a class="reduction-action reduction-action--small"
+                   data-testid="member-compare"
+                   href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare</a>
+                {% endif %}
                 {% if member.Ejected %}
                 <button type="button" data-testid="member-restore"
                         :disabled="busy"
@@ -212,12 +221,5 @@
         {% endfor %}
     </div>
 
-    {% if cluster.Members|length == 2 and cluster.Winner and not cluster.Withheld %}
-    <p class="px-3 pb-3 text-sm">
-        <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700"
-           href="/resource/compare?r1={{ cluster.Members.0.ResourceID }}&r2={{ cluster.Members.1.ResourceID }}"
-           data-testid="cluster-compare-link">Compare these two side by side</a>
-    </p>
-    {% endif %}
 </article>
 {% endif %}

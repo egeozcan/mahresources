@@ -304,10 +304,13 @@ func TestTheExtentCountsShrinkWithTheReviewersAccess(t *testing.T) {
 	assert.Equal(t, 0, confined.SelectedGroups)
 }
 
-// The coverage figures are a measurement taken under whatever access the reviewer
-// who computed the plan had. Showing them to somebody who can now reach less of
-// the selection states how much is out there.
-func TestCoverageIsWithheldFromAReviewerWhoSeesLessThanItMeasured(t *testing.T) {
+// Coverage answers a question about the *whole* Extent — how much of it could be
+// examined — so it is answered only for a principal who can see the whole Extent.
+//
+// Comparing selection counts was not enough: narrowing a subtree can hide a
+// Resource reached through a Group that is still visible, leaving every count
+// unchanged while the figures describe more than the reviewer can now reach.
+func TestCoverageIsWithheldFromEverySubtreeConfinedReviewer(t *testing.T) {
 	tc := SetupTestEnv(t)
 	owner, restricted := asAdmin()
 
@@ -333,15 +336,19 @@ func TestCoverageIsWithheldFromAReviewerWhoSeesLessThanItMeasured(t *testing.T) 
 	require.NoError(t, err)
 	awaitReduction(t, tc, red.ID)
 
+	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	require.NoError(t, err)
+	assert.True(t, adminReview.CoverageTrusted, "an unconfined principal sees the whole Extent, so it sees the figures")
+	assert.Equal(t, 2, adminReview.Coverage.ExtentSize)
+
 	wideReview, err := wideCtx.GetReductionReview(red.ID, owner, restricted, 1)
 	require.NoError(t, err)
-	assert.True(t, wideReview.CoverageTrusted, "the reviewer who computed it sees its figures")
-	assert.Equal(t, 2, wideReview.Coverage.ExtentSize)
+	assert.False(t, wideReview.CoverageTrusted,
+		"even the reviewer who computed it is confined, so the figures are not theirs to read")
 
 	narrowReview, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1)
 	require.NoError(t, err)
-	assert.False(t, narrowReview.CoverageTrusted,
-		"and one who can now reach less of the selection does not")
+	assert.False(t, narrowReview.CoverageTrusted)
 
 	// Redacted in the value, not only in the page. Every server-rendered page also
 	// answers `.json` by serialising its whole template context, and this review is

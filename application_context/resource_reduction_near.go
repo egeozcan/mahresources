@@ -81,10 +81,27 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 			continue
 		}
 
+		// A neighbour whose ImageHash row is gone has had its file replaced and not
+		// yet been re-hashed — OnResourceFileChanged deletes the row and re-queues
+		// the work — while its stored pairs, which carry no foreign key to
+		// image_hashes, survive describing content it no longer holds. Those pairs
+		// are the justification for a deletion, so a Cluster must not be built on
+		// one. (The wider defect is pre-existing and named as out of scope in the
+		// plan: once the worker re-hashes, the stale pairs are still there. What the
+		// review protects against then is what it always did — the reviewer looking
+		// at two images that are not alike.)
+		hashed, err := ctx.perceptuallyHashed(pairIDs(neighbours))
+		if err != nil {
+			return nil, err
+		}
+
 		distances := map[uint]uint8{}
 		neighbourIDs := make([]uint, 0, len(neighbours))
 		for _, pair := range neighbours {
 			if claimed[pair.ResourceID] || excluded[pair.ResourceID] || pair.ResourceID == seed.Resource.ID {
+				continue
+			}
+			if !hashed[pair.ResourceID] {
 				continue
 			}
 			// A neighbour reached twice at different distances keeps the closest,
@@ -149,6 +166,33 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 		clusters = append(clusters, cluster)
 	}
 	return clusters, nil
+}
+
+// pairIDs is the neighbour half of a set of stored pairs.
+func pairIDs(pairs []similarPair) []uint {
+	ids := make([]uint, 0, len(pairs))
+	for _, pair := range pairs {
+		ids = append(ids, pair.ResourceID)
+	}
+	return ids
+}
+
+// perceptuallyHashed reports which of the given Resources currently carry a
+// perceptual hash.
+func (ctx *MahresourcesContext) perceptuallyHashed(ids []uint) (map[uint]bool, error) {
+	out := map[uint]bool{}
+	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
+		var found []uint
+		if err := ctx.db.Model(&models.ImageHash{}).
+			Where("image_hashes.resource_id IN ?", chunk).
+			Pluck("image_hashes.resource_id", &found).Error; err != nil {
+			return nil, fmt.Errorf("checking perceptual hashes: %w", err)
+		}
+		for _, id := range found {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 // perceptualExtentIDs is the seed pool: the Extent's Resources that carry a

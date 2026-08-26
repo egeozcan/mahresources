@@ -170,8 +170,16 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	// `Accept: application/json` request by serialising its whole context, so
 	// hiding these in the HTML would leave the pre-shrink extent size and the hash
 	// totals one URL suffix away — the same mistake the withheld Cluster made.
+	// Coverage answers a question about the *whole* Extent — how much of it could
+	// be examined — so it is shown only to a principal who can see the whole
+	// Extent. Comparing selection counts was not enough: narrowing a subtree can
+	// hide a Resource reached through a Group that is still visible, leaving every
+	// count unchanged while the figures describe more than the reviewer can now
+	// reach. Subtree confinement is the honest predicate, and it needs no walk.
 	coverage := plan.Coverage
-	coverageTrusted := len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) && extent.SelectedGroups == len(storedExtent.GroupIDs)
+	coverageTrusted := !ctx.isScopedPrincipal() &&
+		len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) &&
+		extent.SelectedGroups == len(storedExtent.GroupIDs)
 	extentSize := plan.Coverage.ExtentSize
 	if !coverageTrusted {
 		coverage = models.ReductionCoverage{}

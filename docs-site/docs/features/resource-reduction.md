@@ -62,7 +62,8 @@ There is no filesystem modification time anywhere in this system. `updated_at` i
 |--------|--------|
 | **Make Winner** | Promotes a member. Your judgement beats the rule. |
 | **Eject** | Removes one member from the Cluster. The Resource is left completely untouched. |
-| **Put back** | Restores an ejected member. |
+| **Put back** | Restores an ejected member. Refused on the Near-Identical tier when that Resource has no stored match to the current Winner. |
+| **Compare** | Opens the two-up comparison of that Loser against the Winner that would absorb it. |
 | **Skip** | Moves past a Cluster without deciding about it. |
 | **Apply this Cluster** | Checks or unchecks it for the next apply. |
 
@@ -72,13 +73,15 @@ Two promotions are refused. One that would demote a Winner sitting outside the E
 
 A Cluster you have explicitly acted on **freezes**. Its members are held out of re-clustering, so growing the Extent and recomputing can add Clusters but can never rearrange a judgement you already made. A Cluster that merely arrived checked by default has not been acted on.
 
-An unusually large Near-Identical Cluster arrives unchecked whatever the tier default says, and must be expanded before its controls become available. A large Identical Cluster is not treated as suspicious — fifty copies of one file are fifty copies of one file.
+An unusually large Near-Identical Cluster arrives unchecked whatever the tier default says, and must be expanded before its controls become available; checking one carries an explicit acknowledgement that the server requires, so the guard is not only in the browser. A large Identical Cluster is not treated as suspicious — fifty copies of one file are fifty copies of one file.
 
 Clusters paginate; members within a Cluster do not. Every decision lives in the Reduction's row, so it survives paging, a reload, closing the tab and a server restart.
 
 ## Coverage
 
 The page reports how much of the Extent it could actually examine, so "no repeats found" stays distinguishable from "nothing was hashed": how many Resources carry a content hash, and how many of a perceptually hashable type carry a perceptual hash. When eligible Resources are unhashed the page says so and points at the similarity recompute.
+
+Coverage is a measurement of the **whole** Extent, so it is shown only to an account that can see the whole Extent. A group-limited reviewer is told that instead of being given figures that describe more than they can reach.
 
 ## Applying
 
@@ -94,6 +97,8 @@ Immediately before each merge the Cluster is revalidated. It is refused, marked 
 
 One stale Cluster never refuses the whole batch. Ejected members are exempt from all of these checks, because an ejected Resource is not part of the Cluster and is left untouched.
 
+The checks that matter run **inside the transaction that performs the deletion**, behind a row lock, not merely before it. And an apply acts on the proposal it was asked about: you may eject a member while a batch is running and it will be spared, but a Cluster that has been recomputed or whose Winner has been promoted since you pressed Apply is refused rather than merged, because it is no longer the proposal you approved.
+
 ### keep-as-version
 
 `keepAsVersion` is two flags, one per tier — defaulted **on** for Near-Identical and **off** for Identical. A Near-Identical Loser's file becomes a further version of the Winner, so there is a way back to pixels you decided against; a byte-identical Loser has nothing to preserve.
@@ -104,7 +109,13 @@ Turning them off does not by itself reclaim disk space. Every Loser version tran
 
 A Reduction is visible to the person who created it and to administrators. A Reduction whose owner has been deleted belongs to nobody. A pending destructive decision is not a shared artifact.
 
-Membership is re-checked against your current access both when the page renders and again when you apply, because a scope-limited account's subtree can change after a Reduction is created. A Cluster holding a Resource you may no longer see cannot be applied.
+Membership is re-checked against your current access both when the page renders and again when you apply, because a scope-limited account's subtree can change after a Reduction is created.
+
+A Cluster reaching a Resource you may not see is not shown, not counted, not named in an apply result, and answers every action exactly as a Cluster that does not exist — including on the `.json` form of the page. Its identifier is derived from its members' ids, so anything that confirmed such a Cluster existed would give those ids away.
+
+## Known limits
+
+Perceptual pairs are precomputed and are not removed when a Resource's file changes: a version upload deletes that Resource's perceptual hash and re-queues the work, but the pairs it took part in survive, describing content it no longer holds. A Reduction refuses to cluster on a pair whose endpoint has no current perceptual hash, which covers the window before the hash worker catches up; once it has re-hashed, the old pairs are still there. The plan snapshot means an apply never deletes bytes that changed **since** you reviewed them, and looking at the images is what catches a match that was never true.
 
 ## Not included
 
