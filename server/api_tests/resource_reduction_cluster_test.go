@@ -377,3 +377,85 @@ func TestIdenticalOnlyModeSkipsThePerceptualTier(t *testing.T) {
 	require.Len(t, plan.Clusters, 1)
 	assert.Equal(t, models.ReductionTierIdentical, plan.Clusters[0].Tier)
 }
+
+// A finished plan is refused, not rebased, when the Reduction moved under it.
+//
+// The plan describes the Extent, the Winner Rule and the decisions as they were
+// when the run began. Landing it on a row that has since been widened would
+// present a stale proposal as current, with a fresh computed_at — so the page's
+// own drift line would report zero and the reviewer would have no way to tell.
+func TestAComputeThatLostItsRowIsRefusedRatherThanRebased(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	a := addWithHash(t, tc, "a.txt", "a body", "shared-hash")
+	b := addWithHash(t, tc, "b.txt", "b body", "shared-hash")
+
+	red := createReduction(t, tc, "Moved under it", []uint{a.ID, b.ID})
+	computeReduction(t, tc, red.ID)
+
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	stalePlan, err := application_context.DecodeReductionPlan(current.Plan)
+	require.NoError(t, err)
+
+	// Something widens the Extent while the run is notionally still going.
+	c := addWithHash(t, tc, "c.txt", "c body", "shared-hash")
+	_, err = tc.AppCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		ID:          red.ID,
+		ResourceIds: []uint{c.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	err = tc.AppCtx.StoreReductionPlanForTest(red.ID, current.ComputeJobID, current.Version, stalePlan)
+	assert.ErrorIs(t, err, application_context.ErrReductionStaleCompute)
+}
+
+// A single-Resource Extent still finds the better copy sitting outside it. That
+// reach is the whole reason a Cluster is allowed outside the Extent at all, and
+// "is there already a better copy of this?" is the question a reviewer asks about
+// one photograph.
+func TestASingleResourceExtentStillReachesOutside(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	only := addImage(t, tc, "only.jpg", 200, 200)
+	better := addImage(t, tc, "better.jpg", 900, 900)
+	pairThem(t, tc, only, better, 4)
+
+	red := createReduction(t, tc, "One Resource", []uint{only.ID})
+	plan := computeReduction(t, tc, red.ID)
+
+	require.Len(t, plan.Clusters, 1)
+	cluster := plan.Clusters[0]
+	assert.Equal(t, better.ID, cluster.WinnerID)
+	assert.Equal(t, []uint{only.ID}, cluster.LoserIDs())
+}
+
+// The out-of-Extent rule can move the Winner off the greedy-star seed, and ADR
+// 0002's pair-justification holds only while the Winner is the seed. A member with
+// no pair to the outsider that displaced it is ejected at cluster time, not left
+// for apply to refuse.
+func TestAnOutsiderWinnerEjectsMembersItHasNoPairTo(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	seed := addImage(t, tc, "seed.jpg", 400, 400)
+	sibling := addImage(t, tc, "sibling.jpg", 200, 200)
+	outsider := addImage(t, tc, "outsider.jpg", 900, 900)
+	pairThem(t, tc, seed, sibling, 4)
+	pairThem(t, tc, seed, outsider, 4)
+	// No outsider-to-sibling pair.
+
+	red := createReduction(t, tc, "Outsider wins", []uint{seed.ID, sibling.ID})
+	plan := computeReduction(t, tc, red.ID)
+
+	require.Len(t, plan.Clusters, 1)
+	cluster := plan.Clusters[0]
+	assert.Equal(t, outsider.ID, cluster.WinnerID)
+	assert.Equal(t, []uint{seed.ID}, cluster.LoserIDs(),
+		"the sibling has no stored pair to the Winner, so it is not proposed for deletion")
+
+	ejected := memberOf(cluster, sibling.ID)
+	require.NotNil(t, ejected)
+	assert.True(t, ejected.Ejected)
+	assert.Equal(t, models.EjectReasonNoPairToWinner, ejected.EjectedReason)
+}

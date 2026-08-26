@@ -63,7 +63,7 @@
                        {% if cluster.Checked %}checked{% endif %}
                        disabled
                        :disabled="busy || {% if cluster.Withheld %}true{% else %}false{% endif %} || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                       @change="act('{{ cluster.ID }}', $event.target.checked ? 'check' : 'uncheck')"
+                       @change="check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster
             </label>
@@ -111,6 +111,15 @@
          id="cluster-{{ cluster.ID }}-members"
          x-show="isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
         {% for member in cluster.Members %}
+        {# A member the reviewer may not see is rendered as a placeholder and       #}
+        {# nothing else — no id, no role, no distance, no controls. Printing any of #}
+        {# those would answer "what is over there?" for somebody whose whole        #}
+        {# confinement is that they may not ask.                                    #}
+        {% if not member.Resource %}
+        <div class="reduction-member" data-testid="reduction-member-withheld">
+            <p class="text-xs text-stone-500 max-w-[10rem]">A Resource outside what you may see.</p>
+        </div>
+        {% else %}
         <div class="reduction-member{% if member.IsWinner %} reduction-member--winner{% endif %}{% if member.Ejected %} reduction-member--ejected{% endif %}"
              data-testid="reduction-member"
              data-resource-id="{{ member.ResourceID }}"
@@ -136,8 +145,6 @@
                     {% if member.Resource.Width %}{{ member.Resource.Width }}&times;{{ member.Resource.Height }} &middot; {% endif %}
                     {{ member.Resource.FileSize | humanReadableSize }}
                 </p>
-            {% else %}
-                <p class="text-xs text-stone-500 max-w-[10rem]">Resource {{ member.ResourceID }} is outside what you may see.</p>
             {% endif %}
 
             <p class="text-xs mt-1">
@@ -178,10 +185,11 @@
             </div>
             {% endif %}
         </div>
+        {% endif %}
         {% endfor %}
     </div>
 
-    {% if cluster.Members|length == 2 and cluster.Winner %}
+    {% if cluster.Members|length == 2 and cluster.Winner and not cluster.Withheld %}
     <p class="px-3 pb-3 text-sm">
         <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700"
            href="/resource/compare?r1={{ cluster.Members.0.ResourceID }}&r2={{ cluster.Members.1.ResourceID }}"

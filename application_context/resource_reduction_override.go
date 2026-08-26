@@ -43,6 +43,12 @@ var (
 	// ErrReductionEjectWinner refuses ejecting the Winner, which would leave the
 	// Cluster with nothing to merge into.
 	ErrReductionEjectWinner = errors.New("promote another member first: a Cluster cannot lose its Winner")
+	// ErrReductionMemberNotVisible refuses an override that would make a Resource
+	// the caller cannot see into a Winner, or put one back among the Losers.
+	ErrReductionMemberNotVisible = errors.New("this Resource is outside what you may see")
+	// ErrReductionOversizedUnexpanded refuses checking an unusually large
+	// Near-Identical Cluster that has not been acknowledged.
+	ErrReductionOversizedUnexpanded = errors.New("expand this Cluster and look at it before checking it")
 )
 
 // OverrideReductionCluster records one review decision.
@@ -134,6 +140,16 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if member == nil {
 			return ErrReductionMemberNotFound
 		}
+		// Putting a member back makes it a Loser again, so the caller has to be
+		// able to see what they are re-arming. Ejection is deliberately the one
+		// member action with no such check: it only ever removes a Resource from
+		// harm, and refusing it would leave a confined reviewer holding a Cluster
+		// they can neither apply nor defuse.
+		if visible, err := ctx.memberVisible(member.ResourceID); err != nil {
+			return err
+		} else if !visible {
+			return ErrReductionMemberNotVisible
+		}
 		member.Ejected = false
 		member.EjectedReason = ""
 		cluster.Reviewed = true
@@ -152,6 +168,13 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		return nil
 
 	case ReductionActionCheck:
+		// The size guard is enforced here and not only in the browser. A Cluster
+		// that arrives unchecked because it is oversized is one nobody has looked
+		// at, and a direct POST that checks it and applies it is precisely the
+		// three-hundred-files-behind-one-checkbox the rule exists to prevent.
+		if cluster.Oversized && !override.AcknowledgeOversized {
+			return ErrReductionOversizedUnexpanded
+		}
 		cluster.Checked = true
 		cluster.Reviewed = true
 		if cluster.State == models.ReductionClusterSkipped || cluster.State == models.ReductionClusterStale {
@@ -189,6 +212,15 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	}
 	if member.ResourceID == cluster.WinnerID {
 		return nil
+	}
+	// A Winner absorbs every Loser's associations and survives the merge, so
+	// making one out of a Resource the caller cannot see would let a Reduction
+	// computed under wider access reach back into what that access no longer
+	// covers.
+	if visible, err := ctx.memberVisible(member.ResourceID); err != nil {
+		return err
+	} else if !visible {
+		return ErrReductionMemberNotVisible
 	}
 
 	// A member outside the Extent may win and may never lose. Promoting past it
@@ -289,6 +321,19 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) e
 	}
 	cluster.Lossy = lossyFields(candidates, cluster.WinnerID)
 	return nil
+}
+
+// memberVisible reports whether the acting principal can read a Cluster member.
+//
+// Asked through the scoped handle, so "deleted" and "outside your subtree" are
+// the same answer — which is the answer this file wants: neither is a Resource
+// the caller may promote or re-arm.
+func (ctx *MahresourcesContext) memberVisible(resourceID uint) (bool, error) {
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Where("resources.id = ?", resourceID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func findCluster(plan *models.ResourceReductionPlan, id string) *models.ReductionCluster {

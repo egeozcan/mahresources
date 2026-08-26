@@ -20,10 +20,16 @@ const CLUSTERS = '[data-reduction-clusters]';
  * the only correct response to it is to reload, because a decision made against a
  * plan that no longer exists is not a decision about anything.
  */
-export function reductionReview({ reductionId, version }) {
+export function reductionReview({ reductionId, version, checkedCount, checkedLoserCount }) {
   return {
     reductionId,
     version,
+    // Counted by the server over the whole plan. The page can only see its own
+    // Clusters, and apply acts on every page — a confirm that counts checkboxes
+    // in this DOM understates the blast radius by however many pages the reviewer
+    // has not opened.
+    checkedCount,
+    checkedLoserCount,
     busy: false,
     error: '',
     // Oversized Near-Identical Clusters must be expanded before they can be acted
@@ -41,25 +47,34 @@ export function reductionReview({ reductionId, version }) {
       window.mahAnnounce?.('Cluster expanded. Its controls are now available.');
     },
 
+    /**
+     * Checking an oversized Near-Identical Cluster carries an explicit
+     * acknowledgement, which the server requires. The flag says "this reviewer
+     * expanded it first" — it is not proof they looked, but it is what stops a
+     * caller that is not this page checking three hundred files in one request.
+     */
+    check(clusterId, checked, oversized) {
+      const action = checked ? 'check' : 'uncheck';
+      return this.act(clusterId, action, 0, { acknowledgeOversized: oversized && this.expanded[clusterId] === true });
+    },
+
     // The report of the last apply: what merged, and what was refused and why.
     // Held here rather than re-rendered from the row, because a stale Cluster's
     // reason is about the batch that just ran and the row only says the Cluster is
     // stale.
     applyResult: null,
 
-    checkedCount() {
-      return document.querySelectorAll('[data-testid="cluster-checkbox"]:checked').length;
-    },
-
     async apply() {
       if (this.busy) return;
-      const count = this.checkedCount();
+      const count = this.checkedCount;
       if (count === 0) {
         this.error = 'Nothing is checked.';
         return;
       }
+      const clusters = `${count} Cluster${count === 1 ? '' : 's'}`;
+      const losers = `${this.checkedLoserCount} Resource${this.checkedLoserCount === 1 ? '' : 's'}`;
       const confirmed = await this.$store.confirmDialog.ask(
-        `${count} Cluster${count === 1 ? '' : 's'} will be merged and their Losers deleted. This cannot be undone.`,
+        `${clusters} will be merged and their Losers deleted — ${losers} across every page of this Reduction, not just this one. This cannot be undone.`,
         { title: 'Apply this Resource Reduction?', confirmLabel: 'Apply' },
       );
       if (!confirmed) return;
@@ -93,7 +108,7 @@ export function reductionReview({ reductionId, version }) {
       }
     },
 
-    async act(clusterId, action, resourceId = 0) {
+    async act(clusterId, action, resourceId = 0, extra = {}) {
       if (this.busy) return;
       this.busy = true;
       this.error = '';
@@ -107,6 +122,7 @@ export function reductionReview({ reductionId, version }) {
             clusterId,
             action,
             resourceId,
+            ...extra,
           }),
         });
         if (!response.ok) {
@@ -148,7 +164,11 @@ export function reductionReview({ reductionId, version }) {
       // The version travels in the page too, so a refresh from any other cause
       // leaves this component agreeing with what was rendered.
       const marker = refreshed.querySelector('[data-reduction-version]');
-      if (marker) this.version = Number(marker.dataset.reductionVersion);
+      if (marker) {
+        this.version = Number(marker.dataset.reductionVersion);
+        this.checkedCount = Number(marker.dataset.reductionChecked);
+        this.checkedLoserCount = Number(marker.dataset.reductionCheckedLosers);
+      }
     },
   };
 }

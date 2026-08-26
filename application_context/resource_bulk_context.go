@@ -710,6 +710,28 @@ func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.Resou
 }
 
 func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, keepAsVersion bool) error {
+	return ctx.MergeResourcesExpecting(winnerId, loserIds, keepAsVersion, nil)
+}
+
+// ErrMergeContentChanged refuses a merge whose participants no longer hold the
+// bytes the caller checked them for.
+var ErrMergeContentChanged = errors.New("the content of a resource in this merge changed since it was checked")
+
+// MergeResourcesExpecting is MergeResources with an optional precondition: a map
+// of resource id to the content hash the caller last saw, verified as the first
+// statement inside the merge's own transaction.
+//
+// Checking outside the transaction is not the same thing, and the difference is
+// destructive. A Resource Reduction validates a Cluster and then calls this; a
+// version upload landing between those two moments changes a Loser's bytes, and
+// the merge would delete content nobody reviewed. That window is small, but the
+// entire promise of the review is that it cannot happen — so the check belongs
+// where the rows are actually locked.
+//
+// nil means no precondition, which is what every existing caller passes: the
+// resource-detail merge form and `mr resources merge` are a person naming a
+// winner they are looking at, with no earlier snapshot to be stale against.
+func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds []uint, keepAsVersion bool, expectedHashes map[uint]string) error {
 	if len(loserIds) == 0 || winnerId == 0 {
 		return errors.New("incorrect parameters")
 	}
@@ -746,6 +768,20 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 		var winner models.Resource
 		if err := tx.First(&winner, winnerId).Error; err != nil {
 			return err
+		}
+
+		// The precondition, checked here and not by the caller: these are the rows
+		// the merge is about to delete, read inside the transaction that deletes
+		// them.
+		if len(expectedHashes) > 0 {
+			if expected, named := expectedHashes[winner.ID]; named && expected != winner.Hash {
+				return fmt.Errorf("%w: resource %d", ErrMergeContentChanged, winner.ID)
+			}
+			for _, loser := range losers {
+				if expected, named := expectedHashes[loser.ID]; named && expected != loser.Hash {
+					return fmt.Errorf("%w: resource %d", ErrMergeContentChanged, loser.ID)
+				}
+			}
 		}
 
 		// Transfer associations via direct SQL (no Go-side loading needed)

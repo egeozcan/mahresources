@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -311,4 +312,99 @@ func findClusterByID(plan models.ResourceReductionPlan, id string) *models.Reduc
 		}
 	}
 	return nil
+}
+
+// An oversized Near-Identical Cluster cannot be checked by a request that has not
+// acknowledged it. Arriving unchecked is the protection; a direct POST that
+// checks and applies three hundred files is precisely what that protection is for,
+// and a browser-only guard would not touch it.
+func TestCheckingAnOversizedClusterNeedsAnAcknowledgement(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	hub := addImage(t, tc, "hub.jpg", 4000, 4000)
+	ids := []uint{hub.ID}
+	for i := 0; i < 14; i++ {
+		neighbour := addImage(t, tc, fmt.Sprintf("near-%d.jpg", i), 100, 100)
+		pairThem(t, tc, hub, neighbour, 5)
+		ids = append(ids, neighbour.ID)
+	}
+
+	red := createReduction(t, tc, "Oversized guard", ids)
+	plan := computeReduction(t, tc, red.ID)
+	require.Len(t, plan.Clusters, 1)
+	require.True(t, plan.Clusters[0].Oversized)
+	clusterID := plan.Clusters[0].ID
+
+	err := overrideErr(t, tc, red.ID, clusterID, application_context.ReductionActionCheck, 0)
+	assert.ErrorIs(t, err, application_context.ErrReductionOversizedUnexpanded)
+
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID:                   red.ID,
+		Version:              current.Version,
+		ClusterID:            clusterID,
+		Action:               application_context.ReductionActionCheck,
+		AcknowledgeOversized: true,
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	after := planOf(t, tc, red.ID)
+	assert.True(t, findClusterByID(after, clusterID).Checked)
+}
+
+// Promoting a Resource the reviewer cannot see would make it the Winner — the row
+// that survives and absorbs everything else — so it is refused. Ejecting one is
+// not, because ejection only ever takes a Resource out of harm, and refusing it
+// would leave a confined reviewer holding a Cluster they can neither apply nor
+// defuse.
+func TestAMemberOutsideTheReviewersAccessCannotBePromoted(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+
+	visible := addWithHash(t, tc, "visible.txt", "visible body", "shared-hash")
+	hidden := addWithHash(t, tc, "hidden.txt", "hidden body", "shared-hash")
+	setDimensions(t, tc, visible.ID, 400, 400)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", visible.ID).Update("owner_id", narrow.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", hidden.ID).Update("owner_id", wide.ID).Error)
+
+	wideCtx := scopedTo(t, tc, wide.ID)
+	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name:        "Shrinking promote",
+		ResourceIds: []uint{visible.ID, hidden.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	_, err = wideCtx.RequestReductionCompute(red.ID, owner, restricted, nil)
+	require.NoError(t, err)
+	plan := awaitReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+
+	narrowCtx := scopedTo(t, tc, narrow.ID)
+	current, err := narrowCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = narrowCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID:         red.ID,
+		Version:    current.Version,
+		ClusterID:  clusterID,
+		Action:     application_context.ReductionActionPromote,
+		ResourceID: hidden.ID,
+	}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionMemberNotVisible)
+
+	current, err = narrowCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = narrowCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID:         red.ID,
+		Version:    current.Version,
+		ClusterID:  clusterID,
+		Action:     application_context.ReductionActionEject,
+		ResourceID: hidden.ID,
+	}, owner, restricted)
+	assert.NoError(t, err, "ejecting one is always allowed: it only ever removes a Resource from harm")
 }

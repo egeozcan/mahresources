@@ -1,6 +1,8 @@
 package database_scopes
 
 import (
+	"time"
+
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 )
@@ -32,7 +34,23 @@ func ResourceReductionQuery(query *query_models.ResourceReductionQuery, ignoreSo
 		}
 
 		if statuses := nonEmpty(query.Status); len(statuses) > 0 {
-			dbQuery = dbQuery.Where("status IN ?", statuses)
+			// A Reduction still `computing` past its deadline *reads* as failed —
+			// generic queue jobs are not drained at shutdown, so nothing else would
+			// ever move it off that status. The filter has to agree with the label,
+			// or the one status a reviewer would search for to find a stranded run
+			// is the one that hides it.
+			wantsFailed := false
+			for _, status := range statuses {
+				if status == "failed" {
+					wantsFailed = true
+				}
+			}
+			if wantsFailed {
+				dbQuery = dbQuery.Where("status IN ? OR (status = ? AND compute_deadline IS NOT NULL AND compute_deadline < ?)",
+					statuses, "computing", time.Now())
+			} else {
+				dbQuery = dbQuery.Where("status IN ?", statuses)
+			}
 		}
 
 		if query.OwnerRestricted {

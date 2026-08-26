@@ -74,6 +74,13 @@ type ReductionOverride struct {
 	// ResourceID names the member a promote, eject or restore acts on. Unused by
 	// the whole-Cluster actions.
 	ResourceID uint `json:"resourceId" schema:"resourceId"`
+
+	// AcknowledgeOversized is required to check an unusually large Near-Identical
+	// Cluster. The browser sets it once the reviewer has expanded the Cluster;
+	// the server refuses without it, so the guard means something to a caller
+	// that is not the page — which is the only kind of caller that could check
+	// three hundred files in one request without having looked at any of them.
+	AcknowledgeOversized bool `json:"acknowledgeOversized" schema:"acknowledgeOversized"`
 }
 
 // ReductionApply is a request to apply what is checked.

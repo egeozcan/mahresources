@@ -1206,6 +1206,8 @@ components:
             type: object
         ReductionOverride:
             properties:
+                acknowledgeOversized:
+                    type: boolean
                 action:
                     type: string
                 clusterId:

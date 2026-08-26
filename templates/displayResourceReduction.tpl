@@ -2,7 +2,8 @@
 
 {% block body %}
 <div data-testid="reduction-page" data-reduction-id="{{ raw.ID }}" data-reduction-version="{{ raw.Version }}"
-     x-data="reductionReview({ reductionId: {{ raw.ID }}, version: {{ raw.Version }} })">
+     data-reduction-checked="{{ review.CheckedCount }}" data-reduction-checked-losers="{{ review.CheckedLoserCount }}"
+     x-data="reductionReview({ reductionId: {{ raw.ID }}, version: {{ raw.Version }}, checkedCount: {{ review.CheckedCount }}, checkedLoserCount: {{ review.CheckedLoserCount }} })">
 
     {# Stated plainly and on the page rather than only in a confirm dialog: there #}
     {# is no restore path in this system, so the review is the safety mechanism.  #}
@@ -43,8 +44,8 @@
         <h2 id="reduction-extent-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">Extent</h2>
         <p class="text-sm text-stone-600" data-testid="reduction-extent">
             {{ extent.resourceCount }} Resource{% if extent.resourceCount != 1 %}s{% endif %}
-            and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected,
-            reaching {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} right now.
+            and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected.
+            {% if raw.ComputedAt %}It reached {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} when it was last computed.{% endif %}
             {% if extent.groupCount %}A Group's descendants are included, and are resolved each time the Reduction is computed.{% endif %}
         </p>
         {% if extent.enteredSince %}
@@ -119,8 +120,9 @@
                     class="self-start inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
                 Apply the checked Clusters
             </button>
-            <p class="text-xs text-stone-600">
-                Only the Clusters checked on this page and every other page are applied. The rest stay open.
+            <p class="text-xs text-stone-600" data-testid="reduction-checked-summary">
+                {{ review.CheckedCount }} Cluster{% if review.CheckedCount != 1 %}s{% endif %} checked across this Reduction,
+                {{ review.CheckedLoserCount }} Resource{% if review.CheckedLoserCount != 1 %}s{% endif %} to delete. The rest stay open.
             </p>
         </div>
 

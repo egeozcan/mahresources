@@ -125,6 +125,24 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 		return clusterApplyOutcome{Report: report}
 	}
 
+	// The Cluster is claimed *before* it is merged, not marked afterwards. A
+	// reviewer on a freshly loaded page can eject a Loser at any moment, and the
+	// gap between reading a Cluster and destroying it is the one place an
+	// ejection could be missed — which is exactly the thing ejection promises
+	// cannot happen. Marking it applied first makes every override on it refuse
+	// (ErrReductionClusterSettled), so the ids about to be merged are frozen.
+	//
+	// The mirror failure is a crash between this write and the merge, which
+	// leaves a Cluster marked applied whose Losers still exist. That is the right
+	// way round: it costs a merge that has to be redone, where the other order
+	// costs a file the reviewer had un-approved. It also self-heals — an applied
+	// Cluster's members go back into the pool, so the next recompute re-proposes
+	// them.
+	if !ctx.claimClusterForApply(reductionID, clusterID) {
+		report.Reason = staleReasonAlreadyMoved
+		return clusterApplyOutcome{Report: report}
+	}
+
 	// One flag per tier, because the design's defaults are opposite: a
 	// byte-identical Loser has nothing to preserve, while a Near-Identical one
 	// holds pixels the reviewer decided against. MergeResources takes a single
@@ -134,15 +152,65 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 		keepAsVersion = reduction.KeepAsVersionNear
 	}
 
-	if err := ctx.MergeResources(cluster.WinnerID, report.LoserIDs, keepAsVersion); err != nil {
+	// The hashes travel into the merge rather than being checked only above.
+	// revalidateCluster runs outside the merge's transaction, so a version upload
+	// landing between the two would have the merge delete bytes nobody reviewed;
+	// the precondition is re-verified against the rows the transaction has
+	// actually loaded.
+	expected := map[uint]string{}
+	for _, member := range cluster.Members {
+		if !member.Ejected {
+			expected[member.ResourceID] = member.Hash
+		}
+	}
+
+	if err := ctx.MergeResourcesExpecting(cluster.WinnerID, report.LoserIDs, keepAsVersion, expected); err != nil {
 		reason := staleReasonMergeRefused + ": " + err.Error()
+		if errors.Is(err, ErrMergeContentChanged) {
+			reason = staleReasonHashChanged
+		}
 		report.Reason = reason
-		ctx.markClusterStale(reductionID, clusterID, reason)
+		ctx.demoteClusterToStale(reductionID, clusterID, reason)
 		return clusterApplyOutcome{Report: report}
 	}
 
-	ctx.markClusterApplied(reductionID, clusterID)
 	return clusterApplyOutcome{Applied: true, Report: report}
+}
+
+// claimClusterForApply takes a Cluster out of play for the merge that is about to
+// happen, and reports whether it got it. Losing means somebody else applied it
+// first, or the reviewer moved it while this batch was running.
+func (ctx *MahresourcesContext) claimClusterForApply(reductionID uint, clusterID string) bool {
+	claimed := false
+	ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+		if cluster.State != models.ReductionClusterOpen || !cluster.Checked {
+			return false
+		}
+		cluster.State = models.ReductionClusterApplied
+		cluster.Checked = false
+		cluster.Reviewed = true
+		now := time.Now()
+		cluster.AppliedAt = &now
+		claimed = true
+		return true
+	})
+	return claimed
+}
+
+// demoteClusterToStale takes back a claim whose merge was refused. Unlike
+// markClusterStale it acts on a Cluster this batch has already marked applied,
+// which is the only writer that may move one off that state.
+func (ctx *MahresourcesContext) demoteClusterToStale(reductionID uint, clusterID, reason string) {
+	ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+		if cluster.State != models.ReductionClusterApplied {
+			return false
+		}
+		cluster.State = models.ReductionClusterStale
+		cluster.StaleReason = reason
+		cluster.AppliedAt = nil
+		cluster.Checked = false
+		return true
+	})
 }
 
 // revalidateCluster answers "is this still the thing that was reviewed", and
@@ -202,20 +270,6 @@ func (ctx *MahresourcesContext) revalidateCluster(cluster *models.ReductionClust
 		}
 	}
 	return ""
-}
-
-func (ctx *MahresourcesContext) markClusterApplied(reductionID uint, clusterID string) {
-	ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
-		if cluster.State != models.ReductionClusterOpen {
-			return false
-		}
-		cluster.State = models.ReductionClusterApplied
-		cluster.Checked = false
-		cluster.Reviewed = true
-		now := time.Now()
-		cluster.AppliedAt = &now
-		return true
-	})
 }
 
 func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason string) {

@@ -1,8 +1,6 @@
 package application_context
 
 import (
-	"time"
-
 	"mahresources/contracts"
 	"mahresources/models"
 )
@@ -50,6 +48,15 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	}
 	pageClusters := plan.Clusters[start:end]
 
+	// Counted over every Cluster, not the page. Apply acts on the whole plan.
+	checked, checkedLosers := 0, 0
+	for _, cluster := range plan.Clusters {
+		if cluster.State == models.ReductionClusterOpen && cluster.Checked {
+			checked++
+			checkedLosers += len(cluster.LoserIDs())
+		}
+	}
+
 	// One load for the whole page rather than one per Cluster.
 	var wanted []uint
 	for _, cluster := range pageClusters {
@@ -85,13 +92,20 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		views = append(views, view)
 	}
 
+	// Deliberately no walk of the Extent here. Resolving it is one recursive CTE
+	// per selected Group, which is cheap; *counting* what it reaches is not, and a
+	// Reduction over a top-level Group in a library of millions would pay that on
+	// every page view. The size the page shows is the one the last compute
+	// recorded, which is the figure its coverage line is about anyway; the drift
+	// query below is filtered on creation time first, so only what arrived since
+	// then is ever materialised.
 	extent, err := ctx.resolveReductionExtent(storedExtent)
 	if err != nil {
 		return nil, err
 	}
 	entered := 0
 	if reduction.ComputedAt != nil {
-		entered, err = ctx.countExtentResourcesSince(extent, *reduction.ComputedAt)
+		entered, err = ctx.extentArrivalsSince(extent, *reduction.ComputedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -103,9 +117,11 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		Coverage:            plan.Coverage,
 		Clusters:            views,
 		ClusterCount:        len(plan.Clusters),
+		CheckedCount:        checked,
+		CheckedLoserCount:   checkedLosers,
 		Page:                page,
 		PageSize:            ReductionClustersPerPage,
-		ExtentSize:          extent.Size,
+		ExtentSize:          plan.Coverage.ExtentSize,
 		EnteredSinceCompute: entered,
 	}, nil
 }
@@ -129,24 +145,6 @@ func (ctx *MahresourcesContext) loadResourcesByID(ids []uint) (map[uint]*models.
 		}
 	}
 	return out, nil
-}
-
-// countExtentResourcesSince is the drift figure: how much has entered the Extent
-// since the plan was computed.
-func (ctx *MahresourcesContext) countExtentResourcesSince(extent *ReductionExtent, since time.Time) (int, error) {
-	total := 0
-	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
-		var count int64
-		if err := ctx.db.Model(&models.Resource{}).
-			Where("resources.id IN ?", ids).
-			Where("resources.created_at > ?", since).
-			Count(&count).Error; err != nil {
-			return err
-		}
-		total += int(count)
-		return nil
-	})
-	return total, err
 }
 
 // reductionStateLabel is a Cluster's state in words. "Reviewed" is not a state of

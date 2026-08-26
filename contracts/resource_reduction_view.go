@@ -51,8 +51,15 @@ type ReductionReview struct {
 	Clusters []ReductionClusterView
 
 	ClusterCount int
-	Page         int
-	PageSize     int
+	// CheckedCount is how many Clusters an apply would act on across the WHOLE
+	// plan, not this page's share of it. The confirm dialog names it, and naming
+	// what the current page can see would understate the blast radius by however
+	// many pages the reviewer has not opened.
+	CheckedCount int
+	// CheckedLoserCount is how many Resources those Clusters would destroy.
+	CheckedLoserCount int
+	Page              int
+	PageSize          int
 
 	// ExtentSize is how many Resources the Extent holds right now, and
 	// EnteredSinceCompute how many of those arrived after the plan was computed.

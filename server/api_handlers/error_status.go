@@ -81,8 +81,19 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusNotFound
 	}
 	if errors.Is(err, application_context.ErrReductionConflict) ||
-		errors.Is(err, application_context.ErrReductionBusy) {
+		errors.Is(err, application_context.ErrReductionBusy) ||
+		errors.Is(err, application_context.ErrReductionClusterSettled) {
 		return http.StatusConflict
+	}
+	// Two refusals about what the caller may do rather than about the state of
+	// the row. A Resource outside the caller's subtree is 403 for the same reason
+	// every other scope refusal is; an unacknowledged oversized Cluster is 400,
+	// because the request is simply missing a field it must carry.
+	if errors.Is(err, application_context.ErrReductionMemberNotVisible) {
+		return http.StatusForbidden
+	}
+	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) {
+		return http.StatusBadRequest
 	}
 
 	// A plugin veto from a before-hook. The status used to come from the scan

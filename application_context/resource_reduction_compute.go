@@ -35,6 +35,11 @@ const reductionCASRetries = 5
 // was computing for has since been handed to a different run.
 var ErrReductionComputeSuperseded = errors.New("this Resource Reduction is being computed by a newer job")
 
+// ErrReductionStaleCompute is what a finished clustering run reports when the
+// Reduction changed under it — a widened Extent, an edited Winner Rule, or a
+// review decision taken past the compute deadline.
+var ErrReductionStaleCompute = errors.New("this Resource Reduction changed while it was being computed; compute it again")
+
 // RequestReductionCompute puts a Reduction into `computing` and submits the
 // clustering job.
 //
@@ -132,15 +137,36 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, ownerUserID *ui
 // stops a run whose row has since been recomputed from re-claiming it.
 func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, jobID string) error {
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
-		err := ctx.db.Model(&models.ResourceReduction{}).
+		res := ctx.db.Model(&models.ResourceReduction{}).
 			Where("id = ? AND status = ? AND COALESCE(compute_job_id, '') = ''", reductionID, models.ReductionStatusComputing).
-			Update("compute_job_id", jobID).Error
-		if err == nil {
+			Update("compute_job_id", jobID)
+		if res.Error != nil {
+			if isLockContentionError(res.Error) {
+				continue
+			}
+			return res.Error
+		}
+		if res.RowsAffected == 1 {
 			return nil
 		}
-		if !isLockContentionError(err) {
+		// Zero rows means the slot was not free, and "not free" has two very
+		// different causes. It is already this job's — a retry of this same claim
+		// — which is fine. Or a newer run has taken the row, in which case this
+		// run must stop now rather than compute a plan it would only be told to
+		// discard at the end. Reporting success on both, which an unchecked
+		// Update does, lets a delayed run keep working under somebody else's job
+		// id.
+		var current models.ResourceReduction
+		if err := ctx.db.Select("compute_job_id").First(&current, reductionID).Error; err != nil {
+			if isLockContentionError(err) {
+				continue
+			}
 			return err
 		}
+		if current.ComputeJobID == jobID {
+			return nil
+		}
+		return ErrReductionComputeSuperseded
 	}
 	return fmt.Errorf("could not record the clustering job id for Resource Reduction %d", reductionID)
 }
@@ -158,9 +184,10 @@ const reductionComputeAttempts = 3
 // runReductionCompute is the clustering job's body.
 func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID string, progress download_queue.ProgressSink) error {
 	var plan models.ResourceReductionPlan
+	var version uint
 	var err error
 	for attempt := 0; attempt < reductionComputeAttempts; attempt++ {
-		plan, err = ctx.computeReductionPlan(jobCtx, reductionID, progress)
+		plan, version, err = ctx.computeReductionPlan(jobCtx, reductionID, progress)
 		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
 			break
 		}
@@ -171,12 +198,26 @@ func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, redu
 		}
 		return err
 	}
-	return ctx.storeReductionPlan(reductionID, jobID, plan)
+	if storeErr := ctx.storeReductionPlan(reductionID, jobID, version, plan); storeErr != nil {
+		// A superseded run belongs to nobody: the newer job owns the row and will
+		// report its own outcome, so this one must not overwrite it. Every other
+		// refusal has to be recorded, or the row sits at `computing` until its
+		// deadline with nothing alive to move it — which is the exact stranding
+		// the deadline exists to bound rather than to cause.
+		if errors.Is(storeErr, ErrReductionComputeSuperseded) {
+			return storeErr
+		}
+		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, storeErr); writeErr != nil {
+			return fmt.Errorf("%w (and the failure could not be recorded: %v)", storeErr, writeErr)
+		}
+		return storeErr
+	}
+	return nil
 }
 
 // computeReductionPlan does the work: resolve the Extent, cluster it, and carry
 // forward every judgement already made.
-func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, reductionID uint, progress download_queue.ProgressSink) (models.ResourceReductionPlan, error) {
+func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, reductionID uint, progress download_queue.ProgressSink) (models.ResourceReductionPlan, uint, error) {
 	var plan models.ResourceReductionPlan
 
 	// Read unscoped by owner: this runs for the Reduction the request already
@@ -185,16 +226,20 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	// super-user, whose id the job does not carry.
 	reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false)
 	if err != nil {
-		return plan, err
+		return plan, 0, err
 	}
+	// The version this plan is *about*. Everything below describes the Extent,
+	// the Winner Rule and the decisions as they stand right now, so the write at
+	// the end has to lose if any of them moved.
+	version := reduction.Version
 
 	storedExtent, err := DecodeReductionExtent(reduction.Extent)
 	if err != nil {
-		return plan, err
+		return plan, version, err
 	}
 	previous, err := DecodeReductionPlan(reduction.Plan)
 	if err != nil {
-		return plan, err
+		return plan, version, err
 	}
 	rule := DecodeWinnerRule(reduction.WinnerRule)
 
@@ -203,10 +248,10 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	}
 	extent, err := ctx.resolveReductionExtent(storedExtent)
 	if err != nil {
-		return plan, err
+		return plan, version, err
 	}
 	if err := jobCtx.Err(); err != nil {
-		return plan, err
+		return plan, version, err
 	}
 
 	if progress != nil {
@@ -214,7 +259,7 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	}
 	coverage, err := ctx.reductionCoverage(extent)
 	if err != nil {
-		return plan, err
+		return plan, version, err
 	}
 	plan.Coverage = coverage
 
@@ -252,10 +297,10 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 		}
 	})
 	if err != nil {
-		return plan, err
+		return plan, version, err
 	}
 	if err := jobCtx.Err(); err != nil {
-		return plan, err
+		return plan, version, err
 	}
 
 	// Every Resource an Identical Cluster claims — Winner and Losers alike —
@@ -281,13 +326,22 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 			}
 		})
 		if nearErr != nil {
-			return plan, nearErr
+			return plan, version, nearErr
 		}
 		fresh = append(fresh, near...)
 	}
 
 	plan.Clusters = append(carried, fresh...)
-	return plan, nil
+	return plan, version, nil
+}
+
+// StoreReductionPlanForTest exposes the plan write so a test can reproduce the
+// one interleaving that has no other seam: a run that finishes after the row it
+// was computing for has moved on. The clustering job is the only real caller, and
+// forcing it to lose a race it wins in microseconds is not something a test can do
+// from outside.
+func (ctx *MahresourcesContext) StoreReductionPlanForTest(reductionID uint, jobID string, version uint, plan models.ResourceReductionPlan) error {
+	return ctx.storeReductionPlan(reductionID, jobID, version, plan)
 }
 
 // storeReductionPlan lands a finished plan.
@@ -297,7 +351,7 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 // that outlived its own deadline harmless: if a second compute has since claimed
 // the row, this result describes an Extent nobody is waiting for, and writing it
 // would overwrite a newer plan with an older one.
-func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID string, plan models.ResourceReductionPlan) error {
+func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID string, version uint, plan models.ResourceReductionPlan) error {
 	encoded, err := encodeJSON(plan)
 	if err != nil {
 		return err
@@ -315,7 +369,16 @@ func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID strin
 		if jobID != "" && current.ComputeJobID != jobID {
 			return ErrReductionComputeSuperseded
 		}
-		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
+		if current.Version != version {
+			// Refused, not rebased. The plan describes the Extent, the Winner Rule
+			// and the decisions as they were when the run began; writing it over a
+			// row that has since been widened, re-ruled or overridden would present
+			// a stale proposal as current — with a fresh computed_at, so the page's
+			// own drift line would report zero and the reviewer would have no way to
+			// tell. R8 says a stale write is refused; this is one.
+			return ErrReductionStaleCompute
+		}
+		ok, err := ctx.casReduction(current.ID, version, map[string]any{
 			"plan":                 encoded,
 			"status":               models.ReductionStatusReady,
 			"computed_at":          now,

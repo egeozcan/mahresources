@@ -38,7 +38,12 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 	if err != nil {
 		return nil, err
 	}
-	if len(seedIDs) < 2 {
+	// One seed is enough. D7 lets a Cluster reach outside the Extent precisely so
+	// the better copy sitting elsewhere is visible, and an Extent of one Resource
+	// with a stored pair to a Resource outside it is exactly that case — the
+	// question "is there already a better copy of this?" is the one a reviewer
+	// asks about a single photograph.
+	if len(seedIDs) == 0 {
 		return nil, nil
 	}
 
@@ -111,6 +116,26 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 			continue
 		}
 
+		// The out-of-Extent rule can move the Winner off the seed, and ADR 0002's
+		// pair-justification holds only while the Winner *is* the seed: the
+		// members were chosen for being within threshold of the seed, and nothing
+		// says they are within threshold of an outsider that displaced it. The
+		// amendment says every change of Winner re-checks, so this is the same
+		// re-check promote does, applied at the one other place a Winner moves.
+		// Leaving it to apply would mean proposing a deletion the ADR forbids and
+		// only refusing it at the end.
+		if cluster.WinnerID != seed.Resource.ID {
+			if err := ctx.rejustifyAgainstWinner(cluster); err != nil {
+				return nil, err
+			}
+			if len(cluster.LoserIDs()) == 0 {
+				continue
+			}
+			if err := ctx.refreshLossy(cluster); err != nil {
+				return nil, err
+			}
+		}
+
 		// Claimed on the strength of being in the Cluster, so nothing is proposed
 		// twice. The seed is claimed whether or not it ended as the Winner: an
 		// out-of-Extent member may have displaced it, and it is still spoken for.
@@ -152,11 +177,14 @@ func (ctx *MahresourcesContext) perceptualExtentIDs(extent *ReductionExtent, exc
 // threshold, probed from both directions because the pair table stores each edge
 // once with the lower id first.
 //
-// Built through GORM rather than as raw SQL, deliberately: getSimilarResourcesLimited
-// is raw and therefore bypasses the principal-scope callback, so only its follow-up
-// resource fetch is scoped. A confined reviewer must not be handed a Cluster whose
-// Winner is a Resource outside their subtree, and going through the ORM is what
-// makes that automatic rather than something this file has to remember.
+// This is NOT scoped, and it is important to be exact about why that is safe.
+// The GORM scope callback keys on the statement's own table, and scopeColumn maps
+// only groups, resources and notes — so a query whose model is ResourceSimilarity
+// carries no subtree filter however it joins. What confines the result is the
+// step after it: every id returned here is looked up through loadClusterCandidates,
+// whose model *is* Resource, and a neighbour outside the reviewer's subtree simply
+// does not come back and never becomes a member. The pair re-check at apply is
+// likewise a membership test over ids that were already scope-checked.
 //
 // The zero-pairs d_hash equality fallback the detail page's similar-resources
 // panel carries is deliberately not inherited. It answers a different question —

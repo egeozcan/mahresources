@@ -390,10 +390,14 @@ func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule [
 // reductionCoverage reports how much of the Extent could actually be examined, so
 // "no repeats found" stays distinguishable from "nothing was hashed".
 func (ctx *MahresourcesContext) reductionCoverage(extent *ReductionExtent) (models.ReductionCoverage, error) {
-	coverage := models.ReductionCoverage{ExtentSize: extent.Size}
+	size, err := ctx.countExtentResources(extent)
+	if err != nil {
+		return models.ReductionCoverage{}, err
+	}
+	coverage := models.ReductionCoverage{ExtentSize: size}
 	eligible := hashableContentTypes()
 
-	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
+	err = ctx.extentResourceIDs(extent, func(ids []uint) error {
 		var withHash int64
 		if err := ctx.db.Model(&models.Resource{}).
 			Where("resources.id IN ?", ids).

@@ -322,3 +322,59 @@ func versionCount(t *testing.T, tc *TestContext, resourceID uint) int64 {
 	require.NoError(t, tc.DB.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Count(&count).Error)
 	return count
 }
+
+// The merge itself refuses content that changed, not just the check before it.
+//
+// revalidateCluster runs outside the merge's transaction, so a version upload
+// landing between the two would have the merge delete bytes nobody reviewed. The
+// expected hashes travel into the transaction that does the deleting.
+func TestTheMergeRefusesContentThatChangedUnderIt(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
+	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
+
+	err := tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, map[uint]string{
+		winner.ID: "shared-hash",
+		loser.ID:  "what-it-used-to-be",
+	})
+	require.ErrorIs(t, err, application_context.ErrMergeContentChanged)
+	assert.True(t, resourceExists(t, tc, loser.ID), "the transaction rolled back before deleting anything")
+
+	// The same call with the hashes the rows actually hold goes through.
+	require.NoError(t, tc.AppCtx.MergeResourcesExpecting(winner.ID, []uint{loser.ID}, false, map[uint]string{
+		winner.ID: "shared-hash",
+		loser.ID:  "shared-hash",
+	}))
+	assert.False(t, resourceExists(t, tc, loser.ID))
+}
+
+// A Cluster is claimed before it is merged, so an override landing between the
+// batch reading it and the merge running cannot be missed. The claim is what makes
+// every override on that Cluster refuse for the duration.
+func TestApplyClaimsAClusterBeforeMergingIt(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
+	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
+	setDimensions(t, tc, winner.ID, 400, 400)
+
+	red := createReduction(t, tc, "Claimed", []uint{winner.ID, loser.ID})
+	plan := computeReduction(t, tc, red.ID)
+	clusterID := plan.Clusters[0].ID
+
+	applyReduction(t, tc, red.ID)
+
+	// The Cluster is settled, and an override on it is refused rather than
+	// rewriting a judgement whose Losers no longer exist.
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID:        red.ID,
+		Version:   current.Version,
+		ClusterID: clusterID,
+		Action:    application_context.ReductionActionUncheck,
+	}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionClusterSettled)
+}

@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"time"
 
 	"mahresources/models"
 )
@@ -24,8 +25,6 @@ type ReductionExtent struct {
 	ResourceIDs map[uint]bool
 	// GroupIDs are the selected Groups and every descendant of each.
 	GroupIDs map[uint]bool
-	// Size is how many distinct Resources the Extent holds.
-	Size int
 }
 
 // Empty reports an Extent that names nothing.
@@ -77,11 +76,6 @@ func (ctx *MahresourcesContext) resolveReductionExtent(stored models.ResourceRed
 		}
 	}
 
-	size, err := ctx.countExtentResources(extent)
-	if err != nil {
-		return nil, err
-	}
-	extent.Size = size
 	return extent, nil
 }
 
@@ -147,6 +141,14 @@ func (ctx *MahresourcesContext) extentResourceIDs(extent *ReductionExtent, fn fu
 	return nil
 }
 
+// countExtentResources is how many distinct Resources the Extent holds.
+//
+// This walks the whole Extent, so it is deliberately called once per compute and
+// never on a page render. A Reduction over a top-level Group in a library of
+// millions reaches millions of Resources, and paying that per page view is the
+// difference between a review surface and an outage. What the page shows instead
+// is the figure the last compute recorded, which is also the figure its coverage
+// line is about.
 func (ctx *MahresourcesContext) countExtentResources(extent *ReductionExtent) (int, error) {
 	total := 0
 	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
@@ -154,6 +156,57 @@ func (ctx *MahresourcesContext) countExtentResources(extent *ReductionExtent) (i
 		return nil
 	})
 	return total, err
+}
+
+// extentArrivalsSince counts the Resources that entered the Extent after the
+// given instant — the drift figure the page reports so a Group-scoped Reduction
+// can be seen going out of date rather than surprising the reviewer.
+//
+// Filtered on created_at first and deduplicated over ids rather than summed over
+// counts. The filter is what keeps this cheap: however wide the Extent, only the
+// Resources created since the last compute are ever materialised, and a Resource
+// that is both named explicitly and owned by a named Group must be counted once.
+func (ctx *MahresourcesContext) extentArrivalsSince(extent *ReductionExtent, since time.Time) (int, error) {
+	arrivals := map[uint]bool{}
+	collect := func(ids []uint) {
+		for _, id := range ids {
+			arrivals[id] = true
+		}
+	}
+
+	for _, chunk := range chunkUints(mapKeys(extent.ResourceIDs), idChunk) {
+		var found []uint
+		if err := ctx.db.Model(&models.Resource{}).
+			Where("resources.id IN ?", chunk).
+			Where("resources.created_at > ?", since).
+			Pluck("resources.id", &found).Error; err != nil {
+			return 0, err
+		}
+		collect(found)
+	}
+
+	for _, groupChunk := range chunkUints(mapKeys(extent.GroupIDs), idChunk) {
+		var owned []uint
+		if err := ctx.db.Model(&models.Resource{}).
+			Where("resources.owner_id IN ?", groupChunk).
+			Where("resources.created_at > ?", since).
+			Pluck("resources.id", &owned).Error; err != nil {
+			return 0, err
+		}
+		collect(owned)
+
+		var related []uint
+		if err := ctx.db.Model(&models.Resource{}).
+			Joins("INNER JOIN groups_related_resources grr ON grr.resource_id = resources.id").
+			Where("grr.group_id IN ?", groupChunk).
+			Where("resources.created_at > ?", since).
+			Pluck("resources.id", &related).Error; err != nil {
+			return 0, err
+		}
+		collect(related)
+	}
+
+	return len(arrivals), nil
 }
 
 // containsResources reports which of the given Resource ids are inside the
