@@ -59,9 +59,13 @@
             or <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/groups">the groups list</a>.
         </p>
 
+        {# Bound, not server-rendered: an in-page review action moves the version,  #}
+        {# and this form is a native post that never re-renders. Left static it      #}
+        {# would send a version the row passed some clicks ago and be refused —      #}
+        {# correctly, but for a conflict the reviewer did not cause and cannot see.  #}
         <form method="post" action="/v1/reduction/compute" class="mt-3 no-ajax">
             <input type="hidden" name="id" value="{{ raw.ID }}">
-            <input type="hidden" name="version" value="{{ raw.Version }}">
+            <input type="hidden" name="version" :value="version" value="{{ raw.Version }}">
             <button type="submit"
                     data-testid="reduction-compute"
                     {% if reduction.StatusEffective == "computing" %}disabled{% endif %}
@@ -191,7 +195,8 @@
         <h2 id="reduction-settings-heading" class="text-lg font-mono font-medium text-stone-700 mb-2">Settings</h2>
         <form method="post" action="/v1/reduction/edit" class="space-y-3" data-testid="reduction-settings-form">
             <input type="hidden" name="id" value="{{ raw.ID }}">
-            <input type="hidden" name="version" value="{{ raw.Version }}">
+            {# Same reason as the recompute form above. #}
+            <input type="hidden" name="version" :value="version" value="{{ raw.Version }}">
             {% include "/partials/form/textInput.tpl" with name='name' label='Name' value=raw.Name %}
 
             <fieldset>

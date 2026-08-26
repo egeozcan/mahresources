@@ -211,4 +211,25 @@ test.describe('Resource Reduction', () => {
     // Two Reductions with similar names are told apart by when they were made.
     await expect(card).toContainText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
   });
+
+  test('recompute still works after a review action has moved the version', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR version ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+
+    // An in-page action bumps the row's version. The native forms below never
+    // re-render, so a server-rendered hidden value would now be stale and every
+    // one of them would be refused with a conflict the reviewer did not cause.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-checkbox').uncheck();
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
+      .toHaveText('Reviewed');
+
+    await page.getByTestId('reduction-compute').click();
+    await page.waitForURL(/\/reduction\?id=\d+/);
+    await expect(page.getByTestId('reduction-error')).toBeHidden();
+    await expect(page.getByTestId('reduction-page')).toBeVisible();
+  });
 });
