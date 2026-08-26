@@ -238,7 +238,7 @@ func TestCountHashReferences(t *testing.T) {
 	testHash := "abc123def456"
 
 	// Initially, no references
-	count, err := ctx.CountHashReferences(testHash)
+	count, err := ctx.CountHashReferences(testHash, nil)
 	if err != nil {
 		t.Fatalf("CountHashReferences() error = %v", err)
 	}
@@ -259,7 +259,7 @@ func TestCountHashReferences(t *testing.T) {
 	}
 
 	// Should now have 1 reference (from resource)
-	count, err = ctx.CountHashReferences(testHash)
+	count, err = ctx.CountHashReferences(testHash, nil)
 	if err != nil {
 		t.Fatalf("CountHashReferences() error = %v", err)
 	}
@@ -280,7 +280,7 @@ func TestCountHashReferences(t *testing.T) {
 	}
 
 	// Should now have 2 references
-	count, err = ctx.CountHashReferences(testHash)
+	count, err = ctx.CountHashReferences(testHash, nil)
 	if err != nil {
 		t.Fatalf("CountHashReferences() error = %v", err)
 	}
@@ -301,7 +301,7 @@ func TestCountHashReferences(t *testing.T) {
 	}
 
 	// Should now have 3 references
-	count, err = ctx.CountHashReferences(testHash)
+	count, err = ctx.CountHashReferences(testHash, nil)
 	if err != nil {
 		t.Fatalf("CountHashReferences() error = %v", err)
 	}

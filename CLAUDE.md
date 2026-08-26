@@ -591,6 +591,27 @@ When you add or change a command or flag in `cmd/mr/commands/`, update the corre
 - That page is checked against the code: `mrql/reference_docs_test.go` (fields, parser guardrails) and `application_context/mrql_reference_docs_test.go` (execution limits) fail when a field is added to `mrql/fields.go` or a constant changes without the page following.
 - `SKILL.md` and `references/recipes.md` are hand-authored, and every fenced `bash` block in them runs against an ephemeral server in the `cli-doctest` job via `mr docs check-examples --files`. A block that cannot run standalone opts out with `# mr-doctest: skip, <reason>` as its first line.
 
+## Agent skills
+
+Configuration for the mattpocock engineering skills (`/grill-with-docs`, `/to-spec`,
+`/to-tickets`, `/implement`, `/triage`, `/wayfinder`). Unrelated to the installable
+MRQL agent skill documented in the section above.
+
+### Issue tracker
+
+Issues live as GitHub issues in `egeozcan/mahresources`, driven by the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its name. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See
+`docs/agents/domain.md`.
+
 ## Workflow Orchestration
 
 ### 1. Plan Node Default
