@@ -113,6 +113,31 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 31:
+
+- **A nudge on one axis resolved the other out of a correction it already
+  had.** A request carries a position, so it carries both axes -- but only a
+  moved axis is a request. The other is the correction that was already
+  standing, and it must resolve the way it would have with no request at all:
+  kept where it is unless a bound-mover owes it. Clamped instead, one ArrowDown
+  erased an x correction made before the window. Stored 800x600 each, both
+  actually 400x400: arm, Flip, zoom to 25%, ten box pixels left, Anchor, one
+  report, ArrowDown, the other report -- canonical dx 0 with the ArrowDown and
+  20 without it, in both decode orders. x is the inverse of a flipped
+  correction, legitimately outside the canonical bound and well inside the one
+  the reader is looking at, so the anchor test finds nothing to record and the
+  canonical resolution then snaps it in. `_requestMovedX`/`_requestMovedY` say
+  which axes are actually asks, and an untouched one takes the no-request
+  branch's answer.
+- Asking the anchor canonically instead was tried and is wrong: it restores the
+  reader's frame for anchored axes, undoing the canonical-resolution rule the
+  user settled after round 28, and four tests pinned to that rule fail on it.
+- Standards, taken: the enumerator asserts convergence, so two orders agreeing
+  on a wrong answer is out of its reach by construction -- one axis resolving
+  another converges perfectly. That half is the hand-written rule tests', and
+  the harness now says so where it is defined rather than leaving the gap to be
+  rediscovered.
+
 Round 30:
 
 - **A control pressed while a version was missing re-dated the baseline.** The
