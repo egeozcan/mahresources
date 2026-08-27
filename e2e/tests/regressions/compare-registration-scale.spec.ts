@@ -25,6 +25,7 @@ test.describe.serial('compare page registration and scale', () => {
   let fixtureDir: string;
   let avifResourceId: number;
   let exifResourceId: number;
+  let shapeResourceId: number;
 
   /**
    * A committed fixture with a unique ASCII marker appended.
@@ -127,10 +128,31 @@ test.describe.serial('compare page registration and scale', () => {
     const exifV2 = marked('compare-exif-partner-600x800.jpg');
     await uploadVersion(request, baseURL!, exifResourceId,
       'registration-v2.jpg', 'image/jpeg', exifV2.buffer, 'Re-exported upright');
+
+    // 400x300 against 600x800, chosen so all three scale modes render
+    // differently. Neither is a straightforward rescan of the other, so the
+    // shared 600x800 box matches the shape of the newer version and not the
+    // older one: Relative draws the older at its true size, Fit grows it until
+    // an edge touches, and Stretch distorts it onto the whole box. A pair with
+    // one aspect ratio would collapse Fit and Stretch onto each other, and a
+    // pair where neither image is smaller in *both* axes would collapse Fit onto
+    // Relative -- both fixtures would pass against the wrong implementation.
+    const shapeV1 = marked('compare-scale-400x300.png');
+    const shapeResource = await apiClient.createResource({
+      filePath: shapeV1.path,
+      contentType: 'image/png',
+      exactBytes: true,
+      name: `Registration Shapes ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    shapeResourceId = shapeResource.ID;
+    const shapeV2 = marked('compare-scale-600x800.png');
+    await uploadVersion(request, baseURL!, shapeResourceId,
+      'registration-v2.png', 'image/png', shapeV2.buffer, 'Recomposed as a portrait');
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [avifResourceId, exifResourceId]) {
+    for (const id of [avifResourceId, exifResourceId, shapeResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -198,5 +220,75 @@ test.describe.serial('compare page registration and scale', () => {
     await expect(shown).toHaveCount(1);
     await page.locator('button.compare-overlay-box').click();
     await expect(shown).toHaveCount(1);
+  });
+
+  test('Fit registers a pure resolution change exactly', async ({ page }) => {
+    // The headline case from the board: a rescan at twice the resolution. Under
+    // true relative scale the older version draws at half size and lines up with
+    // nothing; both share one aspect ratio, so fitting each to the box makes
+    // them the same rectangle to the pixel.
+    await page.goto(`/resource/compare?r1=${avifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { lead, trail } = onionImages(page);
+
+    const relativeLead = (await lead.boundingBox())!;
+    const relativeTrail = (await trail.boundingBox())!;
+    expect(relativeTrail.width / relativeLead.width).toBeCloseTo(2, 1);
+
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitLead = (await lead.boundingBox())!;
+    const fitTrail = (await trail.boundingBox())!;
+    expect(fitLead.width).toBeCloseTo(fitTrail.width, 0);
+    expect(fitLead.height).toBeCloseTo(fitTrail.height, 0);
+    expect(fitLead.x).toBeCloseTo(fitTrail.x, 0);
+    expect(fitLead.y).toBeCloseTo(fitTrail.y, 0);
+  });
+
+  test('the three scale modes are three different renderings', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box, lead, trail } = onionImages(page);
+    const frame = (await box.boundingBox())!;
+
+    // Relative: 400x300 inside a 600x800 box is two thirds as wide and three
+    // eighths as tall as the version that defines the box.
+    const relativeLead = (await lead.boundingBox())!;
+    const relativeTrail = (await trail.boundingBox())!;
+    expect(relativeLead.width / relativeTrail.width).toBeCloseTo(400 / 600, 1);
+    expect(relativeLead.height / relativeTrail.height).toBeCloseTo(300 / 800, 1);
+
+    // Fit: the older version grows until its width touches the frame, and
+    // letterboxes vertically because its aspect ratio is not the frame's. Wider
+    // than Relative drew it, and still not the whole frame.
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitLead = (await lead.boundingBox())!;
+    expect(fitLead.width).toBeGreaterThan(relativeLead.width * 1.4);
+    expect(fitLead.height / (await trail.boundingBox())!.height).toBeCloseTo(450 / 800, 1);
+
+    // Stretch: no letterbox left anywhere, both versions distorted onto one
+    // rectangle. This is the mode whose label has to warn about itself.
+    await page.getByRole('radio', { name: /^Stretch to match/ }).click();
+    const stretchLead = (await lead.boundingBox())!;
+    const stretchTrail = (await trail.boundingBox())!;
+    expect(stretchLead.width).toBeCloseTo(stretchTrail.width, 0);
+    expect(stretchLead.height).toBeCloseTo(stretchTrail.height, 0);
+    expect(Math.abs(stretchLead.width - frame.width)).toBeLessThanOrEqual(3);
+    expect(Math.abs(stretchLead.height - frame.height)).toBeLessThanOrEqual(3);
+  });
+
+  test('the scale control is not drawn over a mode it cannot act on', async ({ page }) => {
+    // Side-by-side gives each version its own pane at its own width, which this
+    // package does not touch, so a scale choice there would change nothing. It
+    // is also the mode the page opens in.
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    const scaleControl = page.getByRole('radiogroup', { name: 'Image scale' });
+    await expect(page.getByRole('radiogroup', { name: 'Comparison mode' })).toBeVisible();
+    await expect(scaleControl).toBeHidden();
+
+    await page.getByRole('radio', { name: 'Onion skin' }).click();
+    await expect(scaleControl).toBeVisible();
+
+    await page.getByRole('radio', { name: 'Side by side' }).click();
+    await expect(scaleControl).toBeHidden();
   });
 });

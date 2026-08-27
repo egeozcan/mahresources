@@ -49,6 +49,43 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
             Flip
         </button>
+        {# Scale policy. Hidden in side-by-side, where each version has its own #}
+        {# pane at its own width and a scale choice would change nothing — and #}
+        {# which is the mode the page opens in, so dead controls would be the #}
+        {# first thing a reader saw. Unavailability is aria-disabled rather than #}
+        {# the disabled attribute: disabled removes a role="radio" from the tab #}
+        {# order and breaks the roving tabindex this group depends on. #}
+        <div class="compare-segmented-control" role="radiogroup" aria-label="Image scale"
+             x-show="mode !== 'side-by-side'"
+             :aria-disabled="!scaleAvailable"
+             :title="scaleAvailable ? '' : 'Neither version reports its dimensions, so there is nothing to scale against.'"
+             @keydown="onScaleKeydown($event)">
+            <button @click="setScale('relative')" role="radio" :aria-checked="scale === 'relative'"
+                    aria-label="Relative size" :aria-disabled="!scaleAvailable"
+                    :tabindex="scale === 'relative' ? 0 : -1"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg>
+                <span class="compare-seg-label">Relative</span>
+            </button>
+            <button @click="setScale('fit')" role="radio" :aria-checked="scale === 'fit'"
+                    aria-label="Fit to frame" :aria-disabled="!scaleAvailable"
+                    :tabindex="scale === 'fit' ? 0 : -1"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><polyline points="7 9.5 9 9.5 9 11.5"/><polyline points="17 9.5 15 9.5 15 11.5"/><polyline points="7 14.5 9 14.5 9 12.5"/><polyline points="17 14.5 15 14.5 15 12.5"/></svg>
+                <span class="compare-seg-label">Fit</span>
+            </button>
+            {# "Stretch", not "Fill": the CSS keyword reads as harmless to anyone #}
+            {# not thinking in CSS, and the visible label is hidden below 768px, #}
+            {# so on a phone the aria-label is the entire accessible name and is #}
+            {# where the warning has to survive. #}
+            <button @click="setScale('stretch')" role="radio" :aria-checked="scale === 'stretch'"
+                    aria-label="Stretch to match, distorts aspect ratio" :aria-disabled="!scaleAvailable"
+                    :tabindex="scale === 'stretch' ? 0 : -1"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><line x1="7" y1="12" x2="17" y2="12"/><polyline points="9 10 7 12 9 14"/><polyline points="15 10 17 12 15 14"/></svg>
+                <span class="compare-seg-label">Stretch</span>
+            </button>
+        </div>
     </div>
 
     <!-- Side-by-side mode -->

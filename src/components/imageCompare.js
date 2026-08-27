@@ -1,6 +1,12 @@
 export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
   return {
     mode: 'side-by-side',
+    // How the two images are measured into the shared box. `relative` is true
+    // relative scale and was the only policy the page ever had; it is still the
+    // default, because a pair with identical dimensions renders the same under
+    // all three and the divergent minority has no measurement saying which of a
+    // rescan and a crop is more common.
+    scale: 'relative',
     // `swapped` is the only piece of swap state. Exchanging the URLs and labels
     // in place left the panel colours and the server-rendered alt text describing
     // whichever side had originally been there, so the red "older" panel could
@@ -76,13 +82,74 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      */
     overlayScale(index) {
       const [a, b] = this._sizes;
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '' };
+      // Nothing to measure into. The `[style*="aspect-ratio"]` branch in
+      // index.css owns the layout here and puts the images back in the flow, so
+      // an inline `height: 100%` from the other branches below would beat its
+      // `height: auto` and break a case that currently works.
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '', objectFit: '' };
+
+      // Distort each image onto the whole box. Right for a re-encode that
+      // changed aspect, wrong for a crop, which is why this mode's accessible
+      // name says so rather than leaving the reader to notice.
+      if (this.scale === 'stretch') {
+        return { width: '100%', height: '100%', objectFit: 'fill' };
+      }
+
       const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
       const img = index === 0 ? a : b;
+      let { w, h } = img;
+
+      if (this.scale === 'fit') {
+        // Grow each image until an edge touches the box. Two versions of one
+        // aspect ratio both end up filling a box built from the larger, so a
+        // pure resolution change registers exactly.
+        //
+        // Sized on the *element* rather than left to `object-fit: contain` on a
+        // full-box element, which would paint identically. Two reasons, and
+        // neither is arithmetic for its own sake: a contained letterbox is
+        // invisible to `getBoundingClientRect`, so Fit and Stretch would render
+        // to indistinguishable geometry and nothing outside a screenshot could
+        // tell them apart; and with the element equal to the painted rectangle,
+        // anchoring is `margin` here exactly as it is under relative scale,
+        // instead of `margin` in one mode and `object-position` in the other.
+        const k = Math.min(box.w / img.w, box.h / img.h);
+        w = img.w * k;
+        h = img.h * k;
+      }
+
       return {
-        width: `${(img.w / box.w) * 100}%`,
-        height: `${(img.h / box.h) * 100}%`,
+        width: `${(w / box.w) * 100}%`,
+        height: `${(h / box.h) * 100}%`,
+        objectFit: '',
       };
+    },
+
+    /**
+     * Whether a scale choice would do anything.
+     *
+     * With no usable dimensions on either side every mode returns the same empty
+     * style and the CSS fallback draws the pair, so the control refuses rather
+     * than being drawn as though it worked.
+     */
+    get scaleAvailable() {
+      return this.overlayRatio !== null;
+    },
+
+    setScale(value) {
+      if (!this.scaleAvailable) return;
+      this.scale = value;
+    },
+
+    /**
+     * The refusal has to cover the keyboard too.
+     *
+     * `onRadiogroupKeydown` assigns straight into state, so arrow keys, Home and
+     * End would move a control that announces itself unavailable -- a guard on
+     * `@click` alone leaves the group working for anyone not using a mouse.
+     */
+    onScaleKeydown(e) {
+      if (!this.scaleAvailable) return;
+      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch']);
     },
 
     /**
@@ -235,7 +302,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const group = e.currentTarget;
       this.$nextTick(() => {
         const checked = group.querySelector('[role="radio"][aria-checked="true"]');
-        if (checked instanceof HTMLElement) checked.focus();
+        // Duck-typed for the same reason as `noteSizeFrom`: `HTMLElement` is a
+        // per-realm identity, and what is required of this value is that it can
+        // take focus.
+        if (checked && typeof checked.focus === 'function') checked.focus();
       });
     },
 
