@@ -113,6 +113,10 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 27: clean. No behaviour findings and no standards findings; rules 1-41
+re-verified against their repros. The first of the two consecutive clean rounds
+the merge gate asks for.
+
 Round 26:
 
 - **A report decides in the frame a flip cannot move.** A size report asked
