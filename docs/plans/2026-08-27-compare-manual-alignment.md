@@ -85,9 +85,9 @@ Not decisions -- properties of the file that the implementation has to respect.
 State on the component: `aligning` (armed), and `_offset = { dx, dy, k }` in box
 pixels and a scale factor, describing slot 1 relative to slot 0.
 
-- `alignTransform(index)` returns the transform for a slot: identity for slot 0,
-  `_offset` for slot 1, and the inverse when `swapped` puts slot 0 on the trail
-  side.
+- `alignStyle(index, elementW, elementH)` returns the transform for a slot:
+  identity for slot 0, `_offset` for slot 1, and the inverse when `swapped`
+  puts slot 0 on the trail side.
 - Folded into `overlayScale`, so one style object carries sizing, anchoring and
   alignment, and constraint 1 holds by construction.
 - `nudge(dx, dy)` and `zoomBy(dk)` clamp per decisions 6 and 8.
@@ -105,13 +105,35 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ### 2.2 Offset readout and reset control
 
-- `offsetLabel` renders `+12, -4 - 103%`, reporting the clamped values.
+- `offsetLabel` renders `+12, -4, 103%`, reporting the clamped values.
 - Reset button, `aria-disabled` at identity, clearing translate and scale and
   keeping the arming.
 - A visually-hidden `aria-live="polite"` region, written on keyboard nudge and
   drag end only.
 
 ## Also from review
+
+Round 9:
+
+- **A report that moves neither the offset nor its bound arms no debt.** The
+  arming required a size change and a non-identity offset, but not that the
+  change moved anything the offset depends on. A report that only resized
+  the *leading* version without overtaking the box changed neither the
+  offset nor the bound it sat in, yet armed the debt -- which a later
+  confirming report then paid against alignment made after it: stored
+  1600x1200 both, nudge to dx=1, slot 0 reports 800x600 (box unchanged,
+  trail unchanged, no conversion, debt armed), flip, zoom to 25%, nudge to
+  +850, slot 1 confirms -- the stale debt clamped +850 to +600. The arming
+  now requires the report to have moved the box or the trailing version's
+  element.
+- **Comments explain the constraint, not the review.** The noteSizeFrom
+  comment cited "the round 4 rule", a pointer into the review history;
+  `docs/lessons.md`'s rule is that a comment must earn its place without
+  that provenance. The constraint now stands alone.
+- **The plan's Work section matched the implementation** (`alignStyle`, the
+  comma-separated readout) rather than names the code never had.
+- **The e2e spec deletes the category it creates**, so the fixture does not
+  leak into the worker's shared ephemeral server.
 
 Round 8:
 

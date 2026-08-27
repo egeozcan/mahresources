@@ -926,13 +926,25 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // physical distance at all, and would double a vertical offset.
       const within = this.offsetWithinBound;
       const before = this.overlayBox;
+      // Whether this report moves the offset or the bound it sits in. The
+      // offset moves through the width conversion below; the bound is a
+      // function of the box and of the trailing version's element, so a report
+      // that changes neither -- one that only resizes the *leading* version
+      // without overtaking the box -- moves nothing and earns no debt.
+      const trailIndex = this.swapped ? 0 : 1;
+      const beforeElement = this.elementSize(trailIndex);
+      let moved = false;
       if (next) {
         this._sizes = next;
         const after = this.overlayBox;
+        const afterElement = this.elementSize(trailIndex);
         if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
           const ratio = after.w / before.w;
           this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
         }
+        moved = (before && after && (before.w !== after.w || before.h !== after.h))
+          || (beforeElement && afterElement
+            && (beforeElement.w !== afterElement.w || beforeElement.h !== afterElement.h));
       }
       // The versions changed size too, so the bound moved with them -- but only
       // once **both** have reported. The box is `max` of the two, so while one
@@ -945,18 +957,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // because the report that completes the pair may be one that only
       // *confirms* a stored size: it flips `_measured` without touching
       // `_sizes`, and it still has to pay the debt an earlier report set up.
-      // `within` is snapshotted before this call's own correction -- the round
-      // 4 rule, so an offset a flip legitimately left outside is never pulled
-      // back by a report that changed nothing.
+      // `within` is snapshotted before this call's own correction, so an
+      // offset a flip legitimately left outside is never pulled back by a
+      // report that changed nothing.
       const both = this._measured[0] && this._measured[1];
       // The debt is armed by an actual size change -- never by a confirm. A
       // report that merely confirms changes nothing, so a flip made after it
       // must not have its legitimately-outside inverse clamped by the next
-      // confirm: that would rewrite the reader's original correction. And it
-      // is only armed when there is an offset to have been moved: at identity
-      // a size change moves nothing, so arming would let a later confirm
-      // rewrite alignment the reader made *after* the change.
-      if (next && !this._sizeReboundDue && within && !both && !this.offsetIsIdentity) {
+      // confirm: that would rewrite the reader's original correction. It is
+      // only armed when the report moved something -- the offset, the box or
+      // the trailing element -- and when there is an offset to have been
+      // moved: at identity a size change moves nothing, so arming would let a
+      // later confirm rewrite alignment the reader made *after* the change.
+      if (next && moved && !this._sizeReboundDue && within && !both && !this.offsetIsIdentity) {
         this._sizeReboundDue = true;
         this._sizeReboundDueSwapped = this.swapped;
       }

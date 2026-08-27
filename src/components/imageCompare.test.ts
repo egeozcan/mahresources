@@ -825,6 +825,29 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(450, 6);
   });
 
+  test('a report that moves neither the offset nor its bound arms no debt', () => {
+    // The debt is owed when a size report moves the offset or the bound it
+    // sits in. A report that only resizes the *leading* version without
+    // overtaking the box moves neither -- and arming anyway lets a later
+    // confirming report rewrite alignment the reader made after it.
+    const c = component({ w: 1600, h: 1200 }, { w: 1600, h: 1200 });
+    c.toggleAligning();
+    c.nudge(1, 0);
+    // Slot 0 reports 800x600: slot 1 still determines the 1600x1200 box and
+    // is the trail, so nothing the offset depends on changed.
+    c.noteSizeFrom(img(1, 800, 600));
+    c.swapSides();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    // The flipped view's bound for the 200px-rendered 800x600 slot is +850.
+    expect(c.trailOffset.dx).toBeCloseTo(850, 6);
+    // Slot 1 confirms its stored size. The stale debt must not clamp +850 to
+    // +600 -- the confirming report changed no geometry and nothing of its
+    // own is owed.
+    c.noteSizeFrom(img(2, 1600, 1200));
+    expect(c.trailOffset.dx).toBeCloseTo(850, 6);
+  });
+
   test('a tap is left alone, so an armed reader can still switch versions', () => {
     // preventDefault on touchstart suppresses the synthesized click, so while
     // armed a tap on toggle mode's button would do nothing at all.

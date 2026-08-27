@@ -130,6 +130,9 @@ test.describe.serial('compare page manual alignment', () => {
     if (ownerGroupId) {
       try { await apiClient.deleteGroup(ownerGroupId); } catch { /* already gone */ }
     }
+    if (categoryId) {
+      try { await apiClient.deleteCategory(categoryId); } catch { /* already gone */ }
+    }
     if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
