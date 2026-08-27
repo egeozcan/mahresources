@@ -113,6 +113,38 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 19:
+
+- **A step means stored-box pixels, not standing-box pixels.** The request
+  rode its increments through the box-width conversion at each report -- unit-
+  faithful for a position that already lived in that box, but an increment was
+  denominated in whichever transient box stood at the press. Stored 800x600
+  both, actual 600x800/1200x400: one Shift+ArrowRight between the reports
+  resolved to dx=15 slot-0-first (the 1.5x conversion) and dx=10 slot-1-first
+  (the 1200-wide box already existed at the press). The request's translation
+  is now denominated in **stored-box** pixels -- the one frame both decode
+  orders share: a fresh request converts its base out of the transient box at
+  creation, increments ride raw, box-width reports leave the request alone,
+  and the deferred rebound converts it once, into the final box, when it
+  resolves. Both orders land on 15; the round-17/18 repros converge unchanged
+  (-450, -375) because there the stored and standing widths coincide. (The
+  round-18 rule "the request scales on its own presence" is subsumed: the
+  request now converts at resolution regardless of what the display shows,
+  which is what that rule's walk-back case needed.)
+- **One axis never resolves another.** The request is created whole from the
+  displayed offset, so a y-only ArrowDown during the window carried the
+  display's legitimately-outside flip-derived x (-1800 at k=4) into the
+  request, and resolution clamped it to the final bound (-1200), rewriting
+  canonical dx 450 -> 300. Each axis now resolves as a `boundedNudge` from
+  where the display sits: an untouched axis keeps what it legitimately
+  occupies, a swallowed inward increment still lands on the final boundary,
+  and an outward one from outside moves nothing -- the same widening `nudge`
+  itself applies. The widened nudge takes the request's unclamped value;
+  clamping first and widening after reads the clamp's own pull-in as an
+  inward gesture and snaps anyway.
+- Standards: an orphaned JSDoc block duplicating `_reboundOffset`'s docs sat
+  above `offsetWithinBound` (round-17 edit fallout). Deleted.
+
 Round 18:
 
 - **A remainder survives its walk home.** The deferred request rode through
