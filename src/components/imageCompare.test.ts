@@ -981,6 +981,52 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(-375, 6);
   });
 
+  test('a free in-window nudge lands on the same offset in either decode order', () => {
+    // The transient box is `max` of one real measurement and one stored
+    // placeholder, so it differs per decode order when the corrected widths
+    // differ -- and a step taken against it inherits that difference unless
+    // the step means something order-independent. It means stored-box pixels:
+    // the frame both orders share before any image has spoken. Resolving the
+    // request then converts it with the ratio of the final box to the stored
+    // one, so the same files and the same key land on the same canonical
+    // offset whichever slot decoded first.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      // Actual slot 0 is 600x800, actual slot 1 is 1200x400: the stored box
+      // is 800 wide, the final one 1200.
+      c.noteSizeFrom(img(first, first === 1 ? 600 : 1200, first === 1 ? 800 : 400));
+      c.nudge(10, 0);
+      c.noteSizeFrom(img(second, second === 1 ? 600 : 1200, second === 1 ? 800 : 400));
+      return c._offset.dx;
+    };
+    // Ten stored-box pixels against a box that grows to 1200/800 of that.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(15, 6);
+  });
+
+  test('a nudge on one axis never resolves the other axis out of its flip-derived position', () => {
+    // The request is created whole from the displayed offset, both axes --
+    // but a key that moved only y must not hand the resolver a licence to
+    // clamp x. The flip-derived inverse sits legitimately outside the bound,
+    // and `boundedNudge` widens the display's range around it for exactly
+    // that reason; resolving an untouched axis has to preserve it too, or
+    // one ArrowDown rewrites the canonical offset by 150 (450 -> 300).
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(450, 0);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    c.noteSizeFrom(img(1, 800, 600));
+    c.nudge(0, -1);
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    // Canonical, slot 1 relative to slot 0: still the correction made.
+    expect(c._offset.dx).toBeCloseTo(450, 6);
+    expect(c._offset.dy).toBeCloseTo(0.25, 6);
+  });
+
   test('a pending remainder keeps Reset actionable while the readout sits at identity', () => {
     // `offsetIsIdentity` describes only what is shown; the half-measured
     // window can leave an unshown remainder underneath it. Drawing Reset

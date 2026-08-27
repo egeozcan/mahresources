@@ -68,6 +68,14 @@ function signed(n) {
 }
 
 export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
+  // The shared box as the server's stored dimensions draw it. The order-
+  // independent frame: the load window's transient box is `max` of one real
+  // measurement and one stored placeholder, so it differs per decode order
+  // exactly when the corrected widths differ, while this does not.
+  const storedBox = (a, b) => (a && b && a.w && a.h && b.w && b.h)
+    ? Math.max(a.w, b.w)
+    : null;
+  const storedBoxW = storedBox(leftSize, rightSize);
   return {
     mode: 'side-by-side',
     // How the two images are measured into the shared box. `relative` is true
@@ -123,12 +131,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     _sizeReboundDueSwapped: false,
     // The half-measured nudge records here the translation the reader asked
     // for -- including everything a display-side clamp deferred -- in the same
-    // slot-relative shape `_offset` uses. The display itself obeys the
-    // transient bound so the pair stays watchable; what reaches the boundary
-    // when both versions have reported is this request. Null once resolved or
-    // discarded: every mutation `_offset` takes (a zoom factor, the box-width
-    // conversion) takes this alongside it, and it never drives a render.
+    // slot-relative shape `_offset` uses. The translation is denominated in
+    // **stored-box** pixels rather than the transient box's: a step taken
+    // against the transient box inherits whichever geometry happened to be
+    // standing, so the same two files and the same key would resolve
+    // differently per decode order. Box-width reports therefore leave it
+    // alone; the deferred rebound converts it into the final box's pixels
+    // when it resolves. Null once resolved or discarded; it never drives a
+    // render.
     _requestedOffset: null,
+    // The stored box's width, in its own pixels -- the order-independent
+    // frame the request's translation is denominated in. Null when the
+    // server had no dimensions for the pair: then the box itself does not
+    // exist until one version has reported, only that version's report can
+    // open a nudgeable window, and there is no second order to diverge from.
+    _storedBoxW: storedBoxW,
     _endAlignDrag: null,
     // Removes an active align drag's *move* listeners only, leaving the
     // enders: `toggleAligning` calls it on a mid-gesture disarm.
@@ -423,14 +440,24 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // `_requestedOffset`, and the deferred rebound resolves that request
       // against the final bound once both versions have reported.
       if (this._measured[0] !== this._measured[1]) {
+        const fresh = this._requestedOffset === null;
         const request = this._rawRequest();
+        // A request born here takes the displayed position over as its base,
+        // converted out of the transient box and into the stored-box pixels
+        // the request is denominated in -- but the increment itself rides raw,
+        // because a step means stored-box pixels of the pair, not of whichever
+        // box happened to be standing. Converting the increment too would
+        // telescope straight back to order-dependence.
         // An increment that met the clamp contributes its full travel -- that
         // is the part still owed; one that moved freely contributes only the
         // distance the display actually travelled, so walking the image back
         // retires what running it out incurred.
+        const intoStored = fresh && this._storedBoxW ? this._storedBoxW / box.w : 1;
         this._setRawRequest({
-          dx: request.dx + (next.dx === t.dx + dx ? next.dx - t.dx : dx),
-          dy: request.dy + (next.dy === t.dy + dy ? next.dy - t.dy : dy),
+          dx: request.dx * intoStored
+            + (next.dx === t.dx + dx ? next.dx - t.dx : dx),
+          dy: request.dy * intoStored
+            + (next.dy === t.dy + dy ? next.dy - t.dy : dy),
           k: request.k,
         });
         this._sizeReboundDue = true;
@@ -503,23 +530,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
-     * Bring the offset back inside the bound after the geometry moved under it.
-     *
-     * The bound is a function of the version's *rendered* size and of the
-     * anchor, so zooming out, changing scale policy or anchoring all change it
-     * while leaving the offset where it was. Without this, a correction that
-     * was legal at 100% puts the version entirely outside the frame at 25%: in
-     * an 800-wide box, `dx = 600` renders at x = 900..1100.
-     *
-     * A flip deliberately does **not** call this. Every one of the three above
-     * is the reader changing something and being answered; a flip's whole
-     * purpose is to show the same alignment the other way round, so altering it
-     * there is the one thing that would make it useless. It costs exactness in
-     * one direction -- a zoom while flipped rewrites the stored offset, so
-     * flipping back does not restore the original number -- which is the same
-     * price zooming already charges unflipped.
-     */
-    /**
      * Whether the offset currently sits inside the bound its geometry implies.
      *
      * Snapshotted *before* an operation that moves the bound, because a rebound
@@ -549,12 +559,18 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * correction that was legal at 100% puts the version entirely outside the
      * frame at 25%: in an 800-wide box, `dx = 600` renders at x = 900..1100.
      *
-     * With a request it is the deferred form instead: it resolves what the
-     * half-measured window's clamps swallowed against the bound now standing,
-     * and shows the resolution. The reader asked for where they are plus
-     * everything the transient clamp refused; resolving their request lands
-     * them on that boundary as the display's own position rather than as a
-     * visible correction of one.
+     * With a request it is the deferred form instead: the request -- what the
+     * half-measured window's clamps swallowed, denominated in stored-box
+     * pixels -- is converted into the final box's pixels and resolved against
+     * the bound now standing. Each axis resolves as a nudge *from where the
+     * display sits*: an axis the reader never moved in the window has the
+     * display's own value as its request, and the display's value can sit
+     * legitimately outside -- a flip-derived inverse, which `boundedNudge`
+     * deliberately widened the display's range around. Clamping that axis
+     * outright would snap the far side of the correction by the whole
+     * difference because one ArrowDown happened to touch the other axis; the
+     * widened range lets a swallowed increment land on the final boundary while
+     * an untouched one keeps what it legitimately occupies.
      *
      * A flip deliberately does **not** call this. Every one of the three above
      * is the reader changing something and being answered; a flip's whole
@@ -572,17 +588,36 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const box = this.overlayBox;
       const element = this.elementSize(this.swapped ? 0 : 1);
       if (!box || !element) return;
-      const t = request ?? this.trailOffset;
+      // The request's translation is stored-box pixels; the bound is a fact
+      // about the box standing now, so the two must meet in one frame.
+      const outOfStored = request !== undefined && this._storedBoxW
+        ? box.w / this._storedBoxW
+        : 1;
+      const t = request === undefined
+        ? this.trailOffset
+        : { dx: request.dx * outOfStored, dy: request.dy * outOfStored, k: request.k };
       const x = this.translateRange(box.w, element.w * t.k);
       const y = this.translateRange(box.h, element.h * t.k);
-      const dx = Math.max(x.min, Math.min(x.max, t.dx));
-      const dy = Math.max(y.min, Math.min(y.max, t.dy));
+      const shown = this.trailOffset;
+      let dx, dy;
+      if (request === undefined) {
+        dx = Math.max(x.min, Math.min(x.max, t.dx));
+        dy = Math.max(y.min, Math.min(y.max, t.dy));
+      } else {
+        // The request's *unclamped* value rides the widened nudge: starting
+        // from an outside display, a swallowed inward increment stops at the
+        // near edge exactly as `nudge` itself would, and an untouched or
+        // outward one keeps the display's position. Clamping first and then
+        // widening would instead read the clamp's own pull-in as an inward
+        // gesture and snap a legitimately-outside axis onto the boundary.
+        dx = boundedNudge(shown.dx, t.dx - shown.dx, x);
+        dy = boundedNudge(shown.dy, t.dy - shown.dy, y);
+      }
       // Nothing to bring back: either the clamp held the value or the screen
       // already shows exactly what the request resolves to. Writing anyway
       // would re-derive `_offset` through the inverse and back on every wheel
       // notch while flipped, which is work for no change and the only place
       // this component could accumulate floating-point drift.
-      const shown = this.trailOffset;
       if (dx === shown.dx && dy === shown.dy) return;
       this._setTrailOffset({ dx, dy, k: t.k });
     },
@@ -1132,20 +1167,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           if (!this.offsetIsIdentity) {
             this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
           }
-          // The request scales on its own presence, never on whether anything
-          // is showing yet: display and request diverge exactly across a
-          // half-measured walk-back, where the reader returned the image home
-          // while a remainder rode along. Converting it only alongside the
-          // display would bind the deferred resolution to decode order -- the
-          // same completing report converts a non-identity sibling but skips
-          // one whose walk-back beat it to zero.
-          if (this._requestedOffset !== null) {
-            this._requestedOffset = {
-              dx: this._requestedOffset.dx * ratio,
-              dy: this._requestedOffset.dy * ratio,
-              k: this._requestedOffset.k,
-            };
-          }
+          // The request is *not* converted here: it is denominated in
+          // stored-box pixels, which the box's own growth does not touch, and
+          // the deferred rebound converts it once, into the final box, when
+          // both versions have reported. Converting it report by report would
+          // chain the ratio onto a value whose meaning never lived in the
+          // transient box in the first place -- the order-dependence the
+          // stored-box denomination exists to remove.
         }
         moved = (before && after && (before.w !== after.w || before.h !== after.h))
           || (beforeElement && afterElement
