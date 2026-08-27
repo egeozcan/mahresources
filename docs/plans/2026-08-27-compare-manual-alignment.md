@@ -113,6 +113,29 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 21:
+
+- **A bound moved under nothing displaced breaks nothing, and owes nothing.**
+  Round 20's `_sizeOwed` says where an outside display position came from -- a
+  bound-mover put it there (owed, and the deferred rebound must pay it) or a
+  flip derived it (legitimate, and the resolution must preserve it). Both
+  arming sites armed unconditionally, including when the reader had not
+  displaced the version at all; a zero translation is inside every range
+  `translateRange` can produce, so nothing was broken and nothing could be
+  owed, and the stale claim outlived the whole load window and suppressed the
+  anchor of a genuinely flip-derived outside. Through the control operations
+  (reported by review): stored 400x300 and 800x600, slot 0 confirms, press
+  Anchor while nothing is corrected, arm, nudge to +600, Flip, ArrowDown once,
+  slot 1 confirms -- the flipped -600 clamped to -300, canonical 600 rewritten
+  to 300. Through the reports (found while fixing the first): stored 800x600
+  both, arm, slot 0 reports 800x900, zoom to 25%, nudge to 450, Flip,
+  ArrowDown once, slot 1 confirms -- the flip-derived -1800 clamped to -1200,
+  canonical 450 back as 300. One predicate for both, `offsetIsPlaced`, which
+  is deliberately not `offsetIsIdentity`: that is also false at a bare zoom,
+  and a bare zoom displaces nothing either, so keying on identity would have
+  left `zoomBy` arming through the same hole.
+- Standards: no findings.
+
 Round 20:
 
 - **A drag increment is physical; a keyboard step is not.** Round 19 made the
