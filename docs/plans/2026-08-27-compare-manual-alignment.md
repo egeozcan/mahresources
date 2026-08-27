@@ -113,6 +113,29 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 30:
+
+- **A control pressed while a version was missing re-dated the baseline.** The
+  baseline a report's claim is measured against belongs to the reader, and they
+  can only restate it in geometry that is the pair's. A bound-mover inside the
+  window re-took it against whichever version had decoded, so the completing
+  report found the same correction inside a bound in one order and outside it
+  in the other. Stored 800x600 each, actual 600x900 and 1200x400: arm, Flip,
+  430 box pixels down, zoom to 90%, one report, Stretch, the other report --
+  canonical dy -700 one order and -716.67 the other, the first having clamped a
+  flip-derived outside that was already outside before either report arrived.
+  `_restateReportBaseline` restates it only once both versions have reported;
+  the reader's intent inside the window rides on the request and its anchors,
+  which are canonical and resolved against the final bound.
+- **That closed fifteen of the twenty accepted interleavings.** The whole
+  script 6 family -- a request accumulated across two flips -- was this defect,
+  and the inventory is five now, all script 7. Closing an accepted one fails
+  the enumerator exactly as a new divergence does, which is how a fix that
+  reaches further than its repro announces itself.
+- The reviewer's script is in the corpus as script 9, for the same reason round
+  29's is: the harness enumerates report positions across hand-authored scripts,
+  so a shape no script has cannot be caught by it.
+
 Round 29:
 
 - **A report that brought an axis back inside handed it to the next one.** A
@@ -200,34 +223,35 @@ pay into resolve-the-ask-then-repair-canonically clamps flip-derived inverses
 the design exists to preserve; keying the request's frame on its own creation
 rather than on the first arming reintroduces round 24's defect.
 
-### ACCEPTED: twenty interleavings the enumerator separates
+### ACCEPTED: five interleavings the enumerator separates
 
-The enumerator runs 1,344 interleavings -- 8 scripts against 8 pairs, each
+The enumerator runs 1,352 interleavings -- 10 scripts against 8 pairs, each
 replayed with the two reports inserted at every pair of positions, under both
-decode orders. Scripts 0-4 against pairs 0-4, every shape a reported repro has
-taken from round 17 on, converge with no exceptions. Twenty of the longer ones
-do not, and they are asserted as an exact inventory rather than dropped from the
-corpus: a new divergence fails the test, and so does fixing a listed one.
+decode orders. Every shape a reported repro has taken from round 17 on
+converges with no exceptions. Five do not, and they are asserted as an exact
+inventory rather than dropped from the corpus: a new divergence fails the test,
+and so does fixing a listed one.
 
-Two families, both with the completing report arriving after the whole script.
-Script 6 (`zoom +1, Flip, nudge -10000 x, Flip, nudge +10000 y`) accumulates one
-request across two flips, so its increments are added in different frames and
-combine through the zoom inversion. Script 7 (`nudge 450,450, Flip, Anchor, zoom
-25%, nudge -3,7`) takes its last nudge in the very window the completing report
-closes. Magnitudes are tens of box pixels (450 against 500; 300,211 against
-0,0). Neither is root-caused.
+All five are script 7 (`nudge 450,450, Flip, Anchor, zoom 25%, nudge -3,7`),
+which takes its last nudge in the very window the completing report closes, with
+that report arriving after the whole script. Magnitudes are tens of box pixels
+(450 against 500; 300,211 against 0,0). It is not root-caused. The other family
+-- script 6, a request accumulated across two flips -- was round 30's defect and
+is closed.
 
-**Settled with the user after round 28: these twenty are accepted as documented
-corners, not defects to fix.** What is accepted is bounded by the inventory
+**Settled with the user after round 28: the interleavings this list names are
+accepted as documented corners, not defects to fix.** What is accepted is bounded by the inventory
 itself rather than by a description of it, which is the whole reason the test
 asserts an exact list: the twenty are named, a twenty-first fails the build the
 moment it appears, and closing one of the twenty fails it too, so the acceptance
-cannot quietly widen and cannot be quietly abandoned. Each is a reader who
-flipped and zoomed several times inside a load window and whose second version
-then decoded after the whole script; the position they left is preserved within
-tens of box pixels, and both orders leave the pair watchable, because the
-displayed bound governed every step of the way. Reviewers are told this in the
-round prompt so the loop is not spent re-finding what has been decided.
+cannot quietly widen and cannot be quietly abandoned -- and a fix that reaches
+further than its own repro announces itself the same way, which is how round 30
+learned it had closed fifteen of them. Each is a reader who flipped and zoomed
+several times inside a load window and whose second version then decoded after
+the whole script; the position they left is preserved within tens of box pixels,
+and both orders leave the pair watchable, because the displayed bound governed
+every step of the way. Reviewers are told this in the round prompt so the loop is
+not spent re-finding what has been decided.
 Round 27: clean. No behaviour findings and no standards findings; rules 1-41
 re-verified against their repros. The first of the two consecutive clean rounds
 the merge gate asks for.
