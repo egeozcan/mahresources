@@ -113,6 +113,27 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 25:
+
+- **A pinch takes the whole gesture, not one event.** A second finger makes
+  the gesture the browser's pinch zoom, so the move handler returned without
+  moving the image and without preventing -- for that event only, leaving the
+  drag installed, so lifting a finger handed it back. touchstart at x=100, one
+  finger to 140 (dx=40), two fingers at 150 and 130, then lift one and move
+  the remaining finger to 170 before touchend: the offset advances to 70, that
+  move is preventDefaulted, and the touchmove listener is still live. Resuming
+  is wrong twice over beyond the rule itself -- `last` is written only by a
+  move this handler processed, so the image moves by however far the remaining
+  finger travelled during the pinch, and the browser's magnification has
+  changed what a client coordinate measures in between. The move listeners now
+  go when the second finger lands, as a mid-gesture disarm removes them, and
+  the enders stay so the release still finishes and announces the one move the
+  gesture made.
+- Standards: the same finding's other half. The pinch test stopped at the
+  first two-finger event, never sending another one-finger move and never
+  checking the teardown -- while its own comment already said that a second
+  finger "stops it".
+
 Round 24:
 
 - **A second arming joins the debt, it does not move it.** The deferred
