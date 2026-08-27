@@ -113,6 +113,70 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 28:
+
+- **A control operation during the load window claimed in the wrong frame.**
+  The immediate repair belongs in the displayed frame -- the reader is looking
+  at that view and is owed the guarantee there, which two tests pin -- but a
+  *deferred* one cannot, because by the both-measured moment the view may be
+  the other one. Stored 800x600 each, arm, zoom to 25%, correct to -450, Flip,
+  both versions actually 400x400: load one, press Anchor, load the other. The
+  flipped x was already outside, hiding the crossing Anchor made canonically
+  (the correction had been sitting exactly on that bound), and the completing
+  report then found it already outside and claimed nothing either -- -225 one
+  order and -75 the other, with -225 leaving nothing of the image on screen.
+  Window claims are canonical now for operations as well as reports, and the
+  callers hand `_reboundOrDefer` both frames so the immediate branch keeps its
+  own.
+- **A report claiming an axis did not retire the anchor a nudge recorded
+  before it.** An anchor means the axis was legitimately outside at nudge time
+  *and* unclaimed since; widening around a stale one launders the outside-ness
+  the report created. Stored 800x600 each, actual 600x600 and 400x600, zoom to
+  25%, correct to +450, Flip, load one, ArrowLeft (refused outward, so the
+  whole increment rides onto the request), load the other: 337.5 one order and
+  325 the other, the second being the bound. `_sizeReboundDueSwapped` becomes
+  `_requestSwapped` with it: the only thing with a view of its own to honour is
+  the reader's request, and a claim outstanding means a bound-mover crossed,
+  which is repaired canonically.
+- **The interleavings are enumerated now.** Every load-window defect since
+  round 17 is one family -- a reader's script interleaved with two decodes,
+  converging in one order and not the other -- found one repro at a time, which
+  samples the space rather than covering it (`docs/lessons.md`, "A steady
+  defect rate across review rounds means the space was sampled, not covered").
+  Five scripts against five pairs, each replayed with the two reports inserted
+  at every pair of positions, under both decode orders, asserting the canonical
+  offsets agree. It found both of the above and one further family the reported
+  repros had missed.
+- Standards: the same finding's other half -- the tests verified flipped
+  outside offsets, completing-report repairs and half-measured controls
+  separately and never composed them. The enumerator is that composition.
+
+### OPEN after round 28
+
+One divergence family is **not fixed**, and the enumerator asserts the exact
+set of divergences rather than "none" so that a new one fails the test and so
+does fixing these two.
+
+Whether a report crosses a bound can itself depend on decode order: slot 1's
+report shrinks the canonical trail, and arriving first it crosses while
+arriving last it does not, because by then the box has shrunk with it. The pay
+resolves the reader's request in the view it was made in unless a bound-mover
+has claimed an axis, in which case it repairs canonically -- so the choice
+between those two frames inherits that order-dependence. Repro: stored 800x600
+both, actual 400x400 both; arm, zoom to 25%, nudge -1000, Anchor, load one
+version, Flip, ArrowUp, load the other -- canonical dy is 0 one order and -6.25
+the other. Both are legal positions; each is what its own frame's bound allows.
+
+Three designs were tried and each broke a settled rule. Paying always
+canonically moves a correction the reader watched land in the flipped view
+(seven tests, including "a no-op scale activation arms no deferred debt" and
+"a debt armed at identity never rewrites an alignment made later"). Splitting
+the pay into resolve-the-ask-then-repair-canonically clamps flip-derived
+inverses the design exists to preserve. Keying the request's frame on its own
+creation rather than on the first arming reintroduces round 24's defect. What
+is needed is a decision about which frame wins when both a request and a claim
+are outstanding, not another patch.
+
 Round 27: clean. No behaviour findings and no standards findings; rules 1-41
 re-verified against their repros. The first of the two consecutive clean rounds
 the merge gate asks for.
