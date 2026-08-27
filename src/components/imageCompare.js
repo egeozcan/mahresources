@@ -411,11 +411,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const t = this.trailOffset;
       const x = this.translateRange(box.w, element.w * t.k);
       const y = this.translateRange(box.h, element.h * t.k);
-      this._setTrailOffset({
-        dx: Math.max(x.min, Math.min(x.max, t.dx)),
-        dy: Math.max(y.min, Math.min(y.max, t.dy)),
-        k: t.k,
-      });
+      const dx = Math.max(x.min, Math.min(x.max, t.dx));
+      const dy = Math.max(y.min, Math.min(y.max, t.dy));
+      // Nothing to bring back. Writing anyway would re-derive `_offset` through
+      // the inverse and back on every wheel notch while flipped, which is work
+      // for no change and the only place this component could accumulate
+      // floating-point drift.
+      if (dx === t.dx && dy === t.dy) return;
+      this._setTrailOffset({ dx, dy, k: t.k });
     },
 
     /**
