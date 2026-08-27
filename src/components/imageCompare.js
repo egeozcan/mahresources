@@ -586,37 +586,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // as a drag afterwards.
       const startedFrom = this.trailOffset;
 
-      const moveHandler = (moveE) => {
-        // A second finger turns the gesture into the browser's pinch zoom,
-        // which `touch-action: manipulation` keeps ours to cancel by
-        // preventing. Stop handling it and stop preventing -- and stop moving
-        // the image -- so the pinch is the browser's.
-        if (moveE.touches && moveE.touches.length > 1) return;
-        const next = point(moveE);
-        if (next.x === undefined || next.y === undefined) return;
-        moveE.preventDefault();
-        // Measured per move, as `startSliderDrag`'s own handler measures its
-        // container per move: a `load` landing mid-gesture corrects `_sizes`,
-        // and the box can be re-laid-out under the pointer. Freezing either at
-        // drag start converts the rest of the gesture with a stale ratio.
-        //
-        // `clientWidth` rather than the bounding rect: an absolutely positioned
-        // child resolves its percentages against the padding box, and the rect
-        // includes the border this box carries.
-        const measured = this.overlayBox;
-        const width = box.clientWidth || rect.width;
-        if (!measured || !width) return;
-        // Both axes convert through the *width* ratio: the box is width-driven,
-        // so one box pixel is the same screen distance in either axis
-        // (`renderedWidth / box.w`). The rendered height is a rounded integer,
-        // so converting the y-axis through it breaks that for extreme aspect
-        // ratios -- `noteSizeFrom` made the same mistake and fixed it the same
-        // way.
-        const ratio = measured.w / width;
-        this.nudge((next.x - last.x) * ratio, (next.y - last.y) * ratio);
-        last = next;
-      };
-
+      // Defined before the move handler, which ends the gesture when the
+      // reader disarms mid-drag. The removeEventListener calls name `moveHandler`
+      // and resolve when this runs, by which time both exist.
       const upHandler = (mouseUpEvent) => {
         this._endAlignDrag = null;
         document.removeEventListener('mousemove', moveHandler);
@@ -647,6 +619,45 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           this.announceOffset();
         }
       };
+
+      const moveHandler = (moveE) => {
+        // Disarming mid-gesture -- Space on the focused Align button while the
+        // mouse is still held -- ends the drag: decision 1 is that nothing
+        // nudges while disarmed, and it is checked at gesture start only.
+        if (!this.aligning || !this.alignAvailable) {
+          upHandler(moveE);
+          return;
+        }
+        // A second finger turns the gesture into the browser's pinch zoom,
+        // which `touch-action: manipulation` keeps ours to cancel by
+        // preventing. Stop handling it and stop preventing -- and stop moving
+        // the image -- so the pinch is the browser's.
+        if (moveE.touches && moveE.touches.length > 1) return;
+        const next = point(moveE);
+        if (next.x === undefined || next.y === undefined) return;
+        moveE.preventDefault();
+        // Measured per move, as `startSliderDrag`'s own handler measures its
+        // container per move: a `load` landing mid-gesture corrects `_sizes`,
+        // and the box can be re-laid-out under the pointer. Freezing either at
+        // drag start converts the rest of the gesture with a stale ratio.
+        //
+        // `clientWidth` rather than the bounding rect: an absolutely positioned
+        // child resolves its percentages against the padding box, and the rect
+        // includes the border this box carries.
+        const measured = this.overlayBox;
+        const width = box.clientWidth || rect.width;
+        if (!measured || !width) return;
+        // Both axes convert through the *width* ratio: the box is width-driven,
+        // so one box pixel is the same screen distance in either axis
+        // (`renderedWidth / box.w`). The rendered height is a rounded integer,
+        // so converting the y-axis through it breaks that for extreme aspect
+        // ratios -- `noteSizeFrom` made the same mistake and fixed it the same
+        // way.
+        const ratio = measured.w / width;
+        this.nudge((next.x - last.x) * ratio, (next.y - last.y) * ratio);
+        last = next;
+      };
+
       this._endAlignDrag = upHandler;
 
       document.body.style.userSelect = 'none';

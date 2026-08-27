@@ -113,6 +113,19 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 11:
+
+- **Disarming mid-drag ends it.** The move handler checked `aligning` at
+  gesture start only, so Space on the focused Align button while the mouse
+  was still held left the drag live -- decision 1 is that nothing nudges
+  while disarmed. The next move now ends the gesture (teardown and one
+  announcement if the offset moved) instead of moving the image.
+- **The fake-DOM harness keeps the document and window registries apart.**
+  One shared registry meant the teardown assertions could not tell a
+  listener removed from the wrong target from one properly removed; the
+  blur ender is on `window` and the drag listeners on `document`, which is
+  exactly the target mix a regression could confuse.
+
 Round 10:
 
 - **Reset retires the debt with the correction that earned it.** The debt is

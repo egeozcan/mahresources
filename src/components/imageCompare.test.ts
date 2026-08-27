@@ -1263,20 +1263,33 @@ describe('manual alignment', () => {
    * surface, so stubbing it is faithful rather than a mock of the behaviour.
    */
   function fakeDom() {
-    const handlers: Record<string, Function[]> = {};
-    const add = (type: string, fn: Function) => { (handlers[type] ||= []).push(fn); };
-    const remove = (type: string, fn: Function) => {
-      handlers[type] = (handlers[type] || []).filter((h) => h !== fn);
+    // Separate registries for the two targets: the component registers its
+    // drag listeners on `document` and the blur ender on `window`, and the
+    // teardown assertions are only meaningful if removing from the wrong
+    // target is visible as a still-installed listener.
+    const handlers: Record<string, Record<string, Function[]>> = { document: {}, window: {} };
+    const add = (target: string, type: string, fn: Function) => { (handlers[target][type] ||= []).push(fn); };
+    const remove = (target: string, type: string, fn: Function) => {
+      handlers[target][type] = (handlers[target][type] || []).filter((h) => h !== fn);
     };
     const g = globalThis as any;
     const previous = { document: g.document, window: g.window };
-    g.document = { addEventListener: add, removeEventListener: remove, body: { style: {} } };
-    g.window = { addEventListener: add, removeEventListener: remove };
+    g.document = {
+      addEventListener: (t: string, fn: Function) => add('document', t, fn),
+      removeEventListener: (t: string, fn: Function) => remove('document', t, fn),
+      body: { style: {} },
+    };
+    g.window = {
+      addEventListener: (t: string, fn: Function) => add('window', t, fn),
+      removeEventListener: (t: string, fn: Function) => remove('window', t, fn),
+    };
     return {
-      fire(type: string, event: any = {}) {
-        (handlers[type] || []).slice().forEach((h) => h({ preventDefault() {}, type, ...event }));
+      fire(type: string, event: any = {}, target: 'document' | 'window' = 'document') {
+        (handlers[target][type] || []).slice().forEach((h) => h({ preventDefault() {}, type, ...event }));
       },
-      listening(type: string) { return (handlers[type] || []).length; },
+      listening(type: string) {
+        return (handlers.document[type] || []).length + (handlers.window[type] || []).length;
+      },
       restore() { g.document = previous.document; g.window = previous.window; },
     };
   }
@@ -1314,6 +1327,50 @@ describe('manual alignment', () => {
       for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
         expect(dom.listening(type)).toBe(0);
       }
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('disarming mid-drag ends it: nothing moves while disarmed', () => {
+    // Space on the focused Align button toggles it while the mouse is still
+    // held, and the move handler must not keep nudging -- decision 1 is
+    // "nothing nudges while disarmed", and it is checked at gesture start
+    // only. The next move ends the drag instead of moving the image.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100));
+      dom.fire('mousemove', { clientX: 120, clientY: 100 });
+      expect(c.trailOffset.dx).toBeCloseTo(20, 6);
+
+      c.toggleAligning();
+      dom.fire('mousemove', { clientX: 200, clientY: 100 });
+      expect(c.trailOffset.dx).toBeCloseTo(20, 6);
+      // The gesture is over: its listeners are gone.
+      for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
+        expect(dom.listening(type)).toBe(0);
+      }
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('the drag teardown assertions can tell which target a listener was removed from', () => {
+    // fakeDom keeps the document and window registries apart, so "every
+    // listener it installed is gone" would catch a regression that removed a
+    // mousemove handler from window instead of document.
+    const dom = fakeDom();
+    try {
+      const g = globalThis as any;
+      const fn = () => {};
+      g.document.addEventListener('mousemove', fn);
+      // Removing the same handler from the *window* is a no-op, as with real
+      // addEventListener/removeEventListener targets...
+      g.window.removeEventListener('mousemove', fn);
+      // ...so the listener is still installed, and the assertion sees it.
+      expect(dom.listening('mousemove')).toBe(1);
     } finally {
       dom.restore();
     }
