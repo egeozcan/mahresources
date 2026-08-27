@@ -958,6 +958,53 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(30, 6);
   });
 
+  test('an outstanding remainder converts with the box even when the display walked back to identity', () => {
+    // Display and request diverge exactly here: the reader ran the image out,
+    // walked it back home, and the completing report resized the box. At
+    // identity the display needs no conversion -- but the request is still a
+    // displacement measured in the old box's pixels, and skipping its
+    // conversion binds the deferred resolution to decode order.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.noteSizeFrom(img(first, 600, 800));
+      c.nudge(-1100, 0);
+      c.nudge(600, 0);
+      // Whatever the walk-back left showing, the ask that remains does not
+      // depend on which slot happened to be standing under it.
+      c.noteSizeFrom(img(second, 600, 800));
+      return c.trailOffset.dx;
+    };
+    // -500 outstanding scales by the 0.75 width ratio into the smaller pair:
+    // interior of the final bound, so what arrives IS the scaled request.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-375, 6);
+  });
+
+  test('a pending remainder keeps Reset actionable while the readout sits at identity', () => {
+    // `offsetIsIdentity` describes only what is shown; the half-measured
+    // window can leave an unshown remainder underneath it. Drawing Reset
+    // aria-disabled while pressing it would clear that remainder says the
+    // control cannot act exactly when it can, so idle means no displayed
+    // correction AND no outstanding request.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.noteSizeFrom(img(1, 600, 800));
+    c.nudge(-1100, 0);
+    c.nudge(600, 0);
+    expect(c.offsetIsIdentity).toBe(true);
+    expect(c.resetIdle).toBe(false);
+    // And clearing it is the control's own work: the readout was already at
+    // identity, but activating Reset now still announces, because something
+    // actually changed.
+    let announced = false;
+    vi.spyOn(c, 'announceOffset').mockImplementation(() => { announced = true; });
+    c.resetAlignment();
+    expect(c._requestedOffset).toBeNull();
+    expect(announced).toBe(true);
+    expect(c.resetIdle).toBe(true);
+  });
+
   test('a report that moves neither the offset nor its bound arms no debt', () => {
     // The debt is owed when a size report moves the offset or the bound it
     // sits in. A report that only resizes the *leading* version without

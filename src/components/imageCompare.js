@@ -360,6 +360,18 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return dx === 0 && dy === 0 && k === 1;
     },
 
+    /**
+     * Whether Reset has nothing to do.
+     *
+     * The readout shows only what is displayed, so `offsetIsIdentity` alone
+     * under-reports here: the half-measured window's clamps can leave an
+     * unshown remainder under an identity readout, and pressing Reset would
+     * clear it. A control drawn `aria-disabled` must mean what it says.
+     */
+    get resetIdle() {
+      return this.offsetIsIdentity && this._requestedOffset === null;
+    },
+
     /** `+12, -4, 103%`, reporting the clamped values actually in effect. */
     get offsetLabel() {
       const { dx, dy, k } = this.trailOffset;
@@ -596,21 +608,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * you reset is almost always that you are about to try again.
      */
     resetAlignment() {
-      // The debt was the promise that the discarded correction would be
-      // brought back once both versions reported; Reset discards the
-      // correction, so the promise dies with it -- left armed, a later
-      // confirming report would rewrite alignment the reader makes after the
-      // reset.
+      // Retired by any Reset press, not only ones that visibly move something:
+      // an armed debt or an outstanding window remainder dies with the
+      // correction it belongs to -- left alone, a later confirming report
+      // would rewrite alignment the reader makes after the reset.
       this._sizeReboundDue = false;
       this._sizeReboundDueSwapped = false;
-      // The request the half-measured nudges ran up rides on the same promise
-      // as the debt and dies with it too.
+      // A refused Reset stays silent: the control is drawn `aria-disabled`
+      // while idle rather than removed, so it stays reachable and pressable,
+      // and announcing "offset 0, 0, 100%" at someone who changed nothing is
+      // the live-region equivalent of a control that looks like it acted.
+      // Idle means no displayed correction AND no outstanding request -- a
+      // readout sitting at identity can still have one underneath it, and
+      // clearing it is something done, not a refusal.
+      if (this.resetIdle) return;
       this._requestedOffset = null;
-      // A refused Reset stays silent. The control is drawn `aria-disabled` at
-      // identity rather than removed, so it is reachable and pressable, and
-      // announcing "offset 0, 0, 100%" at someone who changed nothing is the
-      // live-region equivalent of a control that looks like it acted.
-      if (this.offsetIsIdentity) return;
       this._offset = { dx: 0, dy: 0, k: 1 };
       this.announceOffset();
     },
@@ -1114,12 +1126,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this._sizes = next;
         const after = this.overlayBox;
         const afterElement = this.elementSize(trailIndex);
-        if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
+        if (before && after && before.w !== after.w) {
           const ratio = after.w / before.w;
-          this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
-          // The request rides in the same units and scales with it whether or
-          // not the display moved: an outstanding half-measured remainder must
-          // not silently change size when the box's own dimensions do.
+          // At identity there is nothing for the conversion to move.
+          if (!this.offsetIsIdentity) {
+            this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
+          }
+          // The request scales on its own presence, never on whether anything
+          // is showing yet: display and request diverge exactly across a
+          // half-measured walk-back, where the reader returned the image home
+          // while a remainder rode along. Converting it only alongside the
+          // display would bind the deferred resolution to decode order -- the
+          // same completing report converts a non-identity sibling but skips
+          // one whose walk-back beat it to zero.
           if (this._requestedOffset !== null) {
             this._requestedOffset = {
               dx: this._requestedOffset.dx * ratio,
