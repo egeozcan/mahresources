@@ -2704,6 +2704,26 @@ html {
     outline-offset: 1px;
 }
 
+/* Manual alignment. The box only becomes a drag surface once the reader arms
+   the mode, so the cursor says so then and not before. touch-action is the part
+   that is not cosmetic: without it a touch drag scrolls the page instead of
+   reaching the move handler, because the browser claims the gesture before any
+   listener sees it. */
+.compare-box-aligning {
+    cursor: move;
+    touch-action: none;
+    user-select: none;
+}
+
+/* Tabular figures so the numbers do not shuffle the toolbar sideways as they
+   change: this readout updates on every pixel of a drag. */
+.compare-offset-readout {
+    font-size: 0.8125rem;
+    color: #57534e;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 /* Diff views */
 .compare-diff-toolbar {
     display: flex;

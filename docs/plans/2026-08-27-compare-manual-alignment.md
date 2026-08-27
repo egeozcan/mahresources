@@ -1,0 +1,114 @@
+# Compare page, Package 2: Manual alignment
+
+Derived from the `/resource/compare` extension board (artifact
+`49077fa1-1c51-47ce-89bd-0abef8d94460`), package 2, items 2.1 and 2.2. Anchors
+re-verified 27 Aug 2026 against `feat/compare-manual-alignment`'s base
+`e4319332`: `imageCompare.js:153` is `setScale`, `:77` is `overlayScale`,
+`compareImage.tpl:12` is the mode-selector toolbar. The board's own line numbers
+were taken against `415dd859` and have drifted through package 1; the file names
+have not.
+
+## The defect
+
+Package 1 gave the overlay modes a scale policy: `relative`, `fit` and
+`stretch`, with a corner anchor. All three are *whole-pair* policies computed
+from intrinsic dimensions. None of them can act on a pair that is the same size
+and simply not in register -- a flatbed scan placed differently on the glass, a
+handheld re-photograph of a document, a screenshot taken at a different scroll
+offset. The subject sits eleven pixels to the left, every automatic policy
+agrees the two images are already correctly sized, and the interface offers
+nothing.
+
+The residual scale case is the same shape: a re-photograph at 103% of the
+original is not a resolution change (`fit` does nothing, because the intrinsic
+dimensions are identical) and not an aspect change (`stretch` does nothing
+either). Only the reader can say how much.
+
+## Settled decisions
+
+Settled with the user across three rounds before any code was written.
+
+| # | Decision |
+|---|---|
+| 1 | An armed **Align** toggle (`aria-pressed`, beside Flip and Anchor) owns drag and the arrow keys. Nothing nudges while disarmed. Chosen over a modifier-drag (undiscoverable, and Alt-drag belongs to the window manager) and over drag-anywhere-but-the-handle (a three-pixel miss silently moves an image, which is the invisible-state failure 2.2 exists to prevent). It is also the only option that disambiguates the arrow keys, which `_keyHandler` already spends on `sliderPos` and `opacity`. |
+| 2 | The offset is stored **on the version slot** -- one `{dx, dy, k}` describing slot 1 relative to slot 0 -- never on "trail". Same indexing as `_sizes` and `_urls`. |
+| 3 | **Flip inverts** rather than resets: the applied transform becomes `translate(-dx/k, -dy/k) scale(1/k)` when `swapped`. The alignment survives an A/B, which is what a flip is for. |
+| 4 | Units are **box pixels** -- the intrinsic units of the `max(w1,w2) x max(h1,h2)` box -- emitted into the transform as percentages of the element. Resize-invariant, and the same coordinate space every other number in the component lives in. Cost accepted: on a 4000px scan rendered 800px wide one arrow press is a fifth of a screen pixel, so Shift-10 is the usable keyboard step there. |
+| 5 | Arrow keys nudge 1 box px, Shift 10. Drag maps rendered pixels into box pixels through the box's own measured width. |
+| 6 | **Scale ships here**, not deferred to 4.1. `+` / `=` and `-` at 1%, Shift 10%; wheel over the box while armed, `preventDefault`ed. Clamped **25%-400%**. No scale-drag -- drag is spent on translate and a modifier-drag reopens decision 1. |
+| 7 | `transform-origin` **follows the anchor**: centre by default, `0 0` under `anchor === 'top-left'`. Scaling from the centre after the reader has asserted "these line up at the corner" walks that corner off by half the scale change. |
+| 8 | Translate is **clamped to +/-50% of the box** per axis, on `nudgeSlider`'s 1-99 precedent (`imageCompare.js:402`): a state that shows nothing looks broken. The readout reports the clamped value, so the number on screen is the number in effect. |
+| 9 | The Align button **handles its own arrow keys**, calling the same `nudge()` the container handler does. `_keyHandler` skips events targeted at anything focusable on the grounds that "anything focusable answers its own arrow keys"; giving the button its own handler satisfies that rule instead of carving an exception out of it. The interlock is `_keyHandler`'s existing `if (e.defaultPrevented) return`. |
+| 10 | Readout and Reset are **always present** in the overlay modes (`0, 0 - 100%` at rest, Reset `aria-disabled` at identity), hidden in side-by-side by the same `x-show` as scale and anchor. Package 1 decision 8, unchanged: a control that cannot act is marked, not removed. |
+| 11 | The visible readout updates continuously; a **separate visually-hidden `aria-live="polite"` region** is written on each keyboard nudge and on **drag end only**. A live region updated per `pointermove` produces a queue that reads for minutes. |
+| 12 | `R` and Reset clear **translate and scale together**. `R` is armed-only and guarded against firing from a text field, like the container handler. Reset **keeps** the arming: the reason you reset is that you are about to try again. |
+| 13 | Arming survives a mode switch, a Flip and a Reset. Nothing auto-disarms -- alignment is iterative, and re-arming between presses turns a two-second correction into a click per pixel. |
+| 14 | Align stays live under **all three** scale policies, Stretch included. Anchor's refusal under Stretch is a statement of fact (no slack, so zeroing a centring margin provably changes nothing); translate acts under every policy. It inherits only the `scaleAvailable` refusal. |
+| 15 | **Refused when `scaleAvailable` is false**, reusing that predicate rather than a second copy. Under the `index.css:2679` fallback the lead is `position: static` and the trail is pinned to the top with `margin: 0`, so the two are not in a shared coordinate space at all -- and the formats that actually reach it (HEIC, TIFF) paint nothing to align. |
+| 16 | Visible label **"Align"**; accessible name **bound to the version**, `'Nudge and zoom ' + trailLabel`. Flip exchanges which file is trailing, so a fixed "the newer version" is wrong half the time -- the mistake that produced the whole `lead`/`trail` design (`imageCompare.js:20-24`). |
+| 17 | No persistence and no URL state. Package 1 decision 4 and the board's own note that 5.1 owns view state. |
+| 18 | Branch `feat/compare-manual-alignment`, no push, no PR. Postgres suite skipped and said out loud: if this lands as scoped, no `.go` file changes and no SQL path can regress. |
+
+## Constraints carried from the code
+
+Not decisions -- properties of the file that the implementation has to respect.
+
+1. **`overlayScale` returns a fixed key set.** Alpine's object style binding sets
+   only the properties it names, so a key dropped between two renders keeps
+   whatever it was last set to. `transform` and `transformOrigin` must therefore
+   appear in *every* return path, including the no-dimensions early return and
+   the `stretch` branch, as `''` where they do not apply.
+2. **The drag surface is the overlay box itself.** In slider mode the trail
+   `<img>` is `pointer-events-none` and the lead sits inside a
+   `pointer-events-none` clip wrapper, with the slider handle above at `z-10`.
+3. **The transform applies in all three overlay modes**, toggle included.
+   Blinking a nudged pair is how a reader checks the registration took.
+4. **`_sizes` and `_urls` are indexed by the server's left/right**, while
+   `leadUrl` is `_urls[swapped ? 1 : 0]`. Decision 2 exists because getting this
+   backwards transposes the offset on every flip -- the same trap package 1's
+   plan flagged for the box.
+
+## Work
+
+### 2.1 Nudge and zoom the trail image
+
+State on the component: `aligning` (armed), and `_offset = { dx, dy, k }` in box
+pixels and a scale factor, describing slot 1 relative to slot 0.
+
+- `alignTransform(index)` returns the transform for a slot: identity for slot 0,
+  `_offset` for slot 1, and the inverse when `swapped` puts slot 0 on the trail
+  side.
+- Folded into `overlayScale`, so one style object carries sizing, anchoring and
+  alignment, and constraint 1 holds by construction.
+- `nudge(dx, dy)` and `zoomBy(dk)` clamp per decisions 6 and 8.
+- Pointer drag on the overlay box while armed, reusing `startSliderDrag`'s
+  teardown shape: `mousemove`/`touchmove` on the document, ended by `mouseup`,
+  `touchend`, `touchcancel` and `window.blur`, with the ender kept on the
+  component so `destroy()` can end a drag the page is leaving mid-gesture.
+- Wheel on the box while armed, `preventDefault`ed. The box is a `div`, so the
+  listener is non-passive by default and the prevent takes.
+
+### 2.2 Offset readout and reset control
+
+- `offsetLabel` renders `+12, -4 - 103%`, reporting the clamped values.
+- Reset button, `aria-disabled` at identity, clearing translate and scale and
+  keeping the arming.
+- A visually-hidden `aria-live="polite"` region, written on keyboard nudge and
+  drag end only.
+
+## Verification
+
+- **vitest** over the transform arithmetic: the flip inversion, both clamps, the
+  fixed key set including the two new keys, the `scaleAvailable` refusal, and
+  that a scale-policy change leaves the offset alone.
+- **e2e** (`compare-manual-alignment.spec.ts`) over rendered geometry, never the
+  inline style strings -- same reasoning as the package 1 spec, whose comment
+  explains that the `index.css` fallback branch can override those styles
+  wholesale and a style assertion would pass on a page drawing the pair
+  completely wrong.
+- `go test --tags 'json1 fts5' ./...`, `npm run build-js` with `public/dist`
+  committed alongside the source change, and `npm run test:with-server:all`.
+- `docs-site/docs/features/versioning.md` gains the alignment controls beside
+  the scale table. No screenshot retake: the skill regenerates all thirty and
+  the existing shot is still accurate about what it shows.
+- The board is republished to its existing URL with 2.1 and 2.2 marked shipped.

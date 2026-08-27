@@ -116,6 +116,33 @@ Scale and anchor apply to the overlay modes only, and are hidden in **Side-by-si
 A pair whose dimensions neither the file nor the browser reports -- a HEIC or a TIFF, which no browser renders -- leaves nothing to measure against. Both controls are shown as unavailable rather than acting on nothing.
 :::
 
+##### Aligning two versions by hand
+
+Scale decides how large each version is drawn. It cannot help a pair that is already the right size and simply out of register: a page placed differently on the scanner glass, a document re-photographed a few percent off, a screenshot taken at a different scroll offset. **Align** hands that correction to you.
+
+Press **Align** to arm it, then move one version over the other:
+
+| Input | Effect |
+|-------|--------|
+| Drag the image | Move it under the pointer |
+| `Arrow` keys | Move it one pixel, or ten with `Shift` |
+| `-` and `=` | Resize it by 1% |
+| `Shift` with `-` or `=` | Resize it by 10% |
+| Scroll wheel | Resize it by 1% |
+| `R` | Put it back |
+
+Pixels are pixels of the shared frame, not of your screen, so an offset means the same thing after you resize the window. The offset is limited to half the frame in each direction and the resize to between 25% and 400%.
+
+The current offset is shown beside the controls as `+12, -4, 103%` and can be cleared at any time with **Reset**, which clears the resize along with the offset. Align stays armed until you press it again, so a correction can be made in small steps.
+
+:::tip
+Align once, then compare in every mode. The offset holds across **Slider**, **Onion skin** and **Toggle**, and across a change of scale, so you can line the two versions up in one mode and read the result in another.
+:::
+
+**Flip** exchanges which version leads while keeping the alignment: the correction is inverted rather than discarded, so flipping back and forth is how you check that it took.
+
+While Align is armed the arrow keys belong to it, so they no longer move the reveal position or the onion-skin opacity. The slider handle keeps its own drag and its own arrow keys throughout.
+
 #### Text Comparison
 
 For text files (plain text, code, markdown, etc.):

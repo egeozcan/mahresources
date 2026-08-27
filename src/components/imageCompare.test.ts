@@ -64,7 +64,7 @@ describe('filling sizes from the loaded images', () => {
     // AVIF: an accepted content type with no Go decoder anywhere in the tree.
     const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
     expect(c.overlayRatio).toBeNull();
-    expect(c.leadScale).toEqual({ width: '', height: '', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '', height: '', objectFit: '', margin: '', transform: '', transformOrigin: '' });
     expect(c.overlayBoxStyle).toEqual({ aspectRatio: '' });
 
     c.noteSizeFrom(img(1, 400, 300));
@@ -75,8 +75,8 @@ describe('filling sizes from the loaded images', () => {
     c.noteSizeFrom(img(2, 800, 600));
     expect(c.overlayRatio).toBe('800 / 600');
     expect(c.overlayBoxStyle).toEqual({ aspectRatio: '800 / 600' });
-    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
-    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('a size is recorded against the version whose bytes were measured', () => {
@@ -89,12 +89,12 @@ describe('filling sizes from the loaded images', () => {
 
     expect(c._sizes).toEqual([{ w: 400, h: 300 }, { w: 800, h: 600 }]);
     // Swapped, the lead side shows version 2.
-    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
-    expect(c.trailScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
     // And they survive the flip back, still attached to their own version.
     c.swapped = false;
-    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
-    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('a load that lands after a flip is still credited to its own version', () => {
@@ -181,8 +181,8 @@ describe('scale policy', () => {
   test('relative scale draws each version at its true size against the other', () => {
     const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
     expect(c.scale).toBe('relative');
-    expect(c.leadScale).toEqual({ width: '66.66666666666666%', height: '37.5%', objectFit: '', margin: '' });
-    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '66.66666666666666%', height: '37.5%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('fit grows each version until an edge touches the frame', () => {
@@ -190,25 +190,25 @@ describe('scale policy', () => {
     // 56.25% tall. The taller version already touches both edges.
     const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
     c.setScale('fit');
-    expect(c.leadScale).toEqual({ width: '100%', height: '56.25%', objectFit: '', margin: '' });
-    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '100%', height: '56.25%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('fit registers a pure resolution change exactly', () => {
     // The case the package exists for: one aspect ratio, two resolutions. Under
     // relative scale the rescan draws at double size and lines up with nothing.
     const c = component({ w: 800, h: 600 }, { w: 1600, h: 1200 });
-    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
     c.setScale('fit');
     expect(c.leadScale).toEqual(c.trailScale);
-    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('stretch distorts both versions onto the whole frame', () => {
     const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
     c.setScale('stretch');
-    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: 'fill', margin: '' });
-    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: 'fill', margin: '' });
+    expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: 'fill', margin: '', transform: '', transformOrigin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: 'fill', margin: '', transform: '', transformOrigin: '' });
   });
 
   test('leaving stretch takes the distortion back off', () => {
@@ -279,7 +279,7 @@ describe('anchoring', () => {
     const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
     c.toggleAnchor();
     c.setScale('fit');
-    expect(c.leadScale).toEqual({ width: '100%', height: '56.25%', objectFit: '', margin: '0' });
+    expect(c.leadScale).toEqual({ width: '100%', height: '56.25%', objectFit: '', margin: '0', transform: '', transformOrigin: '' });
   });
 
   test('stretch leaves no slack, so the anchor refuses there', () => {
@@ -420,5 +420,249 @@ describe('two sides showing one version', () => {
     expect(c._sizes).toEqual([{ w: 400, h: 300 }, { w: 400, h: 300 }]);
     expect(c.scaleAvailable).toBe(true);
     expect(c.overlayRatio).toBe('400 / 300');
+  });
+});
+
+/**
+ * Package 2: manual alignment.
+ *
+ * Package 1's three scale policies are whole-pair decisions computed from
+ * intrinsic dimensions. None of them can act on a pair that is the same size
+ * and simply not in register. This is the offset the reader drives, and almost
+ * everything that can go wrong with it is arithmetic: which slot carries the
+ * transform, what a percentage is a percentage *of*, and what a flip does to a
+ * correction the reader already made.
+ */
+describe('manual alignment', () => {
+  /** The percentages out of a `translate(x%, y%) scale(k)`, as numbers. */
+  function transformOf(style: any): { tx: number; ty: number; k: number } | null {
+    if (!style.transform) return null;
+    const m = /^translate\((-?[\d.]+)%, (-?[\d.]+)%\) scale\(([\d.]+)\)$/.exec(style.transform);
+    if (!m) throw new Error(`unparseable transform: ${style.transform}`);
+    return { tx: Number(m[1]), ty: Number(m[2]), k: Number(m[3]) };
+  }
+
+  function key(k: string, shiftKey = false) {
+    let prevented = false;
+    return { key: k, shiftKey, preventDefault() { prevented = true; }, get prevented() { return prevented; } };
+  }
+
+  test('a nudge moves the trailing version and leaves the leading one alone', () => {
+    const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(12, -4);
+    expect(transformOf(c.leadScale)).toBeNull();
+    // The trail element is 400x300 *box pixels* wide, and a CSS percentage
+    // translate resolves against the element's own border box -- so twelve box
+    // pixels is 3% of this element and would be 1.5% of the other one.
+    expect(transformOf(c.trailScale)).toEqual({ tx: 3, ty: -4 / 300 * 100, k: 1 });
+  });
+
+  test('the offset is in box pixels, so it means the same at any element size', () => {
+    // Same twelve-pixel correction, expressed against two differently-sized
+    // elements: under Fit the trail grows to fill the box, so the *same* offset
+    // has to come out as a smaller percentage of a larger element.
+    const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(12, 0);
+    expect(transformOf(c.trailScale)!.tx).toBe(3);
+    c.setScale('fit');
+    expect(transformOf(c.trailScale)!.tx).toBe(12 / 800 * 100);
+  });
+
+  test('a flip inverts the correction rather than dropping it', () => {
+    // The reader aligned the trail onto the lead. A flip exchanges the two, so
+    // preserving what they did means applying the inverse to the other image:
+    // translate(-d/k) scale(1/k), which is T inverse for T(p) = k*p + d.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(40, 0);
+    c.zoomBy(0.25);
+    expect(transformOf(c.trailScale)).toEqual({ tx: 5, ty: 0, k: 1.25 });
+
+    c.swapSides();
+    // Slot 0 is the trailing side now and carries the inverse; slot 1 is clean.
+    expect(transformOf(c.trailScale)).toEqual({ tx: -4, ty: 0, k: 0.8 });
+    expect(transformOf(c.leadScale)).toBeNull();
+  });
+
+  test('flipping twice returns exactly the correction that was made', () => {
+    // `_offset` is the durable state and the trail transform is derived from
+    // it, so a flip mutates nothing and there is no drift to accumulate.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(37, -11);
+    c.zoomBy(0.07);
+    const before = c.trailScale.transform;
+    c.swapSides();
+    c.swapSides();
+    expect(c.trailScale.transform).toBe(before);
+  });
+
+  test('the translation is clamped to half the box, and the readout says so', () => {
+    // `nudgeSlider` clamps to 1-99 rather than 0-100 for the same reason: a
+    // state that shows nothing at all reads as a broken page, not as a choice.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(10000, -10000);
+    expect(transformOf(c.trailScale)).toEqual({ tx: 50, ty: -50, k: 1 });
+    expect(c.offsetLabel).toBe('+400, -300, 100%');
+  });
+
+  test('the zoom is clamped to a quarter and four times', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(100);
+    expect(transformOf(c.trailScale)!.k).toBe(4);
+    c.zoomBy(-100);
+    expect(transformOf(c.trailScale)!.k).toBe(0.25);
+  });
+
+  test('the zoom scales from wherever the anchor holds the image', () => {
+    // Anchor pressed means the reader has asserted "these two line up at the
+    // corner". Scaling from the centre then walks that corner off by half the
+    // scale change and undoes the thing they just said.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(0.1);
+    expect(c.trailScale.transformOrigin).toBe('');
+    c.toggleAnchor();
+    expect(c.trailScale.transformOrigin).toBe('0 0');
+  });
+
+  test('a change of scale policy leaves the correction alone', () => {
+    // The offset is in box pixels, so it still means "shift slot 1 by twelve"
+    // after the switch. Silently discarding work the reader did is the worse
+    // failure, and Anchor already changes the sizing without resetting anything.
+    const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(12, -4);
+    for (const policy of ['fit', 'stretch', 'relative']) c.setScale(policy);
+    expect(c.offsetLabel).toBe('+12, -4, 100%');
+  });
+
+  test('stretch still carries the correction, unlike the anchor', () => {
+    // Anchor refuses under Stretch because it provably cannot act -- there is
+    // no slack to take up. A translate acts under every policy, so refusing it
+    // would be extending that rule past its reason.
+    const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.setScale('stretch');
+    c.nudge(80, 0);
+    expect(c.anchorAvailable).toBe(false);
+    expect(c.alignAvailable).toBe(true);
+    // Under stretch the element *is* the box, so eighty box pixels is 10%.
+    expect(transformOf(c.trailScale)).toEqual({ tx: 10, ty: 0, k: 1 });
+  });
+
+  test('a pair with nothing to scale against cannot be aligned either', () => {
+    // Under the no-dimensions fallback the lead is `position: static` and the
+    // trail is pinned to the top with `margin: 0`: the two are not in a shared
+    // coordinate space, and the formats that reach it paint nothing to align.
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    expect(c.alignAvailable).toBe(false);
+    c.toggleAligning();
+    expect(c.aligning).toBe(false);
+    c.nudge(12, -4);
+    expect(c.offsetLabel).toBe('0, 0, 100%');
+    expect(c.trailScale.transform).toBe('');
+  });
+
+  test('reset clears the translation and the zoom together, and stays armed', () => {
+    // A reset that left a 103% zoom behind would be the same invisible state in
+    // a smaller box. The arming survives because the reason you reset is almost
+    // always that you are about to try again.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(12, -4);
+    c.zoomBy(0.03);
+    expect(c.offsetLabel).toBe('+12, -4, 103%');
+    expect(c.offsetIsIdentity).toBe(false);
+
+    c.resetAlignment();
+    expect(c.offsetLabel).toBe('0, 0, 100%');
+    expect(c.offsetIsIdentity).toBe(true);
+    expect(c.trailScale.transform).toBe('');
+    expect(c.aligning).toBe(true);
+  });
+
+  test('the keys do nothing at all until the reader arms the mode', () => {
+    // The arrow keys are already spent -- `_keyHandler` gives them to the
+    // slider position and the onion opacity by mode. Arming is what makes them
+    // unambiguously the alignment's.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    const e = key('ArrowRight');
+    expect(c.handleAlignKey(e)).toBe(false);
+    expect(e.prevented).toBe(false);
+    expect(c.offsetIsIdentity).toBe(true);
+
+    c.toggleAligning();
+    expect(c.handleAlignKey(key('ArrowRight'))).toBe(true);
+    expect(c.offsetLabel).toBe('+1, 0, 100%');
+  });
+
+  test('shift takes the bigger step in both axes and in the zoom', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.handleAlignKey(key('ArrowDown', true));
+    c.handleAlignKey(key('ArrowLeft'));
+    c.handleAlignKey(key('=', true));
+    expect(c.offsetLabel).toBe('-1, +10, 110%');
+  });
+
+  test('R resets, and only while armed', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(12, 0);
+    expect(c.handleAlignKey(key('r'))).toBe(true);
+    expect(c.offsetIsIdentity).toBe(true);
+
+    c.nudge(12, 0);
+    c.toggleAligning();
+    expect(c.handleAlignKey(key('r'))).toBe(false);
+    expect(c.offsetIsIdentity).toBe(false);
+  });
+
+  test('a key announces, a drag does not', () => {
+    // A live region written on every pointermove produces a queue a screen
+    // reader spends minutes reading. The visible readout updates continuously;
+    // the announcement is made on each key and once at the end of a drag.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+
+    c.nudge(5, 0);
+    expect(c.offsetAnnouncement).toBe('');
+
+    c.handleAlignKey(key('ArrowRight'));
+    expect(c.offsetAnnouncement).toContain('+6');
+
+    c.nudge(5, 0);
+    expect(c.offsetAnnouncement).toContain('+6');
+    c.announceOffset();
+    expect(c.offsetAnnouncement).toContain('+11');
+  });
+
+  test('no two announcements in a row are the same string', () => {
+    // `aria-live` fires on a text *change*, so nudging away from a value and
+    // back would land on the text already in the region and announce nothing.
+    // A zero-width mark is alternated to make each announcement a change --
+    // alternated rather than accumulated, because consecutive difference is the
+    // whole property and an ever-growing string is not.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    const said = [];
+    for (const k of ['ArrowRight', 'ArrowLeft', 'ArrowRight', 'ArrowRight']) {
+      c.handleAlignKey(key(k));
+      said.push(c.offsetAnnouncement);
+    }
+    for (let i = 1; i < said.length; i++) expect(said[i]).not.toBe(said[i - 1]);
+    // And the reader hears the number, not the mark.
+    expect(said[3]).toContain('+2');
+    expect(said.map((t) => t.replace(/\u200B/g, ''))).toEqual([
+      'Offset +1, 0, 100%',
+      'Offset 0, 0, 100%',
+      'Offset +1, 0, 100%',
+      'Offset +2, 0, 100%',
+    ]);
   });
 });

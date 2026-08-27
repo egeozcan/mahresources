@@ -100,6 +100,47 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="3" y="5" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
             Anchor
         </button>
+        {# Manual alignment, for the pair that is the right size and simply not #}
+        {# in register. Armed rather than always-live: the arrow keys are #}
+        {# already spent on the slider position and the onion opacity, and no #}
+        {# modifier is free to disambiguate them. #}
+        {# #}
+        {# It carries its own @keydown because the container handler in init() #}
+        {# skips events targeted at anything focusable, on the grounds that a #}
+        {# focusable element answers its own arrow keys -- arming this by #}
+        {# keyboard leaves focus on the one element that would otherwise #}
+        {# swallow every press. The accessible name is bound to the version #}
+        {# rather than the side, because Flip exchanges which file trails. #}
+        <button type="button" @click="toggleAligning()" class="compare-swap-btn-sm"
+                x-show="mode !== 'side-by-side'"
+                :aria-pressed="aligning"
+                :aria-disabled="!alignAvailable"
+                :title="alignAvailable ? 'Drag the image, or use the arrow keys, to line the two versions up by hand.' : 'One of the two versions reports no dimensions, so there is nothing to align against.'"
+                :aria-label="'Nudge and zoom ' + trailLabel"
+                @keydown="handleAlignKey($event)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+            Align
+        </button>
+        {# The offset is otherwise invisible state: without this you cannot tell #}
+        {# a deliberate nudge from a stray drag. Labelled by a visually-hidden #}
+        {# prefix rather than aria-label, which is not reliably exposed on a #}
+        {# span with no role -- and a role="status" here would announce twice, #}
+        {# since the live region below is what does the announcing. #}
+        <span class="compare-offset-readout" x-show="mode !== 'side-by-side'">
+            <span class="sr-only">Alignment offset&nbsp;</span><span x-text="offsetLabel"></span>
+        </span>
+        <button type="button" @click="resetAlignment()" class="compare-swap-btn-sm"
+                x-show="mode !== 'side-by-side'"
+                :aria-disabled="offsetIsIdentity"
+                :title="offsetIsIdentity ? 'Both versions are in their original positions.' : ''"
+                aria-label="Reset the alignment">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>
+            Reset
+        </button>
+        {# Written on each keyboard nudge and once at the end of a drag, never #}
+        {# during one: a live region updated per pointermove queues hundreds of #}
+        {# announcements a screen reader then reads through. #}
+        <span class="sr-only" aria-live="polite" aria-atomic="true" x-text="offsetAnnouncement"></span>
     </div>
 
     <!-- Side-by-side mode -->
@@ -119,7 +160,11 @@
 
     <!-- Slider mode -->
     <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none compare-overlay-box"
-         x-ref="sliderContainer" :style="overlayBoxStyle">
+         x-ref="sliderContainer" :style="overlayBoxStyle"
+         :class="{ 'compare-box-aligning': aligning && alignAvailable }"
+         @mousedown="startAlignDrag($event)"
+         @touchstart="startAlignDrag($event)"
+         @wheel="onAlignWheel($event)">
         <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
@@ -153,7 +198,11 @@
     <!-- Onion skin mode -->
     <div x-show="mode === 'onion'">
         <div class="relative border rounded overflow-hidden compare-overlay-box"
-             :style="overlayBoxStyle">
+             :style="overlayBoxStyle"
+             :class="{ 'compare-box-aligning': aligning && alignAvailable }"
+             @mousedown="startAlignDrag($event)"
+             @touchstart="startAlignDrag($event)"
+             @wheel="onAlignWheel($event)">
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
             <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over"
                  :style="{ ...trailScale, opacity: opacity / 100 }" data-compare-image @load="noteSizeFrom($event.target)">
@@ -171,8 +220,12 @@
     <button type="button" x-show="mode === 'toggle'"
             class="relative border rounded overflow-hidden cursor-pointer block w-full p-0 compare-overlay-box"
             :style="overlayBoxStyle"
+            :class="{ 'compare-box-aligning': aligning && alignAvailable }"
             :aria-label="'Showing ' + (showLeft ? leadLabel : trailLabel) + '. Activate to show the other.'"
-            @click="toggleSide()">
+            @mousedown="startAlignDrag($event)"
+            @touchstart="startAlignDrag($event)"
+            @wheel="onAlignWheel($event)"
+            @click="toggleSide($event)">
         <span class="absolute top-2 right-2 z-10">
             <span x-show="showLeft" :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
             <span x-show="!showLeft" :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>

@@ -3,6 +3,40 @@
 // still swallow them.
 const RADIOGROUP_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
 
+// Manual alignment bounds and steps, in box pixels and scale factors.
+//
+// The translation is clamped to half the box in each axis for the reason
+// `nudgeSlider` clamps to 1-99 rather than 0-100: a state that shows nothing at
+// all reads as a broken page rather than as a choice the reader made. The bound
+// is applied where the reader acts, not on the derived inverse a flip produces
+// -- the inverse of an extreme correction is legitimately extreme, and clamping
+// it there would silently change an alignment instead of preserving it.
+const ALIGN_TRANSLATE_LIMIT = 0.5;
+const ALIGN_ZOOM_MIN = 0.25;
+const ALIGN_ZOOM_MAX = 4;
+const ALIGN_STEP = 1;
+const ALIGN_STEP_LARGE = 10;
+const ALIGN_ZOOM_STEP = 0.01;
+const ALIGN_ZOOM_STEP_LARGE = 0.1;
+
+// The zero-width space that makes a repeated announcement a *changed* string.
+// `aria-live` fires on text change, so nudging away from a value and back would
+// otherwise land on the text already in the region and announce nothing. It is
+// alternated rather than accumulated, which is all the property requires: two
+// consecutive announcements always differ. Screen readers do not voice it.
+const ANNOUNCE_MARK = '\u200B';
+
+/** The CSS transform that undoes `t`: for T(p) = k*p + d, T-inverse(q) = (q - d) / k. */
+function invertOffset(t) {
+  return { dx: -t.dx / t.k, dy: -t.dy / t.k, k: 1 / t.k };
+}
+
+/** `+12` / `-4` / `0` -- the sign is information, and a bare `12` hides it. */
+function signed(n) {
+  const r = Math.round(n);
+  return r > 0 ? `+${r}` : `${r}`;
+}
+
 export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
   return {
     mode: 'side-by-side',
@@ -23,6 +57,27 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // hold the newer file and a screen reader was told the opposite of the truth.
     // Everything that varies is derived from this flag instead.
     swapped: false,
+    // Manual alignment. Package 1's three scale policies are whole-pair
+    // decisions computed from intrinsic dimensions; none of them can act on a
+    // pair that is the right size and simply not in register -- a scan placed
+    // differently on the glass, a re-photograph at 103%. This is the correction
+    // the reader drives, and it is armed rather than always-live because the
+    // arrow keys are already spent on the slider and the onion opacity.
+    aligning: false,
+    // `dx`/`dy` in **box pixels** -- the intrinsic units of the shared
+    // max(w1,w2) x max(h1,h2) box, so a window resize changes nothing -- and
+    // `k` a scale factor. Indexed like `_sizes` and `_urls`: this describes
+    // slot 1 relative to slot 0, never "the trail", because Flip exchanges
+    // which version trails and an offset keyed on the side would transpose on
+    // every press. The trail's transform is derived, so a flip mutates nothing.
+    _offset: { dx: 0, dy: 0, k: 1 },
+    // Written on each keyboard nudge and once at the end of a drag, never
+    // during one: a live region updated per `pointermove` produces a queue a
+    // screen reader spends minutes reading.
+    offsetAnnouncement: '',
+    _announceParity: false,
+    _alignDragMoved: false,
+    _endAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
     showLeft: true,
@@ -96,16 +151,25 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // index.css owns the layout here and puts the images back in the flow, so
       // an inline `height: 100%` from the other branches below would beat its
       // `height: auto` and break a case that currently works.
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '', objectFit: '', margin: '' };
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) {
+        return { width: '', height: '', objectFit: '', margin: '', transform: '', transformOrigin: '' };
+      }
 
       // Distort each image onto the whole box. Right for a re-encode that
       // changed aspect, wrong for a crop, which is why this mode's accessible
       // name says so rather than leaving the reader to notice.
-      if (this.scale === 'stretch') {
-        return { width: '100%', height: '100%', objectFit: 'fill', margin: '' };
-      }
-
       const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
+
+      if (this.scale === 'stretch') {
+        // The element *is* the box here, so that is what a box-pixel offset is
+        // a percentage of. Alignment is not refused under Stretch the way
+        // anchoring is: Anchor refuses because it provably cannot act -- there
+        // is no slack to take up -- while a translate acts under every policy.
+        return {
+          width: '100%', height: '100%', objectFit: 'fill', margin: '',
+          ...this.alignStyle(index, box.w, box.h),
+        };
+      }
       const img = index === 0 ? a : b;
       let { w, h } = img;
 
@@ -136,7 +200,266 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // CSS resolves in a left-to-right document by ignoring `right` and
         // `bottom` -- the top-left corner.
         margin: this.anchor === 'top-left' ? '0' : '',
+        ...this.alignStyle(index, w, h),
       };
+    },
+
+    /**
+     * The reader's own correction, as a transform on the trailing image.
+     *
+     * Sized against the **element**, not the box: a CSS percentage translate
+     * resolves against the element's own border box, and `w`/`h` here are that
+     * element's size in box pixels. So twelve box pixels is 3% of a 400-wide
+     * element and 1.5% of an 800-wide one, which is what makes the stored value
+     * mean the same thing under every scale policy.
+     *
+     * Both keys are returned on every path, empty where they do not apply --
+     * `overlayScale`'s fixed-key-set contract, which a spread into its return
+     * would otherwise be the easiest place in the file to break.
+     */
+    alignStyle(index, elementW, elementH) {
+      const none = { transform: '', transformOrigin: '' };
+      // The lead is the reference and is never moved; only the trail carries
+      // the correction, whichever slot Flip has put there.
+      if (index !== (this.swapped ? 0 : 1)) return none;
+      const { dx, dy, k } = this.trailOffset;
+      if (dx === 0 && dy === 0 && k === 1) return none;
+      const tx = elementW ? (dx / elementW) * 100 : 0;
+      const ty = elementH ? (dy / elementH) * 100 : 0;
+      return {
+        transform: `translate(${tx}%, ${ty}%) scale(${k})`,
+        // The anchor is the reader's assertion that the two line up at the
+        // corner. Scaling from the centre after that walks the corner off by
+        // half the scale change and undoes what they just said.
+        transformOrigin: this.anchor === 'top-left' ? '0 0' : '',
+      };
+    },
+
+    /**
+     * The correction as it applies to whichever image is currently trailing.
+     *
+     * `_offset` is slot 1 relative to slot 0. After a flip the trailing image
+     * is slot 0, and preserving the alignment means applying the inverse to it
+     * rather than resetting -- a flip is how you check the correction took, so
+     * throwing it away is exactly the wrong moment. Derived rather than stored,
+     * so a flip mutates nothing and flipping twice is bit-for-bit a no-op.
+     */
+    get trailOffset() {
+      return this.swapped ? invertOffset(this._offset) : this._offset;
+    },
+
+    _setTrailOffset(t) {
+      // `invertOffset` is an involution, so writing back through it is the same
+      // operation as reading through it.
+      this._offset = this.swapped ? invertOffset(t) : t;
+    },
+
+    /**
+     * Whether manual alignment can act.
+     *
+     * The same predicate the scale group and the anchor use, not a second copy
+     * of it. With no usable dimensions the `index.css` fallback puts the lead
+     * back in the flow and pins the trail to the top: the two are not in a
+     * shared coordinate space at all, and the formats that actually reach that
+     * branch -- HEIC, TIFF -- paint nothing to align.
+     */
+    get alignAvailable() {
+      return this.scaleAvailable;
+    },
+
+    get offsetIsIdentity() {
+      const { dx, dy, k } = this._offset;
+      return dx === 0 && dy === 0 && k === 1;
+    },
+
+    /** `+12, -4, 103%`, reporting the clamped values actually in effect. */
+    get offsetLabel() {
+      const { dx, dy, k } = this.trailOffset;
+      return `${signed(dx)}, ${signed(dy)}, ${Math.round(k * 100)}%`;
+    },
+
+    toggleAligning() {
+      if (!this.alignAvailable) return;
+      this.aligning = !this.aligning;
+    },
+
+    /**
+     * Move the trailing image by a whole number of box pixels.
+     *
+     * Does not announce: the drag calls this many times a second and the
+     * announcement is made once, at the end. Keyboard callers announce for
+     * themselves.
+     */
+    nudge(dx, dy) {
+      if (!this.alignAvailable) return;
+      const [a, b] = this._sizes;
+      const limitX = Math.max(a.w, b.w) * ALIGN_TRANSLATE_LIMIT;
+      const limitY = Math.max(a.h, b.h) * ALIGN_TRANSLATE_LIMIT;
+      const t = this.trailOffset;
+      this._setTrailOffset({
+        dx: Math.max(-limitX, Math.min(limitX, t.dx + dx)),
+        dy: Math.max(-limitY, Math.min(limitY, t.dy + dy)),
+        k: t.k,
+      });
+    },
+
+    zoomBy(delta) {
+      if (!this.alignAvailable) return;
+      const t = this.trailOffset;
+      this._setTrailOffset({
+        dx: t.dx,
+        dy: t.dy,
+        k: Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta)),
+      });
+    },
+
+    /**
+     * Clear the translation and the zoom together.
+     *
+     * Both halves, because a reset that left a 103% zoom behind would be the
+     * same invisible state in a smaller box. The arming survives: the reason
+     * you reset is almost always that you are about to try again.
+     */
+    resetAlignment() {
+      // A refused Reset stays silent. The control is drawn `aria-disabled` at
+      // identity rather than removed, so it is reachable and pressable, and
+      // announcing "offset 0, 0, 100%" at someone who changed nothing is the
+      // live-region equivalent of a control that looks like it acted.
+      if (this.offsetIsIdentity) return;
+      this._offset = { dx: 0, dy: 0, k: 1 };
+      this.announceOffset();
+    },
+
+    announceOffset() {
+      this._announceParity = !this._announceParity;
+      this.offsetAnnouncement = `Offset ${this.offsetLabel}${this._announceParity ? ANNOUNCE_MARK : ''}`;
+    },
+
+    /**
+     * The alignment's keys, from either of the two places they can arrive.
+     *
+     * `_keyHandler` deliberately ignores events targeted at anything focusable,
+     * on the grounds that a focusable element answers its own arrow keys -- and
+     * the Align toggle is a button, so arming it by keyboard leaves focus on the
+     * one element that would swallow every press. Giving that button its own
+     * handler satisfies the rule rather than carving an exception out of it, and
+     * both entry points land here. The interlock against a double step is
+     * `_keyHandler`'s existing `defaultPrevented` guard.
+     *
+     * Returns whether the key was the alignment's, so a caller that shares the
+     * event with other handlers can tell.
+     */
+    handleAlignKey(e) {
+      if (!this.aligning || !this.alignAvailable) return false;
+      const step = e.shiftKey ? ALIGN_STEP_LARGE : ALIGN_STEP;
+      // `e.shiftKey` rather than the shifted character, so the step means the
+      // same on a layout where `+` is not Shift and `=`.
+      const zoom = e.shiftKey ? ALIGN_ZOOM_STEP_LARGE : ALIGN_ZOOM_STEP;
+      switch (e.key) {
+        case 'ArrowLeft': this.nudge(-step, 0); break;
+        case 'ArrowRight': this.nudge(step, 0); break;
+        case 'ArrowUp': this.nudge(0, -step); break;
+        case 'ArrowDown': this.nudge(0, step); break;
+        case '+': case '=': this.zoomBy(zoom); break;
+        case '-': case '_': this.zoomBy(-zoom); break;
+        // `resetAlignment` announces for itself, so this leaves the switch
+        // rather than falling through to a second announcement.
+        case 'r': case 'R':
+          this.resetAlignment();
+          if (typeof e.preventDefault === 'function') e.preventDefault();
+          return true;
+        default: return false;
+      }
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      this.announceOffset();
+      return true;
+    },
+
+    /**
+     * Drag the trailing image while armed.
+     *
+     * The surface is the overlay box itself: in slider mode the trail `<img>`
+     * is `pointer-events-none` and the lead sits inside a `pointer-events-none`
+     * clip wrapper, with the slider handle above at `z-10` -- so the handle
+     * keeps its own drag and everything else in the box is alignment's.
+     *
+     * Rendered pixels are converted into box pixels through the box's measured
+     * width, which is what keeps a drag and an arrow press speaking the same
+     * units. Teardown follows `startSliderDrag`: a mouse released outside the
+     * window delivers no `mouseup` here, and the OS takes a touch gesture away
+     * without a `touchend`.
+     */
+    startAlignDrag(e) {
+      if (!this.aligning || !this.alignAvailable) return;
+      // The slider handle is inside the box and its own `mousedown` bubbles to
+      // here, so without this an armed drag on the handle would move the reveal
+      // position and the trailing image at the same time.
+      const from = e.target;
+      if (from && typeof from.closest === 'function' && from.closest('.compare-slider-handle')) return;
+      const box = e.currentTarget;
+      if (!box || typeof box.getBoundingClientRect !== 'function') return;
+      const rect = box.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      e.preventDefault();
+      // A fresh gesture: whatever the last one did to the toggle-mode click
+      // guard is spent.
+      this._alignDragMoved = false;
+
+      const [a, b] = this._sizes;
+      const perPixelX = Math.max(a.w, b.w) / rect.width;
+      const perPixelY = Math.max(a.h, b.h) / rect.height;
+      const point = (ev) => ({
+        x: ev.clientX ?? ev.touches?.[0]?.clientX,
+        y: ev.clientY ?? ev.touches?.[0]?.clientY,
+      });
+      let last = point(e);
+      if (last.x === undefined || last.y === undefined) return;
+
+      const moveHandler = (moveE) => {
+        const next = point(moveE);
+        if (next.x === undefined || next.y === undefined) return;
+        moveE.preventDefault();
+        this._alignDragMoved = true;
+        this.nudge((next.x - last.x) * perPixelX, (next.y - last.y) * perPixelY);
+        last = next;
+      };
+
+      const upHandler = () => {
+        this._endAlignDrag = null;
+        document.removeEventListener('mousemove', moveHandler);
+        document.removeEventListener('mouseup', upHandler);
+        document.removeEventListener('touchmove', moveHandler);
+        document.removeEventListener('touchend', upHandler);
+        document.removeEventListener('touchcancel', upHandler);
+        window.removeEventListener('blur', upHandler);
+        document.body.style.userSelect = '';
+        // One announcement for the whole gesture. Announcing per `pointermove`
+        // would queue hundreds of them.
+        if (this._alignDragMoved) this.announceOffset();
+      };
+      this._endAlignDrag = upHandler;
+
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', moveHandler);
+      document.addEventListener('mouseup', upHandler);
+      document.addEventListener('touchmove', moveHandler, { passive: false });
+      document.addEventListener('touchend', upHandler);
+      document.addEventListener('touchcancel', upHandler);
+      window.addEventListener('blur', upHandler);
+    },
+
+    /**
+     * Wheel over the box zooms while armed.
+     *
+     * The box is a `div`, so the listener is non-passive by default and the
+     * `preventDefault` actually takes -- without it the page scrolls under a
+     * gesture the reader meant for the image.
+     */
+    onAlignWheel(e) {
+      if (!this.aligning || !this.alignAvailable) return;
+      e.preventDefault();
+      this.zoomBy(e.deltaY < 0 ? ALIGN_ZOOM_STEP : -ALIGN_ZOOM_STEP);
+      this.announceOffset();
     },
 
     /**
@@ -371,6 +694,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           && target.closest('button, a[href], input, select, textarea, [role="radiogroup"], [tabindex]')) {
           return;
         }
+        // While armed, the alignment owns the arrow keys outright. That is the
+        // whole point of arming: they are otherwise spent on the slider
+        // position and the onion opacity, and no modifier is free to
+        // disambiguate them.
+        if (this.aligning && this.handleAlignKey(e)) return;
         const step = e.shiftKey ? 10 : 2;
         if (this.mode === 'slider') {
           if (e.key === 'ArrowLeft') { this.nudgeSlider(-step); e.preventDefault(); }
@@ -396,6 +724,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     destroy() {
       if (this._keyHandler) this.$el.removeEventListener('keydown', this._keyHandler);
       if (this._endDrag) this._endDrag();
+      if (this._endAlignDrag) this._endAlignDrag();
     },
 
     nudgeSlider(delta) {
@@ -406,7 +735,15 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       this.swapped = !this.swapped;
     },
 
-    toggleSide() {
+    toggleSide(e) {
+      // Toggle mode's box is a real button, so an alignment drag across it ends
+      // in a click that would also flip which version is showing. `detail > 0`
+      // is what separates a pointer click from Enter or Space, which report 0
+      // and cannot have been preceded by a drag.
+      if (this._alignDragMoved && e && e.detail > 0) {
+        this._alignDragMoved = false;
+        return;
+      }
       this.showLeft = !this.showLeft;
     },
 
