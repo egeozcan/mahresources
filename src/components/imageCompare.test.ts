@@ -1150,6 +1150,52 @@ describe('manual alignment', () => {
     expect(c._offset.dx).toBeCloseTo(450, 6);
   });
 
+  test('a bound moved while nothing is displaced arms no debt, so a later flip keeps its inverse', () => {
+    // The same rule a size report already obeys -- arm only what the operation
+    // actually broke -- applied to the control operations the load window
+    // defers. A zero translation sits inside every bound `translateRange` can
+    // produce, so moving the bound underneath it breaks nothing; arming there
+    // records that the display's position is the operation's doing, and the
+    // next nudge then reads a legitimately-outside axis as owed and lets the
+    // resolution snap it. Anchor at identity, correct to +600, flip, and one
+    // ArrowDown rewrote the canonical correction to +300.
+    const c = component({ w: 400, h: 300 }, { w: 800, h: 600 });
+    c.noteSizeFrom(img(1, 400, 300));
+    c.toggleAnchor();
+    c.toggleAligning();
+    c.nudge(600, 0);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-600, 6);
+    c.nudge(0, 1);
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-600, 6);
+    expect(c._offset.dx).toBeCloseTo(600, 6);
+    expect(c._offset.dy).toBeCloseTo(-1, 6);
+  });
+
+  test('a size report that lands before any correction arms no debt either', () => {
+    // The same predicate, at the other place that arms it. The first report
+    // corrects the box while the reader has not moved anything yet, so it
+    // broke nothing -- but recording it as a bound-mover's doing outlived the
+    // whole window: zoom, correct to the bound, flip, and the inverse the flip
+    // derives sits legitimately outside, where the next press must preserve it
+    // and instead found the display's position already claimed by a report
+    // that had displaced nothing. Canonical 450 came back as 300.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    // Slot 0 turns out to be taller than stored: the box moves, the offset
+    // does not, because there is no offset.
+    c.noteSizeFrom(img(1, 800, 900));
+    c.zoomBy(-0.75);
+    c.nudge(450, 0);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    c.nudge(0, -1);
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    expect(c._offset.dx).toBeCloseTo(450, 6);
+  });
+
   test('a pending remainder keeps Reset actionable while the readout sits at identity', () => {
     // `offsetIsIdentity` describes only what is shown; the half-measured
     // window can leave an unshown remainder underneath it. Drawing Reset

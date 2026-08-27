@@ -416,6 +416,26 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
+     * Whether the correction displaces the version at all.
+     *
+     * What decides whether an operation that moves the bound has anything to
+     * repair -- and so whether it may arm a debt. Zero displacement is inside
+     * every range `translateRange` can produce: `min` is `-(rest + rendered -
+     * keep)`, which is never above zero, and `max` is `box - keep - rest`,
+     * which is never below it, at any anchor, scale or zoom (the rendered
+     * length is at most four times the box, and `keep` is a quarter of it).
+     *
+     * Distinct from `offsetIsIdentity`, which is also false at a bare zoom --
+     * and a bare zoom displaces nothing either. Arming there costs more than a
+     * wasted debt: it records that whatever the display shows is a
+     * bound-mover's doing, so a nudge taken later reads a legitimately-outside
+     * axis -- a flip's inverse -- as owed and lets the resolution snap it.
+     */
+    get offsetIsPlaced() {
+      return this._offset.dx !== 0 || this._offset.dy !== 0;
+    },
+
+    /**
      * Whether Reset has nothing to do.
      *
      * The readout shows only what is displayed, so `offsetIsIdentity` alone
@@ -592,6 +612,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * rebound is paid.
      */
     _reboundOrDefer() {
+      // A bound moved underneath a version that is not displaced broke
+      // nothing, so there is nothing to repair now and nothing to owe later --
+      // the same refusal `noteSizeFrom` makes, and for the same reason.
+      if (!this.offsetIsPlaced) return;
       if (this._measured[0] === this._measured[1]) {
         this._reboundOffset();
       } else {
@@ -1298,10 +1322,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this._sizeReboundDue = true;
         this._sizeReboundDueSwapped = this.swapped;
       }
-      // Armed by any report that moved the bound, debt or no debt: what it
-      // records is that the display's position is this report's doing, so a
-      // nudge taken after it must not read an outside position as a flip's.
-      if (next && moved && !both) this._sizeOwed = true;
+      // Armed by any report that moved the bound while there was a correction
+      // for it to move, debt or no debt: what it records is that the display's
+      // position is this report's doing, so a nudge taken after it must not
+      // read an outside position as a flip's. A report landing before the
+      // reader has corrected anything moved nothing and claims nothing.
+      if (next && moved && !both && this.offsetIsPlaced) this._sizeOwed = true;
       // Paid when both have reported. One image showing on both sides fills
       // both slots in a single report, so the completing call is also the size
       // change and must rebound directly rather than only through the debt.
