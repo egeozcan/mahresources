@@ -151,6 +151,24 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
+     * Keep a refused pointer press from moving focus.
+     *
+     * `aria-disabled` suppresses neither focus nor pointer events, so clicking a
+     * refused radio focuses a `tabindex="-1"`, `aria-checked="false"` button
+     * while the checked one still holds `tabindex="0"`. That is the roving
+     * tabindex invariant broken: the group's focus is supposed to be on the
+     * checked radio, and Shift+Tab back into it would skip the group entirely.
+     * Preventing the default on `mousedown` is what stops the focus without
+     * touching the click, which still reaches `setScale` and is still refused.
+     *
+     * Discoverability is unaffected -- Tab still enters the group at the checked
+     * radio, where the group's own `aria-disabled` is announced.
+     */
+    refuseFocusIfUnavailable(e) {
+      if (!this.scaleAvailable) e.preventDefault();
+    },
+
+    /**
      * Whether an anchor choice would do anything.
      *
      * Stretch leaves no slack -- both versions already fill the frame exactly --
@@ -194,16 +212,33 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
-     * The `_sizes` / `_urls` slot a side is currently showing.
+     * The `_sizes` / `_urls` slot whose bytes an image is currently displaying.
      *
-     * Those arrays are indexed by the server's left/right, while `leadUrl` is
-     * `_urls[swapped ? 1 : 0]`. Recording a measured size against the *side* it
-     * came from rather than the slot it belongs to transposes the whole box on
-     * every flip, which looks like a rendering bug and is a bookkeeping one.
+     * Resolved from the image's own `currentSrc`, never from `swapped`. Those
+     * arrays are indexed by the server's left/right while `leadUrl` is
+     * `_urls[swapped ? 1 : 0]`, so asking `swapped` means asking a flag that can
+     * move independently of the pixels being measured: a `load` already queued
+     * for the previous `src` can run after a flip, and the element still reports
+     * the old image's `naturalWidth` while the new request is pending. That
+     * records a real measurement against the wrong version, and it stays wrong
+     * if the replacement never loads.
+     *
+     * `currentSrc` is defined as the URL of the image data *currently in use*,
+     * so it and `naturalWidth` describe the same bytes by construction. Both
+     * sides are resolved against one base because `currentSrc` is absolute and
+     * `_urls` are not.
      */
-    slotFor(side) {
-      const swapped = this.swapped ? 1 : 0;
-      return side === 'lead' ? swapped : 1 - swapped;
+    slotForImage(img) {
+      const base = (typeof document !== 'undefined' && document.baseURI) || 'http://compare.invalid/';
+      const resolve = (u) => {
+        try {
+          return new URL(u, base).href;
+        } catch {
+          return String(u);
+        }
+      };
+      const showing = resolve(img.currentSrc || '');
+      return this._urls.findIndex((u) => resolve(u) === showing);
     },
 
     /**
@@ -220,7 +255,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      *
      * So the loaded image wins whenever it has something to say. The stored
      * values remain the first-paint placeholder, which is what keeps the box
-     * from resizing under the reader between markup and load.
+     * from resizing under the reader between markup and load. Which version a
+     * measurement belongs to is decided by `slotForImage`, from the image
+     * itself.
      */
     noteSizeFrom(img) {
       // Duck-typed rather than `instanceof HTMLImageElement`: that identity is
@@ -234,7 +271,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // a HEIC no browser renders, a fetch that failed. Recording that would
       // erase a usable stored value in exchange for nothing.
       if (!w || !h) return;
-      const index = this.slotFor(img.dataset?.compareSide === 'lead' ? 'lead' : 'trail');
+      const index = this.slotForImage(img);
+      // An image showing neither version -- nothing to attribute the size to.
+      if (index === -1) return;
       const known = this._sizes[index];
       if (known && known.w === w && known.h === h) return;
       // A new array rather than an index write: the getters derived from this
@@ -287,7 +326,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // dispatched in a later task and the walk binds the listener inside this
       // one. Sweeping what is already complete makes that independent of an
       // ordering this component does not control and cannot see change.
-      this.$el.querySelectorAll('img[data-compare-side]').forEach((img) => this.noteSizeFrom(img));
+      this.$el.querySelectorAll('img[data-compare-image]').forEach((img) => this.noteSizeFrom(img));
     },
 
     destroy() {

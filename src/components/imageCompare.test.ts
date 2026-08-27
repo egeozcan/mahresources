@@ -24,9 +24,19 @@ function component(leftSize: unknown, rightSize: unknown) {
   });
 }
 
-/** The two properties `noteSizeFrom` reads off a real `<img>`, and nothing else. */
-function img(side: 'lead' | 'trail', naturalWidth: number, naturalHeight: number) {
-  return { naturalWidth, naturalHeight, dataset: { compareSide: side } };
+/**
+ * The three properties `noteSizeFrom` reads off a real `<img>`, and nothing else.
+ *
+ * `version` is 1 or 2 and becomes `currentSrc` -- the URL of the image data the
+ * element is *currently displaying*, which is what decides the slot. Deliberately
+ * not the side the element sits on: that is the bug these tests exist to catch.
+ */
+function img(version: 1 | 2, naturalWidth: number, naturalHeight: number) {
+  return {
+    naturalWidth,
+    naturalHeight,
+    currentSrc: `/v1/resource/version/file?versionId=${version}`,
+  };
 }
 
 describe('filling sizes from the loaded images', () => {
@@ -37,7 +47,7 @@ describe('filling sizes from the loaded images', () => {
     const c = component({ w: 800, h: 600 }, { w: 600, h: 800 });
     expect(c.overlayRatio).toBe('800 / 800');
 
-    c.noteSizeFrom(img('lead', 600, 800));
+    c.noteSizeFrom(img(1, 600, 800));
     expect(c.overlayRatio).toBe('600 / 800');
     expect(c.leadScale).toEqual(c.trailScale);
   });
@@ -45,8 +55,8 @@ describe('filling sizes from the loaded images', () => {
   test('an image with no dimensions of its own leaves the stored ones alone', () => {
     // A dimensionless SVG, a HEIC no browser renders, a fetch that failed.
     const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
-    c.noteSizeFrom(img('lead', 0, 0));
-    c.noteSizeFrom(img('trail', 400, 0));
+    c.noteSizeFrom(img(1, 0, 0));
+    c.noteSizeFrom(img(2, 400, 0));
     expect(c.overlayRatio).toBe('800 / 600');
   });
 
@@ -57,51 +67,77 @@ describe('filling sizes from the loaded images', () => {
     expect(c.leadScale).toEqual({ width: '', height: '', objectFit: '', margin: '' });
     expect(c.overlayBoxStyle).toEqual({ aspectRatio: '' });
 
-    c.noteSizeFrom(img('lead', 400, 300));
+    c.noteSizeFrom(img(1, 400, 300));
     // Still nothing: one known size cannot describe a shared box, and a half-
     // filled pair must keep rendering the way an empty one does.
     expect(c.overlayRatio).toBeNull();
 
-    c.noteSizeFrom(img('trail', 800, 600));
+    c.noteSizeFrom(img(2, 800, 600));
     expect(c.overlayRatio).toBe('800 / 600');
     expect(c.overlayBoxStyle).toEqual({ aspectRatio: '800 / 600' });
     expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
     expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
   });
 
-  test('a size is recorded against the version, not the side it was showing on', () => {
+  test('a size is recorded against the version whose bytes were measured', () => {
     // Eight <img> elements report into two slots, and a flip re-fires `load` on
-    // all of them. Recording against the side would transpose the whole box.
+    // all of them.
     const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
     c.swapped = true;
-    c.noteSizeFrom(img('lead', 400, 300));
-    c.noteSizeFrom(img('trail', 800, 600));
+    c.noteSizeFrom(img(1, 400, 300));
+    c.noteSizeFrom(img(2, 800, 600));
 
-    // Swapped: the lead slot showed version 2, the trail slot version 1.
-    expect(c._sizes).toEqual([{ w: 800, h: 600 }, { w: 400, h: 300 }]);
-    // And the sizes survive the flip back, still attached to their own version.
-    c.swapped = false;
+    expect(c._sizes).toEqual([{ w: 400, h: 300 }, { w: 800, h: 600 }]);
+    // Swapped, the lead side shows version 2.
     expect(c.leadScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
     expect(c.trailScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
+    // And they survive the flip back, still attached to their own version.
+    c.swapped = false;
+    expect(c.leadScale).toEqual({ width: '50%', height: '50%', objectFit: '', margin: '' });
+    expect(c.trailScale).toEqual({ width: '100%', height: '100%', objectFit: '', margin: '' });
+  });
+
+  test('a load that lands after a flip is still credited to its own version', () => {
+    // The interleave, injected rather than raced for. A `load` queued for the
+    // previous `src` runs after `swapped` has already changed, and the element
+    // still reports the old image's dimensions because the new request has not
+    // completed. Asking `swapped` which slot the lead side means would file
+    // version 1's measurement under version 2 -- and leave it there, since the
+    // replacement load may never arrive.
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    c.noteSizeFrom(img(2, 800, 600));
+
+    c.swapped = true;
+    c.noteSizeFrom(img(1, 400, 300));
+
+    expect(c._sizes).toEqual([{ w: 400, h: 300 }, { w: 800, h: 600 }]);
+    expect(c.overlayRatio).toBe('800 / 600');
+  });
+
+  test('an image showing neither version is ignored', () => {
+    const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    c.noteSizeFrom({ naturalWidth: 999, naturalHeight: 999, currentSrc: '/v1/resource/preview?id=7' });
+    c.noteSizeFrom({ naturalWidth: 999, naturalHeight: 999, currentSrc: '' });
+    expect(c.overlayRatio).toBe('800 / 600');
   });
 
   test('repeated reports of a size already known change nothing', () => {
     const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
-    c.noteSizeFrom(img('lead', 400, 300));
-    c.noteSizeFrom(img('trail', 800, 600));
+    c.noteSizeFrom(img(1, 400, 300));
+    c.noteSizeFrom(img(2, 800, 600));
     const settled = c._sizes;
 
     // All four modes hold both images, so every side reports up to four times.
     for (let i = 0; i < 4; i++) {
-      c.noteSizeFrom(img('lead', 400, 300));
-      c.noteSizeFrom(img('trail', 800, 600));
+      c.noteSizeFrom(img(1, 400, 300));
+      c.noteSizeFrom(img(2, 800, 600));
     }
     expect(c._sizes).toBe(settled);
   });
 
   test('anything that is not an image is ignored rather than thrown at', () => {
     const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
-    for (const value of [null, undefined, {}, { naturalWidth: '400', naturalHeight: '300' }]) {
+    for (const value of [null, undefined, {}, { naturalWidth: '400', naturalHeight: '300' }, { naturalWidth: 400, naturalHeight: 300 }]) {
       expect(() => c.noteSizeFrom(value)).not.toThrow();
     }
     expect(c.overlayRatio).toBe('800 / 600');
@@ -198,8 +234,8 @@ describe('scale policy', () => {
     expect(c.scale).toBe('relative');
 
     // And it starts working the moment the browser supplies the dimensions.
-    c.noteSizeFrom(img('lead', 400, 300));
-    c.noteSizeFrom(img('trail', 600, 800));
+    c.noteSizeFrom(img(1, 400, 300));
+    c.noteSizeFrom(img(2, 600, 800));
     expect(c.scaleAvailable).toBe(true);
     arrowRight(c);
     expect(c.scale).toBe('fit');
@@ -250,5 +286,23 @@ describe('anchoring', () => {
     expect(c.anchorAvailable).toBe(false);
     c.toggleAnchor();
     expect(c.anchor).toBe('center');
+  });
+});
+
+describe('a refused scale press does not move focus', () => {
+  test('mousedown is defaulted-prevented only while the control cannot act', () => {
+    // aria-disabled suppresses neither focus nor pointer events, so without this
+    // a click lands focus on a tabindex="-1", aria-checked="false" radio while
+    // the checked one still holds tabindex="0" -- the roving tabindex invariant
+    // broken, and Shift+Tab back into the group skipping it entirely.
+    const unavailable = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    let prevented = false;
+    unavailable.refuseFocusIfUnavailable({ preventDefault: () => { prevented = true; } });
+    expect(prevented).toBe(true);
+
+    const available = component({ w: 400, h: 300 }, { w: 600, h: 800 });
+    let touched = false;
+    available.refuseFocusIfUnavailable({ preventDefault: () => { touched = true; } });
+    expect(touched).toBe(false);
   });
 });

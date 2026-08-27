@@ -58,16 +58,16 @@
         <div class="compare-segmented-control" role="radiogroup" aria-label="Image scale"
              x-show="mode !== 'side-by-side'"
              :aria-disabled="!scaleAvailable"
-             :title="scaleAvailable ? '' : 'Neither version reports its dimensions, so there is nothing to scale against.'"
+             :title="scaleAvailable ? '' : 'One of the two versions reports no dimensions, so there is nothing to scale against.'"
              @keydown="onScaleKeydown($event)">
-            <button @click="setScale('relative')" role="radio" :aria-checked="scale === 'relative'"
+            <button @click="setScale('relative')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'relative'"
                     aria-label="Relative size" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'relative' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg>
                 <span class="compare-seg-label">Relative</span>
             </button>
-            <button @click="setScale('fit')" role="radio" :aria-checked="scale === 'fit'"
+            <button @click="setScale('fit')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'fit'"
                     aria-label="Fit to frame" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'fit' ? 0 : -1"
                     class="compare-seg-btn">
@@ -78,7 +78,7 @@
             {# not thinking in CSS, and the visible label is hidden below 768px, #}
             {# so on a phone the aria-label is the entire accessible name and is #}
             {# where the warning has to survive. #}
-            <button @click="setScale('stretch')" role="radio" :aria-checked="scale === 'stretch'"
+            <button @click="setScale('stretch')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'stretch'"
                     aria-label="Stretch to match, distorts aspect ratio" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'stretch' ? 0 : -1"
                     class="compare-seg-btn">
@@ -95,7 +95,7 @@
                 x-show="mode !== 'side-by-side'"
                 :aria-pressed="anchor === 'top-left'"
                 :aria-disabled="!anchorAvailable"
-                :title="anchorAvailable ? '' : 'Stretch leaves no space to anchor either version in.'"
+                :title="anchorAvailable ? '' : (scaleAvailable ? 'Stretch leaves no space to anchor either version in.' : 'One of the two versions reports no dimensions, so there is nothing to anchor.')"
                 aria-label="Anchor both versions to the top left corner">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="3" y="5" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
             Anchor
@@ -109,20 +109,20 @@
         {# contradict its own caption. #}
         <div class="border rounded overflow-hidden">
             <div :class="swapped ? 'compare-panel-header--new' : 'compare-panel-header--old'" x-text="leadLabel"></div>
-            <img :src="leadUrl" :alt="leadAlt" class="max-w-full h-auto" data-compare-side="lead" @load="noteSizeFrom($event.target)">
+            <img :src="leadUrl" :alt="leadAlt" class="max-w-full h-auto" data-compare-image @load="noteSizeFrom($event.target)">
         </div>
         <div class="border rounded overflow-hidden">
             <div :class="swapped ? 'compare-panel-header--old' : 'compare-panel-header--new'" x-text="trailLabel"></div>
-            <img :src="trailUrl" :alt="trailAlt" class="max-w-full h-auto" data-compare-side="trail" @load="noteSizeFrom($event.target)">
+            <img :src="trailUrl" :alt="trailAlt" class="max-w-full h-auto" data-compare-image @load="noteSizeFrom($event.target)">
         </div>
     </div>
 
     <!-- Slider mode -->
     <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none compare-overlay-box"
          x-ref="sliderContainer" :style="overlayBoxStyle">
-        <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale" data-compare-side="trail" @load="noteSizeFrom($event.target)">
+        <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
-            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
         </div>
         {# A real slider: focusable, announced, and driven by its own arrow keys. #}
         {# The handle used to be an unlabelled div reachable only through a #}
@@ -154,9 +154,9 @@
     <div x-show="mode === 'onion'">
         <div class="relative border rounded overflow-hidden compare-overlay-box"
              :style="overlayBoxStyle">
-            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
             <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over"
-                 :style="{ ...trailScale, opacity: opacity / 100 }" data-compare-side="trail" @load="noteSizeFrom($event.target)">
+                 :style="{ ...trailScale, opacity: opacity / 100 }" data-compare-image @load="noteSizeFrom($event.target)">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
@@ -177,7 +177,7 @@
             <span x-show="showLeft" :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
             <span x-show="!showLeft" :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
         </span>
-        <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
-        <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale" data-compare-side="trail" @load="noteSizeFrom($event.target)">
+        <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
+        <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
     </button>
 </div>
