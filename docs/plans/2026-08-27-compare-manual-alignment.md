@@ -113,6 +113,38 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 22:
+
+- **An operation owns exactly the axes it pushed out of bounds.** Rounds 20
+  and 21 armed `_sizeOwed` by asking what an operation *touched*, which is
+  broader than what it broke; the gap produced three defects of one shape, a
+  claim recorded over an outside the operation did not create, which then
+  suppresses the anchor of one a flip legitimately derives and lets resolution
+  snap an axis the reader had placed. Reported by review: the flag was one
+  boolean for both axes -- stored 800x600 both, actual 800x900 and 800x600,
+  arm, zoom to 25%, nudge to 450, Flip (displayed -1800), slot 0 reports
+  800x900, ArrowUp once, slot 1 confirms; the height-only report claimed x,
+  though every width in the pair is 800 and the offset converts through the
+  width ratio alone, so canonical 450 resolved to 300 one way and 450 the
+  other. Found while fixing it: the same over-claim through the control
+  operations -- nudge to 450, zoom to 25% (450 is at the bound before and at
+  the smaller bound after, inside both times), Flip, ArrowUp: 450 back as 300.
+  The rule is now the invariant rather than an approximation of it: an axis is
+  owed exactly when an operation took it from inside its bound to outside.
+  `_noteSizeOwed(before)` compares a per-axis snapshot taken before the
+  operation against the ranges standing after it, and both arming sites go
+  through it; `offsetWithinBound` is derived from the new per-axis getter, so
+  the range arithmetic exists once. `offsetIsPlaced` stays in
+  `_reboundOrDefer`'s early return -- redundant for the owed flag, not for the
+  rebound debt an undisplaced correction would otherwise arm. Known corner,
+  not chased: the flag does not clear when the reader walks an axis back
+  inside during the window, so a flip-derived outside on that axis later in
+  the same window still gets no anchor; no repro produces a wrong canonical
+  offset from it, and it is the same family as round 20's accepted corner.
+- Standards: the round-19 "one axis never resolves another" test used only
+  confirming reports, so it never exercised a report that moves one axis's
+  bound while the other is legitimately outside. Covered now.
+
 Round 21:
 
 - **A bound moved under nothing displaced breaks nothing, and owes nothing.**
