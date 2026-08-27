@@ -58,20 +58,20 @@
         {# contradict its own caption. #}
         <div class="border rounded overflow-hidden">
             <div :class="swapped ? 'compare-panel-header--new' : 'compare-panel-header--old'" x-text="leadLabel"></div>
-            <img :src="leadUrl" :alt="leadAlt" class="max-w-full h-auto">
+            <img :src="leadUrl" :alt="leadAlt" class="max-w-full h-auto" data-compare-side="lead" @load="noteSizeFrom($event.target)">
         </div>
         <div class="border rounded overflow-hidden">
             <div :class="swapped ? 'compare-panel-header--old' : 'compare-panel-header--new'" x-text="trailLabel"></div>
-            <img :src="trailUrl" :alt="trailAlt" class="max-w-full h-auto">
+            <img :src="trailUrl" :alt="trailAlt" class="max-w-full h-auto" data-compare-side="trail" @load="noteSizeFrom($event.target)">
         </div>
     </div>
 
     <!-- Slider mode -->
     <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none compare-overlay-box"
-         x-ref="sliderContainer" :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''">
-        <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale">
+         x-ref="sliderContainer" :style="overlayBoxStyle">
+        <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img pointer-events-none" :style="trailScale" data-compare-side="trail" @load="noteSizeFrom($event.target)">
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
-            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
         </div>
         {# A real slider: focusable, announced, and driven by its own arrow keys. #}
         {# The handle used to be an unlabelled div reachable only through a #}
@@ -102,10 +102,10 @@
     <!-- Onion skin mode -->
     <div x-show="mode === 'onion'">
         <div class="relative border rounded overflow-hidden compare-overlay-box"
-             :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''">
-            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
+             :style="overlayBoxStyle">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
             <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over"
-                 :style="trailScale + 'opacity: ' + (opacity / 100)">
+                 :style="{ ...trailScale, opacity: opacity / 100 }" data-compare-side="trail" @load="noteSizeFrom($event.target)">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
@@ -119,14 +119,14 @@
     {# only bound Space, and Enter is the key most people reach for. #}
     <button type="button" x-show="mode === 'toggle'"
             class="relative border rounded overflow-hidden cursor-pointer block w-full p-0 compare-overlay-box"
-            :style="overlayRatio ? 'aspect-ratio: ' + overlayRatio : ''"
+            :style="overlayBoxStyle"
             :aria-label="'Showing ' + (showLeft ? leadLabel : trailLabel) + '. Activate to show the other.'"
             @click="toggleSide()">
         <span class="absolute top-2 right-2 z-10">
             <span x-show="showLeft" :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
             <span x-show="!showLeft" :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
         </span>
-        <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale">
-        <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale">
+        <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-side="lead" @load="noteSizeFrom($event.target)">
+        <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale" data-compare-side="trail" @load="noteSizeFrom($event.target)">
     </button>
 </div>

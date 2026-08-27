@@ -638,6 +638,14 @@ test.describe.serial('compare page teardown fixes', () => {
   // fallback that gives it a height by putting the images back in the flow put
   // *both* of them there — so onion skin stopped overlaying and became two
   // images stacked with the lower one faded.
+  //
+  // The database still holds no dimensions for this pair; since the registration
+  // package the browser supplies them from the loaded images, so the pair is now
+  // registered at its true relative scale and the two images are centred in one
+  // box rather than both pinned to its top-left. That is the point of the
+  // package, so this asserts what "overlaid rather than stacked" actually means
+  // — the rectangles intersect, and share a centre — instead of the identical
+  // origin that only held while nothing was registered at all.
   test('onion skin overlays its two images when neither has stored dimensions', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${dimensionlessId}&v1=1&v2=2`);
     await page.waitForLoadState('load');
@@ -657,11 +665,18 @@ test.describe.serial('compare page teardown fixes', () => {
     expect(under).not.toBeNull();
     expect(over).not.toBeNull();
 
-    // Stacked, the second image starts below the first. Overlaid, they share a
-    // top edge and the same origin.
-    expect(Math.abs(over!.y - under!.y)).toBeLessThan(2);
-    expect(Math.abs(over!.x - under!.x)).toBeLessThan(2);
+    // Stacked, the second image begins at or below the bottom of the first and
+    // the two rectangles never meet. Overlaid, they intersect on both axes.
+    const overlapX = Math.min(under!.x + under!.width, over!.x + over!.width) - Math.max(under!.x, over!.x);
+    const overlapY = Math.min(under!.y + under!.height, over!.y + over!.height) - Math.max(under!.y, over!.y);
+    expect(overlapX).toBeGreaterThan(0);
+    expect(overlapY).toBeGreaterThan(0);
     expect(over!.y).toBeLessThan(under!.y + under!.height);
+
+    // And registered, not merely overlapping: two differently-shaped images
+    // centred in one box share that box's centre.
+    expect(over!.x + over!.width / 2).toBeCloseTo(under!.x + under!.width / 2, 0);
+    expect(over!.y + over!.height / 2).toBeCloseTo(under!.y + under!.height / 2, 0);
   });
 
   // The visible mode label is hidden below 768px, which would leave the button

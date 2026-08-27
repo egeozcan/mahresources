@@ -58,13 +58,94 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return `${width} / ${height}`;
     },
 
-    /** Per-image size inside the shared overlay box, as a percentage pair. */
+    /**
+     * Per-image size inside the shared overlay box.
+     *
+     * An **object**, not a CSS string, and that is load-bearing rather than a
+     * matter of taste. Alpine's `x-bind:style` replaces the entire `style`
+     * attribute when given a string, while `x-show` works by writing
+     * `display: none` onto that same attribute. Every element here carries both
+     * -- the toggle-mode images are `x-show`n and styled, and so are the three
+     * overlay boxes. So the moment this value became reactive, a re-render blew
+     * away `x-show`'s work and every mode's box painted at once. The object form
+     * sets only the properties it names and leaves `display` alone.
+     *
+     * The key set is therefore fixed: a key dropped between two renders keeps
+     * whatever it was last set to, so a value that no longer applies is emitted
+     * as an empty string rather than omitted.
+     */
     overlayScale(index) {
       const [a, b] = this._sizes;
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return '';
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '' };
       const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
       const img = index === 0 ? a : b;
-      return `width:${(img.w / box.w) * 100}%;height:${(img.h / box.h) * 100}%;`;
+      return {
+        width: `${(img.w / box.w) * 100}%`,
+        height: `${(img.h / box.h) * 100}%`,
+      };
+    },
+
+    /**
+     * The overlay box's own style, for the same reason as `overlayScale`.
+     *
+     * `index.css` keys its no-dimensions fallback on `[style*="aspect-ratio"]`,
+     * which an object binding still satisfies: setting the property serialises
+     * into the attribute exactly as a string binding did.
+     */
+    get overlayBoxStyle() {
+      return { aspectRatio: this.overlayRatio || '' };
+    },
+
+    /**
+     * The `_sizes` / `_urls` slot a side is currently showing.
+     *
+     * Those arrays are indexed by the server's left/right, while `leadUrl` is
+     * `_urls[swapped ? 1 : 0]`. Recording a measured size against the *side* it
+     * came from rather than the slot it belongs to transposes the whole box on
+     * every flip, which looks like a rendering bug and is a bookkeeping one.
+     */
+    slotFor(side) {
+      const swapped = this.swapped ? 1 : 0;
+      return side === 'lead' ? swapped : 1 - swapped;
+    },
+
+    /**
+     * Fill `_sizes` from what the browser actually painted.
+     *
+     * The stored `Width`/`Height` are whatever Go's `image.DecodeConfig` could
+     * read at upload, and they are wrong in two directions. They are *absent*
+     * for a format no Go decoder exists for -- AVIF is an accepted content type
+     * with none anywhere in the tree -- which drops the pair into the CSS branch
+     * that stacks both images at one origin with no registration at all. And
+     * they *disagree* for anything carrying EXIF orientation, which nothing in
+     * this tree reads: a rotated JPEG stores its dimensions transposed against
+     * what every browser paints and reports.
+     *
+     * So the loaded image wins whenever it has something to say. The stored
+     * values remain the first-paint placeholder, which is what keeps the box
+     * from resizing under the reader between markup and load.
+     */
+    noteSizeFrom(img) {
+      // Duck-typed rather than `instanceof HTMLImageElement`: that identity is
+      // per-realm, so an image adopted from another document is not an instance
+      // of *this* realm's constructor and would be silently ignored. What is
+      // actually required of the argument is the two numbers read below.
+      if (!img || typeof img.naturalWidth !== 'number' || typeof img.naturalHeight !== 'number') return;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      // Zero means the image has not decoded, or cannot: a dimensionless SVG,
+      // a HEIC no browser renders, a fetch that failed. Recording that would
+      // erase a usable stored value in exchange for nothing.
+      if (!w || !h) return;
+      const index = this.slotFor(img.dataset?.compareSide === 'lead' ? 'lead' : 'trail');
+      const known = this._sizes[index];
+      if (known && known.w === w && known.h === h) return;
+      // A new array rather than an index write: the getters derived from this
+      // have to re-run, and eight images report into two slots, so this runs
+      // far more often than it changes anything.
+      const next = this._sizes.slice();
+      next[index] = { w, h };
+      this._sizes = next;
     },
 
     get leadScale() {
@@ -102,6 +183,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         }
       };
       this.$el.addEventListener('keydown', this._keyHandler);
+
+      // An image that finished before its `@load` was bound never fires one.
+      // Alpine's own directive order puts `x-bind` ahead of `x-on`, so `:src`
+      // is assigned first -- today that is still safe, because a `load` is
+      // dispatched in a later task and the walk binds the listener inside this
+      // one. Sweeping what is already complete makes that independent of an
+      // ordering this component does not control and cannot see change.
+      this.$el.querySelectorAll('img[data-compare-side]').forEach((img) => this.noteSizeFrom(img));
     },
 
     destroy() {
