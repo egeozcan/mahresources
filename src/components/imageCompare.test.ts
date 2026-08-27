@@ -850,9 +850,10 @@ describe('manual alignment', () => {
 
   test('a keyboard scale change during the load window defers like the mouse one', () => {
     // The keyboard path assigns `this.scale` straight through the generic
-    // radiogroup handler and used to rebound against the transient geometry,
-    // so a scale changed by arrow key between the two reports landed on a
-    // different offset than the same change by click.
+    // radiogroup handler, so it needs the same deferral the click path has:
+    // rebounding against the transient geometry lands a scale changed by
+    // arrow key between the two reports on a different offset than the same
+    // change by click.
     const run = (first: 1 | 2, second: 1 | 2) => {
       const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
       c.toggleAligning();
@@ -1242,6 +1243,35 @@ describe('manual alignment', () => {
     };
     expect(run(true)).toBeCloseTo(run(false), 6);
     expect(run(true)).toBeCloseTo(850, 6);
+  });
+
+  test('a flip between the two reports cannot change the canonical correction', () => {
+    // The reports are the browser's, the flips are the reader's, and a decode
+    // order must not decide what a flip means. The bound question a report
+    // asks is therefore asked of the canonical correction and the canonical
+    // trail -- the frame a flip does not touch -- rather than of whatever is
+    // on screen when the bytes happen to arrive. Asked of the display, the
+    // width conversion here lands while flipped in one order, where a 600-wide
+    // version in a 900-tall box has room for it, and while unflipped in the
+    // other, where the 400-tall trail does not: the same files and the same
+    // presses finish 125 box pixels apart.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.nudge(0, -450);
+      // Actual slot 0 is 600x900 and slot 1 is 1200x400: the box grows from
+      // 800x600 to 1200x900 and the correction converts to -675.
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 900] : [1200, 400]);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.swapSides();
+      c.noteSizeFrom(img(second, ...size(second)));
+      c.swapSides();
+      return c._offset.dy;
+    };
+    // A 400-tall trail centred in a 900-tall box: rest 250, a quarter of 400
+    // kept, so the boundary is -(250 + 400 - 100).
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-550, 6);
   });
 
   test('a report that moves one axis leaves the other axis its legitimate outside', () => {
