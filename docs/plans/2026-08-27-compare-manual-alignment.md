@@ -113,6 +113,19 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 8:
+
+- **A debt armed at identity never rewrites an alignment made later.** The
+  arming condition required a size change but not a non-identity offset --
+  and `within` is trivially true at identity, so the first size change armed
+  the debt even though there was no offset for it to have moved. A later
+  confirming report then paid it against alignment the reader had made
+  *after* the change: stored 800x600, slot 0 reports 800x1200 (identity, no
+  conversion, debt armed), arm Align, flip, zoom to 25%, nudge to +450,
+  slot 1 confirms -- the stale debt clamps +450 to +300, a rebound
+  correcting what no operation of its own broke. The arming now also
+  requires the offset to be non-identity.
+
 Round 7:
 
 - **A deferred rebound is paid in the orientation that incurred it.** The

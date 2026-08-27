@@ -803,6 +803,28 @@ describe('manual alignment', () => {
     expect(flipped.trailOffset.dx).toBeCloseTo(-3400, 6);
   });
 
+  test('a debt armed at identity never rewrites an alignment made later', () => {
+    // The debt exists for a size change *moving an offset that was inside*.
+    // With the offset at identity there is nothing to move, so a size change
+    // must not arm it -- otherwise a later confirming report fires the stale
+    // debt and rewrites alignment the reader made after the change, which is
+    // a rebound correcting what no operation of its own broke.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    // Slot 0 reports 800x1200 while the offset is identity: nothing moved.
+    c.noteSizeFrom(img(1, 800, 1200));
+    c.toggleAligning();
+    c.swapSides();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    // The flipped view's bound for the 200px-rendered 800x1200 slot is +450.
+    expect(c.trailOffset.dx).toBeCloseTo(450, 6);
+    // Slot 1 confirms its stored size. The stale debt must not clamp +450 to
+    // +300 -- the confirming report changed no geometry and nothing of its
+    // own is owed.
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(450, 6);
+  });
+
   test('a tap is left alone, so an armed reader can still switch versions', () => {
     // preventDefault on touchstart suppresses the synthesized click, so while
     // armed a tap on toggle mode's button would do nothing at all.

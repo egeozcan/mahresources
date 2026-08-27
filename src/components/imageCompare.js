@@ -952,8 +952,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // The debt is armed by an actual size change -- never by a confirm. A
       // report that merely confirms changes nothing, so a flip made after it
       // must not have its legitimately-outside inverse clamped by the next
-      // confirm: that would rewrite the reader's original correction.
-      if (next && !this._sizeReboundDue && within && !both) {
+      // confirm: that would rewrite the reader's original correction. And it
+      // is only armed when there is an offset to have been moved: at identity
+      // a size change moves nothing, so arming would let a later confirm
+      // rewrite alignment the reader made *after* the change.
+      if (next && !this._sizeReboundDue && within && !both && !this.offsetIsIdentity) {
         this._sizeReboundDue = true;
         this._sizeReboundDueSwapped = this.swapped;
       }
