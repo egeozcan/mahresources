@@ -31,23 +31,40 @@ there is no registration at all.
 | 7 | **Relative stays the default.** Identical-dimension pairs render pixel-identically under Relative and Fit, so the default only decides the divergent minority, and no measurement says resolution-change beats crop there. One-line reversal later. |
 | 8 | Controls that cannot act are not drawn as if they can: scale + anchor hidden in side-by-side (`x-show`), anchor `aria-disabled` in Stretch (no slack to anchor), both `aria-disabled` when the pair has no usable dimensions. |
 | 9 | **`max x max` stays the box for all three modes.** It is flip-invariant and agrees with the board's "the larger's frame" whenever one image dominates in both axes, which is every real pair. `overlayRatio` is untouched. |
-| 10 | The `resource_version_context.go` decoder gap is fixed in this branch (see item 0). |
+| 10 | ~~The `resource_version_context.go` decoder gap is fixed in this branch.~~ **Withdrawn: there is no gap.** See item 0. |
 | 11 | Both 1.1 fixtures: AVIF for absent dimensions, EXIF-rotated JPEG for disagreeing ones. Plus vitest over the fill guard. |
 | 12 | `docs-site/docs/features/versioning.md` gains a scale-mode table. Screenshot **not** retaken -- the skill regenerates all thirty and the existing shot is still accurate about the four modes it shows. |
 | 13 | Branch `feat/compare-registration-scale`, no push, no PR. Teardown plan bullet struck; artifact republished to its existing URL at the end. |
 
 ## Work
 
-### 0. Go: the version path's missing decoders
+### 0. Go: the version path's decoders -- **premise was wrong, no bug**
 
-`application_context/resource_version_context.go` imports only `image/gif`,
-`image/jpeg`, `image/png`. The resource upload path imports webp, bmp and tiff
-as well. Every **WebP version therefore stores `0x0`** -- `DecodeConfig` has no
-decoder and `getDimensionsFromContent` returns zeros -- while the browser
-renders WebP perfectly. Add the three blank imports.
+The plan claimed that because `resource_version_context.go` blank-imports only
+`image/gif`, `image/jpeg` and `image/png` while the upload path also imports
+webp, bmp and tiff, every WebP version stored `0x0`.
 
-Not retroactive: rows already written keep their zeros, which is one of the
-reasons 1.1 exists rather than being replaced by this.
+That is false. `image.DecodeConfig` consults a **process-global registry**, and
+`resource_media_context.go` is in the same package `application_context` with
+those three blank imports. They are registered for every caller in the binary.
+`TestGetDimensionsFromContentDecodesEveryStoredRasterFormat` was written as the
+red test and **passed with no import change** -- png, gif, jpeg, bmp, tiff and
+webp all decode to 7x11 today.
+
+What shipped instead is that test, kept as a regression pin, because the
+property is invisible at the call site: the version path's decoder set is
+supplied by files it does not name, so deleting a blank import in
+`resource_media_context.go` would silently zero dimensions here, and nothing
+recomputes them for a row once written.
+
+The AVIF case is the gap that is real, and it is now asserted as `(0, 0)`.
+`image/avif` is in `RasterImageContentTypes` and no Go decoder for it exists
+anywhere in the tree. If one is ever registered the test fails, which is the
+signal that the e2e fixture depending on those zeros needs replacing rather than
+quietly passing on.
+
+**Consequence for the rest of the plan:** the AVIF fixture for 1.1 is unaffected
+and is now pinned from the Go side. The WebP-stores-zeros claim is struck.
 
 ### 1.1 Fill `_sizes` from the loaded images
 
