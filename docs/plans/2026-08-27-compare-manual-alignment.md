@@ -113,6 +113,31 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 23:
+
+- **The repair is per axis too.** Round 22 made the claim per axis and left the
+  repair whole: the four control operations asked "was the offset inside
+  before?" of both axes at once and skipped the rebound entirely when either
+  answered no, so an axis the operation genuinely broke went unrepaired
+  whenever the other happened to be legitimately outside. Two 800x800
+  versions, arm, zoom to 25%, correct to +450,-250, Flip (displayed
+  -1800,+1000 at 400%: x legitimately outside, y inside), press Anchor --
+  top-left makes the range -2400..0 on both axes, so x becomes legal and y is
+  thrown 1000 pixels down a frame 800 tall with nothing of the image on
+  screen, which is exactly what `ALIGN_KEEP_VISIBLE` exists to prevent. The
+  repair now reads the same claim the anchors read, which is one statement
+  said once: the displayed rebound clamps an axis exactly when that axis's
+  outside-ness is owed. The four callers no longer gate the call --
+  `_reboundOrDefer` returns when nothing was broken -- and `noteSizeFrom`'s
+  arm and pay key on the claim rather than on the whole-offset snapshot.
+  `moved`, the per-report movement test, goes with them: an axis crossing from
+  inside to outside is a stricter statement of the same thing, and a confirm
+  still cannot make one. `offsetIsPlaced` stays as `_reboundOrDefer`'s fast
+  path (the wheel calls it once per notch and the per-axis test is a full pass
+  of the range arithmetic), and its comment now says so rather than claiming
+  to be a correctness gate.
+- Standards: no findings.
+
 Round 22:
 
 - **An operation owns exactly the axes it pushed out of bounds.** Rounds 20
