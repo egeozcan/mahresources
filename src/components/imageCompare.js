@@ -182,9 +182,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      *
      * So a claim measures what the reports did to the position the reader
      * chose, cumulatively, rather than what the last one did to whatever the
-     * one before it left. Any act of the reader's clears it -- their new
-     * position is the new thing to be measured against -- and so does the pay,
-     * which is the repair those claims asked for.
+     * one before it left. It is taken at the first report of a provisional
+     * pair and held until the pay, which is the repair those claims asked
+     * for; the reader restates it only once the pair is whole
+     * (`_restateReportBaseline`), and Reset retires it with everything else.
      */
     _reportBefore: null,
     // The half-measured nudge records here the translation the reader asked
@@ -403,9 +404,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     _setTrailOffset(t) {
-      // Every write of the translation restates the position a later report's
-      // claim is measured against -- see `_reportBefore`.
-      this._reportBefore = null;
+      this._restateReportBaseline();
       // `invertOffset` is an involution, so writing back through it is the same
       // operation as reading through it.
       this._offset = this.swapped ? invertOffset(t) : t;
@@ -661,6 +660,22 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * frame: the reader is looking at that view and is owed the guarantee
      * there.
      */
+    /**
+     * The reader has stated a position, so a later report's claim is measured
+     * against this one -- but only while the pair is theirs to state it in.
+     *
+     * With a version still missing, the geometry they are acting in is
+     * whichever one decoded rather than the pair's, so a baseline re-dated
+     * there carries the decode order into every claim that follows: the same
+     * two files and the same presses leave one order clamping a correction and
+     * the other keeping it. Their intent inside that window rides on the
+     * request and its anchors instead, denominated in canonical pixels and
+     * resolved against the final bound. See `_reportBefore`.
+     */
+    _restateReportBaseline() {
+      if (this._measured[0] && this._measured[1]) this._reportBefore = null;
+    },
+
     _canonically(fn) {
       const held = this.swapped;
       this.swapped = false;
@@ -672,9 +687,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     _reboundOrDefer(before) {
-      // A bound-mover restates it too: the same numbers sit differently
-      // against a bound the reader has just changed -- see `_reportBefore`.
-      this._reportBefore = null;
+      this._restateReportBaseline();
       // A bound moved underneath a version that is not displaced broke
       // nothing: zero is inside every range `translateRange` can produce, so
       // the per-axis test below would refuse this too. It is here as the fast

@@ -1371,6 +1371,33 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(20, 6);
   });
 
+  test('a control used while a version is missing does not re-date the baseline', () => {
+    // The baseline a report's claim is measured against belongs to the reader,
+    // and they can only restate it in geometry that is the pair's. Re-dated by
+    // a control pressed while one version is still missing, it is re-taken
+    // against whichever version decoded: the completing report then finds the
+    // same correction inside a bound in one order and outside it in the other,
+    // and clamps a flip-derived outside in exactly one of them.
+    const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 900] : [1200, 400]);
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.swapSides();
+      c.nudge(0, 430);
+      c.zoomBy(-0.1);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.setScale('stretch');
+      c.noteSizeFrom(img(second, ...size(second)));
+      return c._offset.dy;
+    };
+    // The box widens from 800 to 1200 and the correction converts with it. It
+    // was already outside canonically before either report -- the reader is
+    // flipped, and 430 is well inside the bound they are looking at -- so no
+    // report has anything to repair.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-716.666667, 5);
+  });
+
   test('the canonical correction never depends on which version decoded first', () => {
     // Every load-window defect this component has had is one shape: a reader's
     // script interleaved with the two decodes, converging in one order and not
@@ -1407,6 +1434,8 @@ describe('manual alignment', () => {
         step('nudge', (c) => c.nudge(-3, 7))],
       [step('flip', (c) => c.swapSides()), step('zoom 25%', (c) => c.zoomBy(-0.75)),
         step('nudge', (c) => c.nudge(-10, 0)), step('anchor', (c) => c.toggleAnchor())],
+      [step('flip', (c) => c.swapSides()), step('nudge', (c) => c.nudge(0, 430)),
+        step('zoom 90%', (c) => c.zoomBy(-0.1)), step('stretch', (c) => c.setScale('stretch'))],
     ];
     // Pairs whose corrected widths differ from the stored ones and from each
     // other, so the transient box differs per decode order -- the condition
@@ -1463,17 +1492,12 @@ describe('manual alignment', () => {
     // pairs 0-4 -- the shapes every reported repro has taken -- converge. The
     // longer scripts below them do not everywhere, and each such interleaving
     // is listed rather than left out of the corpus, so this list is the whole
-    // of what is accepted: a twenty-first divergence fails this test, and so
-    // does closing one of these twenty. Two families, both with the completing
-    // report arriving after the whole script -- script 6 accumulates one
-    // request across two flips, and script 7 takes its last nudge in the
-    // window the completing report closes. The plan records why they stand.
+    // of what is accepted: a sixth divergence fails this test, and so does
+    // closing one of these five. All five are script 7, which takes its last
+    // nudge in the very window the completing report closes, with that report
+    // arriving after the whole script. The plan records why they stand.
     const ACCEPTED_INTERLEAVINGS = [
-      'p0/s6/0,5', 'p0/s6/1,5', 'p0/s6/2,5', 'p0/s7/4,5',
-      'p1/s6/0,5', 'p1/s6/1,5', 'p1/s6/2,5', 'p1/s7/4,5',
-      'p3/s6/0,5', 'p3/s6/1,5', 'p3/s6/2,5', 'p3/s7/4,5',
-      'p4/s6/0,5', 'p4/s6/1,5', 'p4/s6/2,5', 'p4/s7/4,5',
-      'p6/s6/0,5', 'p6/s6/1,5', 'p6/s6/2,5', 'p7/s7/4,5',
+      'p0/s7/4,5', 'p1/s7/4,5', 'p3/s7/4,5', 'p4/s7/4,5', 'p7/s7/4,5',
     ];
     expect({ diverging: diverged, detail: detail.slice(0, 3) })
       .toEqual({ diverging: ACCEPTED_INTERLEAVINGS, detail: detail.slice(0, 3) });
