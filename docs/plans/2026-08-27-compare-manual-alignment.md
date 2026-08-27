@@ -113,6 +113,29 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 34:
+
+- **One ulp of decode-order residue decided what a later operation repaired.**
+  The bound test decides provenance rather than appearance, so its answer has
+  consequences out of all proportion to its precision. The two orders reach a
+  boundary by different arithmetic and can land on it an ulp apart -- 725
+  against 725.0000000000001 -- and an exact comparison calls one of those
+  inside and the other already outside. The next zoom then repaired one order
+  and not the other. Stored 800x600 each, actual 600x900 and 1200x400: arm,
+  Flip, 450 up, zoom to 90%, one report, ArrowLeft, the other report, zoom
+  again -- canonical dy 787.5 one order and 815.625 the other, the second
+  leaving 157.5 pixels of a 720-pixel image visible where the bound promises
+  180.
+- `withinRange` gives the test slack scaled to the magnitudes involved, since a
+  box can be thousands of pixels across and the ranges scale with it. At 1e-6
+  that is thousandths of a pixel at any size this component can produce: far
+  below anything visible, and far above the rounding it absorbs. Both askers
+  use it -- the getter and the repair's own claim -- so the two cannot disagree.
+- The reviewer's script is in the corpus (13 now). The enumerator's own
+  comparison stays tolerant, which is right: the residue is harmless in itself.
+  What it must never do is change an answer, and that is what a script whose
+  last steps run after both reports actually tests.
+
 Round 33:
 
 - **A completing report tested the display instead of the outstanding
