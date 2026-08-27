@@ -113,6 +113,38 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 32:
+
+- **The window's anchor was sampled against a transient bound.** It recorded
+  the post-nudge position whenever that position sat outside the bound standing
+  at the time -- and the bound standing at the time belongs to whichever version
+  decoded, so the anchor's very existence was decided by decode order. Stored
+  800x600 each, both actually 400x400: arm, Flip, zoom to 25%, out to the
+  flipped bound at +450, one report, ArrowRight once (refused, outward from a
+  position the bound already holds), the other report. Canonical dx -900 with
+  slot 0 first and -600 with slot 1 first, though without that press both orders
+  answer -900 and the press itself asked for nothing the bound would give.
+- **The anchor is the reader's own starting position now**, recorded once with
+  the request and never re-sampled: where the axis stood when the window's
+  first nudge landed, in the request's canonical pixels. The resolution walks
+  from there by everything the window accumulated, against the final bound
+  widened to include it -- the whole interaction replayed as one nudge from
+  where the reader started. It is order-independent by construction: the script
+  before the window is the same in either order, and denominating in
+  `_requestUnitsW` cancels exactly the box conversion a report in between
+  applies. That is also the answer to round 20's objection to reading the
+  position at resolution, which really is contaminated -- by then the completing
+  report may have created the outside-ness itself.
+- **That closed the last five accepted interleavings.** The enumerator reports
+  no divergence anywhere in its corpus.
+- Two narrower fixes were tried and rejected by measurement. Recording an
+  anchor for every unowed axis, and treating a refused increment as no move of
+  that axis, each fix the reported repro; the first undoes the
+  canonical-resolution rule that four tests pin, and the second replaces one
+  transient-bound question with another -- "did the display move" is as
+  order-dependent as "is it outside" -- opening ten divergences while closing
+  one.
+
 Round 31:
 
 - **A nudge on one axis resolved the other out of a correction it already
@@ -248,35 +280,28 @@ pay into resolve-the-ask-then-repair-canonically clamps flip-derived inverses
 the design exists to preserve; keying the request's frame on its own creation
 rather than on the first arming reintroduces round 24's defect.
 
-### ACCEPTED: five interleavings the enumerator separates
+### CLOSED: the interleavings the enumerator once separated
 
 The enumerator runs 1,352 interleavings -- 10 scripts against 8 pairs, each
 replayed with the two reports inserted at every pair of positions, under both
-decode orders. Every shape a reported repro has taken from round 17 on
-converges with no exceptions. Five do not, and they are asserted as an exact
-inventory rather than dropped from the corpus: a new divergence fails the test,
-and so does fixing a listed one.
+decode orders -- and every one of them converges. The list is kept in the shape
+of an inventory rather than collapsed to a count, so a divergence that appears
+fails by name, with its pair, script and the two insertion positions.
 
-All five are script 7 (`nudge 450,450, Flip, Anchor, zoom 25%, nudge -3,7`),
-which takes its last nudge in the very window the completing report closes, with
-that report arriving after the whole script. Magnitudes are tens of box pixels
-(450 against 500; 300,211 against 0,0). It is not root-caused. The other family
--- script 6, a request accumulated across two flips -- was round 30's defect and
-is closed.
+It held twenty entries once, in two families, and both are closed: script 6 -- a
+request accumulated across two flips -- by round 30, and script 7 -- a nudge
+taken in the very window the completing report closes -- by round 32. Both
+turned out to be one thing said twice: a question about a bound, asked while the
+bound belonged to whichever version had decoded.
 
-**Settled with the user after round 28: the interleavings this list names are
-accepted as documented corners, not defects to fix.** What is accepted is bounded by the inventory
-itself rather than by a description of it, which is the whole reason the test
-asserts an exact list: the twenty are named, a twenty-first fails the build the
-moment it appears, and closing one of the twenty fails it too, so the acceptance
-cannot quietly widen and cannot be quietly abandoned -- and a fix that reaches
-further than its own repro announces itself the same way, which is how round 30
-learned it had closed fifteen of them. Each is a reader who flipped and zoomed
-several times inside a load window and whose second version then decoded after
-the whole script; the position they left is preserved within tens of box pixels,
-and both orders leave the pair watchable, because the displayed bound governed
-every step of the way. Reviewers are told this in the round prompt so the loop is
-not spent re-finding what has been decided.
+Settled with the user after round 28, the twenty then standing were accepted as
+documented corners rather than work. What made that safe to accept is that the
+acceptance was the inventory itself and not a description of it: a twenty-first
+would have failed the build the moment it appeared, and closing one failed it
+too, so the acceptance could neither widen nor lapse quietly -- and a fix
+reaching further than its own repro announced itself the same way, which is how
+round 30 learned it had closed fifteen at once.
+
 Round 27: clean. No behaviour findings and no standards findings; rules 1-41
 re-verified against their repros. The first of the two consecutive clean rounds
 the merge gate asks for.
