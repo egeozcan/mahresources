@@ -113,6 +113,28 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 24:
+
+- **A second arming joins the debt, it does not move it.** The deferred
+  rebound is paid in the orientation that incurred it, so a flip between the
+  size change and the confirming load cannot change the canonical result --
+  but two of the three arming sites wrote the orientation unconditionally, so
+  a second arming moved the first one's clamp to whatever orientation was
+  standing when it arrived. Two stored 800x600 versions, arm, zoom to 25%,
+  correct to +450, slot 0 reports 1600x1200 (the box doubles, the correction
+  converts to 900, the bound it now sits outside is 850, debt armed
+  unflipped), Flip, ArrowDown once, slot 1 confirms: the nudge rewrote the
+  orientation, the pay clamped the flipped inverse, and canonical dx came back
+  as 600 where the same press without the flip leaves 850. A press on y moved
+  the x correction by 250, and only when a flip intervened. `_deferRebound`
+  now says the rule once -- the orientation is written only when nothing is
+  armed yet -- and all three sites go through it, with `noteSizeFrom`'s own
+  `!_sizeReboundDue` term folding into it rather than existing twice.
+- Standards: a test comment named "the round 4 rule", which means nothing to a
+  reader without the review history; it states the invariant now. And the gap
+  that let the defect through -- the paid-in-its-own-orientation test flips
+  but sends no input in the gap -- is covered, in both interleavings.
+
 Round 23:
 
 - **The repair is per axis too.** Round 22 made the claim per axis and left the
