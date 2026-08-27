@@ -113,6 +113,29 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 29:
+
+- **A report that brought an axis back inside handed it to the next one.** A
+  claim is what the reports did to the position the reader chose; it was
+  measured instead against whatever the previous report left. So a report that
+  widened a bound past a legitimately-outside axis made that axis inside for a
+  moment, and the completing report then read the very same position as
+  crossing outward and clamped a correction nothing had broken. Which report
+  widens and which crosses is the decode order. Stored 800x600 each, both
+  actually 400x400: arm, Flip, zoom to 25%, ten box pixels left, Anchor, then
+  both reports -- canonical dx 20 with slot 0 first and 0 with slot 1 first,
+  the second having thrown away the alignment the reader made and could see
+  was well inside the bound they were looking at. The snapshot is now taken at
+  the reader's last act and held until they act again (`_reportBefore`), so the
+  reports are measured cumulatively against the reader's position rather than
+  against each other. Every write of the translation, every bound-mover, the
+  pay and Reset restate it.
+- The reviewer's script is in the enumerator's corpus, which is what the
+  finding was reported through: a corpus of scripts and pairs, not of
+  operation sequences, could not express `Flip, zoom, nudge, Anchor` with both
+  reports arriving after all of it. Nine scripts now, 1,232 interleavings, and
+  the accepted inventory is unchanged.
+
 Round 28:
 
 - **A control operation during the load window claimed in the wrong frame.**
