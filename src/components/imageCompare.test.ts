@@ -2066,6 +2066,30 @@ describe('manual alignment', () => {
       });
       expect(prevented).toBe(false);
       expect(c.trailOffset.dx).toBeCloseTo(40, 6);
+
+      // And it stays the browser's. A finger lifting does not hand the
+      // gesture back: the move listener is gone, so the rest of the pinch
+      // neither moves the image nor is cancelled. Resuming would also move it
+      // by the distance the remaining finger covered *during* the pinch --
+      // `last` is only written by a move this handler processed -- on top of
+      // whatever the browser's magnification did to what a client coordinate
+      // means.
+      expect(dom.listening('touchmove')).toBe(0);
+      let laterPrevented = false;
+      dom.fire('touchmove', {
+        touches: [{ clientX: 170, clientY: 100 }],
+        preventDefault() { laterPrevented = true; },
+      });
+      expect(laterPrevented).toBe(false);
+      expect(c.trailOffset.dx).toBeCloseTo(40, 6);
+
+      // The enders stay, as they do for a mid-gesture disarm: the release
+      // still finishes the gesture and announces the one move it made.
+      dom.fire('touchend', {});
+      expect(c.offsetAnnouncement).toContain('+40');
+      for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
+        expect(dom.listening(type)).toBe(0);
+      }
     } finally {
       dom.restore();
     }

@@ -1026,7 +1026,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // which `touch-action: manipulation` keeps ours to cancel by
         // preventing. Stop handling it and stop preventing -- and stop moving
         // the image -- so the pinch is the browser's.
-        if (moveE.touches && moveE.touches.length > 1) return;
+        //
+        // For the rest of the gesture, not just for this event: a finger
+        // lifting must not hand the drag back. `last` is only written by a
+        // move this handler processed, so resuming would move the image by
+        // however far the remaining finger travelled during the pinch -- and
+        // the browser's magnification has changed what a client coordinate
+        // measures in the meantime. The move listeners go, exactly as a
+        // mid-gesture disarm removes them, and the enders stay so the release
+        // still finishes and announces the gesture.
+        if (moveE.touches && moveE.touches.length > 1) {
+          removeMoveListeners();
+          return;
+        }
         const next = point(moveE);
         if (next.x === undefined || next.y === undefined) return;
         anyMove = true;
