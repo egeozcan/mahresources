@@ -151,31 +151,48 @@ Round 28:
   outside offsets, completing-report repairs and half-measured controls
   separately and never composed them. The enumerator is that composition.
 
-### OPEN after round 28
+### The rule that closed round 28's open divergence
 
-One divergence family is **not fixed**, and the enumerator asserts the exact
-set of divergences rather than "none" so that a new one fails the test and so
-does fixing these two.
+**Everything the load window defers is resolved canonically.** Settled with the
+user after round 28, replacing a pay that chose between two frames per
+resolution -- the reader's request in the view it was made in, a bound-mover's
+repair canonically. That choice inherited an order-dependence, because whether
+a report crosses a bound depends on the transient geometry it lands in: slot
+1's report shrinks the canonical trail, and arriving first it crosses while
+arriving last it does not, since by then the box has shrunk with it. Repro that
+forced it: stored 800x600 both, actual 400x400 both; arm, zoom to 25%, nudge
+-1000, Anchor, load one version, Flip, ArrowUp, load the other -- canonical dy
+was 0 one order and -6.25 the other.
 
-Whether a report crosses a bound can itself depend on decode order: slot 1's
-report shrinks the canonical trail, and arriving first it crosses while
-arriving last it does not, because by then the box has shrunk with it. The pay
-resolves the reader's request in the view it was made in unless a bound-mover
-has claimed an axis, in which case it repairs canonically -- so the choice
-between those two frames inherits that order-dependence. Repro: stored 800x600
-both, actual 400x400 both; arm, zoom to 25%, nudge -1000, Anchor, load one
-version, Flip, ArrowUp, load the other -- canonical dy is 0 one order and -6.25
-the other. Both are legal positions; each is what its own frame's bound allows.
+One frame makes the canonical result a function of the reader's script and the
+final geometry alone. `_requestSwapped` and the per-pay choice are gone. The
+price, stated where it is charged: a correction that landed on the flipped
+bound inside the window moves when the second version arrives -- the same
+exactness a zoom taken while flipped already costs. Four tests pinned the old
+frame; each still pins its own rule, asserted on the claim itself, alongside
+the canonical number.
 
-Three designs were tried and each broke a settled rule. Paying always
-canonically moves a correction the reader watched land in the flipped view
-(seven tests, including "a no-op scale activation arms no deferred debt" and
-"a debt armed at identity never rewrites an alignment made later"). Splitting
-the pay into resolve-the-ask-then-repair-canonically clamps flip-derived
-inverses the design exists to preserve. Keying the request's frame on its own
-creation rather than on the first arming reintroduces round 24's defect. What
-is needed is a decision about which frame wins when both a request and a claim
-are outstanding, not another patch.
+The two alternatives were tried and each broke a settled rule. Splitting the
+pay into resolve-the-ask-then-repair-canonically clamps flip-derived inverses
+the design exists to preserve; keying the request's frame on its own creation
+rather than on the first arming reintroduces round 24's defect.
+
+### OPEN: twenty interleavings the enumerator still separates
+
+The enumerator runs 1,344 interleavings -- 8 scripts against 8 pairs, each
+replayed with the two reports inserted at every pair of positions, under both
+decode orders. Scripts 0-4 against pairs 0-4, every shape a reported repro has
+taken from round 17 on, converge with no exceptions. Twenty of the longer ones
+do not, and they are asserted as an exact inventory rather than dropped from the
+corpus: a new divergence fails the test, and so does fixing a listed one.
+
+Two families, both with the completing report arriving after the whole script.
+Script 6 (`zoom +1, Flip, nudge -10000 x, Flip, nudge +10000 y`) accumulates one
+request across two flips, so its increments are added in different frames and
+combine through the zoom inversion. Script 7 (`nudge 450,450, Flip, Anchor, zoom
+25%, nudge -3,7`) takes its last nudge in the very window the completing report
+closes. Magnitudes are tens of box pixels (450 against 500; 300,211 against
+0,0). Neither has been root-caused.
 
 Round 27: clean. No behaviour findings and no standards findings; rules 1-41
 re-verified against their repros. The first of the two consecutive clean rounds
