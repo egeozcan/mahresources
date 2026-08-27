@@ -211,9 +211,9 @@ test.describe.serial('compare page manual alignment', () => {
 
     const reset = page.getByRole('button', { name: 'Reset the alignment' });
     // Absent rather than "false": Alpine drops a falsy aria-disabled, and ARIA
-    // reads an absent one as "not disabled". Same assertion the package 1 spec
-    // makes of the anchor toggle.
-    await expect(reset).not.toHaveAttribute('aria-disabled', 'true');
+    // reads an absent one as "not disabled". `not.toHaveAttribute('true')`
+    // would also pass on "false", which is a value Alpine never leaves behind.
+    await expect(reset).not.toHaveAttribute('aria-disabled');
     await reset.click();
 
     await expect(readout(page)).toHaveText(/0, 0, 100%/);

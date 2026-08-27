@@ -1334,24 +1334,64 @@ describe('manual alignment', () => {
 
   test('disarming mid-drag ends it: nothing moves while disarmed', () => {
     // Space on the focused Align button toggles it while the mouse is still
-    // held, and the move handler must not keep nudging -- decision 1 is
-    // "nothing nudges while disarmed", and it is checked at gesture start
-    // only. The next move ends the drag instead of moving the image.
+    // held, and the gesture's movement has to end with the arming -- decision
+    // 1 is "nothing nudges while disarmed".
     const dom = fakeDom();
     try {
-      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
-      c.toggleAligning();
-      c.startAlignDrag(press(100, 100));
+      // Disarm, then move: the move must not nudge.
+      const stayed = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      stayed.toggleAligning();
+      stayed.startAlignDrag(press(100, 100));
       dom.fire('mousemove', { clientX: 120, clientY: 100 });
-      expect(c.trailOffset.dx).toBeCloseTo(20, 6);
-
-      c.toggleAligning();
+      expect(stayed.trailOffset.dx).toBeCloseTo(20, 6);
+      stayed.toggleAligning();
       dom.fire('mousemove', { clientX: 200, clientY: 100 });
-      expect(c.trailOffset.dx).toBeCloseTo(20, 6);
-      // The gesture is over: its listeners are gone.
+      expect(stayed.trailOffset.dx).toBeCloseTo(20, 6);
+
+      // Disarm and re-arm *without moving in between*, then move: the
+      // disarm removed the move listeners, so a re-arm cannot resurrect the
+      // gesture.
+      const rearmed = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      rearmed.toggleAligning();
+      rearmed.startAlignDrag(press(100, 100));
+      dom.fire('mousemove', { clientX: 120, clientY: 100 });
+      expect(rearmed.trailOffset.dx).toBeCloseTo(20, 6);
+      rearmed.toggleAligning();
+      rearmed.toggleAligning();
+      dom.fire('mousemove', { clientX: 300, clientY: 100 });
+      expect(rearmed.trailOffset.dx).toBeCloseTo(20, 6);
+
+      // The release ends whatever is left of each gesture; then every
+      // listener it installed is gone.
+      dom.fire('mouseup', {});
+      dom.fire('mouseup', {});
       for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
         expect(dom.listening(type)).toBe(0);
       }
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a load converting the offset mid-press is not a drag', () => {
+    // The suppression is for the click ending a *drag*. A press with no
+    // movement is a tap, even if a load converts the offset while the button
+    // is held -- the click is the reader's own, not the end of a gesture.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      c.nudge(40, 0);
+      c.startAlignDrag(press(100, 100));
+      // A load lands while the button is held: the offset is converted but no
+      // drag movement happened.
+      c.noteSizeFrom(img(1, 800, 600));
+      expect(c.trailOffset.dx).toBeCloseTo(80, 6);
+      dom.fire('mouseup', {});
+      // The click is a tap, not the end of a drag: it switches versions.
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
     } finally {
       dom.restore();
     }

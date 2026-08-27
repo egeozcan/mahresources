@@ -113,6 +113,25 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 12:
+
+- **Disarming ends the drag, not just the next move.** Round 11's fix made
+  the move handler end the gesture on observing the disarmed state -- lazy,
+  so a reader who disarmed and *re-armed* without moving in between could
+  resume the supposedly dead gesture. `toggleAligning` now removes the
+  gesture's move listeners the moment it disarms; the enders stay, because
+  the release still fires the button's click and the suppression has to
+  recognise that click as the drag's.
+- **The click suppression is armed by movement, not by an offset change.**
+  `upHandler` compared the offset at press vs release, so a load that
+  converted the offset mid-press -- no drag at all -- armed the suppression
+  and ate the release-click, which was a tap the reader meant for the
+  version switch. The move handler now records that it actually moved, and
+  the stamp is armed by that.
+- **The e2e assertion of the Reset control's enabled state checks absence**
+  (`not.toHaveAttribute('aria-disabled')`), which `'true'`-comparison
+  passed for the `"false"` value Alpine never leaves behind.
+
 Round 11:
 
 - **Disarming mid-drag ends it.** The move handler checked `aligning` at

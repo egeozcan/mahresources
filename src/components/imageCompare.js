@@ -121,6 +121,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     _sizeReboundDue: false,
     _sizeReboundDueSwapped: false,
     _endAlignDrag: null,
+    // Removes an active align drag's *move* listeners only, leaving the
+    // enders: `toggleAligning` calls it on a mid-gesture disarm.
+    _disarmAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
     showLeft: true,
@@ -339,6 +342,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     toggleAligning() {
       if (!this.alignAvailable) return;
       this.aligning = !this.aligning;
+      // Disarming mid-gesture ends the drag's movement: the move listeners
+      // are removed, so nothing nudges while disarmed and a re-arm before the
+      // release cannot resurrect the gesture. The enders stay -- the release
+      // still fires the button's click, and the suppression has to recognise
+      // that click as the drag's.
+      if (!this.aligning && this._disarmAlignDrag) this._disarmAlignDrag();
     },
 
     /**
@@ -582,15 +591,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       let last = point(e);
       if (last.x === undefined || last.y === undefined) return;
       // What the gesture started from, so a press-and-release that changed
-      // nothing -- or one whose every move the bound refused -- is not treated
-      // as a drag afterwards.
+      // nothing is not announced as a drag. Whether the *move handler* actually
+      // processed movement is tracked separately: the suppression is for the
+      // click ending a drag, and an offset can change while the button is held
+      // without any drag -- a load converts it mid-press.
       const startedFrom = this.trailOffset;
+      let anyMove = false;
 
       // Defined before the move handler, which ends the gesture when the
       // reader disarms mid-drag. The removeEventListener calls name `moveHandler`
       // and resolve when this runs, by which time both exist.
       const upHandler = (mouseUpEvent) => {
         this._endAlignDrag = null;
+        this._disarmAlignDrag = null;
         document.removeEventListener('mousemove', moveHandler);
         document.removeEventListener('mouseup', upHandler);
         document.removeEventListener('touchmove', moveHandler);
@@ -598,32 +611,38 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         document.removeEventListener('touchcancel', upHandler);
         window.removeEventListener('blur', upHandler);
         document.body.style.userSelect = '';
-        // One announcement for the whole gesture. Announcing per `pointermove`
-        // would queue hundreds of them.
+        // One announcement for the whole gesture, and only when the offset
+        // actually changed: announcing per `pointermove` would queue hundreds
+        // of them, and a press-and-release that changed nothing is not a drag
+        // to announce.
         const ended = this.trailOffset;
         if (ended.dx !== startedFrom.dx || ended.dy !== startedFrom.dy || ended.k !== startedFrom.k) {
-          // Only a drag that ended on the toggle-mode button can be followed by
-          // the click that button will fire. Stamping regardless let a drag in
-          // onion skin swallow the first click after switching to toggle.
-          //
-          // The click only follows when the *release* landed on the button:
-          // released outside, no click is generated, and a stamp would eat the
-          // reader's next deliberate click inside the window. A touch drag is
-          // excluded too, because its click never comes: the `preventDefault`
-          // the move handler calls on `touchmove` cancels that gesture's
-          // compatibility click, and a gesture that changed the offset has
-          // necessarily moved.
-          const clickFollows = mouseUpEvent && mouseUpEvent.type === 'mouseup'
-            && box.contains(mouseUpEvent.target);
-          if (this.mode === 'toggle' && !isTouch && clickFollows) this._alignDragEndedAt = Date.now();
           this.announceOffset();
+        }
+        // Only a drag that ended on the toggle-mode button can be followed by
+        // the click that button will fire. Stamping regardless let a drag in
+        // onion skin swallow the first click after switching to toggle.
+        //
+        // The stamp is armed by *movement*, not by the offset having changed:
+        // a load that converts the offset mid-press is not a drag, and its
+        // click is the reader's own. The click only follows when the release
+        // landed on the button: released outside, no click is generated, and a
+        // stamp would eat the reader's next deliberate click inside the
+        // window. A touch drag is excluded too, because its click never comes:
+        // the `preventDefault` the move handler calls on `touchmove` cancels
+        // that gesture's compatibility click, and a gesture that moved has
+        // necessarily cancelled it.
+        if (anyMove && this.mode === 'toggle' && !isTouch
+          && mouseUpEvent && mouseUpEvent.type === 'mouseup' && box.contains(mouseUpEvent.target)) {
+          this._alignDragEndedAt = Date.now();
         }
       };
 
       const moveHandler = (moveE) => {
         // Disarming mid-gesture -- Space on the focused Align button while the
-        // mouse is still held -- ends the drag: decision 1 is that nothing
-        // nudges while disarmed, and it is checked at gesture start only.
+        // mouse is still held -- ends the drag: `toggleAligning` already
+        // removed the move listeners, so this is a backstop for any other path
+        // that could flip `aligning`.
         if (!this.aligning || !this.alignAvailable) {
           upHandler(moveE);
           return;
@@ -635,6 +654,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (moveE.touches && moveE.touches.length > 1) return;
         const next = point(moveE);
         if (next.x === undefined || next.y === undefined) return;
+        anyMove = true;
         moveE.preventDefault();
         // Measured per move, as `startSliderDrag`'s own handler measures its
         // container per move: a `load` landing mid-gesture corrects `_sizes`,
@@ -658,7 +678,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         last = next;
       };
 
+      const removeMoveListeners = () => {
+        document.removeEventListener('mousemove', moveHandler);
+        document.removeEventListener('touchmove', moveHandler);
+      };
       this._endAlignDrag = upHandler;
+      this._disarmAlignDrag = removeMoveListeners;
 
       document.body.style.userSelect = 'none';
       document.addEventListener('mousemove', moveHandler);
