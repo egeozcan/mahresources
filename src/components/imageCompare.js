@@ -770,9 +770,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         return;
       }
       // Fit and Stretch render the version at a different size, which moves the
-      // bound the offset was checked against. No early return for "already
-      // selected" -- `offsetWithinBound` is what keeps a no-op activation from
-      // touching anything, and it does so for every path rather than this one.
+      // bound the offset was checked against. A press that selects what is
+      // already selected changes no geometry, so it must not arm the deferred
+      // rebound either: nothing was broken, so nothing is owed.
+      if (value === this.scale) return;
       const within = this.offsetWithinBound;
       this.scale = value;
       if (within) this._reboundOrDefer();
@@ -873,10 +874,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // touches `setScale` at all, so a scale changed by arrow key kept an
       // offset the new sizing had put outside the frame. The within-bound
       // snapshot has to be taken here, before the assignment the callback runs
-      // after.
+      // after -- and the callback has to go through `_reboundOrDefer` like the
+      // mouse path, and only when the value actually changed (Home on the
+      // selected radio changes nothing and must not arm a deferred rebound).
       const within = this.offsetWithinBound;
+      const previous = this.scale;
       this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'],
-        () => { if (within) this._reboundOffset(); });
+        () => { if (within && this.scale !== previous) this._reboundOrDefer(); });
     },
 
     /**

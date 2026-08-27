@@ -848,6 +848,54 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(-112.5, 6);
   });
 
+  test('a keyboard scale change during the load window defers like the mouse one', () => {
+    // The keyboard path assigns `this.scale` straight through the generic
+    // radiogroup handler and used to rebound against the transient geometry,
+    // so a scale changed by arrow key between the two reports landed on a
+    // different offset than the same change by click.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
+      c.toggleAligning();
+      c.toggleAnchor();
+      c.zoomBy(1);
+      c.nudge(0, 50);
+      c.noteSizeFrom(img(first, first === 1 ? 400 : 200, first === 1 ? 300 : 800));
+      c.$nextTick = (fn: () => void) => fn();
+      c.onScaleKeydown({ key: 'ArrowRight', preventDefault() {}, currentTarget: { querySelector: () => null } });
+      c.noteSizeFrom(img(second, second === 1 ? 400 : 200, second === 1 ? 300 : 800));
+      return c.trailOffset.dy;
+    };
+    // 400x300 box and a 200x800 trail at 200% anchored top-left: the final
+    // y-range is [-1200, 400], so the converted 200 stays.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(200, 6);
+  });
+
+  test('a no-op scale activation arms no deferred debt', () => {
+    // Pressing the already-selected policy changes no geometry, so it must
+    // not arm the deferred rebound -- the round 4 rule, applied to the load
+    // window: nothing was broken, so nothing is owed.
+    const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
+    c.toggleAligning();
+    c.zoomBy(3);
+    c.nudge(-10000, 0);
+    // At k=4 the 100x100 trail renders 400 wide: the bound is -150.
+    expect(c.trailOffset.dx).toBeCloseTo(-150, 6);
+    // Slot 0 confirms its stored size: the pair is half-measured now.
+    c.noteSizeFrom(img(1, 100, 100));
+    // Clicking the already-selected Relative changes nothing and must not
+    // arm the debt.
+    c.setScale('relative');
+    c.swapSides();
+    c.nudge(-10000, 0);
+    // The flipped bound for the 25px-rendered slot is -56.25.
+    expect(c.trailOffset.dx).toBeCloseTo(-56.25, 6);
+    // Slot 1 confirms. The no-op must not have armed a debt that clamps
+    // -56.25 to -37.5.
+    c.noteSizeFrom(img(2, 100, 100));
+    expect(c.trailOffset.dx).toBeCloseTo(-56.25, 6);
+  });
+
   test('a report that moves neither the offset nor its bound arms no debt', () => {
     // The debt is owed when a size report moves the offset or the bound it
     // sits in. A report that only resizes the *leading* version without

@@ -113,6 +113,26 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 16:
+
+- **The keyboard scale path defers like the mouse one.** `onScaleKeydown`'s
+  callback rebounded against the current geometry directly, so a scale
+  changed by arrow key between the two load reports clamped the transient
+  trail and landed on a different offset than the same change by click:
+  stored 100x100, actual 400x300/200x800, arm, anchor, zoom 200%, nudge to
+  +50, report, ArrowRight to Fit, report -- lead-first finished at dy=150
+  and trail-first at 200; clicking Fit gives 200 in either order. The
+  callback now routes through `_reboundOrDefer`.
+- **A no-op scale activation arms no deferred debt.** Pressing the
+  already-selected policy changes no geometry, yet `_reboundOrDefer` armed
+  the debt whenever the pair was half-measured -- so a later confirming
+  report paid it against alignment made after the no-op: 100x100 stored and
+  reported, zoom to 400%, nudge to -150, slot 0 confirms, click Relative
+  (already selected), flip, drag to -56.25, slot 1 confirms -- the stale
+  debt clamped it to -37.5. `setScale` returns when the value is unchanged
+  (round 4 made the old early-return's repair path a no-op anyway), and the
+  keyboard callback skips a selection that changed nothing.
+
 Round 15:
 
 - **A control used between the two load reports defers its rebound.** Zoom,
