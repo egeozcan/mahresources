@@ -221,6 +221,77 @@ test.describe.serial('compare page manual alignment', () => {
     await expect(alignButton(page)).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('a drag on the frame moves the trailing version under the pointer', async ({ page }) => {
+    // The primary gesture. In slider mode the images are `pointer-events-none`
+    // and the handle sits above at z-10, so the drag surface is the box itself
+    // -- which is only true if the box actually receives the press.
+    await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box, lead, trail } = onionImages(page);
+
+    await alignButton(page).click();
+    const frame = (await box.boundingBox())!;
+    const leadBefore = (await lead.boundingBox())!;
+    const trailBefore = (await trail.boundingBox())!;
+
+    // Near the top of the frame, so the gesture stays inside the viewport on a
+    // portrait pair, and away from the edges so the clamp is nowhere near.
+    const y = frame.y + Math.min(frame.height / 2, 60);
+    await page.mouse.move(frame.x + frame.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(frame.x + frame.width / 2 + 60, y + 30, { steps: 10 });
+    await page.mouse.up();
+
+    const trailAfter = (await trail.boundingBox())!;
+    expect(trailAfter.x - trailBefore.x).toBeCloseTo(60, 0);
+    expect(trailAfter.y - trailBefore.y).toBeCloseTo(30, 0);
+    // The leading version is the reference and never moves.
+    expect((await lead.boundingBox())!.x).toBeCloseTo(leadBefore.x, 0);
+    await expect(readout(page)).not.toHaveText(/^\s*Alignment offset\s*0, 0, 100%\s*$/);
+  });
+
+  test('an offset in frame pixels survives a change of window size', async ({ page }) => {
+    // The reason the offset is stored in pixels of the shared frame rather than
+    // of the screen. A rendered-pixel offset would keep its pixel count and
+    // change what it means the moment the window did.
+    await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { lead, trail } = onionImages(page);
+
+    await alignButton(page).click();
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
+
+    const wide = (await trail.boundingBox())!.x - (await lead.boundingBox())!.x;
+    const wideWidth = (await lead.boundingBox())!.width;
+
+    await page.setViewportSize({ width: 800, height: 720 });
+    await expect(readout(page)).toHaveText(/\+40, 0, 100%/);
+    const narrow = (await trail.boundingBox())!.x - (await lead.boundingBox())!.x;
+    const narrowWidth = (await lead.boundingBox())!.width;
+
+    expect(narrowWidth).toBeLessThan(wideWidth);
+    // Same fraction of the version, a different number of screen pixels.
+    expect(narrow / narrowWidth).toBeCloseTo(wide / wideWidth, 2);
+  });
+
+  test('a wheel over the frame resizes the version instead of scrolling the page', async ({ page }) => {
+    // The box is a div, so its wheel listener is non-passive by default and the
+    // preventDefault takes. On a listener the browser had made passive the page
+    // would scroll under a gesture meant for the image.
+    await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box } = onionImages(page);
+
+    await alignButton(page).click();
+    const frame = (await box.boundingBox())!;
+    const before = await page.evaluate(() => window.scrollY);
+    await page.mouse.move(frame.x + frame.width / 2, frame.y + Math.min(frame.height / 2, 60));
+    await page.mouse.wheel(0, 200);
+
+    await expect(readout(page)).toHaveText(/0, 0, 99%/);
+    expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  });
+
   test('a pair with no dimensions refuses to be aligned', async ({ page }) => {
     // Under the no-dimensions fallback the two images are not in a shared
     // coordinate space at all, and HEIC paints nothing to align in any case.

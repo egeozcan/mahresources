@@ -37,7 +37,8 @@ Settled with the user across three rounds before any code was written.
 | 5 | Arrow keys nudge 1 box px, Shift 10. Drag maps rendered pixels into box pixels through the box's own measured width. |
 | 6 | **Scale ships here**, not deferred to 4.1. `+` / `=` and `-` at 1%, Shift 10%; wheel over the box while armed, `preventDefault`ed. Clamped **25%-400%**. No scale-drag -- drag is spent on translate and a modifier-drag reopens decision 1. |
 | 7 | `transform-origin` **follows the anchor**: centre by default, `0 0` under `anchor === 'top-left'`. Scaling from the centre after the reader has asserted "these line up at the corner" walks that corner off by half the scale change. |
-| 8 | Translate is **clamped to +/-50% of the box** per axis, on `nudgeSlider`'s 1-99 precedent (`imageCompare.js:402`): a state that shows nothing looks broken. The readout reports the clamped value, so the number on screen is the number in effect. |
+| 8 | Translate is bounded so **a quarter of the moved version stays in frame**, on `nudgeSlider`'s 1-99 precedent (`imageCompare.js:402`): a state that shows nothing looks broken. The readout reports the bounded value, so the number on screen is the number in effect. **Corrected after review:** the first implementation used half the *box*, which does not hold that promise -- a small version anchored to the corner of a large box clears the frame entirely well before it has travelled half a box. The bound is a fraction of the version's own rendered size, and it is anchor-aware. |
+| 8a | A nudge from **outside** the bound may only move inward, never snap. A flip derives the inverse, and the inverse of an extreme correction is legitimately outside this side's bound -- `dx 600` at 25% inverts to `-2400` at 400% -- so clamping on the first arrow press moved the image by the whole difference instead of by one pixel. Found in review. |
 | 9 | The Align button **handles its own arrow keys**, calling the same `nudge()` the container handler does. `_keyHandler` skips events targeted at anything focusable on the grounds that "anything focusable answers its own arrow keys"; giving the button its own handler satisfies that rule instead of carving an exception out of it. The interlock is `_keyHandler`'s existing `if (e.defaultPrevented) return`. |
 | 10 | Readout and Reset are **always present** in the overlay modes (`0, 0 - 100%` at rest, Reset `aria-disabled` at identity), hidden in side-by-side by the same `x-show` as scale and anchor. Package 1 decision 8, unchanged: a control that cannot act is marked, not removed. |
 | 11 | The visible readout updates continuously; a **separate visually-hidden `aria-live="polite"` region** is written on each keyboard nudge and on **drag end only**. A live region updated per `pointermove` produces a queue that reads for minutes. |
@@ -67,6 +68,13 @@ Not decisions -- properties of the file that the implementation has to respect.
    `leadUrl` is `_urls[swapped ? 1 : 0]`. Decision 2 exists because getting this
    backwards transposes the offset on every flip -- the same trap package 1's
    plan flagged for the box.
+5. **The container key handler skips any focusable target**, on the grounds that
+   a focusable element answers its own arrow keys. Arming does not and must not
+   change that: the scale radiogroup navigates with arrows, and claiming them
+   ahead of the skip would break it. So "while armed the arrows nudge" holds
+   where no other control has focus, and on the Align button itself, which
+   carries its own handler for exactly that reason. The docs say this rather
+   than the stronger thing.
 
 ## Work
 
@@ -86,7 +94,12 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
   `touchend`, `touchcancel` and `window.blur`, with the ender kept on the
   component so `destroy()` can end a drag the page is leaving mid-gesture.
 - Wheel on the box while armed, `preventDefault`ed. The box is a `div`, so the
-  listener is non-passive by default and the prevent takes.
+  listener is non-passive by default and the prevent takes. `Ctrl`/`Meta`+wheel
+  is left alone -- it is the browser's own magnification, and a trackpad pinch
+  arrives as exactly that -- and a `deltaY` of 0 (a sideways swipe) is ignored
+  rather than read as "not up" and answered by zooming out. The announcement
+  waits for the burst to stop, which is the wheel's form of announcing at the
+  end of a drag. All three found in review.
 
 ### 2.2 Offset readout and reset control
 

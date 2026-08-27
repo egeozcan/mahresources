@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error -- plain JS module with no type declarations
 import { imageCompare } from './imageCompare.js';
 
@@ -499,14 +499,72 @@ describe('manual alignment', () => {
     expect(c.trailScale.transform).toBe(before);
   });
 
-  test('the translation is clamped to half the box, and the readout says so', () => {
+  test('the translation stops with a quarter of the version still in frame', () => {
     // `nudgeSlider` clamps to 1-99 rather than 0-100 for the same reason: a
     // state that shows nothing at all reads as a broken page, not as a choice.
+    // A congruent pair fills its own box, so a quarter of it left in frame is
+    // three quarters of the box travelled.
     const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
     c.toggleAligning();
     c.nudge(10000, -10000);
-    expect(transformOf(c.trailScale)).toEqual({ tx: 50, ty: -50, k: 1 });
-    expect(c.offsetLabel).toBe('+400, -300, 100%');
+    expect(transformOf(c.trailScale)).toEqual({ tx: 75, ty: -75, k: 1 });
+    expect(c.offsetLabel).toBe('+600, -450, 100%');
+  });
+
+  test('a small version anchored to the corner cannot be pushed out of the frame', () => {
+    // The case a half-the-box bound silently fails. A 100x100 version in a
+    // 1000x1000 box is a tenth of the frame; anchored to the corner it starts
+    // at the edge, so half a box of travel clears the frame entirely and leaves
+    // the reader looking at nothing.
+    const c = component({ w: 1000, h: 1000 }, { w: 100, h: 100 });
+    c.toggleAligning();
+    c.toggleAnchor();
+    c.zoomBy(-0.75);
+    c.nudge(-10000, 0);
+
+    // 25 rendered box pixels of it, so it may travel 18.75 before only a
+    // quarter is left -- not the 500 a fraction of the box would have allowed.
+    expect(c.trailOffset.dx).toBeCloseTo(-18.75, 6);
+    const { tx } = transformOf(c.trailScale)!;
+    // Still overlapping the frame: the rendered rect runs from `dx` to
+    // `dx + 25`, and a quarter of it is inside.
+    expect(c.trailOffset.dx + 100 * 0.25) .toBeGreaterThan(0);
+    expect(tx).toBeCloseTo(-18.75, 6);
+  });
+
+  test('a nudge after a flip moves by its own step, never by the whole bound', () => {
+    // A flip derives the inverse, and the inverse of an extreme correction is
+    // legitimately outside this side's bound: dx 600 at 25% inverts to -2400 at
+    // 400%. Clamping that on the first arrow press would jump the image by the
+    // whole difference and destroy an alignment the reader had made.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    const forward = c.trailOffset.dx;
+
+    c.swapSides();
+    const inverted = c.trailOffset.dx;
+    expect(inverted).toBeCloseTo(-forward / 0.25, 6);
+
+    c.handleAlignKey(key('ArrowRight'));
+    expect(c.trailOffset.dx).toBeCloseTo(inverted + 1, 6);
+    // And it refuses to go further out from there.
+    c.handleAlignKey(key('ArrowLeft'));
+    expect(c.trailOffset.dx).toBeCloseTo(inverted + 1, 6);
+  });
+
+  test('the zoom range is reciprocal, so a flip never lands outside it', () => {
+    // 0.25 is 1/4 exactly. If the two ends were not reciprocal, one flip would
+    // derive a scale the reader could not have chosen.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(100);
+    expect(c.trailOffset.k).toBe(4);
+    c.swapSides();
+    expect(c.trailOffset.k).toBe(0.25);
+    c.swapSides();
+    expect(c.trailOffset.k).toBe(4);
   });
 
   test('the zoom is clamped to a quarter and four times', () => {
@@ -623,7 +681,75 @@ describe('manual alignment', () => {
     expect(c.offsetIsIdentity).toBe(false);
   });
 
-  test('a key announces, a drag does not', () => {
+  test('the wheel leaves the browser its own magnification and its sideways swipe', () => {
+    // Ctrl+wheel is page zoom, and a trackpad pinch arrives as exactly that:
+    // taking it leaves the page unzoomable for as long as the reader is
+    // aligning. A sideways swipe reports deltaY 0, which `deltaY < 0` reads as
+    // "not up" and would answer by zooming out.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+
+    const wheel = (init: any) => {
+      let prevented = false;
+      const e = { deltaY: 0, ctrlKey: false, metaKey: false, ...init, preventDefault() { prevented = true; } };
+      c.onAlignWheel(e);
+      return () => prevented;
+    };
+
+    expect(wheel({ deltaY: -120, ctrlKey: true })()).toBe(false);
+    expect(c.trailOffset.k).toBe(1);
+    expect(wheel({ deltaY: 0 })()).toBe(false);
+    expect(c.trailOffset.k).toBe(1);
+
+    expect(wheel({ deltaY: -120 })()).toBe(true);
+    expect(c.trailOffset.k).toBeCloseTo(1.01, 6);
+    expect(wheel({ deltaY: 120 })()).toBe(true);
+    expect(c.trailOffset.k).toBeCloseTo(1, 6);
+  });
+
+  test('a wheel burst announces once it stops, not once per event', () => {
+    // One notch delivers a burst of events. Announcing per event is the
+    // pointermove mistake in another shape.
+    vi.useFakeTimers();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      for (let i = 0; i < 5; i++) {
+        c.onAlignWheel({ deltaY: -120, ctrlKey: false, metaKey: false, preventDefault() {} });
+        vi.advanceTimersByTime(50);
+      }
+      expect(c.offsetAnnouncement).toBe('');
+      vi.advanceTimersByTime(250);
+      expect(c.offsetAnnouncement).toContain('105%');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a drag suppresses only the click that ends it', () => {
+    // Toggle mode's box is a button, so the click ending a drag across it would
+    // also switch versions. Bounded in time rather than by a flag the next
+    // click clears: a drag in onion skin, a disarm, then a click here is an
+    // unrelated click, and a sticky flag eats it.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    expect(c.showLeft).toBe(true);
+
+    c._alignDragEndedAt = Date.now();
+    c.toggleSide({ detail: 1 });
+    expect(c.showLeft).toBe(true);
+
+    // Keyboard activation reports detail 0 and cannot have followed a drag.
+    c._alignDragEndedAt = Date.now();
+    c.toggleSide({ detail: 0 });
+    expect(c.showLeft).toBe(false);
+
+    // And a drag from some earlier interaction does not reach forward.
+    c._alignDragEndedAt = Date.now() - 5000;
+    c.toggleSide({ detail: 1 });
+    expect(c.showLeft).toBe(true);
+  });
+
+  test('nudge and announceOffset are separate, which is what lets a drag stay quiet', () => {
     // A live region written on every pointermove produces a queue a screen
     // reader spends minutes reading. The visible readout updates continuously;
     // the announcement is made on each key and once at the end of a drag.

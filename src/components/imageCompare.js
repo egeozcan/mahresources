@@ -5,15 +5,24 @@ const RADIOGROUP_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Hom
 
 // Manual alignment bounds and steps, in box pixels and scale factors.
 //
-// The translation is clamped to half the box in each axis for the reason
-// `nudgeSlider` clamps to 1-99 rather than 0-100: a state that shows nothing at
-// all reads as a broken page rather than as a choice the reader made. The bound
-// is applied where the reader acts, not on the derived inverse a flip produces
-// -- the inverse of an extreme correction is legitimately extreme, and clamping
-// it there would silently change an alignment instead of preserving it.
-const ALIGN_TRANSLATE_LIMIT = 0.5;
+// The translation is bounded so that a quarter of the moved version stays in
+// the frame, for the reason `nudgeSlider` clamps to 1-99 rather than 0-100: a
+// state that shows nothing at all reads as a broken page rather than as a
+// choice the reader made. It is a fraction of the **version**, not of the box,
+// because those come apart exactly where it matters -- a small version in a
+// large box, anchored to the corner, clears the frame entirely long before it
+// has travelled half a box.
+const ALIGN_KEEP_VISIBLE = 0.25;
+// The zoom range is deliberately reciprocal (0.25 = 1/4), so the inverse a flip
+// derives is always inside it too and never has to be brought back.
 const ALIGN_ZOOM_MIN = 0.25;
 const ALIGN_ZOOM_MAX = 4;
+// How long after an alignment drag a click on the toggle-mode button is read as
+// the end of that drag rather than as a request to switch versions.
+const ALIGN_CLICK_SUPPRESS_MS = 400;
+// A wheel gesture arrives as a burst of events. The announcement waits for the
+// burst to stop, the way a drag's waits for the pointer to come up.
+const ALIGN_ANNOUNCE_SETTLE_MS = 200;
 const ALIGN_STEP = 1;
 const ALIGN_STEP_LARGE = 10;
 const ALIGN_ZOOM_STEP = 0.01;
@@ -29,6 +38,30 @@ const ANNOUNCE_MARK = '\u200B';
 /** The CSS transform that undoes `t`: for T(p) = k*p + d, T-inverse(q) = (q - d) / k. */
 function invertOffset(t) {
   return { dx: -t.dx / t.k, dy: -t.dy / t.k, k: 1 / t.k };
+}
+
+/** How far `v` lies outside `range`, or 0 when it is inside. */
+function rangeDistance(v, range) {
+  if (v < range.min) return range.min - v;
+  if (v > range.max) return v - range.max;
+  return 0;
+}
+
+/**
+ * Add `delta` to `current` without snapping a value that is already outside.
+ *
+ * A flip derives the inverse of the reader's correction, and the inverse of an
+ * extreme correction is legitimately more extreme than this side's own bound --
+ * `dx = 400, k = 0.25` inverts to `dx = -1600, k = 4`. Clamping that on the
+ * first arrow press would move the image by the whole difference instead of by
+ * one pixel, silently destroying an alignment the reader had made. From out
+ * there a nudge may only move inward.
+ */
+function boundedNudge(current, delta, range) {
+  const next = current + delta;
+  const outside = rangeDistance(current, range);
+  if (outside > 0) return rangeDistance(next, range) < outside ? next : current;
+  return Math.max(range.min, Math.min(range.max, next));
 }
 
 /** `+12` / `-4` / `0` -- the sign is information, and a bare `12` hides it. */
@@ -77,6 +110,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     offsetAnnouncement: '',
     _announceParity: false,
     _alignDragMoved: false,
+    _alignDragEndedAt: 0,
+    _announceTimer: null,
     _endAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
@@ -122,11 +157,39 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * in register and preserves their relative scale.
      */
     get overlayRatio() {
+      const box = this.overlayBox;
+      return box ? `${box.w} / ${box.h}` : null;
+    },
+
+    /** The shared box in intrinsic pixels, or null when there is nothing to measure into. */
+    get overlayBox() {
       const [a, b] = this._sizes;
       if (!a || !b || !a.w || !a.h || !b.w || !b.h) return null;
-      const width = Math.max(a.w, b.w);
-      const height = Math.max(a.h, b.h);
-      return `${width} / ${height}`;
+      return { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
+    },
+
+    /**
+     * One version's untransformed size inside that box, in box pixels.
+     *
+     * The arithmetic `overlayScale` turns into a percentage, named separately
+     * because the alignment bound needs the same number: how far a version may
+     * travel before it leaves the frame is a fact about that version's rendered
+     * size, and a second copy of this would drift from the sizing it describes.
+     */
+    elementSize(index) {
+      const box = this.overlayBox;
+      if (!box) return null;
+      // Under Stretch the element *is* the box.
+      if (this.scale === 'stretch') return { w: box.w, h: box.h };
+      const img = this._sizes[index === 0 ? 0 : 1];
+      if (this.scale === 'fit') {
+        // Grow the image until an edge touches the box, so two versions of one
+        // aspect ratio both fill a box built from the larger and a pure
+        // resolution change registers exactly.
+        const k = Math.min(box.w / img.w, box.h / img.h);
+        return { w: img.w * k, h: img.h * k };
+      }
+      return { w: img.w, h: img.h };
     },
 
     /**
@@ -146,20 +209,18 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * as an empty string rather than omitted.
      */
     overlayScale(index) {
-      const [a, b] = this._sizes;
+      const box = this.overlayBox;
       // Nothing to measure into. The `[style*="aspect-ratio"]` branch in
       // index.css owns the layout here and puts the images back in the flow, so
       // an inline `height: 100%` from the other branches below would beat its
       // `height: auto` and break a case that currently works.
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) {
+      if (!box) {
         return { width: '', height: '', objectFit: '', margin: '', transform: '', transformOrigin: '' };
       }
 
-      // Distort each image onto the whole box. Right for a re-encode that
-      // changed aspect, wrong for a crop, which is why this mode's accessible
-      // name says so rather than leaving the reader to notice.
-      const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
-
+      // Stretch distorts each image onto the whole box. Right for a re-encode
+      // that changed aspect, wrong for a crop, which is why this mode's
+      // accessible name says so rather than leaving the reader to notice.
       if (this.scale === 'stretch') {
         // The element *is* the box here, so that is what a box-pixel offset is
         // a percentage of. Alignment is not refused under Stretch the way
@@ -170,26 +231,15 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           ...this.alignStyle(index, box.w, box.h),
         };
       }
-      const img = index === 0 ? a : b;
-      let { w, h } = img;
-
-      if (this.scale === 'fit') {
-        // Grow each image until an edge touches the box. Two versions of one
-        // aspect ratio both end up filling a box built from the larger, so a
-        // pure resolution change registers exactly.
-        //
-        // Sized on the *element* rather than left to `object-fit: contain` on a
-        // full-box element, which would paint identically. Two reasons, and
-        // neither is arithmetic for its own sake: a contained letterbox is
-        // invisible to `getBoundingClientRect`, so Fit and Stretch would render
-        // to indistinguishable geometry and nothing outside a screenshot could
-        // tell them apart; and with the element equal to the painted rectangle,
-        // anchoring is `margin` here exactly as it is under relative scale,
-        // instead of `margin` in one mode and `object-position` in the other.
-        const k = Math.min(box.w / img.w, box.h / img.h);
-        w = img.w * k;
-        h = img.h * k;
-      }
+      // Sized on the *element* rather than left to `object-fit: contain` on a
+      // full-box element, which would paint identically. Two reasons, and
+      // neither is arithmetic for its own sake: a contained letterbox is
+      // invisible to `getBoundingClientRect`, so Fit and Stretch would render
+      // to indistinguishable geometry and nothing outside a screenshot could
+      // tell them apart; and with the element equal to the painted rectangle,
+      // anchoring is `margin` here exactly as it is under relative scale,
+      // instead of `margin` in one mode and `object-position` in the other.
+      const { w, h } = this.elementSize(index);
 
       return {
         width: `${(w / box.w) * 100}%`,
@@ -292,15 +342,41 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      */
     nudge(dx, dy) {
       if (!this.alignAvailable) return;
-      const [a, b] = this._sizes;
-      const limitX = Math.max(a.w, b.w) * ALIGN_TRANSLATE_LIMIT;
-      const limitY = Math.max(a.h, b.h) * ALIGN_TRANSLATE_LIMIT;
+      const box = this.overlayBox;
+      // The bound is a property of the version being moved, so it is measured
+      // from that version's own element -- the trailing slot, whichever Flip
+      // has put there.
+      const element = this.elementSize(this.swapped ? 0 : 1);
+      if (!box || !element) return;
       const t = this.trailOffset;
       this._setTrailOffset({
-        dx: Math.max(-limitX, Math.min(limitX, t.dx + dx)),
-        dy: Math.max(-limitY, Math.min(limitY, t.dy + dy)),
+        dx: boundedNudge(t.dx, dx, this.translateRange(box.w, element.w * t.k)),
+        dy: boundedNudge(t.dy, dy, this.translateRange(box.h, element.h * t.k)),
         k: t.k,
       });
+    },
+
+    /**
+     * How far the trailing version may travel along one axis.
+     *
+     * Expressed so that `ALIGN_KEEP_VISIBLE` of the version is still inside the
+     * frame at either end. A fraction of the *box* would not do that: a small
+     * version anchored to the corner of a large box clears the frame entirely
+     * well before it has travelled half a box, which is the case a half-box
+     * bound silently fails.
+     *
+     * `rest` is where the rendered rectangle's leading edge sits before any
+     * offset. Centred, the scale happens about the element's own centre, so
+     * that centre stays at the box's; anchored, the element's leading edge is
+     * the box's and `transform-origin: 0 0` keeps it there.
+     */
+    translateRange(boxLength, renderedLength) {
+      const rest = this.anchor === 'top-left' ? 0 : (boxLength - renderedLength) / 2;
+      const keep = renderedLength * ALIGN_KEEP_VISIBLE;
+      return {
+        min: -(rest + renderedLength - keep),
+        max: boxLength - keep - rest,
+      };
     },
 
     zoomBy(delta) {
@@ -405,9 +481,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // guard is spent.
       this._alignDragMoved = false;
 
-      const [a, b] = this._sizes;
-      const perPixelX = Math.max(a.w, b.w) / rect.width;
-      const perPixelY = Math.max(a.h, b.h) / rect.height;
       const point = (ev) => ({
         x: ev.clientX ?? ev.touches?.[0]?.clientX,
         y: ev.clientY ?? ev.touches?.[0]?.clientY,
@@ -419,8 +492,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         const next = point(moveE);
         if (next.x === undefined || next.y === undefined) return;
         moveE.preventDefault();
+        // Measured per move, as `startSliderDrag`'s own handler measures its
+        // container per move: a `load` landing mid-gesture corrects `_sizes`,
+        // and the box can be re-laid-out under the pointer. Freezing either at
+        // drag start converts the rest of the gesture with a stale ratio.
+        //
+        // `clientWidth` rather than the bounding rect: an absolutely positioned
+        // child resolves its percentages against the padding box, and the rect
+        // includes the border this box carries.
+        const measured = this.overlayBox;
+        const width = box.clientWidth || rect.width;
+        const height = box.clientHeight || rect.height;
+        if (!measured || !width || !height) return;
         this._alignDragMoved = true;
-        this.nudge((next.x - last.x) * perPixelX, (next.y - last.y) * perPixelY);
+        this.nudge((next.x - last.x) * (measured.w / width),
+          (next.y - last.y) * (measured.h / height));
         last = next;
       };
 
@@ -435,7 +521,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         document.body.style.userSelect = '';
         // One announcement for the whole gesture. Announcing per `pointermove`
         // would queue hundreds of them.
-        if (this._alignDragMoved) this.announceOffset();
+        if (this._alignDragMoved) {
+          this._alignDragEndedAt = Date.now();
+          this.announceOffset();
+        }
       };
       this._endAlignDrag = upHandler;
 
@@ -457,9 +546,32 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      */
     onAlignWheel(e) {
       if (!this.aligning || !this.alignAvailable) return;
+      // Ctrl+wheel is the browser's own magnification, and a trackpad pinch
+      // arrives as exactly that. Taking it would leave the page unzoomable for
+      // as long as the reader is aligning, which costs more than this gains.
+      if (e.ctrlKey || e.metaKey) return;
+      // A sideways trackpad swipe reports `deltaY` 0. Reading that through
+      // `deltaY < 0` calls it "not up" and zooms *out* on a horizontal gesture.
+      if (!e.deltaY) return;
       e.preventDefault();
       this.zoomBy(e.deltaY < 0 ? ALIGN_ZOOM_STEP : -ALIGN_ZOOM_STEP);
-      this.announceOffset();
+      this.announceOffsetWhenSettled();
+    },
+
+    /**
+     * Announce once the gesture stops, not once per event.
+     *
+     * One wheel notch delivers a burst, so announcing per event is the
+     * `pointermove` mistake in another shape: a queue the reader then sits
+     * through. This is the wheel's equivalent of announcing at the end of a
+     * drag.
+     */
+    announceOffsetWhenSettled() {
+      if (this._announceTimer) clearTimeout(this._announceTimer);
+      this._announceTimer = setTimeout(() => {
+        this._announceTimer = null;
+        this.announceOffset();
+      }, ALIGN_ANNOUNCE_SETTLE_MS);
     },
 
     /**
@@ -725,6 +837,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (this._keyHandler) this.$el.removeEventListener('keydown', this._keyHandler);
       if (this._endDrag) this._endDrag();
       if (this._endAlignDrag) this._endAlignDrag();
+      if (this._announceTimer) clearTimeout(this._announceTimer);
     },
 
     nudgeSlider(delta) {
@@ -737,13 +850,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     toggleSide(e) {
       // Toggle mode's box is a real button, so an alignment drag across it ends
-      // in a click that would also flip which version is showing. `detail > 0`
-      // is what separates a pointer click from Enter or Space, which report 0
-      // and cannot have been preceded by a drag.
-      if (this._alignDragMoved && e && e.detail > 0) {
-        this._alignDragMoved = false;
-        return;
-      }
+      // in a click that would also flip which version is showing.
+      //
+      // Bounded in time rather than by a flag the next click clears: a drag in
+      // onion skin, a disarm, then a click here is a different click entirely,
+      // and a sticky flag eats it. `detail > 0` separates a pointer click from
+      // Enter or Space, which report 0 and cannot have followed a drag.
+      if (e && e.detail > 0 && Date.now() - this._alignDragEndedAt < ALIGN_CLICK_SUPPRESS_MS) return;
       this.showLeft = !this.showLeft;
     },
 

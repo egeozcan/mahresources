@@ -131,7 +131,7 @@ Press **Align** to arm it, then move one version over the other:
 | Scroll wheel | Resize it by 1% |
 | `R` | Put it back |
 
-Pixels are pixels of the shared frame, not of your screen, so an offset means the same thing after you resize the window. The offset is limited to half the frame in each direction and the resize to between 25% and 400%.
+Pixels are pixels of the shared frame, not of your screen, so an offset means the same thing after you resize the window. A version can be moved until a quarter of it is left in the frame, and resized to between 25% and 400%.
 
 The current offset is shown beside the controls as `+12, -4, 103%` and can be cleared at any time with **Reset**, which clears the resize along with the offset. Align stays armed until you press it again, so a correction can be made in small steps.
 
@@ -141,7 +141,7 @@ Align once, then compare in every mode. The offset holds across **Slider**, **On
 
 **Flip** exchanges which version leads while keeping the alignment: the correction is inverted rather than discarded, so flipping back and forth is how you check that it took.
 
-While Align is armed the arrow keys belong to it, so they no longer move the reveal position or the onion-skin opacity. The slider handle keeps its own drag and its own arrow keys throughout.
+While Align is armed the arrow keys move the version rather than the reveal position or the onion-skin opacity. Controls that answer the arrow keys themselves keep them: the scale selector still moves between **Relative**, **Fit** and **Stretch** while it has focus, and the slider handle keeps its own drag and its own arrow keys throughout.
 
 #### Text Comparison
 
