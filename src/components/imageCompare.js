@@ -40,28 +40,25 @@ function invertOffset(t) {
   return { dx: -t.dx / t.k, dy: -t.dy / t.k, k: 1 / t.k };
 }
 
-/** How far `v` lies outside `range`, or 0 when it is inside. */
-function rangeDistance(v, range) {
-  if (v < range.min) return range.min - v;
-  if (v > range.max) return v - range.max;
-  return 0;
-}
-
 /**
  * Add `delta` to `current` without snapping a value that is already outside.
  *
  * A flip derives the inverse of the reader's correction, and the inverse of an
  * extreme correction is legitimately more extreme than this side's own bound --
- * `dx = 400, k = 0.25` inverts to `dx = -1600, k = 4`. Clamping that on the
+ * `dx = 600, k = 0.25` inverts to `dx = -2400, k = 4`. Clamping that on the
  * first arrow press would move the image by the whole difference instead of by
- * one pixel, silently destroying an alignment the reader had made. From out
- * there a nudge may only move inward.
+ * one pixel, silently destroying an alignment the reader had made.
+ *
+ * So the range is widened to include wherever the value already is. From
+ * outside, a nudge travels toward the range and stops at its near edge -- it
+ * never refuses an inward gesture, and never overshoots through the range and
+ * out the far side, which a "must reduce the distance" rule allows: from 100
+ * against a range of [-10, 10], a delta of -150 satisfies that rule at -50.
  */
 function boundedNudge(current, delta, range) {
-  const next = current + delta;
-  const outside = rangeDistance(current, range);
-  if (outside > 0) return rangeDistance(next, range) < outside ? next : current;
-  return Math.max(range.min, Math.min(range.max, next));
+  const low = Math.min(range.min, current);
+  const high = Math.max(range.max, current);
+  return Math.max(low, Math.min(high, current + delta));
 }
 
 /** `+12` / `-4` / `0` -- the sign is information, and a bare `12` hides it. */
@@ -109,7 +106,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // screen reader spends minutes reading.
     offsetAnnouncement: '',
     _announceParity: false,
-    _alignDragMoved: false,
     _alignDragEndedAt: 0,
     _announceTimer: null,
     _endAlignDrag: null,
@@ -387,6 +383,39 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         dy: t.dy,
         k: Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta)),
       });
+      this._reboundOffset();
+    },
+
+    /**
+     * Bring the offset back inside the bound after the geometry moved under it.
+     *
+     * The bound is a function of the version's *rendered* size and of the
+     * anchor, so zooming out, changing scale policy or anchoring all change it
+     * while leaving the offset where it was. Without this, a correction that
+     * was legal at 100% puts the version entirely outside the frame at 25%: in
+     * an 800-wide box, `dx = 600` renders at x = 900..1100.
+     *
+     * A flip deliberately does **not** call this. Every one of the three above
+     * is the reader changing something and being answered; a flip's whole
+     * purpose is to show the same alignment the other way round, so altering it
+     * there is the one thing that would make it useless. It costs exactness in
+     * one direction -- a zoom while flipped rewrites the stored offset, so
+     * flipping back does not restore the original number -- which is the same
+     * price zooming already charges unflipped.
+     */
+    _reboundOffset() {
+      if (!this.alignAvailable || this.offsetIsIdentity) return;
+      const box = this.overlayBox;
+      const element = this.elementSize(this.swapped ? 0 : 1);
+      if (!box || !element) return;
+      const t = this.trailOffset;
+      const x = this.translateRange(box.w, element.w * t.k);
+      const y = this.translateRange(box.h, element.h * t.k);
+      this._setTrailOffset({
+        dx: Math.max(x.min, Math.min(x.max, t.dx)),
+        dy: Math.max(y.min, Math.min(y.max, t.dy)),
+        k: t.k,
+      });
     },
 
     /**
@@ -407,6 +436,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     announceOffset() {
+      // A wheel burst may have one of these pending. Letting it fire after a
+      // Reset or a keyboard nudge announces a value the reader has moved past.
+      if (this._announceTimer) {
+        clearTimeout(this._announceTimer);
+        this._announceTimer = null;
+      }
       this._announceParity = !this._announceParity;
       this.offsetAnnouncement = `Offset ${this.offsetLabel}${this._announceParity ? ANNOUNCE_MARK : ''}`;
     },
@@ -477,9 +512,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const rect = box.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       e.preventDefault();
-      // A fresh gesture: whatever the last one did to the toggle-mode click
-      // guard is spent.
-      this._alignDragMoved = false;
 
       const point = (ev) => ({
         x: ev.clientX ?? ev.touches?.[0]?.clientX,
@@ -487,6 +519,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       });
       let last = point(e);
       if (last.x === undefined || last.y === undefined) return;
+      // What the gesture started from, so a press-and-release that changed
+      // nothing -- or one whose every move the bound refused -- is not treated
+      // as a drag afterwards.
+      const startedFrom = this.trailOffset;
 
       const moveHandler = (moveE) => {
         const next = point(moveE);
@@ -504,7 +540,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         const width = box.clientWidth || rect.width;
         const height = box.clientHeight || rect.height;
         if (!measured || !width || !height) return;
-        this._alignDragMoved = true;
         this.nudge((next.x - last.x) * (measured.w / width),
           (next.y - last.y) * (measured.h / height));
         last = next;
@@ -521,7 +556,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         document.body.style.userSelect = '';
         // One announcement for the whole gesture. Announcing per `pointermove`
         // would queue hundreds of them.
-        if (this._alignDragMoved) {
+        const ended = this.trailOffset;
+        if (ended.dx !== startedFrom.dx || ended.dy !== startedFrom.dy || ended.k !== startedFrom.k) {
           this._alignDragEndedAt = Date.now();
           this.announceOffset();
         }
@@ -590,7 +626,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this.returnFocusToCheckedScale(e);
         return;
       }
+      if (this.scale === value) return;
       this.scale = value;
+      // Fit and Stretch render the version at a different size, which moves the
+      // bound the offset was checked against.
+      this._reboundOffset();
     },
 
     /**
@@ -660,6 +700,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     toggleAnchor() {
       if (!this.anchorAvailable) return;
       this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
+      // The anchor decides where the version rests before any offset, so it
+      // decides how far the offset may carry it.
+      this._reboundOffset();
     },
 
     /**
@@ -780,7 +823,22 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (!next) next = this._sizes.slice();
         next[slot] = { w, h };
       }
-      if (next) this._sizes = next;
+      if (!next) return;
+      // The offset is in box pixels, so correcting the box's own dimensions
+      // changes what an existing one means. A reader who nudged against the
+      // stored placeholder and then saw the real dimensions arrive would watch
+      // their correction change size on its own; converting keeps it the same
+      // fraction of the frame, which is what they actually chose.
+      const before = this.overlayBox;
+      this._sizes = next;
+      const after = this.overlayBox;
+      if (before && after && !this.offsetIsIdentity && (before.w !== after.w || before.h !== after.h)) {
+        this._offset = {
+          dx: this._offset.dx * (after.w / before.w),
+          dy: this._offset.dy * (after.h / before.h),
+          k: this._offset.k,
+        };
+      }
     },
 
     get leadScale() {
@@ -856,7 +914,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // onion skin, a disarm, then a click here is a different click entirely,
       // and a sticky flag eats it. `detail > 0` separates a pointer click from
       // Enter or Space, which report 0 and cannot have followed a drag.
-      if (e && e.detail > 0 && Date.now() - this._alignDragEndedAt < ALIGN_CLICK_SUPPRESS_MS) return;
+      if (e && e.detail > 0 && Date.now() - this._alignDragEndedAt < ALIGN_CLICK_SUPPRESS_MS) {
+        // Spent on the one click it was for. Left standing, it would also eat a
+        // second click arriving inside the same window.
+        this._alignDragEndedAt = 0;
+        return;
+      }
       this.showLeft = !this.showLeft;
     },
 

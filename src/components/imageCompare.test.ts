@@ -554,6 +554,83 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(inverted + 1, 6);
   });
 
+  test('a nudge from outside stops at the range, never through it', () => {
+    // "Reduce the distance to the range" is not enough: from 100 against a
+    // range of [-10, 10], a delta of -150 reduces the distance and lands at
+    // -50, still outside and now on the far side. A large drag after a flip
+    // that derived an out-of-range inverse is exactly that gesture.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    c.swapSides();
+    const outside = c.trailOffset.dx;
+    expect(outside).toBeLessThan(-1000);
+
+    // One enormous inward drag: it must land inside the bound, not beyond it,
+    // and not be refused for overshooting.
+    c.nudge(100000, 0);
+    const box = 800;
+    const rendered = box * c.trailOffset.k;
+    const rest = (box - rendered) / 2;
+    expect(c.trailOffset.dx).toBeCloseTo(box - rendered * 0.25 - rest, 6);
+  });
+
+  test('zooming, rescaling and anchoring bring the offset back into the frame', () => {
+    // The bound is a function of the version's rendered size and of the anchor,
+    // so all three move it while leaving the offset where it was. Without this,
+    // dx 600 in an 800 box renders at x = 900..1100 the moment the reader zooms
+    // out to 25% -- entirely outside the frame they are looking at.
+    const c = component({ w: 800, h: 800 }, { w: 800, h: 800 });
+    c.toggleAligning();
+    c.nudge(10000, 0);
+    expect(c.trailOffset.dx).toBe(600);
+
+    c.zoomBy(-0.75);
+    // 200 rendered, resting at 300: it may reach 800 - 50 - 300 = 450.
+    expect(c.trailOffset.dx).toBeCloseTo(450, 6);
+
+    c.zoomBy(0.75);
+    c.nudge(10000, 0);
+    c.toggleAnchor();
+    // Anchored, the version rests at the frame's edge, so it may travel
+    // 800 - 200 - 0 = 600 -- unchanged here, and the point is that the bound is
+    // re-applied rather than that this case moves.
+    expect(c.trailOffset.dx).toBeCloseTo(600, 6);
+
+    // The anchor bites in the other direction: anchored, a small version rests
+    // at the frame's edge and may travel almost the whole frame; centred, it
+    // rests in the middle and the same offset carries it clean out. The
+    // rebound only ever pulls in, so this is the order that shows it.
+    const d = component({ w: 1000, h: 1000 }, { w: 100, h: 100 });
+    d.toggleAligning();
+    d.toggleAnchor();
+    d.nudge(10000, 0);
+    // Resting at 0, 100 wide: it stops with 25 of itself still inside.
+    expect(d.trailOffset.dx).toBeCloseTo(975, 6);
+
+    d.toggleAnchor();
+    // Centred it rests at 450, so 975 would put it at 1425..1525 -- nowhere
+    // near the frame. It comes back to 1000 - 25 - 450.
+    expect(d.trailOffset.dx).toBeCloseTo(525, 6);
+  });
+
+  test('a corrected box keeps an existing offset the same fraction of the frame', () => {
+    // The offset is in box pixels. A reader who nudged against the stored
+    // placeholder and then saw the browser report the real dimensions would
+    // otherwise watch their correction change size on its own.
+    const c = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(40, -30);
+    expect(transformOf(c.trailScale)).toEqual({ tx: 10, ty: -10, k: 1 });
+
+    c.noteSizeFrom(img(1, 800, 600));
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(80, 6);
+    // Same fraction of the frame, which is what the reader actually chose.
+    expect(transformOf(c.trailScale)).toEqual({ tx: 10, ty: -10, k: 1 });
+  });
+
   test('the zoom range is reciprocal, so a flip never lands outside it', () => {
     // 0.25 is 1/4 exactly. If the two ends were not reciprocal, one flip would
     // derive a scale the reader could not have chosen.
@@ -747,6 +824,33 @@ describe('manual alignment', () => {
     c._alignDragEndedAt = Date.now() - 5000;
     c.toggleSide({ detail: 1 });
     expect(c.showLeft).toBe(true);
+
+    // The suppression is spent on the one click it was for: a second click
+    // inside the same window is the reader asking again.
+    c.showLeft = true;
+    c._alignDragEndedAt = Date.now();
+    c.toggleSide({ detail: 1 });
+    expect(c.showLeft).toBe(true);
+    c.toggleSide({ detail: 1 });
+    expect(c.showLeft).toBe(false);
+  });
+
+  test('a wheel settle pending when a key lands does not announce afterwards', () => {
+    // The keyboard announcement is the current value; letting the wheel's
+    // pending one fire after it announces a value the reader has moved past.
+    vi.useFakeTimers();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.onAlignWheel({ deltaY: -120, ctrlKey: false, metaKey: false, preventDefault() {} });
+      c.handleAlignKey(key('ArrowRight'));
+      const said = c.offsetAnnouncement;
+      expect(said).toContain('+1');
+      vi.advanceTimersByTime(1000);
+      expect(c.offsetAnnouncement).toBe(said);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('nudge and announceOffset are separate, which is what lets a drag stay quiet', () => {

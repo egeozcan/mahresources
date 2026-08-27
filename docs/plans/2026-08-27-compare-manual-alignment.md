@@ -38,7 +38,9 @@ Settled with the user across three rounds before any code was written.
 | 6 | **Scale ships here**, not deferred to 4.1. `+` / `=` and `-` at 1%, Shift 10%; wheel over the box while armed, `preventDefault`ed. Clamped **25%-400%**. No scale-drag -- drag is spent on translate and a modifier-drag reopens decision 1. |
 | 7 | `transform-origin` **follows the anchor**: centre by default, `0 0` under `anchor === 'top-left'`. Scaling from the centre after the reader has asserted "these line up at the corner" walks that corner off by half the scale change. |
 | 8 | Translate is bounded so **a quarter of the moved version stays in frame**, on `nudgeSlider`'s 1-99 precedent (`imageCompare.js:402`): a state that shows nothing looks broken. The readout reports the bounded value, so the number on screen is the number in effect. **Corrected after review:** the first implementation used half the *box*, which does not hold that promise -- a small version anchored to the corner of a large box clears the frame entirely well before it has travelled half a box. The bound is a fraction of the version's own rendered size, and it is anchor-aware. |
-| 8a | A nudge from **outside** the bound may only move inward, never snap. A flip derives the inverse, and the inverse of an extreme correction is legitimately outside this side's bound -- `dx 600` at 25% inverts to `-2400` at 400% -- so clamping on the first arrow press moved the image by the whole difference instead of by one pixel. Found in review. |
+| 8b | The bound is **re-applied after zoom, scale and anchor** (`_reboundOffset`), each of which moves it while leaving the offset where it was -- `dx 600` in an 800 box renders at x = 900..1100 the moment the reader zooms to 25%. A **flip does not** re-apply it: the other three are the reader changing something and being answered, while a flip's whole purpose is to show the same alignment the other way round. Found in review round 2. |
+| 8c | An offset is **converted when the box's own dimensions are corrected** (`noteSizeFrom`), since it is measured in that box's pixels. A reader who nudged against the stored placeholder would otherwise watch their correction change size when the real dimensions arrived. Found in review round 2. |
+| 8a | A nudge from **outside** the bound may only move inward, never snap. A flip derives the inverse, and the inverse of an extreme correction is legitimately outside this side's bound -- `dx 600` at 25% inverts to `-2400` at 400% -- so clamping on the first arrow press moved the image by the whole difference instead of by one pixel. Implemented by widening the range to include wherever the value already is, **not** by "the nudge must reduce the distance", which round 2 showed lets a large delta overshoot through the range and out the far side. Found in review rounds 1 and 2. |
 | 9 | The Align button **handles its own arrow keys**, calling the same `nudge()` the container handler does. `_keyHandler` skips events targeted at anything focusable on the grounds that "anything focusable answers its own arrow keys"; giving the button its own handler satisfies that rule instead of carving an exception out of it. The interlock is `_keyHandler`'s existing `if (e.defaultPrevented) return`. |
 | 10 | Readout and Reset are **always present** in the overlay modes (`0, 0 - 100%` at rest, Reset `aria-disabled` at identity), hidden in side-by-side by the same `x-show` as scale and anchor. Package 1 decision 8, unchanged: a control that cannot act is marked, not removed. |
 | 11 | The visible readout updates continuously; a **separate visually-hidden `aria-live="polite"` region** is written on each keyboard nudge and on **drag end only**. A live region updated per `pointermove` produces a queue that reads for minutes. |
@@ -108,6 +110,20 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
   keeping the arming.
 - A visually-hidden `aria-live="polite"` region, written on keyboard nudge and
   drag end only.
+
+## Also from review
+
+- The toggle-mode click suppression stamps only a gesture that **changed the
+  offset**, and is spent on the one click it was for. A flag the next click
+  cleared reached forward into an unrelated one.
+- `announceOffset` cancels a pending wheel-settle announcement, which would
+  otherwise fire after a Reset and announce a value the reader had moved past.
+- Controls marked `aria-disabled` now **look** unavailable
+  (`index.css`): the attribute was set and nothing rendered differently, so a
+  refused Align, scale radio or Anchor invited a press with a normal cursor and
+  a hover response. Their text colour is deliberately *not* faded -- they stay
+  focusable and are read aloud, so dimming would trade a measured contrast ratio
+  for a visual hint. This corrects package 1's controls as well as this one's.
 
 ## Verification
 

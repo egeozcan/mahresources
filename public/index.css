@@ -2380,6 +2380,29 @@ html {
     color: #fff;
 }
 
+/* A control marked aria-disabled still takes focus and still receives clicks --
+   that is deliberate, because `disabled` would drop a role="radio" out of the
+   roving tabindex the group depends on, and the component refuses the action
+   instead. But it must not look like it will act.
+
+   The text colour is left alone rather than faded. These controls are still
+   focusable and still read aloud, so dimming them would trade a measured
+   contrast ratio for a visual hint; the cursor, the flattened surface and the
+   removed hover response carry the message without that cost. */
+.compare-seg-btn[aria-disabled="true"],
+.compare-swap-btn-sm[aria-disabled="true"] {
+    cursor: not-allowed;
+}
+
+.compare-seg-btn[aria-disabled="true"]:not([aria-checked="true"]),
+.compare-seg-btn[aria-disabled="true"]:not([aria-checked="true"]):hover,
+.compare-swap-btn-sm[aria-disabled="true"],
+.compare-swap-btn-sm[aria-disabled="true"]:hover {
+    background: #ebe9e7;
+    border-color: #d6d3d1;
+    color: #57534e;
+}
+
 /* Swap button — circular */
 .compare-swap-btn {
     display: inline-flex;
