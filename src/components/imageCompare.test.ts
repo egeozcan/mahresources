@@ -289,12 +289,45 @@ describe('anchoring', () => {
   });
 });
 
-describe('a refused scale press does not move focus', () => {
+describe('a refused scale press does not leave focus on a dead radio', () => {
+  /** The two things `returnFocusToCheckedScale` reaches for on a real click. */
+  function clickOn(checkedFocus: { focus: () => void }) {
+    const group = { querySelector: () => checkedFocus };
+    return { currentTarget: { closest: () => group } };
+  }
+
+  test('activation restores focus to the checked radio, whatever moved it', () => {
+    // Guarding mousedown alone leaves the hole open for programmatic focus, for
+    // an assistive technology moving focus directly, and for a touch stack that
+    // focuses without a compatibility mousedown -- Enter or Space then produces
+    // a refused click with focus left on a tabindex="-1", aria-checked="false"
+    // radio. Every one of those paths ends in this handler.
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    let focused = 0;
+    c.setScale('fit', clickOn({ focus: () => { focused += 1; } }));
+    expect(c.scale).toBe('relative');
+    expect(focused).toBe(1);
+  });
+
+  test('an accepted press moves the selection and touches no focus', () => {
+    const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
+    let focused = 0;
+    c.setScale('fit', clickOn({ focus: () => { focused += 1; } }));
+    expect(c.scale).toBe('fit');
+    expect(focused).toBe(0);
+  });
+
+  test('a refusal with no event, and one outside a group, are survivable', () => {
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    expect(() => c.setScale('fit')).not.toThrow();
+    expect(() => c.setScale('fit', { currentTarget: { closest: () => null } })).not.toThrow();
+    expect(c.scale).toBe('relative');
+  });
+
   test('mousedown is defaulted-prevented only while the control cannot act', () => {
-    // aria-disabled suppresses neither focus nor pointer events, so without this
-    // a click lands focus on a tabindex="-1", aria-checked="false" radio while
-    // the checked one still holds tabindex="0" -- the roving tabindex invariant
-    // broken, and Shift+Tab back into the group skipping it entirely.
+    // Cosmetic rather than the mechanism: mousedown and click are separate tasks
+    // with a frame between them, so without this the pointer path paints a focus
+    // ring on a dead control before the click handler takes it back.
     const unavailable = component({ w: 0, h: 0 }, { w: 0, h: 0 });
     let prevented = false;
     unavailable.refuseFocusIfUnavailable({ preventDefault: () => { prevented = true; } });
@@ -304,5 +337,33 @@ describe('a refused scale press does not move focus', () => {
     let touched = false;
     available.refuseFocusIfUnavailable({ preventDefault: () => { touched = true; } });
     expect(touched).toBe(false);
+  });
+});
+
+describe('two sides showing one version', () => {
+  test('a load fills every slot that version occupies', () => {
+    // `sameVersion` blocks a same-resource self-comparison from rendering this
+    // component, but it is `!crossResource && v1 == v2` -- a cross-resource URL
+    // naming one version on both sides gets through with two identical URLs.
+    // Filling only the first slot leaves the second unknown, and for a format
+    // that stores no dimensions the scale controls then stay refused while both
+    // images have decoded perfectly well.
+    const c = imageCompare({
+      leftUrl: '/v1/resource/version/file?versionId=7',
+      rightUrl: '/v1/resource/version/file?versionId=7',
+      leftLabel: 'A', rightLabel: 'B',
+      leftSize: { w: 0, h: 0 }, rightSize: { w: 0, h: 0 },
+    });
+    expect(c.scaleAvailable).toBe(false);
+
+    c.noteSizeFrom({
+      naturalWidth: 400,
+      naturalHeight: 300,
+      currentSrc: '/v1/resource/version/file?versionId=7',
+    });
+
+    expect(c._sizes).toEqual([{ w: 400, h: 300 }, { w: 400, h: 300 }]);
+    expect(c.scaleAvailable).toBe(true);
+    expect(c.overlayRatio).toBe('400 / 300');
   });
 });

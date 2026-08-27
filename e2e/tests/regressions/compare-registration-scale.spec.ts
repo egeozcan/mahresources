@@ -419,15 +419,31 @@ test.describe.serial('compare page registration and scale', () => {
     // broken, and Shift+Tab back into the group would skip it.
     await fit.click({ force: true });
     await expect(fit).toHaveAttribute('aria-checked', 'false');
-    // Scoped to this group: the comparison-mode radio clicked above legitimately
-    // holds focus, and a page-wide "no radio is focused" would assert that away.
-    await expect(group.locator('[role="radio"]:focus')).toHaveCount(0);
+    await expect(fit).not.toBeFocused();
+    // The invariant itself, rather than one implementation of it: focus may
+    // never have moved (the pointer path refuses it) or may have been returned
+    // to the checked radio. What must never happen is focus resting on an
+    // unchecked radio, which is the tabindex="-1" half of the group. Scoped to
+    // this group, since the comparison-mode radio clicked above legitimately
+    // holds focus of its own.
+    await expect(group.locator('[role="radio"][aria-checked="false"]:focus')).toHaveCount(0);
 
     // The keyboard is refused as well: onRadiogroupKeydown assigns straight into
     // state, so a click guard alone leaves the group fully working from there.
     await relative.focus();
     await relative.press('ArrowRight');
     await expect(relative).toHaveAttribute('aria-checked', 'true');
+
+    // And the invariant holds for focus that arrived by some route other than a
+    // pointer -- programmatically here, but equally an assistive technology
+    // moving focus directly, or a touch stack that focuses without a
+    // compatibility mousedown. Enter then produces a refused click, and focus
+    // must not be left on a tabindex="-1", aria-checked="false" radio.
+    await fit.focus();
+    await expect(fit).toBeFocused();
+    await fit.press('Enter');
+    await expect(fit).toHaveAttribute('aria-checked', 'false');
+    await expect(relative).toBeFocused();
   });
 
   test('the scale group keeps its tab stop on the checked radio', async ({ page }) => {

@@ -60,14 +60,14 @@
              :aria-disabled="!scaleAvailable"
              :title="scaleAvailable ? '' : 'One of the two versions reports no dimensions, so there is nothing to scale against.'"
              @keydown="onScaleKeydown($event)">
-            <button @click="setScale('relative')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'relative'"
+            <button @click="setScale('relative', $event)" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'relative'"
                     aria-label="Relative size" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'relative' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg>
                 <span class="compare-seg-label">Relative</span>
             </button>
-            <button @click="setScale('fit')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'fit'"
+            <button @click="setScale('fit', $event)" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'fit'"
                     aria-label="Fit to frame" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'fit' ? 0 : -1"
                     class="compare-seg-btn">
@@ -78,7 +78,7 @@
             {# not thinking in CSS, and the visible label is hidden below 768px, #}
             {# so on a phone the aria-label is the entire accessible name and is #}
             {# where the warning has to survive. #}
-            <button @click="setScale('stretch')" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'stretch'"
+            <button @click="setScale('stretch', $event)" @mousedown="refuseFocusIfUnavailable($event)" role="radio" :aria-checked="scale === 'stretch'"
                     aria-label="Stretch to match, distorts aspect ratio" :aria-disabled="!scaleAvailable"
                     :tabindex="scale === 'stretch' ? 0 : -1"
                     class="compare-seg-btn">

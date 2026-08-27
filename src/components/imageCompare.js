@@ -145,24 +145,50 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return this.overlayRatio !== null;
     },
 
-    setScale(value) {
-      if (!this.scaleAvailable) return;
+    setScale(value, e) {
+      if (!this.scaleAvailable) {
+        this.returnFocusToCheckedScale(e);
+        return;
+      }
       this.scale = value;
     },
 
     /**
-     * Keep a refused pointer press from moving focus.
+     * The roving tabindex invariant, enforced where activation happens.
      *
-     * `aria-disabled` suppresses neither focus nor pointer events, so clicking a
-     * refused radio focuses a `tabindex="-1"`, `aria-checked="false"` button
-     * while the checked one still holds `tabindex="0"`. That is the roving
-     * tabindex invariant broken: the group's focus is supposed to be on the
-     * checked radio, and Shift+Tab back into it would skip the group entirely.
-     * Preventing the default on `mousedown` is what stops the focus without
-     * touching the click, which still reaches `setScale` and is still refused.
+     * `aria-disabled` suppresses neither focus nor pointer events, so focus can
+     * come to rest on a refused `tabindex="-1"`, `aria-checked="false"` radio
+     * while the checked one still holds `tabindex="0"`. The group's focus is
+     * supposed to be on the checked radio, and Shift+Tab back into it would
+     * otherwise skip the group entirely.
      *
-     * Discoverability is unaffected -- Tab still enters the group at the checked
-     * radio, where the group's own `aria-disabled` is announced.
+     * On activation, not on one input path: a first attempt guarded `mousedown`
+     * alone, which leaves the hole open for programmatic focus, for an assistive
+     * technology moving focus directly, and for any touch implementation that
+     * focuses without a compatibility `mousedown`. Enter and Space on such a
+     * radio produce a refused click and leave focus exactly where it should not
+     * be. Every one of those paths ends in the click handler, so that is where
+     * the invariant is restored.
+     */
+    returnFocusToCheckedScale(e) {
+      const target = e && e.currentTarget;
+      const group = target && typeof target.closest === 'function' && target.closest('[role="radiogroup"]');
+      if (!group) return;
+      const checked = group.querySelector('[role="radio"][aria-checked="true"]');
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      if (checked && typeof checked.focus === 'function' && checked !== active) checked.focus();
+    },
+
+    /**
+     * Avoid the focus visibly landing on a refused radio before it is taken back.
+     *
+     * Purely cosmetic, and deliberately not the mechanism: `mousedown` and
+     * `click` are separate tasks with a frame between them, so without this the
+     * pointer path shows a focus ring on a dead control for one frame before
+     * `returnFocusToCheckedScale` moves it. Discoverability is unaffected either
+     * way -- roving tabindex means an unchecked radio was never a tab stop, and
+     * Tab still enters the group at the checked one, where the group's own
+     * `aria-disabled` is announced.
      */
     refuseFocusIfUnavailable(e) {
       if (!this.scaleAvailable) e.preventDefault();
@@ -212,7 +238,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
-     * The `_sizes` / `_urls` slot whose bytes an image is currently displaying.
+     * Every `_sizes` / `_urls` slot whose bytes an image is currently displaying.
      *
      * Resolved from the image's own `currentSrc`, never from `swapped`. Those
      * arrays are indexed by the server's left/right while `leadUrl` is
@@ -227,8 +253,17 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * so it and `naturalWidth` describe the same bytes by construction. Both
      * sides are resolved against one base because `currentSrc` is absolute and
      * `_urls` are not.
+     *
+     * *Every* matching slot, not the first: `sameVersion` keeps a same-resource
+     * self-comparison from rendering this component at all, but it is
+     * `!crossResource && v1 == v2`, so a cross-resource URL naming one version
+     * on both sides reaches it with two identical URLs. Filling only the first
+     * slot would leave the second unknown, which for a format that stores no
+     * dimensions means the scale controls stay refused while both images have
+     * decoded perfectly well.
      */
-    slotForImage(img) {
+    slotsForImage(img) {
+      if (!img.currentSrc) return [];
       const base = (typeof document !== 'undefined' && document.baseURI) || 'http://compare.invalid/';
       const resolve = (u) => {
         try {
@@ -237,8 +272,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           return String(u);
         }
       };
-      const showing = resolve(img.currentSrc || '');
-      return this._urls.findIndex((u) => resolve(u) === showing);
+      const showing = resolve(img.currentSrc);
+      const slots = [];
+      this._urls.forEach((u, i) => {
+        if (resolve(u) === showing) slots.push(i);
+      });
+      return slots;
     },
 
     /**
@@ -256,7 +295,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * So the loaded image wins whenever it has something to say. The stored
      * values remain the first-paint placeholder, which is what keeps the box
      * from resizing under the reader between markup and load. Which version a
-     * measurement belongs to is decided by `slotForImage`, from the image
+     * measurement belongs to is decided by `slotsForImage`, from the image
      * itself.
      */
     noteSizeFrom(img) {
@@ -271,17 +310,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // a HEIC no browser renders, a fetch that failed. Recording that would
       // erase a usable stored value in exchange for nothing.
       if (!w || !h) return;
-      const index = this.slotForImage(img);
-      // An image showing neither version -- nothing to attribute the size to.
-      if (index === -1) return;
-      const known = this._sizes[index];
-      if (known && known.w === w && known.h === h) return;
-      // A new array rather than an index write: the getters derived from this
-      // have to re-run, and eight images report into two slots, so this runs
-      // far more often than it changes anything.
-      const next = this._sizes.slice();
-      next[index] = { w, h };
-      this._sizes = next;
+      // An image showing neither version has nothing to attribute the size to.
+      const slots = this.slotsForImage(img);
+      if (slots.length === 0) return;
+      // A new array rather than an index write, and only when something actually
+      // changed: the getters derived from this have to re-run, and eight images
+      // report into two slots, so this runs far more often than it changes
+      // anything.
+      let next = null;
+      for (const slot of slots) {
+        const known = this._sizes[slot];
+        if (known && known.w === w && known.h === h) continue;
+        if (!next) next = this._sizes.slice();
+        next[slot] = { w, h };
+      }
+      if (next) this._sizes = next;
     },
 
     get leadScale() {
