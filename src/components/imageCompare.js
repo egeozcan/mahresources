@@ -112,6 +112,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // question as whether `_sizes` changed: a load that confirms the stored
     // value writes nothing and still means that version has been measured.
     _measured: [false, false],
+    // A size correction moved an offset that was inside the old bound, but the
+    // rebound has to wait for the other version to report. Owed rather than
+    // immediate because the report that completes the pair may only *confirm* a
+    // stored size -- see `noteSizeFrom`.
+    _sizeReboundDue: false,
     _endAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
@@ -547,6 +552,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // `.compare-box-aligning` sets `touch-action: none`, which is what stops
       // the page scrolling, and the first `touchmove` prevents as well.
       if (e.type !== 'touchstart') e.preventDefault();
+      const isTouch = e.type === 'touchstart';
 
       const point = (ev) => ({
         x: ev.clientX ?? ev.touches?.[0]?.clientX,
@@ -596,7 +602,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           // Only a drag that ended on the toggle-mode button can be followed by
           // the click that button will fire. Stamping regardless let a drag in
           // onion skin swallow the first click after switching to toggle.
-          if (this.mode === 'toggle') this._alignDragEndedAt = Date.now();
+          //
+          // A touch drag is excluded, because its click never comes: the
+          // `preventDefault` the move handler calls on `touchmove` cancels
+          // that gesture's compatibility click, and a gesture that changed the
+          // offset has necessarily moved. Stamping there ate a deliberate tap
+          // inside the window -- a tap the reader meant for the version switch.
+          if (this.mode === 'toggle' && !isTouch) this._alignDragEndedAt = Date.now();
           this.announceOffset();
         }
       };
@@ -873,7 +885,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (!next) next = this._sizes.slice();
         next[slot] = { w, h };
       }
-      if (!next) return;
       // The offset is in box pixels, so correcting the box's own dimensions
       // changes what an existing one means. A reader who nudged against the
       // stored placeholder and then saw the real dimensions arrive would watch
@@ -887,11 +898,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // physical distance at all, and would double a vertical offset.
       const within = this.offsetWithinBound;
       const before = this.overlayBox;
-      this._sizes = next;
-      const after = this.overlayBox;
-      if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
-        const ratio = after.w / before.w;
-        this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
+      if (next) {
+        this._sizes = next;
+        const after = this.overlayBox;
+        if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
+          const ratio = after.w / before.w;
+          this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
+        }
       }
       // The versions changed size too, so the bound moved with them -- but only
       // once **both** have reported. The box is `max` of the two, so while one
@@ -899,7 +912,22 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // describes a pair that does not exist, and clamping against that makes
       // the result depend on which image happened to decode first: the same two
       // files land on a different offset in a different order.
-      if (within && this._measured[0] && this._measured[1]) this._reboundOffset();
+      //
+      // The rebound is **owed** rather than tied to a size change, because the
+      // report that completes the pair may be one that only *confirms* a
+      // stored size: it flips `_measured` without touching `_sizes`, and an
+      // early return there would skip the rebound the earlier report set up,
+      // leaving a converted offset outside the bound the smaller version
+      // leaves. `within` is snapshotted before this call's own correction --
+      // the round 4 rule, so an offset a flip legitimately left outside is
+      // never pulled back by a report that changed nothing.
+      if (!this._sizeReboundDue && within && !(this._measured[0] && this._measured[1])) {
+        this._sizeReboundDue = true;
+      }
+      if (this._measured[0] && this._measured[1]) {
+        if (this._sizeReboundDue) this._reboundOffset();
+        this._sizeReboundDue = false;
+      }
     },
 
     get leadScale() {
@@ -917,14 +945,22 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // new mode's control was.
       this._keyHandler = (e) => {
         if (e.defaultPrevented) return;
-        // Anything focusable answers its own arrow keys. Without this the
-        // reveal position moved while Flip had focus, which is a control that
-        // has nothing to do with it.
         const target = e.target;
-        if (target instanceof HTMLElement
-          && target.closest('button, a[href], input, select, textarea, [role="radiogroup"], [tabindex]')) {
-          return;
-        }
+        // A text field owns every key: `R` in one means the letter, not a
+        // reset. This has to be its own guard, because the alignment's non-
+        // arrow keys pass the one below.
+        if (target instanceof HTMLElement && target.closest('input, select, textarea')) return;
+        // Anything else focusable answers its own arrow keys. Without this the
+        // reveal position moved while Flip had focus, which is a control that
+        // has nothing to do with it. The guard is deliberately scoped to the
+        // keys a focusable control can own -- arrows plus the radiogroup
+        // pattern's Home and End -- so `+`, `-` and `R`, which no button or
+        // radio answers, still reach the alignment when it is armed: a reader
+        // who aligned, then clicked Flip or Anchor, can reset without moving
+        // focus back first.
+        const focusable = target instanceof HTMLElement
+          && target.closest('button, a[href], input, select, textarea, [role="radiogroup"], [tabindex]');
+        if (focusable && RADIOGROUP_KEYS.includes(e.key)) return;
         // While armed, the alignment owns the arrow keys outright. That is the
         // whole point of arming: they are otherwise spent on the slider
         // position and the onion opacity, and no modifier is free to

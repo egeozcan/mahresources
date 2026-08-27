@@ -707,6 +707,19 @@ describe('manual alignment', () => {
     // Slot 0 grew, so the frame did while the trail did not: the offset is
     // converted to 600 and the bound is now 800 - 100 - 200 = 500.
     expect(c.trailOffset.dx).toBeCloseTo(500, 6);
+
+    // The reversed order: the *lead* grows first and the trail then confirms
+    // its stored (smaller) size. The confirming report flips `_measured` to
+    // both-true without changing any size, so the early return skips the
+    // rebound unless a report that only confirms still owes it -- otherwise
+    // the converted offset (600) stays against a bound (500) the smaller trail
+    // leaves, and the version sits entirely outside the frame.
+    const d = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+    d.toggleAligning();
+    d.nudge(10000, 0);
+    d.noteSizeFrom(img(1, 800, 600));
+    d.noteSizeFrom(img(2, 400, 300));
+    expect(d.trailOffset.dx).toBeCloseTo(500, 6);
   });
 
   test('a tap is left alone, so an armed reader can still switch versions', () => {
@@ -895,6 +908,60 @@ describe('manual alignment', () => {
     expect(c.offsetIsIdentity).toBe(false);
   });
 
+  test('+ - and R reach the alignment from a focused button, while the arrows stay its own', () => {
+    // The container handler skips what a focusable element answers itself: the
+    // radiogroups navigate with arrows, the Align button carries its own
+    // handler, the slider handle binds its own keys. But no button answers
+    // `+`, `-` or `R` -- so guarding those too meant a reader who armed Align
+    // and then clicked Flip or Anchor could not press R to reset, because
+    // focus had moved to the button. The guard now splits: text fields keep
+    // every key, arrows and Home/End stay on the focused control, and the
+    // alignment's remaining keys pass.
+    const g = globalThis as any;
+    const previous = g.HTMLElement;
+    class FakeElement {}
+    g.HTMLElement = FakeElement;
+    // `closest` answers the selectors the guard asks about, so a fake target
+    // can be "a button" or "a text input" without a DOM.
+    const focused = (kind: 'button' | 'input') => Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel.includes(kind) ? {} : null),
+    });
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.$el = { addEventListener() {}, querySelectorAll: () => [] };
+      c.init();
+      const fire = (key: string, target: any) => {
+        const e: any = { key, shiftKey: false, target, defaultPrevented: false };
+        e.preventDefault = () => { e.defaultPrevented = true; };
+        c._keyHandler(e);
+      };
+
+      c.nudge(12, 0);
+      // Focus on the Flip button, which answers no keys of its own: R resets.
+      fire('r', focused('button'));
+      expect(c.offsetIsIdentity).toBe(true);
+
+      // ...and `+` zooms from there too.
+      c.nudge(12, 0);
+      fire('=', focused('button'));
+      expect(c.trailOffset.k).toBeCloseTo(1.01, 6);
+
+      // The arrows stay the focused control's own, or the radiogroup would
+      // double-step: a nudge from a button is still refused.
+      c._offset = { dx: 0, dy: 0, k: 1 };
+      fire('ArrowRight', focused('button'));
+      expect(c.offsetIsIdentity).toBe(true);
+
+      // A text field owns every key: R there means the letter, not a reset.
+      c.nudge(12, 0);
+      fire('r', focused('input'));
+      expect(c.offsetIsIdentity).toBe(false);
+    } finally {
+      g.HTMLElement = previous;
+    }
+  });
+
   test('the wheel leaves the browser its own magnification and its sideways swipe', () => {
     // Ctrl+wheel is page zoom, and a trackpad pinch arrives as exactly that:
     // taking it leaves the page unzoomable for as long as the reader is
@@ -1041,6 +1108,34 @@ describe('manual alignment', () => {
       c.startAlignDrag(press(100, 100));
       dom.fire('mousemove', { clientX: 160, clientY: 100 });
       dom.fire('mouseup', {});
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a touch drag never arms the click suppression', () => {
+    // preventDefault on the touchmove cancels that gesture's compatibility
+    // click, so no click can follow a touch drag -- and stamping the window
+    // anyway would eat the deliberate tap that comes next, which is a tap the
+    // reader meant for the version switch.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      c.startAlignDrag({
+        type: 'touchstart',
+        currentTarget: frame(),
+        target: { closest: () => null },
+        touches: [{ clientX: 100, clientY: 100 }],
+        preventDefault() {},
+      });
+      dom.fire('touchmove', { touches: [{ clientX: 140, clientY: 100 }] });
+      dom.fire('touchend', {});
+      // The drag did move the offset, and the tap right after it is not that
+      // drag's click -- the touchmove's preventDefault suppressed it.
       c.toggleSide({ detail: 1 });
       expect(c.showLeft).toBe(false);
     } finally {

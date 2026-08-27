@@ -221,6 +221,28 @@ test.describe.serial('compare page manual alignment', () => {
     await expect(alignButton(page)).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('R still resets with focus on Flip or Anchor', async ({ page }) => {
+    // The container key handler skips what a focusable element answers itself
+    // -- the radiogroups navigate with arrows, the Align button carries its
+    // own handler -- but no button answers `R`. Guarding it anyway meant a
+    // reader who armed Align and then clicked Flip or Anchor could not reset
+    // without clicking Reset first, because focus had moved to the button.
+    await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+
+    await alignButton(page).click();
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
+    await expect(readout(page)).toHaveText(/\+40, 0, 100%/);
+
+    const flip = page.getByRole('button', { name: 'Flip which image is shown first' });
+    await flip.click();
+    await expect(readout(page)).toHaveText(/-40, 0, 100%/);
+
+    // Focus is on the Flip button now, and R is not a key it answers.
+    await page.keyboard.press('r');
+    await expect(readout(page)).toHaveText(/0, 0, 100%/);
+  });
+
   test('a drag on the frame moves the trailing version under the pointer', async ({ page }) => {
     // The primary gesture. In slider mode the images are `pointer-events-none`
     // and the handle sits above at z-10, so the drag surface is the box itself

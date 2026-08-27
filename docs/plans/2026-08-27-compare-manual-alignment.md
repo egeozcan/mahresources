@@ -113,6 +113,33 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 5:
+
+- **A load-time rebound is owed, not skipped.** The rebound waited on
+  `_measured` becoming both-true, but the report that completes the pair may
+  be one that only *confirms* a stored size: it flips `_measured` without
+  touching `_sizes`, and the early return for "nothing changed" skipped the
+  rebound the earlier report had set up. With the lead growing first and the
+  trail then confirming its stored (smaller) size, the converted offset (600)
+  stayed against the bound the smaller trail leaves (500), and the version
+  sat entirely outside the frame. The debt is now recorded when a correction
+  moves an offset that was inside the old bound, and paid the moment both
+  versions have reported; `within` is still snapshotted before the correction
+  (round 4's rule), so a flip-derived offset a report changed nothing for is
+  never pulled back.
+- **A touch drag never arms the toggle-click suppression.** `touchmove`'s
+  `preventDefault` cancels that gesture's compatibility click, so no click
+  can follow a touch drag -- and stamping the 400ms window anyway ate a
+  deliberate tap after a drag, which was a tap the reader meant for the
+  version switch. The stamp is now mouse-only.
+- **The key guard is scoped to the keys a focused control owns.** The
+  container handler's focusable-target guard ran before every alignment
+  shortcut, so after clicking Flip or Anchor, `R` (and `+`/`-`) did nothing
+  while focus sat on the button. The guard still refuses text fields every
+  key and other focusables the arrows and Home/End they answer themselves,
+  but `+`, `-` and `R` -- which no button or radio answers -- pass through to
+  the armed alignment.
+
 Round 4:
 
 - **A rebound corrects what its own operation broke, never what was already
