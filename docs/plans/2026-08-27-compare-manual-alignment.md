@@ -113,6 +113,33 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 26:
+
+- **A report decides in the frame a flip cannot move.** A size report asked
+  its bound question of whatever orientation was on screen when the bytes
+  arrived; the reports are the browser's and the flips are the reader's, so
+  decode order picked which version's bound the correction answered to. Two
+  stored 800x600 versions, arm, correct upward to the bound (dy = -450), with
+  actual slot 0 = 600x900 and slot 1 = 1200x400: load slot 0, Flip, load slot
+  1, Flip back gives canonical dy = -675, while load slot 1, Flip, load slot 0,
+  Flip back gives -550. The width conversion is the same either way -- it
+  multiplies `_offset`, which no flip touches -- but the crossing it causes
+  lands while flipped in one order, where a 600-wide version in a 900-tall box
+  has room for it, and while unflipped in the other, where the 400-tall trail
+  does not. `_canonically` names the frame, and `noteSizeFrom` snapshots there,
+  decides its crossings there, arms with that orientation, and pays there when
+  the completing report's own crossing is what is being paid. The reader's own
+  operations still arm in the orientation they are looking at, which is theirs
+  and is the same in either decode order. Introduced by round 23: dropping the
+  `moved` test was right, but what that test had been doing incidentally was
+  arming an unflipped debt on any report that changed geometry, which forced
+  the pay into the canonical orientation. Every commit before round 23 answers
+  -550 both ways, as this does again.
+- Standards: three comments carried implementation history ("used to", "made
+  the same mistake", "a first attempt") against `docs/lessons.md`'s rule that a
+  comment explains the code and not the review that produced it, plus one in
+  the tests. They state their constraints now.
+
 Round 25:
 
 - **A pinch takes the whole gesture, not one event.** A second finger makes
