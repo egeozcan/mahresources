@@ -896,6 +896,68 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(-56.25, 6);
   });
 
+  test('a zoom clamped at the boundary arms no deferred debt', () => {
+    // Pressing + at 400% changes no geometry -- the clamp holds k -- so
+    // nothing is owed, exactly as a no-op scale activation arms nothing.
+    const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
+    c.toggleAligning();
+    c.zoomBy(3);
+    c.nudge(-10000, 0);
+    c.noteSizeFrom(img(1, 100, 100));
+    c.zoomBy(0.01);
+    expect(c._sizeReboundDue).toBe(false);
+    // A real zoom changes geometry and is owed in the load window.
+    c.zoomBy(-0.5);
+    expect(c._sizeReboundDue).toBe(true);
+  });
+
+  test('a nudge during the load window defers its clamp, so it cannot bind the final result', () => {
+    // Nudging while exactly one version is measured obeys a transient bound --
+    // the trail is whichever slot decoded first -- but only on display: what
+    // the clamp swallowed rides onto the outstanding request, and the deferred
+    // rebound resolves that request against the final bound. Clamping the
+    // increment alone would let the later width conversion scale the
+    // already-clamped value, so the same two files and input landed on a
+    // different canonical offset per decode order.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.noteSizeFrom(img(first, 600, 800));
+      c.nudge(-10000, 0);
+      // Display continuity holds at every instant: the image sits at the
+      // transient bound -- slot 0 first puts an 800-wide trail in an 800 box,
+      // slot 1 first a 600-wide one -- each keeping its own quarter visible.
+      const mid = c.trailOffset.dx;
+      c.noteSizeFrom(img(second, 600, 800));
+      return { mid, final: c.trailOffset.dx };
+    };
+    const order0First = run(1, 2);
+    const order1First = run(2, 1);
+    expect(order0First.mid).toBeCloseTo(-600, 6);
+    expect(order1First.mid).toBeCloseTo(-550, 6);
+    // Both orders resolve to the final bound: 600x800 box, 600px-rendered
+    // trail, centred, so min is -(0 + 600 - 150).
+    expect(order0First.final).toBeCloseTo(order1First.final, 6);
+    expect(order0First.final).toBeCloseTo(-450, 6);
+  });
+
+  test('a reset retires an unmet in-window remainder with the correction', () => {
+    // What a half-measured nudge's clamp deferred lives only while the
+    // correction it belongs to does. A stale remainder surviving Reset would
+    // drag every later alignment made before the pair completes over to the
+    // bound. The completing report here confirms its stored size, changing no
+    // geometry of its own, so the modest nudge must land as asked.
+    const c = component({ w: 600, h: 800 }, { w: 600, h: 800 });
+    c.toggleAligning();
+    c.noteSizeFrom(img(1, 600, 800));
+    c.nudge(-10000, 0);
+    expect(c.trailOffset.dx).toBeCloseTo(-450, 6);
+    c.resetAlignment();
+    c.nudge(30, 0);
+    c.noteSizeFrom(img(2, 600, 800));
+    expect(c.trailOffset.dx).toBeCloseTo(30, 6);
+  });
+
   test('a report that moves neither the offset nor its bound arms no debt', () => {
     // The debt is owed when a size report moves the offset or the bound it
     // sits in. A report that only resizes the *leading* version without

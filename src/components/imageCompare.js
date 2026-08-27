@@ -121,6 +121,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // the orientation that incurred it, whatever a flip did in between.
     _sizeReboundDue: false,
     _sizeReboundDueSwapped: false,
+    // The half-measured nudge records here the translation the reader asked
+    // for -- including everything a display-side clamp deferred -- in the same
+    // slot-relative shape `_offset` uses. The display itself obeys the
+    // transient bound so the pair stays watchable; what reaches the boundary
+    // when both versions have reported is this request. Null once resolved or
+    // discarded: every mutation `_offset` takes (a zoom factor, the box-width
+    // conversion) takes this alongside it, and it never drives a render.
+    _requestedOffset: null,
     _endAlignDrag: null,
     // Removes an active align drag's *move* listeners only, leaving the
     // enders: `toggleAligning` calls it on a mid-gesture disarm.
@@ -317,6 +325,24 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     /**
+     * The trailing-side view of the reader's translation request.
+     *
+     * Before a half-measured nudge has created a divergence this *is* the
+     * displayed offset; afterwards the view derives through the same inversion
+     * a flip applies to `_offset`, so a flip mutates the request no more than
+     * it mutates the display.
+     */
+    _rawRequest() {
+      return this._requestedOffset === null
+        ? this.trailOffset
+        : this.swapped ? invertOffset(this._requestedOffset) : this._requestedOffset;
+    },
+
+    _setRawRequest(t) {
+      this._requestedOffset = this.swapped ? invertOffset(t) : { dx: t.dx, dy: t.dy, k: t.k };
+    },
+
+    /**
      * Whether manual alignment can act.
      *
      * The same predicate the scale group and the anchor use, not a second copy
@@ -367,11 +393,38 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const element = this.elementSize(this.swapped ? 0 : 1);
       if (!box || !element) return;
       const t = this.trailOffset;
-      this._setTrailOffset({
+      const next = {
         dx: boundedNudge(t.dx, dx, this.translateRange(box.w, element.w * t.k)),
         dy: boundedNudge(t.dy, dy, this.translateRange(box.h, element.h * t.k)),
         k: t.k,
-      });
+      };
+      // While exactly one version is measured the bound is transient -- the
+      // box is `max` of a real measurement and a stored placeholder, and the
+      // trail is whichever slot decoded first. The *display* still obeys it:
+      // a nudge must leave the pair watchable even if the second image never
+      // decodes. What is deferred is the resolution. Clamping the increment
+      // against the transient bound and keeping nothing more would bind the
+      // result to whichever bound happened to be standing mid-decode, and the
+      // later width conversion then scales that already-clamped value, so the
+      // same two files and input land on different canonical offsets
+      // depending on decode order. Instead every increment rides onto
+      // `_requestedOffset`, and the deferred rebound resolves that request
+      // against the final bound once both versions have reported.
+      if (this._measured[0] !== this._measured[1]) {
+        const request = this._rawRequest();
+        // An increment that met the clamp contributes its full travel -- that
+        // is the part still owed; one that moved freely contributes only the
+        // distance the display actually travelled, so walking the image back
+        // retires what running it out incurred.
+        this._setRawRequest({
+          dx: request.dx + (next.dx === t.dx + dx ? next.dx - t.dx : dx),
+          dy: request.dy + (next.dy === t.dy + dy ? next.dy - t.dy : dy),
+          k: request.k,
+        });
+        this._sizeReboundDue = true;
+        this._sizeReboundDueSwapped = this.swapped;
+      }
+      this._setTrailOffset(next);
     },
 
     /**
@@ -401,11 +454,20 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (!this.alignAvailable) return;
       const within = this.offsetWithinBound;
       const t = this.trailOffset;
-      this._setTrailOffset({
-        dx: t.dx,
-        dy: t.dy,
-        k: Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta)),
-      });
+      const k = Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta));
+      // Pressing + at the 400% bound changes no geometry -- the clamp holds
+      // k -- so nothing is owed, exactly as a no-op scale activation arms
+      // nothing.
+      if (k === t.k) return;
+      this._setTrailOffset({ dx: t.dx, dy: t.dy, k });
+      // Zooming leaves the translation where it was; an outstanding raw
+      // request keeps its translation too, with only its zoom factor following
+      // the display's, so the deferred resolution compares the request against
+      // the bound the reader is actually looking at.
+      if (this._requestedOffset !== null) {
+        const r = this._rawRequest();
+        this._setRawRequest({ dx: r.dx, dy: r.dy, k });
+      }
       if (within) this._reboundOrDefer();
     },
 
@@ -466,22 +528,64 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return t.dx >= x.min && t.dx <= x.max && t.dy >= y.min && t.dy <= y.max;
     },
 
-    _reboundOffset() {
-      if (!this.alignAvailable || this.offsetIsIdentity) return;
+    /**
+     * Bring a translation back inside the bound the current geometry implies.
+     *
+     * Without arguments this is the load-time rebound proper: it repairs the
+     * displayed offset after zooming out, changing scale policy or anchoring
+     * moved the bound while leaving the offset where it was. Without this, a
+     * correction that was legal at 100% puts the version entirely outside the
+     * frame at 25%: in an 800-wide box, `dx = 600` renders at x = 900..1100.
+     *
+     * With a request it is the deferred form instead: it resolves what the
+     * half-measured window's clamps swallowed against the bound now standing,
+     * and shows the resolution. The reader asked for where they are plus
+     * everything the transient clamp refused; resolving their request lands
+     * them on that boundary as the display's own position rather than as a
+     * visible correction of one.
+     *
+     * A flip deliberately does **not** call this. Every one of the three above
+     * is the reader changing something and being answered; a flip's whole
+     * purpose is to show the same alignment the other way round, so altering it
+     * there is the one thing that would make it useless. It costs exactness in
+     * one direction -- a zoom while flipped rewrites the stored offset, so
+     * flipping back does not restore the original number -- which is the same
+     * price zooming already charges unflipped.
+     */
+    _reboundOffset(request) {
+      if (!this.alignAvailable) return;
+      // At identity nothing the displayed-offset form repairs was broken; the
+      // deferred form carries its own value and must resolve even so.
+      if (request === undefined && this.offsetIsIdentity) return;
       const box = this.overlayBox;
       const element = this.elementSize(this.swapped ? 0 : 1);
       if (!box || !element) return;
-      const t = this.trailOffset;
+      const t = request ?? this.trailOffset;
       const x = this.translateRange(box.w, element.w * t.k);
       const y = this.translateRange(box.h, element.h * t.k);
       const dx = Math.max(x.min, Math.min(x.max, t.dx));
       const dy = Math.max(y.min, Math.min(y.max, t.dy));
-      // Nothing to bring back. Writing anyway would re-derive `_offset` through
-      // the inverse and back on every wheel notch while flipped, which is work
-      // for no change and the only place this component could accumulate
-      // floating-point drift.
-      if (dx === t.dx && dy === t.dy) return;
+      // Nothing to bring back: either the clamp held the value or the screen
+      // already shows exactly what the request resolves to. Writing anyway
+      // would re-derive `_offset` through the inverse and back on every wheel
+      // notch while flipped, which is work for no change and the only place
+      // this component could accumulate floating-point drift.
+      const shown = this.trailOffset;
+      if (dx === shown.dx && dy === shown.dy) return;
       this._setTrailOffset({ dx, dy, k: t.k });
+    },
+
+    /**
+     * Pay the deferred rebound: resolve any outstanding translation request
+     * first -- that is what a half-measured nudge's swallowed increments ride
+     * on -- then fall back to repairing the displayed offset itself. The
+     * resolved request becomes the position shown, so what arrives is where
+     * the reader asked to be, bounded by the geometry both versions imply.
+     */
+    _resolveDeferred() {
+      const request = this._requestedOffset === null ? undefined : this._rawRequest();
+      this._reboundOffset(request);
+      this._requestedOffset = null;
     },
 
     /**
@@ -499,6 +603,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // reset.
       this._sizeReboundDue = false;
       this._sizeReboundDueSwapped = false;
+      // The request the half-measured nudges ran up rides on the same promise
+      // as the debt and dies with it too.
+      this._requestedOffset = null;
       // A refused Reset stays silent. The control is drawn `aria-disabled` at
       // identity rather than removed, so it is reachable and pressable, and
       // announcing "offset 0, 0, 100%" at someone who changed nothing is the
@@ -1010,6 +1117,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
           const ratio = after.w / before.w;
           this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
+          // The request rides in the same units and scales with it whether or
+          // not the display moved: an outstanding half-measured remainder must
+          // not silently change size when the box's own dimensions do.
+          if (this._requestedOffset !== null) {
+            this._requestedOffset = {
+              dx: this._requestedOffset.dx * ratio,
+              dy: this._requestedOffset.dy * ratio,
+              k: this._requestedOffset.k,
+            };
+          }
         }
         moved = (before && after && (before.w !== after.w || before.h !== after.h))
           || (beforeElement && afterElement
@@ -1056,10 +1173,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (this._sizeReboundDue && this.swapped !== this._sizeReboundDueSwapped) {
           const held = this.swapped;
           this.swapped = this._sizeReboundDueSwapped;
-          this._reboundOffset();
+          this._resolveDeferred();
           this.swapped = held;
         } else {
-          this._reboundOffset();
+          this._resolveDeferred();
         }
         this._sizeReboundDue = false;
       }
