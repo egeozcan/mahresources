@@ -496,6 +496,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      */
     handleAlignKey(e) {
       if (!this.aligning || !this.alignAvailable) return false;
+      // Modified keys are the browser's: Ctrl+R reloads, Ctrl+/- zooms the
+      // page, Alt+ArrowLeft goes back. The alignment's shortcuts are the
+      // plain keys (Shift steps them up), so a modified press is not ours --
+      // and refusing here covers the Align button's own handler, which calls
+      // this directly without the container's guard.
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
       const step = e.shiftKey ? ALIGN_STEP_LARGE : ALIGN_STEP;
       // `e.shiftKey` rather than the shifted character, so the step means the
       // same on a layout where `+` is not Shift and `=`.
@@ -553,6 +559,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // the page scrolling, and the first `touchmove` prevents as well.
       if (e.type !== 'touchstart') e.preventDefault();
       const isTouch = e.type === 'touchstart';
+      // A gesture that starts with two fingers is a pinch, the browser's own
+      // magnification (`touch-action: manipulation` keeps it available), not
+      // a drag: refuse to claim it.
+      if (isTouch && e.touches && e.touches.length > 1) return;
 
       const point = (ev) => ({
         x: ev.clientX ?? ev.touches?.[0]?.clientX,
@@ -566,6 +576,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const startedFrom = this.trailOffset;
 
       const moveHandler = (moveE) => {
+        // A second finger turns the gesture into the browser's pinch zoom,
+        // which `touch-action: manipulation` keeps ours to cancel by
+        // preventing. Stop handling it and stop preventing -- and stop moving
+        // the image -- so the pinch is the browser's.
+        if (moveE.touches && moveE.touches.length > 1) return;
         const next = point(moveE);
         if (next.x === undefined || next.y === undefined) return;
         moveE.preventDefault();
@@ -579,14 +594,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // includes the border this box carries.
         const measured = this.overlayBox;
         const width = box.clientWidth || rect.width;
-        const height = box.clientHeight || rect.height;
-        if (!measured || !width || !height) return;
-        this.nudge((next.x - last.x) * (measured.w / width),
-          (next.y - last.y) * (measured.h / height));
+        if (!measured || !width) return;
+        // Both axes convert through the *width* ratio: the box is width-driven,
+        // so one box pixel is the same screen distance in either axis
+        // (`renderedWidth / box.w`). The rendered height is a rounded integer,
+        // so converting the y-axis through it breaks that for extreme aspect
+        // ratios -- `noteSizeFrom` made the same mistake and fixed it the same
+        // way.
+        const ratio = measured.w / width;
+        this.nudge((next.x - last.x) * ratio, (next.y - last.y) * ratio);
         last = next;
       };
 
-      const upHandler = () => {
+      const upHandler = (mouseUpEvent) => {
         this._endAlignDrag = null;
         document.removeEventListener('mousemove', moveHandler);
         document.removeEventListener('mouseup', upHandler);
@@ -603,12 +623,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           // the click that button will fire. Stamping regardless let a drag in
           // onion skin swallow the first click after switching to toggle.
           //
-          // A touch drag is excluded, because its click never comes: the
-          // `preventDefault` the move handler calls on `touchmove` cancels
-          // that gesture's compatibility click, and a gesture that changed the
-          // offset has necessarily moved. Stamping there ate a deliberate tap
-          // inside the window -- a tap the reader meant for the version switch.
-          if (this.mode === 'toggle' && !isTouch) this._alignDragEndedAt = Date.now();
+          // The click only follows when the *release* landed on the button:
+          // released outside, no click is generated, and a stamp would eat the
+          // reader's next deliberate click inside the window. A touch drag is
+          // excluded too, because its click never comes: the `preventDefault`
+          // the move handler calls on `touchmove` cancels that gesture's
+          // compatibility click, and a gesture that changed the offset has
+          // necessarily moved.
+          const clickFollows = mouseUpEvent && mouseUpEvent.type === 'mouseup'
+            && box.contains(mouseUpEvent.target);
+          if (this.mode === 'toggle' && !isTouch && clickFollows) this._alignDragEndedAt = Date.now();
           this.announceOffset();
         }
       };
@@ -913,19 +937,26 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // the result depend on which image happened to decode first: the same two
       // files land on a different offset in a different order.
       //
-      // The rebound is **owed** rather than tied to a size change, because the
-      // report that completes the pair may be one that only *confirms* a
-      // stored size: it flips `_measured` without touching `_sizes`, and an
-      // early return there would skip the rebound the earlier report set up,
-      // leaving a converted offset outside the bound the smaller version
-      // leaves. `within` is snapshotted before this call's own correction --
-      // the round 4 rule, so an offset a flip legitimately left outside is
-      // never pulled back by a report that changed nothing.
-      if (!this._sizeReboundDue && within && !(this._measured[0] && this._measured[1])) {
+      // The rebound is **owed** rather than tied to the size change itself,
+      // because the report that completes the pair may be one that only
+      // *confirms* a stored size: it flips `_measured` without touching
+      // `_sizes`, and it still has to pay the debt an earlier report set up.
+      // `within` is snapshotted before this call's own correction -- the round
+      // 4 rule, so an offset a flip legitimately left outside is never pulled
+      // back by a report that changed nothing.
+      const both = this._measured[0] && this._measured[1];
+      // The debt is armed by an actual size change -- never by a confirm. A
+      // report that merely confirms changes nothing, so a flip made after it
+      // must not have its legitimately-outside inverse clamped by the next
+      // confirm: that would rewrite the reader's original correction.
+      if (next && !this._sizeReboundDue && within && !both) {
         this._sizeReboundDue = true;
       }
-      if (this._measured[0] && this._measured[1]) {
-        if (this._sizeReboundDue) this._reboundOffset();
+      // Paid when both have reported. One image showing on both sides fills
+      // both slots in a single report, so the completing call is also the size
+      // change and must rebound directly rather than only through the debt.
+      if (both && (this._sizeReboundDue || (next && within))) {
+        this._reboundOffset();
         this._sizeReboundDue = false;
       }
     },
@@ -945,6 +976,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // new mode's control was.
       this._keyHandler = (e) => {
         if (e.defaultPrevented) return;
+        // Ctrl/Cmd/Alt keys are the browser's -- Ctrl+R reloads, Ctrl+/- zooms
+        // the page, Alt+ArrowLeft goes back -- not the shortcuts below, which
+        // are the plain keys with Shift as their step modifier. Refusing here
+        // (and never preventing) leaves the browser's own action alone.
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
         const target = e.target;
         // A text field owns every key: `R` in one means the letter, not a
         // reset. This has to be its own guard, because the alignment's non-

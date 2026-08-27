@@ -113,6 +113,48 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 6:
+
+- **The rebound debt is armed by a size change, never by a confirm.** Round
+  5's debt was armed by any pre-completion report where the offset was
+  inside -- including one that merely confirmed a stored size. A reader who
+  then flipped would have the legitimately-outside inverse clamped by the
+  next confirm: 800x600 stored, slot 0 confirms, align to dx=450 at 25%,
+  flip, slot 1 confirms -- the inverse was rewritten from -1800 to -1200,
+  and the original 450 to 300.
+- **A report that fills both slots still reaches the rebound.** One image
+  showing on both sides (two identical URLs) fills both slots in a single
+  report, so the completing call is also the size change; the debt branch
+  (which requires the pair to be incomplete) never armed, and the pay branch
+  (which required the debt) never fired. A stored 400x800 pair aligned to
+  dy=600, reported as 800x400, converted dy to 1200 against a bound of 300
+  and left the version entirely outside the frame. The pay now also fires on
+  a completing call that itself changed the size and moved an offset that
+  was inside.
+- **Modified keys stay the browser's.** Ctrl+R reloads, Ctrl+/- zooms the
+  page and Alt+ArrowLeft goes back; while armed they instead reset, zoomed
+  the image and nudged, and preventDefaulted the browser's own action. The
+  alignment's shortcuts are the plain keys with Shift as their step
+  modifier, so ctrl/meta/alt are refused in both entry points -- the
+  container handler and the Align button's own, which bypasses it.
+- **Pinch zoom stays available.** `.compare-box-aligning` used
+  `touch-action: none`, which removed the reader's ability to magnify the
+  page for as long as Align was armed -- the touchscreen equivalent of
+  stealing Ctrl+wheel, which the wheel handler already leaves to the
+  browser. Now `manipulation` (pan remains suppressed by the touchmove
+  preventDefault), a two-finger touchstart never starts a drag, and a second
+  finger landing mid-drag stops handling without preventing.
+- **A drag converts both axes through the box's width.** The move handler
+  converted the y-axis through the rendered *height*, a rounded integer, so
+  on an extreme aspect ratio a vertical drag disagreed with the horizontal
+  one about how many box pixels a screen pixel was -- the same mistake
+  `noteSizeFrom` made and round 3 fixed. Both axes now use the width ratio.
+- **A release outside the toggle button arms no suppression.** The click
+  that follows a drag only fires when the release lands on the button;
+  released outside, no click follows, and the stamp ate the reader's next
+  deliberate click inside the window. The stamp now checks the release
+  landed inside the box.
+
 Round 5:
 
 - **A load-time rebound is owed, not skipped.** The rebound waited on

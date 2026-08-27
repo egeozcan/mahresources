@@ -2734,7 +2734,12 @@ html {
    listener sees it. */
 .compare-box-aligning {
     cursor: move;
-    touch-action: none;
+    /* `manipulation`, not `none`: pinch zoom is the touchscreen's equivalent
+       of Ctrl+wheel, which the component already leaves to the browser. The
+       component's own touchmove preventDefault suppresses single-finger
+       panning; `none` would remove the reader's ability to magnify the page
+       for as long as Align is armed. */
+    touch-action: manipulation;
     user-select: none;
 }
 

@@ -722,6 +722,49 @@ describe('manual alignment', () => {
     expect(d.trailOffset.dx).toBeCloseTo(500, 6);
   });
 
+  test('a report that only confirms does not arm a later rebound', () => {
+    // The rebound debt exists for a size *change* moving an offset that was
+    // inside. A report that confirms a stored size changes nothing, so it
+    // must not arm it -- otherwise a flip made after a confirm report would
+    // have its legitimately-outside inverse clamped by the next confirm,
+    // rewriting the reader's original correction.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    // Slot 0 confirms its stored size before anything has happened.
+    c.noteSizeFrom(img(1, 800, 600));
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    c.swapSides();
+    // The flip-derived inverse is legitimately outside this side's bound.
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    // Slot 1 confirms too: it completes the pair but changes no size, so it
+    // must not clamp the flipped offset.
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+  });
+
+  test('a report that fills both slots still reaches the rebound', () => {
+    // One image showing on both sides (two identical URLs) fills both slots in
+    // a single report, so the "both measured" moment is also the size change
+    // -- and the rebound has to happen then, or a converted offset is left
+    // outside the bound the corrected box implies.
+    const c = imageCompare({
+      leftUrl: '/v1/resource/version/file?versionId=9',
+      rightUrl: '/v1/resource/version/file?versionId=9',
+      leftLabel: 'A', rightLabel: 'B',
+      leftSize: { w: 400, h: 800 }, rightSize: { w: 400, h: 800 },
+    });
+    c.toggleAligning();
+    c.nudge(0, 10000);
+    // Stored 400x800: dy is bounded to 600 (800 - a quarter of 800).
+    expect(c.trailOffset.dy).toBeCloseTo(600, 6);
+    // The browser reports the real dimensions: 800x400, width doubled. The
+    // offset converts to 1200 and the new bound allows only 300 -- without a
+    // rebound here, the version would sit entirely outside the frame.
+    c.noteSizeFrom({ naturalWidth: 800, naturalHeight: 400, currentSrc: '/v1/resource/version/file?versionId=9' });
+    expect(c.trailOffset.dy).toBeCloseTo(300, 6);
+  });
+
   test('a tap is left alone, so an armed reader can still switch versions', () => {
     // preventDefault on touchstart suppresses the synthesized click, so while
     // armed a tap on toggle mode's button would do nothing at all.
@@ -962,6 +1005,53 @@ describe('manual alignment', () => {
     }
   });
 
+  test('modified keys stay the browser\'s, even while armed', () => {
+    // The alignment's shortcuts are the plain keys, Shift steps them up, and
+    // Ctrl/Cmd/Alt are the browser's: Ctrl+R reloads, Ctrl+/- zooms the page,
+    // Alt+ArrowLeft goes back. Stealing them while armed -- resetting on
+    // Ctrl+R, zooming the image on Ctrl+- -- leaves the reader unable to
+    // reload or magnify until they disarm.
+    const g = globalThis as any;
+    const previous = g.HTMLElement;
+    class FakeElement {}
+    g.HTMLElement = FakeElement;
+    const plain = Object.assign(new FakeElement(), { closest: () => null });
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.nudge(12, 0);
+      c.$el = { addEventListener() {}, querySelectorAll: () => [] };
+      c.init();
+      const fire = (key: string, mods: any = {}) => {
+        const e: any = { key, shiftKey: false, target: plain, defaultPrevented: false, ...mods };
+        e.preventDefault = () => { e.defaultPrevented = true; };
+        c._keyHandler(e);
+        return e;
+      };
+
+      // Ctrl+R is reload, not a reset; Ctrl+- is page zoom, not the
+      // alignment's zoom-out; Alt+ArrowLeft is back, not a nudge. None are
+      // defaulted-prevented either, so the browser's own action proceeds.
+      fire('r', { ctrlKey: true });
+      expect(c.offsetIsIdentity).toBe(false);
+      fire('-', { metaKey: true });
+      expect(c.trailOffset.k).toBe(1);
+      fire('ArrowLeft', { altKey: true });
+      expect(c.trailOffset.dx).toBe(12);
+      expect(fire('=', { ctrlKey: true }).defaultPrevented).toBe(false);
+
+      // handleAlignKey itself refuses too: the Align button calls it directly,
+      // bypassing the container handler.
+      expect(c.handleAlignKey({ key: 'r', ctrlKey: true, shiftKey: false, preventDefault() {} })).toBe(false);
+
+      // The plain keys still work.
+      fire('r');
+      expect(c.offsetIsIdentity).toBe(true);
+    } finally {
+      g.HTMLElement = previous;
+    }
+  });
+
   test('the wheel leaves the browser its own magnification and its sideways swipe', () => {
     // Ctrl+wheel is page zoom, and a trackpad pinch arrives as exactly that:
     // taking it leaves the page unzoomable for as long as the reader is
@@ -1029,21 +1119,24 @@ describe('manual alignment', () => {
     g.window = { addEventListener: add, removeEventListener: remove };
     return {
       fire(type: string, event: any = {}) {
-        (handlers[type] || []).slice().forEach((h) => h({ preventDefault() {}, ...event }));
+        (handlers[type] || []).slice().forEach((h) => h({ preventDefault() {}, type, ...event }));
       },
       listening(type: string) { return (handlers[type] || []).length; },
       restore() { g.document = previous.document; g.window = previous.window; },
     };
   }
 
-  const frame = (width = 800, height = 600) => ({
+  const frame = (width = 800, height = 600, contains = true) => ({
     getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
     clientWidth: width,
     clientHeight: height,
+    // Whether a release on this frame lands *inside* it -- the click that
+    // follows a drag only fires when the release is on the button.
+    contains: () => contains,
   });
 
-  const press = (x: number, y: number, from: any = { closest: () => null }) => ({
-    currentTarget: frame(), target: from, clientX: x, clientY: y, preventDefault() {},
+  const press = (x: number, y: number, from: any = { closest: () => null }, frameOverride?: any) => ({
+    currentTarget: frameOverride ?? frame(), target: from, clientX: x, clientY: y, preventDefault() {},
   });
 
   test('a drag announces once, at the end', () => {
@@ -1138,6 +1231,89 @@ describe('manual alignment', () => {
       // drag's click -- the touchmove's preventDefault suppressed it.
       c.toggleSide({ detail: 1 });
       expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a drag released outside the toggle button arms no suppression', () => {
+    // The click that would follow the drag is the button's -- but only if the
+    // release landed on the button. Released outside, no click follows, and a
+    // stamp would eat the reader's next deliberate click inside the window.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100, { closest: () => null }, frame(800, 600, false)));
+      dom.fire('mousemove', { clientX: 140, clientY: 100 });
+      dom.fire('mouseup', {});
+      // The release was outside the button, so no click followed the drag --
+      // and this tap is the reader's own, not the drag's.
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a two-finger gesture is the browser\'s, not a drag', () => {
+    // `touch-action: manipulation` keeps pinch zoom available, so a gesture
+    // with two fingers must not move the image and must not be cancelled by
+    // a preventDefault -- that would cancel the browser's own magnification,
+    // the touch equivalent of stealing Ctrl+wheel.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      // A pinch that starts with two fingers never starts a drag at all.
+      c.startAlignDrag({
+        type: 'touchstart',
+        currentTarget: frame(),
+        target: { closest: () => null },
+        touches: [{ clientX: 100, clientY: 100 }, { clientX: 120, clientY: 120 }],
+        preventDefault() {},
+      });
+      expect(dom.listening('touchmove')).toBe(0);
+
+      // A second finger landing mid-drag stops it without preventing: the
+      // pinch is the gesture now.
+      c.startAlignDrag({
+        type: 'touchstart',
+        currentTarget: frame(),
+        target: { closest: () => null },
+        touches: [{ clientX: 100, clientY: 100 }],
+        preventDefault() {},
+      });
+      dom.fire('touchmove', { touches: [{ clientX: 140, clientY: 100 }] });
+      expect(c.trailOffset.dx).toBeCloseTo(40, 6);
+      let prevented = false;
+      dom.fire('touchmove', {
+        touches: [{ clientX: 150, clientY: 100 }, { clientX: 130, clientY: 100 }],
+        preventDefault() { prevented = true; },
+      });
+      expect(prevented).toBe(false);
+      expect(c.trailOffset.dx).toBeCloseTo(40, 6);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a drag converts both axes through the box width, keeping a box pixel isotropic', () => {
+    // The box is width-driven: one box pixel is the same screen distance in
+    // either axis (renderedWidth / box.w). Converting the y-axis through the
+    // rendered *height* -- a rounded integer -- breaks that for extreme aspect
+    // ratios: a 4000x397 box rendered 800px wide is 79.4px tall, reports 79,
+    // and a 10px vertical drag becomes 50.25 box pixels instead of 50.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 4000, h: 397 }, { w: 4000, h: 397 });
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100, { closest: () => null }, frame(800, 79)));
+      dom.fire('mousemove', { clientX: 110, clientY: 110 });
+      dom.fire('mouseup', {});
+      expect(c.trailOffset.dx).toBeCloseTo(50, 6);
+      expect(c.trailOffset.dy).toBeCloseTo(50, 6);
     } finally {
       dom.restore();
     }
