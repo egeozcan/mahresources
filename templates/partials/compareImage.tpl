@@ -86,6 +86,20 @@
                 <span class="compare-seg-label">Stretch</span>
             </button>
         </div>
+        {# A binary choice, so a toggle rather than a third roving-tabindex #}
+        {# group — the same aria-pressed pattern Flip already sets in this #}
+        {# toolbar. Disabled rather than hidden under Stretch: one button #}
+        {# vanishing out of a row the reader is looking at is worse than a #}
+        {# visibly unavailable one, and the toolbar stays still. #}
+        <button type="button" @click="toggleAnchor()" class="compare-swap-btn-sm"
+                x-show="mode !== 'side-by-side'"
+                :aria-pressed="anchor === 'top-left'"
+                :aria-disabled="!anchorAvailable"
+                :title="anchorAvailable ? '' : 'Stretch leaves no space to anchor either version in.'"
+                aria-label="Anchor both versions to the top left corner">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="3" y="5" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+            Anchor
+        </button>
     </div>
 
     <!-- Side-by-side mode -->

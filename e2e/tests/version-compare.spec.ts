@@ -196,7 +196,10 @@ test.describe.serial('Version Compare UI', () => {
     await expect(page.locator('.compare-seg-btn:has-text("Slider")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toBeVisible();
-    await expect(page.locator('.compare-swap-btn-sm')).toContainText('Flip');
+    // By accessible name: `.compare-swap-btn-sm` is the toolbar's shared
+    // small-button style, worn by the anchor toggle as well.
+    await expect(page.getByRole('button', { name: 'Flip which image is shown first' }))
+      .toContainText('Flip');
 
     // Click different modes and verify they activate via aria-checked
     await page.locator('.compare-seg-btn:has-text("Slider")').click();

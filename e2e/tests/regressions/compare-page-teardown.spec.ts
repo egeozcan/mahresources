@@ -459,7 +459,11 @@ test.describe.serial('compare page teardown fixes', () => {
   test('flipping the images moves the colour, the label and the alt together', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${imageVersionedId}&v1=1&v2=2`);
     await page.waitForLoadState('load');
-    await expect(page.locator('.compare-swap-btn-sm')).toBeVisible({ timeout: 10000 });
+    // By accessible name, not by the style class: the toolbar's small-button
+    // style is shared with the anchor toggle, and the identity of this control
+    // is what it is called, not how it is painted.
+    await expect(page.getByRole('button', { name: 'Flip which image is shown first' }))
+      .toBeVisible({ timeout: 10000 });
 
     const panes = () => page.evaluate(() =>
       [...document.querySelectorAll('[x-show="mode === \'side-by-side\'"] > div')].map((pane) => {
@@ -477,7 +481,7 @@ test.describe.serial('compare page teardown fixes', () => {
     expect(before).toHaveLength(2);
     for (const pane of before) expect(pane.alt).toBe(pane.label);
 
-    await page.locator('.compare-swap-btn-sm').click();
+    await page.getByRole('button', { name: 'Flip which image is shown first' }).click();
     const after = await panes();
 
     // The images changed places...

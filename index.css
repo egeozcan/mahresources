@@ -220,3 +220,10 @@
     opacity: 0.45;
     cursor: not-allowed;
 }
+
+/* Matches .compare-seg-btn[aria-disabled] above, for the toggle that sits beside
+   the segmented groups rather than inside one. */
+.compare-swap-btn-sm[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}

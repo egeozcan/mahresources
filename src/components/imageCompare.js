@@ -7,6 +7,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // all three and the divergent minority has no measurement saying which of a
     // rescan and a crop is more common.
     scale: 'relative',
+    // Where an image sits in whatever slack the box leaves it. Centring is right
+    // for a photograph and wrong for a document or a screenshot, where content
+    // is flush to a corner and centring throws the page out by half the size
+    // difference.
+    anchor: 'center',
     // `swapped` is the only piece of swap state. Exchanging the URLs and labels
     // in place left the panel colours and the server-rendered alt text describing
     // whichever side had originally been there, so the red "older" panel could
@@ -86,13 +91,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // index.css owns the layout here and puts the images back in the flow, so
       // an inline `height: 100%` from the other branches below would beat its
       // `height: auto` and break a case that currently works.
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '', objectFit: '' };
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '', objectFit: '', margin: '' };
 
       // Distort each image onto the whole box. Right for a re-encode that
       // changed aspect, wrong for a crop, which is why this mode's accessible
       // name says so rather than leaving the reader to notice.
       if (this.scale === 'stretch') {
-        return { width: '100%', height: '100%', objectFit: 'fill' };
+        return { width: '100%', height: '100%', objectFit: 'fill', margin: '' };
       }
 
       const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
@@ -121,6 +126,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         width: `${(w / box.w) * 100}%`,
         height: `${(h / box.h) * 100}%`,
         objectFit: '',
+        // `margin: auto` on the class centres an absolutely-positioned element
+        // pinned on all four sides. Zeroing it over-constrains the box, which
+        // CSS resolves in a left-to-right document by ignoring `right` and
+        // `bottom` -- the top-left corner.
+        margin: this.anchor === 'top-left' ? '0' : '',
       };
     },
 
@@ -138,6 +148,26 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     setScale(value) {
       if (!this.scaleAvailable) return;
       this.scale = value;
+    },
+
+    /**
+     * Whether an anchor choice would do anything.
+     *
+     * Stretch leaves no slack -- both versions already fill the frame exactly --
+     * so there is nothing for an anchor to take up, and a control that looked
+     * pressed while changing nothing would be worse than one that says it cannot
+     * act. Kept visible and marked disabled rather than hidden: one button
+     * vanishing out of a toolbar the reader is looking at is more disorienting
+     * than a visibly unavailable one, and it keeps the row from twitching on
+     * every scale change.
+     */
+    get anchorAvailable() {
+      return this.scaleAvailable && this.scale !== 'stretch';
+    },
+
+    toggleAnchor() {
+      if (!this.anchorAvailable) return;
+      this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
     },
 
     /**

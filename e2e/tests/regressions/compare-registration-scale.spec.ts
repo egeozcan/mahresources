@@ -291,4 +291,55 @@ test.describe.serial('compare page registration and scale', () => {
     await page.getByRole('radio', { name: 'Side by side' }).click();
     await expect(scaleControl).toBeHidden();
   });
+
+  test('anchoring to the top left pins both versions to the frame corner', async ({ page }) => {
+    // Centring is right for a photograph and wrong for a document or a
+    // screenshot, where content sits flush to a corner and centring throws the
+    // whole page out by half the size difference.
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box, lead } = onionImages(page);
+    const frame = (await box.boundingBox())!;
+
+    const centred = (await lead.boundingBox())!;
+    expect(centred.x - frame.x).toBeGreaterThan(10);
+    expect(centred.y - frame.y).toBeGreaterThan(10);
+
+    await page.getByRole('button', { name: /^Anchor/ }).click();
+    const cornered = (await lead.boundingBox())!;
+    // Within the frame's 1px border, which the image sits inside.
+    expect(Math.abs(cornered.x - frame.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(cornered.y - frame.y)).toBeLessThanOrEqual(2);
+
+    // And it holds under Fit, where the older version fills the width and the
+    // slack that gets taken up is vertical.
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitted = (await lead.boundingBox())!;
+    expect(Math.abs(fitted.y - frame.y)).toBeLessThanOrEqual(2);
+  });
+
+  test('the anchor control refuses in Stretch, where there is no slack to take up', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const anchor = page.getByRole('button', { name: /^Anchor/ });
+    // Absent rather than "false": Alpine drops a falsy aria-disabled, and ARIA
+    // treats an absent attribute and an explicit false as the same thing.
+    await expect(anchor).not.toHaveAttribute('aria-disabled', 'true');
+
+    await page.getByRole('radio', { name: /^Stretch to match/ }).click();
+    await expect(anchor).toHaveAttribute('aria-disabled', 'true');
+
+    // Refused, not merely announced as refused: both versions already fill the
+    // frame exactly, so a pressed-looking control that changed nothing would be
+    // worse than one that says it cannot act. Playwright's own actionability
+    // reads aria-disabled and will not click it, which is the pointer half of
+    // the answer; the forced click is the state guard behind it.
+    await expect(anchor).toBeDisabled();
+    await anchor.click({ force: true });
+    await expect(anchor).toHaveAttribute('aria-pressed', 'false');
+
+    // Hidden entirely in side-by-side, like the scale control it sits beside.
+    await page.getByRole('radio', { name: 'Side by side' }).click();
+    await expect(anchor).toBeHidden();
+  });
 });
