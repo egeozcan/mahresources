@@ -1274,6 +1274,150 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(-550, 6);
   });
 
+  test('a control operation during the load window claims what it broke in the frame the pay uses', () => {
+    // A repair the reader watches happen belongs in the view they are looking
+    // at. A repair *deferred* to the both-measured moment does not: by then
+    // the view may be the other one, and the question the operation asked has
+    // to survive until it is answered. Asked of the display, an axis a flip
+    // already left outside hides the crossing the operation makes canonically
+    // -- here Anchor throws the correction past a canonical bound it was
+    // sitting exactly on -- and the completing report then finds it already
+    // outside and claims nothing either. Nothing repairs it, and the two
+    // decode orders finish 150 box pixels apart with one of them showing
+    // nothing of the image at all.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.zoomBy(-0.75);
+      c.nudge(-450, 0);
+      c.swapSides();
+      c.noteSizeFrom(img(first, 400, 400));
+      c.toggleAnchor();
+      c.noteSizeFrom(img(second, 400, 400));
+      return c._offset.dx;
+    };
+    // A 100-wide trail anchored top-left in a 400 box: the near edge is
+    // -(100 - 25).
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-75, 6);
+  });
+
+  test('a report that claims an axis retires the anchor a nudge recorded before it', () => {
+    // An anchor means the axis was legitimately outside at nudge time *and*
+    // nothing has claimed it since. A report arriving afterwards and pushing
+    // that axis out of a bound it was inside is exactly such a claim: widening
+    // the resolution around the older anchor launders the outside-ness the
+    // report created, which is the debt the rebound exists to pay.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.zoomBy(-0.75);
+      c.nudge(450, 0);
+      c.swapSides();
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 600] : [400, 600]);
+      c.noteSizeFrom(img(first, ...size(first)));
+      // Refused outward: the display does not move and the whole increment
+      // rides onto the request, with the flip-derived outside as its anchor.
+      c.nudge(-1, 0);
+      c.noteSizeFrom(img(second, ...size(second)));
+      c.swapSides();
+      return c._offset.dx;
+    };
+    // A 100-wide trail centred in a 600 box: rest 250, a quarter kept, so the
+    // boundary is 600 - 25 - 250.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(325, 6);
+  });
+
+  test('the canonical correction never depends on which version decoded first', () => {
+    // Every load-window defect this component has had is one shape: a reader's
+    // script interleaved with the two decodes, converging in one order and not
+    // the other. Found one repro at a time, that shape gets sampled, never
+    // covered -- a steady find rate across rounds is the signature. So the
+    // interleavings are enumerated instead: each script is replayed with the
+    // two reports inserted at every pair of positions in it, under both decode
+    // orders, and the two canonical offsets must agree.
+    //
+    // Convergence only. Containment is deliberately not asserted: a
+    // flip-derived inverse is legitimately outside this side's bound, and the
+    // whole design is built to preserve it rather than clamp it.
+    const step = (name: string, run: (c: any) => void) => ({ name, run });
+    const SCRIPTS = [
+      [step('nudge -450', (c) => c.nudge(-450, 0)), step('flip', (c) => c.swapSides()),
+        step('anchor', (c) => c.toggleAnchor())],
+      [step('zoom 25%', (c) => c.zoomBy(-0.75)), step('nudge +450', (c) => c.nudge(450, 0)),
+        step('flip', (c) => c.swapSides()), step('nudge y', (c) => c.nudge(0, 1))],
+      [step('nudge -450y', (c) => c.nudge(0, -450)), step('flip', (c) => c.swapSides()),
+        step('nudge', (c) => c.nudge(37, -11)), step('flip', (c) => c.swapSides())],
+      [step('zoom 25%', (c) => c.zoomBy(-0.75)), step('nudge -1000', (c) => c.nudge(-1000, 0)),
+        step('anchor', (c) => c.toggleAnchor()), step('flip', (c) => c.swapSides()),
+        step('nudge y', (c) => c.nudge(0, 50))],
+      [step('nudge', (c) => c.nudge(120, -40)), step('fit', (c) => c.setScale('fit')),
+        step('flip', (c) => c.swapSides()), step('zoom +', (c) => c.zoomBy(0.5))],
+    ];
+    // Pairs whose corrected widths differ from the stored ones and from each
+    // other, so the transient box differs per decode order -- the condition
+    // every one of these defects needed.
+    const PAIRS = [
+      { stored: [{ w: 800, h: 600 }, { w: 800, h: 600 }], actual: [[400, 400], [400, 400]] },
+      { stored: [{ w: 800, h: 600 }, { w: 800, h: 600 }], actual: [[600, 900], [1200, 400]] },
+      { stored: [{ w: 800, h: 200 }, { w: 1200, h: 100 }], actual: [[1200, 800], [100, 400]] },
+      { stored: [{ w: 800, h: 600 }, { w: 800, h: 600 }], actual: [[600, 600], [400, 600]] },
+      { stored: [{ w: 800, h: 600 }, { w: 800, h: 600 }], actual: [[600, 800], [1200, 400]] },
+    ];
+
+    const play = (pair: typeof PAIRS[number], script: typeof SCRIPTS[number],
+      at: number, then: number, first: 1 | 2) => {
+      const c = component(pair.stored[0], pair.stored[1]);
+      c.toggleAligning();
+      const second: 1 | 2 = first === 1 ? 2 : 1;
+      const report = (v: 1 | 2) => c.noteSizeFrom(img(v, pair.actual[v - 1][0], pair.actual[v - 1][1]));
+      for (let k = 0; k <= script.length; k += 1) {
+        if (k === at) report(first);
+        if (k === then) report(second);
+        if (k < script.length) script[k].run(c);
+      }
+      return c._offset;
+    };
+
+    const apart = (a: any, b: any) => Math.abs(a.dx - b.dx) > 1e-6
+      || Math.abs(a.dy - b.dy) > 1e-6 || Math.abs(a.k - b.k) > 1e-9;
+    const diverged: string[] = [];
+    let runs = 0;
+    PAIRS.forEach((pair, p) => {
+      SCRIPTS.forEach((script, sc) => {
+        for (let at = 0; at <= script.length; at += 1) {
+          for (let then = at; then <= script.length; then += 1) {
+            runs += 1;
+            const slot0First = play(pair, script, at, then, 1);
+            const slot1First = play(pair, script, at, then, 2);
+            if (apart(slot0First, slot1First)) {
+              const where = script.map((st, i) => (i === at || i === then ? `[load] ${st.name}` : st.name));
+              diverged.push(`pair ${p} / script ${sc} / loads at ${at},${then} (${where.join(' -> ')}): `
+                + `${JSON.stringify(slot0First)} vs ${JSON.stringify(slot1First)}`);
+            }
+          }
+        }
+      });
+    });
+    expect(runs).toBeGreaterThan(300);
+    // Asserted as an exact set rather than as "none", because one family is
+    // open: the pay resolves a request in the view it was made in unless a
+    // bound-mover has claimed an axis, in which case it repairs canonically --
+    // and *whether* a report crosses a bound can itself depend on decode
+    // order, so the choice between those two frames can. Here slot 1's report
+    // shrinks the canonical trail; arriving first it crosses, arriving last it
+    // does not, because by then the box has shrunk with it. Both answers are
+    // legal positions, and each is what its own frame's bound allows; they are
+    // not the same one. Recorded as open in the plan. Listing them exactly
+    // means a new divergence fails this test, and so does fixing these two.
+    const OPEN = [
+      'pair 0 / script 3 / loads at 3,5 (zoom 25% -> nudge -1000 -> anchor -> [load] flip -> nudge y): {"dx":-75,"dy":0,"k":0.25} vs {"dx":-75,"dy":-6.25,"k":0.25}',
+      'pair 0 / script 3 / loads at 4,5 (zoom 25% -> nudge -1000 -> anchor -> flip -> [load] nudge y): {"dx":-75,"dy":0,"k":0.25} vs {"dx":-75,"dy":-6.25,"k":0.25}',
+    ];
+    expect(diverged).toEqual(OPEN);
+  });
+
   test('a report that moves one axis leaves the other axis its legitimate outside', () => {
     // Provenance is a fact about an axis, not about the component. A report
     // that corrects only the height moves the y bound and, because the offset
