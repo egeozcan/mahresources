@@ -113,6 +113,24 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 10:
+
+- **Reset retires the debt with the correction that earned it.** The debt is
+  the promise that a specific correction will be brought back once both
+  versions report; Reset discards that correction but left the promise
+  armed, so a later confirming report paid it against alignment the reader
+  made *after* the reset: zoom to 25%, nudge to 450, slot 0 reports
+  1600x1200 (convert to 900, arm), Reset, flip, nudge to +900, slot 1
+  confirms -- the stale debt clamped +900 to +400. `resetAlignment` now
+  clears the debt.
+- **The onion-opacity range is not a text field.** The text-field guard
+  matched plain `input`, so the range swallowed `+`, `-` and `R` while
+  focused -- keys it has no use for, since a range answers only the arrows
+  and Home/End. The guard is now `input:not([type="range"]), select,
+  textarea`, and a unit test pins the distinction: R and = reach the armed
+  alignment from the range, the arrows stay its own, and a real text field
+  still owns every key.
+
 Round 9:
 
 - **A report that moves neither the offset nor its bound arms no debt.** The

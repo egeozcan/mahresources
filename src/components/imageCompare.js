@@ -463,6 +463,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * you reset is almost always that you are about to try again.
      */
     resetAlignment() {
+      // The debt was the promise that the discarded correction would be
+      // brought back once both versions reported; Reset discards the
+      // correction, so the promise dies with it -- left armed, a later
+      // confirming report would rewrite alignment the reader makes after the
+      // reset.
+      this._sizeReboundDue = false;
+      this._sizeReboundDueSwapped = false;
       // A refused Reset stays silent. The control is drawn `aria-disabled` at
       // identity rather than removed, so it is reachable and pressable, and
       // announcing "offset 0, 0, 100%" at someone who changed nothing is the
@@ -1019,8 +1026,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         const target = e.target;
         // A text field owns every key: `R` in one means the letter, not a
         // reset. This has to be its own guard, because the alignment's non-
-        // arrow keys pass the one below.
-        if (target instanceof HTMLElement && target.closest('input, select, textarea')) return;
+        // arrow keys pass the one below. A range input is *not* a text field:
+        // it answers the arrows and Home/End itself, but `+`, `-` and `R` are
+        // not its keys, so they still reach the armed alignment from it.
+        if (target instanceof HTMLElement && target.closest('input:not([type="range"]), select, textarea')) return;
         // Anything else focusable answers its own arrow keys. Without this the
         // reveal position moved while Flip had focus, which is a control that
         // has nothing to do with it. The guard is deliberately scoped to the

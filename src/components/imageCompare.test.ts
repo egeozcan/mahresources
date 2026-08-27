@@ -848,6 +848,30 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(850, 6);
   });
 
+  test('reset retires the debt with the correction that earned it', () => {
+    // The debt is the promise that a specific correction will be brought back
+    // once both versions have reported. Reset discards that correction, so
+    // the promise must die with it -- left armed, a later confirming report
+    // would rewrite alignment the reader makes *after* the reset.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    // Slot 0 grows to 1600x1200: conversion to 900, debt armed.
+    c.noteSizeFrom(img(1, 1600, 1200));
+    expect(c.trailOffset.dx).toBeCloseTo(900, 6);
+    // The reader resets, then builds a fresh alignment in the flipped view.
+    c.resetAlignment();
+    c.swapSides();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    // The flipped bound for the 400px-rendered 1600x1200 slot is +900.
+    expect(c.trailOffset.dx).toBeCloseTo(900, 6);
+    // Slot 1 confirms. The old debt must not clamp +900 to +400.
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(900, 6);
+  });
+
   test('a tap is left alone, so an armed reader can still switch versions', () => {
     // preventDefault on touchstart suppresses the synthesized click, so while
     // armed a tap on toggle mode's button would do nothing at all.
@@ -1082,6 +1106,54 @@ describe('manual alignment', () => {
       // A text field owns every key: R there means the letter, not a reset.
       c.nudge(12, 0);
       fire('r', focused('input'));
+      expect(c.offsetIsIdentity).toBe(false);
+    } finally {
+      g.HTMLElement = previous;
+    }
+  });
+
+  test('a range input keeps its arrows but lets + - and R through', () => {
+    // The onion-opacity slider is an <input type="range">: it answers the
+    // arrows and Home/End itself, but `+`, `-` and `R` are not its keys. The
+    // text-field guard must not treat it as one, or an armed reader focused
+    // on the slider could not reset or zoom.
+    const g = globalThis as any;
+    const previous = g.HTMLElement;
+    class FakeElement {}
+    g.HTMLElement = FakeElement;
+    const element = (kind: 'text' | 'range') => Object.assign(new FakeElement(), {
+      closest: (sel: string) => {
+        if (sel.includes('input:not([type="range"])')) return kind === 'text' ? {} : null;
+        if (sel.includes('input') || sel.includes('button')) return {};
+        return null;
+      },
+    });
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.$el = { addEventListener() {}, querySelectorAll: () => [] };
+      c.init();
+      const fire = (key: string, target: any) => {
+        const e: any = { key, shiftKey: false, target, defaultPrevented: false };
+        e.preventDefault = () => { e.defaultPrevented = true; };
+        c._keyHandler(e);
+      };
+
+      c.nudge(12, 0);
+      // On the range: R resets and = zooms...
+      fire('r', element('range'));
+      expect(c.offsetIsIdentity).toBe(true);
+      c.nudge(12, 0);
+      fire('=', element('range'));
+      expect(c.trailOffset.k).toBeCloseTo(1.01, 6);
+      // ...while the arrows stay the slider's own.
+      c._offset = { dx: 0, dy: 0, k: 1 };
+      fire('ArrowRight', element('range'));
+      expect(c.offsetIsIdentity).toBe(true);
+
+      // A real text field still owns every key.
+      c.nudge(12, 0);
+      fire('r', element('text'));
       expect(c.offsetIsIdentity).toBe(false);
     } finally {
       g.HTMLElement = previous;
