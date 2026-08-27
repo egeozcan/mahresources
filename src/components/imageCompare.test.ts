@@ -1196,6 +1196,54 @@ describe('manual alignment', () => {
     expect(c._offset.dx).toBeCloseTo(450, 6);
   });
 
+  test('a report that moves one axis leaves the other axis its legitimate outside', () => {
+    // Provenance is a fact about an axis, not about the component. A report
+    // that corrects only the height moves the y bound and, because the offset
+    // converts through the *width* ratio alone, moves neither the x bound nor
+    // the x value -- so an x sitting legitimately outside after a flip is
+    // still nobody's doing but the flip's, and the next press must anchor it.
+    // One boolean for both axes let a height-only report claim x as well: an
+    // ArrowUp then resolved x from -1800 to -1200, and the two decode orders
+    // came apart, 300 against 450.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.zoomBy(-0.75);
+      c.nudge(450, 0);
+      c.swapSides();
+      expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+      // Slot 0 is taller than stored; every width in the pair is 800.
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [800, 900] : [800, 600]);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.nudge(0, 1);
+      c.noteSizeFrom(img(second, ...size(second)));
+      return c._offset.dx;
+    };
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(450, 6);
+  });
+
+  test('a control operation claims only the axes it actually pushed out of bounds', () => {
+    // A zoom moves both bounds, but moving a bound is not the same as
+    // breaking something: the correction here is at the edge of the bound
+    // before the zoom and at the edge of the smaller one after it, inside
+    // both times. Claiming the axis anyway outlives the operation and
+    // suppresses the anchor of the outside the reader's own flip derives a
+    // moment later -- canonical 450 came back as 300.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.noteSizeFrom(img(1, 800, 600));
+    c.nudge(450, 0);
+    c.zoomBy(-0.75);
+    expect(c.trailOffset.dx).toBeCloseTo(450, 6);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    c.nudge(0, 1);
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    expect(c._offset.dx).toBeCloseTo(450, 6);
+  });
+
   test('a pending remainder keeps Reset actionable while the readout sits at identity', () => {
     // `offsetIsIdentity` describes only what is shown; the half-measured
     // window can leave an unshown remainder underneath it. Drawing Reset
