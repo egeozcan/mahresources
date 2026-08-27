@@ -113,6 +113,26 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 7:
+
+- **A deferred rebound is paid in the orientation that incurred it.** The
+  debt round 6 scoped to size changes was still paid against the *current*
+  orientation's bound. A flip landing between the size change and the
+  confirming load made the pay clamp the flipped inverse and rewrite the
+  canonical offset differently than the same measurements without the flip:
+  stored 800x600, align to dx=450 at 25%, slot 0 reports 1600x1200 (convert
+  to 900, arm the debt), flip, slot 1 confirms -- the inverse was clamped
+  from -3600 to -2400 and the canonical from 900 to 600, where the flip-free
+  order rebounds it to 850. The same two files landing on a different
+  correction depending on when the reader happened to flip is the
+  order-dependence the load-time rebound exists to remove. The pay now
+  completes the correction in the orientation where the size change incurred
+  it (the flip itself still never reapplies the bound), so both orders
+  converge on 850 / -3400.
+- **The stale `touch-action: none` comment was corrected.** Round 6 changed
+  the CSS to `manipulation` but left the component's comment claiming `none`,
+  misdocumenting the accessibility rule the change existed for.
+
 Round 6:
 
 - **The rebound debt is armed by a size change, never by a confirm.** Round

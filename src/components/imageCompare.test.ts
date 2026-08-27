@@ -765,6 +765,44 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dy).toBeCloseTo(300, 6);
   });
 
+  test('a deferred rebound is paid in the orientation that incurred it', () => {
+    // The debt is armed by a size change in whatever orientation the reader is
+    // in. Paying it later in a *different* orientation -- a flip landed
+    // between the change and the confirming load -- clamps the inverse and
+    // rewrites the canonical offset differently than the same measurements
+    // without the flip would have: the same two files land on a different
+    // correction depending on when the reader happened to flip, which is the
+    // order-dependence the load-time rebound exists to remove.
+    const before = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    before.toggleAligning();
+    before.zoomBy(-0.75);
+    before.nudge(10000, 0);
+    before.noteSizeFrom(img(1, 1600, 1200));
+    before.noteSizeFrom(img(2, 800, 600));
+    // Both measured before the flip: the canonical offset rebounds to 850
+    // (1600 box, 200 rendered trail: 1600 - 50 - 700), and the flip then
+    // derives the inverse without touching it.
+    expect(before.trailOffset.dx).toBeCloseTo(850, 6);
+    before.swapSides();
+    expect(before.trailOffset.dx).toBeCloseTo(-3400, 6);
+
+    const flipped = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    flipped.toggleAligning();
+    flipped.zoomBy(-0.75);
+    flipped.nudge(10000, 0);
+    // Slot 0 grows to 1600x1200: the conversion doubles dx to 900 and arms
+    // the debt, both while unflipped.
+    flipped.noteSizeFrom(img(1, 1600, 1200));
+    expect(flipped.trailOffset.dx).toBeCloseTo(900, 6);
+    // The reader flips to check, and the confirming load lands while flipped.
+    flipped.swapSides();
+    flipped.noteSizeFrom(img(2, 800, 600));
+    // The pay must land on the same canonical correction the flip-free order
+    // did, not clamp the flipped inverse to -2400 and rewrite it to 600.
+    expect(flipped._offset.dx).toBeCloseTo(850, 6);
+    expect(flipped.trailOffset.dx).toBeCloseTo(-3400, 6);
+  });
+
   test('a tap is left alone, so an armed reader can still switch versions', () => {
     // preventDefault on touchstart suppresses the synthesized click, so while
     // armed a tap on toggle mode's button would do nothing at all.

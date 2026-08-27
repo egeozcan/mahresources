@@ -115,8 +115,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // A size correction moved an offset that was inside the old bound, but the
     // rebound has to wait for the other version to report. Owed rather than
     // immediate because the report that completes the pair may only *confirm* a
-    // stored size -- see `noteSizeFrom`.
+    // stored size -- see `noteSizeFrom`. The orientation at arming is kept so
+    // the pay can complete the correction in the orientation that incurred it,
+    // whatever a flip did in between.
     _sizeReboundDue: false,
+    _sizeReboundDueSwapped: false,
     _endAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
@@ -555,8 +558,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // which would take the gesture over entirely. On `touchstart` it also
       // suppresses the synthesized `click`, so while armed a *tap* on toggle
       // mode's button would do nothing at all -- and it is not needed there:
-      // `.compare-box-aligning` sets `touch-action: none`, which is what stops
-      // the page scrolling, and the first `touchmove` prevents as well.
+      // `.compare-box-aligning` sets `touch-action: manipulation`, which
+      // leaves the browser's pinch zoom alone while still declaring the
+      // gesture ours to cancel, and the first `touchmove` prevents as well.
       if (e.type !== 'touchstart') e.preventDefault();
       const isTouch = e.type === 'touchstart';
       // A gesture that starts with two fingers is a pinch, the browser's own
@@ -951,12 +955,27 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // confirm: that would rewrite the reader's original correction.
       if (next && !this._sizeReboundDue && within && !both) {
         this._sizeReboundDue = true;
+        this._sizeReboundDueSwapped = this.swapped;
       }
       // Paid when both have reported. One image showing on both sides fills
       // both slots in a single report, so the completing call is also the size
       // change and must rebound directly rather than only through the debt.
       if (both && (this._sizeReboundDue || (next && within))) {
-        this._reboundOffset();
+        // The debt was incurred by a size change in a specific orientation.
+        // If a flip landed between the change and the confirming load, the
+        // pay completes the correction in that same orientation -- paying in
+        // the flipped one clamps the inverse and rewrites the canonical
+        // offset differently than the same measurements without the flip
+        // would have, which is the order-dependence the load-time rebound
+        // exists to remove. The flip itself never reapplies the bound.
+        if (this._sizeReboundDue && this.swapped !== this._sizeReboundDueSwapped) {
+          const held = this.swapped;
+          this.swapped = this._sizeReboundDueSwapped;
+          this._reboundOffset();
+          this.swapped = held;
+        } else {
+          this._reboundOffset();
+        }
         this._sizeReboundDue = false;
       }
     },
