@@ -1196,6 +1196,28 @@ describe('manual alignment', () => {
     expect(c._offset.dx).toBeCloseTo(450, 6);
   });
 
+  test('an operation repairs the axis it broke even while the other is legitimately outside', () => {
+    // Repair is per axis for the same reason arming is. Here the flip leaves x
+    // legitimately outside and y comfortably inside, and the anchor change
+    // trades them: x becomes legal and y is thrown 1000 pixels down a frame
+    // 800 tall, which is the state the whole bound exists to prevent -- an
+    // image with nothing of it on screen. A whole-offset "was it inside"
+    // question answers no, because of x, and the repair never runs; asked per
+    // axis it repairs y and leaves x exactly where the reader's flip put it.
+    const c = component({ w: 800, h: 800 }, { w: 800, h: 800 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(450, -250);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    expect(c.trailOffset.dy).toBeCloseTo(1000, 6);
+    c.toggleAnchor();
+    // Anchored top-left the range is -2400..0 on both axes: x was already
+    // outside and stays, y was inside and comes back to the near edge.
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    expect(c.trailOffset.dy).toBeCloseTo(0, 6);
+  });
+
   test('a report that moves one axis leaves the other axis its legitimate outside', () => {
     // Provenance is a fact about an axis, not about the component. A report
     // that corrects only the height moves the y bound and, because the offset
