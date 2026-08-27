@@ -561,7 +561,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // would queue hundreds of them.
         const ended = this.trailOffset;
         if (ended.dx !== startedFrom.dx || ended.dy !== startedFrom.dy || ended.k !== startedFrom.k) {
-          this._alignDragEndedAt = Date.now();
+          // Only a drag that ended on the toggle-mode button can be followed by
+          // the click that button will fire. Stamping regardless let a drag in
+          // onion skin swallow the first click after switching to toggle.
+          if (this.mode === 'toggle') this._alignDragEndedAt = Date.now();
           this.announceOffset();
         }
       };
@@ -629,10 +632,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this.returnFocusToCheckedScale(e);
         return;
       }
-      if (this.scale === value) return;
       this.scale = value;
       // Fit and Stretch render the version at a different size, which moves the
-      // bound the offset was checked against.
+      // bound the offset was checked against. Unconditional, with no early
+      // return for "already selected": a `_reboundOffset` that has nothing to
+      // do writes nothing, while an early return here means pressing the
+      // already-selected policy cannot repair a state some other path left
+      // outside the bound.
       this._reboundOffset();
     },
 
@@ -725,7 +731,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (RADIOGROUP_KEYS.includes(e.key)) e.preventDefault();
         return;
       }
-      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch']);
+      // With the rebound as the callback, not left to `setScale`: this path
+      // assigns `this.scale` through the generic radiogroup handler and never
+      // touches `setScale` at all, so a scale changed by arrow key kept an
+      // offset the new sizing had put outside the frame.
+      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'], () => this._reboundOffset());
     },
 
     /**
@@ -830,18 +840,23 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // The offset is in box pixels, so correcting the box's own dimensions
       // changes what an existing one means. A reader who nudged against the
       // stored placeholder and then saw the real dimensions arrive would watch
-      // their correction change size on its own; converting keeps it the same
-      // fraction of the frame, which is what they actually chose.
+      // their correction change size on its own.
+      //
+      // **Both** components scale by the *width* ratio. The box is
+      // width-driven: it takes the container's width and derives its height
+      // from `aspect-ratio`, so one box pixel is the same distance on screen in
+      // either axis -- `renderedWidth / box.w`. Scaling each axis by its own
+      // ratio looks right and is not: correcting only the height moves no
+      // physical distance at all, and would double a vertical offset.
       const before = this.overlayBox;
       this._sizes = next;
       const after = this.overlayBox;
-      if (before && after && !this.offsetIsIdentity && (before.w !== after.w || before.h !== after.h)) {
-        this._offset = {
-          dx: this._offset.dx * (after.w / before.w),
-          dy: this._offset.dy * (after.h / before.h),
-          k: this._offset.k,
-        };
+      if (before && after && !this.offsetIsIdentity && before.w !== after.w) {
+        const ratio = after.w / before.w;
+        this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
       }
+      // The versions changed size too, so the bound moved with them.
+      this._reboundOffset();
     },
 
     get leadScale() {
@@ -932,7 +947,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * first / last. Selecting a value moves focus onto the now-checked radio
      * so tabindex stays on the active one (roving tabindex invariant).
      */
-    onRadiogroupKeydown(e, stateKey, values) {
+    onRadiogroupKeydown(e, stateKey, values, onChange) {
       if (!RADIOGROUP_KEYS.includes(e.key)) return;
       e.preventDefault();
       // Down and Up as well as Right and Left: the pattern specifies both pairs,
@@ -946,6 +961,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       else if (e.key === 'Home') nextIdx = 0;
       else if (e.key === 'End') nextIdx = values.length - 1;
       this[stateKey] = values[nextIdx];
+      if (onChange) onChange();
       const group = e.currentTarget;
       this.$nextTick(() => {
         const checked = group.querySelector('[role="radio"][aria-checked="true"]');

@@ -113,6 +113,32 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 3:
+
+- **The keyboard path never reached the rebound.** `onScaleKeydown` delegates to
+  the generic `onRadiogroupKeydown`, which assigns `this.scale` directly and
+  never touches `setScale`, so a scale changed by arrow key kept an offset the
+  new sizing had put outside the frame. The rebound is passed as a callback, and
+  `setScale`'s early return for "already selected" is gone: it meant pressing
+  the already-selected policy could not repair such a state.
+- **The box is width-driven, so a box pixel is isotropic.** The conversion in
+  `noteSizeFrom` scaled `dx` and `dy` by their own axis ratios, which is wrong:
+  the box takes the container's width and derives its height from
+  `aspect-ratio`, so one box pixel is `renderedWidth / box.w` on screen in
+  *either* axis. Correcting only the height moves no physical distance at all
+  and the offset was doubled. Both components scale by the width ratio now, and
+  the rebound runs afterwards because the versions changed size too.
+- **Only a drag that ends in toggle mode arms the click suppression.** Toggle's
+  frame is a button and the click ending a drag across it would also switch
+  versions; a drag in onion skin produces no such click, so stamping there
+  swallowed the first click after a mode switch.
+- The drag path is now unit-tested against minimal DOM stubs. This suite runs
+  with no DOM, so it had been reachable only end-to-end -- which left its own
+  rules (announce once at the end; arm the suppression only where that click can
+  happen) pinned by nothing that runs in a second.
+
+Rounds 1 and 2:
+
 - The toggle-mode click suppression stamps only a gesture that **changed the
   offset**, and is spent on the one click it was for. A flag the next click
   cleared reached forward into an unrelated one.

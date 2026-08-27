@@ -598,6 +598,24 @@ describe('manual alignment', () => {
     // re-applied rather than that this case moves.
     expect(c.trailOffset.dx).toBeCloseTo(600, 6);
 
+    // A scale changed by arrow key assigns through the generic radiogroup
+    // handler and never touches `setScale`, so this is a second path to the
+    // same hazard and it had no rebound at all.
+    const e = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+    e.toggleAligning();
+    e.setScale('fit');
+    e.nudge(10000, 0);
+    // Fit grows the 400x300 trail to fill the 800x600 box, so it may travel
+    // 800 - 200 = 600.
+    expect(e.trailOffset.dx).toBeCloseTo(600, 6);
+
+    e.$nextTick = (fn: () => void) => fn();
+    e.onScaleKeydown({ key: 'ArrowLeft', preventDefault() {}, currentTarget: { querySelector: () => null } });
+    expect(e.scale).toBe('relative');
+    // At its true size the trail is 400 wide, resting at 200: it may reach
+    // 800 - 100 - 200 = 500, and the offset comes back to it.
+    expect(e.trailOffset.dx).toBeCloseTo(500, 6);
+
     // The anchor bites in the other direction: anchored, a small version rests
     // at the frame's edge and may travel almost the whole frame; centred, it
     // rests in the middle and the same offset carries it clean out. The
@@ -615,7 +633,7 @@ describe('manual alignment', () => {
     expect(d.trailOffset.dx).toBeCloseTo(525, 6);
   });
 
-  test('a corrected box keeps an existing offset the same fraction of the frame', () => {
+  test('a corrected box keeps an existing offset the same distance on screen', () => {
     // The offset is in box pixels. A reader who nudged against the stored
     // placeholder and then saw the browser report the real dimensions would
     // otherwise watch their correction change size on its own.
@@ -627,8 +645,25 @@ describe('manual alignment', () => {
     c.noteSizeFrom(img(1, 800, 600));
     c.noteSizeFrom(img(2, 800, 600));
     expect(c.trailOffset.dx).toBeCloseTo(80, 6);
-    // Same fraction of the frame, which is what the reader actually chose.
     expect(transformOf(c.trailScale)).toEqual({ tx: 10, ty: -10, k: 1 });
+  });
+
+  test('a correction to the box height alone moves nothing on screen', () => {
+    // Both components scale by the *width* ratio, because the box is
+    // width-driven: it takes the container's width and derives its height from
+    // `aspect-ratio`, so one box pixel is the same distance on screen in either
+    // axis. Scaling each axis by its own ratio looks right and is not -- this
+    // correction changes no physical distance at all, and would double `dy`.
+    const c = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(0, -30);
+
+    c.noteSizeFrom(img(1, 400, 600));
+    c.noteSizeFrom(img(2, 400, 600));
+    expect(c.trailOffset.dy).toBeCloseTo(-30, 6);
+    // The percentage halves precisely because the element is twice as tall on
+    // screen: -10% of 0.75R and -5% of 1.5R are the same number of pixels.
+    expect(transformOf(c.trailScale)!.ty).toBeCloseTo(-5, 6);
   });
 
   test('the zoom range is reciprocal, so a flip never lands outside it', () => {
@@ -800,6 +835,129 @@ describe('manual alignment', () => {
       expect(c.offsetAnnouncement).toContain('105%');
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The drag path, with the handful of DOM entry points it actually uses.
+   *
+   * This suite runs with no DOM, so the drag was reachable only end-to-end --
+   * which left its own rules (announce once at the end, arm the toggle-click
+   * suppression only where that click can happen) pinned by nothing that runs
+   * in a second. The component touches `addEventListener` on `document` and
+   * `window`, `document.body.style`, and the box's geometry; that is the whole
+   * surface, so stubbing it is faithful rather than a mock of the behaviour.
+   */
+  function fakeDom() {
+    const handlers: Record<string, Function[]> = {};
+    const add = (type: string, fn: Function) => { (handlers[type] ||= []).push(fn); };
+    const remove = (type: string, fn: Function) => {
+      handlers[type] = (handlers[type] || []).filter((h) => h !== fn);
+    };
+    const g = globalThis as any;
+    const previous = { document: g.document, window: g.window };
+    g.document = { addEventListener: add, removeEventListener: remove, body: { style: {} } };
+    g.window = { addEventListener: add, removeEventListener: remove };
+    return {
+      fire(type: string, event: any = {}) {
+        (handlers[type] || []).slice().forEach((h) => h({ preventDefault() {}, ...event }));
+      },
+      listening(type: string) { return (handlers[type] || []).length; },
+      restore() { g.document = previous.document; g.window = previous.window; },
+    };
+  }
+
+  const frame = (width = 800, height = 600) => ({
+    getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
+    clientWidth: width,
+    clientHeight: height,
+  });
+
+  const press = (x: number, y: number, from: any = { closest: () => null }) => ({
+    currentTarget: frame(), target: from, clientX: x, clientY: y, preventDefault() {},
+  });
+
+  test('a drag announces once, at the end', () => {
+    // Announcing per move is the mistake the whole split exists to avoid: a
+    // gesture is hundreds of events and a live region reads every one of them.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100));
+
+      dom.fire('mousemove', { clientX: 120, clientY: 110 });
+      dom.fire('mousemove', { clientX: 140, clientY: 130 });
+      expect(c.offsetLabel).toBe('+40, +30, 100%');
+      expect(c.offsetAnnouncement).toBe('');
+
+      dom.fire('mouseup', {});
+      expect(c.offsetAnnouncement).toContain('+40, +30');
+      // And every listener it installed is gone.
+      for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
+        expect(dom.listening(type)).toBe(0);
+      }
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a press that moves nothing announces nothing and suppresses nothing', () => {
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100));
+      dom.fire('mouseup', {});
+
+      expect(c.offsetAnnouncement).toBe('');
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('only a drag that ends in toggle mode arms the click suppression', () => {
+    // Toggle mode's frame is a button and the click ending a drag across it
+    // would also switch versions. A drag in onion skin produces no such click,
+    // so stamping there swallowed the first click after switching modes.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'onion';
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100));
+      dom.fire('mousemove', { clientX: 140, clientY: 100 });
+      dom.fire('mouseup', {});
+
+      c.mode = 'toggle';
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+
+      c.startAlignDrag(press(100, 100));
+      dom.fire('mousemove', { clientX: 160, clientY: 100 });
+      dom.fire('mouseup', {});
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a press that came from the slider handle is not a drag at all', () => {
+    // The handle's own mousedown bubbles to the box this handler is on, so
+    // without the refusal an armed drag on it moves the reveal position and the
+    // trailing version at the same time.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.startAlignDrag(press(100, 100, { closest: (s: string) => (s === '.compare-slider-handle' ? {} : null) }));
+      expect(dom.listening('mousemove')).toBe(0);
+    } finally {
+      dom.restore();
     }
   });
 
