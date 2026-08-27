@@ -113,6 +113,65 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 20:
+
+- **A drag increment is physical; a keyboard step is not.** Round 19 made the
+  window's increments ride raw, which is right for a key press -- an abstract
+  unit the window redefines as stored-box pixels -- and wrong for a drag,
+  which hands `nudge` a distance the hand covered on the screen already
+  converted into whichever transient box was standing. Recording that raw
+  changes what it measures: stored 800x600 both, actual 600x800/1200x400, box
+  rendered 600px, one report, drag 60 screen px -- slot-0-first resolved to
+  dx=120 (the 60px asked for) and slot-1-first to dx=180 (90px), a visible
+  jump when the second version decoded. `nudge` takes an internal third
+  argument, `physical`, set only by the drag's move handler: a physical
+  increment is recorded converted into the request's canonical pixels, so the
+  resolution's conversion telescopes it back to the screen distance drawn.
+  Converting keyboard steps the same way would reintroduce round 19 verbatim.
+- **Resolution widens only around outside-ness that was legitimate at nudge
+  time.** Round 19b widened each axis around the display's value *at
+  resolution*, so an outside position the completing report had itself created
+  -- it shrank or moved the trailing version, which is the debt that report
+  armed -- was preserved as though it were a flip-derived inverse. Stored
+  800x200/1200x100, actual 1200x800/100x400, one report, Shift+ArrowLeft x100:
+  slot-0-first ended at -900 (entirely out of frame) and slot-1-first at
+  -637.5, against a legal boundary of -625 both ways. Provenance cannot be
+  read at resolution and `_sizeReboundDue` cannot answer it either -- a nudge
+  sets that too, because it is the resolution trigger and not only the
+  bound-repair debt. So a second flag, `_sizeOwed`, is armed exactly where a
+  **bound-mover** arms the debt (size reports, and `_reboundOrDefer`'s deferred
+  branch) and never by a nudge; every in-window nudge snapshots, per axis, the
+  display's position when it is outside the transient range and nothing is
+  owed, storing it slot-relative on the request as `ax`/`ay` so a flip carries
+  it. Resolution clamps each axis to the final bound widened by its anchor, or
+  plainly when there is none. Both orders now land on -625; the round-17/18/19
+  repros are unchanged, an outward gesture from a flip-derived outside still
+  moves nothing rather than snapping 600px inward, and an outside a report
+  created is paid rather than laundered by the next nudge. Accepted corner: a
+  flip between two in-window nudges that produces a *new* legitimate outside
+  gets its anchor refreshed by the second nudge, since a nudge never arms
+  `_sizeOwed` -- there is no case where it is silently dropped.
+- **A missing stored size is not a missing conversion.** With no server
+  dimensions for one version, `_storedBoxW` is null and both the creation and
+  the resolution conversion fell back to 1 -- which reads as "no frame" rather
+  than "this frame". Stored 0x0 and 800x600, slot 0 reports 400x300, one
+  Shift+ArrowRight, slot 1 reports 1200x600: the displayed offset scaled with
+  the box to 15 and the request pulled it back to 10, so the correction
+  visibly shrank when the corrected width arrived. The request now captures
+  its own canonical width at creation, `_requestUnitsW = _storedBoxW || box.w`,
+  and every conversion reads that. With a stored box this is exactly the
+  round-19 behaviour; without one the step means creation-box pixels and
+  resolves to 15. No decode order diverges here -- with one stored side
+  missing only one order can open a nudgeable window. Accepted corner: with no
+  stored box, a further in-window report that changes the width between two
+  nudges still records the later steps in creation-box units.
+- Standards: no code-smell findings; a test-quality gap. The load-window
+  suite covered keyboard nudges only, so drag conversion was tested only after
+  the geometry settled, and there was no case of a clamped request whose
+  trailing element changes size at the completing report, nor of a request
+  with no stored box -- which is why 91 tests passed over all three defects.
+  Five tests added, three of them red first.
+
 Round 19:
 
 - **A step means stored-box pixels, not standing-box pixels.** The request
