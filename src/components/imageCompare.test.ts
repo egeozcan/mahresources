@@ -1371,6 +1371,34 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(20, 6);
   });
 
+  test('an in-window nudge resolves from where the reader stood, not from a transient bound', () => {
+    // The window's anchor is the position the axis had when its first nudge
+    // landed, and the resolution walks from there. Sampled instead from the
+    // bound standing at each nudge, it is whichever version decoded that
+    // decides whether the reader's correction counts as legitimately outside:
+    // one order preserves it and the other snaps it in, from the same presses.
+    const run = (first: 1 | 2, second: 1 | 2, arrow: boolean) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.swapSides();
+      c.zoomBy(-0.75);
+      // Out to the flipped bound, before either version has reported.
+      c.nudge(450, 0);
+      c.noteSizeFrom(img(first, 400, 400));
+      // Refused: outward from a position the bound already holds.
+      if (arrow) c.nudge(1, 0);
+      c.noteSizeFrom(img(second, 400, 400));
+      return c._offset.dx;
+    };
+    // The box halves and the correction halves with it. The refused press
+    // asked for nothing the bound would give, so it changes nothing -- which
+    // is the control here, and it must hold in both orders.
+    expect(run(1, 2, true)).toBeCloseTo(run(2, 1, true), 6);
+    expect(run(1, 2, true)).toBeCloseTo(-900, 6);
+    expect(run(1, 2, false)).toBeCloseTo(-900, 6);
+    expect(run(2, 1, false)).toBeCloseTo(-900, 6);
+  });
+
   test('a nudge on one axis leaves the other axis the correction it already had', () => {
     // A request carries a position, so it carries both axes -- but only a
     // moved axis is a request. The other one is the correction that was
@@ -1519,17 +1547,13 @@ describe('manual alignment', () => {
       });
     });
     expect(runs).toBeGreaterThan(1000);
-    // Asserted as an exact inventory rather than as "none". Scripts 0-4 and
-    // pairs 0-4 -- the shapes every reported repro has taken -- converge. The
-    // longer scripts below them do not everywhere, and each such interleaving
-    // is listed rather than left out of the corpus, so this list is the whole
-    // of what is accepted: a sixth divergence fails this test, and so does
-    // closing one of these five. All five are script 7, which takes its last
-    // nudge in the very window the completing report closes, with that report
-    // arriving after the whole script. The plan records why they stand.
-    const ACCEPTED_INTERLEAVINGS = [
-      'p0/s7/4,5', 'p1/s7/4,5', 'p3/s7/4,5', 'p4/s7/4,5', 'p7/s7/4,5',
-    ];
+    // Every interleaving in the corpus converges. The list is kept in the
+    // shape of an inventory rather than collapsed to a count, because a
+    // divergence that appears fails this test by name -- with its pair, script
+    // and the two insertion positions -- which is what makes the failure
+    // readable. It was not always empty: the twenty entries it once held were
+    // two families, and rounds 30 and 32 closed them.
+    const ACCEPTED_INTERLEAVINGS: string[] = [];
     expect({ diverging: diverged, detail: detail.slice(0, 3) })
       .toEqual({ diverging: ACCEPTED_INTERLEAVINGS, detail: detail.slice(0, 3) });
   });

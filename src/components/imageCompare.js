@@ -581,23 +581,37 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // it -- so walking the image back retires exactly what running it out
         // incurred, without the two cases needing to be told apart.
         const rode = physical ? intoUnits : 1;
-        // Where the display legitimately sits outside its bound, recorded in
-        // the same frame and shape as the translation so a flip carries it.
-        // Snapshotted here rather than read at resolution because that is
-        // where the provenance is still known: outside-ness the reader is
-        // looking at *now*, with no bound-mover's debt outstanding, is a
-        // flip-derived inverse and must survive; outside-ness the completing
-        // report is about to create is the debt itself.
-        const anchor = (value, range, owed) => (owed
-          || (value >= range.min && value <= range.max))
-          ? null
-          : value * intoUnits;
+        // Where the reader stood when the window's first nudge landed, in the
+        // request's own canonical pixels and its slot-relative shape, so a
+        // flip carries it. The resolution walks from here by everything the
+        // window accumulated, against the final bound widened to include it:
+        // the whole interaction replayed as one nudge from where the reader
+        // started.
+        //
+        // Recorded once and never re-sampled. Every other moment to read it
+        // at is contaminated: the transient bound belongs to whichever version
+        // decoded, so "is the display outside it" and "did the display move"
+        // both answer differently per decode order, and the value at
+        // resolution cannot tell a flip-derived outside from one the
+        // completing report has just created. This one is order-independent by
+        // construction -- the reader's script before the window is the same in
+        // either order, and denominating in `_requestUnitsW` cancels exactly
+        // the box conversion a report in between applies.
+        //
+        // Not recorded at all when a bound-mover already owes the axis: that
+        // outside-ness is the debt, not a position to preserve. A report that
+        // claims the axis later retires it in the resolution for the same
+        // reason.
+        const anchor = (base, kept, owed) => {
+          if (!fresh) return kept;
+          return owed ? null : base * intoUnits;
+        };
         this._setRawRequest({
           dx: request.dx * (fresh ? intoUnits : 1) + dx * rode,
           dy: request.dy * (fresh ? intoUnits : 1) + dy * rode,
           k: request.k,
-          ax: anchor(next.dx, x, this._sizeOwedX),
-          ay: anchor(next.dy, y, this._sizeOwedY),
+          ax: anchor(request.dx, request.ax, this._sizeOwedX),
+          ay: anchor(request.dy, request.ay, this._sizeOwedY),
         });
         if (dx !== 0) this._requestMovedX = true;
         if (dy !== 0) this._requestMovedY = true;
