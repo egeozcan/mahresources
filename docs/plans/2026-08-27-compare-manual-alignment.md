@@ -113,6 +113,23 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 18:
+
+- **A remainder survives its walk home.** The deferred request rode through
+  the box-width conversion inside `!offsetIsIdentity`, but display and request
+  diverge exactly there: stored 800x600, actual 600x800, one report, nudge
+  -1100 (clamped), nudge +600 (free) leaves an identity readout with -500
+  still outstanding -- and the completing report then converted a non-identity
+  sibling but skipped this one, so slot-0-first resolved to -450 and
+  slot-1-first to -375. The request now scales on its own presence whenever
+  the box width changes; both orders land on -375.
+- **Reset said it could not clear what it would clear.** The button was drawn
+  `aria-disabled` off `offsetIsIdentity` alone, while pressing it at an
+  identity readout with a pending remainder would actually clear that
+  remainder -- a reader who trusted the disabled state watched the second load
+  move their image. `resetIdle` means no displayed correction AND no
+  outstanding request, and clearing one announces: something changed.
+
 Round 17:
 
 - **A zoom clamped at the boundary arms no deferred debt.** `zoomBy` called
