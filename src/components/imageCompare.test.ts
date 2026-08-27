@@ -633,6 +633,108 @@ describe('manual alignment', () => {
     expect(d.trailOffset.dx).toBeCloseTo(525, 6);
   });
 
+  test('re-selecting the scale already selected leaves a flipped correction alone', () => {
+    // A rebound corrects what its operation broke, never what was already true.
+    // After a flip the derived inverse is legitimately outside this side's
+    // bound, so a rebound triggered by an operation that changed nothing would
+    // clamp it and silently rewrite the reader's original number.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    const chosen = c._offset.dx;
+
+    c.swapSides();
+    expect(c.offsetWithinBound).toBe(false);
+    // Relative is already selected and Fit-then-back is not: this is the
+    // activation that changes nothing.
+    c.setScale('relative');
+    expect(c._offset.dx).toBeCloseTo(chosen, 6);
+    c.$nextTick = (fn: () => void) => fn();
+    c.onScaleKeydown({ key: 'Home', preventDefault() {}, currentTarget: { querySelector: () => null } });
+    expect(c.scale).toBe('relative');
+    expect(c._offset.dx).toBeCloseTo(chosen, 6);
+
+    // And flipping back returns exactly what was chosen.
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(chosen, 6);
+  });
+
+  test('an operation that does move the bound still pulls a flipped offset in', () => {
+    // The other half of the same rule, and the reason it is not "never rebound
+    // while flipped": a reader looking at the flipped view who zooms is owed
+    // the same guarantee as one looking at the original.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(10000, 0);
+    c.swapSides();
+    const before = c.trailOffset.dx;
+
+    c.toggleAnchor();
+    // Anchored, the flipped rendered rect starts at the frame's edge, so this
+    // offset is legal there and nothing moves.
+    expect(c.trailOffset.dx).toBeCloseTo(before, 6);
+    c.toggleAnchor();
+    // Centred it is not, so it comes back in -- which costs this pathological
+    // round trip its exactness, and is the price of the guarantee holding in
+    // the view the reader is actually looking at.
+    expect(c.trailOffset.dx).toBeCloseTo(-1200, 6);
+  });
+
+  test('a load-time rebound waits for both versions to report', () => {
+    // The box is `max` of the two, so while one side is a real measurement and
+    // the other still the stored placeholder it describes a pair that does not
+    // exist. Clamping against that transient makes the same two files land on a
+    // different offset depending on which decoded first.
+    const order = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+      c.toggleAligning();
+      c.nudge(10000, 0);
+      c.noteSizeFrom(img(first, 800, 600));
+      c.noteSizeFrom(img(second, 800, 600));
+      return c.trailOffset.dx;
+    };
+    expect(order(1, 2)).toBeCloseTo(order(2, 1), 6);
+
+    // A version whose load merely confirms the stored size still counts as
+    // measured, or the rebound would wait for a change that never comes.
+    const c = component({ w: 400, h: 300 }, { w: 400, h: 300 });
+    c.toggleAligning();
+    c.nudge(10000, 0);
+    c.noteSizeFrom(img(2, 400, 300));
+    c.noteSizeFrom(img(1, 800, 600));
+    // Slot 0 grew, so the frame did while the trail did not: the offset is
+    // converted to 600 and the bound is now 800 - 100 - 200 = 500.
+    expect(c.trailOffset.dx).toBeCloseTo(500, 6);
+  });
+
+  test('a tap is left alone, so an armed reader can still switch versions', () => {
+    // preventDefault on touchstart suppresses the synthesized click, so while
+    // armed a tap on toggle mode's button would do nothing at all.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      let prevented = false;
+      c.startAlignDrag({
+        type: 'touchstart',
+        currentTarget: frame(),
+        target: { closest: () => null },
+        touches: [{ clientX: 100, clientY: 100 }],
+        preventDefault() { prevented = true; },
+      });
+      expect(prevented).toBe(false);
+      // The gesture still runs -- a touch drag aligns, it just does not cancel
+      // the tap that a touch without movement produces.
+      expect(dom.listening('touchmove')).toBe(1);
+      dom.fire('touchmove', { touches: [{ clientX: 140, clientY: 100 }] });
+      expect(c.trailOffset.dx).toBeCloseTo(40, 6);
+    } finally {
+      dom.restore();
+    }
+  });
+
   test('a corrected box keeps an existing offset the same distance on screen', () => {
     // The offset is in box pixels. A reader who nudged against the stored
     // placeholder and then saw the browser report the real dimensions would

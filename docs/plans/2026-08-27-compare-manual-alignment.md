@@ -113,6 +113,35 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 4:
+
+- **A rebound corrects what its own operation broke, never what was already
+  true.** Round 3 removed `setScale`'s early return so a repair could not be
+  blocked; that let a no-op activation -- clicking the already-selected policy,
+  or `Home` on the selected radio -- clamp a flip-derived offset and rewrite the
+  reader's original number. `offsetWithinBound` is snapshotted before each of
+  the five operations that move the bound, and only an offset that *was* inside
+  is pulled back. Nothing but a flip can leave one outside, so refusing to
+  repair is refusing to repair a state no path produces.
+  - The corner this leaves, known and accepted: from a flip-derived offset that
+    is outside, an anchor round trip is lossy, because under `top-left` that
+    offset is legal and centring again genuinely breaks the bound. Pinned by
+    `an operation that does move the bound still pulls a flipped offset in`.
+    The alternative -- never rebounding while flipped -- costs the guarantee in
+    the view the reader is actually looking at, which is worse.
+- **The load-time rebound waits for both versions to report.** The box is `max`
+  of the two, so while one side is a real measurement and the other still the
+  stored placeholder it describes a pair that does not exist; clamping against
+  that transient made the same two files land on a different offset depending on
+  which decoded first. `_measured` tracks reporting rather than *changing*,
+  because a load confirming the stored size writes nothing and still means that
+  version has been measured.
+- **`touchstart` no longer `preventDefault`s.** It suppresses the synthesized
+  `click`, so while armed a *tap* on toggle mode's button did nothing at all.
+  `touch-action: none` is what stops the page scrolling, and the first
+  `touchmove` prevents as well; `mousedown` still prevents, because there it
+  stops a native image drag taking the gesture over.
+
 Round 3:
 
 - **The keyboard path never reached the rebound.** `onScaleKeydown` delegates to

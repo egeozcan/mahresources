@@ -108,6 +108,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     _announceParity: false,
     _alignDragEndedAt: 0,
     _announceTimer: null,
+    // Which slots a loaded image has reported a size for, which is not the same
+    // question as whether `_sizes` changed: a load that confirms the stored
+    // value writes nothing and still means that version has been measured.
+    _measured: [false, false],
     _endAlignDrag: null,
     sliderPos: 50,
     opacity: 50,
@@ -377,13 +381,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     zoomBy(delta) {
       if (!this.alignAvailable) return;
+      const within = this.offsetWithinBound;
       const t = this.trailOffset;
       this._setTrailOffset({
         dx: t.dx,
         dy: t.dy,
         k: Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta)),
       });
-      this._reboundOffset();
+      if (within) this._reboundOffset();
     },
 
     /**
@@ -403,6 +408,27 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * flipping back does not restore the original number -- which is the same
      * price zooming already charges unflipped.
      */
+    /**
+     * Whether the offset currently sits inside the bound its geometry implies.
+     *
+     * Snapshotted *before* an operation that moves the bound, because a rebound
+     * corrects what that operation broke and never what was already true. The
+     * distinction is what protects a flip: the inverse of an extreme correction
+     * is legitimately outside this side's bound, and without this, re-selecting
+     * the scale that is already selected quietly rewrites the reader's original
+     * number. Nothing else can leave it outside, so refusing to "repair" one is
+     * refusing to repair a state no path produces.
+     */
+    get offsetWithinBound() {
+      const box = this.overlayBox;
+      const element = this.elementSize(this.swapped ? 0 : 1);
+      if (!box || !element) return true;
+      const t = this.trailOffset;
+      const x = this.translateRange(box.w, element.w * t.k);
+      const y = this.translateRange(box.h, element.h * t.k);
+      return t.dx >= x.min && t.dx <= x.max && t.dy >= y.min && t.dy <= y.max;
+    },
+
     _reboundOffset() {
       if (!this.alignAvailable || this.offsetIsIdentity) return;
       const box = this.overlayBox;
@@ -514,7 +540,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (!box || typeof box.getBoundingClientRect !== 'function') return;
       const rect = box.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      e.preventDefault();
+      // On `mousedown` this stops the browser starting a native image drag,
+      // which would take the gesture over entirely. On `touchstart` it also
+      // suppresses the synthesized `click`, so while armed a *tap* on toggle
+      // mode's button would do nothing at all -- and it is not needed there:
+      // `.compare-box-aligning` sets `touch-action: none`, which is what stops
+      // the page scrolling, and the first `touchmove` prevents as well.
+      if (e.type !== 'touchstart') e.preventDefault();
 
       const point = (ev) => ({
         x: ev.clientX ?? ev.touches?.[0]?.clientX,
@@ -632,14 +664,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this.returnFocusToCheckedScale(e);
         return;
       }
-      this.scale = value;
       // Fit and Stretch render the version at a different size, which moves the
-      // bound the offset was checked against. Unconditional, with no early
-      // return for "already selected": a `_reboundOffset` that has nothing to
-      // do writes nothing, while an early return here means pressing the
-      // already-selected policy cannot repair a state some other path left
-      // outside the bound.
-      this._reboundOffset();
+      // bound the offset was checked against. No early return for "already
+      // selected" -- `offsetWithinBound` is what keeps a no-op activation from
+      // touching anything, and it does so for every path rather than this one.
+      const within = this.offsetWithinBound;
+      this.scale = value;
+      if (within) this._reboundOffset();
     },
 
     /**
@@ -708,10 +739,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     toggleAnchor() {
       if (!this.anchorAvailable) return;
-      this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
       // The anchor decides where the version rests before any offset, so it
       // decides how far the offset may carry it.
-      this._reboundOffset();
+      const within = this.offsetWithinBound;
+      this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
+      if (within) this._reboundOffset();
     },
 
     /**
@@ -734,8 +766,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // With the rebound as the callback, not left to `setScale`: this path
       // assigns `this.scale` through the generic radiogroup handler and never
       // touches `setScale` at all, so a scale changed by arrow key kept an
-      // offset the new sizing had put outside the frame.
-      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'], () => this._reboundOffset());
+      // offset the new sizing had put outside the frame. The within-bound
+      // snapshot has to be taken here, before the assignment the callback runs
+      // after.
+      const within = this.offsetWithinBound;
+      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'],
+        () => { if (within) this._reboundOffset(); });
     },
 
     /**
@@ -825,6 +861,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // An image showing neither version has nothing to attribute the size to.
       const slots = this.slotsForImage(img);
       if (slots.length === 0) return;
+      for (const slot of slots) this._measured[slot] = true;
       // A new array rather than an index write, and only when something actually
       // changed: the getters derived from this have to re-run, and eight images
       // report into two slots, so this runs far more often than it changes
@@ -848,6 +885,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // either axis -- `renderedWidth / box.w`. Scaling each axis by its own
       // ratio looks right and is not: correcting only the height moves no
       // physical distance at all, and would double a vertical offset.
+      const within = this.offsetWithinBound;
       const before = this.overlayBox;
       this._sizes = next;
       const after = this.overlayBox;
@@ -855,8 +893,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         const ratio = after.w / before.w;
         this._offset = { dx: this._offset.dx * ratio, dy: this._offset.dy * ratio, k: this._offset.k };
       }
-      // The versions changed size too, so the bound moved with them.
-      this._reboundOffset();
+      // The versions changed size too, so the bound moved with them -- but only
+      // once **both** have reported. The box is `max` of the two, so while one
+      // is a real measurement and the other still the stored placeholder it
+      // describes a pair that does not exist, and clamping against that makes
+      // the result depend on which image happened to decode first: the same two
+      // files land on a different offset in a different order.
+      if (within && this._measured[0] && this._measured[1]) this._reboundOffset();
     },
 
     get leadScale() {
