@@ -1430,22 +1430,22 @@ describe('manual alignment', () => {
     expect(runs).toBeGreaterThan(1000);
     // Asserted as an exact inventory rather than as "none". Scripts 0-4 and
     // pairs 0-4 -- the shapes every reported repro has taken -- converge. The
-    // longer scripts below them do not everywhere, and each remaining
-    // interleaving is listed rather than left out of the corpus: a new
-    // divergence fails this test, and so does fixing a listed one. What is
-    // open, and why, is recorded in the plan.
-    // Two families, both with the completing report arriving after the whole
-    // script: script 6 accumulates a request across two flips, and script 7
-    // takes its last nudge in the window the completing report closes.
-    const OPEN_INTERLEAVINGS = [
+    // longer scripts below them do not everywhere, and each such interleaving
+    // is listed rather than left out of the corpus, so this list is the whole
+    // of what is accepted: a twenty-first divergence fails this test, and so
+    // does closing one of these twenty. Two families, both with the completing
+    // report arriving after the whole script -- script 6 accumulates one
+    // request across two flips, and script 7 takes its last nudge in the
+    // window the completing report closes. The plan records why they stand.
+    const ACCEPTED_INTERLEAVINGS = [
       'p0/s6/0,5', 'p0/s6/1,5', 'p0/s6/2,5', 'p0/s7/4,5',
       'p1/s6/0,5', 'p1/s6/1,5', 'p1/s6/2,5', 'p1/s7/4,5',
       'p3/s6/0,5', 'p3/s6/1,5', 'p3/s6/2,5', 'p3/s7/4,5',
       'p4/s6/0,5', 'p4/s6/1,5', 'p4/s6/2,5', 'p4/s7/4,5',
       'p6/s6/0,5', 'p6/s6/1,5', 'p6/s6/2,5', 'p7/s7/4,5',
     ];
-    expect({ open: diverged, detail: detail.slice(0, 3) })
-      .toEqual({ open: OPEN_INTERLEAVINGS, detail: detail.slice(0, 3) });
+    expect({ diverging: diverged, detail: detail.slice(0, 3) })
+      .toEqual({ diverging: ACCEPTED_INTERLEAVINGS, detail: detail.slice(0, 3) });
   });
 
   test('a report that moves one axis leaves the other axis its legitimate outside', () => {

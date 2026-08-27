@@ -177,7 +177,7 @@ pay into resolve-the-ask-then-repair-canonically clamps flip-derived inverses
 the design exists to preserve; keying the request's frame on its own creation
 rather than on the first arming reintroduces round 24's defect.
 
-### OPEN: twenty interleavings the enumerator still separates
+### ACCEPTED: twenty interleavings the enumerator separates
 
 The enumerator runs 1,344 interleavings -- 8 scripts against 8 pairs, each
 replayed with the two reports inserted at every pair of positions, under both
@@ -192,8 +192,19 @@ request across two flips, so its increments are added in different frames and
 combine through the zoom inversion. Script 7 (`nudge 450,450, Flip, Anchor, zoom
 25%, nudge -3,7`) takes its last nudge in the very window the completing report
 closes. Magnitudes are tens of box pixels (450 against 500; 300,211 against
-0,0). Neither has been root-caused.
+0,0). Neither is root-caused.
 
+**Settled with the user after round 28: these twenty are accepted as documented
+corners, not defects to fix.** What is accepted is bounded by the inventory
+itself rather than by a description of it, which is the whole reason the test
+asserts an exact list: the twenty are named, a twenty-first fails the build the
+moment it appears, and closing one of the twenty fails it too, so the acceptance
+cannot quietly widen and cannot be quietly abandoned. Each is a reader who
+flipped and zoomed several times inside a load window and whose second version
+then decoded after the whole script; the position they left is preserved within
+tens of box pixels, and both orders leave the pair watchable, because the
+displayed bound governed every step of the way. Reviewers are told this in the
+round prompt so the loop is not spent re-finding what has been decided.
 Round 27: clean. No behaviour findings and no standards findings; rules 1-41
 re-verified against their repros. The first of the two consecutive clean rounds
 the merge gate asks for.
