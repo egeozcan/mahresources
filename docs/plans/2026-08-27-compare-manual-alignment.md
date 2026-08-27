@@ -113,6 +113,33 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 17:
+
+- **A zoom clamped at the boundary arms no deferred debt.** `zoomBy` called
+  `_reboundOrDefer` even when the clamp held `k` -- pressing + at 400% changed
+  no geometry yet armed the debt, and the confirming report later paid it
+  against alignment made after the no-op: with 100x100 placeholders, zoom to
+  400%, nudge to -150, slot 0 confirms, press + again (already at the bound),
+  flip, nudge to -56.25, slot 1 confirms -- -56.25 was rewritten to -37.5. The
+  same no-op invariant the scale group carries now holds here: `zoomBy`
+  computes `k` first and returns when the clamp held it.
+- **A nudge during the load window keeps its request.** Nudging while exactly
+  one version is measured clamped against transient geometry -- the trail is
+  whichever slot decoded first -- so the same two files and input landed on
+  different canonical offsets per decode order: stored 800x600 and actual
+  600x800 both, one report, nudge fully left, other report lands dx=-450 when
+  slot 0 reported first and -412.5 when slot 1 did, because the width
+  conversion scaled an already-clamped value that a pull-in-only rebound could
+  not restore. What is deferred is now split from what is shown. The display
+  still obeys the transient bound at every instant -- the pair must stay
+  watchable even if the second image never decodes -- but every increment the
+  clamp swallowed rides onto `_requestedOffset`, which zoom factors and box
+  conversions take alongside them, Reset retires with the correction, and
+  which moves freely when the display does; the deferred rebound resolves that
+  request against the final bound, so what arrives is where the reader asked
+  to be bounded by the geometry both versions imply, whatever order they
+  reported in.
+
 Round 16:
 
 - **The keyboard scale path defers like the mouse one.** `onScaleKeydown`'s
