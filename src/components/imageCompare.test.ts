@@ -290,11 +290,23 @@ describe('anchoring', () => {
 });
 
 describe('a refused scale press does not leave focus on a dead radio', () => {
-  /** The two things `returnFocusToCheckedScale` reaches for on a real click. */
-  function clickOn(checkedFocus: { focus: () => void }) {
-    const group = { querySelector: () => checkedFocus };
+  /**
+   * A refused click, with control over where focus currently sits.
+   *
+   * `focusedInGroup` is what `document.activeElement` will report: the refused
+   * radio (the invariant broken), the checked one (already correct), or null for
+   * focus resting somewhere else entirely.
+   */
+  function clickOn(checked: any, focusedInGroup: any) {
+    const group = {
+      querySelector: () => checked,
+      contains: (node: any) => node === checked || node === focusedInGroup,
+    };
+    (globalThis as any).document = { activeElement: focusedInGroup };
     return { currentTarget: { closest: () => group } };
   }
+
+  const refusedRadio = { getAttribute: () => 'false' };
 
   test('activation restores focus to the checked radio, whatever moved it', () => {
     // Guarding mousedown alone leaves the hole open for programmatic focus, for
@@ -304,15 +316,37 @@ describe('a refused scale press does not leave focus on a dead radio', () => {
     // radio. Every one of those paths ends in this handler.
     const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
     let focused = 0;
-    c.setScale('fit', clickOn({ focus: () => { focused += 1; } }));
+    const checked = { focus: () => { focused += 1; }, getAttribute: () => 'true' };
+    c.setScale('fit', clickOn(checked, refusedRadio));
     expect(c.scale).toBe('relative');
     expect(focused).toBe(1);
+  });
+
+  test('a refusal does not steal focus from outside the group', () => {
+    // The commonest path of all: a pointer press on a dimmed radio, where
+    // refuseFocusIfUnavailable already stopped focus from moving. The reader is
+    // still in whatever field or control they were using, and restoring
+    // unconditionally would yank them into a group they only clicked at.
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    let focused = 0;
+    const checked = { focus: () => { focused += 1; }, getAttribute: () => 'true' };
+    c.setScale('fit', clickOn(checked, null));
+    expect(focused).toBe(0);
+  });
+
+  test('a refusal with focus already on the checked radio changes nothing', () => {
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    let focused = 0;
+    const checked = { focus: () => { focused += 1; }, getAttribute: () => 'true' };
+    c.setScale('fit', clickOn(checked, checked));
+    expect(focused).toBe(0);
   });
 
   test('an accepted press moves the selection and touches no focus', () => {
     const c = component({ w: 400, h: 300 }, { w: 600, h: 800 });
     let focused = 0;
-    c.setScale('fit', clickOn({ focus: () => { focused += 1; } }));
+    const checked = { focus: () => { focused += 1; }, getAttribute: () => 'true' };
+    c.setScale('fit', clickOn(checked, refusedRadio));
     expect(c.scale).toBe('fit');
     expect(focused).toBe(0);
   });

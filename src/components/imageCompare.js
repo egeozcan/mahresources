@@ -174,8 +174,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const target = e && e.currentTarget;
       const group = target && typeof target.closest === 'function' && target.closest('[role="radiogroup"]');
       if (!group) return;
-      const checked = group.querySelector('[role="radio"][aria-checked="true"]');
       const active = typeof document !== 'undefined' ? document.activeElement : null;
+      // Correct the invariant only where it is actually broken -- focus resting
+      // on an unchecked radio of this group. Restoring unconditionally would
+      // steal focus on the commonest path of all: the pointer press never moved
+      // it (`refuseFocusIfUnavailable` saw to that), so the reader is still in
+      // whatever field or control they were using, and this would yank them into
+      // a group they only clicked at.
+      if (!active || !group.contains(active)) return;
+      if (active.getAttribute && active.getAttribute('aria-checked') === 'true') return;
+      const checked = group.querySelector('[role="radio"][aria-checked="true"]');
       if (checked && typeof checked.focus === 'function' && checked !== active) checked.focus();
     },
 
