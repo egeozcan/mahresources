@@ -96,6 +96,26 @@ For images, four comparison modes are available:
 | **Onion skin** | Overlay with adjustable opacity slider |
 | **Toggle** | Click or press Space to switch between versions |
 
+The three overlay modes -- slider, onion skin and toggle -- draw both versions inside one frame, so how each version is measured into that frame decides whether they line up at all. **Scale** sets that:
+
+| Scale | Description |
+|-------|-------------|
+| **Relative** | Each version at its true size against the other. A version scanned at twice the resolution of the one before it is drawn twice as large. This is the default. |
+| **Fit** | Each version grown until an edge touches the frame. Two versions sharing one aspect ratio line up exactly, which makes this the mode for a rescan, a re-export, or any change that moved only the resolution. |
+| **Stretch** | Each version distorted onto the whole frame. |
+
+:::warning
+**Stretch** is right for a re-encode that changed the aspect ratio and wrong for a crop: it scales the crop up to the shape of the original, so the two versions look alike and you cannot see what was cut.
+:::
+
+**Anchor** decides where a version sits in whatever space the frame leaves it. Versions are centred by default, which suits a photograph. Anchor them to the top-left corner for a document or a screenshot, where content is flush to a corner and centring puts the two versions half the size difference apart. **Stretch** fills the frame exactly, so there is no space left to anchor and the control is unavailable while it is selected.
+
+Scale and anchor apply to the overlay modes only, and are hidden in **Side-by-side**, where each version has a pane of its own.
+
+:::note
+A pair whose dimensions neither the file nor the browser reports -- a HEIC or a TIFF, which no browser renders -- leaves nothing to measure against. Both controls are shown as unavailable rather than acting on nothing.
+:::
+
 #### Text Comparison
 
 For text files (plain text, code, markdown, etc.):

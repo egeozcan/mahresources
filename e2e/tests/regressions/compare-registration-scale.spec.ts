@@ -1,0 +1,484 @@
+import { test, expect } from '../../fixtures/base.fixture';
+import type { Locator, Page } from '@playwright/test';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+/**
+ * Package 1 of the compare-page extension board: registration and scale.
+ *
+ * The three overlay modes share one box of `max(w1,w2) x max(h1,h2)` and size
+ * each image inside it as a percentage of its own intrinsic dimensions. That is
+ * true relative scale, and until this package it was the only policy on offer
+ * and it depended entirely on dimensions the database might not hold.
+ *
+ * Everything here asserts *rendered geometry*, never the inline style strings
+ * that produce it. `index.css`'s `.compare-overlay-box:not([style*="aspect-ratio"])`
+ * branch can override those styles wholesale, so a style assertion would pass on
+ * a page that draws the two images completely wrong -- which is the exact failure
+ * these tests exist to catch.
+ */
+test.describe.serial('compare page registration and scale', () => {
+  let runId: number;
+  let categoryId: number;
+  let ownerGroupId: number;
+  let fixtureDir: string;
+  let avifResourceId: number;
+  let exifResourceId: number;
+  let shapeResourceId: number;
+  let heicResourceId: number;
+
+  /**
+   * A committed fixture with a unique ASCII marker appended.
+   *
+   * Every upload in a worker shares one ephemeral server, so identical bytes
+   * resolve to another spec's resource through the global content-hash dedup.
+   * `helpers/unique-upload.ts` does this automatically for png/jpg/gif and
+   * deliberately not for anything else, so the AVIF pair has to be marked here.
+   * Verified rather than assumed: a marked AVIF still sniffs as `image/avif` in
+   * Go's mimetype detector and still decodes to its true size in Chromium, the
+   * same trailing-byte tolerance png and jpeg are relied on for.
+   */
+  function marked(name: string): { path: string; buffer: Buffer } {
+    const source = fs.readFileSync(path.join(__dirname, '../../test-assets', name));
+    const buffer = Buffer.concat([source, Buffer.from(`\ncompare-scale-${runId}-${name}\n`, 'ascii')]);
+    const target = path.join(fixtureDir, `${runId}-${name}`);
+    fs.writeFileSync(target, buffer);
+    return { path: target, buffer };
+  }
+
+  async function uploadVersion(
+    request: any, baseURL: string, resourceId: number,
+    name: string, mimeType: string, buffer: Buffer, comment: string,
+  ) {
+    const response = await request.post(`${baseURL}/v1/resource/versions?resourceId=${resourceId}`, {
+      multipart: { file: { name, mimeType, buffer }, comment },
+    });
+    expect(response.ok()).toBeTruthy();
+  }
+
+  /**
+   * Onion skin is the only mode that paints both images at once, so it is the
+   * one that can be measured. Its container is identifiable without a test-only
+   * attribute: it is the only overlay box holding an `--over` image.
+   */
+  function onionImages(page: Page): { box: Locator; lead: Locator; trail: Locator } {
+    const box = page.locator('.compare-overlay-box')
+      .filter({ has: page.locator('.compare-overlay-img--over') });
+    return {
+      box,
+      lead: box.locator('.compare-overlay-img').first(),
+      trail: box.locator('.compare-overlay-img--over'),
+    };
+  }
+
+  /**
+   * The registration this package builds is driven by `load` events, so a
+   * measurement taken before both images have decoded reads the pre-load
+   * placeholder and is meaningless.
+   */
+  async function showOnionSkin(page: Page) {
+    await page.getByRole('radio', { name: 'Onion skin' }).click();
+    await expect(onionImages(page).trail).toBeVisible();
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('img.compare-overlay-img')]
+        .every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0));
+  }
+
+  test.beforeAll(async ({ apiClient, request, baseURL }) => {
+    runId = Date.now() + Math.floor(Math.random() * 100000);
+    fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compare-scale-'));
+
+    const category = await apiClient.createCategory(
+      `Registration Category ${runId}`, 'Category for compare registration regressions');
+    categoryId = category.ID;
+    const group = await apiClient.createGroup({ name: `Registration Owner ${runId}`, categoryId });
+    ownerGroupId = group.ID;
+
+    // AVIF is an accepted content type with no Go decoder anywhere in the tree,
+    // so both versions store 0x0 and the page has no dimensions to register
+    // with. Chromium renders them and reports their true sizes.
+    // TestGetDimensionsFromContentDecodesEveryStoredRasterFormat pins that.
+    const avifV1 = marked('compare-avif-400x300.avif');
+    const avifResource = await apiClient.createResource({
+      filePath: avifV1.path,
+      contentType: 'image/avif',
+      exactBytes: true,
+      name: `Registration AVIF ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    avifResourceId = avifResource.ID;
+    const avifV2 = marked('compare-avif-800x600.avif');
+    await uploadVersion(request, baseURL!, avifResourceId,
+      'registration-v2.avif', 'image/avif', avifV2.buffer, 'Rescanned at 2x');
+
+    // Version 1 carries EXIF Orientation=6 over an 800x600 JPEG, so Go's
+    // image.DecodeConfig -- which ignores EXIF, as nothing in this tree reads it
+    // -- stores 800x600 while every browser paints and reports it as 600x800.
+    // Version 2 is a plain 600x800. The stored pair and the painted pair
+    // therefore disagree about the shape of the shared box.
+    const exifV1 = marked('compare-exif-rot90-stored800x600.jpg');
+    const exifResource = await apiClient.createResource({
+      filePath: exifV1.path,
+      contentType: 'image/jpeg',
+      exactBytes: true,
+      name: `Registration EXIF ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    exifResourceId = exifResource.ID;
+    const exifV2 = marked('compare-exif-partner-600x800.jpg');
+    await uploadVersion(request, baseURL!, exifResourceId,
+      'registration-v2.jpg', 'image/jpeg', exifV2.buffer, 'Re-exported upright');
+
+    // 400x300 against 600x800, chosen so all three scale modes render
+    // differently. Neither is a straightforward rescan of the other, so the
+    // shared 600x800 box matches the shape of the newer version and not the
+    // older one: Relative draws the older at its true size, Fit grows it until
+    // an edge touches, and Stretch distorts it onto the whole box. A pair with
+    // one aspect ratio would collapse Fit and Stretch onto each other, and a
+    // pair where neither image is smaller in *both* axes would collapse Fit onto
+    // Relative -- both fixtures would pass against the wrong implementation.
+    const shapeV1 = marked('compare-scale-400x300.png');
+    const shapeResource = await apiClient.createResource({
+      filePath: shapeV1.path,
+      contentType: 'image/png',
+      exactBytes: true,
+      name: `Registration Shapes ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    shapeResourceId = shapeResource.ID;
+    const shapeV2 = marked('compare-scale-600x800.png');
+    await uploadVersion(request, baseURL!, shapeResourceId,
+      'registration-v2.png', 'image/png', shapeV2.buffer, 'Recomposed as a portrait');
+
+    // The one shape where *nothing* can report dimensions: Go has no HEIC
+    // decoder and Chromium cannot render HEIC either, so neither the stored
+    // values nor the loaded images supply a coordinate space. Every non-SVG
+    // image/* still routes to this comparator, which is why the controls have
+    // to answer for it.
+    const heicV1 = marked('compare-heic-undecodable.heic');
+    const heicResource = await apiClient.createResource({
+      filePath: heicV1.path,
+      contentType: 'image/heic',
+      exactBytes: true,
+      name: `Registration HEIC ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    heicResourceId = heicResource.ID;
+    const heicV2 = marked('compare-heic-undecodable.heic');
+    await uploadVersion(request, baseURL!, heicResourceId,
+      'registration-v2.heic', 'image/heic',
+      Buffer.concat([heicV2.buffer, Buffer.from(`second-${runId}`, 'ascii')]), 'Second HEIC');
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const id of [avifResourceId, exifResourceId, shapeResourceId, heicResourceId]) {
+      if (id) {
+        try { await apiClient.deleteResource(id); } catch { /* already gone */ }
+      }
+    }
+    if (ownerGroupId) {
+      try { await apiClient.deleteGroup(ownerGroupId); } catch { /* already gone */ }
+    }
+    if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  test('a pair the database holds no dimensions for is registered from the loaded images', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${avifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+
+    const { lead, trail } = onionImages(page);
+    const leadBox = (await lead.boundingBox())!;
+    const trailBox = (await trail.boundingBox())!;
+
+    // 400x300 against 800x600: the older version is drawn at exactly half the
+    // width and half the height of the newer one. Without dimensions both fall
+    // to the CSS branch that draws each at the container's full width, so this
+    // ratio reads 1 and the two images are stacked at one origin, registered
+    // against nothing.
+    expect(trailBox.width / leadBox.width).toBeCloseTo(2, 1);
+    expect(trailBox.height / leadBox.height).toBeCloseTo(2, 1);
+  });
+
+  test('a version whose stored dimensions disagree with the browser is registered by the browser', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${exifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+
+    const { lead, trail } = onionImages(page);
+    const leadBox = (await lead.boundingBox())!;
+    const trailBox = (await trail.boundingBox())!;
+
+    // Both versions paint as 600x800, so they occupy exactly the same rectangle.
+    // Trusting the stored values instead would build a 800x800 box and draw the
+    // rotated version at 100%x75% against the other's 75%x100% -- two different
+    // rectangles for two images the reader sees as identically shaped.
+    expect(trailBox.width).toBeCloseTo(leadBox.width, 0);
+    expect(trailBox.height).toBeCloseTo(leadBox.height, 0);
+    expect(leadBox.width / leadBox.height).toBeCloseTo(600 / 800, 1);
+  });
+
+  // Registration made the box's own style reactive for the first time, and
+  // Alpine's string `x-bind:style` replaces the whole style attribute -- the
+  // same attribute `x-show` writes `display: none` onto. The first version of
+  // this package therefore painted every mode at once the moment the images
+  // finished loading. The two tests below are that failure, from both sides.
+  test('only the selected mode is painted, after the images have loaded', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${avifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const boxes = page.locator('[x-data^="imageCompare"] .compare-overlay-box');
+    const slider = boxes.filter({ has: page.locator('[role="slider"]') });
+    const onion = boxes.filter({ has: page.locator('.compare-overlay-img--over') });
+    const toggle = page.locator('button.compare-overlay-box');
+
+    // Named, not counted: a count of one passes just as happily when the *wrong*
+    // single box is the one on screen.
+    await expect(boxes.locator('visible=true')).toHaveCount(1);
+    await expect(onion).toBeVisible();
+    await expect(slider).toBeHidden();
+    await expect(toggle).toBeHidden();
+
+    await page.getByRole('radio', { name: 'Slider' }).click();
+    await expect(boxes.locator('visible=true')).toHaveCount(1);
+    await expect(slider).toBeVisible();
+    await expect(onion).toBeHidden();
+  });
+
+  test('toggle mode shows one image at a time, after the images have loaded', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${avifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    await page.getByRole('radio', { name: 'Toggle' }).click();
+
+    // Asserted per element rather than by reading the src off whichever image
+    // happens to be visible: that read races Alpine's flush, and "one image is
+    // visible" is also what a toggle that never toggles produces.
+    const toggleBox = page.locator('button.compare-overlay-box');
+    const leadImg = toggleBox.locator('img.compare-overlay-img').first();
+    const trailImg = toggleBox.locator('img.compare-overlay-img').last();
+    await expect(leadImg).toBeVisible();
+    await expect(trailImg).toBeHidden();
+
+    await toggleBox.click();
+    await expect(leadImg).toBeHidden();
+    await expect(trailImg).toBeVisible();
+
+    await toggleBox.click();
+    await expect(leadImg).toBeVisible();
+    await expect(trailImg).toBeHidden();
+  });
+
+  test('Fit registers a pure resolution change exactly', async ({ page }) => {
+    // The headline case from the board: a rescan at twice the resolution. Under
+    // true relative scale the older version draws at half size and lines up with
+    // nothing; both share one aspect ratio, so fitting each to the box makes
+    // them the same rectangle to the pixel.
+    await page.goto(`/resource/compare?r1=${avifResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { lead, trail } = onionImages(page);
+
+    const relativeLead = (await lead.boundingBox())!;
+    const relativeTrail = (await trail.boundingBox())!;
+    expect(relativeTrail.width / relativeLead.width).toBeCloseTo(2, 1);
+
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitLead = (await lead.boundingBox())!;
+    const fitTrail = (await trail.boundingBox())!;
+    expect(fitLead.width).toBeCloseTo(fitTrail.width, 0);
+    expect(fitLead.height).toBeCloseTo(fitTrail.height, 0);
+    expect(fitLead.x).toBeCloseTo(fitTrail.x, 0);
+    expect(fitLead.y).toBeCloseTo(fitTrail.y, 0);
+  });
+
+  test('the three scale modes are three different renderings', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box, lead, trail } = onionImages(page);
+    const frame = (await box.boundingBox())!;
+
+    // Relative: 400x300 inside a 600x800 box is two thirds as wide and three
+    // eighths as tall as the version that defines the box.
+    const relativeLead = (await lead.boundingBox())!;
+    const relativeTrail = (await trail.boundingBox())!;
+    expect(relativeLead.width / relativeTrail.width).toBeCloseTo(400 / 600, 1);
+    expect(relativeLead.height / relativeTrail.height).toBeCloseTo(300 / 800, 1);
+
+    // Fit: the older version grows until its width touches the frame, and
+    // letterboxes vertically because its aspect ratio is not the frame's. Wider
+    // than Relative drew it, and still not the whole frame.
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitLead = (await lead.boundingBox())!;
+    expect(fitLead.width).toBeGreaterThan(relativeLead.width * 1.4);
+    expect(fitLead.height / (await trail.boundingBox())!.height).toBeCloseTo(450 / 800, 1);
+
+    // Stretch: no letterbox left anywhere, both versions distorted onto one
+    // rectangle. This is the mode whose label has to warn about itself.
+    await page.getByRole('radio', { name: /^Stretch to match/ }).click();
+    const stretchLead = (await lead.boundingBox())!;
+    const stretchTrail = (await trail.boundingBox())!;
+    expect(stretchLead.width).toBeCloseTo(stretchTrail.width, 0);
+    expect(stretchLead.height).toBeCloseTo(stretchTrail.height, 0);
+    expect(Math.abs(stretchLead.width - frame.width)).toBeLessThanOrEqual(3);
+    expect(Math.abs(stretchLead.height - frame.height)).toBeLessThanOrEqual(3);
+  });
+
+  test('the scale control is not drawn over a mode it cannot act on', async ({ page }) => {
+    // Side-by-side gives each version its own pane at its own width, which this
+    // package does not touch, so a scale choice there would change nothing. It
+    // is also the mode the page opens in.
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    const scaleControl = page.getByRole('radiogroup', { name: 'Image scale' });
+    await expect(page.getByRole('radiogroup', { name: 'Comparison mode' })).toBeVisible();
+    await expect(scaleControl).toBeHidden();
+
+    await page.getByRole('radio', { name: 'Onion skin' }).click();
+    await expect(scaleControl).toBeVisible();
+
+    await page.getByRole('radio', { name: 'Side by side' }).click();
+    await expect(scaleControl).toBeHidden();
+  });
+
+  test('anchoring to the top left pins the smaller version to the frame corner', async ({ page }) => {
+    // Centring is right for a photograph and wrong for a document or a
+    // screenshot, where content sits flush to a corner and centring throws the
+    // whole page out by half the size difference.
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const { box, lead, trail } = onionImages(page);
+    const frame = (await box.boundingBox())!;
+
+    const centred = (await lead.boundingBox())!;
+    expect(centred.x - frame.x).toBeGreaterThan(10);
+    expect(centred.y - frame.y).toBeGreaterThan(10);
+
+    await page.getByRole('button', { name: /^Anchor/ }).click();
+    const cornered = (await lead.boundingBox())!;
+    // Within the frame's 1px border, which the image sits inside.
+    expect(Math.abs(cornered.x - frame.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(cornered.y - frame.y)).toBeLessThanOrEqual(2);
+
+    // Only the older version is asserted, and deliberately: the newer one
+    // defines the frame in both axes, so it has no slack and sits at the corner
+    // under either anchor. This pair cannot distinguish "anchors both" from
+    // "anchors the one that moves", and pretending otherwise would be a test
+    // that passes for the wrong reason. What it can say is that the version
+    // with no slack does not move, which an anchor implemented as a translation
+    // rather than a margin would break.
+    const trailBefore = (await trail.boundingBox())!;
+    expect(Math.abs(trailBefore.x - frame.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(trailBefore.y - frame.y)).toBeLessThanOrEqual(2);
+
+    // And it holds under Fit, where the older version fills the width and the
+    // slack that gets taken up is vertical.
+    await page.getByRole('radio', { name: 'Fit to frame' }).click();
+    const fitted = (await lead.boundingBox())!;
+    expect(Math.abs(fitted.y - frame.y)).toBeLessThanOrEqual(2);
+  });
+
+  test('the anchor control refuses in Stretch, where there is no slack to take up', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+    const anchor = page.getByRole('button', { name: /^Anchor/ });
+    // Absent rather than "false": Alpine drops a falsy aria-disabled, and ARIA
+    // treats an absent attribute and an explicit false as the same thing.
+    await expect(anchor).not.toHaveAttribute('aria-disabled', 'true');
+
+    await page.getByRole('radio', { name: /^Stretch to match/ }).click();
+    await expect(anchor).toHaveAttribute('aria-disabled', 'true');
+
+    // Refused, not merely announced as refused: both versions already fill the
+    // frame exactly, so a pressed-looking control that changed nothing would be
+    // worse than one that says it cannot act. Playwright's own actionability
+    // reads aria-disabled and will not click it, which is the pointer half of
+    // the answer; the forced click is the state guard behind it.
+    await expect(anchor).toBeDisabled();
+    await anchor.click({ force: true });
+    await expect(anchor).toHaveAttribute('aria-pressed', 'false');
+
+    // Hidden entirely in side-by-side, like the scale control it sits beside.
+    await page.getByRole('radio', { name: 'Side by side' }).click();
+    await expect(anchor).toBeHidden();
+  });
+
+  test('a pair nothing can measure refuses the scale control without stealing focus', async ({ page }) => {
+    // Neither Go nor Chromium can read a HEIC, so there is no coordinate space
+    // and every scale mode would render identically. The group says so.
+    await page.goto(`/resource/compare?r1=${heicResourceId}&v1=1&v2=2`);
+    await page.getByRole('radio', { name: 'Onion skin' }).click();
+
+    const group = page.getByRole('radiogroup', { name: 'Image scale' });
+    await expect(group).toBeVisible();
+    await expect(group).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByRole('button', { name: /^Anchor/ })).toBeDisabled();
+
+    const relative = page.getByRole('radio', { name: 'Relative size' });
+    const fit = page.getByRole('radio', { name: 'Fit to frame' });
+    await expect(relative).toHaveAttribute('aria-checked', 'true');
+
+    // aria-disabled suppresses neither focus nor pointer events. Without a guard
+    // this click lands focus on a tabindex="-1", aria-checked="false" radio while
+    // the checked one still holds tabindex="0" -- the roving tabindex invariant
+    // broken, and Shift+Tab back into the group would skip it.
+    await fit.click({ force: true });
+    await expect(fit).toHaveAttribute('aria-checked', 'false');
+    await expect(fit).not.toBeFocused();
+    // The invariant itself, rather than one implementation of it: focus may
+    // never have moved (the pointer path refuses it) or may have been returned
+    // to the checked radio. What must never happen is focus resting on an
+    // unchecked radio, which is the tabindex="-1" half of the group. Scoped to
+    // this group, since the comparison-mode radio clicked above legitimately
+    // holds focus of its own.
+    await expect(group.locator('[role="radio"][aria-checked="false"]:focus')).toHaveCount(0);
+
+    // The keyboard is refused as well: onRadiogroupKeydown assigns straight into
+    // state, so a click guard alone leaves the group fully working from there.
+    // The keys are still *consumed*, though -- the checked radio is focusable and
+    // is the group's tab stop, so letting Home through would answer "this control
+    // cannot act" by jumping the reader to the top of the page.
+    await page.evaluate(() => {
+      (window as unknown as { __consumed: boolean[] }).__consumed = [];
+      document.addEventListener('keydown', (e) => {
+        (window as unknown as { __consumed: boolean[] }).__consumed.push(e.defaultPrevented);
+      });
+    });
+    await relative.focus();
+    for (const key of ['ArrowRight', 'ArrowDown', 'Home', 'End']) await relative.press(key);
+    await expect(relative).toHaveAttribute('aria-checked', 'true');
+    expect(await page.evaluate(() => (window as unknown as { __consumed: boolean[] }).__consumed))
+      .toEqual([true, true, true, true]);
+
+    // And the invariant holds for focus that arrived by some route other than a
+    // pointer -- programmatically here, but equally an assistive technology
+    // moving focus directly, or a touch stack that focuses without a
+    // compatibility mousedown. Enter then produces a refused click, and focus
+    // must not be left on a tabindex="-1", aria-checked="false" radio.
+    await fit.focus();
+    await expect(fit).toBeFocused();
+    await fit.press('Enter');
+    await expect(fit).toHaveAttribute('aria-checked', 'false');
+    await expect(relative).toBeFocused();
+  });
+
+  test('the scale group keeps its tab stop on the checked radio', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${shapeResourceId}&v1=1&v2=2`);
+    await showOnionSkin(page);
+
+    const relative = page.getByRole('radio', { name: 'Relative size' });
+    const fit = page.getByRole('radio', { name: 'Fit to frame' });
+    const stretch = page.getByRole('radio', { name: /^Stretch to match/ });
+
+    await expect(relative).toHaveAttribute('tabindex', '0');
+    await expect(fit).toHaveAttribute('tabindex', '-1');
+
+    // Arrow keys move the selection, the focus and the single tab stop together.
+    await relative.focus();
+    await relative.press('ArrowRight');
+    await expect(fit).toHaveAttribute('aria-checked', 'true');
+    await expect(fit).toHaveAttribute('tabindex', '0');
+    await expect(relative).toHaveAttribute('tabindex', '-1');
+    await expect(fit).toBeFocused();
+
+    await fit.press('End');
+    await expect(stretch).toHaveAttribute('aria-checked', 'true');
+    await expect(stretch).toBeFocused();
+    await expect(stretch).toHaveAttribute('tabindex', '0');
+  });
+});

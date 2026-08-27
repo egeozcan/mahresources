@@ -2,8 +2,17 @@ package application_context
 
 import (
 	"bytes"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
+	"io"
 	"testing"
 
+	"golang.org/x/image/bmp"
+	"golang.org/x/image/tiff"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"mahresources/models"
@@ -125,6 +134,99 @@ func TestGetDimensionsFromContent(t *testing.T) {
 			if width != tc.wantWidth || height != tc.wantHeight {
 				t.Errorf("getDimensionsFromContent() = (%d, %d), want (%d, %d)",
 					width, height, tc.wantWidth, tc.wantHeight)
+			}
+		})
+	}
+}
+
+// TestGetDimensionsFromContentDecodesEveryStoredRasterFormat pins the version
+// path's decoder set against the formats this tree accepts and stores, and pins
+// the one format it cannot read.
+//
+// resource_version_context.go blank-imports only gif, jpeg and png, which reads
+// like a gap next to the upload path's webp, bmp and tiff. It is not one:
+// image.DecodeConfig consults a process-global registry, resource_media_context.go
+// is the same package, and its imports register those three for every caller in
+// the binary. This test exists because that is invisible at the call site — the
+// version path's decoder set is a property of files it does not name, so removing
+// a blank import over there silently zeroes dimensions over here, and nothing
+// recomputes them for a row once written.
+//
+// AVIF is the real gap and is asserted as such. It is in RasterImageContentTypes
+// and no Go decoder for it exists anywhere in this tree, not in the standard
+// library and not in x/image, so an AVIF version stores no dimensions at all.
+// The compare page's overlay modes therefore have no coordinate space for one,
+// which is why they read naturalWidth/naturalHeight in the browser instead of
+// trusting the stored values. If someone ever registers an AVIF decoder this
+// test fails, and the e2e fixture in compare-registration-scale.spec.ts that
+// depends on the zeros needs replacing rather than quietly passing on.
+//
+// Each fixture is deliberately non-square: a decoder registered for the wrong
+// format, or a width and height read in the wrong order, both survive a square.
+func TestGetDimensionsFromContentDecodesEveryStoredRasterFormat(t *testing.T) {
+	const wantW, wantH uint = 7, 11
+
+	img := image.NewRGBA(image.Rect(0, 0, int(wantW), int(wantH)))
+	for y := 0; y < int(wantH); y++ {
+		for x := 0; x < int(wantW); x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 30), G: uint8(y * 20), B: 90, A: 255})
+		}
+	}
+
+	encode := func(t *testing.T, fn func(io.Writer) error) []byte {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := fn(&buf); err != nil {
+			t.Fatalf("encoding fixture: %v", err)
+		}
+		return buf.Bytes()
+	}
+
+	// x/image ships no WebP encoder, only a decoder, so this one cannot be
+	// generated the way the others are. A 7x11 lossless WebP, 50 bytes.
+	webp, err := base64.StdEncoding.DecodeString(
+		"UklGRioAAABXRUJQVlA4TB4AAAAvBoACALkKRPQ/dhHR/4CQgDDC/7WiAeMxWpFIkQk=")
+	if err != nil {
+		t.Fatalf("decoding the webp fixture: %v", err)
+	}
+
+	// A 7x11 AVIF, 343 bytes. Nothing in the tree can decode it; the assertion
+	// below is that it reads as dimensionless, not that it reads as 7x11.
+	avif, err := base64.StdEncoding.DecodeString(
+		"AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADrbWV0YQAAAAAAAAAh" +
+			"aGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5p" +
+			"bG9jAAAAAEQAAAEAAQAAAAEAAAETAAAARAAAAChpaW5mAAAAAAABAAAAGmluZmUC" +
+			"AAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtpcGNvAAAAFGlzcGUAAAAAAAAA" +
+			"BwAAAAsAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBIAAAAAAAE2NvbHJuY2x4AAEA" +
+			"DQAGgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAATG1kYXQSAAoIOAj1NICGg0gy" +
+			"NheCYwTCSSSTIIAA2EhIt3o8v/X//dFtrM/j9rwb1dUKkTX+e8ZhnOEhj276dEmB" +
+			"3o36S+j9QA==")
+	if err != nil {
+		t.Fatalf("decoding the avif fixture: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		contentType string
+		content     []byte
+		wantW       uint
+		wantH       uint
+	}{
+		{"png", "image/png", encode(t, func(w io.Writer) error { return png.Encode(w, img) }), wantW, wantH},
+		{"gif", "image/gif", encode(t, func(w io.Writer) error { return gif.Encode(w, img, nil) }), wantW, wantH},
+		{"jpeg", "image/jpeg", encode(t, func(w io.Writer) error { return jpeg.Encode(w, img, nil) }), wantW, wantH},
+		{"bmp", "image/bmp", encode(t, func(w io.Writer) error { return bmp.Encode(w, img) }), wantW, wantH},
+		{"tiff", "image/tiff", encode(t, func(w io.Writer) error { return tiff.Encode(w, img, nil) }), wantW, wantH},
+		{"webp", "image/webp", webp, wantW, wantH},
+		{"avif is dimensionless, no decoder exists", "image/avif", avif, 0, 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotW, gotH := getDimensionsFromContent(tc.content, tc.contentType)
+			if gotW != tc.wantW || gotH != tc.wantH {
+				t.Errorf("getDimensionsFromContent(%s) = (%d, %d), want (%d, %d)",
+					tc.contentType, gotW, gotH, tc.wantW, tc.wantH)
 			}
 		})
 	}

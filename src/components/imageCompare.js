@@ -1,6 +1,22 @@
+// The keys the WAI-ARIA radiogroup pattern owns. Named once because two places
+// need the same set: the handler that acts on them, and the refusal that must
+// still swallow them.
+const RADIOGROUP_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+
 export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
   return {
     mode: 'side-by-side',
+    // How the two images are measured into the shared box. `relative` is true
+    // relative scale and was the only policy the page ever had; it is still the
+    // default, because a pair with identical dimensions renders the same under
+    // all three and the divergent minority has no measurement saying which of a
+    // rescan and a crop is more common.
+    scale: 'relative',
+    // Where an image sits in whatever slack the box leaves it. Centring is right
+    // for a photograph and wrong for a document or a screenshot, where content
+    // is flush to a corner and centring throws the page out by half the size
+    // difference.
+    anchor: 'center',
     // `swapped` is the only piece of swap state. Exchanging the URLs and labels
     // in place left the panel colours and the server-rendered alt text describing
     // whichever side had originally been there, so the red "older" panel could
@@ -58,13 +74,278 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return `${width} / ${height}`;
     },
 
-    /** Per-image size inside the shared overlay box, as a percentage pair. */
+    /**
+     * Per-image size inside the shared overlay box.
+     *
+     * An **object**, not a CSS string, and that is load-bearing rather than a
+     * matter of taste. Alpine's `x-bind:style` replaces the entire `style`
+     * attribute when given a string, while `x-show` works by writing
+     * `display: none` onto that same attribute. Every element here carries both
+     * -- the toggle-mode images are `x-show`n and styled, and so are the three
+     * overlay boxes. So the moment this value became reactive, a re-render blew
+     * away `x-show`'s work and every mode's box painted at once. The object form
+     * sets only the properties it names and leaves `display` alone.
+     *
+     * The key set is therefore fixed: a key dropped between two renders keeps
+     * whatever it was last set to, so a value that no longer applies is emitted
+     * as an empty string rather than omitted.
+     */
     overlayScale(index) {
       const [a, b] = this._sizes;
-      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return '';
+      // Nothing to measure into. The `[style*="aspect-ratio"]` branch in
+      // index.css owns the layout here and puts the images back in the flow, so
+      // an inline `height: 100%` from the other branches below would beat its
+      // `height: auto` and break a case that currently works.
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return { width: '', height: '', objectFit: '', margin: '' };
+
+      // Distort each image onto the whole box. Right for a re-encode that
+      // changed aspect, wrong for a crop, which is why this mode's accessible
+      // name says so rather than leaving the reader to notice.
+      if (this.scale === 'stretch') {
+        return { width: '100%', height: '100%', objectFit: 'fill', margin: '' };
+      }
+
       const box = { w: Math.max(a.w, b.w), h: Math.max(a.h, b.h) };
       const img = index === 0 ? a : b;
-      return `width:${(img.w / box.w) * 100}%;height:${(img.h / box.h) * 100}%;`;
+      let { w, h } = img;
+
+      if (this.scale === 'fit') {
+        // Grow each image until an edge touches the box. Two versions of one
+        // aspect ratio both end up filling a box built from the larger, so a
+        // pure resolution change registers exactly.
+        //
+        // Sized on the *element* rather than left to `object-fit: contain` on a
+        // full-box element, which would paint identically. Two reasons, and
+        // neither is arithmetic for its own sake: a contained letterbox is
+        // invisible to `getBoundingClientRect`, so Fit and Stretch would render
+        // to indistinguishable geometry and nothing outside a screenshot could
+        // tell them apart; and with the element equal to the painted rectangle,
+        // anchoring is `margin` here exactly as it is under relative scale,
+        // instead of `margin` in one mode and `object-position` in the other.
+        const k = Math.min(box.w / img.w, box.h / img.h);
+        w = img.w * k;
+        h = img.h * k;
+      }
+
+      return {
+        width: `${(w / box.w) * 100}%`,
+        height: `${(h / box.h) * 100}%`,
+        objectFit: '',
+        // `margin: auto` on the class centres an absolutely-positioned element
+        // pinned on all four sides. Zeroing it over-constrains the box, which
+        // CSS resolves in a left-to-right document by ignoring `right` and
+        // `bottom` -- the top-left corner.
+        margin: this.anchor === 'top-left' ? '0' : '',
+      };
+    },
+
+    /**
+     * Whether a scale choice would do anything.
+     *
+     * With no usable dimensions on either side every mode returns the same empty
+     * style and the CSS fallback draws the pair, so the control refuses rather
+     * than being drawn as though it worked.
+     */
+    get scaleAvailable() {
+      return this.overlayRatio !== null;
+    },
+
+    setScale(value, e) {
+      if (!this.scaleAvailable) {
+        this.returnFocusToCheckedScale(e);
+        return;
+      }
+      this.scale = value;
+    },
+
+    /**
+     * The roving tabindex invariant, enforced where activation happens.
+     *
+     * `aria-disabled` suppresses neither focus nor pointer events, so focus can
+     * come to rest on a refused `tabindex="-1"`, `aria-checked="false"` radio
+     * while the checked one still holds `tabindex="0"`. The group's focus is
+     * supposed to be on the checked radio, and Shift+Tab back into it would
+     * otherwise skip the group entirely.
+     *
+     * On activation, not on one input path: a first attempt guarded `mousedown`
+     * alone, which leaves the hole open for programmatic focus, for an assistive
+     * technology moving focus directly, and for any touch implementation that
+     * focuses without a compatibility `mousedown`. Enter and Space on such a
+     * radio produce a refused click and leave focus exactly where it should not
+     * be. Every one of those paths ends in the click handler, so that is where
+     * the invariant is restored.
+     */
+    returnFocusToCheckedScale(e) {
+      const target = e && e.currentTarget;
+      const group = target && typeof target.closest === 'function' && target.closest('[role="radiogroup"]');
+      if (!group) return;
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      // Correct the invariant only where it is actually broken -- focus resting
+      // on an unchecked radio of this group. Restoring unconditionally would
+      // steal focus on the commonest path of all: the pointer press never moved
+      // it (`refuseFocusIfUnavailable` saw to that), so the reader is still in
+      // whatever field or control they were using, and this would yank them into
+      // a group they only clicked at.
+      if (!active || !group.contains(active)) return;
+      if (active.getAttribute && active.getAttribute('aria-checked') === 'true') return;
+      const checked = group.querySelector('[role="radio"][aria-checked="true"]');
+      if (checked && typeof checked.focus === 'function' && checked !== active) checked.focus();
+    },
+
+    /**
+     * Avoid the focus visibly landing on a refused radio before it is taken back.
+     *
+     * Purely cosmetic, and deliberately not the mechanism: `mousedown` and
+     * `click` are separate tasks with a frame between them, so without this the
+     * pointer path shows a focus ring on a dead control for one frame before
+     * `returnFocusToCheckedScale` moves it. Discoverability is unaffected either
+     * way -- roving tabindex means an unchecked radio was never a tab stop, and
+     * Tab still enters the group at the checked one, where the group's own
+     * `aria-disabled` is announced.
+     */
+    refuseFocusIfUnavailable(e) {
+      if (!this.scaleAvailable) e.preventDefault();
+    },
+
+    /**
+     * Whether an anchor choice would do anything.
+     *
+     * Stretch leaves no slack -- both versions already fill the frame exactly --
+     * so there is nothing for an anchor to take up, and a control that looked
+     * pressed while changing nothing would be worse than one that says it cannot
+     * act. Kept visible and marked disabled rather than hidden: one button
+     * vanishing out of a toolbar the reader is looking at is more disorienting
+     * than a visibly unavailable one, and it keeps the row from twitching on
+     * every scale change.
+     */
+    get anchorAvailable() {
+      return this.scaleAvailable && this.scale !== 'stretch';
+    },
+
+    toggleAnchor() {
+      if (!this.anchorAvailable) return;
+      this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
+    },
+
+    /**
+     * The refusal has to cover the keyboard too.
+     *
+     * `onRadiogroupKeydown` assigns straight into state, so arrow keys, Home and
+     * End would move a control that announces itself unavailable -- a guard on
+     * `@click` alone leaves the group working for anyone not using a mouse.
+     */
+    onScaleKeydown(e) {
+      if (!this.scaleAvailable) {
+        // Refuse the change, but still swallow the keys the pattern owns. The
+        // checked radio stays focusable and is the group's tab stop, so letting
+        // ArrowDown, Home or End through hands them to the browser's default
+        // scrolling -- Home jumps the reader to the top of the page as the answer
+        // to pressing a key on a control that told them it could not act.
+        if (RADIOGROUP_KEYS.includes(e.key)) e.preventDefault();
+        return;
+      }
+      this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch']);
+    },
+
+    /**
+     * The overlay box's own style, for the same reason as `overlayScale`.
+     *
+     * `index.css` keys its no-dimensions fallback on `[style*="aspect-ratio"]`,
+     * which an object binding still satisfies: setting the property serialises
+     * into the attribute exactly as a string binding did.
+     */
+    get overlayBoxStyle() {
+      return { aspectRatio: this.overlayRatio || '' };
+    },
+
+    /**
+     * Every `_sizes` / `_urls` slot whose bytes an image is currently displaying.
+     *
+     * Resolved from the image's own `currentSrc`, never from `swapped`. Those
+     * arrays are indexed by the server's left/right while `leadUrl` is
+     * `_urls[swapped ? 1 : 0]`, so asking `swapped` means asking a flag that can
+     * move independently of the pixels being measured: a `load` already queued
+     * for the previous `src` can run after a flip, and the element still reports
+     * the old image's `naturalWidth` while the new request is pending. That
+     * records a real measurement against the wrong version, and it stays wrong
+     * if the replacement never loads.
+     *
+     * `currentSrc` is defined as the URL of the image data *currently in use*,
+     * so it and `naturalWidth` describe the same bytes by construction. Both
+     * sides are resolved against one base because `currentSrc` is absolute and
+     * `_urls` are not.
+     *
+     * *Every* matching slot, not the first: `sameVersion` keeps a same-resource
+     * self-comparison from rendering this component at all, but it is
+     * `!crossResource && v1 == v2`, so a cross-resource URL naming one version
+     * on both sides reaches it with two identical URLs. Filling only the first
+     * slot would leave the second unknown, which for a format that stores no
+     * dimensions means the scale controls stay refused while both images have
+     * decoded perfectly well.
+     */
+    slotsForImage(img) {
+      if (!img.currentSrc) return [];
+      const base = (typeof document !== 'undefined' && document.baseURI) || 'http://compare.invalid/';
+      const resolve = (u) => {
+        try {
+          return new URL(u, base).href;
+        } catch {
+          return String(u);
+        }
+      };
+      const showing = resolve(img.currentSrc);
+      const slots = [];
+      this._urls.forEach((u, i) => {
+        if (resolve(u) === showing) slots.push(i);
+      });
+      return slots;
+    },
+
+    /**
+     * Fill `_sizes` from what the browser actually painted.
+     *
+     * The stored `Width`/`Height` are whatever Go's `image.DecodeConfig` could
+     * read at upload, and they are wrong in two directions. They are *absent*
+     * for a format no Go decoder exists for -- AVIF is an accepted content type
+     * with none anywhere in the tree -- which drops the pair into the CSS branch
+     * that stacks both images at one origin with no registration at all. And
+     * they *disagree* for anything carrying EXIF orientation, which nothing in
+     * this tree reads: a rotated JPEG stores its dimensions transposed against
+     * what every browser paints and reports.
+     *
+     * So the loaded image wins whenever it has something to say. The stored
+     * values remain the first-paint placeholder, which is what keeps the box
+     * from resizing under the reader between markup and load. Which version a
+     * measurement belongs to is decided by `slotsForImage`, from the image
+     * itself.
+     */
+    noteSizeFrom(img) {
+      // Duck-typed rather than `instanceof HTMLImageElement`: that identity is
+      // per-realm, so an image adopted from another document is not an instance
+      // of *this* realm's constructor and would be silently ignored. What is
+      // actually required of the argument is the two numbers read below.
+      if (!img || typeof img.naturalWidth !== 'number' || typeof img.naturalHeight !== 'number') return;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      // Zero means the image has not decoded, or cannot: a dimensionless SVG,
+      // a HEIC no browser renders, a fetch that failed. Recording that would
+      // erase a usable stored value in exchange for nothing.
+      if (!w || !h) return;
+      // An image showing neither version has nothing to attribute the size to.
+      const slots = this.slotsForImage(img);
+      if (slots.length === 0) return;
+      // A new array rather than an index write, and only when something actually
+      // changed: the getters derived from this have to re-run, and eight images
+      // report into two slots, so this runs far more often than it changes
+      // anything.
+      let next = null;
+      for (const slot of slots) {
+        const known = this._sizes[slot];
+        if (known && known.w === w && known.h === h) continue;
+        if (!next) next = this._sizes.slice();
+        next[slot] = { w, h };
+      }
+      if (next) this._sizes = next;
     },
 
     get leadScale() {
@@ -102,6 +383,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         }
       };
       this.$el.addEventListener('keydown', this._keyHandler);
+
+      // An image that finished before its `@load` was bound never fires one.
+      // Alpine's own directive order puts `x-bind` ahead of `x-on`, so `:src`
+      // is assigned first -- today that is still safe, because a `load` is
+      // dispatched in a later task and the walk binds the listener inside this
+      // one. Sweeping what is already complete makes that independent of an
+      // ordering this component does not control and cannot see change.
+      this.$el.querySelectorAll('img[data-compare-image]').forEach((img) => this.noteSizeFrom(img));
     },
 
     destroy() {
@@ -128,14 +417,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * so tabindex stays on the active one (roving tabindex invariant).
      */
     onRadiogroupKeydown(e, stateKey, values) {
+      if (!RADIOGROUP_KEYS.includes(e.key)) return;
+      e.preventDefault();
       // Down and Up as well as Right and Left: the pattern specifies both pairs,
       // and which one a reader reaches for depends on how they read the control.
       const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
       const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
-      if (!forward && !back && e.key !== 'Home' && e.key !== 'End') {
-        return;
-      }
-      e.preventDefault();
       const currentIdx = values.indexOf(this[stateKey]);
       let nextIdx = currentIdx;
       if (forward) nextIdx = (currentIdx + 1) % values.length;
@@ -146,7 +433,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const group = e.currentTarget;
       this.$nextTick(() => {
         const checked = group.querySelector('[role="radio"][aria-checked="true"]');
-        if (checked instanceof HTMLElement) checked.focus();
+        // Duck-typed for the same reason as `noteSizeFrom`: `HTMLElement` is a
+        // per-realm identity, and what is required of this value is that it can
+        // take focus.
+        if (checked && typeof checked.focus === 'function') checked.focus();
       });
     },
 

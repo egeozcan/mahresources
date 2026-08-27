@@ -212,3 +212,18 @@
     width: 100%;
   }
 }
+
+/* A segmented radio that cannot act on the current pair. `disabled` would take
+   the button out of the tab order and break the group's roving tabindex, so the
+   refusal is aria-disabled and this is what says so visually. */
+.compare-seg-btn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Matches .compare-seg-btn[aria-disabled] above, for the toggle that sits beside
+   the segmented groups rather than inside one. */
+.compare-swap-btn-sm[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
