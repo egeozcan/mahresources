@@ -1371,6 +1371,34 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(20, 6);
   });
 
+  test('a nudge on one axis leaves the other axis the correction it already had', () => {
+    // A request carries a position, so it carries both axes -- but only a
+    // moved axis is a request. The other one is the correction that was
+    // already standing, and resolving it against the bound because its
+    // neighbour was nudged is one axis resolving another: here x is the
+    // inverse of a flipped correction, legitimately outside the canonical
+    // bound and well inside the one the reader is looking at, and a single
+    // ArrowDown erased it.
+    const run = (first: 1 | 2, second: 1 | 2, arrow: boolean) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.swapSides();
+      c.zoomBy(-0.75);
+      c.nudge(-10, 0);
+      c.toggleAnchor();
+      c.noteSizeFrom(img(first, 400, 400));
+      if (arrow) c.nudge(0, 1);
+      c.noteSizeFrom(img(second, 400, 400));
+      return { dx: c._offset.dx, dy: c._offset.dy };
+    };
+    // The box halves and x halves with it, whether or not y was touched.
+    expect(run(1, 2, false)).toEqual(run(2, 1, false));
+    expect(run(1, 2, false).dx).toBeCloseTo(20, 6);
+    expect(run(1, 2, true)).toEqual(run(2, 1, true));
+    expect(run(1, 2, true).dx).toBeCloseTo(20, 6);
+    expect(run(1, 2, true).dy).toBeCloseTo(-2, 6);
+  });
+
   test('a control used while a version is missing does not re-date the baseline', () => {
     // The baseline a report's claim is measured against belongs to the reader,
     // and they can only restate it in geometry that is the pair's. Re-dated by
@@ -1409,7 +1437,10 @@ describe('manual alignment', () => {
     //
     // Convergence only. Containment is deliberately not asserted: a
     // flip-derived inverse is legitimately outside this side's bound, and the
-    // whole design is built to preserve it rather than clamp it.
+    // whole design is built to preserve it rather than clamp it. Two orders
+    // agreeing on a wrong answer is therefore out of this test's reach by
+    // construction, and the hand-written rule tests above are what hold that
+    // half -- one axis resolving another converges perfectly.
     const step = (name: string, run: (c: any) => void) => ({ name, run });
     const SCRIPTS = [
       [step('nudge -450', (c) => c.nudge(-450, 0)), step('flip', (c) => c.swapSides()),

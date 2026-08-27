@@ -199,6 +199,20 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // converts it into the final box's pixels when it resolves. Null once
     // resolved or discarded; it never drives a render.
     _requestedOffset: null,
+    /**
+     * Which axes the reader actually asked to move inside the window.
+     *
+     * The request carries both axes because it carries a position, but only a
+     * moved axis is a *request*: the other one is the correction that was
+     * already standing, and it must resolve the way it would have with no
+     * request at all -- kept where it is unless a bound-mover owes it. Clamped
+     * instead, one ArrowDown erases an x correction made before the window,
+     * which is one axis resolving another.
+     *
+     * Flip-invariant, like the claim flags: `invertOffset` maps dx to dx.
+     */
+    _requestMovedX: false,
+    _requestMovedY: false,
     // The stored box's width, in its own pixels -- the frame both decode
     // orders share before either image has spoken. Null when the server had no
     // dimensions for the pair: then the box itself does not exist until one
@@ -585,6 +599,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           ax: anchor(next.dx, x, this._sizeOwedX),
           ay: anchor(next.dy, y, this._sizeOwedY),
         });
+        if (dx !== 0) this._requestMovedX = true;
+        if (dy !== 0) this._requestMovedY = true;
         this._sizeReboundDue = true;
       }
       this._setTrailOffset(next);
@@ -869,8 +885,20 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // bound it was inside is such a claim, and widening around the older
         // anchor would launder the outside-ness that report created.
         const held = (anchor, owed) => (owed || anchor === null ? null : anchor * outOfUnits);
-        dx = axis(t.dx, held(request.ax, this._sizeOwedX), x);
-        dy = axis(t.dy, held(request.ay, this._sizeOwedY), y);
+        // An axis the reader never moved in the window is not a request at
+        // all: it is the correction that was already standing, and it resolves
+        // exactly as it would have with no request -- kept unless a
+        // bound-mover owes it. Clamping it because the *other* axis was nudged
+        // is one axis resolving another.
+        const still = (value, owed, range) => (owed
+          ? Math.max(range.min, Math.min(range.max, value))
+          : value);
+        dx = this._requestMovedX
+          ? axis(t.dx, held(request.ax, this._sizeOwedX), x)
+          : still(shown.dx, this._sizeOwedX, x);
+        dy = this._requestMovedY
+          ? axis(t.dy, held(request.ay, this._sizeOwedY), y)
+          : still(shown.dy, this._sizeOwedY, y);
       }
       // Nothing to bring back: either the clamp held the value or the screen
       // already shows exactly what the request resolves to. Writing anyway
@@ -893,6 +921,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       this._reboundOffset(request);
       this._requestedOffset = null;
       this._requestUnitsW = null;
+      this._requestMovedX = false;
+      this._requestMovedY = false;
     },
 
     /**
@@ -921,6 +951,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (this.resetIdle) return;
       this._requestedOffset = null;
       this._requestUnitsW = null;
+      this._requestMovedX = false;
+      this._requestMovedY = false;
       this._offset = { dx: 0, dy: 0, k: 1 };
       this.announceOffset();
     },
