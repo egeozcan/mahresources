@@ -488,7 +488,12 @@ Carried out of the eleven rounds, none of them defects this branch introduced:
   page's were.
 - No template gates a write control on the principal's capability; every one is
   drawn and refused at submit.
-- Dimensionless image pairs overlay at one origin but are not registered
-  against each other. Reading `naturalWidth`/`naturalHeight` on load and filling
-  `_sizes` from that would remove the fallback branch entirely.
+- ~~Dimensionless image pairs overlay at one origin but are not registered
+  against each other.~~ Closed by
+  `docs/plans/2026-08-27-compare-registration-scale.md`: the overlay modes read
+  `naturalWidth`/`naturalHeight` on load and fill `_sizes` from that, and they
+  prefer those values over the stored ones, which are transposed for anything
+  carrying EXIF orientation. The fallback branch **stays** -- HEIC and TIFF
+  reach this comparator and no browser renders them, so those pairs never
+  produce usable dimensions and that branch is still what draws them.
 - The three from round 11 above.
