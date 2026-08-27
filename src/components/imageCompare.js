@@ -141,8 +141,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // was half-measured, but the rebound has to wait for the other version to
     // report. Owed rather than immediate because the report that completes
     // the pair may only *confirm* a stored size -- see `noteSizeFrom`. The
-    // orientation at arming is kept so the pay can complete the correction in
-    // the orientation that incurred it, whatever a flip did in between.
+    // orientation at the *first* arming is kept -- see `_deferRebound` -- so
+    // the pay can complete the correction in the orientation that incurred
+    // it, whatever a flip did in between.
     _sizeReboundDue: false,
     _sizeReboundDueSwapped: false,
     // Whether the outstanding debt was incurred by something that *moved the
@@ -565,8 +566,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           ax: anchor(next.dx, x, this._sizeOwedX),
           ay: anchor(next.dy, y, this._sizeOwedY),
         });
-        this._sizeReboundDue = true;
-        this._sizeReboundDueSwapped = this.swapped;
+        this._deferRebound();
       }
       this._setTrailOffset(next);
     },
@@ -625,6 +625,24 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * is owed at the both-measured moment instead, where the load-time
      * rebound is paid.
      */
+    /**
+     * Arm the deferred rebound, recording the orientation only if nothing is
+     * armed yet.
+     *
+     * The pay completes the correction in the orientation that *incurred* the
+     * debt, so that a flip landing between the change and the confirming load
+     * cannot change the canonical result. A second arming -- a nudge, a zoom,
+     * a later report -- joins the debt that is already outstanding rather than
+     * replacing it, and so has no orientation of its own to record. Writing
+     * one anyway pays the first arming's clamp against the other version's
+     * bound: with a flip in between, one ArrowDown moved a correction on the
+     * *other* axis by 250 pixels.
+     */
+    _deferRebound() {
+      if (!this._sizeReboundDue) this._sizeReboundDueSwapped = this.swapped;
+      this._sizeReboundDue = true;
+    },
+
     _reboundOrDefer(before) {
       // A bound moved underneath a version that is not displaced broke
       // nothing: zero is inside every range `translateRange` can produce, so
@@ -649,8 +667,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         this._sizeOwedX = false;
         this._sizeOwedY = false;
       } else {
-        this._sizeReboundDue = true;
-        this._sizeReboundDueSwapped = this.swapped;
+        this._deferRebound();
       }
     },
 
@@ -1379,10 +1396,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // so no axis crosses -- which is what keeps a flip made after it from
       // being clamped by the next confirm, while the debt an earlier report
       // armed still gets paid.
-      if (!this._sizeReboundDue && !both && (this._sizeOwedX || this._sizeOwedY)) {
-        this._sizeReboundDue = true;
-        this._sizeReboundDueSwapped = this.swapped;
-      }
+      if (!both && (this._sizeOwedX || this._sizeOwedY)) this._deferRebound();
       // Paid when both have reported. One image showing on both sides fills
       // both slots in a single report, so the completing call is also the size
       // change and must rebound directly rather than only through the debt.

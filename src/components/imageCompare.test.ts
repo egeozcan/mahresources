@@ -873,8 +873,8 @@ describe('manual alignment', () => {
 
   test('a no-op scale activation arms no deferred debt', () => {
     // Pressing the already-selected policy changes no geometry, so it must
-    // not arm the deferred rebound -- the round 4 rule, applied to the load
-    // window: nothing was broken, so nothing is owed.
+    // not arm the deferred rebound, exactly as it does not reapply the bound
+    // outside the load window: nothing was broken, so nothing is owed.
     const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
     c.toggleAligning();
     c.zoomBy(3);
@@ -1216,6 +1216,32 @@ describe('manual alignment', () => {
     // outside and stays, y was inside and comes back to the near edge.
     expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
     expect(c.trailOffset.dy).toBeCloseTo(0, 6);
+  });
+
+  test('a nudge joins an outstanding debt rather than moving it to its own orientation', () => {
+    // The debt is paid in the orientation that incurred it, and a flip landing
+    // between the size change and the confirming load must not change the
+    // canonical result. A nudge arriving in that gap is a second arming of a
+    // debt that already exists, so it has no orientation of its own to
+    // record: rewriting the orientation pays the report's clamp against the
+    // other version's bound, and one ArrowDown then rewrote the x correction
+    // from 850 to 600 -- but only when a flip happened to intervene, which is
+    // the flip-invariance the paid-in-its-own-orientation rule exists for.
+    const run = (flip: boolean) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.zoomBy(-0.75);
+      c.nudge(450, 0);
+      // Slot 0 is twice its stored size: the box doubles, the correction
+      // converts to 900, and the bound it now sits outside is 850.
+      c.noteSizeFrom(img(1, 1600, 1200));
+      if (flip) c.swapSides();
+      c.nudge(0, 1);
+      c.noteSizeFrom(img(2, 800, 600));
+      return c._offset.dx;
+    };
+    expect(run(true)).toBeCloseTo(run(false), 6);
+    expect(run(true)).toBeCloseTo(850, 6);
   });
 
   test('a report that moves one axis leaves the other axis its legitimate outside', () => {
