@@ -1342,6 +1342,35 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(325, 6);
   });
 
+  test('a report that brings an axis back inside does not hand it to the next one', () => {
+    // A claim is the reports' doing measured against the position the reader
+    // chose. Measured instead against whatever the previous report left, a
+    // report that happens to widen a bound past a legitimately-outside axis
+    // makes that axis inside again for a moment, and the completing report
+    // then finds it crossing outward and clamps a correction nothing broke.
+    // Which report widens and which crosses is the decode order, so the same
+    // two files and the same presses keep the reader's alignment in one order
+    // and snap it to zero in the other.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      // Flipped and zoomed out, ten box pixels left: well inside the bound the
+      // reader is looking at, and outside the canonical one, which is what a
+      // flip-derived inverse is.
+      c.swapSides();
+      c.zoomBy(-0.75);
+      c.nudge(-10, 0);
+      c.toggleAnchor();
+      c.noteSizeFrom(img(first, 400, 400));
+      c.noteSizeFrom(img(second, 400, 400));
+      return c._offset.dx;
+    };
+    // The box halves, so the correction halves with it and the reader still
+    // sees the ten pixels they asked for, as five.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(20, 6);
+  });
+
   test('the canonical correction never depends on which version decoded first', () => {
     // Every load-window defect this component has had is one shape: a reader's
     // script interleaved with the two decodes, converging in one order and not
@@ -1376,6 +1405,8 @@ describe('manual alignment', () => {
       [step('nudge', (c) => c.nudge(450, 450)), step('flip', (c) => c.swapSides()),
         step('anchor', (c) => c.toggleAnchor()), step('zoom 25%', (c) => c.zoomBy(-0.75)),
         step('nudge', (c) => c.nudge(-3, 7))],
+      [step('flip', (c) => c.swapSides()), step('zoom 25%', (c) => c.zoomBy(-0.75)),
+        step('nudge', (c) => c.nudge(-10, 0)), step('anchor', (c) => c.toggleAnchor())],
     ];
     // Pairs whose corrected widths differ from the stored ones and from each
     // other, so the transient box differs per decode order -- the condition

@@ -169,6 +169,24 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // so no orientation is recorded with them.
     _sizeOwedX: false,
     _sizeOwedY: false,
+    /**
+     * The per-axis bound test as of the reader's last act, canonically -- what
+     * a size report's claim is measured against.
+     *
+     * Deliberately not re-read per report. A report can move a bound so that
+     * an axis the reader legitimately left outside is momentarily inside
+     * again, and the next report then finds it crossing outward and claims it,
+     * clamping a position no report ever broke. Which report does that is the
+     * decode order: the same two files and the same presses keep the
+     * correction in one order and snap it in the other.
+     *
+     * So a claim measures what the reports did to the position the reader
+     * chose, cumulatively, rather than what the last one did to whatever the
+     * one before it left. Any act of the reader's clears it -- their new
+     * position is the new thing to be measured against -- and so does the pay,
+     * which is the repair those claims asked for.
+     */
+    _reportBefore: null,
     // The half-measured nudge records here the translation the reader asked
     // for -- including everything a display-side clamp deferred -- in the same
     // slot-relative shape `_offset` uses, plus a per-axis `ax`/`ay` anchor
@@ -385,6 +403,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     _setTrailOffset(t) {
+      // Every write of the translation restates the position a later report's
+      // claim is measured against -- see `_reportBefore`.
+      this._reportBefore = null;
       // `invertOffset` is an involution, so writing back through it is the same
       // operation as reading through it.
       this._offset = this.swapped ? invertOffset(t) : t;
@@ -651,6 +672,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
 
     _reboundOrDefer(before) {
+      // A bound-mover restates it too: the same numbers sit differently
+      // against a bound the reader has just changed -- see `_reportBefore`.
+      this._reportBefore = null;
       // A bound moved underneath a version that is not displaced broke
       // nothing: zero is inside every range `translateRange` can produce, so
       // the per-axis test below would refuse this too. It is here as the fast
@@ -871,6 +895,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // correction it belongs to -- left alone, a later confirming report
       // would rewrite alignment the reader makes after the reset.
       this._sizeReboundDue = false;
+      this._reportBefore = null;
       this._sizeOwedX = false;
       this._sizeOwedY = false;
       // A refused Reset stays silent: the control is drawn `aria-disabled`
@@ -1376,12 +1401,15 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         if (!next) next = this._sizes.slice();
         next[slot] = { w, h };
       }
-      // Snapshotted before this call's own correction, so that what the
-      // report broke can be told from what was already true: an axis a flip
-      // legitimately left outside was outside before this report too. In the
+      // What the reports have done to the reader's position, measured against
+      // that position rather than against whatever the previous report left:
+      // taken once, at the reader's last act, and held until they act again --
+      // see `_reportBefore`. So an axis a flip legitimately left outside stays
+      // the reader's whatever a report does to the bound in between. In the
       // canonical frame, because the answer must not depend on which version
       // decoded first -- see `_canonically`.
-      const withinAxes = this._canonically(() => this.offsetAxesWithinBound);
+      const withinAxes = this._reportBefore
+        || (this._reportBefore = this._canonically(() => this.offsetAxesWithinBound));
       const before = this.overlayBox;
       // The offset is in box pixels, so correcting the box's own dimensions
       // changes what an existing one means. A reader who nudged against the
@@ -1454,6 +1482,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // the price already charged for a zoom taken while flipped. The flip
         // itself still never reapplies the bound.
         this._canonically(() => this._resolveDeferred());
+        // The repair those claims asked for has run, so what stands now is
+        // what a later report is measured against.
+        this._reportBefore = null;
         this._sizeReboundDue = false;
         this._sizeOwedX = false;
         this._sizeOwedY = false;
