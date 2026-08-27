@@ -825,6 +825,29 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(450, 6);
   });
 
+  test('a control used between the two reports does not make the result order-dependent', () => {
+    // Pressing Anchor (or zooming, or changing scale) while one slot has
+    // reported and the other has not clamps against a transient geometry --
+    // the trail is whichever slot decoded first -- and the later width
+    // conversion scales the already-clamped value, so the same two files land
+    // on a different canonical offset depending on decode order. The clamp is
+    // deferred to the both-measured moment.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.zoomBy(-0.75);
+      c.nudge(-430, 0);
+      c.noteSizeFrom(img(first, 600, 800));
+      c.toggleAnchor();
+      c.noteSizeFrom(img(second, 600, 800));
+      return c.trailOffset.dx;
+    };
+    // Both orders land on the final bound: 600x800 box, 150px-rendered trail,
+    // anchored top-left, so min is -(0 + 150 - 37.5).
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-112.5, 6);
+  });
+
   test('a report that moves neither the offset nor its bound arms no debt', () => {
     // The debt is owed when a size report moves the offset or the bound it
     // sits in. A report that only resizes the *leading* version without
@@ -1368,6 +1391,31 @@ describe('manual alignment', () => {
       for (const type of ['mousemove', 'mouseup', 'touchmove', 'touchend', 'touchcancel', 'blur']) {
         expect(dom.listening(type)).toBe(0);
       }
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a non-primary button press is not a drag', () => {
+    // Right-dragging the image must not move it -- and must not arm the
+    // toggle-click suppression, because a right-button release generates no
+    // click at all, so a later deliberate left click would be eaten. The
+    // context menu has to survive too: preventDefault on a right mousedown
+    // would suppress it.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      let prevented = false;
+      c.startAlignDrag({ ...press(100, 100), type: 'mousedown', button: 2, preventDefault() { prevented = true; } });
+      expect(prevented).toBe(false);
+      expect(dom.listening('mousemove')).toBe(0);
+      expect(c.trailOffset.dx).toBe(0);
+
+      // A left click right after is the reader's own: nothing was stamped.
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
     } finally {
       dom.restore();
     }

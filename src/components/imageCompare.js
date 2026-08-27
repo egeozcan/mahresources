@@ -112,12 +112,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // question as whether `_sizes` changed: a load that confirms the stored
     // value writes nothing and still means that version has been measured.
     _measured: [false, false],
-    // A size correction moved an offset that was inside the old bound, but the
-    // rebound has to wait for the other version to report. Owed rather than
-    // immediate because the report that completes the pair may only *confirm* a
-    // stored size -- see `noteSizeFrom`. The orientation at arming is kept so
-    // the pay can complete the correction in the orientation that incurred it,
-    // whatever a flip did in between.
+    // A size correction moved an offset that was inside the old bound, or a
+    // control operation (zoom, scale, anchor) moved the bound while the pair
+    // was half-measured, but the rebound has to wait for the other version to
+    // report. Owed rather than immediate because the report that completes
+    // the pair may only *confirm* a stored size -- see `noteSizeFrom`. The
+    // orientation at arming is kept so the pay can complete the correction in
+    // the orientation that incurred it, whatever a flip did in between.
     _sizeReboundDue: false,
     _sizeReboundDueSwapped: false,
     _endAlignDrag: null,
@@ -405,7 +406,26 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         dy: t.dy,
         k: Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta)),
       });
-      if (within) this._reboundOffset();
+      if (within) this._reboundOrDefer();
+    },
+
+    /**
+     * Rebound now, unless the pair is half-measured.
+     *
+     * The load window -- exactly one version measured -- is a geometry that
+     * does not exist: the box is `max` of a real measurement and a stored
+     * placeholder, and the trail is whichever slot decoded first. Clamping
+     * against it makes the final offset depend on decode order, so the clamp
+     * is owed at the both-measured moment instead, where the load-time
+     * rebound is paid.
+     */
+    _reboundOrDefer() {
+      if (this._measured[0] === this._measured[1]) {
+        this._reboundOffset();
+      } else {
+        this._sizeReboundDue = true;
+        this._sizeReboundDueSwapped = this.swapped;
+      }
     },
 
     /**
@@ -561,6 +581,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      */
     startAlignDrag(e) {
       if (!this.aligning || !this.alignAvailable) return;
+      // Only the primary button drags. A right-button release generates no
+      // click, so a right-drag must not move the image, must not arm the
+      // toggle-click suppression, and must not be preventDefaulted -- that
+      // would suppress the context menu.
+      if (e.type === 'mousedown' && e.button !== 0) return;
       // The slider handle is inside the box and its own `mousedown` bubbles to
       // here, so without this an armed drag on the handle would move the reveal
       // position and the trailing image at the same time.
@@ -750,7 +775,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // touching anything, and it does so for every path rather than this one.
       const within = this.offsetWithinBound;
       this.scale = value;
-      if (within) this._reboundOffset();
+      if (within) this._reboundOrDefer();
     },
 
     /**
@@ -823,7 +848,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // decides how far the offset may carry it.
       const within = this.offsetWithinBound;
       this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
-      if (within) this._reboundOffset();
+      if (within) this._reboundOrDefer();
     },
 
     /**

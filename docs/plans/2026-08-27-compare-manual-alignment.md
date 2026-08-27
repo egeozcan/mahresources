@@ -113,6 +113,26 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 15:
+
+- **A control used between the two load reports defers its rebound.** Zoom,
+  scale and Anchor clamp against whatever geometry is current -- and while
+  the pair is half-measured that geometry does not exist: the trail is
+  whichever slot decoded first, so a 600x800 report against an 800x600
+  placeholder clamps differently per order, and the second report's width
+  conversion then scales the already-clamped value, which a deferred rebound
+  can only pull further in. Stored 800x600, zoom to 25%, nudge to -430,
+  report 600x800, Anchor, report 600x800: lead-first finished at -112.5 and
+  trail-first at -84.375. The three controls now route through
+  `_reboundOrDefer`, which clamps immediately outside the load window and
+  owes the clamp to the both-measured moment inside it -- the same debt the
+  size corrections pay.
+- **Only the primary button drags.** A right-button `mousedown` started a
+  drag and `preventDefault`ed it (suppressing the context menu); its release
+  generates no click, yet stamped the toggle-click suppression, so a
+  deliberate left click inside the window was eaten. Non-primary buttons now
+  return before any of that.
+
 Round 14:
 
 - **A release announces only an actual drag.** The round 12 fix scoped the
