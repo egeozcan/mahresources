@@ -113,6 +113,15 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 14:
+
+- **A release announces only an actual drag.** The round 12 fix scoped the
+  click suppression to real movement but left the announcement comparing the
+  offset at press vs release -- so a load that converted the offset mid-press
+  announced "Offset +80, 0, 100%" for a gesture that never moved, reading a
+  conversion as the reader's own action. The live region is now written on
+  `anyMove` like the suppression: keyboard nudges and actual drag ends only.
+
 Round 12:
 
 - **Disarming ends the drag, not just the next move.** Round 11's fix made

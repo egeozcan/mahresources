@@ -1389,7 +1389,11 @@ describe('manual alignment', () => {
       c.noteSizeFrom(img(1, 800, 600));
       expect(c.trailOffset.dx).toBeCloseTo(80, 6);
       dom.fire('mouseup', {});
-      // The click is a tap, not the end of a drag: it switches versions.
+      // The click is a tap, not the end of a drag: it switches versions, and
+      // the release announces nothing -- the conversion was a load's doing,
+      // not the gesture's, and the live region reads only what the reader
+      // did.
+      expect(c.offsetAnnouncement).toBe('');
       c.toggleSide({ detail: 1 });
       expect(c.showLeft).toBe(false);
     } finally {

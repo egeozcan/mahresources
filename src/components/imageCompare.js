@@ -590,12 +590,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       });
       let last = point(e);
       if (last.x === undefined || last.y === undefined) return;
-      // What the gesture started from, so a press-and-release that changed
-      // nothing is not announced as a drag. Whether the *move handler* actually
-      // processed movement is tracked separately: the suppression is for the
-      // click ending a drag, and an offset can change while the button is held
-      // without any drag -- a load converts it mid-press.
-      const startedFrom = this.trailOffset;
+      // Whether the *move handler* actually processed movement. Both the
+      // announcement and the click suppression key on this: an offset can
+      // change while the button is held without any drag -- a load converts it
+      // mid-press -- and neither the live region nor the suppression may read
+      // that as the reader's own gesture.
       let anyMove = false;
 
       // Defined before the move handler, which ends the gesture when the
@@ -611,14 +610,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         document.removeEventListener('touchcancel', upHandler);
         window.removeEventListener('blur', upHandler);
         document.body.style.userSelect = '';
-        // One announcement for the whole gesture, and only when the offset
-        // actually changed: announcing per `pointermove` would queue hundreds
-        // of them, and a press-and-release that changed nothing is not a drag
-        // to announce.
-        const ended = this.trailOffset;
-        if (ended.dx !== startedFrom.dx || ended.dy !== startedFrom.dy || ended.k !== startedFrom.k) {
-          this.announceOffset();
-        }
+        // One announcement for the whole gesture, and only for an actual
+        // drag: a press-and-release with no movement is not a drag, and an
+        // offset that changed from a load mid-press is not the gesture's
+        // doing -- announcing it would read a conversion as the reader's own
+        // action.
+        if (anyMove) this.announceOffset();
         // Only a drag that ended on the toggle-mode button can be followed by
         // the click that button will fire. Stamping regardless let a drag in
         // onion skin swallow the first click after switching to toggle.
