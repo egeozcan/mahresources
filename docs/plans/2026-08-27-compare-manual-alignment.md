@@ -113,6 +113,41 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 33:
+
+- **A completing report tested the display instead of the outstanding
+  request.** The display can walk back inside the transient bound while the
+  request it rides on stays far outside, so the report saw nothing crossing and
+  left the anchor standing. Stored 800x200 / 1200x100, actual 1200x800 /
+  100x400: nudge -700, one report, nudge -300, nudge +300, the other report --
+  canonical dx -700 with slot 0 first and -625, the final bound, with slot 1
+  first.
+- **A zoom deferred by the window claimed against the first decoder's
+  geometry.** The claim was canonical in orientation but still read whichever
+  provisional sizes had arrived. Stored 800x600 each, actual 600x900 /
+  1200x400: nudge +450 y, Flip, zoom to 50%, one report, zoom to 25%, the other
+  report -- canonical dy 850 one order and 2250 the other, from the same
+  presses and the same final geometry.
+- **One rule replaced both, and the mechanism they belonged to.** Nothing is
+  claimed while a version is missing: every moment in that window is a geometry
+  belonging to whichever version decoded, so a claim recorded there carries the
+  decode order with it. The repair works it out instead, by one rule for both
+  of its forms -- an axis inside its bound at the reference moment and outside
+  it now was put there by what happened in between, and only that is owed. The
+  reference moment is what differs: for the displayed repair it is just before
+  the operation that called, and for the deferred one it is the window's
+  opening, taken ahead of the first report's own effect. Both are moments the
+  decode order cannot move.
+- `_sizeReboundDue`, `_sizeOwedX`, `_sizeOwedY`, `_noteSizeOwed` and
+  `offsetBoundSnapshot` are gone with it -- the pay runs whenever the pair
+  completes with something to have an opinion about, and decides for itself.
+  Net 116 lines removed against 47 added. Five tests asserted the deleted flags;
+  each now asserts what the rule actually promises, which for the "arms
+  nothing" cases is that the operation changed neither the correction nor the
+  request.
+- Both reviewer scripts are in the corpus (12 scripts now): a request walked out
+  and back, and consecutive zooms straddling the first report.
+
 Round 32:
 
 - **The window's anchor was sampled against a transient bound.** It recorded
