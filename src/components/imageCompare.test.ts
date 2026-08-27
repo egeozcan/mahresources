@@ -1027,6 +1027,129 @@ describe('manual alignment', () => {
     expect(c._offset.dy).toBeCloseTo(0.25, 6);
   });
 
+  test('a drag during the load window covers the same screen distance in either decode order', () => {
+    // A keyboard step is an abstract unit, and the load window redefines it as
+    // stored-box pixels so both decode orders agree. A drag increment is not
+    // abstract: it is a physical distance the reader's hand covered on the
+    // screen, already converted into the pixels of whichever transient box was
+    // standing. Recording *that* raw changes what it measures -- the same 60px
+    // drag becomes 60 screen pixels one way and 90 the other, and the image
+    // visibly jumps when the second version decodes. So a drag increment is
+    // recorded converted, and the resolution's conversion telescopes it back
+    // to the physical distance.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const dom = fakeDom();
+      try {
+        // Stored 800x600 both; actual slot 0 is 600x800 and slot 1 is 1200x400,
+        // so the transient box is 800 wide one way and 1200 the other.
+        const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 800] : [1200, 400]);
+        const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+        c.toggleAligning();
+        c.noteSizeFrom(img(first, ...size(first)));
+        // The box is rendered 600 CSS pixels wide, and the hand moves 60 of them.
+        c.startAlignDrag(press(100, 100, { closest: () => null }, frame(600, 600)));
+        dom.fire('mousemove', { clientX: 160, clientY: 100 });
+        dom.fire('mouseup', {});
+        c.noteSizeFrom(img(second, ...size(second)));
+        return c._offset.dx;
+      } finally {
+        dom.restore();
+      }
+    };
+    // The final box is 1200 wide and still rendered 600 across, so 60 screen
+    // pixels are 120 box pixels -- whichever version decoded first.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(120, 6);
+  });
+
+  test('a request pays the rebound the completing report incurs, rather than preserving it', () => {
+    // An axis the display legitimately occupies outside its bound -- a flip's
+    // inverse -- is preserved through the resolution. An axis the *completing
+    // report* pushed outside is the opposite: that report shrank the trailing
+    // version, and the debt it armed is exactly what the deferred rebound
+    // exists to pay. Widening around wherever the display happens to sit at
+    // resolution cannot tell the two apart, so it preserves the decode-order
+    // artifact instead: one order leaves the image entirely out of frame, the
+    // other leaves less than the quarter the bound promises.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const c = component({ w: 800, h: 200 }, { w: 1200, h: 100 });
+      c.toggleAligning();
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [1200, 800] : [100, 400]);
+      c.noteSizeFrom(img(first, ...size(first)));
+      // Far past either transient bound: the display stops at it, and every
+      // press beyond rides onto the request whole.
+      for (let i = 0; i < 100; i += 1) c.nudge(-10, 0);
+      c.noteSizeFrom(img(second, ...size(second)));
+      return c._offset.dx;
+    };
+    // 1200-wide box, a 100-wide trail centred in it: rest 550, a quarter of
+    // 100 kept, so the boundary is -(550 + 100 - 25).
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-625, 6);
+  });
+
+  test('a request converts with the box even when the pair had no stored size', () => {
+    // With no stored dimensions there is no stored box to denominate the
+    // request in, and no second decode order to diverge from either -- only
+    // the version that reported first can open a nudgeable window. What is
+    // still owed is physical fidelity: the step was taken against the box
+    // standing at the request's creation, so the corrected box has to carry it
+    // the same distance the displayed offset travels. Falling back to a
+    // conversion factor of 1 makes the correction visibly shrink the moment
+    // the real width arrives.
+    const c = component({ w: 0, h: 0 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.noteSizeFrom(img(1, 400, 300));
+    c.nudge(10, 0);
+    expect(c.trailOffset.dx).toBeCloseTo(10, 6);
+    // The box grows 800 -> 1200, so ten of its pixels become fifteen.
+    c.noteSizeFrom(img(2, 1200, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(15, 6);
+  });
+
+  test('an outside position a report created is not laundered into a legitimate one by a later nudge', () => {
+    // The other half of the same rule, and the reason the provenance is
+    // snapshotted at the nudge rather than read off the display: here the
+    // report lands *first*, shrinking the trailing version until the existing
+    // correction hangs outside the new bound, and the nudge that follows sees
+    // exactly the picture a flip-derived inverse paints. What separates them
+    // is that a bound-mover armed a debt, so the outside-ness is owed and the
+    // nudge records no anchor -- the deferred rebound pays it instead of
+    // preserving it.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.nudge(450, 0);
+    // Slot 1 is the trail, and it turns out to be 100 wide rather than 800:
+    // the bound closes to -425..425 with the correction sitting at 450.
+    c.noteSizeFrom(img(2, 100, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(450, 6);
+    c.nudge(10, 0);
+    c.noteSizeFrom(img(1, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(425, 6);
+  });
+
+  test('a swallowed outward nudge from a flip-derived outside stops there rather than snapping in', () => {
+    // The anchor's preserving half. The display sits at the inverse of an
+    // extreme correction, legitimately outside this side's own bound, and the
+    // reader pushes it further out: the display refuses to travel and the
+    // whole increment rides onto the request. Resolving that request against
+    // the plain bound would answer a refused outward gesture by moving the
+    // image 600 pixels inward -- so the range is widened to the anchor, and
+    // the request stops exactly where the display already was.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.toggleAligning();
+    c.zoomBy(-0.75);
+    c.nudge(450, 0);
+    c.swapSides();
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    c.noteSizeFrom(img(1, 800, 600));
+    c.nudge(-100, 0);
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    c.noteSizeFrom(img(2, 800, 600));
+    expect(c.trailOffset.dx).toBeCloseTo(-1800, 6);
+    expect(c._offset.dx).toBeCloseTo(450, 6);
+  });
+
   test('a pending remainder keeps Reset actionable while the readout sits at identity', () => {
     // `offsetIsIdentity` describes only what is shown; the half-measured
     // window can leave an unshown remainder underneath it. Drawing Reset
