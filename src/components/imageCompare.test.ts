@@ -1379,6 +1379,30 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(20, 6);
   });
 
+  test('an ulp of decode-order residue cannot change what a later operation repairs', () => {
+    // The two orders reach a boundary by different arithmetic and can land on
+    // it an ulp apart. The bound test decides provenance, not appearance, so
+    // an exact comparison calls one of those inside and the other already
+    // outside -- and the next operation then repairs one order and not the
+    // other, from a difference far below anything anyone could see.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 900] : [1200, 400]);
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.swapSides();
+      c.nudge(0, -450);
+      c.zoomBy(-0.1);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.nudge(-1, 0);
+      c.noteSizeFrom(img(second, ...size(second)));
+      // Both orders stand on the bound here, 725 apart by one ulp.
+      c.zoomBy(-0.1);
+      return c._offset.dy;
+    };
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(787.5, 6);
+  });
+
   test('a request walked back inside is still measured against the final bound', () => {
     // The display can walk back inside the transient bound while the request
     // it rides on stays far outside. Asked of the display, the completing
@@ -1552,6 +1576,9 @@ describe('manual alignment', () => {
         step('nudge +300', (c) => c.nudge(300, 0))],
       [step('nudge y', (c) => c.nudge(0, 450)), step('flip', (c) => c.swapSides()),
         step('zoom 50%', (c) => c.zoomBy(-0.5)), step('zoom 25%', (c) => c.zoomBy(-0.5))],
+      [step('flip', (c) => c.swapSides()), step('nudge -450y', (c) => c.nudge(0, -450)),
+        step('zoom 90%', (c) => c.zoomBy(-0.1)), step('nudge x', (c) => c.nudge(-1, 0)),
+        step('zoom 81%', (c) => c.zoomBy(-0.1))],
     ];
     // Pairs whose corrected widths differ from the stored ones and from each
     // other, so the transient box differs per decode order -- the condition
@@ -1581,6 +1608,11 @@ describe('manual alignment', () => {
       return c._offset;
     };
 
+    // Tolerant, because the two orders reach a boundary by different
+    // arithmetic and land an ulp apart on it. What that residue must never do
+    // is change an answer, so the corpus carries scripts whose last steps run
+    // after both reports: they ask a later operation to classify both states,
+    // and it has to classify them the same way.
     const apart = (a: any, b: any) => Math.abs(a.dx - b.dx) > 1e-6
       || Math.abs(a.dy - b.dy) > 1e-6 || Math.abs(a.k - b.k) > 1e-9;
     const diverged: string[] = [];

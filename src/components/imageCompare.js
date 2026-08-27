@@ -55,6 +55,30 @@ function invertOffset(t) {
  * out the far side, which a "must reduce the distance" rule allows: from 100
  * against a range of [-10, 10], a delta of -150 satisfies that rule at -50.
  */
+/**
+ * Whether a translation sits inside the range its geometry allows.
+ *
+ * With slack, because the answer decides PROVENANCE and not appearance: a
+ * value on its boundary is reached by different arithmetic depending on which
+ * version decoded first -- the same correction arrives as 725 down one path
+ * and 725.0000000000001 down the other -- and an exact comparison calls one
+ * of those inside and the other already outside. A later operation then
+ * repairs one order and not the other, and the two diverge by hundreds of box
+ * pixels from a difference of one ulp.
+ *
+ * Scaled to the magnitudes involved rather than absolute, since a box can be a
+ * few thousand pixels across and the ranges scale with it. At 1e-6 the slack is
+ * thousandths of a pixel at any size this component can produce -- far below
+ * anything visible, and far above the rounding it exists to absorb.
+ */
+const BOUND_EPSILON = 1e-6;
+
+function withinRange(value, range) {
+  const slack = BOUND_EPSILON
+    * Math.max(1, Math.abs(range.min), Math.abs(range.max), Math.abs(value));
+  return value >= range.min - slack && value <= range.max + slack;
+}
+
 function boundedNudge(current, delta, range) {
   const low = Math.min(range.min, current);
   const high = Math.max(range.max, current);
@@ -721,10 +745,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const t = this.trailOffset;
       const x = this.translateRange(box.w, element.w * t.k);
       const y = this.translateRange(box.h, element.h * t.k);
-      return {
-        x: t.dx >= x.min && t.dx <= x.max,
-        y: t.dy >= y.min && t.dy <= y.max,
-      };
+      return { x: withinRange(t.dx, x), y: withinRange(t.dy, y) };
     },
 
     /**
@@ -795,9 +816,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // deliberately not any moment *inside* the window: every one of those is
       // a geometry belonging to whichever version decoded, so a claim recorded
       // there would carry the decode order with it.
-      const crossed = (value, range) => value < range.min || value > range.max;
-      const owedX = before.x && crossed(t.dx, x);
-      const owedY = before.y && crossed(t.dy, y);
+      const owedX = before.x && !withinRange(t.dx, x);
+      const owedY = before.y && !withinRange(t.dy, y);
       let dx, dy;
       if (request === undefined) {
         // Only where the outside-ness is owed. An axis still inside clamps to
