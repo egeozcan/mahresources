@@ -141,18 +141,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // was half-measured, but the rebound has to wait for the other version to
     // report. Owed rather than immediate because the report that completes
     // the pair may only *confirm* a stored size -- see `noteSizeFrom`. The
+    // It carries no orientation. Everything the load window defers is decided
+    // and paid canonically -- see `_canonically` -- so no flip anywhere in the
+    // window, and no decode order that chose where the flip fell, can move
+    // what the pay is about.
     _sizeReboundDue: false,
-    // The orientation the outstanding request was made in, recorded by the
-    // first nudge to arm the debt -- and by nothing else, because nothing else
-    // has a view of its own to honour. A request is the reader's ask, made
-    // while looking at one of the two arrangements and clamped on screen
-    // against that one's bound; resolving it in the other moves a correction
-    // they watched land. It is honoured only while nothing has been
-    // *claimed*: a claim is a bound-mover's crossing, and those are decided
-    // and repaired canonically -- see `_canonically` -- because a report's
-    // timing is the browser's and must not decide which version's bound the
-    // pair answers to.
-    _requestSwapped: false,
     // Whether the outstanding debt was incurred by something that *moved the
     // bound* -- a size report, or a control operation the load window
     // deferred -- as opposed to by a nudge. `_sizeReboundDue` cannot answer
@@ -548,10 +541,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // that was never in the canonical frame. It is converted, and the
         // resolution's conversion telescopes it back to the screen distance
         // the reader drew.
-        // An increment that met the clamp contributes its full travel -- that
-        // is the part still owed; one that moved freely contributes only the
-        // distance the display actually travelled, so walking the image back
-        // retires what running it out incurred.
+        // Either way it is the whole increment the reader asked for. One that
+        // met the clamp contributes the part still owed on top of the travel
+        // the display made, and one that moved freely travelled the whole of
+        // it -- so walking the image back retires exactly what running it out
+        // incurred, without the two cases needing to be told apart.
         const rode = physical ? intoUnits : 1;
         // Where the display legitimately sits outside its bound, recorded in
         // the same frame and shape as the translation so a flip carries it.
@@ -565,15 +559,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           ? null
           : value * intoUnits;
         this._setRawRequest({
-          dx: request.dx * (fresh ? intoUnits : 1)
-            + (next.dx === t.dx + dx ? next.dx - t.dx : dx) * rode,
-          dy: request.dy * (fresh ? intoUnits : 1)
-            + (next.dy === t.dy + dy ? next.dy - t.dy : dy) * rode,
+          dx: request.dx * (fresh ? intoUnits : 1) + dx * rode,
+          dy: request.dy * (fresh ? intoUnits : 1) + dy * rode,
           k: request.k,
           ax: anchor(next.dx, x, this._sizeOwedX),
           ay: anchor(next.dy, y, this._sizeOwedY),
         });
-        if (!this._sizeReboundDue) this._requestSwapped = this.swapped;
         this._sizeReboundDue = true;
       }
       this._setTrailOffset(next);
@@ -650,13 +641,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * there.
      */
     _canonically(fn) {
-      return this._inOrientation(false, fn);
-    },
-
-    /** `_canonically`, for the one frame that is not it: the request's own. */
-    _inOrientation(swapped, fn) {
       const held = this.swapped;
-      this.swapped = swapped;
+      this.swapped = false;
       try {
         return fn();
       } finally {
@@ -885,7 +871,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // correction it belongs to -- left alone, a later confirming report
       // would rewrite alignment the reader makes after the reset.
       this._sizeReboundDue = false;
-      this._requestSwapped = false;
       this._sizeOwedX = false;
       this._sizeOwedY = false;
       // A refused Reset stays silent: the control is drawn `aria-disabled`
@@ -1456,17 +1441,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // both slots in a single report, so the completing call is also the size
       // change and must rebound directly rather than only through the debt.
       if (both && (this._sizeReboundDue || this._sizeOwedX || this._sizeOwedY)) {
-        // A claim outstanding means a bound-mover crossed, and those are
-        // decided canonically, so the repair they owe is canonical: a flip
-        // anywhere between the change and the confirming load cannot move
-        // what the pay is about. With nothing claimed there is no repair to
-        // make, only the reader's own request to resolve, and that resolves
-        // in the view they made it in -- clamping it against the other
-        // arrangement's bound would move a correction they watched land. The
-        // flip itself never reapplies the bound.
-        const claimed = this._sizeOwedX || this._sizeOwedY;
-        this._inOrientation(claimed ? false : this._requestSwapped,
-          () => this._resolveDeferred());
+        // Canonically, always, and that is the whole of the rule rather than
+        // a choice made per pay. A request resolved in the view the reader
+        // made it in honours what they watched land, but *which* view that is
+        // stops being the only input the moment a bound-mover also has a
+        // claim outstanding -- and whether a report crosses a bound depends on
+        // the transient geometry it lands in, which is the decode order. One
+        // frame for everything deferred is what makes the canonical result a
+        // function of the reader's script and the final geometry alone. It
+        // costs the flipped window its exactness: a correction that landed on
+        // the flipped bound moves when the second version arrives, which is
+        // the price already charged for a zoom taken while flipped. The flip
+        // itself still never reapplies the bound.
+        this._canonically(() => this._resolveDeferred());
         this._sizeReboundDue = false;
         this._sizeOwedX = false;
         this._sizeOwedY = false;
