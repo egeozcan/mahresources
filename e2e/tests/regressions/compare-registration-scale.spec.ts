@@ -430,9 +430,20 @@ test.describe.serial('compare page registration and scale', () => {
 
     // The keyboard is refused as well: onRadiogroupKeydown assigns straight into
     // state, so a click guard alone leaves the group fully working from there.
+    // The keys are still *consumed*, though -- the checked radio is focusable and
+    // is the group's tab stop, so letting Home through would answer "this control
+    // cannot act" by jumping the reader to the top of the page.
+    await page.evaluate(() => {
+      (window as unknown as { __consumed: boolean[] }).__consumed = [];
+      document.addEventListener('keydown', (e) => {
+        (window as unknown as { __consumed: boolean[] }).__consumed.push(e.defaultPrevented);
+      });
+    });
     await relative.focus();
-    await relative.press('ArrowRight');
+    for (const key of ['ArrowRight', 'ArrowDown', 'Home', 'End']) await relative.press(key);
     await expect(relative).toHaveAttribute('aria-checked', 'true');
+    expect(await page.evaluate(() => (window as unknown as { __consumed: boolean[] }).__consumed))
+      .toEqual([true, true, true, true]);
 
     // And the invariant holds for focus that arrived by some route other than a
     // pointer -- programmatically here, but equally an assistive technology

@@ -221,6 +221,27 @@ describe('scale policy', () => {
     expect(c.leadScale.objectFit).toBe('');
   });
 
+  test('a refused group still swallows the keys the pattern owns', () => {
+    // Returning early without preventDefault hands ArrowDown, Home and End to
+    // the browser's default scrolling. The checked radio is still focusable and
+    // is the group's tab stop, so pressing Home on a control that just said it
+    // cannot act would jump the reader to the top of the page.
+    const c = component({ w: 0, h: 0 }, { w: 0, h: 0 });
+    for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+      let prevented = false;
+      c.onScaleKeydown({ key, preventDefault: () => { prevented = true; }, currentTarget: { querySelector: () => null } });
+      expect(prevented, key).toBe(true);
+    }
+    // And leaves every other key alone -- Tab above all, which has to keep
+    // moving focus out of the group.
+    for (const key of ['Tab', 'Enter', ' ', 'a', 'PageDown']) {
+      let prevented = false;
+      c.onScaleKeydown({ key, preventDefault: () => { prevented = true; }, currentTarget: { querySelector: () => null } });
+      expect(prevented, key).toBe(false);
+    }
+    expect(c.scale).toBe('relative');
+  });
+
   test('a pair with nothing to scale against refuses by mouse and by keyboard', () => {
     // Every mode returns the same empty style here and the CSS fallback draws
     // the pair, so the control announces itself disabled. A guard on the click

@@ -1,3 +1,8 @@
+// The keys the WAI-ARIA radiogroup pattern owns. Named once because two places
+// need the same set: the handler that acts on them, and the refusal that must
+// still swallow them.
+const RADIOGROUP_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+
 export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
   return {
     mode: 'side-by-side',
@@ -230,7 +235,15 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * `@click` alone leaves the group working for anyone not using a mouse.
      */
     onScaleKeydown(e) {
-      if (!this.scaleAvailable) return;
+      if (!this.scaleAvailable) {
+        // Refuse the change, but still swallow the keys the pattern owns. The
+        // checked radio stays focusable and is the group's tab stop, so letting
+        // ArrowDown, Home or End through hands them to the browser's default
+        // scrolling -- Home jumps the reader to the top of the page as the answer
+        // to pressing a key on a control that told them it could not act.
+        if (RADIOGROUP_KEYS.includes(e.key)) e.preventDefault();
+        return;
+      }
       this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch']);
     },
 
@@ -404,14 +417,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * so tabindex stays on the active one (roving tabindex invariant).
      */
     onRadiogroupKeydown(e, stateKey, values) {
+      if (!RADIOGROUP_KEYS.includes(e.key)) return;
+      e.preventDefault();
       // Down and Up as well as Right and Left: the pattern specifies both pairs,
       // and which one a reader reaches for depends on how they read the control.
       const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
       const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
-      if (!forward && !back && e.key !== 'Home' && e.key !== 'End') {
-        return;
-      }
-      e.preventDefault();
       const currentIdx = values.indexOf(this[stateKey]);
       let nextIdx = currentIdx;
       if (forward) nextIdx = (currentIdx + 1) % values.length;
