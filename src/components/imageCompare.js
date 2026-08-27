@@ -136,39 +136,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     // question as whether `_sizes` changed: a load that confirms the stored
     // value writes nothing and still means that version has been measured.
     _measured: [false, false],
-    // A size correction moved an offset that was inside the old bound, or a
-    // control operation (zoom, scale, anchor) moved the bound while the pair
-    // was half-measured, but the rebound has to wait for the other version to
-    // report. Owed rather than immediate because the report that completes
-    // the pair may only *confirm* a stored size -- see `noteSizeFrom`. The
-    // It carries no orientation. Everything the load window defers is decided
-    // and paid canonically -- see `_canonically` -- so no flip anywhere in the
-    // window, and no decode order that chose where the flip fell, can move
-    // what the pay is about.
-    _sizeReboundDue: false,
-    // Whether the outstanding debt was incurred by something that *moved the
-    // bound* -- a size report, or a control operation the load window
-    // deferred -- as opposed to by a nudge. `_sizeReboundDue` cannot answer
-    // that: a nudge sets it too, because it is the resolution trigger and not
-    // only the bound-repair debt. The difference decides provenance. A
-    // display sitting outside its bound is legitimate when a flip derived it
-    // and *owed* when a bound-mover put it there, and only the legitimate one
-    // may be preserved through the deferred resolution.
-    //
-    // Armed exactly where an operation took an axis from inside its bound to
-    // outside it -- see `_noteSizeOwed` -- which is one statement doing two
-    // jobs, because they are the same statement: the displayed rebound may
-    // repair an axis exactly when that axis's outside-ness is owed, and a
-    // window nudge may anchor one exactly when it is not. Anything looser
-    // claims outside-ness the operation did not create and then suppresses
-    // the anchor of one a flip legitimately derives afterwards. One flag per
-    // axis, because that is the grain the question has: a report correcting
-    // only the height moves the y bound, and the offset converts through the
-    // *width* ratio alone, so it leaves x exactly where it was. The axes do
-    // not transpose under a flip (`invertOffset` maps dx to dx and dy to dy),
-    // so no orientation is recorded with them.
-    _sizeOwedX: false,
-    _sizeOwedY: false,
     /**
      * The per-axis bound test as of the reader's last act, canonically -- what
      * a size report's claim is measured against.
@@ -468,17 +435,14 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * Whether the correction displaces the version at all.
      *
      * What decides whether an operation that moves the bound has anything to
-     * repair -- and so whether it may arm a debt. Zero displacement is inside
-     * every range `translateRange` can produce: `min` is `-(rest + rendered -
-     * keep)`, which is never above zero, and `max` is `box - keep - rest`,
-     * which is never below it, at any anchor, scale or zoom (the rendered
-     * length is at most four times the box, and `keep` is a quarter of it).
+     * repair. Zero displacement is inside every range `translateRange` can
+     * produce: `min` is `-(rest + rendered - keep)`, which is never above zero,
+     * and `max` is `box - keep - rest`, which is never below it, at any anchor,
+     * scale or zoom (the rendered length is at most four times the box, and
+     * `keep` is a quarter of it).
      *
      * Distinct from `offsetIsIdentity`, which is also false at a bare zoom --
-     * and a bare zoom displaces nothing either. Arming there costs more than a
-     * wasted debt: it records that whatever the display shows is a
-     * bound-mover's doing, so a nudge taken later reads a legitimately-outside
-     * axis -- a flip's inverse -- as owed and lets the resolution snap it.
+     * and a bare zoom displaces nothing either.
      */
     get offsetIsPlaced() {
       return this._offset.dx !== 0 || this._offset.dy !== 0;
@@ -598,24 +562,19 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // either order, and denominating in `_requestUnitsW` cancels exactly
         // the box conversion a report in between applies.
         //
-        // Not recorded at all when a bound-mover already owes the axis: that
-        // outside-ness is the debt, not a position to preserve. A report that
-        // claims the axis later retires it in the resolution for the same
-        // reason.
-        const anchor = (base, kept, owed) => {
-          if (!fresh) return kept;
-          return owed ? null : base * intoUnits;
-        };
+        // The resolution drops it for an axis the reports pushed out of a
+        // bound it was inside: that outside-ness is theirs to repair, not a
+        // position to preserve.
+        const anchor = (base, kept) => (fresh ? base * intoUnits : kept);
         this._setRawRequest({
           dx: request.dx * (fresh ? intoUnits : 1) + dx * rode,
           dy: request.dy * (fresh ? intoUnits : 1) + dy * rode,
           k: request.k,
-          ax: anchor(request.dx, request.ax, this._sizeOwedX),
-          ay: anchor(request.dy, request.ay, this._sizeOwedY),
+          ax: anchor(request.dx, request.ax),
+          ay: anchor(request.dy, request.ay),
         });
         if (dx !== 0) this._requestMovedX = true;
         if (dy !== 0) this._requestMovedY = true;
-        this._sizeReboundDue = true;
       }
       this._setTrailOffset(next);
     },
@@ -645,7 +604,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     zoomBy(delta) {
       if (!this.alignAvailable) return;
-      const within = this.offsetBoundSnapshot;
+      const within = this.offsetAxesWithinBound;
       const t = this.trailOffset;
       const k = Math.max(ALIGN_ZOOM_MIN, Math.min(ALIGN_ZOOM_MAX, t.k + delta));
       // Pressing + at the 400% bound changes no geometry -- the clamp holds
@@ -664,16 +623,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       this._reboundOrDefer(within);
     },
 
-    /**
-     * Rebound now, unless the pair is half-measured.
-     *
-     * The load window -- exactly one version measured -- is a geometry that
-     * does not exist: the box is `max` of a real measurement and a stored
-     * placeholder, and the trail is whichever slot decoded first. Clamping
-     * against it makes the final offset depend on decode order, so the clamp
-     * is owed at the both-measured moment instead, where the load-time
-     * rebound is paid.
-     */
     /**
      * Answer `fn` as though no flip were in effect.
      *
@@ -731,20 +680,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // a whole -- "was it inside before?" -- x answers for y, the repair never
       // runs, and the reader is left looking at nothing at all, which is the
       // state the bound exists to prevent.
-      if (this._measured[0] === this._measured[1]) {
-        this._noteSizeOwed(before.shown);
-        if (!this._sizeOwedX && !this._sizeOwedY) return;
-        this._reboundOffset();
-        // Consumed here: with both versions measured there is no later
-        // resolution to clear them, and a claim left standing would let the
-        // next operation repair an axis it did not break.
-        this._sizeOwedX = false;
-        this._sizeOwedY = false;
-      } else {
-        this._canonically(() => this._noteSizeOwed(before.canonical));
-        if (!this._sizeOwedX && !this._sizeOwedY) return;
-        this._sizeReboundDue = true;
-      }
+      //
+      // Only with the pair whole. While a version is missing this operation
+      // has no bound worth asking about -- the one standing belongs to
+      // whichever version decoded -- so it records nothing at all and the pay
+      // works out what is owed when the pair is complete.
+      if (this._measured[0] !== this._measured[1]) return;
+      this._reboundOffset(undefined, before);
     },
 
     /**
@@ -772,19 +714,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * the x value exactly where they were. `offsetWithinBound` is this
      * conjoined rather than a second copy of the range arithmetic.
      */
-    /**
-     * The bound question in both frames, captured before an operation moves
-     * it. Which one answers depends on when the repair happens: now, in the
-     * view the reader is looking at, or at the both-measured moment, in the
-     * frame a flip cannot move.
-     */
-    get offsetBoundSnapshot() {
-      return {
-        shown: this.offsetAxesWithinBound,
-        canonical: this._canonically(() => this.offsetAxesWithinBound),
-      };
-    },
-
     get offsetAxesWithinBound() {
       const box = this.overlayBox;
       const element = this.elementSize(this.swapped ? 0 : 1);
@@ -796,25 +725,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         x: t.dx >= x.min && t.dx <= x.max,
         y: t.dy >= y.min && t.dy <= y.max,
       };
-    },
-
-    /**
-     * Record which axes an operation just pushed out of bounds.
-     *
-     * `before` is the per-axis snapshot taken before that operation ran. An
-     * axis that was inside and is now outside was put there by the operation,
-     * so whatever a later nudge finds there is owed rather than a flip's
-     * doing. An axis still inside owes nothing, and one already outside was
-     * already outside -- claiming either would suppress the anchor of an
-     * outside a flip legitimately derives later, and resolve that axis out of
-     * a position the reader made.
-     *
-     * Called after the operation, so the ranges it reads are the new ones.
-     */
-    _noteSizeOwed(before) {
-      const now = this.offsetAxesWithinBound;
-      if (before.x && !now.x) this._sizeOwedX = true;
-      if (before.y && !now.y) this._sizeOwedY = true;
     },
 
     /**
@@ -853,7 +763,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * flipping back does not restore the original number -- which is the same
      * price zooming already charges unflipped.
      */
-    _reboundOffset(request) {
+    _reboundOffset(request, before) {
       if (!this.alignAvailable) return;
       // At identity nothing the displayed-offset form repairs was broken; the
       // deferred form carries its own value and must resolve even so.
@@ -873,6 +783,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const x = this.translateRange(box.w, element.w * t.k);
       const y = this.translateRange(box.h, element.h * t.k);
       const shown = this.trailOffset;
+      // What is owed, decided here and only here, and by one rule for both
+      // forms: an axis inside its bound at the reference moment and outside it
+      // now was put there by what happened in between, and only that is owed.
+      // One already outside then is the reader's -- a flip derives it -- and
+      // pulling it in would rewrite a correction they made.
+      //
+      // The reference moment is what differs. For the displayed form it is
+      // just before the operation that called; for the deferred form it is the
+      // window's opening, taken ahead of the first report's own effect. It is
+      // deliberately not any moment *inside* the window: every one of those is
+      // a geometry belonging to whichever version decoded, so a claim recorded
+      // there would carry the decode order with it.
+      const crossed = (value, range) => value < range.min || value > range.max;
+      const owedX = before.x && crossed(t.dx, x);
+      const owedY = before.y && crossed(t.dy, y);
       let dx, dy;
       if (request === undefined) {
         // Only where the outside-ness is owed. An axis still inside clamps to
@@ -880,8 +805,8 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // flip's doing, not this operation's -- pulling it in is the rewrite
         // of the reader's own correction that `offsetWithinBound` has always
         // existed to refuse, asked at the grain the question has.
-        dx = this._sizeOwedX ? Math.max(x.min, Math.min(x.max, t.dx)) : t.dx;
-        dy = this._sizeOwedY ? Math.max(y.min, Math.min(y.max, t.dy)) : t.dy;
+        dx = owedX ? Math.max(x.min, Math.min(x.max, t.dx)) : t.dx;
+        dy = owedY ? Math.max(y.min, Math.min(y.max, t.dy)) : t.dy;
       } else {
         // The request's *unclamped* value meets the range widened by the
         // anchor: from an anchored position a swallowed inward increment stops
@@ -899,6 +824,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // bound it was inside is such a claim, and widening around the older
         // anchor would launder the outside-ness that report created.
         const held = (anchor, owed) => (owed || anchor === null ? null : anchor * outOfUnits);
+
         // An axis the reader never moved in the window is not a request at
         // all: it is the correction that was already standing, and it resolves
         // exactly as it would have with no request -- kept unless a
@@ -908,11 +834,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
           ? Math.max(range.min, Math.min(range.max, value))
           : value);
         dx = this._requestMovedX
-          ? axis(t.dx, held(request.ax, this._sizeOwedX), x)
-          : still(shown.dx, this._sizeOwedX, x);
+          ? axis(t.dx, held(request.ax, owedX), x)
+          : still(shown.dx, owedX, x);
         dy = this._requestMovedY
-          ? axis(t.dy, held(request.ay, this._sizeOwedY), y)
-          : still(shown.dy, this._sizeOwedY, y);
+          ? axis(t.dy, held(request.ay, owedY), y)
+          : still(shown.dy, owedY, y);
       }
       // Nothing to bring back: either the clamp held the value or the screen
       // already shows exactly what the request resolves to. Writing anyway
@@ -930,9 +856,9 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * resolved request becomes the position shown, so what arrives is where
      * the reader asked to be, bounded by the geometry both versions imply.
      */
-    _resolveDeferred() {
+    _resolveDeferred(before) {
       const request = this._requestedOffset === null ? undefined : this._rawRequest();
-      this._reboundOffset(request);
+      this._reboundOffset(request, before);
       this._requestedOffset = null;
       this._requestUnitsW = null;
       this._requestMovedX = false;
@@ -951,10 +877,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // an armed debt or an outstanding window remainder dies with the
       // correction it belongs to -- left alone, a later confirming report
       // would rewrite alignment the reader makes after the reset.
-      this._sizeReboundDue = false;
       this._reportBefore = null;
-      this._sizeOwedX = false;
-      this._sizeOwedY = false;
       // A refused Reset stays silent: the control is drawn `aria-disabled`
       // while idle rather than removed, so it stays reachable and pressable,
       // and announcing "offset 0, 0, 100%" at someone who changed nothing is
@@ -1252,7 +1175,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // already selected changes no geometry, so it must not arm the deferred
       // rebound either: nothing was broken, so nothing is owed.
       if (value === this.scale) return;
-      const within = this.offsetBoundSnapshot;
+      const within = this.offsetAxesWithinBound;
       this.scale = value;
       this._reboundOrDefer(within);
     },
@@ -1325,7 +1248,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (!this.anchorAvailable) return;
       // The anchor decides where the version rests before any offset, so it
       // decides how far the offset may carry it.
-      const within = this.offsetBoundSnapshot;
+      const within = this.offsetAxesWithinBound;
       this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
       this._reboundOrDefer(within);
     },
@@ -1355,7 +1278,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // after -- and the callback has to go through `_reboundOrDefer` like the
       // mouse path, and only when the value actually changed (Home on the
       // selected radio changes nothing and must not arm a deferred rebound).
-      const within = this.offsetBoundSnapshot;
+      const within = this.offsetAxesWithinBound;
       const previous = this.scale;
       this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'],
         () => { if (this.scale !== previous) this._reboundOrDefer(within); });
@@ -1506,28 +1429,17 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // the result depend on which image happened to decode first: the same two
       // files land on a different offset in a different order.
       //
-      // The rebound is **owed** rather than tied to the size change itself,
+      // The repair waits for the pair rather than following the size change,
       // because the report that completes the pair may be one that only
       // *confirms* a stored size: it flips `_measured` without touching
-      // `_sizes`, and it still has to pay the debt an earlier report set up.
+      // `_sizes`, and it is still the moment the geometry becomes real.
       const both = this._measured[0] && this._measured[1];
-      // Per axis: a report that pushed an axis out of a bound it was inside
-      // owns that axis's position, so a nudge taken after it must not read the
-      // outside as a flip's doing, and the rebound may repair exactly that
-      // axis. A report that only confirms, that moved an axis still inside, or
-      // that found the axis already outside claims nothing. Run for the
-      // completing report too -- one image can fill both slots, and then this
-      // call is also the size change whose repair the pay below performs.
-      if (next) this._canonically(() => this._noteSizeOwed(withinAxes));
-      // A confirm can produce no claim of its own -- it changes no geometry,
-      // so no axis crosses -- which is what keeps a flip made after it from
-      // being clamped by the next confirm, while the debt an earlier report
-      // armed still gets paid.
-      if (!both && (this._sizeOwedX || this._sizeOwedY)) this._sizeReboundDue = true;
-      // Paid when both have reported. One image showing on both sides fills
-      // both slots in a single report, so the completing call is also the size
-      // change and must rebound directly rather than only through the debt.
-      if (both && (this._sizeReboundDue || this._sizeOwedX || this._sizeOwedY)) {
+      // Paid when both have reported -- whenever there is a correction or an
+      // outstanding request for the pay to have an opinion about, since it is
+      // the pay that works out whether anything is owed. One image showing on
+      // both sides fills both slots in a single report, so the completing call
+      // can also be the size change whose repair it performs.
+      if (both && (this.offsetIsPlaced || this._requestedOffset !== null)) {
         // Canonically, always, and that is the whole of the rule rather than
         // a choice made per pay. A request resolved in the view the reader
         // made it in honours what they watched land, but *which* view that is
@@ -1540,13 +1452,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // the flipped bound moves when the second version arrives, which is
         // the price already charged for a zoom taken while flipped. The flip
         // itself still never reapplies the bound.
-        this._canonically(() => this._resolveDeferred());
+        this._canonically(() => this._resolveDeferred(withinAxes));
         // The repair those claims asked for has run, so what stands now is
         // what a later report is measured against.
         this._reportBefore = null;
-        this._sizeReboundDue = false;
-        this._sizeOwedX = false;
-        this._sizeOwedY = false;
       }
     },
 

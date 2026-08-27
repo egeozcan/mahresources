@@ -812,10 +812,10 @@ describe('manual alignment', () => {
     const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
     // Slot 0 reports 800x1200 while the offset is identity: nothing moved.
     c.noteSizeFrom(img(1, 800, 1200));
-    // Which is the rule, stated where it is decided: at identity no axis can
-    // cross, because zero is inside every range `translateRange` produces.
-    expect(c._sizeOwedX).toBe(false);
-    expect(c._sizeOwedY).toBe(false);
+    // Which is the rule, stated where it is decided: at identity there is no
+    // correction for the report to have moved, and zero is inside every range
+    // `translateRange` produces, so no axis can cross one.
+    expect(c.offsetIsPlaced).toBe(false);
     c.toggleAligning();
     c.swapSides();
     c.zoomBy(-0.75);
@@ -830,7 +830,6 @@ describe('manual alignment', () => {
     // which would need a claim, and there is none.
     c.noteSizeFrom(img(2, 800, 600));
     expect(c.trailOffset.dx).toBeCloseTo(300, 6);
-    expect(c._sizeOwedX).toBe(false);
   });
 
   test('a control used between the two reports does not make the result order-dependent', () => {
@@ -892,11 +891,15 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(-150, 6);
     // Slot 0 confirms its stored size: the pair is half-measured now.
     c.noteSizeFrom(img(1, 100, 100));
-    // Clicking the already-selected Relative changes nothing and must not
-    // claim anything: it moves no bound, so no axis crosses one.
+    // Clicking the already-selected Relative moves no bound, so there is
+    // nothing for it to have broken and nothing about it for the pay to find.
+    const held = { ...c._offset };
+    const request = c._requestedOffset === null ? null : { ...c._requestedOffset };
     c.setScale('relative');
-    expect(c._sizeOwedX).toBe(false);
-    expect(c._sizeOwedY).toBe(false);
+    expect({ offset: { ...c._offset }, request: c._requestedOffset }).toEqual({
+      offset: held,
+      request,
+    });
     c.swapSides();
     c.nudge(-10000, 0);
     // The flipped bound for the 25px-rendered slot is -56.25.
@@ -907,22 +910,27 @@ describe('manual alignment', () => {
     // rebound to repair one.
     c.noteSizeFrom(img(2, 100, 100));
     expect(c.trailOffset.dx).toBeCloseTo(-37.5, 6);
-    expect(c._sizeOwedX).toBe(false);
   });
 
-  test('a zoom clamped at the boundary arms no deferred debt', () => {
-    // Pressing + at 400% changes no geometry -- the clamp holds k -- so
-    // nothing is owed, exactly as a no-op scale activation arms nothing.
+  test('a zoom the clamp already holds changes nothing at all', () => {
+    // Pressing + at 400% changes no geometry -- the clamp holds k -- so there
+    // is nothing to defer and nothing to repair, exactly as a no-op scale
+    // activation changes nothing.
     const c = component({ w: 100, h: 100 }, { w: 100, h: 100 });
     c.toggleAligning();
     c.zoomBy(3);
     c.nudge(-10000, 0);
     c.noteSizeFrom(img(1, 100, 100));
+    const held = { ...c._offset };
+    const request = c._requestedOffset === null ? null : { ...c._requestedOffset };
     c.zoomBy(0.01);
-    expect(c._sizeReboundDue).toBe(false);
-    // A real zoom changes geometry and is owed in the load window.
+    expect({ offset: { ...c._offset }, request: c._requestedOffset }).toEqual({
+      offset: held,
+      request,
+    });
+    // A real zoom does change the geometry the reader is looking at.
     c.zoomBy(-0.5);
-    expect(c._sizeReboundDue).toBe(true);
+    expect(c._offset.k).not.toBeCloseTo(held.k, 6);
   });
 
   test('a nudge during the load window defers its clamp, so it cannot bind the final result', () => {
@@ -1371,6 +1379,51 @@ describe('manual alignment', () => {
     expect(run(1, 2)).toBeCloseTo(20, 6);
   });
 
+  test('a request walked back inside is still measured against the final bound', () => {
+    // The display can walk back inside the transient bound while the request
+    // it rides on stays far outside. Asked of the display, the completing
+    // report sees nothing crossing and leaves the anchor standing, so the
+    // request resolves to a position the final geometry does not allow -- in
+    // one decode order only, since the other order's transient bound put the
+    // display outside and the crossing was seen.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [1200, 800] : [100, 400]);
+      const c = component({ w: 800, h: 200 }, { w: 1200, h: 100 });
+      c.toggleAligning();
+      c.nudge(-700, 0);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.nudge(-300, 0);
+      c.nudge(300, 0);
+      c.noteSizeFrom(img(second, ...size(second)));
+      return c._offset.dx;
+    };
+    // The final bound, which is where a request that asks for more than the
+    // geometry allows has to land.
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(-625, 6);
+  });
+
+  test('two zooms straddling a report agree on what the second one broke', () => {
+    // A zoom inside the window has no bound worth asking about: the one
+    // standing belongs to whichever version decoded, so the second zoom
+    // claimed y in one order and not the other, from the same presses and the
+    // same final geometry.
+    const run = (first: 1 | 2, second: 1 | 2) => {
+      const size = (v: 1 | 2): [number, number] => (v === 1 ? [600, 900] : [1200, 400]);
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.toggleAligning();
+      c.nudge(0, 450);
+      c.swapSides();
+      c.zoomBy(-0.5);
+      c.noteSizeFrom(img(first, ...size(first)));
+      c.zoomBy(-0.5);
+      c.noteSizeFrom(img(second, ...size(second)));
+      return c._offset.dy;
+    };
+    expect(run(1, 2)).toBeCloseTo(run(2, 1), 6);
+    expect(run(1, 2)).toBeCloseTo(2250, 6);
+  });
+
   test('an in-window nudge resolves from where the reader stood, not from a transient bound', () => {
     // The window's anchor is the position the axis had when its first nudge
     // landed, and the resolution walks from there. Sampled instead from the
@@ -1495,6 +1548,10 @@ describe('manual alignment', () => {
         step('nudge', (c) => c.nudge(-10, 0)), step('anchor', (c) => c.toggleAnchor())],
       [step('flip', (c) => c.swapSides()), step('nudge', (c) => c.nudge(0, 430)),
         step('zoom 90%', (c) => c.zoomBy(-0.1)), step('stretch', (c) => c.setScale('stretch'))],
+      [step('nudge -700', (c) => c.nudge(-700, 0)), step('nudge -300', (c) => c.nudge(-300, 0)),
+        step('nudge +300', (c) => c.nudge(300, 0))],
+      [step('nudge y', (c) => c.nudge(0, 450)), step('flip', (c) => c.swapSides()),
+        step('zoom 50%', (c) => c.zoomBy(-0.5)), step('zoom 25%', (c) => c.zoomBy(-0.5))],
     ];
     // Pairs whose corrected widths differ from the stored ones and from each
     // other, so the transient box differs per decode order -- the condition
@@ -1639,14 +1696,14 @@ describe('manual alignment', () => {
     c.toggleAligning();
     c.nudge(1, 0);
     // Slot 0 reports 800x600: slot 1 still determines the 1600x1200 box and
-    // is the trail, so nothing the offset depends on changed.
+    // is the trail, so nothing the offset depends on changed -- and a report
+    // that changes nothing leaves the correction exactly where it was.
+    const held = { ...c._offset };
     c.noteSizeFrom(img(1, 800, 600));
+    expect({ ...c._offset }).toEqual(held);
     c.swapSides();
     c.zoomBy(-0.75);
     c.nudge(10000, 0);
-    // Nothing the offset depends on changed, so no axis crossed a bound.
-    expect(c._sizeOwedX).toBe(false);
-    expect(c._sizeOwedY).toBe(false);
     // The flipped view's bound for the 200px-rendered 800x600 slot is +850.
     expect(c.trailOffset.dx).toBeCloseTo(850, 6);
     // Slot 1 confirms, and the window's request resolves canonically. The
@@ -1655,7 +1712,6 @@ describe('manual alignment', () => {
     // charged.
     c.noteSizeFrom(img(2, 1600, 1200));
     expect(c.trailOffset.dx).toBeCloseTo(600, 6);
-    expect(c._sizeOwedX).toBe(false);
   });
 
   test('reset retires the debt with the correction that earned it', () => {
@@ -1672,10 +1728,12 @@ describe('manual alignment', () => {
     expect(c.trailOffset.dx).toBeCloseTo(900, 6);
     // The reader resets, then builds a fresh alignment in the flipped view.
     c.resetAlignment();
-    // The promise died with the correction that earned it.
-    expect(c._sizeReboundDue).toBe(false);
-    expect(c._sizeOwedX).toBe(false);
-    expect(c._sizeOwedY).toBe(false);
+    // The promise died with the correction that earned it: nothing is left
+    // for a later report to bring back.
+    expect({ offset: { ...c._offset }, request: c._requestedOffset }).toEqual({
+      offset: { dx: 0, dy: 0, k: 1 },
+      request: null,
+    });
     c.swapSides();
     c.zoomBy(-0.75);
     c.nudge(10000, 0);
@@ -1686,7 +1744,6 @@ describe('manual alignment', () => {
     // there is none: Reset cleared it with the correction it belonged to.
     c.noteSizeFrom(img(2, 800, 600));
     expect(c.trailOffset.dx).toBeCloseTo(400, 6);
-    expect(c._sizeOwedX).toBe(false);
   });
 
   test('a tap is left alone, so an armed reader can still switch versions', () => {
