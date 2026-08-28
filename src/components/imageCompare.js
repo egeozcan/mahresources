@@ -42,6 +42,46 @@ const BLINK_RATE_DEFAULT = 4;
 // consecutive announcements always differ. Screen readers do not voice it.
 const ANNOUNCE_MARK = '\u200B';
 
+// The pixel-diff heatmap's constants. The sample cap is what bounds the work:
+// whatever the source images measure, the compose canvases never exceed this
+// side, so a repaint costs well under a megapixel of getImageData. The gate is
+// textDiff's CONFIRM_ABOVE_BYTES analogue -- a courtesy ask before spending
+// decode-and-downsample work on a very large pair, not an enforced bound.
+const HEATMAP_SAMPLE_SIDE = 512;
+const HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12;
+// A per-channel absolute difference above this counts as changed. Resampling
+// both versions through the same rectangle produces small errors everywhere;
+// 32/255 is far above them and far below any visible edit. An identical pair
+// measures exactly zero, because identical bytes take the identical path.
+const HEATMAP_THRESHOLD = 32;
+
+/**
+ * Count the pixels the two composed frames disagree about.
+ *
+ * Denominator: pixels both versions painted (alpha > 0). A pixel only one
+ * version paints is not "changed" -- it is "missing in one", which the
+ * summary banner's Size and Dimensions stats already tell. Numerator: overlap
+ * pixels whose maximum per-channel absolute difference exceeds the threshold.
+ * Returns counts, not a percentage, so the caller decides what zero overlap
+ * means.
+ */
+export function countChanged(lead, trail, threshold) {
+  let changed = 0;
+  let overlap = 0;
+  const n = Math.min(lead.length, trail.length);
+  for (let i = 0; i < n; i += 4) {
+    if (lead[i + 3] === 0 || trail[i + 3] === 0) continue;
+    overlap++;
+    const d = Math.max(
+      Math.abs(lead[i] - trail[i]),
+      Math.abs(lead[i + 1] - trail[i + 1]),
+      Math.abs(lead[i + 2] - trail[i + 2]),
+    );
+    if (d > threshold) changed++;
+  }
+  return { changed, overlap };
+}
+
 /** The CSS transform that undoes `t`: for T(p) = k*p + d, T-inverse(q) = (q - d) / k. */
 function invertOffset(t) {
   return { dx: -t.dx / t.k, dy: -t.dy / t.k, k: 1 / t.k };
@@ -1516,6 +1556,77 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     },
     get trailScale() {
       return this.overlayScale(this.swapped ? 0 : 1);
+    },
+
+    /**
+     * Where one version's rectangle sits in the frame, in box pixels.
+     *
+     * The heatmap re-derives what the CSS actually paints -- scale policy,
+     * anchor, and the reader's own correction -- from the numbers the style
+     * bindings already use (`elementSize`, the anchor's rest position,
+     * `trailOffset`), so the canvas and the screen can never disagree about
+     * what is being compared. A pixel maps to `origin + k(p - origin) +
+     * (dx, dy)`, which is exactly the CSS transform `translate(dx%, dy%)
+     * scale(k)` about `transform-origin`: the translate resolves against the
+     * element's own size, so `dx` box pixels of a `w`-wide element cancel the
+     * percentage and come back out as `dx` canvas pixels.
+     *
+     * Per *slot*, like `elementSize`: `swapped` decides which slot trails,
+     * and a flip moves the correction between slots inverted rather than
+     * mutating anything, exactly as the styles do.
+     */
+    heatMapPlacement(index) {
+      const box = this.overlayBox;
+      if (!box) return null;
+      const el = this.elementSize(index);
+      if (!el) return null;
+      const anchored = this.anchor === 'top-left';
+      const restX = anchored ? 0 : (box.w - el.w) / 2;
+      const restY = anchored ? 0 : (box.h - el.h) / 2;
+      // One origin rule for both slots -- the point the CSS transform-origin
+      // names for this element. The lead is never transformed, so its origin
+      // is inert, but it is computed rather than zeroed so the object cannot
+      // carry a value that would be wrong if anything ever read it.
+      const originX = anchored ? restX : restX + el.w / 2;
+      const originY = anchored ? restY : restY + el.h / 2;
+      if (index !== (this.swapped ? 0 : 1)) {
+        // The reference version: at rest, untransformed.
+        return { x: restX, y: restY, w: el.w, h: el.h, k: 1, dx: 0, dy: 0, originX, originY };
+      }
+      const { dx, dy, k } = this.trailOffset;
+      return {
+        x: restX, y: restY, w: el.w, h: el.h, k, dx, dy,
+        originX, originY,
+      };
+    },
+
+    /**
+     * The heatmap's sampling resolution for the current frame.
+     *
+     * The box scaled down until neither side exceeds the cap, never up. Both
+     * compose canvases share it, so the per-repaint pixel work is bounded by
+     * the cap whatever the source images measure.
+     */
+    heatMapSampleSize() {
+      const box = this.overlayBox;
+      if (!box) return null;
+      const s = Math.min(HEATMAP_SAMPLE_SIDE / box.w, HEATMAP_SAMPLE_SIDE / box.h, 1);
+      return { w: Math.max(1, Math.round(box.w * s)), h: Math.max(1, Math.round(box.h * s)) };
+    },
+
+    /**
+     * Whether computing the heatmap asks first.
+     *
+     * The cost that grows without bound is the source decode-and-downsample,
+     * which scales with the versions' own megapixels -- the sampling canvas
+     * above already bounds the per-repaint work. Both sides count, since both
+     * are drawn every repaint. False when either size is unknown: the pair
+     * refuses on `scaleAvailable` before this is ever asked.
+     */
+    heatMapNeedsConfirm() {
+      const [a, b] = this._sizes;
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return false;
+      return (a.w * a.h + b.w * b.h) / 1e6 > HEATMAP_CONFIRM_ABOVE_MEGAPIXELS;
     },
 
     /**

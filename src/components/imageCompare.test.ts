@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error -- plain JS module with no type declarations
-import { imageCompare } from './imageCompare.js';
+import { imageCompare, countChanged } from './imageCompare.js';
 
 /**
  * The compare page's overlay modes place two images in one coordinate space.
@@ -2849,5 +2849,130 @@ describe('the blink comparator', () => {
     c.mode = 'toggle';
     modeWatch![1]();
     expect(c.blinking).toBe(false);
+  });
+});
+
+describe('the pixel-diff heatmap: pure math', () => {
+  test('congruent relative pair: both versions fill the frame, trail at rest', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    // Centred anchoring puts the transform origin at the element's own centre,
+    // matching the CSS default.
+    const filled = { x: 0, y: 0, w: 800, h: 600, k: 1, dx: 0, dy: 0, originX: 400, originY: 300 };
+    expect(c.heatMapPlacement(0)).toEqual(filled);
+    expect(c.heatMapPlacement(1)).toEqual(filled);
+  });
+
+  test('a smaller version rests centred; the frame is the larger', () => {
+    const c = component({ w: 400, h: 300 }, { w: 800, h: 600 });
+    expect(c.heatMapPlacement(0)).toMatchObject({ x: 200, y: 150, w: 400, h: 300, k: 1, dx: 0, dy: 0 });
+    expect(c.heatMapPlacement(1)).toMatchObject({ x: 0, y: 0, w: 800, h: 600 });
+  });
+
+  test('the anchor moves the rest position, not the size', () => {
+    const c = component({ w: 400, h: 300 }, { w: 800, h: 600 });
+    c.anchor = 'top-left';
+    expect(c.heatMapPlacement(0)).toMatchObject({ x: 0, y: 0 });
+  });
+
+  test('Fit grows each version until an edge touches the frame', () => {
+    // 300x400 against 800x600: the frame is 800x600 (the larger in each axis).
+    const c = component({ w: 300, h: 400 }, { w: 800, h: 600 });
+    c.scale = 'fit';
+    // Slot 0: min(800/300, 600/400) = 1.5 -> 450x600, flush to top and bottom,
+    // centred horizontally.
+    expect(c.heatMapPlacement(0)).toMatchObject({ x: 175, y: 0, w: 450, h: 600 });
+    // Slot 1 (800x600): fills the frame exactly.
+    expect(c.heatMapPlacement(1)).toMatchObject({ x: 0, y: 0, w: 800, h: 600 });
+  });
+
+  test('Stretch puts every version on the whole frame', () => {
+    const c = component({ w: 400, h: 800 }, { w: 800, h: 600 });
+    c.scale = 'stretch';
+    // The frame is 800x800 (the larger in each axis), and Stretch distorts
+    // each version onto all of it.
+    expect(c.heatMapPlacement(0)).toMatchObject({ x: 0, y: 0, w: 800, h: 800 });
+  });
+
+  test('the trail carries the correction; the lead never moves', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c._setTrailOffset({ dx: 10, dy: -5, k: 2 });
+    expect(c.heatMapPlacement(1)).toMatchObject({ dx: 10, dy: -5, k: 2 });
+    expect(c.heatMapPlacement(0)).toMatchObject({ dx: 0, dy: 0, k: 1 });
+  });
+
+  test('a flip moves the correction to the other slot, inverted', () => {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c._setTrailOffset({ dx: 10, dy: -5, k: 2 });
+    c.swapped = true;
+    // Slot 0 trails now: the inverse of slot 1's correction.
+    expect(c.heatMapPlacement(0)).toMatchObject({ dx: -5, dy: 2.5, k: 0.5 });
+    // Slot 1 is the reference and sits at rest.
+    expect(c.heatMapPlacement(1)).toMatchObject({ dx: 0, dy: 0, k: 1 });
+  });
+
+  test('the transform origin follows the anchor', () => {
+    const c = component({ w: 400, h: 300 }, { w: 800, h: 600 });
+    c._setTrailOffset({ dx: 4, dy: 0, k: 1 });
+    // Centre: the trail's rest rect is (200, 150, 400, 300), so its origin is its own centre.
+    expect(c.heatMapPlacement(1)).toMatchObject({ originX: 400, originY: 300 });
+    c.anchor = 'top-left';
+    // Anchored: the trail's rest rect is (0, 0, 400, 300), origin at its corner.
+    expect(c.heatMapPlacement(1)).toMatchObject({ originX: 0, originY: 0 });
+  });
+
+  test('sampling resolution never exceeds the cap and never upscales', () => {
+    // These read the module constant through behaviour: 800x600 -> 512x384.
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    expect(c.heatMapSampleSize()).toEqual({ w: 512, h: 384 });
+    // Portrait: the cap lands on the height.
+    const tall = component({ w: 800, h: 1600 }, { w: 800, h: 1600 });
+    expect(tall.heatMapSampleSize()).toEqual({ w: 256, h: 512 });
+    // A small frame is sampled at its own size, never interpolated up.
+    const small = component({ w: 4, h: 2 }, { w: 4, h: 2 });
+    expect(small.heatMapSampleSize()).toEqual({ w: 4, h: 2 });
+  });
+
+  test('counting: identical opaque pixels change nothing', () => {
+    const lead = new Uint8ClampedArray([10, 20, 30, 255, 200, 100, 50, 255]);
+    const trail = new Uint8ClampedArray([10, 20, 30, 255, 200, 100, 50, 255]);
+    expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 2 });
+  });
+
+  test('counting: a difference at or under the threshold is resampling noise', () => {
+    const lead = new Uint8ClampedArray([10, 20, 30, 255]);
+    // Max channel diff of exactly 32 is noise (the comparison is strict).
+    const trail = new Uint8ClampedArray([10, 52, 30, 255]);
+    expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 1 });
+    // One more on any channel is a difference.
+    const beyond = new Uint8ClampedArray([10, 53, 30, 255]);
+    expect(countChanged(lead, beyond, 32)).toEqual({ changed: 1, overlap: 1 });
+  });
+
+  test('counting: a pixel only one version paints belongs to nobody', () => {
+    // Lead opaque, trail transparent: not an overlap, and not a change --
+    // "missing in one" is the banner's Size story, not the heatmap's.
+    const lead = new Uint8ClampedArray([10, 20, 30, 255, 5, 5, 5, 255]);
+    const trail = new Uint8ClampedArray([10, 20, 30, 255, 0, 0, 0, 0]);
+    expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 1 });
+  });
+
+  test('counting: nothing overlapping means nothing to compare', () => {
+    const lead = new Uint8ClampedArray([0, 0, 0, 0]);
+    const trail = new Uint8ClampedArray([0, 0, 0, 0]);
+    expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 0 });
+  });
+
+  test('the gate asks above twelve combined megapixels, and only there', () => {
+    // 0.48 MP each: well under.
+    const small = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    expect(small.heatMapNeedsConfirm()).toBe(false);
+    // 6.6 MP each, 13.2 combined: over.
+    const large = component({ w: 3000, h: 2200 }, { w: 3000, h: 2200 });
+    expect(large.heatMapNeedsConfirm()).toBe(true);
+    // 12.0 combined exactly is not over: two 2717x2208 halves land just
+    // under, so the boundary is asserted from the other side instead --
+    // two 2700x2200 (5.94 each, 11.88 combined) pass.
+    const edge = component({ w: 2700, h: 2200 }, { w: 2700, h: 2200 });
+    expect(edge.heatMapNeedsConfirm()).toBe(false);
   });
 });
