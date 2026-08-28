@@ -12,6 +12,37 @@ const CLUSTERS = '[data-reduction-clusters]';
 const PAGINATION = 'nav[aria-label="Pagination"]';
 
 /**
+ * Force the live cluster checkboxes onto the server's verdict.
+ *
+ * The checkbox state is server-rendered as an *attribute*, while a reviewer's
+ * click sets the DOM *property* — and Alpine.morph's attribute patching never
+ * resets a property the user has touched. Any click whose action did not stick
+ * (a click swallowed by the busy window, a POST that failed, one cut off by
+ * navigating away) therefore leaves a card advertising a decision the server
+ * never recorded, and no amount of refreshing repairs it. bfcache and browser
+ * form-state restoration then carry the phantom across back-navigation.
+ *
+ * Called after every morph: the live articles' data-cluster-id attributes have
+ * just been patched to the fresh render's values, so matching by cluster id
+ * pairs each surviving checkbox with its server truth.
+ */
+function repairClusterCheckboxes(from, fresh) {
+  const truth = new Map();
+  for (const box of fresh.querySelectorAll('[data-testid="cluster-checkbox"]')) {
+    const card = box.closest('[data-cluster-id]');
+    if (card) truth.set(card.getAttribute('data-cluster-id'), box.checked);
+  }
+  if (truth.size === 0) return;
+  for (const box of from.querySelectorAll('[data-testid="cluster-checkbox"]')) {
+    const card = box.closest('[data-cluster-id]');
+    const serverChecked = card && truth.get(card.getAttribute('data-cluster-id'));
+    if (serverChecked !== undefined && box.checked !== serverChecked) {
+      box.checked = serverChecked;
+    }
+  }
+}
+
+/**
  * The review surface of a Resource Reduction, as a store.
  *
  * The page is two columns — the Clusters in the body, the controls in the
@@ -81,10 +112,19 @@ export function registerReductionReviewStore(Alpine) {
      * acknowledgement, which the server requires. The flag says "this reviewer
      * expanded it first" — it is not proof they looked, but it is what stops a
      * caller that is not this page checking three hundred files in one request.
+     *
+     * The native click toggles the checkbox before anything here runs; when the
+     * action is swallowed, revert the control too, or it keeps showing a
+     * decision that was never recorded — a state no later refresh can repair
+     * (see repairClusterCheckboxes for the other half of that rule).
      */
-    check(clusterId, checked, oversized) {
-      const action = checked ? 'check' : 'uncheck';
-      return this.act(clusterId, action, 0, { acknowledgeOversized: oversized && this.expanded[clusterId] === true });
+    check(clusterId, checked, oversized, event) {
+      if (this.busy) {
+        if (event?.target) event.target.checked = !checked;
+        window.mahAnnounce?.('One moment — the previous action is still running.');
+        return;
+      }
+      return this.act(clusterId, checked ? 'check' : 'uncheck', 0, { acknowledgeOversized: oversized && this.expanded[clusterId] === true });
     },
 
     // The report of the last apply: what merged, and what was refused and why.
@@ -172,6 +212,14 @@ export function registerReductionReviewStore(Alpine) {
       } catch (err) {
         this.error = err.message;
         window.mahAnnounce?.(`That did not happen: ${err.message}`, { assertive: true });
+        // The clicked checkbox still paints the state the server just refused.
+        // Re-render from server truth (best effort) so the page never shows a
+        // decision that will not be applied.
+        try {
+          await this.refresh();
+        } catch {
+          // The action's own error stays on screen if the repair fetch fails too.
+        }
       } finally {
         this.busy = false;
       }
@@ -205,6 +253,7 @@ export function registerReductionReviewStore(Alpine) {
       const next = refreshed.querySelector(CLUSTERS);
       if (!current || !next) throw new Error('Could not find the refreshed Clusters');
       Alpine.morph(current, next, morphOptionsWithShortcodeElements());
+      repairClusterCheckboxes(current, next);
 
       // The version travels in the page too, so a refresh from any other cause
       // leaves this store agreeing with what was rendered.

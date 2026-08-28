@@ -94,9 +94,15 @@
                 <input type="checkbox"
                        data-testid="cluster-checkbox"
                        {% if cluster.Checked %}checked{% endif %}
+                       autocomplete="off"
+                       {# Browser form restoration on back-navigation repaints saved     #}
+                       {# checkbox states by control index. The card set changes while   #}
+                       {# the reviewer works, so a saved state can land on the wrong     #}
+                       {# cluster's box — a phantom this page must not show. The box is  #}
+                       {# server-rendered and morph-repaired instead.                    #}
                        disabled
                        :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                       @change="$store.reductionReview.check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       @change="$store.reductionReview.check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %}, $event)"
                        class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster
             </label>

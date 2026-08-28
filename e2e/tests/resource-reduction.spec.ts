@@ -334,6 +334,38 @@ test.describe('Resource Reduction', () => {
     await expect(clusters.first().getByTestId('cluster-state')).toHaveText('Open');
   });
 
+  test('a stale clicked checkbox is repaired to server truth by the next refresh', async ({ page, apiClient, request, baseURL }) => {
+    // The checkbox state is server-rendered as an attribute, while a click sets
+    // the DOM property. A click whose action did not stick (swallowed by the
+    // busy window, a failed POST, one cut off by navigating away) leaves the
+    // property diverged from server truth — and Alpine.morph's attribute
+    // patching never resets it, so the card keeps advertising a decision the
+    // server never recorded. Every refresh must force server truth back on.
+    const label = `RR repair ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}&Status=open`);
+    const clusters = page.getByTestId('reduction-cluster');
+    await expect(clusters).toHaveCount(2);
+
+    // Paint the phantom: the second cluster's box shows unchecked while the
+    // server truth is checked (its uncheck click was swallowed or cut off).
+    await clusters.nth(1).getByTestId('cluster-checkbox').evaluate(el => { el.checked = false; });
+    // History restoration must not repaint saved states onto reloaded pages,
+    // where the card set has changed since the state was saved.
+    await expect(clusters.nth(1).getByTestId('cluster-checkbox')).toHaveAttribute('autocomplete', 'off');
+
+    // An explicit action on the first cluster refreshes the page. The first
+    // cluster leaves the open filter; the second one stays and must have been
+    // repaired to its server-rendered state.
+    await clusters.nth(0).getByTestId('cluster-checkbox').uncheck();
+
+    await expect(clusters).toHaveCount(1);
+    await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();
+  });
+
   test('an action that empties the current page lands on the last valid page', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR page ${Date.now()}`;
     // 21 Identical Clusters: page 2 of the Status=open filter holds exactly one.
