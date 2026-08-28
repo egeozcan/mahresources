@@ -147,7 +147,31 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		return nil, err
 	}
 
-	return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
+	// The read-back can lose a shared-cache table lock to the claim write.
+	// SubmitJobWithOptions starts the worker goroutine before it returns, and the
+	// worker's first act is claimReductionComputeJob — an UPDATE on this same
+	// table — so the request's own final read races the job it just started.
+	// SQLITE_LOCKED is a shared-cache table lock that does not go through
+	// busy_timeout; in the WAL configuration the app runs under a reader never
+	// blocks on a writer, so this only fires in the test fixture's `cache=shared`
+	// DSN. The request has already landed by the time this read runs — the CAS
+	// wrote `computing` and the job is in the queue — so a lock lost here must not
+	// report the request as failed to the caller. Retried exactly like the claim
+	// write's own loop above; anything that is not contention still fails
+	// immediately.
+	var fresh *models.ResourceReduction
+	var lastErr error
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		fresh, lastErr = ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
+		if lastErr == nil {
+			return fresh, nil
+		}
+		if !isLockContentionError(lastErr) {
+			return nil, lastErr
+		}
+		waitOutContention(attempt)
+	}
+	return nil, lastErr
 }
 
 // claimReductionComputeJob records which queue job owns the row's `computing`
