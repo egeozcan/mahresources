@@ -29,6 +29,29 @@ var reductionStatuses = []SelectOption{
 	{Link: models.ReductionStatusFailed, Title: "Failed"},
 }
 
+// reductionClusterStatuses is the Cluster-state filter of the review page, in
+// the order the cards show them. "reviewed" is not a state of its own — it is a
+// judgement recorded on an open Cluster — but it is what the reviewer sees, so
+// it is what the filter offers. The leading "All statuses" option is the
+// list-page marker makeMultiFilterOptions checks when nothing is active; it has
+// an empty Link, so no checkbox is ever rendered for it.
+var reductionClusterStatuses = []SelectOption{
+	{Link: "", Title: "All statuses"},
+	{Link: models.ReductionClusterOpen, Title: "Open"},
+	{Link: "reviewed", Title: "Reviewed"},
+	{Link: models.ReductionClusterSkipped, Title: "Skipped"},
+	{Link: models.ReductionClusterApplied, Title: "Applied"},
+	{Link: models.ReductionClusterStale, Title: "Stale"},
+}
+
+// reductionTiers is the matching-tier filter of the review page, with the same
+// invisible "All tiers" marker.
+var reductionTiers = []SelectOption{
+	{Link: "", Title: "All tiers"},
+	{Link: models.ReductionTierIdentical, Title: "Identical"},
+	{Link: models.ReductionTierNear, Title: "Near-Identical"},
+}
+
 // reductionScope mirrors the API handler's own and the download page's: an
 // administrator sees everything, everyone else sees only what they created, and
 // a row with no owner is nobody's.
@@ -109,9 +132,17 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 		}
 
 		page := http_utils.GetPageParameter(request)
-		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page))
+		var reviewQuery query_models.ResourceReductionReviewQuery
+		if err := decoder.Decode(&reviewQuery, request.URL.Query()); err != nil {
+			return addErrContext(err, baseContext)
+		}
+		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page), &reviewQuery)
 		if err != nil {
 			return addErrContext(err, baseContext)
+		}
+
+		if redirect := outOfRangePageRedirect(request, int64(review.ClusterCount), review.PageSize, page); redirect != nil {
+			return redirect
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), int64(review.ClusterCount), review.PageSize, review.Page)
@@ -140,6 +171,15 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			},
 			"winnerCriteria":  allWinnerCriteria(),
 			"winnerRuleSlots": winnerRuleSlots(application_context.DecodeWinnerRule(reduction.WinnerRule)),
+			// The sidebar filters. Active follows the request's own values, so a
+			// filter link from another page (or a share) renders checked.
+			"clusterStatusOptions": makeMultiFilterOptions(reductionClusterStatuses, reviewQuery.Status),
+			"clusterTierOptions":   makeMultiFilterOptions(reductionTiers, reviewQuery.Tier),
+			"attentionActive":      reviewQuery.NeedsAttention,
+			// True when any filter is active, so the empty state can say "nothing
+			// matches" rather than "nothing repeats" — the second is a claim about
+			// the whole Extent, and a filter may simply have excluded everything.
+			"reviewFilterActive":   reviewQuery.NeedsAttention || len(reviewQuery.Status) > 0 || len(reviewQuery.Tier) > 0,
 		}.Update(baseContext)
 	}
 }

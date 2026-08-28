@@ -45,6 +45,28 @@ type ResourceReductionQuery struct {
 	OwnerRestricted bool  `schema:"-"`
 }
 
+// ResourceReductionReviewQuery filters the Clusters of one Reduction's review.
+//
+// Unlike the list query it is applied in memory: the plan is one decoded JSON
+// document, so there is no SQL to scope. The values are the tokens the page's
+// own labels map to: open / reviewed / skipped / applied / stale for Status,
+// identical / near for Tier.
+type ResourceReductionReviewQuery struct {
+	// Status is an OR over the Cluster states the page shows. "reviewed" is not
+	// a state of its own — it is a judgement recorded on an open Cluster — so it
+	// selects `open` Clusters that have been acted on, and "open" selects the
+	// rest.
+	Status []string `schema:"status"`
+	// Tier is an OR over the matching tiers.
+	Tier []string `schema:"tier"`
+	// NeedsAttention keeps only the Clusters that ask for a closer look: a Loser
+	// holding something the Winner does not, or an unusually large Near-Identical
+	// Cluster. Both are facts of the plan, which is what makes the filter
+	// server-side at all — withheld Clusters are decided at render time and are
+	// deliberately not part of it.
+	NeedsAttention bool `schema:"attention"`
+}
+
 // ResourceReductionEditor updates a Reduction's own settings, as opposed to its
 // Extent or its plan.
 type ResourceReductionEditor struct {

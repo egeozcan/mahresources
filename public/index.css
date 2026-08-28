@@ -990,7 +990,10 @@ html {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.6875rem;
     font-weight: 600;
-    color: #78716c;
+    /* #57534e on #f5f5f4 is 7.0:1; the previous #78716c measured 4.4:1, under */
+    /* the 4.5:1 floor for 11px text. The axe sweep caught it on the Reduction */
+    /* review; /series carries the same badge and would have failed the same.  */
+    color: #57534e;
     background: #f5f5f4;
     border-radius: 9999px;
 }

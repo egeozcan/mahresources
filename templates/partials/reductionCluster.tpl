@@ -86,21 +86,21 @@
                        data-testid="cluster-checkbox"
                        {% if cluster.Checked %}checked{% endif %}
                        disabled
-                       :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                       @change="check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                       @change="$store.reductionReview.check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %})"
                        class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Apply this Cluster
             </label>
 
             {% if cluster.State == "skipped" %}
             <button type="button" data-testid="cluster-reopen"
-                    :disabled="busy"
-                    @click="act('{{ cluster.ID }}', 'reopen')"
+                    :disabled="$store.reductionReview.busy"
+                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'reopen')"
                     class="reduction-action">Reopen</button>
             {% else %}
             <button type="button" data-testid="cluster-skip"
-                    :disabled="busy || !isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                    @click="act('{{ cluster.ID }}', 'skip')"
+                    :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'skip')"
                     class="reduction-action">Skip</button>
             {% endif %}
         </div>
@@ -117,9 +117,9 @@
     <p class="text-sm text-amber-800 px-3" role="note" data-testid="cluster-oversized">
         An unusually large Near-Identical Cluster. Expand it and look before you check it.
     </p>
-    <p class="px-3" x-show="!isExpanded('{{ cluster.ID }}', true)">
+    <p class="px-3" x-show="!$store.reductionReview.isExpanded('{{ cluster.ID }}', true)">
         <button type="button" data-testid="cluster-expand"
-                @click="expand('{{ cluster.ID }}')"
+                @click="$store.reductionReview.expand('{{ cluster.ID }}')"
                 aria-controls="cluster-{{ cluster.ID }}-members"
                 class="reduction-action">Expand these {{ cluster.Members|length }} Resources</button>
     </p>
@@ -127,7 +127,7 @@
 
     <div class="reduction-cluster-members flex flex-wrap gap-3 p-3"
          id="cluster-{{ cluster.ID }}-members"
-         x-show="isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
+         x-show="$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
         {% for member in cluster.Members %}
         {# A member with no Resource behind it is one of two things, and they read  #}
         {# very differently. On an applied Cluster it is a Loser this Reduction just #}
@@ -190,8 +190,8 @@
             <div class="flex flex-wrap gap-1 mt-1">
                 {% if not member.IsWinner and not member.Ejected %}
                 <button type="button" data-testid="member-promote"
-                        :disabled="busy"
-                        @click="act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})"
+                        :disabled="$store.reductionReview.busy"
+                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})"
                         class="reduction-action reduction-action--small">Make Winner</button>
                 {% endif %}
                 {% if member.IsLoser and cluster.Winner and not member.Ejected %}
@@ -209,13 +209,13 @@
                 {# restore of it in any case; the button is simply not drawn.            #}
                 {% if member.Ejected and member.InExtent %}
                 <button type="button" data-testid="member-restore"
-                        :disabled="busy"
-                        @click="act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})"
+                        :disabled="$store.reductionReview.busy"
+                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})"
                         class="reduction-action reduction-action--small">Put back</button>
                 {% elif not member.IsWinner and not member.Ejected %}
                 <button type="button" data-testid="member-eject"
-                        :disabled="busy"
-                        @click="act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})"
+                        :disabled="$store.reductionReview.busy"
+                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})"
                         class="reduction-action reduction-action--small">Eject</button>
                 {% endif %}
             </div>

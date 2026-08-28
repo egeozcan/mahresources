@@ -111,7 +111,7 @@ import { templateBundle } from './components/templateBundle.js';
 import { accountSecurity } from './components/accountSecurity.js';
 import { resourceUpload } from './components/resourceUpload.js';
 import { reductionBulkAction } from './components/resourceReductionBulk.js';
-import { reductionReview } from './components/reductionReview.js';
+import { registerReductionReviewStore } from './components/reductionReview.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -180,6 +180,10 @@ registerConfirmDialogStore(Alpine);
 // After confirmDialog and bulkSelection: the /downloads actions read the shared
 // selection and raise the shared confirm.
 registerDownloadsStore(Alpine);
+// The reduction review is a store because its state crosses the body/sidebar
+// split: the Clusters live in the body and the apply controls in the sidebar,
+// which are two Alpine roots.
+registerReductionReviewStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('singleEntitySelector', singleEntitySelector);
@@ -241,7 +245,6 @@ Alpine.data('templateBundle', templateBundle);
 Alpine.data('accountSecurity', accountSecurity);
 Alpine.data('resourceUpload', resourceUpload);
 Alpine.data('reductionBulkAction', reductionBulkAction);
-Alpine.data('reductionReview', reductionReview);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
