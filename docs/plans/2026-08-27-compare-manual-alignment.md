@@ -113,6 +113,32 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 36: no majors. Two standards findings taken, one minor disproved. The
+second of the two consecutive clean rounds the merge gate asks for.
+
+- **The zero-distance move test did not assert `preventDefault`.** Moving that
+  call below the equality guard would restore single-finger panning with every
+  test still green -- the fix's other half was untested. It is asserted now, and
+  verified by making exactly that edit and watching it go red.
+- **`boundedNudge`'s doc comment had been orphaned** above `BOUND_EPSILON` and
+  `withinRange` when round 34 inserted them: the helper went in ahead of the
+  function but behind its comment. Reunited.
+- **The minor is wrong, and checking it was worth more than fixing it would
+  have been.** The claim: Toggle mode's box keeps `cursor: pointer` while armed,
+  because `cursor-pointer` and `.compare-box-aligning` are both one class and
+  `tailwind.css` is linked after `index.css`. Specificity and order are the
+  whole of that argument, and both are outranked by a third thing neither
+  mentions -- Tailwind v4 emits its utilities inside `@layer utilities`, and an
+  unlayered rule beats every layered one whatever its specificity or order.
+  Confirmed twice: `public/tailwind.css` puts `.cursor-pointer` in that layer,
+  and an e2e test written to catch the bug passes with the "fix" reverted.
+  A compound-selector fix was written and then withdrawn; what would have been
+  left is a rule carrying a false explanation of why it exists.
+- The e2e test is kept, with the real mechanism in its comment. The affordance
+  now depends on a layering property of a file this component does not own, so
+  it is asserted rather than assumed: move `index.css` into a layer and it goes
+  red.
+
 Round 35: no majors. One minor and one standards finding, both taken.
 
 - **A move event that lands where it started was counted as a drag.** A pointer
