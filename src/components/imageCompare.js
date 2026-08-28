@@ -28,6 +28,13 @@ const ALIGN_STEP_LARGE = 10;
 const ALIGN_ZOOM_STEP = 0.01;
 const ALIGN_ZOOM_STEP_LARGE = 0.1;
 
+// The blink comparator's rate range, in flips per second. Named where the
+// range input's bounds and the announcement read them, so the three cannot
+// drift.
+const BLINK_RATE_MIN = 2;
+const BLINK_RATE_MAX = 8;
+const BLINK_RATE_DEFAULT = 4;
+
 // The zero-width space that makes a repeated announcement a *changed* string.
 // `aria-live` fires on text change, so nudging away from a value and back would
 // otherwise land on the text already in the region and announce nothing. It is
@@ -227,6 +234,20 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     opacity: 50,
     showLeft: true,
     isDragging: false,
+    // The blink comparator. Starts stopped, always: the reader asked for the
+    // page, not for an animation. `blinkRate` is flips per second, bounded by
+    // BLINK_RATE_MIN/MAX; `_blinkTimer` holds the interval handle.
+    blinking: false,
+    blinkRate: BLINK_RATE_DEFAULT,
+    _blinkTimer: null,
+    // Resolved lazily from `prefers-reduced-motion` and updated by its change
+    // listener, so a reader who toggles the OS preference mid-play is answered
+    // too. Null until first asked; the unit suite (no DOM) never asks.
+    _reducedMotion: false,
+    _reducedMotionQuery: null,
+    _reducedMotionListener: null,
+    blinkAnnouncement: '',
+    _blinkAnnounceParity: false,
     _urls: [leftUrl, rightUrl],
     _labels: [leftLabel || '', rightLabel || ''],
     // Intrinsic sizes, so the overlay modes can place both images in one
@@ -1497,7 +1518,110 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return this.overlayScale(this.swapped ? 0 : 1);
     },
 
+    /**
+     * Whether the blink comparator may act at all.
+     *
+     * Blink needs no geometry -- a pair the browser cannot measure still has
+     * two images to alternate between -- so the one thing it must honour is
+     * the OS's reduced-motion request. A vestibular reader's browser says
+     * "no self-moving UI" and this control obeys it, drawn unavailable with
+     * the reason attached rather than silently swallowing a press.
+     */
+    get blinkAvailable() {
+      return !this._reducedMotion;
+    },
+
+    get reducedMotionTitle() {
+      return this.blinkAvailable
+        ? 'Alternate the two versions automatically.'
+        : 'Your system requests reduced motion, so the blink comparator is unavailable.';
+    },
+
+    get blinkRateMin() {
+      return BLINK_RATE_MIN;
+    },
+
+    get blinkRateMax() {
+      return BLINK_RATE_MAX;
+    },
+
+    _resolveReducedMotion() {
+      if (this._reducedMotionQuery) return;
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+      // Duck-typed rather than assumed: the query object, its listener
+      // registration and its `addEventListener` are all recent additions to
+      // some embedders, and a missing one must degrade to "allowed", not to
+      // an exception at init.
+      const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this._reducedMotionQuery = query;
+      this._reducedMotion = !!query.matches;
+      if (typeof query.addEventListener !== 'function') return;
+      this._reducedMotionListener = (e) => {
+        this._reducedMotion = e.matches;
+        // A preference arriving mid-play stops the blink: the request is
+        // about what the screen does, not about who started it.
+        if (e.matches && this.blinking) this.pauseBlink();
+      };
+      query.addEventListener('change', this._reducedMotionListener);
+    },
+
+    toggleBlink() {
+      if (this.blinking) {
+        this.pauseBlink();
+        return;
+      }
+      this._resolveReducedMotion();
+      if (!this.blinkAvailable) return;
+      this.blinking = true;
+      this._startBlinkInterval();
+      this._announceBlinkState();
+    },
+
+    /** One flip per tick, straight to `showLeft`. Not `toggleSide`: that
+     *  carries the pointer click's drag-suppression and `detail` logic, and
+     *  an interval tick is neither. */
+    _startBlinkInterval() {
+      const rate = Math.max(BLINK_RATE_MIN, Math.min(BLINK_RATE_MAX, this.blinkRate || BLINK_RATE_DEFAULT));
+      this._blinkTimer = setInterval(() => { this.showLeft = !this.showLeft; }, Math.round(1000 / rate));
+    },
+
+    pauseBlink() {
+      if (!this.blinking) return;
+      this.blinking = false;
+      if (this._blinkTimer !== null) {
+        clearInterval(this._blinkTimer);
+        this._blinkTimer = null;
+      }
+      this._announceBlinkState();
+    },
+
+    blinkRateChanged() {
+      // Restart only an interval that is running; a rate set while stopped
+      // takes effect at the next start.
+      if (this.blinking) {
+        if (this._blinkTimer !== null) clearInterval(this._blinkTimer);
+        this._startBlinkInterval();
+      }
+      // A rate change is one discrete event, announced once -- never once
+      // per `input` the range fires while the reader drags it.
+      if (this.blinking) this._announceBlinkState();
+    },
+
+    _announceBlinkState() {
+      this._blinkAnnounceParity = !this._blinkAnnounceParity;
+      const message = this.blinking
+        ? `Blinking at ${Math.round(this.blinkRate)} flashes per second`
+        : 'Blink paused';
+      this.blinkAnnouncement = `${message}${this._blinkAnnounceParity ? ANNOUNCE_MARK : ''}`;
+    },
+
     init() {
+      // Resolved here rather than at the first press, because the control's
+      // availability is rendered before the reader ever touches it: a reduced
+      // motion preference must show the button unavailable on first paint,
+      // not announce it healthy and then refuse.
+      this._resolveReducedMotion();
+
       // Arrow keys nudge the slider or the onion opacity. The handler is on the
       // container rather than the document, and skips events the mode radiogroup
       // is already handling: on the document it also fired for the radiogroup's
@@ -1546,6 +1670,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       };
       this.$el.addEventListener('keydown', this._keyHandler);
 
+      // Leaving toggle mode pauses the blink: it alternates the toggle box's
+      // own images, and a blink the reader can no longer see is a timer that
+      // runs for nothing. Duck-typed because the unit suite drives `init`
+      // with no Alpine behind it, and the pause itself is tested directly.
+      if (typeof this.$watch === 'function') {
+        this.$watch('mode', () => {
+          if (this.mode !== 'toggle') this.pauseBlink();
+        });
+      }
+
       // An image that finished before its `@load` was bound never fires one.
       // Alpine's own directive order puts `x-bind` ahead of `x-on`, so `:src`
       // is assigned first -- today that is still safe, because a `load` is
@@ -1560,6 +1694,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (this._endDrag) this._endDrag();
       if (this._endAlignDrag) this._endAlignDrag();
       if (this._announceTimer) clearTimeout(this._announceTimer);
+      if (this._blinkTimer !== null) {
+        clearInterval(this._blinkTimer);
+        this._blinkTimer = null;
+      }
+      if (this._reducedMotionQuery && this._reducedMotionListener) {
+        if (typeof this._reducedMotionQuery.removeEventListener === 'function') {
+          this._reducedMotionQuery.removeEventListener('change', this._reducedMotionListener);
+        }
+        this._reducedMotionListener = null;
+      }
     },
 
     nudgeSlider(delta) {

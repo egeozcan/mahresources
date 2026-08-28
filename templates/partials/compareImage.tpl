@@ -146,6 +146,33 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>
             Reset
         </button>
+        {# Blink comparator: auto-flip while the toggle box is showing, at a #}
+        {# rate the reader picks. Starts stopped, always -- an animation nobody #}
+        {# asked for is exactly what prefers-reduced-motion exists to refuse, and #}
+        {# the control says so rather than silently swallowing the press. #}
+        <button type="button" @click="toggleBlink()" class="compare-swap-btn-sm"
+                x-show="mode === 'toggle'"
+                :aria-pressed="blinking"
+                :aria-disabled="!blinkAvailable"
+                :title="reducedMotionTitle"
+                aria-label="Blink between the two versions">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" x-show="!blinking"><polygon points="6 3 20 12 6 21"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" x-show="blinking"><line x1="7" y1="4" x2="7" y2="20"/><line x1="17" y1="4" x2="17" y2="20"/></svg>
+            <span x-show="!blinking">Blink</span>
+            <span x-show="blinking">Pause</span>
+        </button>
+        <span class="compare-blink-rate" x-show="mode === 'toggle'">
+            <label class="sr-only" for="compare-blink-rate">Blink rate in flashes per second</label>
+            <input id="compare-blink-rate" type="range" :min="blinkRateMin" :max="blinkRateMax" step="1"
+                   x-model.number="blinkRate" @change="blinkRateChanged()"
+                   aria-label="Blink rate in flashes per second"
+                   :aria-valuetext="Math.round(blinkRate) + ' flashes per second'"
+                   class="w-20 align-middle">
+        </span>
+        {# Written on start, pause and rate change only -- never on a flip: at #}
+        {# 2-8 flips a second a live region updated per flip is the pointermove #}
+        {# mistake at the feature's own frequency. #}
+        <span class="sr-only" aria-live="polite" aria-atomic="true" x-text="blinkAnnouncement"></span>
         {# Written on each keyboard nudge and once at the end of a drag, never #}
         {# during one: a live region updated per pointermove queues hundreds of #}
         {# announcements a screen reader then reads through. #}

@@ -2699,3 +2699,155 @@ describe('manual alignment', () => {
     ]);
   });
 });
+
+describe('the blink comparator', () => {
+  function blinkComponent() {
+    const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+    c.mode = 'toggle';
+    return c;
+  }
+
+  test('starts stopped, on every visit', () => {
+    const c = blinkComponent();
+    expect(c.blinking).toBe(false);
+    expect(c.showLeft).toBe(true);
+  });
+
+  test('playing flips the visible side on every tick, and pauses stop it', () => {
+    vi.useFakeTimers();
+    try {
+      const c = blinkComponent();
+      c.toggleBlink();
+      expect(c.blinking).toBe(true);
+      expect(c.showLeft).toBe(true);
+      vi.advanceTimersByTime(251);
+      // Default 4 Hz = 250ms: exactly one flip in the first window.
+      expect(c.showLeft).toBe(false);
+      vi.advanceTimersByTime(250);
+      expect(c.showLeft).toBe(true);
+
+      c.toggleBlink();
+      expect(c.blinking).toBe(false);
+      const afterPause = c.showLeft;
+      vi.advanceTimersByTime(1000);
+      expect(c.showLeft).toBe(afterPause);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the interval is cleared on pause, not left running', () => {
+    vi.useFakeTimers();
+    const cleared: any[] = [];
+    const spy = vi.spyOn(globalThis, 'clearInterval').mockImplementation((t) => { cleared.push(t); return t; });
+    try {
+      const c = blinkComponent();
+      c.toggleBlink();
+      const handle = c._blinkTimer;
+      expect(handle).not.toBeNull();
+      c.toggleBlink();
+      expect(cleared).toContain(handle);
+      expect(c._blinkTimer).toBeNull();
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test('state is announced once per discrete event, and the flips announce nothing', () => {
+    vi.useFakeTimers();
+    try {
+      const c = blinkComponent();
+      c.toggleBlink();
+      const started = c.blinkAnnouncement;
+      expect(started).toContain('4 flashes per second');
+      vi.advanceTimersByTime(1000);
+      // Four flips at 4 Hz -- an even count, so the pair is back where it
+      // started. What matters here is that the flips happened and that none
+      // of them touched the live region.
+      expect(c.showLeft).toBe(true);
+      expect(c.blinkAnnouncement).toBe(started);
+
+      c.toggleBlink();
+      expect(c.blinkAnnouncement).toContain('paused');
+      // Two identical announcements must still differ as strings, or a
+      // pause following a pause announces nothing.
+      c.toggleBlink();
+      // Two consecutive announcements must differ as strings, or a pause
+      // following a pause (or a second start) would announce nothing.
+      const firstPaused = c.blinkAnnouncement;
+      c.toggleBlink();
+      expect(c.blinkAnnouncement).not.toBe(firstPaused);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('prefers-reduced-motion refuses to start and marks the control', () => {
+    const c = blinkComponent();
+    c._reducedMotion = true;
+    expect(c.blinkAvailable).toBe(false);
+    c.toggleBlink();
+    expect(c.blinking).toBe(false);
+    expect(c.showLeft).toBe(true);
+    // And nothing was announced for a refusal.
+    expect(c.blinkAnnouncement).toBe('');
+  });
+
+  test('a rate change while playing restarts the interval at the new period', () => {
+    vi.useFakeTimers();
+    try {
+      const c = blinkComponent();
+      c.toggleBlink();
+      c.blinkRate = 8;
+      c.blinkRateChanged();
+      expect(c.blinking).toBe(true);
+      vi.advanceTimersByTime(126);
+      // 8 Hz = 125ms: one flip.
+      expect(c.showLeft).toBe(false);
+      // A pause announced after the rate change, not the old period's state.
+      expect(c.blinkAnnouncement).toContain('8 flashes per second');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('destroy clears the interval', () => {
+    vi.useFakeTimers();
+    const cleared: any[] = [];
+    const spy = vi.spyOn(globalThis, 'clearInterval').mockImplementation((t) => { cleared.push(t); return t; });
+    try {
+      const c = blinkComponent();
+      c.toggleBlink();
+      const handle = c._blinkTimer;
+      c.destroy();
+      expect(cleared).toContain(handle);
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test('leaving toggle mode pauses, through the watcher init registers', () => {
+    const registered: Array<[string, () => void]> = [];
+    const c = blinkComponent();
+    c.$el = { addEventListener() {}, querySelectorAll: () => [] };
+    (c as any).$watch = (key: string, cb: () => void) => registered.push([key, cb]);
+    c.init();
+
+    const modeWatch = registered.find(([key]) => key === 'mode');
+    expect(modeWatch).toBeDefined();
+    c.toggleBlink();
+    expect(c.blinking).toBe(true);
+    // Alpine updates `mode` before firing the watcher, so the watcher re-reads
+    // it; the test simulates the reader picking another mode.
+    c.mode = 'onion';
+    modeWatch![1]();
+    expect(c.blinking).toBe(false);
+    // And returning to toggle mode leaves the blink stopped: it starts on the
+    // reader's press, never on a mode change.
+    c.mode = 'toggle';
+    modeWatch![1]();
+    expect(c.blinking).toBe(false);
+  });
+});

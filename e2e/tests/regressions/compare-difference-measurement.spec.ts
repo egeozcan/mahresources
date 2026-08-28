@@ -233,4 +233,128 @@ test.describe.serial('compare page: difference and measurement', () => {
       expect(results.violations).toEqual([]);
     });
   });
+
+  test.describe('3.3: blink comparator', () => {
+    const toggleBox = (page: Page) => page.locator('button.compare-overlay-box');
+    const blinkButton = (page: Page) => page.getByRole('button', { name: 'Blink between the two versions' });
+    const rateInput = (page: Page) => page.getByRole('slider', { name: 'Blink rate in flashes per second' });
+
+    /** Which version the toggle box is showing right now, sampled from its
+     *  accessible name ("Showing X. Activate to show the other."). */
+    async function showing(page: Page): Promise<string> {
+      const label = (await toggleBox(page).getAttribute('aria-label'))!;
+      return label.replace(/^Showing\s+(.*)\. Activate to show the other\.$/, '$1');
+    }
+
+    /** Sample the showing side for `ms`, returning the distinct states seen. */
+    async function sampleSides(page: Page, ms: number): Promise<string[]> {
+      return page.evaluate(async (duration) => {
+        const box = document.querySelector('button.compare-overlay-box') as HTMLButtonElement | null;
+        const seen: string[] = [];
+        const read = () => {
+          if (!box) return;
+          const label = box.getAttribute('aria-label') || '';
+          const side = label.replace(/^Showing\s+(.*)\. Activate to show the other\.$/, '$1');
+          if (!seen.length || seen[seen.length - 1] !== side) seen.push(side);
+        };
+        read();
+        const end = performance.now() + duration;
+        while (performance.now() < end) {
+          await new Promise((r) => setTimeout(r, 10));
+          read();
+        }
+        return seen;
+      }, ms);
+    }
+
+    test('starts stopped, on every visit', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await expect(toggleBox(page)).toBeVisible();
+      await expect(blinkButton(page)).toBeVisible();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
+      const sides = await sampleSides(page, 500);
+      expect(sides.length).toBe(1);
+    });
+
+    test('playing alternates the visible side; pause stops it', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+
+      await blinkButton(page).click();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'true');
+      const sides = await sampleSides(page, 1200);
+      // Default 4 Hz across a generous window: far more than one alternation,
+      // and both sides named, whichever one started.
+      expect(sides.length).toBeGreaterThanOrEqual(3);
+
+      // The accessible name is fixed (aria-pressed carries the state), so
+      // pausing is a second press on the same button. The affordance swaps
+      // icons: the play triangle shows when stopped, the pause bars when
+      // playing. Asserted on visibility, not textContent, which reads hidden
+      // spans too.
+      await blinkButton(page).click();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
+      await expect(blinkButton(page).locator('svg').nth(0)).toBeVisible();
+      await expect(blinkButton(page).locator('svg').nth(1)).toBeHidden();
+      const rest = await sampleSides(page, 500);
+      expect(rest.length).toBe(1);
+    });
+
+    test('the rate control changes how fast it flips', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+
+      await rateInput(page).fill('8');
+      await rateInput(page).dispatchEvent('change');
+      await blinkButton(page).click();
+      const fast = await sampleSides(page, 1000);
+      // 8 Hz over a second, sampled at 10ms: every flip is caught.
+      expect(fast.length).toBeGreaterThanOrEqual(9);
+    });
+
+    test('prefers-reduced-motion refuses with a stated reason', async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+
+      await expect(blinkButton(page)).toBeVisible();
+      await expect(blinkButton(page)).toHaveAttribute('aria-disabled', 'true');
+      expect(await blinkButton(page).getAttribute('title')).toContain('reduced motion');
+
+      // aria-disabled suppresses neither focus nor pointer events, so the
+      // component itself has to refuse a forced press.
+      await blinkButton(page).click({ force: true });
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
+      const sides = await sampleSides(page, 500);
+      expect(sides.length).toBe(1);
+    });
+
+    test('leaving toggle mode pauses the blink', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await blinkButton(page).click();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'true');
+
+      await page.locator('.compare-seg-btn:has-text("Onion")').click();
+      await expect(blinkButton(page)).toBeHidden();
+      // Back in toggle mode, still stopped: the pause was the reader's answer,
+      // not a mode switch's side effect that a re-entry undoes.
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
+      const sides = await sampleSides(page, 500);
+      expect(sides.length).toBe(1);
+    });
+
+    test('the toolbar with blink playing passes an axe scan', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await blinkButton(page).click();
+      const { AxeBuilder } = await import('@axe-core/playwright');
+      const results = await new AxeBuilder({ page })
+        .include('.compare-segmented-control')
+        .analyze();
+      expect(results.violations).toEqual([]);
+    });
+  });
 });

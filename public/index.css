@@ -2763,6 +2763,15 @@ html {
     white-space: nowrap;
 }
 
+/* The blink rate control rides the same toolbar row; it is not the offset
+   readout, so it carries its own class and the readout's locator stays one. */
+.compare-blink-rate {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.8125rem;
+    color: #57534e;
+}
+
 /* Diff views */
 .compare-diff-toolbar {
     display: flex;
