@@ -45,42 +45,39 @@ Files (called **Resources**), **Notes**, and **Groups** live in a database with 
 
 ### Content
 
-- **Resources** - any file type, with automatic thumbnails (images natively, video through FFmpeg, Office documents through LibreOffice), perceptual hashing for similarity detection, and full version history
-- **Notes** - text content assembled from typed **note blocks**: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register more block types
-- **Groups** - a nested hierarchy that owns Resources, Notes, and other Groups, plus typed **relations** between Groups ("works at", "parent of")
-- **Series** - Resources that share metadata, such as the pages of one scanned document
-- **Tags, Categories, Resource Categories, and Note Types** - flat labels, and types that give each entity its own presentation
+**Resources** are files of any type. Thumbnails are generated automatically: images natively, video through FFmpeg, and Office documents through LibreOffice. Perceptual hashing detects similar files, and every Resource keeps a full version history.
+
+**Notes** hold text assembled from typed **note blocks**: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register more block types.
+
+**Groups** form a nested hierarchy. A Group owns Resources, Notes, and other Groups, and typed **relations** connect one Group to another ("works at", "parent of"). A **series** ties together Resources that share metadata, such as the pages of one scanned document.
+
+**Tags** are flat labels. **Categories**, **Resource Categories**, and **Note Types** are types, and each gives its entity its own presentation.
 
 ### Finding Things
 
-- **Full-text search** across all content, via FTS5 on SQLite or tsvector on PostgreSQL, reachable from anywhere with Cmd/Ctrl+K
-- **MRQL** - a query language for Resources, Notes, and Groups, with its own page at `/mrql`, a filter bar on every list page, saved queries, and an `[mrql]` shortcode that embeds results in templates
-- **Saved queries** - stored raw SQL with custom result templates; point `DB_READONLY_DSN` at a read-only connection to enforce that at the database level
-- **Timeline view** and **image similarity** browsing
+**Full-text search** covers all content, via FTS5 on SQLite or tsvector on PostgreSQL, and is reachable from anywhere with Cmd/Ctrl+K.
+
+**MRQL** is a query language for Resources, Notes, and Groups. It has its own page at `/mrql`, a filter bar on every list page, saved queries, and an `[mrql]` shortcode that embeds results in templates.
+
+**Saved queries** store raw SQL alongside a custom result template. Point `DB_READONLY_DSN` at a read-only connection to enforce that at the database level.
+
+Two more ways to move through a library are the **timeline view** and **image similarity** browsing.
 
 ### Working With Data
 
-- **Bulk operations** - tag, merge, delete, or edit metadata across many items at once
-- **Resource Reduction** - a workspace for collapsing repeated Resources. Clusters of repeats are proposed for review, and nothing is deleted until you approve it
-- **Group export / import** - move a Group subtree, with its resources, notes, tags, and categories, through a self-contained tar archive
-- **Download queue** - submit remote URLs, watch them in the Download Cockpit, and retry from persisted history
-- **Meta schemas** - a JSON Schema on each Category, Resource Category, or Note Type that validates metadata and generates a form for it
-- **Custom templates** - HTML fragments with server-side shortcodes, rendered into slots on detail pages, cards, hover cards, and list pages
-- **Note sharing** - publish an individual note on a separate read-only server behind an unguessable token
-- **Activity log** - create, update, delete, and plugin operations across every entity
+**Bulk operations** tag, merge, delete, or edit metadata across many items at once. **Resource Reduction** is a workspace for collapsing repeated Resources: clusters of repeats are proposed for review, and nothing is deleted until you approve it. **Group export / import** moves a Group subtree, with its resources, notes, tags, and categories, through a self-contained tar archive. The **download queue** takes remote URLs, shows them in the Download Cockpit, and retries them from persisted history.
+
+Each Category, Resource Category, and Note Type carries a **meta schema**, a JSON Schema that validates metadata and generates a form for it. The same three carry **custom templates**: HTML fragments with server-side shortcodes, rendered into slots on detail pages, cards, hover cards, and list pages. **Note sharing** publishes an individual note on a separate read-only server behind an unguessable token, and an **activity log** records create, update, delete, and plugin operations across every entity.
 
 ### Extending and Integrating
 
-- **Plugins** - sandboxed Lua that hooks writes, adds pages and JSON endpoints, runs background and scheduled jobs, serves its own static assets, and keeps per-plugin data in a key-value store
-- **JSON API** - every route serves both HTML and JSON (append `.json` or send `Accept: application/json`)
-- **`mr` CLI** - a command-line client covering the same API
-- **Optional accounts and RBAC** - four roles with group-subtree scoping, off by default
+**Plugins** are sandboxed Lua. They hook writes, add pages and JSON endpoints, run background and scheduled jobs, serve their own static assets, and keep per-plugin data in a key-value store.
+
+Every route serves both HTML and **JSON**, so appending `.json` or sending `Accept: application/json` turns any page into an API response. The **`mr` CLI** is a command-line client covering that same API. **Accounts and RBAC** are optional and off by default, with four roles and group-subtree scoping.
 
 ## Requirements
 
-- **Go 1.26+**
-- **Node.js 20.19+ or 22.12+** - the range Vite 8 supports; older 20.x and 22.x releases fail `npm install` with `EBADENGINE`
-- **A C compiler** - the SQLite driver is cgo-based. Do not set `CGO_ENABLED=0`, or the binary builds without working SQLite
+Building Mahresources needs **Go 1.26+**, **Node.js 20.19+ or 22.12+**, and **a C compiler**. The Node version range is the one Vite 8 supports; older 20.x and 22.x releases fail `npm install` with `EBADENGINE`. The SQLite driver is cgo-based, so do not set `CGO_ENABLED=0`, or the binary builds without working SQLite.
 
 FFmpeg (video thumbnails), LibreOffice (document thumbnails), and ImageMagick (HEIC and AVIF) are optional and detected on `PATH`.
 
@@ -105,7 +102,7 @@ npm run build
 
 The server listens on `:8181` by default. Start it from the repository root: the binary is not self-contained and loads Pongo2 templates from `./templates` and static assets from `./public`, both relative to the working directory.
 
-No Docker image is published, but the repository builds one -- see the [installation guide](https://egeozcan.github.io/mahresources/getting-started/installation) and the [Docker deployment guide](https://egeozcan.github.io/mahresources/deployment/docker).
+No Docker image is published, but the repository builds one. See the [installation guide](https://egeozcan.github.io/mahresources/getting-started/installation) and the [Docker deployment guide](https://egeozcan.github.io/mahresources/deployment/docker).
 
 ## Configuration
 
@@ -130,12 +127,7 @@ Authentication is **off by default**. With `-auth` unset there is no login page 
 
 > **Do not expose an unprotected instance to the internet.** For remote access, put it behind a reverse proxy that enforces authentication (nginx with basic auth, OAuth2 Proxy, Authelia). See the [reverse proxy guide](https://egeozcan.github.io/mahresources/deployment/reverse-proxy).
 
-When you need accounts, turn them on with `-auth`. Requests then authenticate with a session cookie or a per-user API token, and four roles apply:
-
-- **admin** - full access, including settings, plugins, and user administration
-- **editor** - CRUD on entities, but no categories and no system settings
-- **user** - CRUD on resources and notes, optionally confined to one Group's subtree
-- **guest** - read-only, always confined to one Group's subtree
+When you need accounts, turn them on with `-auth`. Requests then authenticate with a session cookie or a per-user API token, and one of four roles applies. An **admin** has full access, including settings, plugins, and user administration. An **editor** has CRUD on entities, but no categories and no system settings. A **user** has CRUD on resources and notes, optionally confined to one Group's subtree. A **guest** is read-only, and always confined to one Group's subtree.
 
 Scoped users and guests are held to their subtree across lists, reads, search, MRQL, file serving, and writes. Bootstrap the first account with `-create-admin-user` and `-create-admin-password`. Built-in auth can be combined with a reverse proxy. See [Authentication & RBAC](https://egeozcan.github.io/mahresources/features/authentication).
 
@@ -171,14 +163,9 @@ E2E tests run against an ephemeral server that the scripts start and stop themse
 
 ## Documentation
 
-- [Getting Started](https://egeozcan.github.io/mahresources/getting-started/installation) - installation, quick start, first steps
-- [Core Concepts](https://egeozcan.github.io/mahresources/concepts/overview) - resources, notes, groups, tags, relationships, series
-- [User Guide](https://egeozcan.github.io/mahresources/user-guide/navigation) - navigation, search, bulk operations
-- [Configuration](https://egeozcan.github.io/mahresources/configuration/overview) - every flag and runtime setting
-- [Advanced Features](https://egeozcan.github.io/mahresources/features/mrql) - MRQL, plugins, templates, versioning, export/import
-- [CLI Reference](https://egeozcan.github.io/mahresources/cli/) - every `mr` command
-- [API Reference](https://egeozcan.github.io/mahresources/api/overview) - REST endpoints
-- [Deployment](https://egeozcan.github.io/mahresources/deployment/docker) - Docker, systemd, reverse proxy, backups
+[Getting Started](https://egeozcan.github.io/mahresources/getting-started/installation) covers installation, the quick start, and first steps. [Core Concepts](https://egeozcan.github.io/mahresources/concepts/overview) explains resources, notes, groups, tags, relationships, and series, and the [User Guide](https://egeozcan.github.io/mahresources/user-guide/navigation) covers navigation, search, and bulk operations.
+
+[Configuration](https://egeozcan.github.io/mahresources/configuration/overview) documents every flag and runtime setting. [Advanced Features](https://egeozcan.github.io/mahresources/features/mrql) covers MRQL, plugins, templates, versioning, and export/import. [Deployment](https://egeozcan.github.io/mahresources/deployment/docker) covers Docker, systemd, reverse proxies, and backups. Every `mr` command is documented in the [CLI reference](https://egeozcan.github.io/mahresources/cli/), and the REST endpoints in the [API reference](https://egeozcan.github.io/mahresources/api/overview).
 
 The OpenAPI spec is generated from the routes themselves with `make openapi`.
 
