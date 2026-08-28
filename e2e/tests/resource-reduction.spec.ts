@@ -305,6 +305,35 @@ test.describe('Resource Reduction', () => {
     await expect(page.locator('[data-reduction-count]')).toHaveText('(0)');
   });
 
+  test('checking a Cluster under the open filter leaves the next Cluster\'s checkbox alone', async ({ page, apiClient, request, baseURL }) => {
+    // The morph bug this pins: unchecking (or checking) one Cluster marks it
+    // Reviewed, so under Status=open the refreshed render no longer contains it
+    // and the card disappears. Alpine.morph used to match the articles
+    // positionally, so the DOM node behind it was patched into the next
+    // Cluster's shape — and the checkbox state the reviewer just changed (a
+    // DOM property, which the morph's attribute patch never resets) bled onto
+    // the next Cluster's card. The key="{{ cluster.ID }}" on the article makes
+    // the morph match by Cluster identity instead.
+    const label = `RR morph key ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}&Status=open`);
+    const clusters = page.getByTestId('reduction-cluster');
+    await expect(clusters).toHaveCount(2);
+
+    // Identical Clusters arrive checked, so the click is an uncheck — it makes
+    // the Cluster Reviewed and the filter drops it.
+    await clusters.first().getByTestId('cluster-checkbox').uncheck();
+
+    await expect(clusters).toHaveCount(1);
+    // The survivor's own server-rendered state, not the clicked state of the
+    // card that just left the filter.
+    await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();
+    await expect(clusters.first().getByTestId('cluster-state')).toHaveText('Open');
+  });
+
   test('an action that empties the current page lands on the last valid page', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR page ${Date.now()}`;
     // 21 Identical Clusters: page 2 of the Status=open filter holds exactly one.

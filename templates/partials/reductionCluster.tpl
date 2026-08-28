@@ -12,7 +12,15 @@
 {# member it is enough to recover the hidden one by enumeration, which is the     #}
 {# disclosure the branch exists to prevent. The heading is anchored on the        #}
 {# Cluster's position on the page instead.                                        #}
+{# The key anchors Alpine.morph, which the review store's refresh uses to        #}
+{# re-render the Clusters in place. Without it the morph matches the articles    #}
+{# positionally, so when a filter (or the action itself) removes the Cluster     #}
+{# that was acted on, the node behind it is patched into the shape of the next   #}
+{# one and keeps that one's live DOM state — a checkbox the reviewer just        #}
+{# clicked moves onto the neighbouring Cluster. The withheld branch publishes no #}
+{# Cluster id by design, so it anchors on its position instead.                  #}
 <article class="card reduction-cluster"
+         key="withheld-{{ cluster.Position }}"
          data-testid="reduction-cluster"
          aria-labelledby="cluster-withheld-{{ cluster.Position }}-heading">
     {# A Cluster reaching a Resource this reviewer may not see is not rendered as #}
@@ -32,6 +40,7 @@
 </article>
 {% else %}
 <article class="card reduction-cluster"
+         key="{{ cluster.ID }}"
          data-testid="reduction-cluster"
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
