@@ -1547,6 +1547,16 @@ describe('manual alignment', () => {
     // construction, and the hand-written rule tests above are what hold that
     // half -- one axis resolving another converges perfectly.
     const step = (name: string, run: (c: any) => void) => ({ name, run });
+    // The move handler measures the box per event and converts the screen
+    // distance the hand covered into that box's pixels; `RENDERED_CSS_WIDTH`
+    // stands in for the element's own width, which is fixed while the box
+    // behind it changes.
+    const RENDERED_CSS_WIDTH = 600;
+    const drag = (sx: number, sy: number) => (c: any) => {
+      const box = c.overlayBox;
+      const ratio = box ? box.w / RENDERED_CSS_WIDTH : 1;
+      c.nudge(sx * ratio, sy * ratio, true);
+    };
     const SCRIPTS = [
       [step('nudge -450', (c) => c.nudge(-450, 0)), step('flip', (c) => c.swapSides()),
         step('anchor', (c) => c.toggleAnchor())],
@@ -1579,6 +1589,19 @@ describe('manual alignment', () => {
       [step('flip', (c) => c.swapSides()), step('nudge -450y', (c) => c.nudge(0, -450)),
         step('zoom 90%', (c) => c.zoomBy(-0.1)), step('nudge x', (c) => c.nudge(-1, 0)),
         step('zoom 81%', (c) => c.zoomBy(-0.1))],
+      // A drag increment is a physical distance, recorded on the request by a
+      // different conversion than a key press -- so it belongs in the corpus in
+      // its own right. `drag` converts screen pixels the way the move handler
+      // does, against the box standing at the time, because that is what makes
+      // the same gesture the same input in either decode order: handing
+      // `nudge` a fixed number of BOX pixels would be a different physical
+      // distance in each, and the divergence that follows would be the
+      // corpus's own doing.
+      [step('zoom 50%', (c) => c.zoomBy(-0.5)), step('drag', drag(-260, 90)),
+        step('flip', (c) => c.swapSides()), step('drag', drag(40, -1000))],
+      [step('nudge', (c) => c.nudge(-380, 120)), step('flip', (c) => c.swapSides()),
+        step('reset', (c) => c.resetAlignment()), step('zoom 25%', (c) => c.zoomBy(-0.75)),
+        step('nudge', (c) => c.nudge(90, 90))],
     ];
     // Pairs whose corrected widths differ from the stored ones and from each
     // other, so the transient box differs per decode order -- the condition
@@ -1594,14 +1617,23 @@ describe('manual alignment', () => {
       { stored: [{ w: 300, h: 900 }, { w: 900, h: 300 }], actual: [[900, 300], [300, 900]] },
     ];
 
+    // `twice` re-delivers the first slot's report immediately after itself, as
+    // a browser does when an element re-decodes: it changes no size and must
+    // change no answer, but it is a second pass through everything a report
+    // touches. A pair with identical URLs is deliberately not enumerated here
+    // -- one report fills both slots, so there is no second report and decode
+    // order is not a variable; the single-report path has its own test.
     const play = (pair: typeof PAIRS[number], script: typeof SCRIPTS[number],
-      at: number, then: number, first: 1 | 2) => {
+      at: number, then: number, first: 1 | 2, twice: boolean) => {
       const c = component(pair.stored[0], pair.stored[1]);
       c.toggleAligning();
       const second: 1 | 2 = first === 1 ? 2 : 1;
       const report = (v: 1 | 2) => c.noteSizeFrom(img(v, pair.actual[v - 1][0], pair.actual[v - 1][1]));
       for (let k = 0; k <= script.length; k += 1) {
-        if (k === at) report(first);
+        if (k === at) {
+          report(first);
+          if (twice) report(first);
+        }
         if (k === then) report(second);
         if (k < script.length) script[k].run(c);
       }
@@ -1623,9 +1655,10 @@ describe('manual alignment', () => {
         for (let at = 0; at <= script.length; at += 1) {
           for (let then = at; then <= script.length; then += 1) {
             runs += 1;
-            const slot0First = play(pair, script, at, then, 1);
-            const slot1First = play(pair, script, at, then, 2);
-            if (apart(slot0First, slot1First)) {
+            const slot0First = play(pair, script, at, then, 1, false);
+            const slot1First = play(pair, script, at, then, 2, false);
+            const repeated = play(pair, script, at, then, 1, true);
+            if (apart(slot0First, slot1First) || apart(slot0First, repeated)) {
               diverged.push(`p${p}/s${sc}/${at},${then}`);
               const where = script.map((st, i) => (i === at || i === then ? `[load] ${st.name}` : st.name));
               detail.push(`p${p}/s${sc}/${at},${then} (${where.join(' -> ')}): `
@@ -2416,6 +2449,29 @@ describe('manual alignment', () => {
       dom.fire('touchend', {});
       // The drag did move the offset, and the tap right after it is not that
       // drag's click -- the touchmove's preventDefault suppressed it.
+      c.toggleSide({ detail: 1 });
+      expect(c.showLeft).toBe(false);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  test('a move event that lands where it started is not a drag', () => {
+    // A pointer can report a move without having travelled. Counted as a drag
+    // it announces an offset nobody moved, and it stamps the click
+    // suppression, so the tap the reader meant for the version switch does
+    // nothing at all -- from a press that never left its starting point.
+    const dom = fakeDom();
+    try {
+      const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
+      c.mode = 'toggle';
+      c.toggleAligning();
+      const button = { closest: () => null };
+      c.startAlignDrag(press(100, 100, button, frame(800, 600, true)));
+      dom.fire('mousemove', { clientX: 100, clientY: 100 });
+      dom.fire('mouseup', { clientX: 100, clientY: 100 });
+      expect(c.offsetAnnouncement).toBe('');
+      // The click that follows is the reader's, and it switches versions.
       c.toggleSide({ detail: 1 });
       expect(c.showLeft).toBe(false);
     } finally {

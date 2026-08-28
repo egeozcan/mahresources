@@ -1094,8 +1094,16 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         }
         const next = point(moveE);
         if (next.x === undefined || next.y === undefined) return;
-        anyMove = true;
+        // Prevented whatever the pointer did: a single-finger touchmove that
+        // reports the same point is still a pan the browser would otherwise
+        // scroll with.
         moveE.preventDefault();
+        // But a move event that lands on the point it started from is not a
+        // drag. Nothing travelled, so nothing can have moved the offset, and
+        // counting it announces a correction nobody made and swallows the
+        // click that would have switched versions.
+        if (next.x === last.x && next.y === last.y) return;
+        anyMove = true;
         // Measured per move, as `startSliderDrag`'s own handler measures its
         // container per move: a `load` landing mid-gesture corrects `_sizes`,
         // and the box can be re-laid-out under the pointer. Freezing either at
