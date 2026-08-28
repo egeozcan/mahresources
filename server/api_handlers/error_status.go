@@ -86,10 +86,12 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusConflict
 	}
 	// A refusal about the request rather than about the state of the row: an
-	// unacknowledged oversized Cluster, or a restore with no match to put back.
-	// Both are 400, because the request is missing something it must carry.
+	// unacknowledged oversized Cluster, a restore with no match to put back, or a
+	// restore of a member outside the Extent, which may never become a Loser.
+	// All are 400, because the request is missing something it must carry.
 	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) ||
-		errors.Is(err, application_context.ErrReductionRestoreUnpaired) {
+		errors.Is(err, application_context.ErrReductionRestoreUnpaired) ||
+		errors.Is(err, application_context.ErrReductionRestoreOutsider) {
 		return http.StatusBadRequest
 	}
 

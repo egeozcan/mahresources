@@ -278,8 +278,14 @@ type ReductionMember struct {
 
 // Ejection reasons.
 const (
-	EjectReasonManual         = "manual"
+	EjectReasonManual = "manual"
+
 	EjectReasonNoPairToWinner = "no-pair-to-winner"
+
+	// EjectReasonOutsiderDemoted marks the automatic ejection of an out-of-Extent
+	// member when a promotion moves the Winner past it. An outsider may never
+	// lose, and ejection is how it leaves the merge proposal without being touched.
+	EjectReasonOutsiderDemoted = "outsider-demoted"
 )
 
 // IsLoser reports whether a member would be merged away and deleted by an apply.

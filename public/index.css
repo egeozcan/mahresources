@@ -3716,6 +3716,24 @@ progress.export-progress-bar::-moz-progress-bar {
     padding-bottom: 0.25rem;
 }
 
+/* A Resource's name can be a long unbroken URL (a remote download keeps its
+   source URL as the name), and the header prints it in the "Winner:" meta line.
+   .card-meta-item is white-space: nowrap and a flex item with min-width: auto,
+   so it refuses to shrink below the name's full width and leaks outside the
+   card — worst at reduced zoom, where the card narrows and the nowrap content
+   does not. Scoped to this page: let the meta item shrink and break the link
+   where it has to. overflow-wrap: anywhere rather than break-all, following the
+   .card-title precedent (Finding 148), so ordinary names keep word boundaries. */
+.reduction-cluster .card-meta-item {
+    min-width: 0;
+    white-space: normal;
+}
+
+.reduction-cluster .card-meta-link {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .reduction-member {
     display: flex;
     flex-direction: column;

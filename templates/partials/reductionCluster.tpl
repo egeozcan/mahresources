@@ -203,12 +203,16 @@
                    data-testid="member-compare"
                    href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare</a>
                 {% endif %}
-                {% if member.Ejected %}
+                {# "Put back" is for undoing an ejection, and it works by re-proposing the #}
+                {# deletion — which an out-of-Extent member may never be part of. Its    #}
+                {# only way out of "Ejected" is a promotion, and the server refuses a    #}
+                {# restore of it in any case; the button is simply not drawn.            #}
+                {% if member.Ejected and member.InExtent %}
                 <button type="button" data-testid="member-restore"
                         :disabled="busy"
                         @click="act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})"
                         class="reduction-action reduction-action--small">Put back</button>
-                {% elif not member.IsWinner %}
+                {% elif not member.IsWinner and not member.Ejected %}
                 <button type="button" data-testid="member-eject"
                         :disabled="busy"
                         @click="act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})"

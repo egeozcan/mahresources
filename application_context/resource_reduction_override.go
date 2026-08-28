@@ -37,9 +37,6 @@ var (
 	// ErrReductionClusterSettled refuses an override on a Cluster whose merge has
 	// already happened. Its Losers do not exist any more.
 	ErrReductionClusterSettled = errors.New("this Cluster has already been applied")
-	// ErrReductionWouldDemoteOutsider refuses a promotion that would turn a
-	// Resource outside the Extent into a Loser.
-	ErrReductionWouldDemoteOutsider = errors.New("this Cluster's Winner is outside the Extent and may never be merged away; eject it instead")
 	// ErrReductionEjectWinner refuses ejecting the Winner, which would leave the
 	// Cluster with nothing to merge into.
 	ErrReductionEjectWinner = errors.New("promote another member first: a Cluster cannot lose its Winner")
@@ -49,6 +46,9 @@ var (
 	// ErrReductionRestoreUnpaired refuses putting back a member that has no stored
 	// perceptual pair to the Cluster's current Winner.
 	ErrReductionRestoreUnpaired = errors.New("this Resource has no stored match to the Cluster's Winner, so it cannot be put back")
+	// ErrReductionRestoreOutsider refuses putting back a member outside the Extent.
+	// Restoring one would make it a Loser, and an outsider may never lose.
+	ErrReductionRestoreOutsider = errors.New("this Resource is outside the Extent and may never be merged away, so it cannot be put back")
 )
 
 // OverrideReductionCluster records one review decision.
@@ -160,6 +160,14 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if member == nil {
 			return ErrReductionMemberNotFound
 		}
+		// An outsider may never lose, and putting it back would make it one — the
+		// whole point of restore is to re-propose the deletion. The only way a
+		// member outside the Extent becomes ejected is an automatic one (see
+		// promoteMember), so refusing here can never strand the reviewer's own
+		// decision.
+		if !member.InExtent {
+			return ErrReductionRestoreOutsider
+		}
 		member.Ejected = false
 		member.EjectedReason = ""
 		cluster.Reviewed = true
@@ -250,16 +258,19 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 		return nil
 	}
 
-	// A member outside the Extent may win and may never lose. Promoting past it
-	// would turn it into a Loser, which is the one thing the Extent is there to
-	// prevent.
+	// A member outside the Extent may win and may never lose. Promoting past one
+	// therefore does not demote it — that would leave it a Loser, one apply away
+	// from the destruction the Extent exists to prevent — it ejects it, exactly
+	// like an ejection the reviewer performs: the Resource is untouched and only
+	// leaves the merge proposal. buildCluster guarantees at most one outsider per
+	// Cluster and that it arrives as the Winner, so the ordinary case is one
+	// automatic ejection of the outgoing Winner.
 	for _, existing := range cluster.Members {
 		if existing.InExtent || existing.Ejected {
 			continue
 		}
-		if existing.ResourceID == cluster.WinnerID {
-			return ErrReductionWouldDemoteOutsider
-		}
+		existing.Ejected = true
+		existing.EjectedReason = models.EjectReasonOutsiderDemoted
 	}
 
 	cluster.WinnerID = member.ResourceID
@@ -302,6 +313,14 @@ func (ctx *MahresourcesContext) rejustifyAgainstWinner(cluster *models.Reduction
 	for _, member := range cluster.Members {
 		if member.ResourceID == cluster.WinnerID {
 			member.Distance = nil
+			continue
+		}
+		// An outsider may never lose: whatever its pair state to the new Winner, it
+		// stays out of the merge proposal. Relabelling its ejection no-pair-to-winner
+		// would be the restore path's own trigger — the next promotion whose Winner
+		// does have a surviving pair to the outsider would then read the relabel as
+		// "a previous promotion's lapse" and re-arm it into a Loser.
+		if !member.InExtent {
 			continue
 		}
 		distance, paired := closest[member.ResourceID]

@@ -134,9 +134,43 @@ func TestPromotingInAnIdenticalClusterEjectsNothing(t *testing.T) {
 	assert.ElementsMatch(t, []uint{a.ID, b.ID}, cluster.LoserIDs())
 }
 
-// A Resource outside the Extent may win and may never lose, so a promotion that
-// would demote it is refused rather than silently allowed.
-func TestPromotingPastAnOutOfExtentWinnerIsRefused(t *testing.T) {
+// A Resource outside the Extent may win and may never lose. A promotion past an
+// outsider Winner therefore does not demote it into a Loser — it ejects it: the
+// outsider leaves the merge proposal, untouched, while the in-Extent members get
+// a Winner they can actually merge into. The old behaviour refused the promotion
+// and told the reviewer to "eject it instead", but ejecting the Winner is refused
+// — a catch-22 in which two identical in-Extent copies could never be merged.
+func TestPromotingPastAnOutOfExtentWinnerEjectsTheOutsider(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	inside := addWithHash(t, tc, "inside.txt", "inside body", "shared-hash")
+	second := addWithHash(t, tc, "second.txt", "second body", "shared-hash")
+	outside := addWithHash(t, tc, "outside.txt", "outside body", "shared-hash")
+	setDimensions(t, tc, inside.ID, 100, 100)
+	setDimensions(t, tc, second.ID, 100, 100)
+	setDimensions(t, tc, outside.ID, 800, 800)
+
+	red := createReduction(t, tc, "Promote past the outsider", []uint{inside.ID, second.ID})
+	plan := computeReduction(t, tc, red.ID)
+	cluster := plan.Clusters[0]
+	require.Equal(t, outside.ID, cluster.WinnerID)
+
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, inside.ID)
+	cluster = plan.Clusters[0]
+
+	assert.Equal(t, inside.ID, cluster.WinnerID)
+	member := memberOf(cluster, outside.ID)
+	require.NotNil(t, member)
+	assert.True(t, member.Ejected, "the outsider leaves the merge proposal")
+	assert.Equal(t, models.EjectReasonOutsiderDemoted, member.EjectedReason)
+	assert.NotContains(t, cluster.LoserIDs(), outside.ID, "an outsider may never lose")
+	assert.Equal(t, []uint{second.ID}, cluster.LoserIDs(), "the other in-Extent copy stays mergeable")
+}
+
+// Restoring an ejected outsider would make it a Loser again, and an outsider may
+// never lose. The refusal is the same shape as RestoreUnpaired: the request asks
+// for something the Cluster cannot honour.
+func TestRestoringAnOutOfExtentMemberIsRefused(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	inside := addWithHash(t, tc, "inside.txt", "inside body", "shared-hash")
@@ -144,13 +178,77 @@ func TestPromotingPastAnOutOfExtentWinnerIsRefused(t *testing.T) {
 	setDimensions(t, tc, inside.ID, 100, 100)
 	setDimensions(t, tc, outside.ID, 800, 800)
 
-	red := createReduction(t, tc, "Refused promote", []uint{inside.ID})
+	red := createReduction(t, tc, "Restore the outsider", []uint{inside.ID})
 	plan := computeReduction(t, tc, red.ID)
 	cluster := plan.Clusters[0]
 	require.Equal(t, outside.ID, cluster.WinnerID)
 
-	err := overrideErr(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, inside.ID)
-	assert.ErrorIs(t, err, application_context.ErrReductionWouldDemoteOutsider)
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, inside.ID)
+	require.NotNil(t, memberOf(plan.Clusters[0], outside.ID))
+
+	err := overrideErr(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionRestore, outside.ID)
+	assert.ErrorIs(t, err, application_context.ErrReductionRestoreOutsider)
+}
+
+// Re-arming an auto-ejected outsider into a Loser is the one way an apply could
+// destroy a Resource outside the Extent, and the route to it runs through
+// rejustifyAgainstWinner: a promotion whose new Winner lost the pair to the
+// outsider relabels its ejection no-pair-to-winner, and the promotion after that —
+// whose Winner still has a surviving pair — sees the relabelled reason and
+// "restores" it. With the guard, the reason never changes and the outsider stays
+// out of the merge proposal through any number of promotions and recomputes.
+func TestAutoEjectedOutsiderStaysEjectedAcrossPromotions(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	outsider := addImage(t, tc, "outsider.jpg", 800, 800)
+	a := addImage(t, tc, "a.jpg", 100, 100)
+	b := addImage(t, tc, "b.jpg", 100, 100)
+	pairThem(t, tc, outsider, a, 3)
+	pairThem(t, tc, outsider, b, 3)
+	pairThem(t, tc, a, b, 3)
+
+	red := createReduction(t, tc, "Outsider re-arm", []uint{a.ID, b.ID})
+	plan := computeReduction(t, tc, red.ID)
+	cluster := plan.Clusters[0]
+	require.Equal(t, outsider.ID, cluster.WinnerID)
+
+	// Promote a: the outsider is auto-ejected.
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, a.ID)
+	cluster = plan.Clusters[0]
+	require.Equal(t, a.ID, cluster.WinnerID)
+	o := memberOf(cluster, outsider.ID)
+	require.NotNil(t, o)
+	require.True(t, o.Ejected)
+	require.Equal(t, models.EjectReasonOutsiderDemoted, o.EjectedReason)
+
+	// A similarity recompute drops the outsider→b pair.
+	lo, hi := outsider.ID, b.ID
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	require.NoError(t, tc.DB.Where("resource_id1 = ? AND resource_id2 = ?", lo, hi).
+		Delete(&models.ResourceSimilarity{}).Error)
+
+	// Promote b: the new Winner has no pair to the outsider. The ejection stays —
+	// and it keeps the outsider-demoted reason, because that is the label the
+	// restore path must never treat as "a previous promotion's lapse".
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, b.ID)
+	cluster = plan.Clusters[0]
+	o = memberOf(cluster, outsider.ID)
+	require.NotNil(t, o)
+	require.True(t, o.Ejected)
+	require.Equal(t, models.EjectReasonOutsiderDemoted, o.EjectedReason)
+
+	// Promote a again: the surviving outsider→a pair must not restore the outsider
+	// into a Loser. This is the exact sequence that re-armed it before the guard.
+	plan = override(t, tc, red.ID, cluster.ID, application_context.ReductionActionPromote, a.ID)
+	cluster = plan.Clusters[0]
+	require.Equal(t, a.ID, cluster.WinnerID)
+	o = memberOf(cluster, outsider.ID)
+	require.NotNil(t, o)
+	require.True(t, o.Ejected, "an outsider may never lose, whatever its pairs")
+	assert.Equal(t, models.EjectReasonOutsiderDemoted, o.EjectedReason)
+	assert.NotContains(t, cluster.LoserIDs(), outsider.ID)
 }
 
 // Ejection is a safe action, which is what makes it usable freely: the Resource is
