@@ -15,7 +15,7 @@
         {# label is hidden below 768px, which would otherwise leave the button with #}
         {# nothing but an aria-hidden icon and no accessible name. #}
         <div class="compare-segmented-control" role="radiogroup" aria-label="Comparison mode"
-             @keydown="onRadiogroupKeydown($event, 'mode', ['side-by-side', 'slider', 'onion', 'toggle'])">
+             @keydown="onRadiogroupKeydown($event, 'mode', ['side-by-side', 'slider', 'onion', 'toggle', 'difference'])">
             <button @click="mode = 'side-by-side'" role="radio" :aria-checked="mode === 'side-by-side'" aria-label="Side by side"
                     :tabindex="mode === 'side-by-side' ? 0 : -1"
                     class="compare-seg-btn">
@@ -39,6 +39,15 @@
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="16" cy="12" r="4"/></svg>
                 <span class="compare-seg-label">Toggle</span>
+            </button>
+            {# The accessible name carries what the mode is for, because the visible #}
+            {# label is hidden below 768px and a name of "Difference" alone leaves #}
+            {# the black-is-identical reading to be discovered the hard way. #}
+            <button @click="mode = 'difference'" role="radio" :aria-checked="mode === 'difference'" aria-label="Difference blend: black means identical"
+                    :tabindex="mode === 'difference' ? 0 : -1"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="12" height="12" rx="1"/><rect x="10" y="2" width="12" height="12" rx="1"/><path d="M12 18h8v-8" stroke-dasharray="2 2"/></svg>
+                <span class="compare-seg-label">Difference</span>
             </button>
         </div>
         {# Named for what it does. The toolbar's swap reloads the page with the two #}
@@ -210,6 +219,29 @@
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
             <input type="range" min="0" max="100" x-model.number="opacity" class="w-48" aria-label="Onion skin opacity">
+            <span :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
+        </div>
+    </div>
+
+    <!-- Difference mode -->
+    {# The trail carries mix-blend-mode: difference, so a pixel both versions #}
+    {# painted identically reads black. The box copies onion skin's structure #}
+    {# minus the opacity bar, so it composes with the scale policy, the anchor #}
+    {# and the alignment offset by construction -- same bindings, same box. #}
+    <div x-show="mode === 'difference'">
+        <div class="relative border rounded overflow-hidden compare-overlay-box"
+             :style="overlayBoxStyle"
+             :class="{ 'compare-box-aligning': aligning && alignAvailable }"
+             @mousedown="startAlignDrag($event)"
+             @touchstart="startAlignDrag($event)"
+             @wheel="onAlignWheel($event)">
+            <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
+            <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over compare-overlay-img--difference"
+                 :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
+        </div>
+        <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
+            <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
+            <span class="text-xs text-stone-500">black = identical</span>
             <span :class="swapped ? 'compare-side-label--old' : 'compare-side-label--new'" x-text="trailLabel"></span>
         </div>
     </div>

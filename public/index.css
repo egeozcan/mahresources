@@ -2725,6 +2725,14 @@ html {
     height: auto;
 }
 
+.compare-overlay-img--difference {
+    /* The whole point of the mode: a pixel both versions painted identically
+       reads black. The blend is against what sits under the image in the
+       overlay box -- the lead where the lead paints, the box background where
+       only the trail paints -- so one image alone never disappears to black. */
+    mix-blend-mode: difference;
+}
+
 .compare-slider-handle:focus-visible {
     outline: 3px solid #0f766e;
     outline-offset: 1px;
