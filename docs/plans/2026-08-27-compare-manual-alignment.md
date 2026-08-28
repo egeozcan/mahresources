@@ -113,6 +113,29 @@ pixels and a scale factor, describing slot 1 relative to slot 0.
 
 ## Also from review
 
+Round 35: no majors. One minor and one standards finding, both taken.
+
+- **A move event that lands where it started was counted as a drag.** A pointer
+  can report a move without having travelled. Counted, it announces a
+  correction nobody made and stamps the toggle-click suppression, so the tap
+  the reader meant for the version switch does nothing -- from a press that
+  never left its starting point. The event is still `preventDefault`ed, since a
+  single-finger touchmove reporting the same point is a pan the browser would
+  otherwise scroll with; what it no longer does is count.
+- **The corpus reaches drags, Reset and a re-decode now.** Three gaps the
+  reviewer named: a drag increment is a physical distance recorded by a
+  different conversion than a key press, Reset retires a request mid-window,
+  and a browser re-delivers a report for a slot it has already filled. 2,008
+  interleavings, all converging.
+- The drag step converts screen pixels the way the move handler does, against
+  the box standing at the time. Handing `nudge` a fixed number of *box* pixels
+  instead makes the same script a different physical gesture in each decode
+  order, and the corpus reported a divergence that was its own doing -- worth
+  recording, because a harness that models an input wrongly accuses the code.
+- A pair with identical URLs is deliberately not enumerated: one report fills
+  both slots, so there is no second report and decode order is not a variable.
+  That path has its own test.
+
 Round 34:
 
 - **One ulp of decode-order residue decided what a later operation repaired.**
