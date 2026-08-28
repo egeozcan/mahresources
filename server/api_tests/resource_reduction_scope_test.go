@@ -130,7 +130,7 @@ func TestAClusterIsRefusedWhenTheReviewersScopeHasShrunk(t *testing.T) {
 	// Their access is narrowed. The Loser is now outside what they may see.
 	narrowCtx := scopedTo(t, tc, narrow.ID)
 
-	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, review.Clusters, 1)
 	assert.Equal(t, 1, review.Clusters[0].Withheld,
@@ -186,7 +186,7 @@ func TestAWithheldClusterIsNeitherCountedNorNamed(t *testing.T) {
 
 	narrowCtx := scopedTo(t, tc, narrow.ID)
 
-	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, review.CheckedCount,
 		"a Cluster they cannot see is not in the total the apply confirmation names")
@@ -208,7 +208,7 @@ func TestAWithheldClusterIsNeitherCountedNorNamed(t *testing.T) {
 	assert.True(t, resourceExists(t, tc, loser.ID))
 
 	// The admin, who may see both, gets the whole picture.
-	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, adminReview.Clusters[0].Withheld)
 }
@@ -248,7 +248,7 @@ func TestAWithheldClusterIsRedactedOnTheJSONSurfaceToo(t *testing.T) {
 	hiddenClusterID := plan.Clusters[0].ID
 
 	narrowCtx := scopedTo(t, tc, narrow.ID)
-	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, review.Clusters, 1)
 
@@ -292,12 +292,12 @@ func TestTheExtentCountsShrinkWithTheReviewersAccess(t *testing.T) {
 	}, owner, restricted)
 	require.NoError(t, err)
 
-	admin, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	admin, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, admin.SelectedResources, "an administrator sees the whole selection")
 	assert.Equal(t, 2, admin.SelectedGroups)
 
-	confined, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1)
+	confined, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, confined.SelectedResources,
 		"and a confined reviewer sees only what is theirs, not a count of what is not")
@@ -336,17 +336,17 @@ func TestCoverageIsWithheldFromEverySubtreeConfinedReviewer(t *testing.T) {
 	require.NoError(t, err)
 	awaitReduction(t, tc, red.ID)
 
-	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.True(t, adminReview.CoverageTrusted, "an unconfined principal sees the whole Extent, so it sees the figures")
 	assert.Equal(t, 2, adminReview.Coverage.ExtentSize)
 
-	wideReview, err := wideCtx.GetReductionReview(red.ID, owner, restricted, 1)
+	wideReview, err := wideCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.False(t, wideReview.CoverageTrusted,
 		"even the reviewer who computed it is confined, so the figures are not theirs to read")
 
-	narrowReview, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1)
+	narrowReview, err := scopedTo(t, tc, narrow.ID).GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.False(t, narrowReview.CoverageTrusted)
 
@@ -363,4 +363,87 @@ func TestCoverageIsWithheldFromEverySubtreeConfinedReviewer(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(body), `"extentSize":2`)
 	assert.NotContains(t, string(body), `"contentHashed":2`)
+}
+
+// The review filter must not become an oracle for the fields the redaction
+// strips. A withheld Cluster's tier is a statement about Resources the reviewer
+// may not see, so filtering by tier must not reveal it: the stub disappears from
+// every filtered result, and only fully visible Clusters answer a filter.
+func TestReductionReviewFilterCannotProbeWithheldClusters(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	mine, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Mine"})
+	require.NoError(t, err)
+	theirs, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Theirs"})
+	require.NoError(t, err)
+
+	// A visible Identical Cluster inside the subtree…
+	a := addWithHash(t, tc, "a.txt", "a body", "visible-hash")
+	b := addWithHash(t, tc, "b.txt", "b body", "visible-hash")
+	// …and a Near-Identical Cluster outside it. Its tier is the secret the
+	// filter must not give away.
+	best := addImage(t, tc, "best.jpg", 800, 800)
+	worse := addImage(t, tc, "worse.jpg", 400, 400)
+	pairThem(t, tc, best, worse, 4)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id IN ?", []uint{a.ID, b.ID}).Update("owner_id", mine.ID).Error)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id IN ?", []uint{best.ID, worse.ID}).Update("owner_id", theirs.ID).Error)
+
+	red := createReduction(t, tc, "Oracle", []uint{a.ID, b.ID, best.ID, worse.ID})
+	plan := computeReduction(t, tc, red.ID)
+	require.Len(t, plan.Clusters, 2)
+
+	scoped := scopedTo(t, tc, mine.ID)
+
+	// Unfiltered: the visible Cluster and one stub.
+	unfiltered, err := scoped.GetReductionReview(red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, unfiltered.Clusters, 2)
+	visibleCount, withheldCount := 0, 0
+	for _, view := range unfiltered.Clusters {
+		if view.Withheld > 0 {
+			withheldCount++
+		} else {
+			visibleCount++
+		}
+	}
+	assert.Equal(t, 1, visibleCount, "the Cluster inside the subtree renders")
+	assert.Equal(t, 1, withheldCount, "the one outside renders as a stub")
+
+	// Tier=identical: the visible one matches and the stub is absent.
+	byTier, err := scoped.GetReductionReview(red.ID, owner, restricted, 1, &query_models.ResourceReductionReviewQuery{
+		Tier: []string{models.ReductionTierIdentical},
+	})
+	require.NoError(t, err)
+	require.Len(t, byTier.Clusters, 1)
+	assert.Zero(t, byTier.Clusters[0].Withheld)
+	assert.Equal(t, models.ReductionTierIdentical, byTier.Clusters[0].Tier)
+
+	// Tier=near: the hidden Cluster's real tier must not surface it — the stub
+	// is in no filtered result, and the count stays zero.
+	byNear, err := scoped.GetReductionReview(red.ID, owner, restricted, 1, &query_models.ResourceReductionReviewQuery{
+		Tier: []string{models.ReductionTierNear},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, byNear.Clusters, "the hidden near Cluster is not in the result, so its tier stays unknown")
+	assert.Zero(t, byNear.ClusterCount)
+
+	// The serialised review — what both the HTML and the .json response embed —
+	// carries no trace of the hidden Cluster under the filter: its id is a hash
+	// of the tier and member ids, so its absence is the whole disclosure test.
+	body, err := json.Marshal(byNear)
+	require.NoError(t, err)
+	var hiddenID string
+	for _, cluster := range plan.Clusters {
+		if cluster.Tier == models.ReductionTierNear {
+			hiddenID = cluster.ID
+		}
+	}
+	require.NotEmpty(t, hiddenID)
+	assert.NotContains(t, string(body), hiddenID,
+		"the hidden Cluster's identity is not in the filtered result")
+	assert.NotContains(t, string(body), `"Withheld":1`,
+		"and neither is the stub that would state it exists")
+	assert.NotContains(t, string(body), `"tier":"near"`,
+		"its tier is redacted from every serialisation")
 }

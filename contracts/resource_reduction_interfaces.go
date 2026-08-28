@@ -16,8 +16,10 @@ type ResourceReductionReader interface {
 	GetResourceReductionCount(query *query_models.ResourceReductionQuery) (int64, error)
 	GetResourceReduction(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
 	// GetReductionReview is one page of a Reduction's plan with the Resources
-	// behind it, re-checked against the current principal.
-	GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int) (*ReductionReview, error)
+	// behind it, filtered by the caller's Cluster query. Filtering happens before
+	// pagination, so the page count and the ClusterCount in the review describe
+	// what is shown.
+	GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*ReductionReview, error)
 }
 
 // ResourceReductionWriter provides the mutations the Reduction pages perform.

@@ -58,6 +58,37 @@ async function createReduction(
   return body.id;
 }
 
+/**
+ * Build `count` distinct Identical Clusters (two Resources per cluster, each
+ * pair with its own content hash) and return every member id.
+ */
+async function makeIdenticalPairs(
+  request: APIRequestContext,
+  baseURL: string,
+  apiClient: { createResource: (data: { filePath: string; name: string }) => Promise<{ ID: number; Name: string }> },
+  label: string,
+  count: number,
+): Promise<number[]> {
+  const filePath = path.join(__dirname, '../test-assets/sample-image-10.png');
+  const ids: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const keeper = await apiClient.createResource({ filePath, name: `${label} keeper ${i}` });
+    const twin = await apiClient.createResource({ filePath, name: `${label} twin ${i}` });
+    const stored = await request.get(`${baseURL}/v1/resource/view?id=${keeper.ID}`);
+    expect(stored.ok()).toBeTruthy();
+    const bytes = Buffer.from(await stored.body());
+    const upload = await request.post(`${baseURL}/v1/resource/versions?resourceId=${twin.ID}`, {
+      multipart: {
+        file: { name: 'twin.png', mimeType: 'image/png', buffer: bytes },
+        comment: 'made identical to the keeper',
+      },
+    });
+    expect(upload.ok()).toBeTruthy();
+    ids.push(keeper.ID, twin.ID);
+  }
+  return ids;
+}
+
 async function computeAndWait(request: APIRequestContext, baseURL: string, id: number) {
   const current = await (await request.get(`${baseURL}/v1/reductions`)).json();
   const row = current.reductions.find((r: { id: number }) => r.id === id);
@@ -231,5 +262,89 @@ test.describe('Resource Reduction', () => {
     await page.waitForURL(/\/reduction\?id=\d+/);
     await expect(page.getByTestId('reduction-error')).toBeHidden();
     await expect(page.getByTestId('reduction-page')).toBeVisible();
+  });
+
+  test('the sidebar filters hide and show Clusters by status, server-side', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR filter ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+
+    // Skip the Cluster via the card's own control.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
+      .toHaveText('Skipped');
+
+    // Checking "Skipped" in the sidebar and submitting is a server round trip,
+    // not a browser-side hide: the URL carries the query and the page re-renders.
+    await page.getByRole('checkbox', { name: 'Skipped' }).check();
+    await page.getByRole('button', { name: 'Apply Filters' }).click();
+    await page.waitForURL(/Status=skipped/);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-reopen'))
+      .toBeVisible();
+
+    // Filtering to Open excludes the skipped one entirely, and the empty state
+    // says the filter matched nothing — not that the Extent has no repeats.
+    await page.goto(`/reduction?id=${id}&Status=open`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
+    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
+
+    // A filter-affecting action while filtered: reopening the Cluster from the
+    // `Status=skipped` view removes its card, and the heading count follows the
+    // server's filtered count — the morph re-syncs it rather than leaving it at
+    // the stale pre-action figure.
+    await page.goto(`/reduction?id=${id}&Status=skipped`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-reopen').click();
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
+    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
+    await expect(page.locator('[data-reduction-count]')).toHaveText('(0)');
+  });
+
+  test('an action that empties the current page lands on the last valid page', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR page ${Date.now()}`;
+    // 21 Identical Clusters: page 2 of the Status=open filter holds exactly one.
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 21);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}&Status=open&page=2`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+
+    // Skipping the only Cluster on page 2 drops the match set to 20, so page 2
+    // no longer exists. The refresh follows the server's redirect to page 1 and
+    // adopts its URL without a full reload.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
+    await expect.poll(() => page.url()).toContain('page=1');
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(20);
+    await expect(page.locator('[data-reduction-count]')).toHaveText('(20)');
+  });
+
+  test('Apply can create a second page under a filter, and the pagination appears', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR applypage ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 21);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    // Filtered to a status nothing is in yet: empty. The footer nav renders
+    // even for an empty match set, but with no page links to click.
+    await page.goto(`/reduction?id=${id}&Status=applied`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
+    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
+    await expect(page.locator('nav[aria-label="Pagination"] a')).toHaveCount(0);
+
+    // Applying moves all 21 checked Clusters into the filtered status. The
+    // refreshed page's nav gains the page links it did not have, so page 2 is
+    // reachable without a reload.
+    await page.getByTestId('reduction-apply').click();
+    await page.locator('[role="alertdialog"]').getByRole('button', { name: 'Apply' }).click();
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(20);
+    await expect(page.locator('[data-reduction-count]')).toHaveText('(21)');
+    await page.locator('nav[aria-label="Pagination"]').getByRole('link', { name: 'Page 2' }).click();
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
   });
 });

@@ -6,8 +6,20 @@ import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorp
 // and this page will grow more sections.
 const CLUSTERS = '[data-reduction-clusters]';
 
+// The footer pagination, addressed by its landmark label. It lives in the base
+// layout, outside the body block, so a `.body` fragment never carries it — the
+// refresh below fetches the full page for exactly this reason.
+const PAGINATION = 'nav[aria-label="Pagination"]';
+
 /**
- * The review surface of a Resource Reduction.
+ * The review surface of a Resource Reduction, as a store.
+ *
+ * The page is two columns — the Clusters in the body, the controls in the
+ * sidebar — and the two are separate Alpine roots, so the state they share (the
+ * version, the checked counts, the apply result) cannot live in one component.
+ * A store is what both roots can reach, and it is the app's established pattern
+ * for state that crosses the body/sidebar split (downloads, confirmDialog,
+ * lightbox).
  *
  * Every decision is one POST carrying the version the page last saw, followed by
  * a re-render of the Clusters from the server. Re-rendering rather than patching
@@ -20,23 +32,40 @@ const CLUSTERS = '[data-reduction-clusters]';
  * the only correct response to it is to reload, because a decision made against a
  * plan that no longer exists is not a decision about anything.
  */
-export function reductionReview({ reductionId, version, checkedCount, checkedLoserCount }) {
-  return {
-    reductionId,
-    version,
+export function registerReductionReviewStore(Alpine) {
+  Alpine.store('reductionReview', {
+    reductionId: 0,
+    version: 0,
     // Counted by the server over the whole plan. The page can only see its own
     // Clusters, and apply acts on every page — a confirm that counts checkboxes
     // in this DOM understates the blast radius by however many pages the reviewer
     // has not opened.
-    checkedCount,
-    checkedLoserCount,
+    checkedCount: 0,
+    checkedLoserCount: 0,
     busy: false,
     error: '',
+    applyResult: null,
     // Oversized Near-Identical Clusters must be expanded before they can be acted
     // on, so a chained match cannot delete three hundred files behind one
     // checkbox. Keyed by cluster id; nothing is remembered across a reload,
     // deliberately — the gesture is meant to be made each time.
     expanded: {},
+
+    /**
+     * Seed the store from the server-rendered page. Called from the body root's
+     * x-init, which is the first root in the document; the sidebar's bindings
+     * pick the values up through reactivity before the first paint.
+     *
+     * Not named `init`: Alpine treats an `init` method on a store as its own
+     * registration lifecycle hook and calls it with no arguments, which would
+     * throw on the required `initial`.
+     */
+    seed(initial) {
+      this.reductionId = initial.reductionId;
+      this.version = initial.version;
+      this.checkedCount = initial.checkedCount;
+      this.checkedLoserCount = initial.checkedLoserCount;
+    },
 
     isExpanded(clusterId, oversized) {
       return !oversized || this.expanded[clusterId] === true;
@@ -62,7 +91,6 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
     // Held here rather than re-rendered from the row, because a stale Cluster's
     // reason is about the batch that just ran and the row only says the Cluster is
     // stale.
-    applyResult: null,
 
     async apply() {
       if (this.busy) return;
@@ -73,7 +101,7 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
       }
       const clusters = `${count} Cluster${count === 1 ? '' : 's'}`;
       const losers = `${this.checkedLoserCount} Resource${this.checkedLoserCount === 1 ? '' : 's'}`;
-      const confirmed = await this.$store.confirmDialog.ask(
+      const confirmed = await Alpine.store('confirmDialog').ask(
         `${clusters} will be merged and their Losers deleted — ${losers} across every page of this Reduction, not just this one. This cannot be undone.`,
         { title: 'Apply this Resource Reduction?', confirmLabel: 'Apply' },
       );
@@ -152,16 +180,25 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
     /**
      * Re-render the Clusters from the server.
      *
-     * The `.body` fragment is the same page without its chrome, which is how the
-     * bulk bar refreshes a list. Morphing rather than replacing keeps focus where
-     * the reviewer left it, which matters a great deal here: the whole review is
-     * meant to be operable from the keyboard.
+     * The full page, not the `.body` fragment: the footer pagination lives in
+     * the base layout, and an action under a filter can change how many Clusters
+     * match, so the pagination has to come back with everything else. The server
+     * render cost is identical either way — the context is built fully for a
+     * `.body` request too — and only the response's chrome is extra.
+     *
+     * Morphing rather than replacing keeps focus where the reviewer left it,
+     * which matters a great deal here: the whole review is meant to be operable
+     * from the keyboard.
      */
     async refresh() {
-      const url = new URL(window.location);
-      url.pathname = url.pathname + '.body';
-      const response = await fetch(url.toString());
+      const response = await fetch(window.location.href, { headers: { Accept: 'text/html' } });
       if (!response.ok) throw new Error(`Could not refresh the Clusters: ${response.status}`);
+
+      // An out-of-range page — one an action just emptied — is 302'd to the last
+      // valid page, and the redirected response IS that page. Morph it in and
+      // adopt its URL rather than unloading: a reload would clear the apply
+      // report this page exists to show.
+      const adopted = new URL(response.url);
       const refreshed = new DOMParser().parseFromString(await response.text(), 'text/html');
 
       const current = document.querySelector(CLUSTERS);
@@ -170,15 +207,50 @@ export function reductionReview({ reductionId, version, checkedCount, checkedLos
       Alpine.morph(current, next, morphOptionsWithShortcodeElements());
 
       // The version travels in the page too, so a refresh from any other cause
-      // leaves this component agreeing with what was rendered.
+      // leaves this store agreeing with what was rendered.
       const marker = refreshed.querySelector('[data-reduction-version]');
-      if (marker) {
-        this.version = Number(marker.dataset.reductionVersion);
-        this.checkedCount = Number(marker.dataset.reductionChecked);
-        this.checkedLoserCount = Number(marker.dataset.reductionCheckedLosers);
+      if (!marker) throw new Error('Could not find the refreshed page state');
+      this.version = Number(marker.dataset.reductionVersion);
+      this.checkedCount = Number(marker.dataset.reductionChecked);
+      this.checkedLoserCount = Number(marker.dataset.reductionCheckedLosers);
+
+      // The heading's Cluster count is outside the morphed container, and a
+      // filter-affecting action (skip, reopen, apply) can change what matches.
+      // The refreshed page has already counted the filtered set; copy its
+      // figure in, visible text and raw number together.
+      const countEl = document.querySelector('[data-reduction-count]');
+      const refreshedCount = refreshed.querySelector('[data-reduction-count]');
+      if (!countEl || !refreshedCount) throw new Error('Could not find the refreshed Cluster count');
+      countEl.textContent = refreshedCount.textContent;
+      countEl.dataset.reductionCount = refreshedCount.dataset.reductionCount;
+
+      // The footer pagination, which the base layout renders and the review
+      // action just made stale. Three transitions are possible: morph the new
+      // nav in over the old one, remove a nav the refreshed page no longer has
+      // (the match set dropped to a single page), or — the case a filter can
+      // also produce — insert a nav where there was none (Apply moved Clusters
+      // into the filtered status, creating a multi-page result). The include
+      // sits first in the footer, so that is where an inserted nav belongs.
+      const footer = document.querySelector('footer.footer');
+      const nav = document.querySelector(PAGINATION);
+      const nextNav = refreshed.querySelector(PAGINATION);
+      if (nav && nextNav) {
+        Alpine.morph(nav, nextNav, morphOptionsWithShortcodeElements());
+      } else if (nav && !nextNav) {
+        nav.remove();
+      } else if (!nav && nextNav && footer) {
+        footer.insertBefore(nextNav, footer.firstChild);
+      }
+
+      // Adopt the server's verdict on which page is current: an out-of-range
+      // page was redirected to the last valid one, and the URL must match what
+      // is rendered. replaceState so nothing unloads — the apply report and the
+      // reviewer's scroll survive.
+      if (adopted.pathname + adopted.search !== window.location.pathname + window.location.search) {
+        history.replaceState(null, '', adopted.pathname + adopted.search);
       }
     },
-  };
+  });
 }
 
 const ANNOUNCEMENTS = {
