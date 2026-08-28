@@ -16,7 +16,7 @@ result. The columns depend on the result mode: aggregated `GROUP BY`
 emits the group keys followed by the aggregate aliases; a flat query
 emits a fixed scalar column set for the entity (with `meta` as a JSON
 string); a bucketed `GROUP BY` prepends the bucket-key columns to the
-flat item columns. CSV export requires a single entity type — use
+flat item columns. CSV export requires a single entity type -- use
 `--format json` for cross-entity results, which streams the exact
 `/v1/mrql` response body.
 

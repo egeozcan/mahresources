@@ -14,5 +14,5 @@ vocabulary, and `timeline` for an ASCII activity chart.
 
 Most bulk-mutation commands select targets via `--ids=<csv>`; `merge`
 uses `--winner` / `--losers` instead. The current CLI does not accept
-MRQL selectors on bulk commands — pipe from `groups list --json | jq`
+MRQL selectors on bulk commands -- pipe from `groups list --json | jq`
 to extract IDs when you need query-based selection.

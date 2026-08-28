@@ -151,7 +151,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | `resources` | relation | Related resources (match by name) |
 | `notes` | relation | Related notes (match by name) |
 
-Relation fields also support `.count` comparisons against a non-negative integer — `tags.count = 0`, `resources.count >= 100` — with `=`, `!=`, `>`, `>=`, `<`, `<=`, in filters and `ORDER BY`. `owner` and `parent` are single references and cannot be counted (use `IS NULL`).
+Relation fields also support `.count` comparisons against a non-negative integer -- `tags.count = 0`, `resources.count >= 100` -- with `=`, `!=`, `>`, `>=`, `<`, `<=`, in filters and `ORDER BY`. `owner` and `parent` are single references and cannot be counted (use `IS NULL`).
 
 ### Comparison Operators
 
@@ -199,7 +199,7 @@ Both `~` and `!~` are case-insensitive.
 
 #### Regex Matching (PostgreSQL only)
 
-On PostgreSQL deployments, `~*` and `!~*` match against a case-insensitive POSIX regular expression. Unlike `~`, the pattern is a real regex — no `*`/`?` wildcard shortcuts, no implicit anchoring or `%...%` wrapping:
+On PostgreSQL deployments, `~*` and `!~*` match against a case-insensitive POSIX regular expression. Unlike `~`, the pattern is a real regex -- no `*`/`?` wildcard shortcuts, no implicit anchoring or `%...%` wrapping:
 
 ```
 name ~* "^IMG_[0-9]{4}\.(jpe?g|png)$"    # names like IMG_0421.jpg
@@ -208,9 +208,9 @@ originalName !~* "\.(tmp|bak)$"          # not ending in .tmp or .bak
 
 Allowed on string and `meta.<key>` fields (and string traversal leaves like `owner.name`). Not on numeric, datetime, or relation fields. On SQLite (no native regex) `~*`/`!~*` return an error. An invalid pattern surfaces the database's "invalid regular expression" message.
 
-### Ranges — `BETWEEN`
+### Ranges -- `BETWEEN`
 
-`BETWEEN` matches an inclusive range on both ends; `NOT BETWEEN` is the complement. It works wherever `>=`/`<=` do — dates, numbers (including size units), strings (lexicographic), and `meta.<key>`. Bounds can be any value, including relative dates, `NOW()`, and `$params`:
+`BETWEEN` matches an inclusive range on both ends; `NOT BETWEEN` is the complement. It works wherever `>=`/`<=` do -- dates, numbers (including size units), strings (lexicographic), and `meta.<key>`. Bounds can be any value, including relative dates, `NOW()`, and `$params`:
 
 ```
 created BETWEEN "2024-01-01" AND "2024-06-30"
@@ -356,18 +356,18 @@ A query with no `LIMIT` does not return everything. The server applies a default
 
 Each MRQL statement runs under a deadline set by `-mrql-query-timeout` / `MRQL_QUERY_TIMEOUT`, 10 seconds by default and editable at runtime as `mrql_query_timeout`. A query that exceeds it fails and is recorded as a warning at `/logs` with entity type `mrql`. In cross-entity mode a timed-out entity branch is reported as a warning in the response instead of failing the whole query.
 
-### Random Order — `RANDOM()`
+### Random Order -- `RANDOM()`
 
-`ORDER BY RANDOM()` returns rows in a random order — handy for a random sample with `LIMIT`:
+`ORDER BY RANDOM()` returns rows in a random order -- handy for a random sample with `LIMIT`:
 
 ```
 type = resource AND tags IS EMPTY ORDER BY RANDOM() LIMIT 20
 type = note ORDER BY name, RANDOM()        # random tiebreak within equal names
 ```
 
-`RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. Because the order is re-rolled on every request, paging past the first page (`LIMIT`/`OFFSET`) draws a fresh random sample that can repeat earlier rows — this is the expected "give me N random items" behavior, not stable pagination.
+`RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. Because the order is re-rolled on every request, paging past the first page (`LIMIT`/`OFFSET`) draws a fresh random sample that can repeat earlier rows -- this is the expected "give me N random items" behavior, not stable pagination.
 
-### Relevance Order — `RANK`
+### Relevance Order -- `RANK`
 
 `ORDER BY RANK` sorts full-text results by relevance, most relevant first (no direction needed; `RANK DESC` reverses to least-relevant first):
 
@@ -375,7 +375,7 @@ type = note ORDER BY name, RANDOM()        # random tiebreak within equal names
 type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
 ```
 
-`RANK` requires exactly one `TEXT ~` predicate (its term defines the relevance), a single entity type, and no `GROUP BY`. It errors if the server was started with full-text search disabled (`-skip-fts`) — a relevance sort over the non-indexed fallback would be meaningless.
+`RANK` requires exactly one `TEXT ~` predicate (its term defines the relevance), a single entity type, and no `GROUP BY`. It errors if the server was started with full-text search disabled (`-skip-fts`) -- a relevance sort over the non-indexed fallback would be meaningless.
 
 ## Scope
 
@@ -465,7 +465,7 @@ type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileS
 
 Each result row includes the grouped field values plus one key per aggregate function (e.g., `count`, `sum_fileSize`, `avg_fileSize`).
 
-The response also carries a `columns` array: the column names in the order the query wrote them, grouped fields first and then aggregates. The `/mrql` results table, `mr mrql run` and `mrql export --format csv` all follow it, so the three agree. Read `columns` rather than the key order of a `rows` entry — a JSON object carries no order, and enumerating a row's keys gives you the parser's order, not the query's.
+The response also carries a `columns` array: the column names in the order the query wrote them, grouped fields first and then aggregates. The `/mrql` results table, `mr mrql run` and `mrql export --format csv` all follow it, so the three agree. Read `columns` rather than the key order of a `rows` entry -- a JSON object carries no order, and enumerating a row's keys gives you the parser's order, not the query's.
 
 Add `HAVING` after the aggregate list to keep only buckets whose aggregates match; conditions use aggregate functions (never plain fields) and combine with `AND` / `OR` / `NOT`:
 
@@ -474,7 +474,7 @@ type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC
 type = resource GROUP BY tags COUNT() HAVING SUM(fileSize) > 1gb AND COUNT() >= 10
 ```
 
-Datetime fields can be bucketed by calendar period with `.day`, `.week` (Monday start), `.month`, or `.year` — valid in GROUP BY (both modes) and its ORDER BY only:
+Datetime fields can be bucketed by calendar period with `.day`, `.week` (Monday start), `.month`, or `.year` -- valid in GROUP BY (both modes) and its ORDER BY only:
 
 ```
 type = note GROUP BY created.month COUNT() ORDER BY created.month ASC
@@ -492,7 +492,7 @@ type = note GROUP BY owner ORDER BY name ASC LIMIT 3
 
 In bucketed mode, `LIMIT` applies **per bucket** (maximum items per group), not to the total result set.
 
-A bucketed response carries a `keyColumns` array, the counterpart of `columns` above: the group-by key names in the order the query wrote them, matching the leading columns of `mrql export --format csv`. Each bucket's `key` object may carry entries `keyColumns` does not name — a bucket keyed on a relation field also gets `<field>_id` so two same-named groups stay distinguishable — so read `keyColumns` for order and the `key` object for values.
+A bucketed response carries a `keyColumns` array, the counterpart of `columns` above: the group-by key names in the order the query wrote them, matching the leading columns of `mrql export --format csv`. Each bucket's `key` object may carry entries `keyColumns` does not name -- a bucket keyed on a relation field also gets `<field>_id` so two same-named groups stay distinguishable -- so read `keyColumns` for order and the `key` object for values.
 
 ### ORDER BY with GROUP BY
 
@@ -784,7 +784,7 @@ type = resource GROUP BY meta.camera_model LIMIT 10
 
 ## Parameterized Queries (Reports)
 
-A query may contain `$name` placeholders in **value positions** — anywhere a
+A query may contain `$name` placeholders in **value positions** -- anywhere a
 literal value is accepted (comparison right-hand side, `IN (...)` list items, and
 `HAVING` comparison right-hand side). A placeholder name is `[a-zA-Z_][a-zA-Z0-9_]*`.
 Placeholders are **not** allowed in field names, `LIMIT`/`OFFSET`, `SCOPE`,
@@ -800,7 +800,7 @@ tags IN ($a, $b)
 Parameters make a saved query reusable as a **report**: save it once with
 placeholders, then supply values at run time.
 
-- **Binding is at the value level, never string interpolation** — bound values
+- **Binding is at the value level, never string interpolation** - bound values
   translate to database bind placeholders exactly like typed literals, so they are
   injection-safe by construction. `tag = $t` with `t = 'x" OR 1=1'` is just an
   unusual tag string that matches nothing.
@@ -811,7 +811,7 @@ placeholders, then supply values at run time.
 - **Every placeholder must be supplied.** A missing value is a 400 error listing
   the missing name; an unknown/extra parameter is also rejected (typo protection).
   Names are case-sensitive.
-- **Saving is allowed with unbound placeholders** — validation accepts a
+- **Saving is allowed with unbound placeholders** - validation accepts a
   placeholder against any field type and re-checks compatibility once bound.
 
 On the `/mrql` page, one labeled input appears per placeholder above the Run
@@ -852,10 +852,10 @@ raw parameterized SQL and its bind variables.
 download. `format=csv` (default) or `format=json`. The same inputs as execution
 apply (`query` or `id`/`name`, `params`, `limit`, `page`, `buckets`, `offset`).
 
-- **CSV — aggregated**: the `GROUP BY` keys then the aggregate aliases, in query order.
-- **CSV — flat**: a fixed scalar column set per entity (`meta` as a JSON string).
-  CSV requires a single entity type — use `format=json` for cross-entity results.
-- **CSV — bucketed**: the bucket-key columns prepended to the flat item columns.
+- **CSV -- aggregated**: the `GROUP BY` keys then the aggregate aliases, in query order.
+- **CSV -- flat**: a fixed scalar column set per entity (`meta` as a JSON string).
+  CSV requires a single entity type -- use `format=json` for cross-entity results.
+- **CSV -- bucketed**: the bucket-key columns prepended to the flat item columns.
 - **JSON**: the exact `/v1/mrql` response body as a download.
 
 When no explicit `LIMIT` is present the default is applied and reported via the
@@ -871,5 +871,5 @@ re-submit the current query and parameters.
 
 ## See Also
 
-- [MRQL Reference](./mrql-reference.md) — compact syntax cheatsheet for quick lookup
-- [Saved Queries (SQL)](./saved-queries.md) — the raw-SQL query runner, separate from MRQL saved queries (documented above)
+- [MRQL Reference](./mrql-reference.md) -- compact syntax cheatsheet for quick lookup
+- [Saved Queries (SQL)](./saved-queries.md) -- the raw-SQL query runner, separate from MRQL saved queries (documented above)

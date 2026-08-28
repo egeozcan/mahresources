@@ -9,7 +9,7 @@ sidebar_label: delete
 Delete a saved MRQL query by numeric ID. Destructive: removes the
 database row for the saved query. Any downstream references (bookmarks,
 dashboards, or `[mrql saved="..."]` shortcodes) must be updated
-separately — the server does not rewrite them. Deleting a nonexistent
+separately -- the server does not rewrite them. Deleting a nonexistent
 ID returns exit code 1.
 
 Unlike `mrql run`, the delete subcommand only accepts a numeric ID; pass

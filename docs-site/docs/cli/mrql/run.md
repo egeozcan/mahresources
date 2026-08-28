@@ -10,21 +10,21 @@ Execute a saved MRQL query by name or numeric ID. The argument is tried
 as an ID first and then as a name, so a name that happens to be numeric
 can still be resolved. Returns the same shape as a one-off `mrql` call:
 either a standard result with an `entityType` plus the matching entity
-arrays, or — for `GROUP BY` queries — a grouped result with `mode`
+arrays, or -- for `GROUP BY` queries -- a grouped result with `mode`
 (`aggregated` or `bucketed`) and `rows` / `groups`.
 
 An `aggregated` result also carries `columns`: the column names in the
 order the query wrote them, group-by fields first and then aggregates.
 The table output and `mrql export --format csv` both follow it, so the
-two agree. Read `columns` rather than the key order of a `rows` entry —
+two agree. Read `columns` rather than the key order of a `rows` entry --
 a JSON object carries no order.
 
 A `bucketed` result carries `keyColumns` for the same reason: the
 group-by key names in the order the query wrote them. The per-bucket
 header line and the CSV export's leading columns both follow it. A
-bucket's `key` object may hold entries `keyColumns` does not name — a
+bucket's `key` object may hold entries `keyColumns` does not name -- a
 bucket keyed on a relation field also gets `<field>_id` so two
-same-named groups stay apart — and those are printed after the named
+same-named groups stay apart -- and those are printed after the named
 ones.
 
 Pagination and shaping flags (`--limit`, `--buckets`, `--offset`, plus

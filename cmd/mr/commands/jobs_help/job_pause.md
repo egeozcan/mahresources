@@ -13,7 +13,7 @@ background goroutine is cancelled, discarding the bytes transferred so
 far, and the job stays in the queue with status `paused` until you call
 `job resume`.
 
-Generic jobs (group exports, imports) cannot be paused — their runners
+Generic jobs (group exports, imports) cannot be paused -- their runners
 are not re-entrant. Pause is intended for long URL fetches.
 
 # Example

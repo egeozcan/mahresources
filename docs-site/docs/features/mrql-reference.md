@@ -102,7 +102,7 @@ type = group AND resources.count >= 100 ORDER BY resources.count DESC
 type = resource AND notes.count >= 1 ORDER BY tags.count DESC
 ```
 
-`owner` and `parent` are single references and cannot be counted — use `owner IS NULL` / `parent IS NULL` instead. `IN`, `IS EMPTY`, and `~` are not supported on `.count`.
+`owner` and `parent` are single references and cannot be counted -- use `owner IS NULL` / `parent IS NULL` instead. `IN`, `IS EMPTY`, and `~` are not supported on `.count`.
 
 ## Relative Dates
 
@@ -138,7 +138,7 @@ mr mrql --limit 10 --page 2 'type = note'
 mr mrql run "my-saved-query"
 ```
 
-## SCOPE — Filter to Group Subtree
+## SCOPE -- Filter to Group Subtree
 
 ```
 type = "resource" SCOPE 42 ORDER BY created LIMIT 10
@@ -146,12 +146,12 @@ type = "note" SCOPE "My Project"
 type = "resource" SCOPE 7 GROUP BY contentType COUNT()
 ```
 
-- `SCOPE <id>` — group with that ID plus all descendants.
-- `SCOPE "name"` — lookup by name (case-insensitive); errors listing all matches if multiple groups share the name.
+- `SCOPE <id>` -- group with that ID plus all descendants.
+- `SCOPE "name"` -- lookup by name (case-insensitive); errors listing all matches if multiple groups share the name.
 - Resources / notes scope by `owner_id`; groups scope by `id`.
 - Omit `SCOPE` or use `SCOPE 0` for unfiltered queries.
 
-## GROUP BY — Aggregated Mode
+## GROUP BY -- Aggregated Mode
 
 Aggregate functions present → flat rows of computed values.
 
@@ -165,7 +165,7 @@ type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileS
 
 Output keys: `count`, `sum_{field}`, `avg_{field}`, `min_{field}`, `max_{field}`.
 
-### HAVING — Filter Aggregated Buckets
+### HAVING -- Filter Aggregated Buckets
 
 `HAVING` keeps only buckets whose aggregates match the condition. It requires at least one aggregate function in the `GROUP BY` clause (aggregated mode only) and accepts aggregate comparisons combined with `AND` / `OR` / `NOT` and parentheses. The aggregate in `HAVING` does not need to appear in the aggregate list.
 
@@ -176,7 +176,7 @@ type = note GROUP BY noteType COUNT() HAVING NOT (COUNT() < 5)
 type = resource GROUP BY tags COUNT() HAVING MAX(created) < -1y
 ```
 
-Plain fields are not allowed on the left side of `HAVING` conditions — filter them in the expression before `GROUP BY`.
+Plain fields are not allowed on the left side of `HAVING` conditions -- filter them in the expression before `GROUP BY`.
 
 Note: when `GROUP BY` includes a junction relation (e.g. `tags`), `COUNT()` counts join rows. Grouping by a single relation yields correct per-bucket entity counts; grouping by two relations simultaneously multiplies rows.
 
@@ -190,7 +190,7 @@ type = resource GROUP BY updated.week COUNT()
 type = resource GROUP BY created.year
 ```
 
-## GROUP BY — Bucketed Mode
+## GROUP BY -- Bucketed Mode
 
 No aggregate functions → entities organized into named buckets. `LIMIT` applies per bucket.
 
@@ -220,7 +220,7 @@ type = note AND owner.children.name ~ "Sprint*"
 
 Valid leaf fields after traversal: group scalars (`name`, `description`, `category`, `url`, `id`, `guid`, `created`, `updated`), `tags`, and meta (`meta.<key>`). `parent`, `children` and `owner` are valid as a leaf only with `IS NULL` / `IS NOT NULL` (`owner.parent IS NULL`); comparing them is an error.
 
-### Recursive Traversal — `ancestors.` / `descendants.`
+### Recursive Traversal -- `ancestors.` / `descendants.`
 
 Walk the group hierarchy transitively at any depth (no need to know how many
 `parent.` steps to write). Valid on every entity type.
@@ -232,14 +232,14 @@ type = resource AND ancestors.meta.region = "eu"    # resources under an EU grou
 ```
 
 - Base group: the group itself, or (for resources/notes) the `owner` group.
-- **Strict** — excludes the base group. Combine with `owner`/`parent` to include
+- **Strict** - excludes the base group. Combine with `owner`/`parent` to include
   it: `owner.name = "Archive" OR ancestors.name = "Archive"`.
 - Leaf is exactly one group field: a scalar, `tags`, or `meta.<key>`. No further
   chaining.
 - Negation is existential: `ancestors.category != 3` = *no ancestor has category
   3*. Not supported: `IN`, `IS EMPTY`/`IS NULL`, `ORDER BY`, `GROUP BY`.
 
-### Similarity Search — `SIMILAR TO`
+### Similarity Search -- `SIMILAR TO`
 
 Match resources perceptually similar to a target resource, from the
 precomputed similarity pairs (the same data the resource page's similarity
@@ -286,16 +286,16 @@ type = resource AND tags IS EMPTY ORDER BY RANDOM() LIMIT 20
 type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
 ```
 
-- `RANDOM()` — random order (or a random sample with `LIMIT`). Takes no
+- `RANDOM()` -- random order (or a random sample with `LIMIT`). Takes no
   `ASC`/`DESC`. Not allowed with `GROUP BY`. `LIMIT`/`OFFSET` re-roll the order
-  on each request, so paging a random order can repeat rows — that is the
+  on each request, so paging a random order can repeat rows -- that is the
   expected "give me N random items" behavior.
-- `RANK` — full-text relevance; most relevant first (no direction needed;
+- `RANK` -- full-text relevance; most relevant first (no direction needed;
   `RANK DESC` reverses to least-relevant first). Requires exactly one `TEXT ~`
   predicate, a single entity type, and no `GROUP BY`. Errors if the server was
   started with full-text search disabled (`-skip-fts`).
 
-## Parameters — `$name`
+## Parameters -- `$name`
 
 Placeholders in value positions only (comparison RHS, `IN (...)` items, `HAVING` RHS). Not in field names, `LIMIT`/`OFFSET`, `SCOPE`, `WITHIN`, or `GROUP BY` keys. `$name` inside a quoted string is literal.
 
@@ -304,7 +304,7 @@ type = "resource" AND tags = $tag AND created > $since
 type = "resource" GROUP BY contentType COUNT() HAVING COUNT() > $min
 ```
 
-- Binding is value-level (bind placeholders), never string interpolation — injection-safe.
+- Binding is value-level (bind placeholders), never string interpolation -- injection-safe.
 - A supplied string coerces like a typed literal (`-7d`, `10mb`, `NOW()`, quoted-string unwraps); otherwise a plain string. Force a string with quotes: `--param n='"42"'`.
 - Every placeholder must be supplied (missing → 400); unknown params rejected. Case-sensitive.
 
@@ -317,7 +317,7 @@ API: a `params` object in the JSON body, or `param.<name>=value` query parameter
 
 ## EXPLAIN
 
-`POST /v1/mrql/explain` / `mr mrql explain` — return the SQL a query would run, without executing it. Honours default `LIMIT`, `SCOPE`, and RBAC forced scope. One statement for flat/aggregated; three (resources/notes/groups) for cross-entity; bucketed shows the key-discovery query plus a fan-out note.
+`POST /v1/mrql/explain` / `mr mrql explain` -- return the SQL a query would run, without executing it. Honours default `LIMIT`, `SCOPE`, and RBAC forced scope. One statement for flat/aggregated; three (resources/notes/groups) for cross-entity; bucketed shows the key-discovery query plus a fan-out note.
 
 ```bash
 mr mrql explain 'type = resource AND fileSize > 1mb'
@@ -328,7 +328,7 @@ Web: **Explain** button / `Mod-Shift-Enter`.
 
 ## Export
 
-`GET|POST /v1/mrql/export` / `mr mrql export` — stream results as `format=csv` (default) or `format=json`. Same inputs as execution.
+`GET|POST /v1/mrql/export` / `mr mrql export` -- stream results as `format=csv` (default) or `format=json`. Same inputs as execution.
 
 - CSV aggregated: group keys + aggregate aliases. Flat: fixed scalar columns per entity (`meta` as JSON string); single entity type only. Bucketed: bucket-key columns + flat item columns.
 - JSON: the exact `/v1/mrql` body.
@@ -378,6 +378,6 @@ mr resources list --mrql 'tags = "vacation" AND created > -30d'
 
 ## See Also
 
-- [MRQL Query Language](./mrql.md) — conceptual overview with worked examples
-- [Saved Queries (SQL)](./saved-queries.md) — the raw-SQL query runner, separate from MRQL saved queries
+- [MRQL Query Language](./mrql.md) -- conceptual overview with worked examples
+- [Saved Queries (SQL)](./saved-queries.md) -- the raw-SQL query runner, separate from MRQL saved queries
 - CLI: [`mr mrql`](../cli/mrql/index.md), [`mr mrql run`](../cli/mrql/run.md), [`mr mrql explain`](../cli/mrql/explain.md), [`mr mrql export`](../cli/mrql/export.md), [`mr mrql list`](../cli/mrql/list.md)

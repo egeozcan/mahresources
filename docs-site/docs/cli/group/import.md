@@ -12,8 +12,8 @@ or the `/v1/groups/export` API) as its single positional argument.
 
 The command runs a two-phase job pipeline: first a `parse` job uploads
 the tar, validates the manifest schema version, and produces an
-`ImportPlan` (counts, mappings, conflicts, dangling refs). Then — unless
-`--dry-run` is set — an `apply` job actually creates the groups and
+`ImportPlan` (counts, mappings, conflicts, dangling refs). Then -- unless
+`--dry-run` is set -- an `apply` job actually creates the groups and
 related entities.
 
 Use `--dry-run` to inspect the plan without mutating state. Use

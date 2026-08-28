@@ -15,7 +15,7 @@ creation.
 Content is deduplicated by hash, so re-fetching bytes the server already holds
 never produces a second resource. With no `--owner-id` given, the request is
 refused with HTTP 400 naming the existing one. The doctest below fetches the
-same asset on every run, so its cleanup has to run on *every* exit path — a run
+same asset on every run, so its cleanup has to run on *every* exit path -- a run
 that dies after the create leaves the row behind, and every later run of the
 block then fails on that duplicate however unique its `--name` is. Hence the
 `trap` rather than a trailing `delete`, which `bash -e` would skip.

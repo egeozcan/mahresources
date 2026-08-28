@@ -9,7 +9,7 @@ sidebar_label: save
 Save a named MRQL query for later reuse. Takes two positional arguments:
 `<name>` (a unique label) and `<query>` (the MRQL text). The optional
 `--description` flag attaches a human-readable note. The query text is
-validated at save time — malformed MRQL returns HTTP 400 with a parse
+validated at save time -- malformed MRQL returns HTTP 400 with a parse
 error pointing at the offending token, and the record is not persisted.
 
 The created record is returned; capture `.id` from JSON output to run

@@ -13,7 +13,7 @@ submission time. Each entry exposes enough detail to drive CLI
 dashboards, pause/resume decisions, or cleanup scripts.
 
 The queue lives in server memory; a restart empties it. Pagination is
-not supported — the full list is returned in one response.
+not supported -- the full list is returned in one response.
 
 ## Usage
 

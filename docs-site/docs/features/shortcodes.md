@@ -48,7 +48,7 @@ Shortcodes can also be used as paired opening/closing tags wrapping content:
 [/name]
 ```
 
-Block shortcodes can be nested. The inner content is processed after the outer shortcode decides what to render. Not all shortcodes use block mode — each handler decides whether to use the inner content.
+Block shortcodes can be nested. The inner content is processed after the outer shortcode decides what to render. Not all shortcodes use block mode -- each handler decides whether to use the inner content.
 
 ## Processing
 
@@ -59,7 +59,7 @@ Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. Every
 A shortcode that cannot be expanded never leaks its raw `[…]` source. Instead, the rendered page carries a diagnosable marker:
 
 - **A failing plugin shortcode** renders an inline `<span class="shortcode-error" title="…">⚠ plugin:name:shortcode</span>` with the error in the `title` attribute.
-- **An unclosed `[conditional]`** (used without `[/conditional]`) renders the same inline marker — it can't gate anything as written. The template lint flags this at edit time.
+- **An unclosed `[conditional]`** (used without `[/conditional]`) renders the same inline marker -- it can't gate anything as written. The template lint flags this at edit time.
 - **Structural stops** render an HTML comment rather than visible noise: the recursion depth cap emits `<!-- mr:shortcode depth limit reached -->`, and a context that deliberately wires no query executor or plugin renderer emits `<!-- mr:mrql unavailable in this context -->` / `<!-- mr:plugin unavailable in this context -->`.
 
 ## `[meta]` -- Metadata Display
@@ -130,12 +130,12 @@ That guarantee stops where the browser re-parses the value. Escaping covers `&`,
 | `<button onclick="f('[meta path='u' inline='true']')">` | The HTML parser decodes `&#39;` back to `'` before the script is parsed, so a quote in the value escapes the JS string. Do not interpolate Meta into a handler |
 | `<div style="color:[meta path='u' inline='true']">` | CSS injection; escaping does not apply to CSS syntax |
 | `<iframe srcdoc="… [meta path='u' inline='true']">` | The browser decodes `srcdoc` and parses it as a document, so escaping buys nothing anywhere in the value |
-| anything with `raw="true"` | Nothing is escaped at all — in an attribute the value can close it, and in ordinary text a value like `<img src=x onerror=…>` becomes a real element |
+| anything with `raw="true"` | Nothing is escaped at all -- in an attribute the value can close it, and in ordinary text a value like `<img src=x onerror=…>` becomes a real element |
 | a Custom CSS slot | The whole slot is a stylesheet, so `;` and `}` in a value start new declarations. The editor knows because it sends the slot's language along with the content |
-| `<script>… [meta path='u' inline='true'] …</script>` | A script body decodes no entities, so the value reaches JavaScript verbatim — `${…}` in a template literal is not escaped at all. Pass it in through a `data-` attribute instead |
+| `<script>… [meta path='u' inline='true'] …</script>` | A script body decodes no entities, so the value reaches JavaScript verbatim -- `${…}` in a template literal is not escaped at all. Pass it in through a `data-` attribute instead |
 | `<style>… [meta path='u' inline='true'] …</style>` | Likewise for CSS: `;` and `}` are untouched |
 | `<div @click="f('[meta path='u' inline='true']')">` | Alpine evaluates a directive's value as JavaScript after the parser has decoded the escaping, exactly as `on*` does. `x-*`, `@*` and a leading `:` are all directives |
-| `<div data-[meta path='u' inline='true']="x">` | Interpolating a *name* — nothing delimits it, so a space or `=` in the value adds attributes |
+| `<div data-[meta path='u' inline='true']="x">` | Interpolating a *name* -- nothing delimits it, so a space or `=` in the value adds attributes |
 
 This matters because the two halves have different authors: an admin or editor writes the template, but the Meta value it interpolates is written by anyone who can edit the entity -- which includes the plain `user` role.
 
@@ -221,7 +221,7 @@ Renders a struct field value from the entity object itself (not metadata). Uses 
 - `Tags.0.Name` indexes into a slice (a purely numeric segment); an out-of-range index renders empty.
 - A `nil` pointer, missing field, or out-of-range index anywhere along the path renders empty (or the `default`).
 
-The shortcode never triggers database loads by design (list pages render many cards). Related structs resolve only where the page already preloaded them — detail pages preload `Owner`; card contexts may not. When a related struct is not loaded, the path renders empty.
+The shortcode never triggers database loads by design (list pages render many cards). Related structs resolve only where the page already preloaded them -- detail pages preload `Owner`; card contexts may not. When a related struct is not loaded, the path renders empty.
 
 ### Formatting
 
@@ -318,7 +318,7 @@ An explicit `SCOPE` clause in the MRQL query takes precedence over the attribute
 
 ### Per-page query budget
 
-Because a category's `Custom*` templates render once per card, an entity-scoped `[mrql]` in a `CustomSummary` runs **one query per card** — so a list page of many cards can execute many queries. Identical queries within a single render are deduplicated by a per-page cache and cost nothing; each distinct query counts against the per-page budget (`-mrql-page-query-budget`, default 200). Once the budget is spent, further distinct `[mrql]` queries render the standard error box ("inline query budget exceeded (N per page)…") instead of executing, and one warning per page is logged. Raise the flag if a legitimately dense page trips it, or set `0` to disable. See [Advanced configuration](../configuration/advanced.md#inline-mrql-page-query-budget).
+Because a category's `Custom*` templates render once per card, an entity-scoped `[mrql]` in a `CustomSummary` runs **one query per card** -- so a list page of many cards can execute many queries. Identical queries within a single render are deduplicated by a per-page cache and cost nothing; each distinct query counts against the per-page budget (`-mrql-page-query-budget`, default 200). Once the budget is spent, further distinct `[mrql]` queries render the standard error box ("inline query budget exceeded (N per page)…") instead of executing, and one warning per page is logged. Raise the flag if a legitimately dense page trips it, or set `0` to disable. See [Advanced configuration](../configuration/advanced.md#inline-mrql-page-query-budget).
 
 ### Nesting
 
@@ -651,10 +651,10 @@ Resolves a detail-page URL for the current entity or a related target.
 
 ### Targets
 
-- `self` (default) — the current entity's detail page (`/group?id=`, `/resource?id=`, `/note?id=` by entity type).
-- `owner` — the owning group (`/group?id=`). For resources and notes this is their group; for groups it is the parent group.
-- `root` — the root of the ownership chain (`/group?id=`).
-- `category` — the entity's category/type page (`/category?id=`, `/resourceCategory?id=`, `/noteType?id=`).
+- `self` (default) -- the current entity's detail page (`/group?id=`, `/resource?id=`, `/note?id=` by entity type).
+- `owner` -- the owning group (`/group?id=`). For resources and notes this is their group; for groups it is the parent group.
+- `root` -- the root of the ownership chain (`/group?id=`).
+- `category` -- the entity's category/type page (`/category?id=`, `/resourceCategory?id=`, `/noteType?id=`).
 
 ### Inline vs Block
 
@@ -670,7 +670,7 @@ Resolves a detail-page URL for the current entity or a related target.
   [link to="owner"]Back to group[/link]
   ```
 
-When the target cannot be resolved (unknown `to`, an unset category, or an owner/root that is not resolvable), the inline form renders nothing and the block form renders its inner content without a wrapping anchor — never a link to a placeholder ID.
+When the target cannot be resolved (unknown `to`, an unset category, or an owner/root that is not resolvable), the inline form renders nothing and the block form renders its inner content without a wrapping anchor -- never a link to a placeholder ID.
 
 ### Examples
 
@@ -693,7 +693,7 @@ Renders its inner content once per element of an array meta value.
 
 ### How It Works
 
-`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element — use `[item]` for element data.
+`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
 
 ### `[item]`
 
@@ -716,7 +716,7 @@ Renders its inner content once per element of an array meta value.
 [/each]
 
 [each path="ingredients"]
-  <li>[item index="true"]. [item path="name"] — [item path="qty" default="?"]</li>
+  <li>[item index="true"]. [item path="name"] -- [item path="qty" default="?"]</li>
 [else]
   <p>No ingredients.</p>
 [/each]
@@ -837,9 +837,9 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
 - `aria-busy` is set on the content being refreshed and on the button, and the button greys out. On the icon form the glyph also spins, which `prefers-reduced-motion` suppresses.
 - Activation announces "Reloading" politely, then "Content reloaded" on success. A fast reload coalesces the two.
 - On failure the previous content is left exactly as it was, "Could not reload the content" is announced assertively, and a "Reload failed." marker appears beside the button so the stale content is not mistaken for fresh.
-- The button is normally inside the content it replaces. If it had focus when it was activated, and focus has not moved elsewhere in the meantime, focus goes to the equivalent reload button in the fresh content; if no reload button survives the re-render, it goes to the refreshed container, then to the first thing inside it that can hold focus, and failing that outwards to the nearest ancestor that can — so the reader is never dropped onto `<body>`. A region wrapper is `display: contents` and generates no box, so it cannot always take focus itself, and content that came back as bare text offers nothing inside to land on.
+- The button is normally inside the content it replaces. If it had focus when it was activated, and focus has not moved elsewhere in the meantime, focus goes to the equivalent reload button in the fresh content; if no reload button survives the re-render, it goes to the refreshed container, then to the first thing inside it that can hold focus, and failing that outwards to the nearest ancestor that can -- so the reader is never dropped onto `<body>`. A region wrapper is `display: contents` and generates no box, so it cannot always take focus itself, and content that came back as bare text offers nothing inside to land on.
 - Repeat activations while a reload is in flight are ignored. If the page itself re-renders while a reload is in flight (an Alpine morph), that reload is abandoned: the button becomes clickable again immediately against the newly rendered content, and the abandoned request reports neither success nor failure.
-- When one reload encloses another — a region reload and a `[lazy]` block inside it — the later activation wins in both directions, regardless of which response arrives first. Replacing a region also replaces every block inside it, so letting the slower answer land would put back a render older than the one the reader just asked for. The superseded button is released the moment it is overtaken rather than when its own request answers, so a slow or hung request cannot leave a live button spinning and unclickable.
+- When one reload encloses another -- a region reload and a `[lazy]` block inside it -- the later activation wins in both directions, regardless of which response arrives first. Replacing a region also replaces every block inside it, so letting the slower answer land would put back a render older than the one the reader just asked for. The superseded button is released the moment it is overtaken rather than when its own request answers, so a slow or hung request cannot leave a live button spinning and unclickable.
 
 ### Limitations
 
@@ -847,7 +847,7 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
 - The block body is the face of a `<button>`, so keep it to phrasing content: a button may not contain links or other interactive elements. Two cases are refused outright rather than left to produce invalid markup, and the template linter flags both:
   - **A `[reload]` inside another `[reload]`.** Nested buttons are repaired differently by every browser, and each repair leaves two controls in the accessibility tree. The outer `[reload]` renders a `⚠ reload` marker instead of a button. The body's *source* is checked as well as its rendered output, because a `[lazy]`/`[details]` inside the face is sealed rather than expanded, so a `[reload]` within it would be invisible at render time and arrive inside the button when the deferred fetch landed.
   - **A `[lazy]` or `[details]` inside a `[reload]`.** Both emit a block-level element, which a button may not contain. Each renders its own `⚠` marker in place. This is also what stops the deferred-nesting case above from reaching the page by way of a `[partial]`, whose source the checks on the button's own body never see.
-- A region token carries the slot's own source, so a `[reload]` in a `CustomSummary` adds one sealed copy of that slot per card on a list page. The sealed token runs about **1.34x the size of the raw slot body** (base64 over a nonce and an authentication tag), so a 2 KB `CustomSummary` adds roughly 2.7 KB per card — about 135 KB on a 50-card page. The ciphertext is randomised, so identical slots across cards do not compress against each other. This scales with cards rendered per page, not with database size. Putting the `[reload]` inside a `[lazy]` mints no region at all, because the block's own token (which `[lazy]` seals regardless) serves the button. That only shrinks the page when the deferred body is smaller than the whole slot, but it never adds a second copy on top.
+- A region token carries the slot's own source, so a `[reload]` in a `CustomSummary` adds one sealed copy of that slot per card on a list page. The sealed token runs about **1.34x the size of the raw slot body** (base64 over a nonce and an authentication tag), so a 2 KB `CustomSummary` adds roughly 2.7 KB per card -- about 135 KB on a 50-card page. The ciphertext is randomised, so identical slots across cards do not compress against each other. This scales with cards rendered per page, not with database size. Putting the `[reload]` inside a `[lazy]` mints no region at all, because the block's own token (which `[lazy]` seals regardless) serves the button. That only shrinks the page when the deferred body is smaller than the whole slot, but it never adds a second copy on top.
 - A description is sealed **after** its Markdown and mention filters have run, so a `[reload]` written in one re-evaluates the shortcodes inside it but replays the surrounding prose as it stood when the page loaded. Edits to the description text itself need a page load.
 
 ## Plugin Shortcodes

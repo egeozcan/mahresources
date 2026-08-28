@@ -88,7 +88,7 @@ mr group export 42 --no-wait
 | `--no-tag-defs` | bool | `false` | disable --include-tag-defs |
 | `--include-group-relation-type-defs` | bool | `true` | include GroupRelationType defs (D3, default on) |
 | `--no-group-relation-type-defs` | bool | `false` | disable --include-group-relation-type-defs |
-| `--schema-defs` | string | `selected` | schema-def shortcut (all|none|selected — selected defers to individual --include-*-defs flags) |
+| `--schema-defs` | string | `selected` | schema-def shortcut (all|none|selected; selected defers to individual --include-*-defs flags) |
 | `--gzip` | bool | `false` | gzip the output tar |
 | `--output` | string | `` | output file path (default stdout) |
 | `--wait` | bool | `true` | wait for the job to finish before returning |

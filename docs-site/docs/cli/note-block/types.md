@@ -9,7 +9,7 @@ sidebar_label: types
 List every block type the server knows about, including built-in types
 (`text`, `heading`, `todos`, `gallery`, `references`, `table`,
 `calendar`, `divider`) and any types registered by active plugins. Each
-entry includes `defaultContent` and `defaultState` — the canonical
+entry includes `defaultContent` and `defaultState` -- the canonical
 empty-payload shapes you should extend when creating a block of that
 type. Useful for discovering the content/state schema a given type
 expects before calling `note-block create` or `note-block update`.

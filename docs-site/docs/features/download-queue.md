@@ -107,7 +107,7 @@ All three are editable at runtime via `/admin/settings`. A zero value falls back
 ## Where downloads may point
 
 A download URL is supplied by a user and fetched by the server, so the queue
-refuses any URL that resolves to a **private** address — loopback, link-local
+refuses any URL that resolves to a **private** address -- loopback, link-local
 (including the cloud metadata endpoint), RFC1918 and carrier-grade NAT. Public
 hosts are unaffected, except `168.63.129.16`, Azure's host-internal
 platform-agent endpoint, which is refused like a private address despite being
@@ -117,7 +117,7 @@ To download from your own network, name the addresses with
 `-allow-private-fetch`; see
 [Fetching from your own network](../configuration/overview.md#fetching-from-your-own-network).
 A download refused this way fails with a "blocked request" error that
-deliberately does not name the address the URL resolved to — the submitter is not
+deliberately does not name the address the URL resolved to -- the submitter is not
 told which internal addresses exist. The full detail, including the resolved
 address, is written to the activity log for administrators.
 

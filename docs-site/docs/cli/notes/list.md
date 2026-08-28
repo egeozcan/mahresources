@@ -16,8 +16,8 @@ type. Pagination is via the global `--page` flag (default page size 50).
 
 `--mrql` applies an MRQL filter expression, with `type = "note"`
 implied (the same expression the list-page filter bar accepts). It uses
-the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
-`SCOPE`, or `$name` parameters — and composes with the other filter
+the WHERE-clause grammar only -- no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters -- and composes with the other filter
 flags via AND. Example: `--mrql 'tags = "todo" AND created > -7d'`.
 
 ## Usage

@@ -537,7 +537,7 @@ end
 abort propagates, so a before-hook's veto stays a veto.
 
 **What joins the transaction.** Every `mah.db` call, `mah.kv` write and
-`mah.log` line made while `fn` runs — including those made by *another* plugin's
+`mah.log` line made while `fn` runs -- including those made by *another* plugin's
 `before_*` hook that your writes fire. Stored key-value data and log lines are
 written to the same database, so they roll back with everything else.
 
@@ -561,7 +561,7 @@ different reasons:
 | `mah.http.get` / `post` / `request` | raises | the request is sent immediately; a rollback cannot recall it |
 
 The first four hold the database write lock for as long as they wait, and every
-other writer in the process fails once its lock timeout expires — which is why a
+other writer in the process fails once its lock timeout expires -- which is why a
 read is on the list too. The last two are the opposite problem: neither the
 filesystem nor a webhook has a rollback. Read and fetch first, then open the
 transaction and write what you got; delete resources and fire requests outside
@@ -570,7 +570,7 @@ one.
 The asynchronous `mah.http` calls raise instead of reporting through their
 callback, unlike every other error on that surface. Their callback runs on a
 later goroutine, after your frame has returned but while the transaction may
-still be open, so a `mah.db` write from inside it would escape the transaction —
+still be open, so a `mah.db` write from inside it would escape the transaction --
 answering the refusal there would build the escape the refusal exists to
 prevent.
 

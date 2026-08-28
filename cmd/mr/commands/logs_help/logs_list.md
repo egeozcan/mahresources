@@ -18,7 +18,7 @@ as `2026-04-15T00:00:00Z`.
 Pagination uses the global `--page` flag with a fixed page size of 50.
 The response wraps the `logs` array with `totalCount`, `page`, and
 `perPage` so scripts can walk the full result set. JSON output uses
-lowercase keys throughout — match them exactly when building jq
+lowercase keys throughout -- match them exactly when building jq
 filters.
 
 # Example

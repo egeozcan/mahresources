@@ -13,7 +13,7 @@ ID, name, description (truncated), and creation timestamp.
 
 To execute a listed query, use `mrql run <name-or-id>`. To inspect the
 stored MRQL text itself, use `mrql list --json` and extract the `.query`
-field — there is no dedicated `mrql get` subcommand.
+field -- there is no dedicated `mrql get` subcommand.
 
 ## Usage
 

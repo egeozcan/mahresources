@@ -34,7 +34,7 @@ policy doing exactly what it promises.
 One case is reported by neither an error nor a recorded run: if the
 plugin's VM is still busy when the dispatch budget runs out, the handler
 is never entered. That is "did not start" rather than "failed", so
-nothing is written to the row and no outcome is recorded — the schedule
+nothing is written to the row and no outcome is recorded -- the schedule
 is simply left as it was. Re-read `mr plugin schedules` to tell the two
 apart: a run that happened moves `runs`.
 

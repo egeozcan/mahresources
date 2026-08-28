@@ -14,7 +14,7 @@ creating intermediate objects as needed and leaving siblings at every
 level untouched, so writing an object at `address` drops the keys
 `address` already held. The response carries the full updated Meta.
 
-Values must be valid JSON literals — string values need to be quoted
+Values must be valid JSON literals -- string values need to be quoted
 twice (bash single quotes around a JSON-quoted string), as in the
 examples below.
 

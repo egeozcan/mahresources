@@ -119,23 +119,23 @@ The share server runs on a separate port and serves only these routes plus the s
 
 ## Note Type Templates on Shared Pages
 
-By default a public share page ignores the note type's [custom templates](../features/custom-templates.md) — it renders only the note's own name, description, and blocks. A note type can opt in to applying its presentation to shared pages with the **Apply templates to public share pages** checkbox on the note type form (`ApplyTemplatesToShares`, off by default, so existing shares never change appearance without an explicit choice).
+By default a public share page ignores the note type's [custom templates](../features/custom-templates.md) -- it renders only the note's own name, description, and blocks. A note type can opt in to applying its presentation to shared pages with the **Apply templates to public share pages** checkbox on the note type form (`ApplyTemplatesToShares`, off by default, so existing shares never change appearance without an explicit choice).
 
 When enabled, two slots apply to the `/s/<token>` page for notes of that type:
 
-- **Custom Header** — rendered above the note content.
-- **Custom CSS** — injected as an inline `<style>` block.
+- **Custom Header** - rendered above the note content.
+- **Custom CSS** - injected as an inline `<style>` block.
 
 The other slots (Custom Sidebar, Custom Summary, Custom Avatar, Custom MRQL Result) do **not** apply: a share page has no sidebar and no card/list context.
 
 Templates run in a **restricted mode** appropriate to an anonymous, unauthenticated surface:
 
-- **No queries.** `[mrql]` shortcodes do not execute — running queries on the public surface would leak data beyond the shared note and add unauthenticated database load. They render as an HTML comment, not as results and not as leaked shortcode text.
-- **No plugins.** Plugin shortcodes (`[plugin:...]`) do not run — plugin code executes against the unscoped database. They also render as an HTML comment.
+- **No queries.** `[mrql]` shortcodes do not execute -- running queries on the public surface would leak data beyond the shared note and add unauthenticated database load. They render as an HTML comment, not as results and not as leaked shortcode text.
+- **No plugins.** Plugin shortcodes (`[plugin:...]`) do not run -- plugin code executes against the unscoped database. They also render as an HTML comment.
 - **Read-only metadata.** `[meta]` renders in display mode only: the share page never shows an edit control that would POST back to the primary server. Note that the metadata **value itself is still published** onto the public page as read-only text, so a shared Custom Header that references a `[meta]` field exposes that field's value to anyone with the URL.
 - **Whole-page reload.** A `[reload]` button renders normally, but a share page renders its slots without the deferred tokens that make a single block or slot re-renderable, so there is nothing smaller for the button to refresh -- activating it reloads the whole page.
 
-`[property]`, `[conditional]`, `[each]`, `[link]`, and `[partial]` work normally — they are pure functions over the already-shared note.
+`[property]`, `[conditional]`, `[each]`, `[link]`, and `[partial]` work normally -- they are pure functions over the already-shared note.
 
 ## Interactive Blocks on Shared Notes
 

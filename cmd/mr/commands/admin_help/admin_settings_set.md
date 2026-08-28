@@ -6,7 +6,7 @@ relatedCmds: admin settings reset, admin settings get, admin settings list
 
 # Long
 
-Override a runtime setting. The override persists to the database and takes effect on the next use of the setting — no restart required. The command prints the updated setting view so you can confirm the new value.
+Override a runtime setting. The override persists to the database and takes effect on the next use of the setting -- no restart required. The command prints the updated setting view so you can confirm the new value.
 
 Size values accept suffix notation (e.g., `1G`, `500M`, `2048K`). Duration values use Go's time.ParseDuration format (`30s`, `5m`, `2h`). Use `--reason` to record why the change was made; the reason is stored in the database and shown by `mr admin settings get`.
 

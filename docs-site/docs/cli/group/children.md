@@ -15,7 +15,7 @@ children; the command exposes no flag to raise that, so use
 A group with no children returns an empty array.
 
 Field names on tree-node responses are lowercase (`id`, `name`), not
-PascalCase — unlike full Group objects returned by `group get`.
+PascalCase -- unlike full Group objects returned by `group get`.
 
 ## Usage
 

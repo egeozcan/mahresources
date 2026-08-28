@@ -21,8 +21,8 @@ top-level groups. The JSON output is a flat array. Use
 
 `--mrql` applies an MRQL filter expression, with `type = "group"`
 implied (the same expression the list-page filter bar accepts). It uses
-the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
-`SCOPE`, or `$name` parameters — and composes with the other filter
+the WHERE-clause grammar only -- no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters -- and composes with the other filter
 flags via AND. Example: `--mrql 'descendants.category = "Archive"'`.
 
 # Example

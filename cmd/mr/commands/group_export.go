@@ -245,7 +245,7 @@ func registerExportFlags(cmd *cobra.Command, opts *exportCmdOptions) {
 		return nil
 	}
 
-	cmd.Flags().StringVar(&opts.SchemaDefsShortcut, "schema-defs", "selected", "schema-def shortcut (all|none|selected — selected defers to individual --include-*-defs flags)")
+	cmd.Flags().StringVar(&opts.SchemaDefsShortcut, "schema-defs", "selected", "schema-def shortcut (all|none|selected; selected defers to individual --include-*-defs flags)")
 	cmd.Flags().BoolVar(&opts.Gzip, "gzip", false, "gzip the output tar")
 	cmd.Flags().StringVarP(&opts.OutputPath, "output", "o", "", "output file path (default stdout)")
 	cmd.Flags().Bool("wait", true, "wait for the job to finish before returning")

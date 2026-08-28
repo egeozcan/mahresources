@@ -243,7 +243,7 @@ The CustomSummary template appears in list views. Keep it compact:
 The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:
 
 - **Group cards** (via Category) and **Note cards** (via Note Type): CustomAvatar **replaces the default initials avatar**. When it is empty, the initials avatar shows instead.
-- **Resource cards** (via Resource Category): resource cards are thumbnail-led and have no initials avatar to replace, so CustomAvatar is **shown next to the category name** under the thumbnail — the thumbnail always remains.
+- **Resource cards** (via Resource Category): resource cards are thumbnail-led and have no initials avatar to replace, so CustomAvatar is **shown next to the category name** under the thumbnail -- the thumbnail always remains.
 
 This is intentional, not an inconsistency; avatar-replacement on resource cards would be a feature change, not a fix.
 
@@ -353,7 +353,7 @@ Shortcodes are processed against **the row's resource**, so `[meta]` and `[prope
 Unlike the other slots, both are processed with **the category/type itself as the entity**, not a member group/resource/note. This has four consequences:
 
 - `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
-- `[meta]` renders its empty state — a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
+- `[meta]` renders its empty state -- a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
 - `[mrql]` resolves against **global scope** (not a group subtree), so dashboard queries count across the whole instance. Add an explicit `scope="..."` attribute if you want to narrow it.
 - `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]` and `[details]` render inline here instead of deferring.
 

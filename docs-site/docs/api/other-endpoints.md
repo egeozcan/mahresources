@@ -506,7 +506,7 @@ curl -X POST "http://localhost:8181/v1/query/run?name=Recent%20Resources" \
   -H "Accept: application/json"
 ```
 
-The response is `{"columns": [...], "rows": [[...], ...]}` — the `SELECT` list in
+The response is `{"columns": [...], "rows": [[...], ...]}` -- the `SELECT` list in
 its own order, and one array of values per row, index-aligned with it. See
 [Saved Queries](../features/saved-queries.md#run-a-query) for the repeated-column
 and column-type rules, and for what changed from the previous array-of-objects
@@ -552,7 +552,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, effective max: 50 — larger values are clamped) |
+| `limit` | integer | Maximum results (default: 20, effective max: 50 -- larger values are clamped) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`, `mrqlQuery`) |
 
 #### Example
@@ -792,12 +792,12 @@ Legacy alias: `GET /v1/download/queue`
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /v1/jobs/cancel?id={job_id}` | Cancel a job that has not finished — pending, downloading, processing or paused. A finished job answers `409 Conflict`; an unknown id answers `404`. |
+| `POST /v1/jobs/cancel?id={job_id}` | Cancel a job that has not finished -- pending, downloading, processing or paused. A finished job answers `409 Conflict`; an unknown id answers `404`. |
 | `POST /v1/jobs/pause?id={job_id}` | Pause a download job. A job in a state that cannot be paused answers `409 Conflict`. |
 | `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
 | `GET /v1/jobs/get?id={job_id}` | Return one job snapshot by id. Answers `404` for an unknown id or a job the caller may not see. No legacy alias. |
-| `POST /v1/jobs/clearCompleted` | Dismiss every finished job the caller can see; active and paused jobs are kept. Answers `{"cleared": N, "ids": ["<job id>", ...]}`, naming the jobs that were removed — which rows are finished is decided when the request is handled, so a caller cannot work it out from its own earlier view of the queue. |
+| `POST /v1/jobs/clearCompleted` | Dismiss every finished job the caller can see; active and paused jobs are kept. Answers `{"cleared": N, "ids": ["<job id>", ...]}`, naming the jobs that were removed -- which rows are finished is decided when the request is handled, so a caller cannot work it out from its own earlier view of the queue. |
 
 Downloads can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
 

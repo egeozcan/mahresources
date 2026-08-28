@@ -240,7 +240,7 @@ Object values are automatically detected and rendered as smart widgets when they
 |-------|---------------|---------|
 | **URL / Location** | `href` + `host` or `hostname` | Clickable link with host subtitle |
 | **GeoLocation** | `latitude` + `longitude` (or `lat` + `lng`) | Coordinates with OpenStreetMap link |
-| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 — Apr 1, 2024" |
+| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 -- Apr 1, 2024" |
 | **Dimensions** | `width` + `height` (both numbers) | "1920 × 1080" |
 
 Shape detection runs automatically. To override it, use the `x-display` annotation (see below).

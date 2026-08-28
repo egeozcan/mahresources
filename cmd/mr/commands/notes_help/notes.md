@@ -13,7 +13,7 @@ bulk removal, `meta-keys` for discovering the meta-schema vocabulary,
 and `timeline` for ASCII activity charts.
 
 Bulk-mutation commands select targets via `--ids=<csv>`. The current
-CLI does not support MRQL selectors on bulk commands — pipe from
+CLI does not support MRQL selectors on bulk commands -- pipe from
 `notes list --json | jq` to extract IDs when you need query-based
 selection. Every bulk command is all-or-nothing on the note IDs: one
 unknown note ID refuses the whole batch and changes nothing.

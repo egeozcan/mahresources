@@ -11,7 +11,7 @@ For the complete DSL syntax reference (operators, fields, GROUP BY, SCOPE, trave
 MRQL (Mahresources Query Language) is a small DSL for querying the
 mahresources data model across Resources, Notes, and Groups. A single
 expression selects an entity type and applies filters, scope, ordering,
-limit, and optional `GROUP BY` aggregations with `HAVING` — for example
+limit, and optional `GROUP BY` aggregations with `HAVING` -- for example
 `type = resource AND tags = "photo"`,
 `type = resource GROUP BY contentType COUNT()`, or
 `type = resource GROUP BY hash COUNT() HAVING COUNT() > 1`. Relation

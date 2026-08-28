@@ -8,7 +8,7 @@ relatedCmds: log get, log entity, admin
 The plural `logs` command group reads the server's activity log across
 the whole system rather than a single entry. It exposes filtered,
 paginated listings so scripts can audit changes, inspect recent
-deletes, or build dashboards. Only read operations are provided — the
+deletes, or build dashboards. Only read operations are provided -- the
 log is append-only and the server writes it automatically as entities
 change.
 

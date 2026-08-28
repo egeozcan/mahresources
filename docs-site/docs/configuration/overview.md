@@ -109,7 +109,7 @@ rate-limiting, and proxy-header trust have their own flags -- see
 ## Runtime vs. boot-only settings
 
 Most flags apply only at startup. A [curated subset](./runtime-settings.md) can
-be changed at runtime via the admin UI, CLI, or API — no restart needed.
+be changed at runtime via the admin UI, CLI, or API -- no restart needed.
 
 Boot-only settings include: database DSN, bind addresses, file save path,
 ephemeral mode, alt filesystems, share port, FTS initialization, worker pool
@@ -123,7 +123,7 @@ URL** (`/v1/resource/remote`), the background **download queue**, and the
 from whoever is using the app, and the fetch happens from the server.
 
 That means the server can be asked to fetch things the person asking could not
-reach themselves — an admin panel on the internal network, a database's HTTP
+reach themselves -- an admin panel on the internal network, a database's HTTP
 interface, or, on a cloud host, the instance metadata endpoint at
 `169.254.169.254`, which hands out credentials to anything that asks. The
 response is then stored as a resource, or rendered on the page.
@@ -148,8 +148,8 @@ and is already covered as link-local. Name it in
 
 ### Allowing specific internal hosts
 
-If you genuinely fetch from your own network — a NAS, an internal calendar
-server, a file server — name what it may reach:
+If you genuinely fetch from your own network -- a NAS, an internal calendar
+server, a file server -- name what it may reach:
 
 ```bash
 ./mahresources -allow-private-fetch=192.168.1.5,10.0.0.0/8
@@ -164,7 +164,7 @@ than as a mysteriously failing download:
 
 - **Name addresses or CIDR blocks, not hostnames.** The check is applied to the
   address a name resolves to, so a hostname in this list could never match
-  anything — it would look like it permitted something while permitting nothing.
+  anything -- it would look like it permitted something while permitting nothing.
   Worse, a public hostname whose DNS record points at an internal address would
   otherwise sail through.
 - **Blocks must be reasonably narrow.** A prefix shorter than `/8` (and the
@@ -176,7 +176,7 @@ than as a mysteriously failing download:
   refused for being too broad; name the specific block or address you need.
 
 A refused fetch is reported to the user as a blocked request that does not name
-the address the URL resolved to — otherwise a list of failed downloads would map
+the address the URL resolved to -- otherwise a list of failed downloads would map
 your internal network for anyone allowed to submit one. The full detail,
 including the resolved address, is written to the [activity log](../features/activity-log.md)
 by all three paths, where an administrator can read it.

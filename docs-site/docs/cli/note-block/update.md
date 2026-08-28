@@ -10,7 +10,7 @@ Replace a block's `content` payload. Takes the block ID as a positional
 argument and the new content as `--content` JSON. The content shape
 must match the block's type (see `note-block types` for the default
 content schema of each built-in type). This command does not touch the
-block's `state`, `position`, or `type` — use `note-block update-state`
+block's `state`, `position`, or `type` -- use `note-block update-state`
 for state changes and `note-blocks reorder` for position changes. The
 parent Note is affected in one way: updating its first `text` block also
 rewrites the Note's description.

@@ -1,5 +1,5 @@
 ---
-outputShape: Array of objects with shape [{"key": string}] — one entry per distinct Meta key across all Groups
+outputShape: Array of objects with shape [{"key": string}] -- one entry per distinct Meta key across all Groups
 exitCodes: 0 on success; 1 on any error
 relatedCmds: group edit-meta, groups add-meta
 ---

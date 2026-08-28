@@ -119,12 +119,12 @@ The `entity_ref` param type lets a plugin action accept references to one or mor
 ### Behavior
 
 - The picker UI opens layered over the action modal. It applies the effective filter (per-param `filters` if set, else inherits `action.filters`).
-- The handler receives the IDs as `ctx.params.<name>` — a Lua number for `multi=false`, a Lua table of numbers for `multi=true`. Server-side validation guarantees every ID exists and matches the filter at request time.
+- The handler receives the IDs as `ctx.params.<name>` -- a Lua number for `multi=false`, a Lua table of numbers for `multi=true`. Server-side validation guarantees every ID exists and matches the filter at request time.
 - `default` controls what the picker is prefilled with:
-  - `"trigger"` (default when omitted) — the entity the action was launched from.
-  - `"selection"` — IDs from the current bulk-selection store.
-  - `"both"` — union of trigger and selection (requires `multi=true`).
-  - `""` — empty; user picks every entry.
+  - `"trigger"` (default when omitted) -- the entity the action was launched from.
+  - `"selection"` -- IDs from the current bulk-selection store.
+  - `"both"` -- union of trigger and selection (requires `multi=true`).
+  - `""` -- empty; user picks every entry.
 - Trigger and selection are silently ignored if `param.entity` does not match the action's launch entity type. (Example: an action declared `entity = "resource"` with an `entity_ref entity = "group" default = "trigger"` will open with an empty picker on resource pages, since the trigger resource ID is not a valid group ID.)
 
 ### Constraints
@@ -386,7 +386,7 @@ Content-Type: application/json
 A bulk sync run is **not atomic**: each entity runs in turn and every write it
 made is committed before the next one starts. So a handler that fails partway
 through returns `200` with one entry per submitted entity, positionally, the
-failed ones carrying `success: false` and a message — not a `5xx` that would
+failed ones carrying `success: false` and a message -- not a `5xx` that would
 describe none of what already happened. A **single**-entity run is different and
 keeps its error status, because nothing about it is partial.
 

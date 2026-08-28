@@ -12,7 +12,7 @@ jobs that have already completed, failed, or been cancelled, answering
 HTTP 409 Conflict. On success the server marks the job `cancelled` and
 leaves it in the queue for inspection.
 
-Use `jobs list` to see which jobs are eligible — any job with a status
+Use `jobs list` to see which jobs are eligible -- any job with a status
 other than pending, downloading, processing, or paused cannot be
 cancelled.
 

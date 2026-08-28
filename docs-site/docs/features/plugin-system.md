@@ -56,7 +56,7 @@ plugin = {
 
 The name is validated at discovery: lower case, starting with a letter, up to 50 characters of `a-z`, `0-9`, `-` and `_`. It is a URL segment in every menu href and the prefix of every shortcode the plugin registers, so a name outside that grammar is skipped with a warning rather than loaded. Two directories declaring the same name are both skipped, because the name is what a plugin's enabled state, settings and KV namespace belong to.
 
-A plugin that declares `api_version` receives only the capabilities it lists — plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
+A plugin that declares `api_version` receives only the capabilities it lists -- plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
 
 ## Plugin Lifecycle
 

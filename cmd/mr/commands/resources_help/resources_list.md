@@ -23,8 +23,8 @@ subgroups, recursively. It has no effect without `--owner-id`.
 
 `--mrql` applies an MRQL filter expression, with `type = "resource"`
 implied (the same expression the list-page filter bar accepts). It uses
-the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
-`SCOPE`, or `$name` parameters — and composes with the other filter
+the WHERE-clause grammar only -- no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters -- and composes with the other filter
 flags via AND. An invalid expression returns an error. Example:
 `--mrql 'tags = "vacation" AND created > -30d'`.
 

@@ -16,7 +16,7 @@ a non-zero exit and the server's per-field errors; a key the plugin does
 not declare is dropped rather than refused, so a misspelled name fails
 quietly.
 
-This command replaces the stored values wholesale — keys omitted from
+This command replaces the stored values wholesale -- keys omitted from
 the `--data` payload are not preserved. Run `plugins list --json` to
 inspect the current `values` object before writing a new one.
 

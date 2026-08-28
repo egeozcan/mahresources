@@ -22,7 +22,7 @@ Names must be unique across all Queries.
 
 1. The SQL in `text` is executed via `sqlx` using the configured query connection
 2. Named parameters (`:paramName` syntax) are substituted from user input
-3. Results are returned as `{columns, rows}` — the `SELECT` list in its own order, and one array of values per row
+3. Results are returned as `{columns, rows}` -- the `SELECT` list in its own order, and one array of values per row
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
 If `DB_READONLY_DSN` points to a database-enforced read-only connection, writes are blocked at the database level. Without that, queries still run, but they are not database-enforced read-only.
@@ -80,7 +80,7 @@ objects keyed by column name, which is what these templates have always iterated
 
 Two further variables carry the response exactly as the API sends it: `columns` (the `SELECT` list
 in order) and `rows` (one array of values per row, index-aligned with `columns`). `results` is a
-convenience projection built from those, and it is lossy in one case — when a column name appears
+convenience projection built from those, and it is lossy in one case -- when a column name appears
 twice, the object keeps only the last of the two values. Read `columns` and `rows` when that
 matters.
 
@@ -275,12 +275,12 @@ to spell:
 
 - A column declared `json` or `jsonb` (Postgres), or `JSON` (the SQLite type
   mahresources' `meta` / `section_config` columns are declared with), holds a JSON
-  document and is inlined as structure — including when the document is a scalar,
+  document and is inlined as structure -- including when the document is a scalar,
   so `'123'::jsonb` is the number `123`.
 - Every other column is its text. A `text` column spelling `123` stays the string
   `"123"`; so does a `numeric`, a `uuid`, an array (`{a,b}`), and a `bytea` whose
   bytes happen to read as JSON.
-- Bytes that are not valid UTF-8 — a `bytea` of real binary — are base64-encoded,
+- Bytes that are not valid UTF-8 -- a `bytea` of real binary -- are base64-encoded,
   which is the only representation JSON has for them.
 - `NULL` is `null`.
 
@@ -293,9 +293,9 @@ or parse client-side, if you need the document.
 
 Before this rule, a value was typed by sniffing its bytes: anything that parsed
 as a JSON object or array became one. That made the same document have two types
-depending on how the driver handed it over — on SQLite,
+depending on how the driver handed it over -- on SQLite,
 `SELECT json_object('a',1)` was the string `"{\"a\":1}"` while
-`SELECT CAST(json_object('a',1) AS BLOB)` was the object `{"a":1}` — and it left
+`SELECT CAST(json_object('a',1) AS BLOB)` was the object `{"a":1}` -- and it left
 scalar `jsonb` values as quoted strings. If you were relying on a `bytea` or BLOB
 being re-parsed into structure, parse it yourself.
 

@@ -6,7 +6,7 @@ sidebar_position: 5
 
 Most configuration flags bind once at startup. A curated subset can be
 overridden at runtime via the `/admin/settings` page, the `mr admin settings`
-CLI, or the `/v1/admin/settings` HTTP API — no restart required.
+CLI, or the `/v1/admin/settings` HTTP API -- no restart required.
 
 ## How precedence works
 
@@ -51,9 +51,9 @@ boot value.
 `max_upload_size` bounds one **request** body. That distinction matters on the
 create-resource page, which has two ways of submitting:
 
-- **Native post** — the browser sends every selected file in one multipart body,
+- **Native post** - the browser sends every selected file in one multipart body,
   so `max_upload_size` caps the batch as a whole.
-- **Client-side widget** — above `upload_widget_file_threshold` files *or*
+- **Client-side widget** - above `upload_widget_file_threshold` files *or*
   `upload_widget_size_threshold` bytes, the page sends one request per file,
   `upload_concurrency` at a time, with a progress bar and per-file errors. Each
   file is then capped individually, and the widget refuses an oversized file in
@@ -78,4 +78,4 @@ the key as `entity_name`, old→new values in `message`, and the request IP in
 
 See [`mr admin settings`](../cli/admin/settings/index.md).
 
-<!-- SCREENSHOT: /admin/settings — regenerate via retake-screenshots skill -->
+<!-- SCREENSHOT: /admin/settings -- regenerate via retake-screenshots skill -->

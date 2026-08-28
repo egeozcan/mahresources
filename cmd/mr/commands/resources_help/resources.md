@@ -15,5 +15,5 @@ annotation, `delete` / `merge` for destructive operations,
 
 Most bulk-mutation commands select targets via `--ids=<csv>`; `merge`
 uses `--winner` / `--losers` instead. The current CLI does not support
-MRQL selectors on bulk commands — pipe from `resources list --json | jq`
+MRQL selectors on bulk commands -- pipe from `resources list --json | jq`
 to extract IDs when you need query-based selection.

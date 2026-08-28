@@ -69,7 +69,7 @@ mah.job_fail(job_id, "API returned 500")
 
 Plugins can create action jobs programmatically using `mah.start_job(label, fn)`, without requiring a user to click an action button. The job is an `ActionJob` with `source: "plugin"`, `actionId: "start_job"`, and `entityType: "custom"`. The callback runs in a background goroutine with a 5-minute timeout and receives the `job_id` as its first argument.
 
-The job is **owned by whoever triggered the plugin code that called it**, so a non-admin sees the work they started. With authentication disabled the job has no owner, which is only visible to admins — the same rule every other job follows. Any `mah.db` write the callback makes is attributed to that same user.
+The job is **owned by whoever triggered the plugin code that called it**, so a non-admin sees the work they started. With authentication disabled the job has no owner, which is only visible to admins -- the same rule every other job follows. Any `mah.db` write the callback makes is attributed to that same user.
 
 ```lua
 local job_id = mah.start_job("Import data", function(job_id)

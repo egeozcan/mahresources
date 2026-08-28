@@ -58,7 +58,7 @@ end)
 
 ### When Hooks Run Relative to the Database
 
-An **after hook runs once the change is durable** — after the transaction that made it has committed. A bulk delete of fifty notes commits, then fires fifty `after_note_delete` hooks; if the transaction rolls back, none of them fire. This means a write your after hook makes through `mah.db` is an ordinary write, not one contending with a transaction that is still open.
+An **after hook runs once the change is durable** -- after the transaction that made it has committed. A bulk delete of fifty notes commits, then fires fifty `after_note_delete` hooks; if the transaction rolls back, none of them fire. This means a write your after hook makes through `mah.db` is an ordinary write, not one contending with a transaction that is still open.
 
 A **before hook can veto, and a veto means the change does not happen.** On a bulk operation that covers the whole batch: aborting the deletion of one resource in a selection of fifty leaves all fifty in place, and aborting the deletion of one merge loser rolls the entire merge back.
 
@@ -79,14 +79,14 @@ The rule applies per plugin: it never suppresses a *different* plugin's hook. (A
 
 ### When a Hook's Plugin Is Busy
 
-A plugin is single-threaded, so a hook may have to wait for its own plugin's VM — a long `mah.http.*_sync` call holds it for up to 120 seconds. A hook dispatched from **inside another plugin's code** waits at most 5 seconds, which stops two plugins that hook each other's writes from deadlocking. What happens then depends on which side of the operation the hook is on:
+A plugin is single-threaded, so a hook may have to wait for its own plugin's VM -- a long `mah.http.*_sync` call holds it for up to 120 seconds. A hook dispatched from **inside another plugin's code** waits at most 5 seconds, which stops two plugins that hook each other's writes from deadlocking. What happens then depends on which side of the operation the hook is on:
 
 | | On timeout |
 |---|---|
 | **Before hook** | The operation **fails** with an error. The hook that could not run might have been the one that would have vetoed, so proceeding would let unrelated contention silently disable a guard. |
 | **After hook** | Skipped and logged. The change has already committed, so this is a missed notification, not a bypassed check. |
 
-A hook dispatched from ordinary application code — the common case — waits as long as it needs to and is never skipped for this reason.
+A hook dispatched from ordinary application code -- the common case -- waits as long as it needs to and is never skipped for this reason.
 
 The same split decides what a **cancelled request** does to a hook that is waiting. A before hook stops waiting when the caller that made the write goes away, and the write fails; nothing was written, so nobody is left believing otherwise, and it is the answer the table above already gives for a busy VM. An after hook never stops waiting. It describes a change that has already committed, so abandoning it would leave your plugin's view of the database permanently out of step with the database, and a browser tab that closed is not a reason for that. Hooks deferred by [`mah.db.transaction`](./plugin-lua-api.md#transactions) make that plainer still: they are dispatched when the transaction commits, by which point the request that started it is often gone by design.
 
@@ -152,7 +152,7 @@ The handler receives `job_id`, `source`, `status`, `name`, `url`, `error`, plus
 :::note These need the `job_events` capability, not `hooks`
 
 An entity hook fires on a write the caller just made. A job event fires when
-*any* job in the deployment finishes, whoever started it — so it is its own
+*any* job in the deployment finishes, whoever started it -- so it is its own
 capability. A plugin holding only `hooks` is refused at load, with an error
 naming the capability it needs.
 :::
@@ -162,7 +162,7 @@ one: those run on the plugin job system and report through `mah.job_complete` an
 `mah.job_fail`.
 
 They are **after-only**: a job that has already finished cannot be vetoed, and
-returning a modified table changes nothing. Delivery is best-effort — the queue
+returning a modified table changes nothing. Delivery is best-effort -- the queue
 hands the event to a dispatcher and never waits, so under sustained load an
 event can be dropped rather than delay a download. A dropped event is logged.
 
@@ -319,7 +319,7 @@ page render re-sends the same bytes through the VM lock.
 
 `main.js` is a module and therefore deferred, and the `head` slot is emitted
 after it. Two deferred scripts run in document order, so a deferred or module
-plugin script runs **after** `Alpine.start()` — `alpine:init` has already fired
+plugin script runs **after** `Alpine.start()` -- `alpine:init` has already fired
 and your plugin silently does nothing.
 
 A classic `<script src>` runs before Alpine starts, which is early enough to
@@ -335,7 +335,7 @@ document.addEventListener('alpine:init', () => {
 ```
 :::
 
-**No capability is required.** Serving a file grants the plugin nothing — the Lua
+**No capability is required.** Serving a file grants the plugin nothing -- the Lua
 VM has no filesystem access at all, so your plugin cannot read these files; the
 host reads them, from a directory whoever installed the plugin already wrote.
 An asset matters only when something references it, and every surface that can

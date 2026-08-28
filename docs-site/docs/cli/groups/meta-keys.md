@@ -50,7 +50,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of objects with shape [&#123;"key": string&#125;] — one entry per distinct Meta key across all Groups
+Array of objects with shape [&#123;"key": string&#125;] -- one entry per distinct Meta key across all Groups
 
 ## Exit Codes
 
