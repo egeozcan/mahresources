@@ -417,13 +417,13 @@
         "groups",
         "resources"
       ],
-      "seedDetails": "Resources with CreatedAt dates spanning 2020-2026. Some resources updated after creation.",
+      "seedDetails": "110 resources spread across 24 monthly buckets (2024-09 to 2026-08), 2-7 per month, owned by 5 groups.",
       "viewport": {
         "width": 1200,
         "height": 800
       },
       "interactions": [],
-      "capturedDate": ""
+      "capturedDate": "2026-08-28"
     },
     "schema-editor-modal.png": {
       "page": "/category?id=1",
