@@ -1,12 +1,12 @@
 ---
 name: retake-screenshots
-description: Retake all docs-site screenshots with richly seeded data. Builds the app, starts an ephemeral server, seeds realistic data, captures 30 screenshots via Playwright, and updates the manifest.
+description: Retake all docs-site screenshots with richly seeded data. Builds the app, starts an ephemeral server, seeds realistic data, captures 31 screenshots via Playwright, and updates the manifest.
 argument-hint: "[--skip-seed] [--only=dashboard,grid-view,...] [--port=8181]"
 ---
 
 # Retake Docs-Site Screenshots
 
-Captures all 30 screenshots for the docs-site with realistic, populated seed data. The process is fully automated: build, seed, screenshot, cleanup.
+Captures all 31 screenshots for the docs-site with realistic, populated seed data. The process is fully automated: build, seed, screenshot, cleanup.
 
 ## Usage
 
@@ -35,6 +35,8 @@ Find an available port (default 8181) and start the server:
 Wait until `curl -s http://localhost:8181 > /dev/null` succeeds.
 
 Skip this step if the user passed `--skip-seed` and a server is already running.
+
+Use a file-backed DB (`-db-type=SQLITE -db-dsn=...`) instead of `-ephemeral` if the run includes `timeline-view` — step 3l has to reach the rows with `sqlite3`.
 
 ### Step 3: Seed realistic data
 
@@ -229,6 +231,37 @@ curl -X POST "$API_URL/reduction" -H "Content-Type: application/json" \
 
 Leave one uncomputed ("Not computed yet") and give one `"matchingMode":"identical"`.
 
+#### 3l. Backdated resources (the timeline shot)
+
+The timeline chart buckets by `created_at`, and every resource the seed creates
+is stamped with *now*, so an unmodified seed draws one bar. The rows have to be
+backdated in the database, which is why this shot needs a **file-backed** SQLite
+DB rather than `-ephemeral`:
+
+```bash
+./mahresources -db-type=SQLITE -db-dsn=$TMPDIR/seed.db -file-save-path=$TMPDIR/files \
+  -bind-address=:$PORT -max-db-connections=2 &
+```
+
+Upload ~110 resources (unique bytes each — `AddResource` deduplicates on content
+hash and hands back the existing row, so repeated uploads of one file give one
+resource), then spread them over the 24 months ending with the current one, 2-7
+per month, so the bars differ in height:
+
+```sql
+PRAGMA trusted_schema=ON;  -- else the FTS triggers refuse: "unsafe use of virtual table"
+UPDATE resources SET created_at='2025-04-11T14:03:00.000000+02:00',
+                     updated_at='2025-04-11T14:03:00.000000+02:00' WHERE id=42;
+```
+
+Match the stored format exactly, **including the local UTC offset** — these are
+text timestamps and every comparison is lexicographic, so a bare
+`2025-04-11 14:03:00` buckets wrong or falls out of the window entirely. The
+offset changes with DST, so pick it per month.
+
+Monthly is the default granularity and the window is anchored at today, so data
+older than ~24 months is off-screen and does not need to be seeded.
+
 ### Step 4: Take screenshots with Playwright
 
 Write a temporary `e2e/take-screenshots.mjs` script and run it with `npx tsx`:
@@ -241,7 +274,7 @@ const page = await context.newPage();
 // waitUntil: 'load' (NOT 'networkidle' — causes timeouts)
 ```
 
-#### Screenshot inventory (30 here; the manifest also carries 5 schema-editor and timeline shots)
+#### Screenshot inventory (31 here; the manifest also carries 5 schema-editor shots)
 
 | # | File | URL | Interactions |
 |---|------|-----|-------------|
@@ -275,6 +308,7 @@ const page = await context.newPage();
 | 28 | reduction-review.png | /reduction?id=1 | Scroll to the Clusters heading, clear of the 36px sticky `<header>` |
 | 29 | reduction-list.png | /reductions | — |
 | 30 | reduction-bulk-action.png | /resources | Click "Select All", click `bulk-reduction-action`, fill `bulk-reduction-name` |
+| 31 | timeline-view.png | /resources/timeline | Needs the backdated rows from 3l; wait ~2s for the chart to draw |
 
 All screenshots go to `docs-site/static/img/`.
 
@@ -293,7 +327,7 @@ Update `docs-site/static/img/screenshot-manifest.json` with the current date for
 ### Step 7: Verify
 
 - Run `cd docs-site && npm run build` to verify all image references resolve
-- Confirm all 30 PNGs exist in `docs-site/static/img/`
+- Confirm all 31 PNGs exist in `docs-site/static/img/`
 - Confirm `screenshot-manifest.json` is valid JSON
 
 ## Gotchas
