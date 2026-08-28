@@ -2468,7 +2468,12 @@ describe('manual alignment', () => {
       c.toggleAligning();
       const button = { closest: () => null };
       c.startAlignDrag(press(100, 100, button, frame(800, 600, true)));
-      dom.fire('mousemove', { clientX: 100, clientY: 100 });
+      // Still prevented, and that half is not incidental: a single-finger
+      // touchmove reporting the same point is a pan, and letting it through
+      // scrolls the page out from under the gesture. Only the counting stops.
+      let prevented = false;
+      dom.fire('mousemove', { clientX: 100, clientY: 100, preventDefault() { prevented = true; } });
+      expect(prevented).toBe(true);
       dom.fire('mouseup', { clientX: 100, clientY: 100 });
       expect(c.offsetAnnouncement).toBe('');
       // The click that follows is the reader's, and it switches versions.

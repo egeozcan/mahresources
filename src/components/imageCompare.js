@@ -41,21 +41,6 @@ function invertOffset(t) {
 }
 
 /**
- * Add `delta` to `current` without snapping a value that is already outside.
- *
- * A flip derives the inverse of the reader's correction, and the inverse of an
- * extreme correction is legitimately more extreme than this side's own bound --
- * `dx = 600, k = 0.25` inverts to `dx = -2400, k = 4`. Clamping that on the
- * first arrow press would move the image by the whole difference instead of by
- * one pixel, silently destroying an alignment the reader had made.
- *
- * So the range is widened to include wherever the value already is. From
- * outside, a nudge travels toward the range and stops at its near edge -- it
- * never refuses an inward gesture, and never overshoots through the range and
- * out the far side, which a "must reduce the distance" rule allows: from 100
- * against a range of [-10, 10], a delta of -150 satisfies that rule at -50.
- */
-/**
  * Whether a translation sits inside the range its geometry allows.
  *
  * With slack, because the answer decides PROVENANCE and not appearance: a
@@ -79,6 +64,21 @@ function withinRange(value, range) {
   return value >= range.min - slack && value <= range.max + slack;
 }
 
+/**
+ * Add `delta` to `current` without snapping a value that is already outside.
+ *
+ * A flip derives the inverse of the reader's correction, and the inverse of an
+ * extreme correction is legitimately more extreme than this side's own bound --
+ * `dx = 600, k = 0.25` inverts to `dx = -2400, k = 4`. Clamping that on the
+ * first arrow press would move the image by the whole difference instead of by
+ * one pixel, silently destroying an alignment the reader had made.
+ *
+ * So the range is widened to include wherever the value already is. From
+ * outside, a nudge travels toward the range and stops at its near edge -- it
+ * never refuses an inward gesture, and never overshoots through the range and
+ * out the far side, which a "must reduce the distance" rule allows: from 100
+ * against a range of [-10, 10], a delta of -150 satisfies that rule at -50.
+ */
 function boundedNudge(current, delta, range) {
   const low = Math.min(range.min, current);
   const high = Math.max(range.max, current);
@@ -1098,7 +1098,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // reports the same point is still a pan the browser would otherwise
         // scroll with.
         moveE.preventDefault();
-        // But a move event that lands on the point it started from is not a
+        // ONLY the counting stops below: keep that call above this guard, or a
+        // single-finger pan scrolls the page out from under the gesture.
+        //
+        // A move event that lands on the point it started from is not a
         // drag. Nothing travelled, so nothing can have moved the offset, and
         // counting it announces a correction nobody made and swallows the
         // click that would have switched versions.

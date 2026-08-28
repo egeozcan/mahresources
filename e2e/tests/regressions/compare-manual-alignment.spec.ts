@@ -335,6 +335,31 @@ test.describe.serial('compare page manual alignment', () => {
     await expect(readout(page)).toHaveText(/0, 0, 100%/);
   });
 
+  test('the armed box says it is a drag surface, in the mode whose box is a button', async ({ page }) => {
+    // Cursor is the only affordance the armed box has, and it is the one thing
+    // here no unit test can hold: it depends on which stylesheet wins. Toggle
+    // mode's box is the sharp case -- a `<button>` carrying `cursor-pointer`,
+    // one class against `.compare-box-aligning`'s one, in a file linked after
+    // `index.css`. It still loses, because Tailwind v4 emits its utilities
+    // inside `@layer utilities` and an unlayered rule outranks every layered
+    // one whatever its specificity or order. That is a load-bearing property of
+    // a file this component does not own, so it is asserted rather than
+    // assumed: move `index.css` into a layer and this goes red.
+    await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+    await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+    const box = page.locator('button.compare-overlay-box');
+    await expect(box).toBeVisible();
+    await expect(box).toHaveCSS('cursor', 'pointer');
+
+    await alignButton(page).click();
+    await expect(alignButton(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(box).toHaveCSS('cursor', 'move');
+
+    // And back, so the affordance tracks the mode rather than latching.
+    await alignButton(page).click();
+    await expect(box).toHaveCSS('cursor', 'pointer');
+  });
+
   test('an armed drag on the slider handle still moves the reveal, not the image', async ({ page }) => {
     // The handle lives inside the box whose `mousedown` starts an alignment
     // drag, and its own `mousedown` bubbles there. Without the guard an armed
