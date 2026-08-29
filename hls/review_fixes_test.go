@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -891,10 +892,68 @@ func TestAGapPlaylistIsRefused(t *testing.T) {
 // a permitted 16 MiB playlist of two-character lines is eight million of them
 // -- 128 MiB spent inside the function that exists to stop a playlist spending
 // memory.
+// It measures *bytes*, not allocation count: strings.Split takes one large
+// allocation, so a count-based assertion passes on the very implementation this
+// exists to reject.
 func TestCountTagsDoesNotAllocatePerLine(t *testing.T) {
-	text := strings.Repeat("#\n", 200_000)
-	allocs := testing.AllocsPerRun(1, func() { countTags(text) })
-	if allocs > 8 {
-		t.Errorf("countTags made %.0f allocations over a 200k-line playlist, want a constant few", allocs)
+	text := strings.Repeat("#\n", 500_000)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	countTags(text)
+	runtime.ReadMemStats(&after)
+
+	grew := after.TotalAlloc - before.TotalAlloc
+	// A split of half a million lines is ~8 MiB of string headers alone.
+	if grew > 1<<20 {
+		t.Errorf("countTags allocated %d bytes over a 500k-line playlist, want next to none", grew)
+	}
+}
+
+// TestEveryRawScanIsAllocationFree covers the other three, which were left on
+// strings.Split when countTags was fixed -- so one playlist was still scanned
+// three times at a header per line.
+func TestEveryRawScanIsAllocationFree(t *testing.T) {
+	text := strings.Repeat("#\n", 500_000)
+	for name, scan := range map[string]func(){
+		"explicitByteRangeOffsets": func() { explicitByteRangeOffsets(text) },
+		"explicitMapOffsets":       func() { explicitMapOffsets(text) },
+		"headerKeys":               func() { headerKeys(text) },
+		"hasGapSegments":           func() { hasGapSegments(text) },
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		scan()
+		runtime.ReadMemStats(&after)
+		if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+			t.Errorf("%s allocated %d bytes over a 500k-line playlist", name, grew)
+		}
+	}
+}
+
+// TestAWideMasterPlaylistIsRefused. The parser re-attaches every EXT-X-MEDIA
+// alternative to every variant as it reads, so variants x alternatives is what
+// actually gets allocated -- and both counts were bounded only by the segment
+// limit, which describes how *long* a stream is rather than how wide.
+func TestAWideMasterPlaylistIsRefused(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	b.WriteString(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="x",URI="a.m3u8"` + "\n")
+	for i := 0; i < maxRenditions+1; i++ {
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AUDIO=\"a\"\nv%d.m3u8\n", i+1, i)
+	}
+	_, _, err := parse(b.String(), "https://x/master.m3u8", Defaults(), 0, new(string))
+	assertUnsupported(t, err, "renditions")
+}
+
+// TestAGaplessMetadataTagIsNotMistakenForAGap. Matching EXT-X-GAP by prefix
+// refuses any future tag whose name begins with it.
+func TestAGaplessMetadataTagIsNotMistakenForAGap(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n" +
+		"#EXT-X-GAPLESS-METADATA:something\n#EXTINF:1.0,\na.ts\n#EXT-X-ENDLIST\n"
+	if _, _, err := parse(text, "https://x/index.m3u8", Defaults(), 0, new(string)); err != nil {
+		t.Fatalf("a playlist with no gaps was refused as gapped: %v", err)
 	}
 }

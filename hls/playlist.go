@@ -35,11 +35,14 @@ import (
 // tag written with a leading space is a tag to it and was invisible to a
 // document-wide count anchored on "\n#EXT". Two hundred and fifty thousand of
 // those still fit inside the byte limit.
-func countTags(text string) (segments, variants, tags int) {
-	// Walked by index rather than strings.Split: a split allocates a header per
-	// line, and a permitted 16 MiB playlist of two-character lines is eight
-	// million of them -- 128 MiB spent inside the very function that exists to
-	// stop a playlist spending memory.
+// eachLine walks a playlist's trimmed lines without allocating.
+//
+// Every raw-text scan here goes through it. strings.Split allocates a header
+// per line, and a permitted 16 MiB playlist of two-character lines is eight
+// million of them -- so four scans of one such playlist spent well over a third
+// of a gigabyte, inside the code that exists to stop a playlist spending
+// memory. Returning false stops the walk.
+func eachLine(text string, fn func(line string) bool) {
 	for len(text) > 0 {
 		line := text
 		if i := strings.IndexByte(text, '\n'); i >= 0 {
@@ -47,9 +50,16 @@ func countTags(text string) (segments, variants, tags int) {
 		} else {
 			text = ""
 		}
-		line = strings.TrimSpace(line)
+		if !fn(strings.TrimSpace(line)) {
+			return
+		}
+	}
+}
+
+func countTags(text string) (segments, variants, alternatives, tags int) {
+	eachLine(text, func(line string) bool {
 		if !strings.HasPrefix(line, "#EXT") {
-			continue
+			return true
 		}
 		tags++
 		switch {
@@ -57,9 +67,12 @@ func countTags(text string) (segments, variants, tags int) {
 			segments++
 		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
 			variants++
+		case strings.HasPrefix(line, "#EXT-X-MEDIA:"):
+			alternatives++
 		}
-	}
-	return segments, variants, tags
+		return true
+	})
+	return segments, variants, alternatives, tags
 }
 
 // hasGapSegments reports whether the playlist marks any segment EXT-X-GAP.
@@ -70,19 +83,23 @@ func countTags(text string) (segments, variants, tags int) {
 // a broken server. Refused by name instead -- the recording is genuinely
 // incomplete, and saying so beats handing back a file with a hole in it.
 func hasGapSegments(text string) bool {
-	for len(text) > 0 {
-		line := text
-		if i := strings.IndexByte(text, '\n'); i >= 0 {
-			line, text = text[:i], text[i+1:]
-		} else {
-			text = ""
+	found := false
+	eachLine(text, func(line string) bool {
+		// Exactly, not by prefix: EXT-X-GAP carries no value, and a prefix
+		// match refuses any future tag that happens to start with its name.
+		if line == "#EXT-X-GAP" {
+			found = true
+			return false
 		}
-		if strings.HasPrefix(strings.TrimSpace(line), "#EXT-X-GAP") {
-			return true
-		}
-	}
-	return false
+		return true
+	})
+	return found
 }
+
+// maxRenditions bounds a master playlist's width. Real ones list a handful of
+// bitrates and a handful of audio tracks; this is two orders of magnitude above
+// anything a service publishes.
+const maxRenditions = 500
 
 // maxPlaylistTagLines bounds the tags one playlist may carry, derived from the
 // segment limit rather than configured separately: the limit an operator sets
@@ -213,13 +230,12 @@ type segmentKey struct {
 // carry them.
 func explicitByteRangeOffsets(text string) []bool {
 	var out []bool
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "#EXT-X-BYTERANGE:") {
-			continue
+	eachLine(text, func(line string) bool {
+		if strings.HasPrefix(line, "#EXT-X-BYTERANGE:") {
+			out = append(out, strings.Contains(line[len("#EXT-X-BYTERANGE:"):], "@"))
 		}
-		out = append(out, strings.Contains(line[len("#EXT-X-BYTERANGE:"):], "@"))
-	}
+		return true
+	})
 	return out
 }
 
@@ -230,12 +246,22 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 	// megabytes before a check that runs on the result could refuse it. A few
 	// of those at once is the server's memory. This is a *bound on parsing*;
 	// readMedia still enforces the same limit on what it accepts.
-	segments, variants, tags := countTags(text)
+	segments, variants, alternatives, tags := countTags(text)
 	if segments > opt.MaxSegments {
 		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", segments, opt.MaxSegments)
 	}
-	if variants > opt.MaxSegments {
-		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", variants, opt.MaxSegments)
+	// Renditions are capped far below the segment limit, and separately from
+	// it, because the two numbers describe different things: a stream is
+	// legitimately thousands of segments long and is never more than a few
+	// dozen renditions wide. The parser also re-attaches every EXT-X-MEDIA
+	// alternative to every variant as it reads, so variants x alternatives is
+	// what actually gets allocated -- five thousand of each is twenty-five
+	// million pointers, and no real master playlist is anywhere near either.
+	if variants > maxRenditions {
+		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", variants, maxRenditions)
+	}
+	if alternatives > maxRenditions {
+		return nil, "", unsupported("this HLS master playlist lists %d alternative renditions, which is over this server's limit of %d", alternatives, maxRenditions)
 	}
 	// And a backstop that no tag type escapes. Enumerating the ones the parser
 	// materializes -- EXTINF, STREAM-INF, I-FRAME-STREAM-INF, MEDIA -- is a
@@ -574,8 +600,7 @@ func refuseImplicitMapOffset(m *m3u8.Map, explicit bool) error {
 func headerKeys(text string) (atMap, atFirstSegment string) {
 	seenMap := false
 	current := ""
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
+	eachLine(text, func(line string) bool {
 		switch {
 		case strings.HasPrefix(line, "#EXT-X-KEY:"):
 			current = line
@@ -585,9 +610,10 @@ func headerKeys(text string) (atMap, atFirstSegment string) {
 				atMap = current
 			}
 		case strings.HasPrefix(line, "#EXTINF:"):
-			return atMap, current
+			return false
 		}
-	}
+		return true
+	})
 	return atMap, current
 }
 
@@ -641,10 +667,9 @@ func splitAttributes(list string) []string {
 // playlist's, the rest belong to the segments they precede.
 func explicitMapOffsets(text string) []bool {
 	var out []bool
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
+	eachLine(text, func(line string) bool {
 		if !strings.HasPrefix(line, "#EXT-X-MAP:") {
-			continue
+			return true
 		}
 		attr := ""
 		if i := strings.Index(line, `BYTERANGE="`); i >= 0 {
@@ -654,7 +679,8 @@ func explicitMapOffsets(text string) []bool {
 			}
 		}
 		out = append(out, strings.Contains(attr, "@"))
-	}
+		return true
+	})
 	return out
 }
 
