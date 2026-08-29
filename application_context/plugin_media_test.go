@@ -330,6 +330,37 @@ end
 	}
 }
 
+// TestPluginMediaTrimRefusesANonStringIntoMode. Reading only strings meant
+// `{into = false}` fell through to the default -- which is the branch that
+// replaces the resource's content, and plainly not what that caller asked for.
+func TestPluginMediaTrimRefusesANonStringIntoMode(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "media", "hooks", "inject" } }
+local report = "not-run"
+function init()
+    mah.on("after_note_create", function(data)
+        local ok, err = mah.media.trim(1, "0", "1", { into = false })
+        if ok then report = "accepted" else report = tostring(err) end
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`})
+	if _, err := ctx.CreateOrUpdateNote(&query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{Name: "trigger"},
+	}); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	out := runSlot(ctx, "page_top")
+	if out == "accepted" || out == "not-run" {
+		t.Fatalf("into = false reported %q, want a refusal rather than the destructive default", out)
+	}
+	if !strings.Contains(out, "into") {
+		t.Errorf("the refusal %q does not name the option that was wrong", out)
+	}
+}
+
 // TestPluginMediaProbeIsRefusedInsideATransaction. Probing waits for a video
 // slot, may copy the file and then runs a process; inside a transaction that is
 // the database's write lock held for all of it. A read that takes a minute is

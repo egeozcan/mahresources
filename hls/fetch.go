@@ -392,12 +392,18 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 
 	if t.hasRange() {
 		if resp.StatusCode == http.StatusPartialContent {
-			// A 206 is only trustworthy if it says it starts where we asked.
-			// A server answering 206 from the wrong offset -- or with a
-			// Content-Range naming a different span -- would have its bytes
-			// filed as this sub-range, and the mux would assemble the wrong
-			// media without a single error.
-			if start, ok := contentRangeStart(resp.Header.Get("Content-Range")); ok && start != t.offset {
+			// A 206 is trustworthy only if it says where it starts, and says
+			// the place we asked for. RFC 7233 requires the header on every
+			// 206, so an absent or unparseable one is a broken server rather
+			// than an old one -- and treating "no claim" as "the right claim"
+			// files whatever arrived as this sub-range and misassembles the
+			// media with no error anywhere.
+			start, ok := contentRangeStart(resp.Header.Get("Content-Range"))
+			if !ok {
+				_ = resp.Body.Close()
+				return nil, nil, fmt.Errorf("the server answered a partial response with no usable Content-Range for bytes %d-%d", t.offset, t.offset+t.length-1)
+			}
+			if start != t.offset {
 				_ = resp.Body.Close()
 				return nil, nil, fmt.Errorf("the server answered byte %d for a request that asked for byte %d", start, t.offset)
 			}

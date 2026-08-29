@@ -275,10 +275,25 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 
 	for _, url := range urls {
 		(func(url string) {
+			// One deadline per URL, taken before the request rather than after
+			// it. An HLS assembly's own overall bound starts inside hls.Fetch,
+			// which is *after* this response has arrived -- so a server that
+			// spent twenty-nine of its thirty permitted minutes delivering the
+			// playlist would then get a fresh thirty for the segments.
+			urlCtx := reqCtx
+			if overallTimeout > 0 {
+				// Zero means nobody configured one, which a context built from
+				// a bare config has; passing it through would mean "already
+				// expired" and refuse every fetch.
+				var cancelURL context.CancelFunc
+				urlCtx, cancelURL = context.WithTimeout(reqCtx, overallTimeout)
+				defer cancelURL()
+			}
+
 			// NewRequestWithContext rather than Get: the client's own Timeout
 			// bounds the transfer, but only the context can end it early when
 			// the caller's budget runs out first.
-			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+			req, err := http.NewRequestWithContext(urlCtx, http.MethodGet, url, nil)
 			if err != nil {
 				setError(err)
 				return
@@ -376,7 +391,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 				if resp.Request != nil && resp.Request.URL != nil {
 					base = resp.Request.URL.String()
 				}
-				assembled, hlsErr := hls.Fetch(reqCtx, ctx.hlsDeps(httpClient, policy), base, head, timeoutBody, ctx.hlsOptions(), nil)
+				assembled, hlsErr := hls.Fetch(urlCtx, ctx.hlsDeps(httpClient, policy), base, head, timeoutBody, ctx.hlsOptions(), nil)
 				if hlsErr != nil {
 					setError(hlsErr)
 					return

@@ -337,14 +337,19 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		}
 		// A per-segment EXT-X-MAP after the first is a format change mid-stream
 		// that a single -c copy mux cannot represent.
-		if seg.Map != nil && seg.Map.URI != "" && (out.initSegment == nil || seg.Map.URI != out.initSegment.url) {
+		if seg.Map != nil && seg.Map.URI != "" {
 			t, err := resolveTarget(playlistURL, seg.Map.URI, seg.Map.Limit, seg.Map.Offset)
 			if err != nil {
 				return nil, err
 			}
-			if out.initSegment == nil {
+			switch {
+			case out.initSegment == nil:
 				out.initSegment = &t
-			} else if t.url != out.initSegment.url {
+			// Compared whole, not by URL. One resource can hold several
+			// initialization sections at different byte ranges, so comparing
+			// names alone silently kept the first and decoded the rest of the
+			// stream against the wrong codec configuration.
+			case t != *out.initSegment:
 				return nil, unsupported("this HLS stream changes its initialization segment part-way through, which this server cannot download")
 			}
 		}

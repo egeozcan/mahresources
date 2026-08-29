@@ -672,7 +672,16 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, checkURL func(string) error, base string, head []byte, body io.Reader) (*hls.Result, error) {
 	var lastNotify time.Time
 	deps := hls.Deps{Client: client, CheckURL: checkURL, FfmpegPath: dm.ffmpegPath}
-	result, err := hls.Fetch(ctx, deps, base, head, body, dm.hlsOptions,
+	// The limits are the deployment's boot config, but the *timeout* is live:
+	// an operator lowering remote_overall_timeout at runtime expects it to
+	// apply, and the value captured at construction would outlive the change.
+	// The context above already carries it; this keeps the package's own bound
+	// from being the looser of the two.
+	opts := dm.hlsOptions
+	if overall := dm.currentSettings().OverallTimeout(); overall > 0 {
+		opts.OverallTimeout = overall
+	}
+	result, err := hls.Fetch(ctx, deps, base, head, body, opts,
 		func(phase string, done, total int64) {
 			// Guarded by the attempt, like every other write about this job: a
 			// callback unwinding from an abandoned attempt must not relabel the
@@ -781,6 +790,20 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	httpClient, checkURL, err := dm.createHTTPClientFor(s, job.PluginName())
 	if err != nil {
 		return nil, err
+	}
+
+	// One deadline for the whole transfer, taken before the request. An HLS
+	// assembly's own bound starts after this response has arrived, so without
+	// this a server could spend the entire permitted time on the playlist and
+	// then be granted it again for the segments. Read from live settings, like
+	// every other timeout on this path.
+	// Zero means "nobody configured one", which every embedder and every test
+	// that builds a bare settings provider has. Passing it through would mean
+	// "already expired" and refuse every download.
+	if overall := s.OverallTimeout(); overall > 0 {
+		var cancelAll context.CancelFunc
+		ctx, cancelAll = context.WithTimeout(ctx, overall)
+		defer cancelAll()
 	}
 
 	// The submitted URL too, not only the ones a playlist goes on to name. A

@@ -286,8 +286,10 @@ func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceI
 // to trim, read the version back, create a resource from it and restore the
 // original.
 //
-// The clip inherits the source's owner and groups, because a clip belongs where
-// its source does; a caller who wants it elsewhere can move it afterwards.
+// The clip inherits the source's owner group and storage location, because a
+// clip belongs where its source does. It does *not* copy the source's other
+// group memberships or its tags: those describe the whole recording, and a
+// caller who wants them can add them to the resource this hands back.
 func (ctx *MahresourcesContext) TrimVideoToNewResource(reqCtx context.Context, resourceID uint, start, end, name string) (*models.Resource, error) {
 	startSec, endSec, err := parseTrimRange(start, end)
 	if err != nil {

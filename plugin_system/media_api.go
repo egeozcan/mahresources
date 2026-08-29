@@ -165,8 +165,18 @@ func (pm *PluginManager) registerMediaModule(L *lua.LState, mahMod *lua.LTable) 
 		into, comment, name := "version", "", ""
 		switch arg := L.Get(4).(type) {
 		case *lua.LTable:
-			if v, ok := arg.RawGetString("into").(lua.LString); ok {
+			// A present-but-not-a-string `into` is a refusal, not a fallback.
+			// Falling through would answer `{into = false}` by replacing the
+			// resource's content, which is the destructive branch and the one
+			// the caller was plainly not asking for.
+			switch v := arg.RawGetString("into").(type) {
+			case lua.LString:
 				into = string(v)
+			case *lua.LNilType:
+			default:
+				L.Push(lua.LNil)
+				L.Push(lua.LString(`into must be "version" or "resource"`))
+				return 2
 			}
 			if v, ok := arg.RawGetString("comment").(lua.LString); ok {
 				comment = string(v)

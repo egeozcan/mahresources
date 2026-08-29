@@ -457,3 +457,38 @@ func bytesRepeat(b byte, n int) []byte {
 	}
 	return out
 }
+
+// TestA206WithNoContentRangeIsRefused. RFC 7233 requires the header on every
+// 206, so an absent or unparseable one is a broken server -- and treating "no
+// claim" as "the right claim" files whatever arrived as the requested range and
+// misassembles the media with no error anywhere.
+func TestA206WithNoContentRangeIsRefused(t *testing.T) {
+	for _, header := range []string{"", "pages 1-2", "bytes ???-99/1000"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if header != "" {
+				w.Header().Set("Content-Range", header)
+			}
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(bytesRepeat('X', 100))
+		}))
+
+		_, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/a.ts", offset: 500, length: 100})
+		if err == nil {
+			t.Errorf("a 206 with Content-Range %q was accepted", header)
+		}
+		srv.Close()
+	}
+}
+
+// TestAChangedInitializationRangeIsRefused. One resource can hold several
+// initialization sections at different byte ranges, so comparing URLs alone
+// kept the first and decoded the rest of the stream against the wrong codec
+// configuration -- silently.
+func TestAChangedInitializationRangeIsRefused(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@0"` + "\n#EXTINF:1.0,\na.m4s\n" +
+		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@100"` + "\n#EXTINF:1.0,\nb.m4s\n" +
+		"#EXT-X-ENDLIST\n"
+	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
+	assertUnsupported(t, err, "initialization")
+}
