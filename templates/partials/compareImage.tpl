@@ -146,6 +146,19 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>
             Reset
         </button>
+        {# Pixel diff: paints a canvas mask over the pair marking every pixel #}
+        {# the two versions disagree about, and reports the share of the #}
+        {# overlap that changed in the summary banner. Available in every #}
+        {# overlay mode because it reads what each mode paints. #}
+        <button type="button" @click="toggleHeatMap()" class="compare-swap-btn-sm"
+                x-show="mode !== 'side-by-side'"
+                :aria-pressed="heatMapOn"
+                :aria-disabled="!scaleAvailable"
+                :title="scaleAvailable ? 'Show which parts of the pair changed, and how much.' : 'One of the two versions reports no dimensions, so there is nothing to compare pixel by pixel.'"
+                aria-label="Pixel diff">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h2m6 0h2M9 16h6" stroke-dasharray="2 2"/></svg>
+            Pixel diff
+        </button>
         {# Blink comparator: auto-flip while the toggle box is showing, at a #}
         {# rate the reader picks. Starts stopped, always -- an animation nobody #}
         {# asked for is exactly what prefers-reduced-motion exists to refuse, and #}
@@ -173,10 +186,25 @@
         {# 2-8 flips a second a live region updated per flip is the pointermove #}
         {# mistake at the feature's own frequency. #}
         <span class="sr-only" aria-live="polite" aria-atomic="true" x-text="blinkAnnouncement"></span>
+        {# Heatmap updates only after a discrete action's repaint completes. #}
+        <span class="sr-only" aria-live="polite" aria-atomic="true" x-text="heatMapAnnouncement"></span>
         {# Written on each keyboard nudge and once at the end of a drag, never #}
         {# during one: a live region updated per pointermove queues hundreds of #}
         {# announcements a screen reader then reads through. #}
         <span class="sr-only" aria-live="polite" aria-atomic="true" x-text="offsetAnnouncement"></span>
+    </div>
+
+    {# The size gate, before work rather than after: over the megapixel mark #}
+    {# the computation asks first, with the real number attached. #}
+    <div x-show="heatMapNeedsConfirm" x-cloak class="compare-diff-gate mb-4">
+        <p>
+            These images come to <span class="font-mono" x-text="heatMapMegapixelsLabel()"></span> together.
+            Comparing them pixel by pixel decodes and samples both versions and may take a while.
+        </p>
+        <div class="flex gap-2">
+            <button type="button" class="compare-gate-btn" @click="confirmHeatMap()">Compute anyway</button>
+            <button type="button" class="compare-gate-btn compare-gate-btn--secondary" @click="dismissHeatMapConfirm()">Not now</button>
+        </div>
     </div>
 
     <!-- Side-by-side mode -->
@@ -205,6 +233,7 @@
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
         </div>
+        <canvas class="compare-heatmap-mask" x-show="heatMapOn" data-compare-heatmap="slider" aria-hidden="true"></canvas>
         {# A real slider: focusable, announced, and driven by its own arrow keys. #}
         {# The handle used to be an unlabelled div reachable only through a #}
         {# document-level shortcut nothing advertised. #}
@@ -242,6 +271,7 @@
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
             <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over"
                  :style="{ ...trailScale, opacity: opacity / 100 }" data-compare-image @load="noteSizeFrom($event.target)">
+        <canvas class="compare-heatmap-mask" x-show="heatMapOn" data-compare-heatmap="onion" aria-hidden="true"></canvas>
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
@@ -265,6 +295,7 @@
             <img :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
             <img :src="trailUrl" :alt="trailAlt" class="compare-overlay-img compare-overlay-img--over compare-overlay-img--difference"
                  :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
+        <canvas class="compare-heatmap-mask" x-show="heatMapOn" data-compare-heatmap="difference" aria-hidden="true"></canvas>
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span :class="swapped ? 'compare-side-label--new' : 'compare-side-label--old'" x-text="leadLabel"></span>
@@ -291,5 +322,6 @@
         </span>
         <img x-show="showLeft" :src="leadUrl" :alt="leadAlt" class="compare-overlay-img" :style="leadScale" data-compare-image @load="noteSizeFrom($event.target)">
         <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
+        <canvas class="compare-heatmap-mask" x-show="heatMapOn" data-compare-heatmap="toggle" aria-hidden="true"></canvas>
     </button>
 </div>

@@ -117,6 +117,20 @@
             {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} &rarr; {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
         </span>
         {% endif %}
+        {# The image comparator's pixel diff reports here. This banner renders #}
+        {# for every comparator category, and the image component's scope does #}
+        {# not reach it, so the number travels through the comparePixelDiff #}
+        {# store — whose JS-side subscription is the only listener; these #}
+        {# pages keep no @…window markup. Percent null with no empty-overlap #}
+        {# flag means the mask is hidden and the stat hides with it. Not a #}
+        {# live region: it updates per repaint frame during a drag, and the #}
+        {# region announces the number on discrete events instead. #}
+        <span class="compare-stat" x-show="$store.comparePixelDiff.percent !== null || $store.comparePixelDiff.overlapEmpty" x-cloak>
+            <span class="compare-stat-label">Pixels changed</span>
+            <span x-show="!$store.comparePixelDiff.overlapEmpty"
+                  x-text="$store.comparePixelDiff.percent + '%'" class="font-medium"></span>
+            <span x-show="$store.comparePixelDiff.overlapEmpty" title="The two versions do not overlap on the frame, so there is nothing to compare pixel by pixel.">&mdash;</span>
+        </span>
         {% if crossResource %}
         <span class="compare-stat compare-stat--flag">
             <span class="compare-stat-label">Cross-resource</span>

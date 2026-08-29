@@ -56,19 +56,23 @@ const HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12;
 const HEATMAP_THRESHOLD = 32;
 
 /**
- * Count the pixels the two composed frames disagree about.
+ * Compare the two composed frames: per-pixel, count the overlap and mark the
+ * changed pixels.
  *
  * Denominator: pixels both versions painted (alpha > 0). A pixel only one
  * version paints is not "changed" -- it is "missing in one", which the
  * summary banner's Size and Dimensions stats already tell. Numerator: overlap
  * pixels whose maximum per-channel absolute difference exceeds the threshold.
- * Returns counts, not a percentage, so the caller decides what zero overlap
- * means.
+ *
+ * Returns `changed` and `overlap` counts plus the finished mask bytes (RGBA,
+ * the mask colour where changed, transparent elsewhere) so the canvas half
+ * paints exactly what this counted -- one pixel loop, not two.
  */
-export function countChanged(lead, trail, threshold) {
+export function heatMapDiff(lead, trail, threshold) {
   let changed = 0;
   let overlap = 0;
   const n = Math.min(lead.length, trail.length);
+  const mask = new Uint8ClampedArray(n);
   for (let i = 0; i < n; i += 4) {
     if (lead[i + 3] === 0 || trail[i + 3] === 0) continue;
     overlap++;
@@ -77,9 +81,37 @@ export function countChanged(lead, trail, threshold) {
       Math.abs(lead[i + 1] - trail[i + 1]),
       Math.abs(lead[i + 2] - trail[i + 2]),
     );
-    if (d > threshold) changed++;
+    if (d > threshold) {
+      changed++;
+      mask[i] = 255;
+      mask[i + 1] = 0;
+      mask[i + 2] = 230;
+      mask[i + 3] = 170;
+    }
   }
+  return { changed, overlap, mask };
+}
+
+/** The counts alone -- the shape the percentage is computed from. */
+export function countChanged(lead, trail, threshold) {
+  const { changed, overlap } = heatMapDiff(lead, trail, threshold);
   return { changed, overlap };
+}
+
+/**
+ * Canvas transform for the CSS placement `translate(dx, dy) scale(k)`.
+ *
+ * CSS applies the scale about the chosen origin but does not scale the
+ * translation that precedes it. Keeping this arithmetic pure makes that
+ * ordering explicit -- a sequence of canvas `translate`/`scale` calls makes
+ * it deceptively easy to multiply the reader's correction by `k`.
+ */
+export function heatMapCanvasTransform({ k, dx, dy, originX, originY }, sx, sy) {
+  return [
+    k, 0, 0, k,
+    (originX * (1 - k) + dx) * sx,
+    (originY * (1 - k) + dy) * sy,
+  ];
 }
 
 /** The CSS transform that undoes `t`: for T(p) = k*p + d, T-inverse(q) = (q - d) / k. */
@@ -274,6 +306,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     opacity: 50,
     showLeft: true,
     isDragging: false,
+    // The pixel-diff heatmap. Armed rather than automatic: the mask is noise
+    // on an unregistered pair, and the reader decides when to look at it.
+    // `heatMapPercent` is null whenever nothing has been computed -- unarmed,
+    // half-measured, or a pair that does not overlap.
+    heatMapOn: false,
+    heatMapNeedsConfirm: false,
+    heatMapConfirmed: false,
+    heatMapPercent: null,
+    heatMapOverlapEmpty: false,
+    heatMapAnnouncement: '',
+    _heatMapFrame: null,
+    _heatMapAnnounceAfterRepaint: false,
+    _heatMapAnnounceParity: false,
+    // The compose canvases and the sample resolution they were built for.
+    _heatMapScratch: null,
     // The blink comparator. Starts stopped, always: the reader asked for the
     // page, not for an animation. `blinkRate` is flips per second, bounded by
     // BLINK_RATE_MIN/MAX; `_blinkTimer` holds the interval handle.
@@ -474,6 +521,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // `invertOffset` is an involution, so writing back through it is the same
       // operation as reading through it.
       this._offset = this.swapped ? invertOffset(t) : t;
+      // Every correction moves what the mask should show. The heatmap's
+      // watchers also fire on this write under Alpine; this explicit request
+      // is what covers harnesses without reactivity, and both coalesce.
+      this._scheduleHeatMapRepaint();
     },
 
     /**
@@ -984,6 +1035,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       }
       this._announceParity = !this._announceParity;
       this.offsetAnnouncement = `Offset ${this.offsetLabel}${this._announceParity ? ANNOUNCE_MARK : ''}`;
+      // The correction has already requested a silent repaint. Upgrade that
+      // pending frame to announce after it computes, so a drag stays quiet per
+      // move and its one end event speaks the final percentage, not the stale
+      // one from before the frame.
+      this._scheduleHeatMapRepaint(true);
     },
 
     /**
@@ -1270,6 +1326,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const within = this.offsetAxesWithinBound;
       this.scale = value;
       this._reboundOrDefer(within);
+      this._scheduleHeatMapRepaint(true);
     },
 
     /**
@@ -1343,6 +1400,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const within = this.offsetAxesWithinBound;
       this.anchor = this.anchor === 'top-left' ? 'center' : 'top-left';
       this._reboundOrDefer(within);
+      this._scheduleHeatMapRepaint(true);
     },
 
     /**
@@ -1373,7 +1431,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       const within = this.offsetAxesWithinBound;
       const previous = this.scale;
       this.onRadiogroupKeydown(e, 'scale', ['relative', 'fit', 'stretch'],
-        () => { if (this.scale !== previous) this._reboundOrDefer(within); });
+        () => {
+          if (this.scale !== previous) {
+            this._reboundOrDefer(within);
+            this._scheduleHeatMapRepaint(true);
+          }
+        });
     },
 
     /**
@@ -1549,6 +1612,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         // what a later report is measured against.
         this._reportBefore = null;
       }
+      // Either way the pair's geometry has moved closer to final: repaint the
+      // mask if the reader armed it. While half-measured this is a no-op (the
+      // guard refuses to compute against a placeholder), and the report that
+      // completes the pair -- even one that only confirms a stored size and
+      // writes no sizes -- is the moment the heatmap computes.
+      this._scheduleHeatMapRepaint();
     },
 
     get leadScale() {
@@ -1623,10 +1692,18 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * are drawn every repaint. False when either size is unknown: the pair
      * refuses on `scaleAvailable` before this is ever asked.
      */
-    heatMapNeedsConfirm() {
+    heatMapRequiresConfirm() {
       const [a, b] = this._sizes;
       if (!a || !b || !a.w || !a.h || !b.w || !b.h) return false;
       return (a.w * a.h + b.w * b.h) / 1e6 > HEATMAP_CONFIRM_ABOVE_MEGAPIXELS;
+    },
+
+    /** "13.2 megapixels" -- the real number the gate's notice carries, so the
+     *  person deciding can see what they are agreeing to (textDiff's rule). */
+    heatMapMegapixelsLabel() {
+      const [a, b] = this._sizes;
+      if (!a || !b || !a.w || !a.h || !b.w || !b.h) return '';
+      return `${((a.w * a.h + b.w * b.h) / 1e6).toFixed(1)} megapixels`;
     },
 
     /**
@@ -1726,12 +1803,224 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       this.blinkAnnouncement = `${message}${this._blinkAnnounceParity ? ANNOUNCE_MARK : ''}`;
     },
 
+    /**
+     * Arm or disarm the pixel-diff mask.
+     *
+     * Armed state survives a mode switch (the alignment's rule): the reader
+     * who aligned in onion skin and checks the result in toggle mode should
+     * not have to re-arm the mask per mode. Disarming is what the toggle is
+     * for.
+     *
+     * Over the confirm gate, arming stops at the notice -- textDiff's shape:
+     * the computation has not started. `heatMapConfirmed` remembers the
+     * consent for the session, so a disarmed-then-rearmed pair does not ask
+     * twice.
+     */
+    toggleHeatMap() {
+      if (!this.scaleAvailable) return;
+      if (this.heatMapOn) {
+        this.heatMapOn = false;
+        this.heatMapPercent = null;
+        this.heatMapOverlapEmpty = false;
+        this._emitHeatMapPercent();
+        this._announceHeatMapState();
+        return;
+      }
+      if (this.heatMapRequiresConfirm() && !this.heatMapConfirmed) {
+        this.heatMapNeedsConfirm = true;
+        this._announceHeatMapState();
+        return;
+      }
+      this.heatMapOn = true;
+      this.heatMapNeedsConfirm = false;
+      this.heatMapPercent = null;
+      this.heatMapOverlapEmpty = false;
+      // The completing-report path computes on its own while half-measured;
+      // a whole pair computes now. The announcement waits for that paint: in
+      // a browser this request runs in rAF, so announcing here would see null.
+      this._scheduleHeatMapRepaint(true);
+    },
+
+    confirmHeatMap() {
+      this.heatMapConfirmed = true;
+      this.heatMapNeedsConfirm = false;
+      this.toggleHeatMap();
+    },
+
+    dismissHeatMapConfirm() {
+      this.heatMapNeedsConfirm = false;
+    },
+
+    /**
+     * One event for the banner, whatever changed: a percentage, "no
+     * overlap", or "hidden" (percent null). The banner is outside this
+     * component's scope and shared by every comparator category, so it owns
+     * its own state and listens on window.
+     */
+    _emitHeatMapPercent() {
+      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+      window.dispatchEvent(new CustomEvent('compare-pixel-diff', {
+        detail: { percent: this.heatMapPercent, overlapEmpty: this.heatMapOverlapEmpty },
+      }));
+    },
+
+    /**
+     * Repaint the mask for the pair as it stands.
+     *
+     * Silent: during a drag this runs per animation frame, and a live region
+     * that reads the percentage per frame is the pointermove mistake. The
+     * announcements happen at the discrete ends (`_announceHeatMapState`).
+     */
+    _repaintHeatMap() {
+      if (!this.heatMapOn || !this.scaleAvailable) return false;
+      // A half-measured pair has no final frame: the box is max of one real
+      // measurement and one stored placeholder, so a number computed there
+      // depends on which version decoded first. The completing report paints.
+      if (!this._measured[0] || !this._measured[1]) return false;
+      const result = this._repaintHeatMapDom();
+      if (!result) return false;
+      const { changed, overlap } = result;
+      this.heatMapOverlapEmpty = overlap === 0;
+      this.heatMapPercent = overlap === 0 ? null : Math.round((changed / overlap) * 100);
+      this._emitHeatMapPercent();
+      return true;
+    },
+
+    /**
+     * Coalesce repaint requests into one frame.
+     *
+     * A drag fires this per move event; without coalescing the compose +
+     * getImageData runs per event, which is the phone that hangs. Runs
+     * directly when no rAF exists (the unit suite), so the writers' explicit
+     * requests are always honoured somewhere.
+     */
+    _scheduleHeatMapRepaint(announceAfter = false) {
+      // Only an armed heatmap can eventually produce an announcement. This
+      // keeps ordinary alignment announcements from leaving latent heatmap
+      // work behind while the mask is off.
+      if (announceAfter && this.heatMapOn) this._heatMapAnnounceAfterRepaint = true;
+      const repaint = () => {
+        const complete = this._repaintHeatMap();
+        // A half-measured arm keeps the request pending. The report that makes
+        // the pair whole schedules another repaint and is the one that speaks.
+        if (complete && this._heatMapAnnounceAfterRepaint) {
+          this._heatMapAnnounceAfterRepaint = false;
+          this._announceHeatMapState();
+        }
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        if (this._heatMapFrame !== null) return;
+        this._heatMapFrame = requestAnimationFrame(() => {
+          this._heatMapFrame = null;
+          repaint();
+        });
+        return;
+      }
+      repaint();
+    },
+
+    /**
+     * The live region for the percentage, written on discrete events only.
+     * Silent when nothing is computed: an uncomputed mask has no number to
+     * say, and repeating an unchanged one announces nothing anyway.
+     */
+    _announceHeatMapState() {
+      if (!this.heatMapOn || (this.heatMapPercent === null && !this.heatMapOverlapEmpty)) return;
+      this._heatMapAnnounceParity = !this._heatMapAnnounceParity;
+      const message = this.heatMapOverlapEmpty
+        ? 'Pixel diff: the two versions do not overlap, so nothing was compared'
+        : `Pixel diff: ${this.heatMapPercent}% of the overlap changed`;
+      this.heatMapAnnouncement = `${message}${this._heatMapAnnounceParity ? ANNOUNCE_MARK : ''}`;
+    },
+
+    /**
+     * The canvas half of the heatmap: compose each version the way the CSS
+     * paints it, diff, paint the mask.
+     *
+     * The compose canvases are `overlayBox` scaled to the sampling resolution
+     * and re-used while it holds. Each version is drawn through
+     * `heatMapPlacement`'s numbers -- the same rest rectangle, transform and
+     * origin the style bindings emit -- so what is compared is what is on
+     * screen, in frame pixels. `getImageData` is clean: the version files are
+     * served same-origin.
+     *
+     * Returns the change counts, or null when a slot's bytes cannot be drawn
+     * (the image element has not decoded, or shows neither version).
+     */
+    _repaintHeatMapDom() {
+      if (typeof document === 'undefined') return null;
+      const box = this.overlayBox;
+      const sample = this.heatMapSampleSize();
+      if (!box || !sample) return null;
+      const el = this._root;
+      if (!el || typeof el.querySelectorAll !== 'function') return null;
+
+      const sx = sample.w / box.w;
+      const sy = sample.h / box.h;
+      let scratch = this._heatMapScratch;
+      if (!scratch || scratch.w !== sample.w || scratch.h !== sample.h) {
+        scratch = {
+          w: sample.w, h: sample.h,
+          compose: [document.createElement('canvas'), document.createElement('canvas')],
+        };
+        for (const c of scratch.compose) { c.width = sample.w; c.height = sample.h; }
+        this._heatMapScratch = scratch;
+      }
+
+      // One element per slot: the first data-compare-image whose currentSrc
+      // names that slot. The eight-plus images across the modes all hold the
+      // same two decodes; whichever loaded is fine to draw from.
+      const sources = [null, null];
+      for (const imgEl of el.querySelectorAll('img[data-compare-image]')) {
+        for (const slot of this.slotsForImage(imgEl)) {
+          if (!sources[slot] && imgEl.complete && imgEl.naturalWidth > 0) sources[slot] = imgEl;
+        }
+      }
+      if (!sources[0] || !sources[1]) return null;
+
+      const contexts = scratch.compose.map((c) => c.getContext('2d', { willReadFrequently: true }));
+      for (let slot = 0; slot < 2; slot++) {
+        const ctx = contexts[slot];
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, sample.w, sample.h);
+        const p = this.heatMapPlacement(slot);
+        if (!p) return null;
+        ctx.setTransform(...heatMapCanvasTransform(p, sx, sy));
+        ctx.drawImage(sources[slot], p.x * sx, p.y * sy, p.w * sx, p.h * sy);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+
+      const leadData = contexts[0].getImageData(0, 0, sample.w, sample.h);
+      const trailData = contexts[1].getImageData(0, 0, sample.w, sample.h);
+      const { changed, overlap, mask } = heatMapDiff(leadData.data, trailData.data, HEATMAP_THRESHOLD);
+
+      // The mask is already in pixel order. Pick the canvas by component state,
+      // not rendered visibility: Alpine applies `x-show` after the state change,
+      // so an rAF can observe every mode box hidden even though the selected one
+      // becomes visible later in the same update. Painting the selected mode's
+      // canvas first makes that ordering irrelevant.
+      const maskData = new ImageData(mask, sample.w, sample.h);
+      const canvas = el.querySelector(`canvas[data-compare-heatmap="${this.mode}"]`);
+      if (canvas) {
+        if (canvas.width !== sample.w || canvas.height !== sample.h) { canvas.width = sample.w; canvas.height = sample.h; }
+        canvas.getContext('2d').putImageData(maskData, 0, 0);
+      }
+      return { changed, overlap };
+    },
+
     init() {
       // Resolved here rather than at the first press, because the control's
       // availability is rendered before the reader ever touches it: a reduced
       // motion preference must show the button unavailable on first paint,
       // not announce it healthy and then refuse.
       this._resolveReducedMotion();
+
+      // The component's own root, captured while `init` runs -- the only time
+      // `$el` is guaranteed to name it. Read from a method, `$el` is whichever
+      // element's expression made the call: the Pixel diff button's click
+      // hands the heatmap a root with no images in it. textDiff carries the
+      // same capture for the same reason.
+      this._root = this.$el;
 
       // Arrow keys nudge the slider or the onion opacity. The handler is on the
       // container rather than the document, and skips events the mode radiogroup
@@ -1785,10 +2074,21 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       // own images, and a blink the reader can no longer see is a timer that
       // runs for nothing. Duck-typed because the unit suite drives `init`
       // with no Alpine behind it, and the pause itself is tested directly.
+      // The same watcher repaints the heatmap mask -- a new mode means a new
+      // overlay box, whose mask canvas has to be painted.
       if (typeof this.$watch === 'function') {
         this.$watch('mode', () => {
           if (this.mode !== 'toggle') this.pauseBlink();
+          this._scheduleHeatMapRepaint(true);
         });
+        // The repaint net for the heatmap: every state that moves the pair is
+        // watched, so a future writer that forgets to ask for a repaint still
+        // gets one. The current writers also ask directly, because the unit
+        // suite -- and any embedded harness without Alpine -- runs without
+        // reactivity, and there the explicit calls are the only ones there.
+        for (const key of ['_offset', '_sizes', 'scale', 'anchor', 'swapped']) {
+          this.$watch(key, () => this._scheduleHeatMapRepaint());
+        }
       }
 
       // An image that finished before its `@load` was bound never fires one.
@@ -1809,6 +2109,11 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
         clearInterval(this._blinkTimer);
         this._blinkTimer = null;
       }
+      if (this._heatMapFrame !== null) {
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._heatMapFrame);
+        this._heatMapFrame = null;
+      }
+      this._heatMapAnnounceAfterRepaint = false;
       if (this._reducedMotionQuery && this._reducedMotionListener) {
         if (typeof this._reducedMotionQuery.removeEventListener === 'function') {
           this._reducedMotionQuery.removeEventListener('change', this._reducedMotionListener);
@@ -1823,6 +2128,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
 
     swapSides() {
       this.swapped = !this.swapped;
+      this._scheduleHeatMapRepaint(true);
     },
 
     toggleSide(e) {

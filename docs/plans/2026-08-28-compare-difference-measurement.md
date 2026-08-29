@@ -26,7 +26,7 @@ packages 1 and 2, exactly as the brief warned; the file names have not.
 | 6 | **3.2 — A size gate, before work** (`HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12`, combined *source* megapixels of both versions), mirroring `textDiff`'s `CONFIRM_ABOVE_BYTES` (`src/components/textDiff.js:15`): over the gate, arming shows a notice with the real number and a "Compute anyway" button, reusing the `compare-diff-gate` / `compare-gate-btn` classes. It is a courtesy gate against decode + downsample cost on a phone, not a bound the page can enforce — the same honesty round 11 of the teardown granted the text gate. |
 | 7 | **3.2 — The heatmap computes only on a whole pair.** `!_measured[0] || !_measured[1]` → no computation, no percent event. This is the load-window rule the alignment's deferred rebound already carries: computing against one real measurement and one stored placeholder bakes transient, decode-order-dependent geometry into a number the reader is told is a measurement. Arming during the window waits; the completing report computes. Both decode orders then answer with the final geometry alone. |
 | 8 | **3.2 — The percentage's denominator is the overlap.** Numerator: pixels where both images painted (alpha > 0) whose max per-channel absolute difference exceeds `HEATMAP_THRESHOLD = 32` (suppresses resampling noise; an identical pair measures exactly 0 because identical bytes through the same rectangle take the same resampling path). Overlap = 0 → the banner shows an em dash with a stated reason. A pixel only one version paints is not "changed", it is "missing in one" — and the summary banner's Size/Dimensions stats already carry that story. |
-| 9 | **3.2 — The banner percentage rides a window event, because the banner is not in the component's scope.** `compare.tpl` renders the banner outside the `x-data` that includes `compareImage.tpl` (and renders it for every category, not just image), so the component dispatches `compare-pixel-diff` on `window` with `{ percent, overlapEmpty }` and the banner stat carries its own tiny `x-data` listening for it. The banner stat is **not** a live region: it updates per repaint, and a repaint happens per drag frame. |
+| 9 | **3.2 — The banner percentage rides a window event, because the banner is not in the component's scope.** `compare.tpl` renders the banner outside the `x-data` that includes `compareImage.tpl` (and renders it for every category, not just image), so the component dispatches `compare-pixel-diff` on `window` with `{ percent, overlapEmpty }`. A tiny registered Alpine store listens in JavaScript and the banner reads that store; compare templates deliberately carry no `@…window` listener markup. The banner stat is **not** a live region: it updates per repaint, and a repaint happens per drag frame. |
 | 10 | **3.2 — Announcements are separate from the display, written on discrete events only.** A visually-hidden `aria-live="polite"` region mirrors `offsetAnnouncement`: written when the toggle completes, after a keyboard nudge, at drag end, when the wheel burst settles, and after scale/anchor/flip/reset changes and the completing size report — never once per `pointermove` or per `requestAnimationFrame`. The announce calls sit beside the existing `announceOffset()` calls, and a vitest corpus walks every writer so a new one that skips the announcement fails by name (package 2's stated lesson: apply the guarantee at every writer, enumerated, not at one). |
 | 11 | **3.3 — Blink is play/pause + rate, toggle-mode only.** A "Blink" button (`aria-pressed`, starts stopped) and a native range input labelled "Blink rate in flashes per second" (2–8, step 1, default 4), both `x-show="mode === 'toggle'"`. Playing flips `showLeft` directly — not through `toggleSide`, whose click-suppression and `e.detail` logic is a pointer event's business. A manual click during playback just adds one flip. |
 | 12 | **3.3 — `prefers-reduced-motion` refuses to start and stops a running blink.** With the media query matching, the button is drawn `aria-disabled` with a title stating the reason (the aria-disabled-not-hidden rule package 1 decision 8 set). A `change` listener on the media query pauses a running blink and re-marks the control. Duck-typed so the unit suite (no DOM) gets "allowed". |
@@ -64,7 +64,7 @@ packages 1 and 2, exactly as the brief warned; the file names have not.
 
 - Constants: `HEATMAP_SAMPLE_SIDE = 512`, `HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12`, `HEATMAP_THRESHOLD = 32`.
 - Pure math (vitest-covered): `heatMapPlacement(index)` → `{ x, y, w, h, k, dx, dy, originX, originY }` in box pixels; `heatMapSampleSize()`; `countChanged(lead, trail, threshold)` → `{ changed, overlap }` over two `Uint8ClampedArray`s.
-- Canvas plumbing (e2e-covered): `_heatMapCompose()` (two scratch canvases, `getImageData` each), `_repaintHeatMap()` (mask ImageData → every visible `canvas[data-compare-heatmap]`), `_scheduleHeatMapRepaint()` (rAF-coalesced).
+- Canvas plumbing (e2e-covered): two reused scratch canvases, `getImageData` each; `_repaintHeatMapDom()` (mask ImageData → the canvas named by component mode, never by timing-sensitive rendered visibility); `_scheduleHeatMapRepaint()` (rAF-coalesced, with discrete announcements deferred until a completed paint).
 - Gate: `heatmapNeedsConfirm` state, `toggleHeatMap()`, `confirmHeatMap()`; notice reuses `compare-diff-gate`.
 - Writers enumerated (repaint + announce): `toggleHeatMap`, `confirmHeatMap`, `setScale`, `onScaleKeydown`'s callback, `toggleAnchor`, `swapSides`, `resetAlignment`, `handleAlignKey`, the align drag's `upHandler`, `announceOffsetWhenSettled`'s timeout, the mode `$watch`, and `noteSizeFrom`'s completing-report branch.
 - Banner: event-driven stat span in `templates/compare.tpl` after the Dimensions stat.
@@ -79,6 +79,18 @@ packages 1 and 2, exactly as the brief warned; the file names have not.
 | Docs | `docs-site/docs/features/versioning.md`: Difference row in the image-modes table; a short "Pixel diff" paragraph (what the percentage means, the gate); a "Blink" row. No screenshot retake (package 1/2 precedent). |
 
 New fixtures (committed): `compare-heatmap-large-v1.png` / `-v2.png` (~3000×2200 flat colour, distinct marker pixels so the hashes differ; ≈13.2 combined MP, over the gate). Generated with a throwaway Go program using `image/png` — no new dependency.
+
+## Implementation review
+
+- [x] 3.1 Difference blend implemented and browser-tested.
+- [x] 3.3 Blink comparator implemented, including reduced-motion refusal and cleanup.
+- [x] 3.2 pure placement/counting math implemented and unit-tested.
+- [x] 3.2 canvas mask, banner bridge, size gate, HEIC refusal and discrete live-region behavior implemented.
+- [x] Documentation updated; committed browser fixtures and rebuilt bundle included.
+- [ ] Full SQLite, browser+CLI, a11y, Postgres and CSS gates.
+- [ ] Two consecutive independent review rounds without major findings.
+
+The final pre-commit re-measurement is unchanged: **3.1 XS, 3.2 M at the top of M, 3.3 S**. Implementation exposed two timing details inside the expected M work — Alpine's `x-show` can lag the first repaint, and a live-region update must wait for the rAF computation — but neither widened the interface or added an unbounded path.
 
 ## Order
 

@@ -73,6 +73,7 @@ import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
 import { registerConfirmDialogStore } from './components/confirmDialog.js';
+import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
@@ -177,6 +178,9 @@ registerLightboxStore(Alpine);
 registerEntityPickerStore(Alpine);
 registerPasteUploadStore(Alpine);
 registerConfirmDialogStore(Alpine);
+// The compare banner reads the image comparator's pixel-diff percentage
+// through this store: the banner is outside that component's Alpine scope.
+registerComparePixelDiffStore(Alpine);
 // After confirmDialog and bulkSelection: the /downloads actions read the shared
 // selection and raise the shared confirm.
 registerDownloadsStore(Alpine);

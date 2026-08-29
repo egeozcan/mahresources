@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error -- plain JS module with no type declarations
-import { imageCompare, countChanged } from './imageCompare.js';
+import { imageCompare, countChanged, heatMapCanvasTransform } from './imageCompare.js';
 
 /**
  * The compare page's overlay modes place two images in one coordinate space.
@@ -2920,6 +2920,12 @@ describe('the pixel-diff heatmap: pure math', () => {
     expect(c.heatMapPlacement(1)).toMatchObject({ originX: 0, originY: 0 });
   });
 
+  test('the canvas transform does not scale the reader\'s translation', () => {
+    expect(heatMapCanvasTransform({
+      k: 2, dx: 10, dy: -5, originX: 400, originY: 300,
+    }, 0.5, 0.25)).toEqual([2, 0, 0, 2, -195, -76.25]);
+  });
+
   test('sampling resolution never exceeds the cap and never upscales', () => {
     // These read the module constant through behaviour: 800x600 -> 512x384.
     const c = component({ w: 800, h: 600 }, { w: 800, h: 600 });
@@ -2965,14 +2971,224 @@ describe('the pixel-diff heatmap: pure math', () => {
   test('the gate asks above twelve combined megapixels, and only there', () => {
     // 0.48 MP each: well under.
     const small = component({ w: 800, h: 600 }, { w: 800, h: 600 });
-    expect(small.heatMapNeedsConfirm()).toBe(false);
+    expect(small.heatMapRequiresConfirm()).toBe(false);
     // 6.6 MP each, 13.2 combined: over.
     const large = component({ w: 3000, h: 2200 }, { w: 3000, h: 2200 });
-    expect(large.heatMapNeedsConfirm()).toBe(true);
+    expect(large.heatMapRequiresConfirm()).toBe(true);
     // 12.0 combined exactly is not over: two 2717x2208 halves land just
     // under, so the boundary is asserted from the other side instead --
     // two 2700x2200 (5.94 each, 11.88 combined) pass.
     const edge = component({ w: 2700, h: 2200 }, { w: 2700, h: 2200 });
-    expect(edge.heatMapNeedsConfirm()).toBe(false);
+    expect(edge.heatMapRequiresConfirm()).toBe(false);
+  });
+});
+
+describe('the pixel-diff heatmap: orchestration', () => {
+  function heatComponent(measured = true, size = { w: 800, h: 600 }) {
+    const c = component(size, size);
+    c.$el = { addEventListener() {}, removeEventListener() {}, querySelectorAll: () => [] };
+    (c as any).$watch = (key: string, cb: () => void) => { (c as any)._watchers[key] = cb; };
+    (c as any)._watchers = {};
+    c.init();
+    if (measured) {
+      c.noteSizeFrom(img(1, size.w, size.h));
+      c.noteSizeFrom(img(2, size.w, size.h));
+    }
+    // No canvas in the unit environment: the DOM half is spied, so these
+    // tests are about the orchestration around it.
+    vi.spyOn(c as any, '_repaintHeatMapDom').mockReturnValue({ changed: 7, overlap: 300 });
+    return c;
+  }
+
+  function withWindow(fn: (events: any[]) => void) {
+    const g = globalThis as any;
+    const previous = g.window;
+    const events: any[] = [];
+    g.window = { dispatchEvent: (e: any) => { events.push(e); return true; } };
+    try {
+      fn(events);
+    } finally {
+      g.window = previous;
+    }
+  }
+
+  test('arming a whole pair computes and puts the percentage on the window', () => {
+    withWindow((events) => {
+      const c = heatComponent();
+      c.toggleHeatMap();
+      expect(c.heatMapOn).toBe(true);
+      expect(c.heatMapPercent).toBe(2); // round(100 * 7 / 300)
+      expect(c.heatMapOverlapEmpty).toBe(false);
+      const event = events.find((e) => e.type === 'compare-pixel-diff');
+      expect(event).toBeDefined();
+      expect(event.detail).toEqual({ percent: 2, overlapEmpty: false });
+    });
+  });
+
+  test('arming during the load window waits for the completing report', () => {
+    withWindow((events) => {
+      const c = heatComponent(false);
+      c.noteSizeFrom(img(1, 800, 600));
+      c.toggleHeatMap();
+      expect(c.heatMapOn).toBe(true);
+      // One measured version: no computation, no number, no event. Computing
+      // against the stored placeholder would bake decode-order geometry into
+      // a figure the banner presents as a measurement.
+      expect(c.heatMapPercent).toBeNull();
+      expect(events).toEqual([]);
+      c.noteSizeFrom(img(2, 800, 600));
+      expect(c.heatMapPercent).toBe(2);
+      expect(events).toHaveLength(1);
+    });
+  });
+
+  test('disarming clears the number and tells the banner to hide', () => {
+    withWindow((events) => {
+      const c = heatComponent();
+      c.toggleHeatMap();
+      c.toggleHeatMap();
+      expect(c.heatMapOn).toBe(false);
+      expect(c.heatMapPercent).toBeNull();
+      expect(events[events.length - 1].detail).toEqual({ percent: null, overlapEmpty: false });
+    });
+  });
+
+  test('the large-pair gate confirms once and can be re-armed', () => {
+    const c = heatComponent(true, { w: 3000, h: 2200 });
+    c.toggleHeatMap();
+    expect(c.heatMapOn).toBe(false);
+    expect(c.heatMapNeedsConfirm).toBe(true);
+
+    c.confirmHeatMap();
+    expect(c.heatMapNeedsConfirm).toBe(false);
+    expect(c.heatMapOn).toBe(true);
+
+    c.toggleHeatMap();
+    c.toggleHeatMap();
+    expect(c.heatMapOn).toBe(true);
+    expect(c.heatMapNeedsConfirm).toBe(false);
+  });
+
+  test('no overlap is reported as such, never as a percentage of nothing', () => {
+    withWindow((events) => {
+      const c = heatComponent();
+      vi.spyOn(c as any, '_repaintHeatMapDom').mockReturnValue({ changed: 0, overlap: 0 });
+      c.toggleHeatMap();
+      expect(c.heatMapPercent).toBeNull();
+      expect(c.heatMapOverlapEmpty).toBe(true);
+      expect(c.heatMapAnnouncement).toContain('do not overlap');
+      expect(events[0].detail).toEqual({ percent: null, overlapEmpty: true });
+    });
+  });
+
+  test('arming announces once; the repaints during a gesture do not', () => {
+    const c = heatComponent();
+    c.toggleHeatMap();
+    const said = c.heatMapAnnouncement;
+    expect(said).toContain('Pixel diff');
+    expect(said).toContain('2%');
+    // A silent repaint (what a drag frame triggers) changes nothing.
+    (c as any)._repaintHeatMap();
+    expect(c.heatMapAnnouncement).toBe(said);
+  });
+
+  test('an rAF-backed arm announces after paint, and a discrete alignment end announces again', () => {
+    const c = heatComponent();
+    const g = globalThis as any;
+    const scheduled: (() => void)[] = [];
+    g.requestAnimationFrame = (cb: () => void) => { scheduled.push(cb); return scheduled.length; };
+    try {
+      c.toggleHeatMap();
+      expect(c.heatMapAnnouncement).toBe('');
+      scheduled.shift()!();
+      const armed = c.heatMapAnnouncement;
+      expect(armed).toContain('Pixel diff');
+
+      c.nudge(2, 0);
+      scheduled.shift()!();
+      expect(c.heatMapAnnouncement).toBe(armed);
+
+      c.announceOffset();
+      scheduled.shift()!();
+      expect(c.heatMapAnnouncement).not.toBe(armed);
+      expect(c.heatMapAnnouncement).toContain('Pixel diff');
+    } finally {
+      delete g.requestAnimationFrame;
+    }
+  });
+
+  test('the repaint is coalesced through rAF, and a pending frame is not doubled', () => {
+    const c = heatComponent();
+    const g = globalThis as any;
+    const scheduled: (() => void)[] = [];
+    g.requestAnimationFrame = (cb: () => void) => { scheduled.push(cb); return scheduled.length; };
+    try {
+      c.toggleHeatMap();
+      (c as any)._repaintHeatMapDom.mockClear();
+      (c as any)._scheduleHeatMapRepaint();
+      (c as any)._scheduleHeatMapRepaint();
+      (c as any)._scheduleHeatMapRepaint();
+      expect(scheduled).toHaveLength(1);
+      expect((c as any)._heatMapFrame).not.toBeNull();
+      scheduled[0]();
+      expect((c as any)._heatMapFrame).toBeNull();
+      expect((c as any)._repaintHeatMapDom).toHaveBeenCalled();
+    } finally {
+      delete g.requestAnimationFrame;
+    }
+  });
+
+  test('every writer that moves the pair repaints the mask', () => {
+    withWindow(() => {
+      const c = heatComponent();
+      const repaint = vi.spyOn(c as any, '_scheduleHeatMapRepaint');
+      // Each entry is one writer that can change what the mask should show,
+      // with the call that moves it. A writer added later that moves the pair
+      // without being in this list fails the review question, not silently.
+      c.toggleHeatMap();
+      c.setScale('fit');
+      c.toggleAnchor();
+      c.swapSides();
+      c.nudge(3, 0);
+      c.zoomBy(0.1);
+      c.resetAlignment();
+      c.noteSizeFrom(img(2, 900, 600));
+      (c as any)._watchers['mode']();
+      (c as any)._watchers['_offset']({ dx: 1, dy: 0, k: 1 });
+      (c as any)._watchers['_sizes']([{ w: 900, h: 600 }, { w: 900, h: 600 }]);
+      (c as any)._watchers['scale']();
+      (c as any)._watchers['anchor']();
+      (c as any)._watchers['swapped']();
+      expect(repaint).toHaveBeenCalledTimes(14);
+    });
+  });
+
+  test('the watcher set covers every state that moves the pair', () => {
+    const c = heatComponent();
+    const keys = Object.keys((c as any)._watchers);
+    // `mode` is here for the blink's pause as well as the heatmap; the rest
+    // are the heatmap's geometry. `_measured` rides the `_sizes` watcher --
+    // a report that only confirms a stored size completes the pair through
+    // the `noteSizeFrom` completion branch, which repaints directly.
+    expect(keys.sort()).toEqual(['_offset', '_sizes', 'anchor', 'mode', 'scale', 'swapped']);
+  });
+
+  test('destroy cancels a pending frame', () => {
+    const g = globalThis as any;
+    g.requestAnimationFrame = () => 42;
+    const cancelled: number[] = [];
+    g.cancelAnimationFrame = (h: number) => { cancelled.push(h); };
+    try {
+      const c = heatComponent();
+      c.toggleHeatMap();
+      (c as any)._scheduleHeatMapRepaint();
+      expect((c as any)._heatMapFrame).not.toBeNull();
+      c.destroy();
+      expect(cancelled).toContain(42);
+      expect((c as any)._heatMapFrame).toBeNull();
+    } finally {
+      delete g.requestAnimationFrame;
+      delete g.cancelAnimationFrame;
+    }
   });
 });

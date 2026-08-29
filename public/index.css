@@ -2211,6 +2211,7 @@ html {
 
 /* Side labels — OLD (warm red) and NEW (cool green) */
 .compare-side-label--old {
+    position: relative;
     display: inline-flex;
     align-items: center;
     padding: 0.125rem 0.5rem;
@@ -2219,11 +2220,16 @@ html {
     letter-spacing: 0.05em;
     text-transform: uppercase;
     border-radius: 9999px;
+    /* Above the heatmap mask (z-5): the labels name the sides wherever the
+       reader looks, and a semi-transparent magenta wash is not allowed to
+       dim them. */
+    z-index: 10;
     background: #fef2f2;
     color: #991b1b;
 }
 
 .compare-side-label--new {
+    position: relative;
     display: inline-flex;
     align-items: center;
     padding: 0.125rem 0.5rem;
@@ -2232,6 +2238,7 @@ html {
     letter-spacing: 0.05em;
     text-transform: uppercase;
     border-radius: 9999px;
+    z-index: 10;
     background: #f0fdf4;
     color: #166534;
 }
@@ -2366,7 +2373,10 @@ html {
     border: none;
     border-right: 1px solid #d6d3d1;
     cursor: pointer;
-    transition: background-color var(--transition-fast), color var(--transition-fast);
+    /* Do not cross-fade the foreground and background of a selected radio.
+       The intermediate pair briefly falls below 4.5:1 even though both end
+       states pass, which makes the state change itself a contrast failure. */
+    transition: none;
     white-space: nowrap;
 }
 
@@ -2986,6 +2996,31 @@ html {
 
 .compare-gate-btn:hover {
     background: #92400e;
+}
+
+.compare-gate-btn--secondary {
+    color: #713f12;
+    background: transparent;
+    border: 1px solid #fde68a;
+}
+
+.compare-gate-btn--secondary:hover {
+    background: #fef9c3;
+}
+
+/* The pixel-diff mask. Stretched from its internal sampling resolution back
+   over the overlay box; smooth interpolation reads better than blocky
+   nearest-neighbour. It never takes a click: the box under it owns drag,
+   slider and toggle. */
+.compare-heatmap-mask {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    /* Above the images, below the slider handle (z-10) and the side labels
+       (z-10), which name the sides wherever the reader looks. */
+    z-index: 5;
+    pointer-events: none;
 }
 
 .compare-binary-badge {

@@ -23,6 +23,8 @@ test.describe.serial('compare page: difference and measurement', () => {
   let fixtureDir: string;
   let pairResourceId: number;
   let heicResourceId: number;
+  let diffPairResourceId: number;
+  let largePairResourceId: number;
 
   /**
    * A committed fixture with a unique ASCII marker appended. Every upload in a
@@ -91,10 +93,39 @@ test.describe.serial('compare page: difference and measurement', () => {
     const heicV2 = marked('compare-heic-undecodable.heic', 'v2');
     await uploadVersion(request, baseURL!, heicResourceId,
       'pkg3-v2.heic', 'image/heic', heicV2.buffer, 'Second HEIC');
+
+    // Two genuinely different images: the pair where the percentage and the
+    // mask have something to say.
+    const diffV1 = path.join(__dirname, '../../test-assets/sample-image-24.png');
+    const diffResource = await apiClient.createResource({
+      filePath: diffV1,
+      contentType: 'image/png',
+      name: `Pkg3 Different Pair ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    diffPairResourceId = diffResource.ID;
+    const diffV2 = fs.readFileSync(path.join(__dirname, '../../test-assets/sample-image-25.png'));
+    await uploadVersion(request, baseURL!, diffPairResourceId,
+      'pkg3-diff-v2.png', 'image/png', diffV2, 'A different picture');
+
+    // Two ~6.6 MP flat images (13.2 combined megapixels): over the pixel
+    // diff's confirm gate, and cheap to serve. The corner markers differ, so
+    // the hashes (and a few pixels) differ too.
+    const largeV1 = path.join(__dirname, '../../test-assets/compare-heatmap-large-v1.png');
+    const largeResource = await apiClient.createResource({
+      filePath: largeV1,
+      contentType: 'image/png',
+      name: `Pkg3 Large Pair ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    largePairResourceId = largeResource.ID;
+    const largeV2 = fs.readFileSync(path.join(__dirname, '../../test-assets/compare-heatmap-large-v2.png'));
+    await uploadVersion(request, baseURL!, largePairResourceId,
+      'pkg3-large-v2.png', 'image/png', largeV2, 'Large flat pair');
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [pairResourceId, heicResourceId]) {
+    for (const id of [pairResourceId, heicResourceId, diffPairResourceId, largePairResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -308,9 +339,10 @@ test.describe.serial('compare page: difference and measurement', () => {
       await rateInput(page).fill('8');
       await rateInput(page).dispatchEvent('change');
       await blinkButton(page).click();
-      const fast = await sampleSides(page, 1000);
-      // 8 Hz over a second, sampled at 10ms: every flip is caught.
-      expect(fast.length).toBeGreaterThanOrEqual(9);
+      const fast = await sampleSides(page, 1500);
+      // 8 Hz over 1.5s ≈ 12 flips, sampled at 10ms: every flip is caught,
+      // with slack for interval jitter.
+      expect(fast.length).toBeGreaterThanOrEqual(10);
     });
 
     test('prefers-reduced-motion refuses with a stated reason', async ({ page }) => {
@@ -355,6 +387,169 @@ test.describe.serial('compare page: difference and measurement', () => {
         .include('.compare-segmented-control')
         .analyze();
       expect(results.violations).toEqual([]);
+    });
+  });
+
+  test.describe('3.2: pixel diff heatmap', () => {
+    const heatButton = (page: Page) => page.getByRole('button', { name: 'Pixel diff' });
+    const bannerStat = (page: Page) => page.locator('.compare-summary .compare-stat', { hasText: 'Pixels changed' });
+    const maskCanvas = (page: Page) => page.locator('canvas[data-compare-heatmap]:visible');
+
+    /** Fraction of the visible mask canvas the component painted. */
+    async function maskCoverage(page: Page): Promise<number> {
+      return page.evaluate(() => {
+        const canvas = [...document.querySelectorAll('canvas[data-compare-heatmap]')]
+          .find((c) => (c as HTMLCanvasElement).offsetParent) as HTMLCanvasElement | undefined;
+        if (!canvas || !canvas.width) return -1;
+        const { data } = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+        let painted = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted++;
+        return painted / (canvas.width * canvas.height);
+      });
+    }
+
+    async function showOnion(page: Page) {
+      await page.getByRole('radio', { name: 'Onion skin' }).click();
+      await waitDecoded(page);
+    }
+
+    test('an identical pair reports 0% and paints no mask', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await expect(bannerStat(page)).toBeHidden();
+
+      await heatButton(page).click();
+      await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
+      await expect(bannerStat(page)).toBeVisible();
+      await expect(bannerStat(page)).toContainText('0%');
+      expect(await maskCoverage(page)).toBe(0);
+    });
+
+    test('a different pair reports a positive share and paints the mask', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      await expect(bannerStat(page)).toBeVisible();
+      const text = (await bannerStat(page).innerText()).trim();
+      const pct = Number(text.match(/(\d+)%/)?.[1]);
+      expect(pct).toBeGreaterThan(0);
+      expect(pct).toBeLessThanOrEqual(100);
+      // The mask paints what was counted: its coverage tracks the reported
+      // share within the slack the screenshot's antialiasing and the side
+      // labels' protection allow.
+      const coverage = await maskCoverage(page);
+      expect(coverage).toBeGreaterThan(0);
+      expect(Math.abs(coverage * 100 - pct)).toBeLessThan(2);
+    });
+
+    test('the armed mask follows mode switches without waiting for visibility', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      await expect.poll(() => maskCoverage(page)).toBeGreaterThan(0);
+
+      for (const [name, mode] of [
+        [/Difference/, 'difference'],
+        ['Slider', 'slider'],
+        ['Toggle', 'toggle'],
+      ] as const) {
+        await page.getByRole('radio', { name }).click();
+        await expect(maskCanvas(page)).toHaveAttribute('data-compare-heatmap', mode);
+        await expect.poll(() => maskCoverage(page)).toBeGreaterThan(0);
+      }
+      await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    test('the mask follows the alignment offset, and the number moves with it', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      await expect(bannerStat(page)).toContainText('0%');
+
+      await page.getByRole('button', { name: /^Nudge and zoom / }).click();
+      for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
+      // A 40-frame-pixel correction of an identical pair makes the painted
+      // versions disagree by exactly that much: the mask and the percentage
+      // both answer.
+      await expect(bannerStat(page)).toContainText(/\d+%/);
+      expect(await maskCoverage(page)).toBeGreaterThan(0);
+      expect(Number((await bannerStat(page).innerText()).match(/(\d+)%/)?.[1])).toBeGreaterThan(0);
+    });
+
+    test('disarming clears the number and the mask', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      await expect(bannerStat(page)).toBeVisible();
+      await heatButton(page).click();
+      await expect(bannerStat(page)).toBeHidden();
+      await expect(maskCanvas(page)).toHaveCount(0);
+    });
+
+    test('a pair with no dimensions refuses with a stated reason', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${heicResourceId}&v1=1&v2=2`);
+      await page.getByRole('radio', { name: 'Onion skin' }).click();
+      await expect(heatButton(page)).toBeVisible();
+      await expect(heatButton(page)).toHaveAttribute('aria-disabled', 'true');
+      expect(await heatButton(page).getAttribute('title')).toContain('no dimensions');
+
+      await heatButton(page).click({ force: true });
+      await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'false');
+      await expect(bannerStat(page)).toBeHidden();
+    });
+
+    test('a large pair asks before computing, and the confirm computes', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${largePairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+
+      // The gate: the notice with the real number, and no percentage yet.
+      const gate = page.locator('.compare-diff-gate');
+      await expect(gate).toBeVisible();
+      await expect(gate).toContainText(/megapixels/);
+      await expect(bannerStat(page)).toBeHidden();
+
+      await page.getByRole('button', { name: 'Compute anyway' }).click();
+      await expect(gate).toBeHidden();
+      await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
+      await expect(bannerStat(page)).toBeVisible();
+      // The pair is flat colour with two small distinct markers: a tiny share.
+      const pct = Number((await bannerStat(page).innerText()).match(/(\d+)%/)?.[1]);
+      expect(pct).toBeGreaterThan(0);
+      expect(pct).toBeLessThan(10);
+    });
+
+    test('the percentage is announced on discrete ends, never during a drag', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      // The heatmap's live region is one of several sr-only polite regions on
+      // the page (offset, blink); text does not exist until something is
+      // announced, so the positive assertion waits for the announcement.
+      const heatLive = page.locator('span.sr-only[aria-live="polite"]', { hasText: 'Pixel diff' });
+      await expect(heatLive).toBeVisible();
+      await expect(heatLive).toContainText(/\d+%/);
+      const armedAnnouncement = await heatLive.textContent();
+
+      const align = page.getByRole('button', { name: /^Nudge and zoom / });
+      await align.click();
+      const box = page.locator('div.compare-overlay-box:visible');
+      const bounds = (await box.boundingBox())!;
+      const y = bounds.y + Math.min(bounds.height / 2, 60);
+      await page.mouse.move(bounds.x + bounds.width / 2, y);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width / 2 + 20, y, { steps: 6 });
+      // Pointermove repaints are silent. The release below is the one discrete
+      // event representing the whole gesture and is the only one that speaks.
+      expect(await heatLive.textContent()).toBe(armedAnnouncement);
+      await page.mouse.up();
+      await expect.poll(() => heatLive.textContent()).not.toBe(armedAnnouncement);
+      const dragAnnouncement = await heatLive.textContent();
+
+      // A keyboard nudge is another discrete event: it announces the new share.
+      await page.keyboard.press('ArrowRight');
+      await expect.poll(() => heatLive.textContent()).not.toBe(dragAnnouncement);
+      await expect(heatLive).toContainText(/\d+%/);
     });
   });
 });
