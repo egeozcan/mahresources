@@ -680,6 +680,11 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		}, config.ExportRetention),
 		download_queue.ManagerConfig{
 			Concurrency: config.MaxJobConcurrency,
+			// The queue assembles an HLS playlist the way the synchronous path
+			// does, so it needs the same two things: where ffmpeg is, and the
+			// deployment's limits.
+			FfmpegPath: config.FfmpegPath,
+			HLSOptions: hlsOptionsFromConfig(config),
 			// The queue fetches a user-supplied URL on a background worker with
 			// no request and no principal, so it is the operator fetch path
 			// with the least context of its own. It gets the same host policy

@@ -152,18 +152,3 @@ func TestAddRemoteResource_NonPlaylistBodiesAreStoredWhole(t *testing.T) {
 		}
 	}
 }
-
-func TestHLSOutputName(t *testing.T) {
-	cases := map[string]string{
-		"index.m3u8":     "index.mp4",
-		"Some Video.M3U": "Some Video.mp4",
-		"":               "",
-		"clip.mp4":       "clip.mp4",
-		"no-extension":   "no-extension.mp4",
-	}
-	for in, want := range cases {
-		if got := hlsOutputName(in); got != want {
-			t.Errorf("hlsOutputName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

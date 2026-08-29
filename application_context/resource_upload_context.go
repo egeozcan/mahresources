@@ -367,8 +367,8 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 				defer assembled.Cleanup()
 				defer assembled.Body.Close()
 				content = io.NopCloser(assembled.Body)
-				name = hlsOutputName(name)
-				fileName = hlsOutputName(fileName)
+				name = hls.OutputName(name)
+				fileName = hls.OutputName(fileName)
 			}
 
 			res, err := ctx.AddResource(content, fileName, &query_models.ResourceCreator{

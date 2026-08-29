@@ -2,8 +2,6 @@ package application_context
 
 import (
 	"net/http"
-	"path"
-	"strings"
 
 	"mahresources/hls"
 )
@@ -25,29 +23,15 @@ func (ctx *MahresourcesContext) hlsDeps(client *http.Client) hls.Deps {
 // hlsOptions reads the deployment's limits. A zero field keeps the hls
 // package's own default rather than meaning "no segments allowed".
 func (ctx *MahresourcesContext) hlsOptions() hls.Options {
-	return hls.Options{
-		MaxSegments:   ctx.Config.HLSMaxSegments,
-		MaxTotalBytes: ctx.Config.HLSMaxTotalBytes,
-		Concurrency:   ctx.Config.HLSConcurrency,
-	}
+	return hlsOptionsFromConfig(ctx.Config)
 }
 
-// hlsOutputName renames a playlist to what was actually stored.
-//
-// The bytes are MP4 whatever the URL said, and a resource called "index.m3u8"
-// holding an MP4 misdescribes itself everywhere it is listed, served or
-// downloaded again. An empty name stays empty: the caller's own fallbacks
-// (the resource name, then the URL's last path element) run afterwards.
-func hlsOutputName(name string) string {
-	if name == "" {
-		return ""
+// hlsOptionsFromConfig is the same read, for the download manager, which is
+// built before the context finishes assembling itself.
+func hlsOptionsFromConfig(config *MahresourcesConfig) hls.Options {
+	return hls.Options{
+		MaxSegments:   config.HLSMaxSegments,
+		MaxTotalBytes: config.HLSMaxTotalBytes,
+		Concurrency:   config.HLSConcurrency,
 	}
-	ext := path.Ext(name)
-	if strings.EqualFold(ext, ".m3u8") || strings.EqualFold(ext, ".m3u") {
-		name = strings.TrimSuffix(name, ext)
-	}
-	if strings.EqualFold(path.Ext(name), ".mp4") {
-		return name
-	}
-	return name + ".mp4"
 }

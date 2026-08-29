@@ -1,12 +1,15 @@
 package download_queue
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"mahresources/contracts"
+	"mahresources/hls"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"net"
@@ -55,6 +58,14 @@ type ManagerConfig struct {
 	// left `remote_connect_timeout` half-applied — worse than not applying,
 	// because the symptom does not point at the cause.
 	ClientPolicy func(client *http.Client, connectTimeout time.Duration) *http.Client
+
+	// FfmpegPath and HLSOptions are what an HLS download needs, injected for
+	// the same reason ClientPolicy is: this package sits below the layer that
+	// reads configuration. An empty FfmpegPath makes an HLS URL fail with a
+	// message naming ffmpeg rather than store the playlist text as the video,
+	// which is what a deployment without ffmpeg should hear.
+	FfmpegPath string
+	HLSOptions hls.Options
 
 	// RefusalMessage renders a policy refusal for the job's error field, which
 	// its submitter reads. It exists so the address a hostname resolved to does
@@ -126,6 +137,8 @@ type DownloadManager struct {
 	jobs        map[string]*DownloadJob
 	jobOrder    []string // Maintains insertion order
 	resourceCtx ResourceCreator
+	ffmpegPath  string
+	hlsOptions  hls.Options
 	settings    DownloadSettings
 	semaphore   chan struct{}
 	// workers counts the download goroutines in flight, so Shutdown can wait for
@@ -184,6 +197,8 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, settings Download
 		concurrency:    cfg.Concurrency,
 		jobRetention:   cfg.JobRetention,
 		clientPolicy:   cfg.ClientPolicy,
+		ffmpegPath:     cfg.FfmpegPath,
+		hlsOptions:     cfg.HLSOptions,
 		refusalMessage: cfg.RefusalMessage,
 	}
 
@@ -526,6 +541,49 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 	return client
 }
 
+// assembleHLS downloads a streaming playlist and returns the single file it
+// assembles to.
+//
+// The client is the one this transfer already built, decorated with the
+// deployment's egress policy. Passing it on is the whole point: a playlist
+// names further URLs, and every one of them is fetched under the same policy
+// the submitted URL was. ffmpeg is handed local files only and cannot open a
+// socket.
+//
+// Progress is reported through the job's phase counters rather than its byte
+// counters, because the size of an HLS stream is not known until every segment
+// has been fetched -- TotalSize stays -1, which is what the queue already
+// means by "unknown".
+func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, head []byte, body io.Reader) (*hls.Result, error) {
+	var lastNotify time.Time
+	result, err := hls.Fetch(ctx, hls.Deps{Client: client, FfmpegPath: dm.ffmpegPath}, job.URL, head, body, dm.hlsOptions,
+		func(phase string, done, total int64) {
+			job.SetPhase(phase)
+			job.SetPhaseProgress(done, total)
+			// Throttled like the byte progress, and for the same reason: a
+			// four-hundred-segment stream would otherwise be four hundred SSE
+			// events. A phase change is always sent, since those are rare and
+			// are the part a watcher is actually waiting for.
+			if done == 0 || time.Since(lastNotify) >= progressNotifyInterval {
+				lastNotify = time.Now()
+				dm.notifyJob("updated", job)
+			}
+		})
+	if err != nil {
+		return nil, dm.describeFetchError(job.URL, err)
+	}
+
+	// The transfer is over by the time Fetch returns, so the job moves to
+	// `processing` here rather than at an EOF the progress reader would have
+	// seen. Same order as attemptReporter.onComplete: status first, then one
+	// notification, never two for one transition.
+	job.updateProgressForRun(runID, result.Size, result.Size)
+	if job.setStatusForRun(runID, JobStatusProcessing) {
+		dm.notifyJob("updated", job)
+	}
+	return result, nil
+}
+
 // describeFetchError renders a transfer failure for the job's error field.
 //
 // The submitter reads that field. A dial refusal's own text names the address
@@ -627,9 +685,34 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	timeoutBody := NewTimeoutReaderWithContext(resp.Body, s.IdleTimeout(), ctx)
 	defer timeoutBody.Close()
 
-	// Wrap with progress reader
-	reporter := &attemptReporter{dm: dm, job: job, runID: runID, total: contentLength}
-	progressBody := NewProgressReader(timeoutBody, reporter.onProgress, reporter.onComplete)
+	// An HLS playlist is a list of the media, not the media, so storing what
+	// arrived would file a few kilobytes of text as the video. Recognised from
+	// the bytes rather than the URL: the endpoints this matters for carry
+	// neither an .m3u8 extension nor a playlist content type.
+	//
+	// The sniff reads off the body, so the non-playlist path has to put those
+	// bytes back before the progress reader sees them -- otherwise the first
+	// sixty-four bytes of every download are silently dropped.
+	head := make([]byte, hls.SniffLen())
+	sniffed, _ := io.ReadFull(timeoutBody, head)
+	head = head[:sniffed]
+
+	var progressBody contracts.File
+	assembledHLS := false
+	if hls.IsPlaylist(head, resp.Header.Get("Content-Type"), job.URL) {
+		assembled, hlsErr := dm.assembleHLS(ctx, runID, job, httpClient, head, timeoutBody)
+		if hlsErr != nil {
+			return nil, hlsErr
+		}
+		defer assembled.Cleanup()
+		defer assembled.Body.Close()
+		progressBody = io.NopCloser(assembled.Body)
+		assembledHLS = true
+	} else {
+		// Wrap with progress reader
+		reporter := &attemptReporter{dm: dm, job: job, runID: runID, total: contentLength}
+		progressBody = NewProgressReader(io.MultiReader(bytes.NewReader(head), timeoutBody), reporter.onProgress, reporter.onComplete)
+	}
 
 	// The stored file name and the resource's display name are different things,
 	// and conflating them lost the Name the user typed: the worker built one
@@ -645,6 +728,16 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	name := trimResourceName(job.creator.Name)
 	if name == "" {
 		name = fileName
+	}
+
+	// The names follow the bytes, which are MP4 whatever the URL said: an
+	// assembled video still called "index.m3u8" misdescribes itself everywhere
+	// it is listed, served or downloaded again. Applied to the local values
+	// rather than to job.creator, which is the payload the history row stores
+	// and a retry replays.
+	if assembledHLS {
+		fileName = hls.OutputName(fileName)
+		name = hls.OutputName(name)
 	}
 
 	// Use existing AddResource logic
