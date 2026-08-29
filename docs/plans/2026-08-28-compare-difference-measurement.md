@@ -98,6 +98,8 @@ The final pre-commit re-measurement is unchanged: **3.1 XS, 3.2 M at the top of 
 
 **Independent review round 3 found two standards majors, both addressed before round 4:** flash-safe Blink now hands the heatmap its grey backdrop and 8% contrast transform and schedules a discrete repaint when entering/leaving that rendering; a partially-transparent browser fixture proves a normal-frame 100% difference collapses to 0% under the filter and returns on pause. Both large-pair gate exits now return focus to **Pixel diff**, with the E2E walking dismiss and confirm. The refusal text and docs now state the durable policy (Pixel diff does not support HEIC/TIFF) instead of blaming the current browser decoder.
 
+**Independent review round 4 found one spec major, addressed before round 5:** the exact refusal set omitted the registered `image/tiff-fx` subtype. Refusal is now a normalized media-family predicate covering `tif`/`tiff`, `heic`/`heif`, their `x-` forms, and hyphenated family subtypes such as TIFF-FX and HEIC sequences; the unit corpus enumerates TIFF-FX and vendor aliases.
+
 ## Order
 
 | Batch | Contents |

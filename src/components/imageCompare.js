@@ -60,14 +60,16 @@ const HEATMAP_THRESHOLD = 0;
 // visible RGB through this colour while source alpha itself still decides the
 // overlap denominator.
 const HEATMAP_BACKDROP = [250, 250, 249];
-const HEATMAP_UNSUPPORTED_CONTENT_TYPES = new Set([
-  'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
-  'image/x-heic', 'image/x-heif',
-  'image/tiff', 'image/tif', 'image/x-tiff', 'image/x-tif',
-]);
-
 function normalizedContentType(value) {
   return String(value || '').split(';', 1)[0].trim().toLowerCase();
+}
+
+function heatMapUnsupportedContentType(value) {
+  const type = normalizedContentType(value);
+  // Refuse the media families, not only today's common spellings. TIFF-FX is
+  // a registered TIFF subtype, and sequence/vendor-prefixed HEIF forms belong
+  // to the same durable Package 3 refusal contract.
+  return /^image\/(?:x-)?(?:tiff?|heic|heif)(?:$|-)/.test(type);
 }
 
 /**
@@ -1365,7 +1367,7 @@ export function imageCompare({
      * upload cannot arm a computation that this feature promises to refuse.
      */
     get heatMapUnsupportedFormat() {
-      return this._contentTypes.some((type) => HEATMAP_UNSUPPORTED_CONTENT_TYPES.has(normalizedContentType(type)));
+      return this._contentTypes.some(heatMapUnsupportedContentType);
     },
 
     get heatMapAvailable() {

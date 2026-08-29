@@ -3182,18 +3182,24 @@ describe('the pixel-diff heatmap: orchestration', () => {
     });
   });
 
-  test('a TIFF with stored dimensions still refuses pixel diff', () => {
-    const c = component(
-      { w: 20, h: 10 },
-      { w: 20, h: 10 },
+  test('stored dimensions do not make any TIFF-family media type measurable', () => {
+    for (const contentType of [
+      'image/tiff', 'image/tif', 'image/tiff-fx',
+      'image/x-tiff', 'image/x-tif', 'image/x-tiff-fx',
       ' IMAGE/X-TIFF; charset=binary ',
-      'image/tif',
-    );
-    expect(c.scaleAvailable).toBe(true);
-    expect(c.heatMapAvailable).toBe(false);
-    expect(c.heatMapUnavailableTitle).toContain('TIFF');
-    c.toggleHeatMap();
-    expect(c.heatMapOn).toBe(false);
+    ]) {
+      const c = component(
+        { w: 20, h: 10 },
+        { w: 20, h: 10 },
+        contentType,
+        'image/png',
+      );
+      expect(c.scaleAvailable, contentType).toBe(true);
+      expect(c.heatMapAvailable, contentType).toBe(false);
+      expect(c.heatMapUnavailableTitle, contentType).toContain('TIFF');
+      c.toggleHeatMap();
+      expect(c.heatMapOn, contentType).toBe(false);
+    }
   });
 
   test('the large-pair gate confirms once and can be re-armed', () => {
