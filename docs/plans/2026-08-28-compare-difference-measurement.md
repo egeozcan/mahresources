@@ -102,6 +102,8 @@ The final pre-commit re-measurement is unchanged: **3.1 XS, 3.2 M at the top of 
 
 **Independent review round 5: no majors.** Its two low notes were closed before round 6: the family table now pins HEIC, HEIF, sequence and `x-` positives plus near-match negatives, and the Scale/Anchor docs no longer claim all HEIC/TIFF pairs lack dimensions or conflate geometry availability with Pixel diff's policy.
 
+**Independent review round 6: no majors and no findings.** Rounds 5 and 6 are the required two consecutive no-major reviews. Final validation at this head covered full SQLite and PostgreSQL browser/CLI suites, all Go tests on both engines, 1,210 Vitest tests, the dedicated accessibility coverage embedded in both browser suites, and the CSS source scan. A pre-existing crop-test timing window surfaced once as a Playwright retry under the PostgreSQL load; the assertion now waits for Alpine's canonical clamped values, and its focused PostgreSQL rerun passes.
+
 ## Order
 
 | Batch | Contents |

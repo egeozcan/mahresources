@@ -206,7 +206,11 @@ test.describe.serial('Resource crop', () => {
     await dialog.locator(`#crop-w-${resourceId}`).fill('30');
     await dialog.locator(`#crop-h-${resourceId}`).fill('30');
 
-    // The clamp must preserve the 1:1 aspect, so W and H end up equal.
+    // Alpine applies the clamp reactively after the input event. Wait for the
+    // canonical state to render back into both fields instead of reading the
+    // just-filled DOM values in that one-tick window.
+    await expect(dialog.locator(`#crop-w-${resourceId}`)).toHaveValue('20');
+    await expect(dialog.locator(`#crop-h-${resourceId}`)).toHaveValue('20');
     const widthValue = await dialog.locator(`#crop-w-${resourceId}`).inputValue();
     const heightValue = await dialog.locator(`#crop-h-${resourceId}`).inputValue();
     expect(Number(widthValue)).toBeGreaterThan(0);
