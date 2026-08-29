@@ -671,7 +671,13 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 // means by "unknown".
 func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, checkURL func(string) error, base string, head []byte, body io.Reader) (*hls.Result, error) {
 	var lastNotify time.Time
-	deps := hls.Deps{Client: client, CheckURL: checkURL, FfmpegPath: dm.ffmpegPath}
+	deps := hls.Deps{
+		Client:     client,
+		CheckURL:   checkURL,
+		FfmpegPath: dm.ffmpegPath,
+		// Live, like every other timeout on this path.
+		IdleTimeout: dm.currentSettings().IdleTimeout(),
+	}
 	// The limits are the deployment's boot config, but the *timeout* is live:
 	// an operator lowering remote_overall_timeout at runtime expects it to
 	// apply, and the value captured at construction would outlive the change.

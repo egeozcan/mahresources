@@ -62,6 +62,13 @@ type Deps struct {
 	FfmpegPath string
 	// TempDir is where segments land. Empty uses the system default.
 	TempDir string
+	// IdleTimeout fails a transfer that stops producing bytes.
+	//
+	// The overall deadline alone is not a substitute: a server that sends
+	// headers and then stalls holds a worker for the whole of it, and a
+	// playlist has hundreds of chances to do that. Zero disables the check,
+	// which is what a caller with no configured idle timeout has.
+	IdleTimeout time.Duration
 }
 
 // Options are the per-download limits and preferences.
@@ -328,6 +335,55 @@ func fetchText(ctx context.Context, d Deps, url string) (string, string, error) 
 	return buf.String(), finalURL(resp, url), nil
 }
 
+// idleGuard fails a read that has produced nothing for the timeout.
+//
+// The caller's own client applies its timeouts to the request it made; every
+// request this package goes on to issue is its own, and the deployment's idle
+// bound has to reach those too or a single stalled segment holds a worker until
+// the overall deadline.
+func idleGuard(rc io.ReadCloser, timeout time.Duration) io.ReadCloser {
+	if timeout <= 0 {
+		return rc
+	}
+	return &idleReader{inner: rc, timeout: timeout}
+}
+
+type idleReader struct {
+	inner   io.ReadCloser
+	timeout time.Duration
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	// One goroutine per Read, which is the cost of not being able to interrupt
+	// a blocked Read any other way.
+	done := make(chan result, 1)
+	go func() {
+		n, err := r.inner.Read(p)
+		done <- result{n, err}
+	}()
+
+	timer := time.NewTimer(r.timeout)
+	defer timer.Stop()
+	select {
+	case res := <-done:
+		return res.n, res.err
+	case <-timer.C:
+		// Close first, then wait. Closing the body makes the blocked read
+		// return, and waiting for it is what stops that goroutine writing into
+		// p after this call has handed p back to its caller -- a write nobody
+		// would see until it corrupted a segment.
+		_ = r.inner.Close()
+		<-done
+		return 0, fmt.Errorf("the server stopped sending data for %s", r.timeout)
+	}
+}
+
+func (r *idleReader) Close() error { return r.inner.Close() }
+
 // contentRangeStart reads the first byte position out of a Content-Range
 // header ("bytes 100-199/1234"). ok is false when the header is absent or in a
 // form this does not recognise, which is treated as "no claim made" rather than
@@ -390,6 +446,8 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
+	body := idleGuard(resp.Body, d.IdleTimeout)
+
 	if t.hasRange() {
 		if resp.StatusCode == http.StatusPartialContent {
 			// A 206 is trustworthy only if it says where it starts, and says
@@ -400,19 +458,19 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 			// media with no error anywhere.
 			start, ok := contentRangeStart(resp.Header.Get("Content-Range"))
 			if !ok {
-				_ = resp.Body.Close()
+				_ = body.Close()
 				return nil, nil, fmt.Errorf("the server answered a partial response with no usable Content-Range for bytes %d-%d", t.offset, t.offset+t.length-1)
 			}
 			if start != t.offset {
-				_ = resp.Body.Close()
+				_ = body.Close()
 				return nil, nil, fmt.Errorf("the server answered byte %d for a request that asked for byte %d", start, t.offset)
 			}
 		} else {
 			// The server ignored the Range and sent the whole object. Storing
 			// that for each of a hundred sub-ranges would multiply one file
 			// into a hundred copies of itself, so the range is applied here.
-			if _, err := io.CopyN(io.Discard, resp.Body, t.offset); err != nil {
-				_ = resp.Body.Close()
+			if _, err := io.CopyN(io.Discard, body, t.offset); err != nil {
+				_ = body.Close()
 				return nil, nil, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
 			}
 		}
@@ -421,9 +479,9 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 		return struct {
 			io.Reader
 			io.Closer
-		}{io.LimitReader(resp.Body, t.length), resp.Body}, resp, nil
+		}{io.LimitReader(body, t.length), body}, resp, nil
 	}
-	return resp.Body, resp, nil
+	return body, resp, nil
 }
 
 // downloadInto fetches one media playlist's parts into its own subdirectory of
@@ -460,18 +518,29 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 	// its key every segment still names each key once, and fetching a 16-byte
 	// file four hundred times would be the slowest part of the download.
 	keyFiles := map[string]string{}
+	// The initialization section's key is listed first, and separately: a
+	// playlist can name a key that applies to the map and then replace it
+	// before the first segment, in which case no segment names it and it would
+	// never be fetched at all.
+	keys := make([]*segmentKey, 0, len(m.segments)+1)
+	if m.initKey != nil {
+		keys = append(keys, m.initKey)
+	}
 	for _, seg := range m.segments {
-		if seg.key == nil {
+		keys = append(keys, seg.key)
+	}
+	for _, key := range keys {
+		if key == nil {
 			continue
 		}
-		if _, done := keyFiles[seg.key.uri]; done {
+		if _, done := keyFiles[key.uri]; done {
 			continue
 		}
 		name := fmt.Sprintf("key%d.bin", len(keyFiles))
-		if _, err := fetchToFile(ctx, d, fetchTarget{url: seg.key.uri, length: maxKeyBytes}, filepath.Join(dir, name), opt, total); err != nil {
+		if _, err := fetchToFile(ctx, d, fetchTarget{url: key.uri, maxBytes: maxKeyBytes}, filepath.Join(dir, name), opt, total); err != nil {
 			return "", fmt.Errorf("could not download the stream's decryption key: %w", err)
 		}
-		keyFiles[seg.key.uri] = name
+		keyFiles[key.uri] = name
 	}
 
 	p.report(PhaseSegments, 0, int64(len(m.segments)))
@@ -596,6 +665,17 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 	if err != nil {
 		return 0, err
 	}
+	// A sub-range that arrived short is a truncated segment, and the reader
+	// above is bounded rather than checked -- so without this the missing bytes
+	// are simply absent from the file and the mux either fails opaquely or
+	// produces damaged media. Only ranged fetches can be checked this way: an
+	// ordinary segment has no promised length.
+	if t.hasRange() && n != t.length {
+		return 0, fmt.Errorf("the server sent %d bytes for a %d byte sub-range", n, t.length)
+	}
+	if t.maxBytes > 0 && n > t.maxBytes {
+		return 0, fmt.Errorf("the server sent %d bytes where at most %d was expected", n, t.maxBytes)
+	}
 	return n, f.Sync()
 }
 
@@ -631,11 +711,23 @@ func localPlaylist(m *media, names []string, keyFiles map[string]string) string 
 	// Reproduced because an EXT-X-KEY with no IV derives one from the sequence
 	// number. See media.seqNo.
 	fmt.Fprintf(&b, "#EXT-X-MEDIA-SEQUENCE:%d\n", m.seqNo)
+	lastKey := ""
 	if m.initSegment != nil {
+		// The key comes first. ffmpeg decrypts the initialization section with
+		// whichever key it has seen by the time it reads the map, so a map line
+		// written above the key line reads an encrypted initialization section
+		// as plaintext -- and the stream then decodes to nothing, with no error
+		// naming the cause.
+		if m.initKey != nil {
+			lastKey = fmt.Sprintf("#EXT-X-KEY:METHOD=AES-128,URI=%q", keyFiles[m.initKey.uri])
+			if m.initKey.iv != "" {
+				lastKey += ",IV=" + m.initKey.iv
+			}
+			b.WriteString(lastKey + "\n")
+		}
 		b.WriteString(`#EXT-X-MAP:URI="init.mp4"` + "\n")
 	}
 
-	lastKey := ""
 	for i, seg := range m.segments {
 		key := "#EXT-X-KEY:METHOD=NONE"
 		if seg.key != nil {

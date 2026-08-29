@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,7 +150,7 @@ func TestImplicitByteRangeOffsetsAdvance(t *testing.T) {
 		"#EXT-X-BYTERANGE:200\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestExplicitByteRangeOffsetZeroIsKept(t *testing.T) {
 		"#EXT-X-BYTERANGE:100@100\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50@0\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,6 +451,12 @@ func TestAnOversized206IsTruncated(t *testing.T) {
 	}
 }
 
+// atomicInt64 is a tiny holder so a test can hand fetchToFileOnce the shared
+// byte counter it expects without declaring the import at every call site.
+type atomicInt64 struct{ v atomic.Int64 }
+
+func (a *atomicInt64) ptr() *atomic.Int64 { return &a.v }
+
 func bytesRepeat(b byte, n int) []byte {
 	out := make([]byte, n)
 	for i := range out {
@@ -489,6 +496,138 @@ func TestAChangedInitializationRangeIsRefused(t *testing.T) {
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@0"` + "\n#EXTINF:1.0,\na.m4s\n" +
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@100"` + "\n#EXTINF:1.0,\nb.m4s\n" +
 		"#EXT-X-ENDLIST\n"
-	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
+	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
 	assertUnsupported(t, err, "initialization")
+}
+
+// TestAKeyStaysInEffectUntilAnotherReplacesIt. An EXT-X-KEY applies to every
+// segment after it until another replaces it, and the parser attaches it only
+// to the segment it preceded. Falling back to the playlist-level key decrypted
+// a rotated stream entirely with its first key.
+func TestAKeyStaysInEffectUntilAnotherReplacesIt(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
+		"#EXTINF:1.0,\na.ts\n#EXTINF:1.0,\nb.ts\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k2.bin"` + "\n" +
+		"#EXTINF:1.0,\nc.ts\n#EXTINF:1.0,\nd.ts\n" +
+		"#EXT-X-ENDLIST\n"
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"k1.bin", "k1.bin", "k2.bin", "k2.bin"}
+	for i, seg := range m.segments {
+		if seg.key == nil {
+			t.Fatalf("segment %d has no key", i)
+		}
+		if !strings.HasSuffix(seg.key.uri, want[i]) {
+			t.Errorf("segment %d uses %s, want %s — the rotation was dropped and the whole stream decrypts with the first key",
+				i, seg.key.uri, want[i])
+		}
+	}
+}
+
+// TestAMidStreamMethodNoneClearsTheKey is the same rule in the direction that
+// is easy to miss: a METHOD=NONE tag arrives as a key that parses to nil, which
+// is indistinguishable from "no tag here" unless the tag itself is tracked. The
+// old fallback read those clear segments as still encrypted.
+func TestAMidStreamMethodNoneClearsTheKey(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
+		"#EXTINF:1.0,\na.ts\n" +
+		"#EXT-X-KEY:METHOD=NONE\n" +
+		"#EXTINF:1.0,\nb.ts\n#EXTINF:1.0,\nc.ts\n" +
+		"#EXT-X-ENDLIST\n"
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.segments[0].key == nil {
+		t.Error("the first segment lost its key")
+	}
+	for _, i := range []int{1, 2} {
+		if m.segments[i].key != nil {
+			t.Errorf("segment %d is still encrypted after METHOD=NONE — clear bytes would be run through a decryptor", i)
+		}
+	}
+}
+
+// TestAnEncryptedInitialisationSectionGetsItsKeyFirst. ffmpeg decrypts the
+// initialization section with whichever key it has seen by the time it reads
+// the map, so a map line written above the key line reads it as plaintext and
+// the stream decodes to nothing with no error naming the cause.
+func TestAnEncryptedInitialisationSectionGetsItsKeyFirst(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
+		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
+		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.initKey == nil {
+		t.Fatal("the initialization section's key was not recorded")
+	}
+	local := localPlaylist(m, []string{"seg00000.ts"}, map[string]string{m.initKey.uri: "key0.bin"})
+	keyAt := strings.Index(local, "#EXT-X-KEY")
+	mapAt := strings.Index(local, "#EXT-X-MAP")
+	if keyAt < 0 || mapAt < 0 || keyAt > mapAt {
+		t.Fatalf("the local playlist orders MAP before KEY:\n%s", local)
+	}
+}
+
+// TestAShortSubRangeIsRefused. The range reader is bounded rather than checked,
+// so missing bytes were simply absent from the file and the mux failed opaquely
+// or produced damaged media.
+func TestAShortSubRangeIsRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-99/1000")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(bytesRepeat('X', 40)) // promised 100
+	}))
+	defer srv.Close()
+
+	var spent atomicInt64
+	_, err := fetchToFileOnce(context.Background(), deps(),
+		fetchTarget{url: srv.URL + "/a.ts", offset: 0, length: 100},
+		filepath.Join(t.TempDir(), "seg.ts"), Defaults(), spent.ptr())
+	if err == nil {
+		t.Fatal("a sub-range that arrived 60 bytes short was accepted as complete")
+	}
+	if !strings.Contains(err.Error(), "40") {
+		t.Errorf("error %v does not say how much arrived", err)
+	}
+}
+
+// TestAStalledSegmentFailsOnTheIdleTimeout. The overall deadline is not a
+// substitute: a server that sends headers and then stalls holds a worker for
+// the whole of it, and a playlist has hundreds of chances to do that.
+func TestAStalledSegmentFailsOnTheIdleTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-time.After(10 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	d := deps()
+	d.IdleTimeout = 300 * time.Millisecond
+	start := time.Now()
+	var spent atomicInt64
+	_, err := fetchToFileOnce(context.Background(), d, fetchTarget{url: srv.URL + "/a.ts"},
+		filepath.Join(t.TempDir(), "seg.ts"), Defaults(), spent.ptr())
+	if err == nil {
+		t.Fatal("a stalled transfer was accepted")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("the stall was detected after %s, not by the idle timeout", elapsed)
+	}
 }

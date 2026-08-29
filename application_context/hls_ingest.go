@@ -18,6 +18,10 @@ func (ctx *MahresourcesContext) hlsDeps(client *http.Client, policy plugin_syste
 	return hls.Deps{
 		Client:     client,
 		FfmpegPath: ctx.Config.FfmpegPath,
+		// The deployment's idle bound, applied to every request this makes.
+		// The client's own timeouts govern the request the caller already
+		// issued; these are new ones.
+		IdleTimeout: ctx.Config.RemoteResourceIdleTimeout,
 		// The allowlist, which the client's decoration does not carry: it
 		// polices addresses and redirect hops, while "may this caller talk to
 		// this host at all" is checked by whoever holds the URL. Every other

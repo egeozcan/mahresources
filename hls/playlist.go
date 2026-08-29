@@ -79,6 +79,12 @@ type media struct {
 	// their codec configuration in. Without it an fMP4 stream muxes to a file
 	// no player can open.
 	initSegment *fetchTarget
+	// initKey is the key in effect where the initialization section appeared.
+	// It is written before the EXT-X-MAP line in the local playlist, because an
+	// encrypted initialization section read as plaintext yields a file that
+	// decodes to nothing -- and ffmpeg applies whichever key it has seen *by*
+	// the time it reads the map.
+	initKey *segmentKey
 	// audio is a separate audio rendition to mux in, when the master playlist
 	// carried one. Video and audio in separate playlists is ordinary -- it is
 	// how one audio track is shared across five video bitrates -- and a
@@ -109,6 +115,11 @@ type fetchTarget struct {
 	// playlist needs no byte-range tags of its own.
 	length int64
 	offset int64
+	// maxBytes refuses a response larger than this. Distinct from length,
+	// which is a range the server promised to honour and is checked for having
+	// arrived *exactly*: this is only a ceiling, for a resource whose size we
+	// do not know but do have an upper bound on.
+	maxBytes int64
 }
 
 func (t fetchTarget) hasRange() bool { return t.length > 0 }
@@ -177,7 +188,7 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
-		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt, explicitByteRangeOffsets(text))
+		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt, explicitByteRangeOffsets(text), explicitMapOffsets(text))
 		return m, "", err
 	default:
 		return nil, "", unsupported("the URL is an HLS playlist of a kind this server does not handle")
@@ -292,7 +303,13 @@ func resolutionHeight(res string) int {
 }
 
 // readMedia validates a media playlist and flattens it into the segment list.
-func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets []bool) (*media, error) {
+func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets, explicitMaps []bool) (*media, error) {
+	mapIndex := 0
+	nextMapExplicit := func() bool {
+		explicit := mapIndex < len(explicitMaps) && explicitMaps[mapIndex]
+		mapIndex++
+		return explicit
+	}
 	// A playlist with no EXT-X-ENDLIST is a live stream: the segment window
 	// slides, and new segments keep appearing for as long as the broadcast
 	// runs. The byte and segment caps below would bound such a download, but
@@ -308,12 +325,22 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		out.targetDuration = 10
 	}
 
+	// The key in effect, carried forward across segments that carry no tag.
+	currentKey, err := readKey(pl.Key, playlistURL)
+	if err != nil {
+		return nil, err
+	}
+
 	if pl.Map != nil && pl.Map.URI != "" {
+		if err := refuseImplicitMapOffset(pl.Map, nextMapExplicit()); err != nil {
+			return nil, err
+		}
 		t, err := resolveTarget(playlistURL, pl.Map.URI, pl.Map.Limit, pl.Map.Offset)
 		if err != nil {
 			return nil, err
 		}
 		out.initSegment = &t
+		out.initKey = currentKey
 	}
 
 	// EXT-X-BYTERANGE with no @offset means "the byte after the previous
@@ -338,6 +365,9 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		// A per-segment EXT-X-MAP after the first is a format change mid-stream
 		// that a single -c copy mux cannot represent.
 		if seg.Map != nil && seg.Map.URI != "" {
+			if err := refuseImplicitMapOffset(seg.Map, nextMapExplicit()); err != nil {
+				return nil, err
+			}
 			t, err := resolveTarget(playlistURL, seg.Map.URI, seg.Map.Limit, seg.Map.Offset)
 			if err != nil {
 				return nil, err
@@ -345,6 +375,7 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 			switch {
 			case out.initSegment == nil:
 				out.initSegment = &t
+				out.initKey = currentKey
 			// Compared whole, not by URL. One resource can hold several
 			// initialization sections at different byte ranges, so comparing
 			// names alone silently kept the first and decoded the rest of the
@@ -354,15 +385,20 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 			}
 		}
 
-		key, err := readKey(seg.Key, playlistURL)
-		if err != nil {
-			return nil, err
-		}
-		if key == nil {
-			if key, err = readKey(pl.Key, playlistURL); err != nil {
+		// An EXT-X-KEY applies to every segment *after* it until another one
+		// replaces it, and the parser attaches it only to the segment it
+		// preceded. Falling back to the playlist-level key for every segment
+		// with no tag of its own therefore decrypted a rotated stream entirely
+		// with its first key -- and read a mid-stream METHOD=NONE as "still
+		// encrypted", since that arrives as a tag whose parsed key is nil,
+		// indistinguishable from no tag at all unless the tag itself is the
+		// thing being tracked.
+		if seg.Key != nil {
+			if currentKey, err = readKey(seg.Key, playlistURL); err != nil {
 				return nil, err
 			}
 		}
+		key := currentKey
 
 		t, err := resolveTarget(playlistURL, seg.URI, seg.Limit, seg.Offset)
 		if err != nil {
@@ -390,6 +426,48 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		return nil, unsupported("this HLS playlist contains no media segments")
 	}
 	return out, nil
+}
+
+// refuseImplicitMapOffset rejects an EXT-X-MAP byte range with no explicit
+// offset.
+//
+// The specification places it after the previous sub-range of the same
+// resource, and the parser reports an omitted offset as zero -- so a second map
+// with an implicit offset compares equal to the first and is silently ignored,
+// decoding the rest of the stream against the wrong codec configuration. The
+// running offset that solves this for media segments cannot be reused here,
+// because the two tags interleave in ways the segment list does not record.
+//
+// Refused rather than guessed: the form is vanishingly rare, and a wrong guess
+// produces a file that plays as garbage rather than an error anyone can act on.
+func refuseImplicitMapOffset(m *m3u8.Map, explicit bool) error {
+	if m.Limit > 0 && !explicit {
+		return unsupported("this HLS stream's initialization section uses a byte range with no explicit offset, which this server cannot place")
+	}
+	return nil
+}
+
+// explicitMapOffsets is explicitByteRangeOffsets for EXT-X-MAP, whose byte
+// range is an attribute rather than a tag of its own. They appear in the same
+// order the parser reports them: a map before the first segment becomes the
+// playlist's, the rest belong to the segments they precede.
+func explicitMapOffsets(text string) []bool {
+	var out []bool
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#EXT-X-MAP:") {
+			continue
+		}
+		attr := ""
+		if i := strings.Index(line, `BYTERANGE="`); i >= 0 {
+			rest := line[i+len(`BYTERANGE="`):]
+			if j := strings.IndexByte(rest, '"'); j >= 0 {
+				attr = rest[:j]
+			}
+		}
+		out = append(out, strings.Contains(attr, "@"))
+	}
+	return out
 }
 
 // readKey validates an EXT-X-KEY and resolves its URI.
