@@ -100,6 +100,8 @@ The final pre-commit re-measurement is unchanged: **3.1 XS, 3.2 M at the top of 
 
 **Independent review round 4 found one spec major, addressed before round 5:** the exact refusal set omitted the registered `image/tiff-fx` subtype. Refusal is now a normalized media-family predicate covering `tif`/`tiff`, `heic`/`heif`, their `x-` forms, and hyphenated family subtypes such as TIFF-FX and HEIC sequences; the unit corpus enumerates TIFF-FX and vendor aliases.
 
+**Independent review round 5: no majors.** Its two low notes were closed before round 6: the family table now pins HEIC, HEIF, sequence and `x-` positives plus near-match negatives, and the Scale/Anchor docs no longer claim all HEIC/TIFF pairs lack dimensions or conflate geometry availability with Pixel diff's policy.
+
 ## Order
 
 | Batch | Contents |

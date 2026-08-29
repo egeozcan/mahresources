@@ -3182,11 +3182,13 @@ describe('the pixel-diff heatmap: orchestration', () => {
     });
   });
 
-  test('stored dimensions do not make any TIFF-family media type measurable', () => {
+  test('stored dimensions do not make refused TIFF/HEIF-family media types measurable', () => {
     for (const contentType of [
       'image/tiff', 'image/tif', 'image/tiff-fx',
       'image/x-tiff', 'image/x-tif', 'image/x-tiff-fx',
       ' IMAGE/X-TIFF; charset=binary ',
+      'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
+      'image/x-heic', 'image/x-heif', 'image/x-heic-sequence', 'image/x-heif-sequence',
     ]) {
       const c = component(
         { w: 20, h: 10 },
@@ -3196,9 +3198,20 @@ describe('the pixel-diff heatmap: orchestration', () => {
       );
       expect(c.scaleAvailable, contentType).toBe(true);
       expect(c.heatMapAvailable, contentType).toBe(false);
-      expect(c.heatMapUnavailableTitle, contentType).toContain('TIFF');
       c.toggleHeatMap();
       expect(c.heatMapOn, contentType).toBe(false);
+    }
+  });
+
+  test('nearby but unrelated image media types are not caught by the family boundary', () => {
+    for (const contentType of ['image/heicfoo', 'image/heiff', 'image/tiffx', 'image/png']) {
+      const c = component(
+        { w: 20, h: 10 },
+        { w: 20, h: 10 },
+        contentType,
+        'image/png',
+      );
+      expect(c.heatMapAvailable, contentType).toBe(true);
     }
   });
 

@@ -116,7 +116,7 @@ The four overlay modes -- slider, onion skin, toggle and difference -- draw both
 Scale and anchor apply to the overlay modes only, and are hidden in **Side-by-side**, where each version has a pane of its own.
 
 :::note
-A pair whose dimensions neither the file nor the browser reports -- a HEIC or a TIFF, which no browser renders -- leaves nothing to measure against. Both controls are shown as unavailable rather than acting on nothing.
+A pair whose dimensions neither the stored file metadata nor the browser reports leaves nothing to scale or anchor against. Both controls are shown as unavailable rather than acting on nothing. This geometry rule is separate from Pixel diff's explicit HEIC/TIFF policy below: a TIFF with stored dimensions can still use Scale and Anchor even though Pixel diff refuses it.
 :::
 
 ##### Aligning two versions by hand
