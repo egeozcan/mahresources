@@ -1,0 +1,359 @@
+// Package hls turns an HLS playlist URL into a single MP4 file.
+//
+// It exists because two independent fetch paths need it and neither can host
+// it: the synchronous downloader in application_context (behind
+// /v1/resource/remote and the plugin's create_resource_from_url) and the
+// download queue's own worker, which does its own HTTP and sits *below*
+// application_context. So this is a leaf package in the shape groupio/ and
+// search/ already establish — it depends on models/ and above nothing, and it
+// takes everything it needs per call rather than capturing it at construction.
+//
+// The one design rule worth stating up front: **this package fetches the
+// segments itself, through the caller's http.Client, and ffmpeg is never given
+// a URL.** Handing ffmpeg the playlist would be a dozen lines shorter and would
+// hand it the network too — bypassing the per-plugin egress allowlist, the
+// per-redirect re-check and the dial-time deny on private addresses that the
+// caller's client carries. A crafted playlist naming 169.254.169.254 would then
+// be fetched with no policy applied at all. Every byte that reaches ffmpeg here
+// is a local file, and the mux runs with a protocol whitelist that cannot open
+// a socket.
+package hls
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/grafov/m3u8"
+)
+
+// PlaylistHeader is the first line of every playlist, and how one is
+// recognised.
+const PlaylistHeader = "#EXTM3U"
+
+// sniffLen is how many bytes of a response body IsPlaylist needs. The tag is
+// seven bytes, but a UTF-8 BOM and leading whitespace both occur in the wild.
+const sniffLen = 64
+
+// IsPlaylist reports whether a response is an HLS playlist.
+//
+// It answers from the bytes, not from the URL or the Content-Type. Both of
+// those are hints: the URLs this feature exists for routinely carry neither an
+// .m3u8 extension nor application/vnd.apple.mpegurl, because they are generated
+// endpoints. The header tag is mandatory in the specification and is the only
+// signal that is actually reliable.
+//
+// contentType and rawURL are accepted so a caller can pass what it has; they
+// are used only to *reject* faster, never to accept something whose bytes do
+// not say playlist.
+func IsPlaylist(head []byte, contentType, rawURL string) bool {
+	text := strings.TrimLeft(string(head), "\ufeff \t\r\n")
+	return strings.HasPrefix(text, PlaylistHeader)
+}
+
+// SniffLen is how many bytes a caller should read before calling IsPlaylist.
+func SniffLen() int { return sniffLen }
+
+// ErrNotSupported marks a playlist this package deliberately refuses, as
+// opposed to one it failed to handle. Callers surface the message as-is: each
+// one says what would have to change, and a user who is told "unsupported" with
+// no reason will retry the same URL.
+type ErrNotSupported struct{ Reason string }
+
+func (e *ErrNotSupported) Error() string { return e.Reason }
+
+func unsupported(format string, args ...any) error {
+	return &ErrNotSupported{Reason: fmt.Sprintf(format, args...)}
+}
+
+// media is a parsed, validated media playlist: the segments to fetch, in order,
+// plus what is needed to reproduce a local playlist ffmpeg will accept.
+type media struct {
+	segments []segment
+	// seqNo is EXT-X-MEDIA-SEQUENCE. It must be reproduced in the local
+	// playlist: when an EXT-X-KEY carries no IV, the specification derives one
+	// from the segment's sequence number, so dropping this silently decrypts
+	// every segment with the wrong IV and produces a file of noise rather than
+	// an error.
+	seqNo uint64
+	// targetDuration is EXT-X-TARGETDURATION, required by the specification.
+	targetDuration float64
+	// initSegment is EXT-X-MAP, the initialization section fMP4 playlists put
+	// their codec configuration in. Without it an fMP4 stream muxes to a file
+	// no player can open.
+	initSegment *fetchTarget
+}
+
+// segment is one media segment to fetch.
+type segment struct {
+	target fetchTarget
+	// duration is the EXTINF value, reproduced in the local playlist.
+	duration float64
+	// key is the encryption applying to this segment, or nil. Per the
+	// specification each segment may carry its own EXT-X-KEY, and rotating keys
+	// mid-stream is ordinary, so this is per segment rather than per playlist.
+	key *segmentKey
+	// discontinuity reproduces EXT-X-DISCONTINUITY. Dropping it makes ffmpeg
+	// treat a timestamp jump as corruption.
+	discontinuity bool
+}
+
+// fetchTarget is a URL plus an optional byte range.
+type fetchTarget struct {
+	url string
+	// length and offset carry EXT-X-BYTERANGE. The range is applied as an HTTP
+	// Range header and each range lands in its own local file, so the local
+	// playlist needs no byte-range tags of its own.
+	length int64
+	offset int64
+}
+
+func (t fetchTarget) hasRange() bool { return t.length > 0 }
+
+// segmentKey is an AES-128 key reference.
+type segmentKey struct {
+	uri string
+	iv  string
+}
+
+// parse decodes playlist text and returns either the media playlist it
+// describes or, for a master playlist, the URL of the variant to fetch next.
+//
+// Exactly one of the two is returned. depth guards against a master playlist
+// pointing at another master playlist, which is not legal but is trivial to
+// serve and would otherwise recurse.
+func parse(text, playlistURL string, opt Options, depth int) (*media, string, error) {
+	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)
+	if err != nil {
+		return nil, "", fmt.Errorf("could not parse the HLS playlist: %w", err)
+	}
+
+	switch listType {
+	case m3u8.MASTER:
+		if depth >= maxPlaylistDepth {
+			return nil, "", unsupported("this HLS master playlist points at another master playlist more than %d levels deep", maxPlaylistDepth)
+		}
+		variant, err := pickVariant(list.(*m3u8.MasterPlaylist), opt)
+		if err != nil {
+			return nil, "", err
+		}
+		abs, err := resolveRef(playlistURL, variant)
+		if err != nil {
+			return nil, "", err
+		}
+		return nil, abs, nil
+	case m3u8.MEDIA:
+		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt)
+		return m, "", err
+	default:
+		return nil, "", unsupported("the URL is an HLS playlist of a kind this server does not handle")
+	}
+}
+
+// pickVariant chooses which rendition of a master playlist to download.
+//
+// Default is the highest bandwidth, which is what "download this video" means
+// to someone who did not ask for a size. MaxHeight caps that: the best variant
+// no taller than the cap, or — when every variant is taller — the smallest one,
+// because refusing to download anything is a worse answer to "at most 720p"
+// than handing back the closest thing available.
+func pickVariant(master *m3u8.MasterPlaylist, opt Options) (string, error) {
+	type candidate struct {
+		uri       string
+		bandwidth uint32
+		height    int
+	}
+	var candidates []candidate
+	for _, v := range master.Variants {
+		if v == nil || v.URI == "" {
+			continue
+		}
+		// I-frame-only renditions are trick-play streams (one key frame every
+		// few seconds), not something to hand a user as "the video".
+		if v.Iframe {
+			continue
+		}
+		candidates = append(candidates, candidate{uri: v.URI, bandwidth: v.Bandwidth, height: resolutionHeight(v.Resolution)})
+	}
+	if len(candidates) == 0 {
+		return "", unsupported("this HLS master playlist lists no playable video renditions")
+	}
+
+	best := -1
+	for i, c := range candidates {
+		if opt.MaxHeight > 0 && c.height > opt.MaxHeight {
+			continue
+		}
+		if best < 0 || candidates[i].bandwidth > candidates[best].bandwidth {
+			best = i
+		}
+	}
+	if best < 0 {
+		// Every rendition is taller than the cap: take the smallest.
+		best = 0
+		for i := range candidates {
+			if candidates[i].height < candidates[best].height {
+				best = i
+			}
+		}
+	}
+	return candidates[best].uri, nil
+}
+
+// resolutionHeight reads the height out of an "WxH" RESOLUTION attribute.
+// A variant with no RESOLUTION reports 0, which no MaxHeight cap excludes —
+// an unlabelled rendition is not evidence of a large one.
+func resolutionHeight(res string) int {
+	x := strings.IndexAny(res, "xX")
+	if x < 0 {
+		return 0
+	}
+	h := 0
+	for _, r := range res[x+1:] {
+		if r < '0' || r > '9' {
+			break
+		}
+		h = h*10 + int(r-'0')
+	}
+	return h
+}
+
+// readMedia validates a media playlist and flattens it into the segment list.
+func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media, error) {
+	// A playlist with no EXT-X-ENDLIST is a live stream: the segment window
+	// slides, and new segments keep appearing for as long as the broadcast
+	// runs. The byte and segment caps below would bound such a download, but
+	// only into an arbitrary clip of whichever window happened to be current
+	// when we asked — a confusing partial result rather than an answer. Refuse
+	// by name so the message says what is actually true.
+	if !pl.Closed {
+		return nil, unsupported("this is a live HLS stream (the playlist has no #EXT-X-ENDLIST); only complete recordings can be downloaded")
+	}
+
+	out := &media{seqNo: pl.SeqNo, targetDuration: pl.TargetDuration}
+	if out.targetDuration <= 0 {
+		out.targetDuration = 10
+	}
+
+	if pl.Map != nil && pl.Map.URI != "" {
+		t, err := resolveTarget(playlistURL, pl.Map.URI, pl.Map.Limit, pl.Map.Offset)
+		if err != nil {
+			return nil, err
+		}
+		out.initSegment = &t
+	}
+
+	for _, seg := range pl.Segments {
+		// Segments is a fixed-capacity ring buffer, so trailing entries are nil
+		// rather than absent.
+		if seg == nil || seg.URI == "" {
+			continue
+		}
+		if len(out.segments) >= opt.MaxSegments {
+			return nil, unsupported("this HLS stream has more than %d segments, which is over this server's limit", opt.MaxSegments)
+		}
+		// A per-segment EXT-X-MAP after the first is a format change mid-stream
+		// that a single -c copy mux cannot represent.
+		if seg.Map != nil && seg.Map.URI != "" && (out.initSegment == nil || seg.Map.URI != out.initSegment.url) {
+			t, err := resolveTarget(playlistURL, seg.Map.URI, seg.Map.Limit, seg.Map.Offset)
+			if err != nil {
+				return nil, err
+			}
+			if out.initSegment == nil {
+				out.initSegment = &t
+			} else if t.url != out.initSegment.url {
+				return nil, unsupported("this HLS stream changes its initialization segment part-way through, which this server cannot download")
+			}
+		}
+
+		key, err := readKey(seg.Key, playlistURL)
+		if err != nil {
+			return nil, err
+		}
+		if key == nil {
+			if key, err = readKey(pl.Key, playlistURL); err != nil {
+				return nil, err
+			}
+		}
+
+		t, err := resolveTarget(playlistURL, seg.URI, seg.Limit, seg.Offset)
+		if err != nil {
+			return nil, err
+		}
+		out.segments = append(out.segments, segment{
+			target:        t,
+			duration:      seg.Duration,
+			key:           key,
+			discontinuity: seg.Discontinuity,
+		})
+	}
+
+	if len(out.segments) == 0 {
+		return nil, unsupported("this HLS playlist contains no media segments")
+	}
+	return out, nil
+}
+
+// readKey validates an EXT-X-KEY and resolves its URI.
+//
+// Only AES-128 with the default key format is handled. The others are refused
+// with a message naming DRM, because that is what they are: SAMPLE-AES and any
+// non-identity KEYFORMAT (FairPlay, Widevine, PlayReady) mean the content is
+// licensed, not that a parser is missing a case, and a user told "unsupported
+// encryption" will reasonably keep retrying.
+func readKey(k *m3u8.Key, playlistURL string) (*segmentKey, error) {
+	if k == nil {
+		return nil, nil
+	}
+	switch strings.ToUpper(strings.TrimSpace(k.Method)) {
+	case "", "NONE":
+		return nil, nil
+	case "AES-128":
+	default:
+		return nil, unsupported("this HLS stream is protected by DRM (%s) and cannot be downloaded", k.Method)
+	}
+	if f := strings.Trim(strings.TrimSpace(k.Keyformat), `"`); f != "" && !strings.EqualFold(f, "identity") {
+		return nil, unsupported("this HLS stream is protected by DRM (key format %q) and cannot be downloaded", f)
+	}
+	if k.URI == "" {
+		return nil, unsupported("this HLS stream is encrypted but its playlist names no key")
+	}
+	abs, err := resolveRef(playlistURL, k.URI)
+	if err != nil {
+		return nil, err
+	}
+	return &segmentKey{uri: abs, iv: strings.TrimSpace(k.IV)}, nil
+}
+
+// resolveTarget resolves a segment reference against the playlist URL.
+func resolveTarget(playlistURL, ref string, limit, offset int64) (fetchTarget, error) {
+	abs, err := resolveRef(playlistURL, ref)
+	if err != nil {
+		return fetchTarget{}, err
+	}
+	return fetchTarget{url: abs, length: limit, offset: offset}, nil
+}
+
+// resolveRef resolves a possibly-relative playlist reference.
+//
+// Only http and https survive. A playlist is remote content, and a reference of
+// file:///etc/passwd or data: would otherwise be handed to the caller's client
+// — which polices *addresses*, not schemes, so the deny that stops a private
+// address would not stop a local file.
+func resolveRef(base, ref string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("could not read the playlist URL: %w", err)
+	}
+	r, err := url.Parse(strings.TrimSpace(ref))
+	if err != nil {
+		return "", fmt.Errorf("the playlist contains a reference that is not a URL: %w", err)
+	}
+	abs := b.ResolveReference(r)
+	switch strings.ToLower(abs.Scheme) {
+	case "http", "https":
+		return abs.String(), nil
+	default:
+		return "", unsupported("this HLS playlist points at a %q URL, which this server will not fetch", abs.Scheme)
+	}
+}

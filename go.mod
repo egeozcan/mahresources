@@ -15,6 +15,7 @@ require (
 	github.com/getkin/kin-openapi v0.140.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/schema v1.4.1
+	github.com/grafov/m3u8 v0.12.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jmoiron/sqlx v1.4.0
