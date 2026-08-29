@@ -28,6 +28,30 @@ import (
 	"github.com/grafov/m3u8"
 )
 
+// countTags counts what the parser will materialize, line by line.
+//
+// Line by line and trimmed, rather than by scanning the whole document for a
+// newline-anchored prefix: the parser trims each line before matching, so a
+// tag written with a leading space is a tag to it and was invisible to a
+// document-wide count anchored on "\n#EXT". Two hundred and fifty thousand of
+// those still fit inside the byte limit.
+func countTags(text string) (segments, variants, tags int) {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#EXT") {
+			continue
+		}
+		tags++
+		switch {
+		case strings.HasPrefix(line, "#EXTINF:"):
+			segments++
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			variants++
+		}
+	}
+	return segments, variants, tags
+}
+
 // maxPlaylistTagLines bounds the tags one playlist may carry, derived from the
 // segment limit rather than configured separately: the limit an operator sets
 // is "how big a stream may be", and this is the same statement measured where
@@ -168,20 +192,18 @@ func explicitByteRangeOffsets(text string) []bool {
 }
 
 func parse(text, playlistURL string, opt Options, depth int, pendingAudio *string) (*media, string, error) {
-	// Counted before decoding, not after. The parser materializes every segment
+	// Counted before decoding, not after. The parser materializes every entry
 	// it is given, so a playlist well inside the byte limit -- a million
 	// one-character entries is a few megabytes -- allocates hundreds of
 	// megabytes before a check that runs on the result could refuse it. A few
 	// of those at once is the server's memory. This is a *bound on parsing*;
 	// readMedia still enforces the same limit on what it accepts.
-	// Both kinds of entry, because both are materialized: a master playlist
-	// carries no #EXTINF at all, so counting only those left a 16 MiB list of
-	// several hundred thousand EXT-X-STREAM-INF variants to be built in full.
-	if n := strings.Count(text, "#EXTINF:"); n > opt.MaxSegments {
-		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", n, opt.MaxSegments)
+	segments, variants, tags := countTags(text)
+	if segments > opt.MaxSegments {
+		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", segments, opt.MaxSegments)
 	}
-	if n := strings.Count(text, "#EXT-X-STREAM-INF:"); n > opt.MaxSegments {
-		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", n, opt.MaxSegments)
+	if variants > opt.MaxSegments {
+		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", variants, opt.MaxSegments)
 	}
 	// And a backstop that no tag type escapes. Enumerating the ones the parser
 	// materializes -- EXTINF, STREAM-INF, I-FRAME-STREAM-INF, MEDIA -- is a
@@ -189,8 +211,8 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 	// wrong about it means a playlist inside every named limit still allocating
 	// hundreds of megabytes. A playlist spends at most a couple of lines per
 	// entry, so bounding the tag lines bounds what any of them can build.
-	if n := strings.Count(text, "\n#EXT"); n > maxPlaylistTagLines(opt) {
-		return nil, "", unsupported("this HLS playlist has %d tags, which is over this server's limit", n)
+	if tags > maxPlaylistTagLines(opt) {
+		return nil, "", unsupported("this HLS playlist has %d tags, which is over this server's limit", tags)
 	}
 
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)

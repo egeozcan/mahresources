@@ -728,6 +728,10 @@ if info then
 end
 ```
 
+Only audio and video resources are accepted, which is what the capability's
+label promises: on anything else ffprobe is a general metadata reader, and it
+would hand back a photograph's EXIF including where it was taken.
+
 Returns what ffprobe reports, nested as ffprobe writes it: a `format` table and
 a `streams` array. The whole document is returned rather than a chosen few
 fields, because which field matters depends on what you are doing --  duration,

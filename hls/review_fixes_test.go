@@ -834,6 +834,17 @@ func TestAPlaylistOfUncountedTagsIsRefused(t *testing.T) {
 	}
 	_, _, err := parse(b.String(), "https://x/master.m3u8", Options{MaxSegments: 5000}.withDefaults(), 0, new(string))
 	assertUnsupported(t, err, "tags")
+
+	// And the same list written with a leading space on every line. The parser
+	// trims before matching, so those are tags to it -- and a count anchored on
+	// a newline saw none of them.
+	var indented strings.Builder
+	indented.WriteString("#EXTM3U\n")
+	for i := 0; i < 30000; i++ {
+		indented.WriteString("  #EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1,URI=\"i.m3u8\"\n")
+	}
+	_, _, err = parse(indented.String(), "https://x/master.m3u8", Options{MaxSegments: 5000}.withDefaults(), 0, new(string))
+	assertUnsupported(t, err, "tags")
 }
 
 // TestPlaylistBytesCountAgainstTheBudget. A master can point at a media

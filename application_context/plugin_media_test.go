@@ -491,3 +491,34 @@ function init() end
 		t.Errorf("%d jobs were queued for a read-only principal", len(jobs))
 	}
 }
+
+// TestPluginMediaProbeRefusesNonMedia. On anything but audio or video, ffprobe
+// is a general metadata reader -- it hands back a photograph's EXIF, including
+// where it was taken. "media" is a grant an operator can make without also
+// granting db:read, so this would be the one way to read that without the
+// capability that covers it.
+func TestPluginMediaProbeRefusesNonMedia(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{"media": mediaProbePlugin})
+	ctx.Config.FfmpegPath = mediaTestFfmpeg(t)
+
+	photo := &models.Resource{
+		Name: "holiday", Hash: "hash-photo", Location: "holiday.jpg",
+		ContentType: "image/jpeg",
+	}
+	if err := ctx.db.Create(photo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ctx.CreateOrUpdateNote(&query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{Name: "trigger", Description: itoa(photo.ID)},
+	}); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	out := runSlot(ctx, "page_top")
+	if strings.HasPrefix(out, "ok:") {
+		t.Fatalf("a photograph's metadata was read through mah.media.probe: %q", out)
+	}
+	if !strings.Contains(out, "audio or video") {
+		t.Errorf("the refusal %q does not say what kind of resource is expected", out)
+	}
+}

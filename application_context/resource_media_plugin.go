@@ -65,6 +65,14 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
 		return nil, err
 	}
+	// Audio and video only, which is what the capability's label promises. On
+	// anything else ffprobe is a general metadata reader -- it would hand back
+	// a photograph's EXIF, including where it was taken -- and "media" is a
+	// grant an operator can make without also granting db:read, so this would
+	// be the one way to read that without the capability that covers it.
+	if !isProbableMedia(resource) {
+		return nil, errors.New("resource is not audio or video")
+	}
 
 	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
 	if err != nil {
@@ -385,6 +393,11 @@ func ownerOrZero(id *uint) uint {
 		return 0
 	}
 	return *id
+}
+
+// isProbableMedia reports whether a resource is the kind mah.media describes.
+func isProbableMedia(r models.Resource) bool {
+	return r.IsVideo() || strings.HasPrefix(r.ContentType, "audio/")
 }
 
 // boundedBuffer stops collecting once the limit is reached, without failing the
