@@ -801,3 +801,22 @@ func TestKeyFingerprintsRespectQuotedCommas(t *testing.T) {
 		t.Error("one key written two ways compared unequal")
 	}
 }
+
+// TestAnOversizedPlaylistIsRefusedBeforeParsing. The parser materializes every
+// segment it is given, so a playlist well inside the byte limit -- a million
+// one-character entries is a few megabytes -- allocated hundreds of megabytes
+// before a check running on the *result* could refuse it.
+func TestAnOversizedPlaylistIsRefusedBeforeParsing(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n")
+	for i := 0; i < 5001; i++ {
+		b.WriteString("#EXTINF:0,\na\n")
+	}
+	b.WriteString("#EXT-X-ENDLIST\n")
+
+	_, _, err := parse(b.String(), "https://x/index.m3u8", Options{MaxSegments: 5000}.withDefaults(), 0, new(string))
+	assertUnsupported(t, err, "segments")
+	if !strings.Contains(err.Error(), "5001") {
+		t.Errorf("the refusal %q does not say how many were listed", err)
+	}
+}

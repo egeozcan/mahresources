@@ -159,6 +159,16 @@ func explicitByteRangeOffsets(text string) []bool {
 }
 
 func parse(text, playlistURL string, opt Options, depth int, pendingAudio *string) (*media, string, error) {
+	// Counted before decoding, not after. The parser materializes every segment
+	// it is given, so a playlist well inside the byte limit -- a million
+	// one-character entries is a few megabytes -- allocates hundreds of
+	// megabytes before a check that runs on the result could refuse it. A few
+	// of those at once is the server's memory. This is a *bound on parsing*;
+	// readMedia still enforces the same limit on what it accepts.
+	if n := strings.Count(text, "#EXTINF:"); n > opt.MaxSegments {
+		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", n, opt.MaxSegments)
+	}
+
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)
 	if err != nil {
 		return nil, "", fmt.Errorf("could not parse the HLS playlist: %w", err)

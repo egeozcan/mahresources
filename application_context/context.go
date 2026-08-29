@@ -683,7 +683,10 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			// The queue assembles an HLS playlist the way the synchronous path
 			// does, so it needs the same two things: where ffmpeg is, and the
 			// deployment's limits.
-			FfmpegPath: config.FfmpegPath,
+			// Read per download rather than captured: startup auto-detects
+			// ffmpeg after this context is built, so a value taken here is the
+			// empty one from before the detection.
+			FfmpegPath: func() string { return ctx.Config.FfmpegPath },
 			HLSOptions: hlsOptionsFromConfig(config),
 			// The host allowlist, applied to every URL a playlist names as well
 			// as to the one submitted.

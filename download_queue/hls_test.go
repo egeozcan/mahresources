@@ -3,6 +3,7 @@ package download_queue
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,13 +52,19 @@ func hlsFfmpeg(t *testing.T) string {
 	return p
 }
 
-// buildStream writes a real two-second HLS stream and serves it.
+// buildStream writes a real HLS stream and serves it. seconds becomes roughly
+// that many one-second segments, which is what a concurrency test needs to
+// actually run several workers at once.
 func buildAndServeStream(t *testing.T, ffmpeg string) *httptest.Server {
+	return buildAndServeStreamOf(t, ffmpeg, 2)
+}
+
+func buildAndServeStreamOf(t *testing.T, ffmpeg string, seconds int) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
 	cmd := exec.Command(ffmpeg,
 		"-hide_banner", "-loglevel", "error",
-		"-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=2",
+		"-f", "lavfi", "-i", fmt.Sprintf("testsrc=size=160x120:rate=10:duration=%d", seconds),
 		"-c:v", "libx264", "-preset", "ultrafast", "-g", "10",
 		"-f", "hls", "-hls_time", "1", "-hls_list_size", "0",
 		"-hls_segment_filename", filepath.Join(dir, "s%d.ts"),
@@ -78,7 +85,7 @@ func TestDownloadWithProgressAssemblesAnHLSPlaylist(t *testing.T) {
 	created := &recordingResourceCreator{}
 	dm := createTestManager()
 	dm.resourceCtx = created
-	dm.ffmpegPath = ffmpeg
+	dm.ffmpegPath = func() string { return ffmpeg }
 
 	srv := buildAndServeStream(t, ffmpeg)
 	job := &DownloadJob{
@@ -184,10 +191,10 @@ func TestHLSProgressIsSafeUnderConcurrentSegments(t *testing.T) {
 	created := &recordingResourceCreator{}
 	dm := createTestManager()
 	dm.resourceCtx = created
-	dm.ffmpegPath = ffmpeg
+	dm.ffmpegPath = func() string { return ffmpeg }
 	dm.hlsOptions.Concurrency = 4
 
-	srv := buildAndServeStream(t, ffmpeg)
+	srv := buildAndServeStreamOf(t, ffmpeg, 8)
 	job := &DownloadJob{
 		ID:      "hls-concurrent",
 		URL:     srv.URL + "/index.m3u8",
@@ -197,6 +204,38 @@ func TestHLSProgressIsSafeUnderConcurrentSegments(t *testing.T) {
 	}
 	if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
 		t.Fatalf("downloadWithProgress: %v", err)
+	}
+}
+
+// TestTheFfmpegPathIsResolvedPerDownload is the deployment case: startup
+// auto-detects ffmpeg on PATH *after* this manager is built, so a path captured
+// at construction stayed empty in the most ordinary configuration there is --
+// ffmpeg installed, no -ffmpeg-path -- and every queued HLS download failed
+// saying ffmpeg was unavailable while the boot log said it had been found.
+func TestTheFfmpegPathIsResolvedPerDownload(t *testing.T) {
+	ffmpeg := hlsFfmpeg(t)
+	created := &recordingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = created
+
+	// Empty at construction, exactly as it is before startup's detection runs.
+	detected := ""
+	dm.ffmpegPath = func() string { return detected }
+	detected = ffmpeg
+
+	srv := buildAndServeStream(t, ffmpeg)
+	job := &DownloadJob{
+		ID:      "late-ffmpeg",
+		URL:     srv.URL + "/index.m3u8",
+		Status:  JobStatusDownloading,
+		creator: &query_models.ResourceFromRemoteCreator{},
+		ctx:     context.Background(),
+	}
+	if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
+		t.Fatalf("a download after ffmpeg was detected still failed: %v", err)
+	}
+	if len(created.body) < 12 || !bytes.Equal(created.body[4:8], []byte("ftyp")) {
+		t.Fatalf("stored %d bytes beginning %q, want an MP4", len(created.body), firstBytes(created.body))
 	}
 }
 

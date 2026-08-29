@@ -62,10 +62,18 @@ type ManagerConfig struct {
 
 	// FfmpegPath and HLSOptions are what an HLS download needs, injected for
 	// the same reason ClientPolicy is: this package sits below the layer that
-	// reads configuration. An empty FfmpegPath makes an HLS URL fail with a
-	// message naming ffmpeg rather than store the playlist text as the video,
-	// which is what a deployment without ffmpeg should hear.
-	FfmpegPath string
+	// reads configuration. An empty path makes an HLS URL fail with a message
+	// naming ffmpeg rather than store the playlist text as the video, which is
+	// what a deployment without ffmpeg should hear.
+	//
+	// A function, not a string, because the path is not known when this manager
+	// is built. Startup auto-detects ffmpeg on PATH *after* the context (and
+	// therefore this manager) exists, so a captured string stayed empty in the
+	// most ordinary deployment there is -- ffmpeg installed, no -ffmpeg-path --
+	// and every queued HLS download failed saying ffmpeg was unavailable while
+	// the boot log said it had been found. The synchronous path reads it live
+	// and worked, which made the two disagree.
+	FfmpegPath func() string
 	HLSOptions hls.Options
 
 	// HostCheckURL is the allowlist half of the host policy, applied to every
@@ -143,7 +151,7 @@ type DownloadManager struct {
 	jobs        map[string]*DownloadJob
 	jobOrder    []string // Maintains insertion order
 	resourceCtx ResourceCreator
-	ffmpegPath  string
+	ffmpegPath  func() string
 	hlsOptions  hls.Options
 	hostCheck   func(string) error
 
@@ -656,6 +664,15 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 	return client
 }
 
+// currentFfmpegPath resolves the configured ffmpeg, now rather than at
+// construction. See ManagerConfig.FfmpegPath.
+func (dm *DownloadManager) currentFfmpegPath() string {
+	if dm.ffmpegPath == nil {
+		return ""
+	}
+	return dm.ffmpegPath()
+}
+
 // assembleHLS downloads a streaming playlist and returns the single file it
 // assembles to.
 //
@@ -678,7 +695,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	deps := hls.Deps{
 		Client:     client,
 		CheckURL:   checkURL,
-		FfmpegPath: dm.ffmpegPath,
+		FfmpegPath: dm.currentFfmpegPath(),
 		// Live, like every other timeout on this path.
 		IdleTimeout: dm.currentSettings().IdleTimeout(),
 	}
