@@ -27,6 +27,11 @@ const maxPlaylistBytes = 16 << 20
 // maxKeyBytes bounds an EXT-X-KEY response. An AES-128 key is exactly 16 bytes.
 const maxKeyBytes = 1 << 12
 
+// defaultOverallTimeout bounds an entire assembly when the caller names no
+// limit. Generous, because a long stream over a slow link is legitimate; the
+// point is that a bound exists at all.
+const defaultOverallTimeout = 2 * time.Hour
+
 // Deps is everything the fetch needs from its caller, supplied per call.
 //
 // Nothing here is captured at construction, for the reason the extracted
@@ -75,8 +80,18 @@ type Options struct {
 	// servers under load 503 routinely, and a single failure at segment 340 of
 	// 380 otherwise discards the whole transfer.
 	SegmentRetries int
-	// Timeout bounds the ffmpeg mux. Zero uses defaultMuxTimeout.
+	// MuxTimeout bounds the ffmpeg mux. Zero uses defaultMuxTimeout.
 	MuxTimeout time.Duration
+	// OverallTimeout bounds the whole assembly: playlists, keys, every segment
+	// and the mux.
+	//
+	// It is not the same thing as the client's per-request timeout, and the
+	// difference is the defect it closes. http.Client.Timeout applies to each
+	// request independently, so a five-thousand-segment stream whose server
+	// stalls every request just under that limit is bounded by nothing: the
+	// worker is pinned for days on a download the deployment believes cannot
+	// exceed thirty minutes. Zero uses defaultOverallTimeout.
+	OverallTimeout time.Duration
 }
 
 // Defaults are the limits used when a caller supplies none. They bound a
@@ -105,6 +120,9 @@ func (opt Options) withDefaults() Options {
 	}
 	if opt.SegmentRetries < 0 {
 		opt.SegmentRetries = 0
+	}
+	if opt.OverallTimeout <= 0 {
+		opt.OverallTimeout = defaultOverallTimeout
 	}
 	return opt
 }
@@ -163,6 +181,10 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 		// earlier.
 		return nil, ErrFfmpegUnavailable
 	}
+
+	// One deadline for the whole download. See Options.OverallTimeout.
+	ctx, cancelAll := context.WithTimeout(ctx, opt.OverallTimeout)
+	defer cancelAll()
 
 	p.report(PhasePlaylist, 0, 0)
 
@@ -306,6 +328,27 @@ func fetchText(ctx context.Context, d Deps, url string) (string, string, error) 
 	return buf.String(), finalURL(resp, url), nil
 }
 
+// contentRangeStart reads the first byte position out of a Content-Range
+// header ("bytes 100-199/1234"). ok is false when the header is absent or in a
+// form this does not recognise, which is treated as "no claim made" rather than
+// as a mismatch.
+func contentRangeStart(header string) (int64, bool) {
+	header = strings.TrimSpace(header)
+	if !strings.HasPrefix(header, "bytes ") {
+		return 0, false
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes "))
+	dash := strings.IndexByte(spec, '-')
+	if dash <= 0 {
+		return 0, false
+	}
+	start, err := strconv.ParseInt(spec[:dash], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return start, true
+}
+
 // finalURL is the URL a response was actually served from, after redirects.
 func finalURL(resp *http.Response, requested string) string {
 	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
@@ -347,15 +390,28 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	if t.hasRange() && resp.StatusCode != http.StatusPartialContent {
-		// The server ignored the Range and sent the whole object. Storing that
-		// for each of a hundred sub-ranges would multiply one file into a
-		// hundred copies of itself and mux to nonsense, so the range is applied
-		// here instead.
-		if _, err := io.CopyN(io.Discard, resp.Body, t.offset); err != nil {
-			_ = resp.Body.Close()
-			return nil, nil, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
+	if t.hasRange() {
+		if resp.StatusCode == http.StatusPartialContent {
+			// A 206 is only trustworthy if it says it starts where we asked.
+			// A server answering 206 from the wrong offset -- or with a
+			// Content-Range naming a different span -- would have its bytes
+			// filed as this sub-range, and the mux would assemble the wrong
+			// media without a single error.
+			if start, ok := contentRangeStart(resp.Header.Get("Content-Range")); ok && start != t.offset {
+				_ = resp.Body.Close()
+				return nil, nil, fmt.Errorf("the server answered byte %d for a request that asked for byte %d", start, t.offset)
+			}
+		} else {
+			// The server ignored the Range and sent the whole object. Storing
+			// that for each of a hundred sub-ranges would multiply one file
+			// into a hundred copies of itself, so the range is applied here.
+			if _, err := io.CopyN(io.Discard, resp.Body, t.offset); err != nil {
+				_ = resp.Body.Close()
+				return nil, nil, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
+			}
 		}
+		// Bounded either way: a 206 whose body runs past the range it promised
+		// is the same corruption as a 200 nobody sliced.
 		return struct {
 			io.Reader
 			io.Closer

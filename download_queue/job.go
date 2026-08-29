@@ -220,6 +220,27 @@ func (j *DownloadJob) updateProgressForRun(runID uint64, downloaded, total int64
 	return true
 }
 
+// setPhaseForRun writes the phase label and its counters, but only while this
+// attempt still owns the job.
+//
+// Unguarded, a segment callback still unwinding from an abandoned attempt
+// overwrites the counters of the attempt that replaced it -- and publishes an
+// event describing a phase the job left. Same rule as updateProgressForRun, and
+// for the same reason: a pause and resume starts a second attempt beside the
+// first while the first is still finishing its last segment.
+func (j *DownloadJob) setPhaseForRun(runID uint64, phase string, current, total int64) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if !j.ownedByRunLocked(runID) {
+		return false
+	}
+	j.Phase = phase
+	j.PhaseCount = current
+	j.PhaseTotal = total
+	return true
+}
+
 // setStatusForRun moves the job to a status its own attempt reports — today only
 // `processing`, when the transfer hits EOF and the resource write begins.
 //

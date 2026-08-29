@@ -42,5 +42,9 @@ func hlsOptionsFromConfig(config *MahresourcesConfig) hls.Options {
 		MaxSegments:   config.HLSMaxSegments,
 		MaxTotalBytes: config.HLSMaxTotalBytes,
 		Concurrency:   config.HLSConcurrency,
+		// The deployment's own answer to "how long may one remote fetch take",
+		// applied to the whole assembly rather than to each of its thousands of
+		// requests. Zero leaves the package's default.
+		OverallTimeout: config.RemoteResourceOverallTimeout,
 	}
 }

@@ -244,3 +244,122 @@ func itoa(v uint) string {
 	}
 	return string(digits)
 }
+
+// TestPluginMediaTrimIntoANewResource covers the second of the two things a
+// plugin can ask for. Trimming into a version replaces the source's content,
+// which is wrong when the source is a recording you are pulling clips out of.
+func TestPluginMediaTrimIntoANewResource(t *testing.T) {
+	ffmpeg := mediaTestFfmpeg(t)
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "media", "hooks", "inject" } }
+local report = ""
+function init()
+    mah.on("after_note_create", function(data)
+        local res, err = mah.media.trim(tonumber(data.description) or 0, "0", "1",
+                                        { into = "resource", name = "the clip" })
+        if not res then report = "error:" .. tostring(err)
+        else report = "id=" .. tostring(res.id) .. " name=" .. tostring(res.name) end
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`})
+	ctx.Config.FfmpegPath = ffmpeg
+
+	source := putVideo(t, ctx, "recording", nil, tinyVideo(t, ffmpeg))
+	if _, err := ctx.CreateOrUpdateNote(&query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{Name: "trigger", Description: itoa(source.ID)},
+	}); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+
+	out := runSlot(ctx, "page_top")
+	if !strings.Contains(out, "id=") {
+		t.Fatalf("trim into a resource reported %q", out)
+	}
+	if !strings.Contains(out, "the clip") {
+		t.Errorf("the new resource is named %q, want the name that was asked for", out)
+	}
+
+	// The source must be untouched: same content, and no new version.
+	var versions int64
+	if err := ctx.db.Table("resource_versions").Where("resource_id = ?", source.ID).Count(&versions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if versions != 0 {
+		t.Errorf("the source gained %d versions — into=\"resource\" must leave it alone", versions)
+	}
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("%d resources exist, want the source plus the clip", count)
+	}
+}
+
+// TestPluginMediaTrimRefusesAnUnknownIntoMode. A typo that quietly replaced a
+// two-hour recording with a ten-second clip is not something the author would
+// find out about in time.
+func TestPluginMediaTrimRefusesAnUnknownIntoMode(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "media", "hooks", "inject" } }
+local report = "not-run"
+function init()
+    mah.on("after_note_create", function(data)
+        local ok, err = mah.media.trim(1, "0", "1", { into = "verison" })
+        if ok then report = "accepted" else report = tostring(err) end
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`})
+	if _, err := ctx.CreateOrUpdateNote(&query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{Name: "trigger"},
+	}); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	out := runSlot(ctx, "page_top")
+	if out == "accepted" || out == "not-run" {
+		t.Fatalf("a misspelled into mode reported %q, want a refusal", out)
+	}
+	if !strings.Contains(out, "into") {
+		t.Errorf("the refusal %q does not name the option that was wrong", out)
+	}
+}
+
+// TestPluginMediaProbeIsRefusedInsideATransaction. Probing waits for a video
+// slot, may copy the file and then runs a process; inside a transaction that is
+// the database's write lock held for all of it. A read that takes a minute is
+// as bad as a write that does.
+func TestPluginMediaProbeIsRefusedInsideATransaction(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "media", "hooks", "inject" } }
+local report = "not-run"
+function init()
+    mah.on("after_note_create", function(data)
+        mah.db.transaction(function()
+            local info, err = mah.media.probe(1)
+            if info then report = "probed" else report = tostring(err) end
+        end)
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`})
+	if _, err := ctx.CreateOrUpdateNote(&query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{Name: "trigger"},
+	}); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	out := runSlot(ctx, "page_top")
+	if out == "probed" || out == "not-run" {
+		t.Fatalf("probe inside a transaction reported %q, want a refusal", out)
+	}
+	if !strings.Contains(out, "transaction") {
+		t.Errorf("the refusal %q does not say what is wrong", out)
+	}
+}

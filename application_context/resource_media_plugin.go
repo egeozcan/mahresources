@@ -10,11 +10,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/afero"
 
+	"mahresources/hls"
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // The media operations mah.media is built on: read what a file contains, and
@@ -116,6 +119,14 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 	}
 	if maxWidth < 0 || maxWidth > maxFrameWidth {
 		return nil, fmt.Errorf("the frame width must be between 1 and %d", maxFrameWidth)
+	}
+	if maxWidth == 0 {
+		// "The video's own size" still has a ceiling. Without this the default
+		// -- the value a caller passes by saying nothing -- was the one case
+		// that could return a 8K still as a base64 string, which is the exact
+		// thing the cap exists to prevent. The scale filter never upscales, so
+		// this changes nothing for anything smaller.
+		maxWidth = maxFrameWidth
 	}
 	// Refused above the resource read and the lock, so a request that cannot
 	// succeed neither reads the file nor holds the lock while failing. Same
@@ -263,6 +274,76 @@ func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceI
 	}
 	defer lock.Release(resourceID)
 	return ctx.TrimVideo(reqCtx, resourceID, start, end, comment)
+}
+
+// TrimVideoToNewResource cuts a clip and files it as a resource of its own,
+// leaving the source untouched.
+//
+// The other half of what a plugin can ask for. TrimVideo replaces the
+// resource's current content with the clip, which is right when the clip *is*
+// the thing you wanted; it is wrong when the source is a two-hour recording you
+// are pulling five clips out of, and a plugin doing that would otherwise have
+// to trim, read the version back, create a resource from it and restore the
+// original.
+//
+// The clip inherits the source's owner and groups, because a clip belongs where
+// its source does; a caller who wants it elsewhere can move it afterwards.
+func (ctx *MahresourcesContext) TrimVideoToNewResource(reqCtx context.Context, resourceID uint, start, end, name string) (*models.Resource, error) {
+	startSec, endSec, err := parseTrimRange(start, end)
+	if err != nil {
+		return nil, err
+	}
+	// Above the resource read and the gate, so a request that cannot succeed
+	// neither reads the file nor holds a slot while failing.
+	if err := ctx.requireFfmpeg(); err != nil {
+		return nil, fmt.Errorf("cannot trim video: %w", err)
+	}
+
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceID).Error; err != nil {
+		return nil, err
+	}
+	if !resource.IsVideo() {
+		return nil, errors.New("resource must be a video")
+	}
+
+	lock := ctx.locks.VideoThumbnailGenerationLock
+	if !lock.AcquireWithTimeout(resourceID, orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout)) {
+		return nil, errors.New("timed out waiting for a video processing slot")
+	}
+	defer lock.Release(resourceID)
+
+	clip, err := ctx.trimVideoBytes(reqCtx, &resource, start, endSec-startSec)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(name) == "" {
+		name = fmt.Sprintf("%s (%s-%s)", resource.Name, start, end)
+	}
+	// ffmpeg always writes an MP4 container here, whatever the source was, so
+	// the name says mp4 rather than inheriting a .webm the bytes are not.
+	name = hls.OutputName(TrimEntityName(name))
+
+	query := &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:             name,
+			OwnerId:          ownerOrZero(resource.OwnerId),
+			OriginalName:     resource.OriginalName,
+			OriginalLocation: resource.OriginalLocation,
+		},
+	}
+	if resource.StorageLocation != nil {
+		query.PathName = *resource.StorageLocation
+	}
+	return ctx.AddResource(io.NopCloser(bytes.NewReader(clip)), name, query)
+}
+
+func ownerOrZero(id *uint) uint {
+	if id == nil {
+		return 0
+	}
+	return *id
 }
 
 // The fallbacks for a context built from a bare config, which is what the CLI

@@ -121,7 +121,10 @@ func (ctx *MahresourcesContext) validatePluginDownloadScope(actorUserID uint, cr
 		}
 	}
 	// Notes are subtree-scoped on owner_id and the worker associates them
-	// without consulting anyone's scope.
+	// without consulting anyone's scope. Inert today, because
+	// applyResourceOptions maps no `notes` key -- kept so that adding one is a
+	// change to one function rather than a widening nobody notices, which is
+	// the shape this whole check exists to prevent.
 	for _, n := range creator.Notes {
 		if !scoped.NoteVisible(n) {
 			return errors.New("download target note is outside your permitted scope")

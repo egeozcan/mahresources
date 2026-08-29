@@ -1905,33 +1905,50 @@ func (ctx *MahresourcesContext) requireFfmpeg() error {
 	return nil
 }
 
+// trimVideoBytes cuts a clip out of a video and returns the encoded MP4.
+//
+// Extracted so the two things that can be done with a clip -- replace the
+// resource's current content (TrimVideo) and file it as a new resource
+// (TrimVideoToNewResource) -- share one definition of what "the clip" is. The
+// caller has already validated the times and confirmed ffmpeg is available.
+func (ctx *MahresourcesContext) trimVideoBytes(httpContext context.Context, resource *models.Resource, start string, seconds float64) ([]byte, error) {
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine if we can use a local file path (fast seeking) or need stdin fallback
+	localPath, isLocal := resolveLocalFilePath(fs, resource.GetCleanLocation())
+
+	// Pass the clip length to ffmpeg as -t (duration) rather than -to (end time).
+	duration := fmt.Sprintf("%.3f", seconds)
+
+	var outBuf bytes.Buffer
+	var trimErr error
+
+	if isLocal {
+		trimErr = ctx.trimVideoFile(httpContext, localPath, start, duration, &outBuf)
+	} else {
+		trimErr = ctx.trimVideoReader(httpContext, fs, resource.GetCleanLocation(), start, duration, &outBuf)
+	}
+
+	if trimErr != nil {
+		return nil, fmt.Errorf("failed to trim video: %w", trimErr)
+	}
+	if outBuf.Len() == 0 {
+		return nil, errors.New("ffmpeg produced no output")
+	}
+	return outBuf.Bytes(), nil
+}
+
 func (ctx *MahresourcesContext) TrimVideo(
 	httpContext context.Context,
 	resourceId uint,
 	start, end, comment string,
 ) error {
-	// Validate time parameters
-	if start == "" {
-		return errors.New("start time is required")
-	}
-	if end == "" {
-		return errors.New("end time is required")
-	}
-
-	startSec, err := parseTimeToSeconds(start)
+	startSec, endSec, err := parseTrimRange(start, end)
 	if err != nil {
-		return fmt.Errorf("invalid start time %q: %w", start, err)
-	}
-	endSec, err := parseTimeToSeconds(end)
-	if err != nil {
-		return fmt.Errorf("invalid end time %q: %w", end, err)
-	}
-
-	if startSec < 0 {
-		return fmt.Errorf("start time cannot be negative: %s", start)
-	}
-	if endSec <= startSec {
-		return fmt.Errorf("end time (%s) must be after start time (%s)", end, start)
+		return err
 	}
 
 	// Checked here on purpose: below the time validation, so a caller who sent a
@@ -1955,35 +1972,10 @@ func (ctx *MahresourcesContext) TrimVideo(
 		return errors.New("resource must be a video")
 	}
 
-	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	trimmedBytes, err := ctx.trimVideoBytes(httpContext, &resource, start, endSec-startSec)
 	if err != nil {
 		return err
 	}
-
-	// Determine if we can use a local file path (fast seeking) or need stdin fallback
-	localPath, isLocal := resolveLocalFilePath(fs, resource.GetCleanLocation())
-
-	// Pass the clip length to ffmpeg as -t (duration) rather than -to (end time).
-	duration := fmt.Sprintf("%.3f", endSec-startSec)
-
-	var outBuf bytes.Buffer
-	var trimErr error
-
-	if isLocal {
-		trimErr = ctx.trimVideoFile(httpContext, localPath, start, duration, &outBuf)
-	} else {
-		trimErr = ctx.trimVideoReader(httpContext, fs, resource.GetCleanLocation(), start, duration, &outBuf)
-	}
-
-	if trimErr != nil {
-		return fmt.Errorf("failed to trim video: %w", trimErr)
-	}
-
-	if outBuf.Len() == 0 {
-		return errors.New("ffmpeg produced no output")
-	}
-
-	trimmedBytes := outBuf.Bytes()
 
 	// ffmpeg always transcodes to an MP4 container (libx264/aac, -f mp4), so the
 	// output extension and content type are MP4 regardless of the source format.
@@ -2098,6 +2090,33 @@ func (ctx *MahresourcesContext) TrimVideo(
 }
 
 // parseTimeToSeconds parses a time string (e.g. "90", "1.5", "1:30", "00:01:30") into seconds.
+// parseTrimRange validates a clip's endpoints and returns them in seconds.
+//
+// Shared so the two entry points cannot drift on what a valid range is: one of
+// them refusing a negative start while the other accepted it would be a
+// difference nobody would notice until ffmpeg produced something strange.
+func parseTrimRange(start, end string) (startSec, endSec float64, err error) {
+	if start == "" {
+		return 0, 0, errors.New("start time is required")
+	}
+	if end == "" {
+		return 0, 0, errors.New("end time is required")
+	}
+	if startSec, err = parseTimeToSeconds(start); err != nil {
+		return 0, 0, fmt.Errorf("invalid start time %q: %w", start, err)
+	}
+	if endSec, err = parseTimeToSeconds(end); err != nil {
+		return 0, 0, fmt.Errorf("invalid end time %q: %w", end, err)
+	}
+	if startSec < 0 {
+		return 0, 0, fmt.Errorf("start time cannot be negative: %s", start)
+	}
+	if endSec <= startSec {
+		return 0, 0, fmt.Errorf("end time (%s) must be after start time (%s)", end, start)
+	}
+	return startSec, endSec, nil
+}
+
 func parseTimeToSeconds(s string) (float64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

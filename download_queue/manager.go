@@ -674,8 +674,12 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 	deps := hls.Deps{Client: client, CheckURL: checkURL, FfmpegPath: dm.ffmpegPath}
 	result, err := hls.Fetch(ctx, deps, base, head, body, dm.hlsOptions,
 		func(phase string, done, total int64) {
-			job.SetPhase(phase)
-			job.SetPhaseProgress(done, total)
+			// Guarded by the attempt, like every other write about this job: a
+			// callback unwinding from an abandoned attempt must not relabel the
+			// one that replaced it.
+			if !job.setPhaseForRun(runID, phase, done, total) {
+				return
+			}
 			// Throttled like the byte progress, and for the same reason: a
 			// four-hundred-segment stream would otherwise be four hundred SSE
 			// events. A phase change is always sent, since those are rare and

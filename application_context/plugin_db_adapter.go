@@ -1956,6 +1956,14 @@ func (a *pluginDBAdapter) TrimVideoClip(reqCtx context.Context, resourceID uint,
 	return a.ctx.trimVideoGated(reqCtx, resourceID, start, end, comment)
 }
 
+func (a *pluginDBAdapter) TrimVideoClipToResource(reqCtx context.Context, resourceID uint, start, end, name string) (map[string]any, error) {
+	res, err := a.ctx.TrimVideoToNewResource(reqCtx, resourceID, start, end, name)
+	if err != nil {
+		return nil, err
+	}
+	return resourceToMap(res), nil
+}
+
 // Compile-time proof the adapter still satisfies the media seam. Without it,
 // mediaProcessorFor's type assertion would simply start answering nil and
 // mah.media would report "not available" with nothing failing to build.

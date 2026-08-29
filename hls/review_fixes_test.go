@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/grafov/m3u8"
 )
@@ -365,4 +366,94 @@ func readAllUpTo(r io.Reader, p []byte) int {
 		return n
 	}
 	return n
+}
+
+// TestTheWholeAssemblyIsBounded. http.Client.Timeout applies to each request
+// independently, so a stream of many segments whose server stalls each one just
+// under that limit is bounded by nothing -- the worker is pinned for as long as
+// the playlist is long. One deadline covers the lot.
+func TestTheWholeAssemblyIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	var playlist strings.Builder
+	playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n")
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&playlist, "#EXTINF:1.0,\ns%d.ts\n", i)
+	}
+	playlist.WriteString("#EXT-X-ENDLIST\n")
+	writePlaylist(t, dir, playlist.String())
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".m3u8") {
+			http.ServeFile(w, r, filepath.Join(dir, filepath.Base(r.URL.Path)))
+			return
+		}
+		// Each segment individually finishes well inside any per-request
+		// timeout; twenty of them do not.
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+
+	d := deps()
+	d.FfmpegPath = "/nonexistent"
+	start := time.Now()
+	_, err := fetchAll(t, d, slow.URL+"/index.m3u8",
+		Options{OverallTimeout: 1500 * time.Millisecond, Concurrency: 1, SegmentRetries: 0}, nil)
+	if err == nil {
+		t.Fatal("a stream that outran its overall deadline was assembled")
+	}
+	if elapsed := time.Since(start); elapsed > 8*time.Second {
+		t.Errorf("the download ran for %s past a 1.5s overall deadline — it is bounded per request, not overall", elapsed)
+	}
+}
+
+// TestA206FromTheWrongOffsetIsRefused. A server answering 206 from somewhere
+// other than the requested byte would have its bytes filed as this sub-range,
+// and the mux would assemble the wrong media with no error anywhere.
+func TestA206FromTheWrongOffsetIsRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-99/1000")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(bytesRepeat('X', 100))
+	}))
+	defer srv.Close()
+
+	_, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/all.ts", offset: 500, length: 100})
+	if err == nil {
+		t.Fatal("a 206 answering byte 0 was accepted for a request that asked for byte 500")
+	}
+	if !strings.Contains(err.Error(), "byte") {
+		t.Errorf("error %v does not explain the mismatch", err)
+	}
+}
+
+// TestAnOversized206IsTruncated. A 206 whose body runs past the range it
+// promised is the same corruption as a 200 nobody sliced.
+func TestAnOversized206IsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-99/1000")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(bytesRepeat('X', 1000))
+	}))
+	defer srv.Close()
+
+	rc, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/all.ts", offset: 0, length: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	got := make([]byte, 1000)
+	if n := readAllUpTo(rc, got); n != 100 {
+		t.Errorf("read %d bytes from a 100-byte sub-range", n)
+	}
+}
+
+func bytesRepeat(b byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b
+	}
+	return out
 }

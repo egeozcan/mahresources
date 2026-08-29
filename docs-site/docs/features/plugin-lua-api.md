@@ -741,24 +741,43 @@ local uri, err = mah.media.extract_frame(id, 12.5, 640)
 
 Returns one frame as a `data:image/jpeg;base64,...` URI -- the same shape
 `mah.image` takes, so the two compose directly. `at_seconds` defaults to 0 and
-accepts fractions. `max_width` defaults to 0, meaning the video's own size; it
-never upscales, and cannot exceed 4096.
+accepts fractions. `max_width` defaults to 0, meaning the video's own size, capped at 4096 -- the
+frame travels back as a base64 string, and an 8K still is tens of megabytes of
+it. It never upscales.
 
 A timestamp past the end of the video is an error, not an empty string.
 
-### mah.media.trim(resource_id, start, end, comment)
+### mah.media.trim(resource_id, start, end, options)
 
 ```lua
+-- Replace the resource's content with the clip (what the trim button does):
 local ok, err = mah.media.trim(id, "0:30", "1:15", "the good part")
+
+-- Or file the clip separately, leaving the source alone:
+local clip, err = mah.media.trim(id, "0:30", "1:15",
+                                 { into = "resource", name = "the good part" })
 ```
 
-Cuts a clip and stores it as a **new version** of the resource, exactly as the
-trim button in the UI does. `start` and `end` accept `SS`, `MM:SS` or
-`HH:MM:SS`. Returns `true`, or `nil, error_string`.
+`start` and `end` accept `SS`, `MM:SS` or `HH:MM:SS`.
 
-Refused inside `mah.db.transaction`: the cut runs ffmpeg over the whole clip,
-and holding a transaction open across that holds the database's write lock for
-the length of a transcode.
+The fourth argument is a table, or a string for the comment. `into` chooses
+what the clip becomes:
+
+| `into` | Result |
+|---|---|
+| `"version"` (default) | A new version of the resource, replacing its current content. Returns `true`. |
+| `"resource"` | A resource of its own, source untouched, inheriting the source's owner. Returns the new resource table. |
+
+A misspelled `into` is refused rather than defaulted -- a typo that quietly
+replaced a two-hour recording with a ten-second clip is not something you would
+find out about in time.
+
+### What all three refuse
+
+Inside `mah.db.transaction`, all three are refused. Each waits for a video
+processing slot, may copy the file and then runs a process, and holding a
+transaction open across that holds the database's write lock for the whole of
+it. A read that takes a minute is as bad as a write that does.
 
 ## mah.kv -- Key-Value Storage
 
