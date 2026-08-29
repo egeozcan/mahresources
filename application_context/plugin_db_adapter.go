@@ -1953,7 +1953,7 @@ func (a *pluginDBAdapter) FrameDataURI(reqCtx context.Context, resourceID uint, 
 }
 
 func (a *pluginDBAdapter) TrimVideoClip(reqCtx context.Context, resourceID uint, start, end, comment string) error {
-	return a.ctx.TrimVideo(reqCtx, resourceID, start, end, comment)
+	return a.ctx.trimVideoGated(reqCtx, resourceID, start, end, comment)
 }
 
 // Compile-time proof the adapter still satisfies the media seam. Without it,

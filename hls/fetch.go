@@ -183,7 +183,16 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 		}
 	}()
 
-	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, p)
+	// One budget for the whole download, not one per playlist. A separate audio
+	// rendition is part of the same file the caller asked for, so counting it
+	// separately would let an attacker-controlled playlist spend twice the
+	// configured cap by splitting its streams.
+	var spent atomic.Int64
+	if m.audio != nil && len(m.segments)+len(m.audio.segments) > opt.MaxSegments {
+		return nil, unsupported("this HLS stream has more than %d segments across its video and audio, which is over this server's limit", opt.MaxSegments)
+	}
+
+	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, p, &spent)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +201,7 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 	if m.audio != nil {
 		// Its own subdirectory: both playlists number their segments from zero,
 		// and one directory would have the audio overwrite the video.
-		if audioPath, err = downloadInto(ctx, d, m.audio, dir, "audio", opt, p); err != nil {
+		if audioPath, err = downloadInto(ctx, d, m.audio, dir, "audio", opt, p, &spent); err != nil {
 			return nil, fmt.Errorf("could not download this stream's audio: %w", err)
 		}
 	}
@@ -357,12 +366,12 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 
 // downloadInto fetches one media playlist's parts into its own subdirectory of
 // dir and writes the local playlist ffmpeg will read, returning its path.
-func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt Options, p Progress) (string, error) {
+func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt Options, p Progress, spent *atomic.Int64) (string, error) {
 	sub := filepath.Join(dir, name)
 	if err := os.Mkdir(sub, 0o700); err != nil {
 		return "", fmt.Errorf("could not create a working directory for the download: %w", err)
 	}
-	local, err := downloadParts(ctx, d, m, sub, opt, p)
+	local, err := downloadParts(ctx, d, m, sub, opt, p, spent)
 	if err != nil {
 		return "", err
 	}
@@ -375,14 +384,12 @@ func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt O
 
 // downloadParts fetches the initialization segment, the keys and every media
 // segment into dir, and returns the text of the local playlist that names them.
-func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Options, p Progress) (string, error) {
+func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Options, p Progress, total *atomic.Int64) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var total atomic.Int64
-
 	if m.initSegment != nil {
-		if _, err := fetchToFile(ctx, d, *m.initSegment, filepath.Join(dir, "init.mp4"), opt, &total); err != nil {
+		if _, err := fetchToFile(ctx, d, *m.initSegment, filepath.Join(dir, "init.mp4"), opt, total); err != nil {
 			return "", fmt.Errorf("could not download the stream's initialization segment: %w", err)
 		}
 	}
@@ -399,7 +406,7 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 			continue
 		}
 		name := fmt.Sprintf("key%d.bin", len(keyFiles))
-		if _, err := fetchToFile(ctx, d, fetchTarget{url: seg.key.uri, length: maxKeyBytes}, filepath.Join(dir, name), opt, &total); err != nil {
+		if _, err := fetchToFile(ctx, d, fetchTarget{url: seg.key.uri, length: maxKeyBytes}, filepath.Join(dir, name), opt, total); err != nil {
 			return "", fmt.Errorf("could not download the stream's decryption key: %w", err)
 		}
 		keyFiles[seg.key.uri] = name
@@ -442,7 +449,7 @@ func downloadParts(ctx context.Context, d Deps, m *media, dir string, opt Option
 		go func(i int, seg segment) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if _, err := fetchToFile(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, &total); err != nil {
+			if _, err := fetchToFile(ctx, d, seg.target, filepath.Join(dir, names[i]), opt, total); err != nil {
 				fail(fmt.Errorf("could not download segment %d of %d: %w", i+1, len(m.segments), err))
 				return
 			}

@@ -218,16 +218,51 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	runCtx, cancel := context.WithTimeout(reqCtx, timeout)
-	defer cancel()
 
 	acquired, runErr := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
 		resourceID,
 		orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout),
 		timeout,
-		func() error { return fn(runCtx) },
+		func() error {
+			// Started here, not before the lock: waiting for a slot is not
+			// running. A deadline taken outside would be spent by the queue in
+			// front of this call, so a request that waited 25 of its 60
+			// permitted seconds would give ffmpeg five -- and one that waited
+			// the full lock timeout would hand it a context already cancelled.
+			runCtx, cancel := context.WithTimeout(reqCtx, timeout)
+			defer cancel()
+			return fn(runCtx)
+		},
 	)
 	return runErr, acquired
+}
+
+// trimVideoGated is TrimVideo under the deployment's video concurrency gate.
+//
+// TrimVideo takes only the per-resource version lock, so N concurrent trims of
+// N different resources start N ffmpeg processes -- and unlike a probe or a
+// frame, a trim is a full re-encode. That is the existing behaviour of the trim
+// button, where a person is doing one at a time; a plugin loop is not, so the
+// plugin's door takes the same global gate every other ffmpeg-family call here
+// takes.
+//
+// The gate is taken *around* TrimVideo rather than inside it: this is the
+// plugin surface's own bound, and putting it inside would change the HTTP
+// endpoint's behaviour too. It cannot deadlock against the lock TrimVideo takes
+// (VersionUploadLock) -- a different lock -- and nothing under TrimVideo takes
+// this one, since thumbnails are generated lazily on request rather than at
+// write time.
+//
+// No run timeout: a trim is a transcode, and the thirty seconds that bounds a
+// frame extraction would refuse every clip longer than a few minutes. What is
+// bounded is concurrency, and the caller's own context still cancels the work.
+func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceID uint, start, end, comment string) error {
+	lock := ctx.locks.VideoThumbnailGenerationLock
+	if !lock.AcquireWithTimeout(resourceID, orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout)) {
+		return errors.New("timed out waiting for a video processing slot")
+	}
+	defer lock.Release(resourceID)
+	return ctx.TrimVideo(reqCtx, resourceID, start, end, comment)
 }
 
 // The fallbacks for a context built from a bare config, which is what the CLI

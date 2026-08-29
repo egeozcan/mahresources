@@ -125,6 +125,27 @@ type segmentKey struct {
 // Exactly one of the two is returned. depth guards against a master playlist
 // pointing at another master playlist, which is not legal but is trivial to
 // serve and would otherwise recurse.
+// explicitByteRangeOffsets scans the raw playlist for EXT-X-BYTERANGE tags and
+// reports, in order, whether each one wrote an explicit @offset.
+//
+// The parser cannot answer this: it represents an omitted offset and an
+// explicit @0 identically as zero. They mean opposite things -- "continue after
+// the previous sub-range of this resource" versus "start at byte zero" -- and
+// guessing either way corrupts the other. Reading the text is the only way to
+// tell them apart, and the tags appear in the same order as the segments that
+// carry them.
+func explicitByteRangeOffsets(text string) []bool {
+	var out []bool
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#EXT-X-BYTERANGE:") {
+			continue
+		}
+		out = append(out, strings.Contains(line[len("#EXT-X-BYTERANGE:"):], "@"))
+	}
+	return out
+}
+
 func parse(text, playlistURL string, opt Options, depth int, pendingAudio *string) (*media, string, error) {
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)
 	if err != nil {
@@ -156,7 +177,7 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
-		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt)
+		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt, explicitByteRangeOffsets(text))
 		return m, "", err
 	default:
 		return nil, "", unsupported("the URL is an HLS playlist of a kind this server does not handle")
@@ -271,7 +292,7 @@ func resolutionHeight(res string) int {
 }
 
 // readMedia validates a media playlist and flattens it into the segment list.
-func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media, error) {
+func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets []bool) (*media, error) {
 	// A playlist with no EXT-X-ENDLIST is a live stream: the segment window
 	// slides, and new segments keep appearing for as long as the broadcast
 	// runs. The byte and segment caps below would bound such a download, but
@@ -299,8 +320,11 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media,
 	// sub-range of this same resource". The parser reports that as offset 0, so
 	// without this every sub-range of a byte-range playlist requests the *first*
 	// n bytes: the same opening fragment repeated, muxed into nonsense. Tracked
-	// per URL, since two resources interleave their ranges independently.
+	// per URL, since two resources interleave their ranges independently, and
+	// applied only where the text carried no @offset -- an explicit @0 means
+	// byte zero and must survive.
 	rangeEnd := map[string]int64{}
+	rangeIndex := 0
 
 	for _, seg := range pl.Segments {
 		// Segments is a fixed-capacity ring buffer, so trailing entries are nil
@@ -340,7 +364,9 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media,
 			return nil, err
 		}
 		if t.hasRange() {
-			if t.offset == 0 {
+			explicit := rangeIndex < len(explicitOffsets) && explicitOffsets[rangeIndex]
+			rangeIndex++
+			if !explicit {
 				if prev, seen := rangeEnd[t.url]; seen {
 					t.offset = prev
 				}

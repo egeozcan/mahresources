@@ -779,6 +779,16 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 		return nil, err
 	}
 
+	// The submitted URL too, not only the ones a playlist goes on to name. A
+	// plugin's URL was checked when it was submitted, but a retry replays a
+	// stored payload -- possibly long afterwards, possibly in another process,
+	// and possibly after an operator narrowed that plugin's network list. The
+	// client's decoration would not catch it: it polices addresses and redirect
+	// hops, not the allowlist.
+	if err := checkURL(job.URL); err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", job.URL, nil)
 	if err != nil {
 		return nil, err

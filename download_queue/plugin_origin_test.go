@@ -190,3 +190,43 @@ func (c *capturingHistoryRecorder) RecordTerminalDownload(r HistoryRecord) error
 	c.last = r
 	return nil
 }
+
+// TestTheSubmittedURLIsCheckedAgainstTheCurrentAllowlist. A plugin's URL is
+// checked when it is submitted, but a retry replays a stored payload -- perhaps
+// long afterwards, perhaps in another process, perhaps after an operator
+// narrowed that plugin's network list. The client's decoration would not catch
+// it: it polices addresses and redirect hops, not the allowlist.
+func TestTheSubmittedURLIsCheckedAgainstTheCurrentAllowlist(t *testing.T) {
+	created := &recordingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = created
+	dm.clientPolicy = func(c *http.Client, _ time.Duration) *http.Client { return c }
+
+	served := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served = true
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer srv.Close()
+
+	dm.SetPolicyResolver(func(string) (EgressPolicy, bool) {
+		return EgressPolicy{
+			// Decoration that allows everything, so only the allowlist can refuse.
+			Decorate: func(c *http.Client, _ time.Duration) *http.Client { return c },
+			CheckURL: func(string) error {
+				return errors.New("this host is no longer in the plugin's network list")
+			},
+		}, true
+	})
+
+	_, err := dm.downloadWithProgress(context.Background(), 0, pluginJob(t, srv.URL+"/f.bin", "narrowed"))
+	if err == nil {
+		t.Fatal("the submitted URL was fetched without an allowlist check")
+	}
+	if !strings.Contains(err.Error(), "network list") {
+		t.Fatalf("error was %v, want the allowlist refusal", err)
+	}
+	if served {
+		t.Error("the request reached the server despite the refusal")
+	}
+}

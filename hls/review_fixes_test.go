@@ -143,13 +143,12 @@ func TestRelativeReferencesResolveAgainstTheServedURL(t *testing.T) {
 // that as 0, so without tracking it every sub-range fetches the *first* n bytes
 // and the mux gets the opening fragment repeated.
 func TestImplicitByteRangeOffsetsAdvance(t *testing.T) {
-	m, err := readMedia(mustParseMedia(t,
-		"#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:1\n"+
-			"#EXT-X-BYTERANGE:100@0\n#EXTINF:1.0,\nall.ts\n"+
-			"#EXT-X-BYTERANGE:200\n#EXTINF:1.0,\nall.ts\n"+
-			"#EXT-X-BYTERANGE:50\n#EXTINF:1.0,\nall.ts\n"+
-			"#EXT-X-ENDLIST\n"),
-		"https://x/index.m3u8", Defaults())
+	text := "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:1\n" +
+		"#EXT-X-BYTERANGE:100@0\n#EXTINF:1.0,\nall.ts\n" +
+		"#EXT-X-BYTERANGE:200\n#EXTINF:1.0,\nall.ts\n" +
+		"#EXT-X-BYTERANGE:50\n#EXTINF:1.0,\nall.ts\n" +
+		"#EXT-X-ENDLIST\n"
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +159,75 @@ func TestImplicitByteRangeOffsetsAdvance(t *testing.T) {
 				i, seg.target.offset, want[i])
 		}
 	}
+}
+
+// TestExplicitByteRangeOffsetZeroIsKept is the other half, and the one the
+// running-offset rule can silently break. The parser cannot tell an omitted
+// offset from an explicit @0 -- both arrive as zero -- and they mean opposite
+// things, so the raw text is scanned for the @ that distinguishes them.
+func TestExplicitByteRangeOffsetZeroIsKept(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:1\n" +
+		"#EXT-X-BYTERANGE:100@100\n#EXTINF:1.0,\nall.ts\n" +
+		"#EXT-X-BYTERANGE:50@0\n#EXTINF:1.0,\nall.ts\n" +
+		"#EXT-X-ENDLIST\n"
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.segments[1].target.offset; got != 0 {
+		t.Errorf("an explicit @0 sub-range starts at byte %d, want 0 — the running offset overrode what the playlist actually said", got)
+	}
+}
+
+// TestASeparateAudioRenditionSharesTheDownloadBudget. A rendition is part of
+// the same file the caller asked for, so counting it against its own budget
+// would let a playlist spend twice the configured cap by splitting its streams.
+func TestASeparateAudioRenditionSharesTheDownloadBudget(t *testing.T) {
+	ffmpeg := ffmpegPath()
+	if ffmpeg == "" {
+		t.Skip("ffmpeg is not installed")
+	}
+	dir := t.TempDir()
+	buildVideoOnly(t, ffmpeg, dir)
+	buildAudioOnly(t, ffmpeg, dir)
+	master := "#EXTM3U\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="English",DEFAULT=YES,URI="audio.m3u8"` + "\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=200000,RESOLUTION=160x120,AUDIO="aac"` + "\nvideo.m3u8\n"
+	if err := os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(master), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := serve(t, dir)
+
+	// Enough for the video alone, not for both. A per-playlist budget would
+	// accept this and store roughly twice the cap.
+	videoBytes := dirSize(t, dir, "v")
+	_, err := fetchAll(t, deps(), srv.URL+"/master.m3u8", Options{MaxTotalBytes: videoBytes + 1024, SegmentRetries: 0}, nil)
+	if err == nil {
+		t.Fatal("video plus audio was downloaded past the byte budget")
+	}
+	if !strings.Contains(err.Error(), "limit") {
+		t.Errorf("the failure was %v, want it to name the limit", err)
+	}
+}
+
+func dirSize(t *testing.T, dir, prefix string) int64 {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += info.Size()
+	}
+	return total
 }
 
 // TestARangeIgnoringServerIsSlicedLocally. A server that answers 200 with the
