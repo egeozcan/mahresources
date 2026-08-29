@@ -325,6 +325,49 @@ local resource, err = mah.db.create_resource_from_data(base64_string, options)
 
 Same options and return format as `create_resource_from_url`. Default filename is `"plugin_upload"` if no `name` is provided.
 
+#### Without waiting for it: `mah.download.submit`
+
+```lua
+local job, err = mah.download.submit(url, options)
+```
+
+Enqueues the download on the application's own queue and returns immediately
+with `{ id = "...", url = "...", status = "pending" }`. Requires `db:write` --
+the same capability, and the same power, as `create_resource_from_url`; only
+the waiting differs.
+
+Use it whenever the file might be large. `create_resource_from_url` holds the
+plugin's VM lock for the whole transfer, so nothing else in that plugin runs
+meanwhile, and inside a background job it is bounded by the five-minute job
+limit. `mah.download.submit` has neither problem: the host does the work, and
+the job appears in the jobs panel and the download history with progress,
+cancel and retry like any other download.
+
+The URL is checked against the plugin's `network` rules immediately, so a host
+outside them comes back as `nil, error_string` rather than failing minutes
+later. **Every attempt is re-checked against those same rules**, including a
+retry made long afterwards -- so a download submitted by a plugin that has
+since been disabled is refused rather than run.
+
+`options` are the same as `create_resource_from_url`'s. Refused inside
+`mah.db.transaction`.
+
+To act on the result, listen for the job event (requires `job_events`):
+
+```lua
+mah.download.submit("https://example.com/video.m3u8", { owner_id = 5 })
+
+mah.on("after_job_completed", function(job)
+    if job.resource_id then
+        mah.db.add_tags("resource", job.resource_id, { 7 })
+    end
+end)
+```
+
+An HLS playlist URL is assembled into a single video by the host -- see
+[Download Queue](./download-queue.md#streaming-playlists-hls). Nothing extra is
+needed for that, and it applies to `create_resource_from_url` too.
+
 ### Resource Editing
 
 ```lua
@@ -658,6 +701,62 @@ local ok, err = mah.db.remove_resources_from_note(10, {42})
 |----------|-----------|---------|
 | `mah.db.add_resources_to_note(note_id, resource_ids)` | note ID, array of resource IDs | `true` or `nil, error` |
 | `mah.db.remove_resources_from_note(note_id, resource_ids)` | note ID, array of resource IDs | `true` or `nil, error` |
+
+## mah.media -- Video and Audio
+
+Requires the `media` capability. Separate from `image` on purpose: `mah.image`
+transforms bytes the plugin already holds, while these read files out of the
+user's library.
+
+Every call reaches the file through the calling principal's own access, so a
+group-limited caller cannot probe or cut a resource outside its subtree. What
+you name is a resource id and a number -- never a path, and never an ffmpeg
+argument.
+
+All three need ffmpeg installed on the server; without it they return
+`nil, error_string` saying so.
+
+### mah.media.probe(resource_id)
+
+```lua
+local info, err = mah.media.probe(id)
+if info then
+    print(info.format.duration)          -- "12.480000"
+    print(info.streams[1].codec_name)    -- "h264"
+end
+```
+
+Returns what ffprobe reports, nested as ffprobe writes it: a `format` table and
+a `streams` array. The whole document is returned rather than a chosen few
+fields, because which field matters depends on what you are doing --  duration,
+codec, rotation, channel layout, frame rate.
+
+### mah.media.extract_frame(resource_id, at_seconds, max_width)
+
+```lua
+local uri, err = mah.media.extract_frame(id, 12.5, 640)
+```
+
+Returns one frame as a `data:image/jpeg;base64,...` URI -- the same shape
+`mah.image` takes, so the two compose directly. `at_seconds` defaults to 0 and
+accepts fractions. `max_width` defaults to 0, meaning the video's own size; it
+never upscales, and cannot exceed 4096.
+
+A timestamp past the end of the video is an error, not an empty string.
+
+### mah.media.trim(resource_id, start, end, comment)
+
+```lua
+local ok, err = mah.media.trim(id, "0:30", "1:15", "the good part")
+```
+
+Cuts a clip and stores it as a **new version** of the resource, exactly as the
+trim button in the UI does. `start` and `end` accept `SS`, `MM:SS` or
+`HH:MM:SS`. Returns `true`, or `nil, error_string`.
+
+Refused inside `mah.db.transaction`: the cut runs ffmpeg over the whole clip,
+and holding a transaction open across that holds the database's write lock for
+the length of a transcode.
 
 ## mah.kv -- Key-Value Storage
 

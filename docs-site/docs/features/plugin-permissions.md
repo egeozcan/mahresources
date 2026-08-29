@@ -54,10 +54,11 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 | Capability | Grants |
 |---|---|
 | `db:read` | the `mah.db` readers, `mrql_query`, `get_resource_data` |
-| `db:write` | the `mah.db` writers, including creation and association |
+| `db:write` | the `mah.db` writers, including creation and association, and `mah.download` |
 | `http` | `mah.http` |
 | `kv` | `mah.kv` |
 | `image` | `mah.image` |
+| `media` | `mah.media` |
 | `hooks` | `mah.on` |
 | `inject` | `mah.inject` |
 | `render` | `mah.shortcode`, `mah.block_type`, `mah.display_type` |
@@ -71,6 +72,10 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc`, `mah.get_setting`. None reads or writes anything outside the plugin itself.
 
 **`db:write` implies `db:read`.** The writers return the entity they wrote -- `patch_note(id, {})` changes nothing and hands back the whole note -- so a write-only grant was already a read of anything by id. The implication is made explicit so the label an operator consents to is what they actually grant. The reverse never holds.
+
+**`media` is separate from `image`.** `mah.image` transforms bytes the plugin already holds and touches nothing else; `mah.media` reads the video and audio in the user's library and spends an ffmpeg process doing it. Folding them together would silently widen every plugin already consented to image transforms into one that can read media out of the library.
+
+**`mah.download.submit` is part of `db:write`, not a name of its own.** It fetches a URL into the library exactly as `mah.db.create_resource_from_url` does -- which `db:write`'s own label already describes -- and differs only in whether the caller waits. It is not `jobs` either: `jobs` means the *plugin's own code* runs in the background, and here none of it does.
 
 **`job_events` is separate from `hooks`** for the same reason `schedule` is separate from `jobs`. An entity hook fires on a write the caller just made, so a plugin holding `hooks` observes what its own users are doing. A job event fires when *any* background job in the deployment finishes, whoever submitted it, including work the plugin had nothing to do with. That is unattended observation of other people's activity, so it gets its own name and `CompareGrants` reports the widening. A plugin holding only `hooks` that registers `mah.on("after_job_completed", ...)` is refused at load, and the error names the capability it needs rather than reporting an unknown event.
 
