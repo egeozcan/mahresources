@@ -236,6 +236,45 @@ func TestSearchStaysBelowApplicationContext(t *testing.T) {
 	}
 }
 
+// TestHLSStaysBelowItsConsumers pins the third extraction of this shape. hls/
+// assembles a streaming playlist into one file and is called from *both* fetch
+// paths -- application_context's synchronous downloader and the download
+// queue's worker, which sits below it. That is the whole reason it is its own
+// package, and an import back up would make it unusable from the lower one:
+// download_queue cannot import application_context, so an hls/ that did could
+// never be called from the queue at all.
+//
+// It may not import plugin_system either. The policy it applies is the
+// caller's, arriving as an *http.Client already decorated; reaching for the
+// policy itself would let it build one, and a package that can build a policy
+// can build the wrong one.
+func TestHLSStaysBelowItsConsumers(t *testing.T) {
+	forbidden := []string{
+		modulePath + "/application_context",
+		modulePath + "/server",
+		modulePath + "/contracts",
+		modulePath + "/download_queue",
+		modulePath + "/plugin_system",
+		modulePath + "/groupio",
+		modulePath + "/search",
+	}
+	for dir, imports := range pkgImports(t) {
+		if !under(dir, "hls") {
+			continue
+		}
+		for _, imp := range sorted(imports) {
+			for _, bad := range forbidden {
+				if imp == bad || strings.HasPrefix(imp, bad+"/") {
+					t.Errorf("%s imports %s\n"+
+						"\thls/ sits below application_context/ and download_queue/, both of which\n"+
+						"\tcall it. It takes its http.Client and ffmpeg path per call and needs\n"+
+						"\tnothing from the layers above.", dir, imp)
+				}
+			}
+		}
+	}
+}
+
 func sorted(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {

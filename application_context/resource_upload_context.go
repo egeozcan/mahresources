@@ -12,6 +12,7 @@ import (
 	"log"
 	"mahresources/contracts"
 	"mahresources/hash_worker"
+	"mahresources/hls"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
@@ -340,7 +341,37 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 			}
 			name = TrimEntityName(name)
 
-			res, err := ctx.AddResource(timeoutBody, resourceQuery.FileName, &query_models.ResourceCreator{
+			// The response may be an HLS playlist rather than the media
+			// itself, in which case saving what arrived would store a few
+			// kilobytes of text named like a video. Sniffed from the bytes,
+			// because the URLs this matters for are generated endpoints
+			// carrying neither an .m3u8 extension nor a playlist content type.
+			//
+			// The same httpClient is handed to the fetch, so every segment and
+			// key it goes on to retrieve is policed by the same policy this
+			// request was -- the plugin's own allowlist when a plugin is
+			// fetching, the host's otherwise. That is the whole reason the
+			// segments are fetched here rather than by ffmpeg.
+			head := make([]byte, hls.SniffLen())
+			read, _ := io.ReadFull(timeoutBody, head)
+			head = head[:read]
+			var content contracts.File = io.NopCloser(io.MultiReader(bytes.NewReader(head), timeoutBody))
+			fileName := resourceQuery.FileName
+
+			if hls.IsPlaylist(head, resp.Header.Get("Content-Type"), url) {
+				assembled, hlsErr := hls.Fetch(reqCtx, ctx.hlsDeps(httpClient), url, head, timeoutBody, ctx.hlsOptions(), nil)
+				if hlsErr != nil {
+					setError(hlsErr)
+					return
+				}
+				defer assembled.Cleanup()
+				defer assembled.Body.Close()
+				content = io.NopCloser(assembled.Body)
+				name = hlsOutputName(name)
+				fileName = hlsOutputName(fileName)
+			}
+
+			res, err := ctx.AddResource(content, fileName, &query_models.ResourceCreator{
 				ResourceQueryBase: query_models.ResourceQueryBase{
 					Name:               name,
 					Description:        resourceQuery.Description,

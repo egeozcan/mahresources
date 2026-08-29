@@ -82,6 +82,13 @@ type MahresourcesConfig struct {
 	VideoThumbnailLockTimeout time.Duration
 	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
 	VideoThumbnailConcurrency uint
+	// HLSMaxSegments, HLSMaxTotalBytes and HLSConcurrency bound one HLS
+	// download. They refuse rather than truncate: half a video delivered as a
+	// success is worse than a refusal that says why. Zero means the hls
+	// package's own default.
+	HLSMaxSegments   int
+	HLSMaxTotalBytes int64
+	HLSConcurrency   int
 	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
@@ -247,6 +254,13 @@ type MahresourcesInputConfig struct {
 	VideoThumbnailLockTimeout time.Duration
 	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
 	VideoThumbnailConcurrency uint
+	// HLSMaxSegments, HLSMaxTotalBytes and HLSConcurrency bound one HLS
+	// download. They refuse rather than truncate: half a video delivered as a
+	// success is worse than a refusal that says why. Zero means the hls
+	// package's own default.
+	HLSMaxSegments   int
+	HLSMaxTotalBytes int64
+	HLSConcurrency   int
 	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
@@ -1388,6 +1402,9 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
 		AllowPrivateFetch:            cfg.AllowPrivateFetch,
+		HLSMaxSegments:               cfg.HLSMaxSegments,
+		HLSMaxTotalBytes:             cfg.HLSMaxTotalBytes,
+		HLSConcurrency:               cfg.HLSConcurrency,
 		VideoThumbnailTimeout:        videoThumbTimeout,
 		VideoThumbnailLockTimeout:    videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,
