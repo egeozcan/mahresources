@@ -188,8 +188,9 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
+		keyAtMap, keyAtFirstSegment := headerKeys(text)
 		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt,
-			explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+			explicitByteRangeOffsets(text), explicitMapOffsets(text), keyAtMap, keyAtFirstSegment)
 		return m, "", err
 	default:
 		return nil, "", unsupported("the URL is an HLS playlist of a kind this server does not handle")
@@ -304,7 +305,15 @@ func resolutionHeight(res string) int {
 }
 
 // readMedia validates a media playlist and flattens it into the segment list.
-func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets, explicitMaps []bool, keyBeforeMap bool) (*media, error) {
+func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets, explicitMaps []bool, keyAtMap, keyAtFirstSegment string) (*media, error) {
+	// A stream whose initialization section is protected by a *different* key
+	// from its first segment cannot be reproduced: the parser keeps only the
+	// last of the keys above that segment, so the map's own key is not in the
+	// parse at all. Refused rather than assembled with the wrong key, which
+	// yields a file that decodes to nothing.
+	if keyAtMap != "" && keyAtFirstSegment != "" && keyAtMap != keyAtFirstSegment {
+		return nil, unsupported("this HLS stream protects its initialization section with a different key from its segments, which this server cannot download")
+	}
 	mapIndex := 0
 	nextMapExplicit := func() bool {
 		explicit := mapIndex < len(explicitMaps) && explicitMaps[mapIndex]
@@ -392,7 +401,7 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 				// Both attach to the same segment, so the parse alone cannot
 				// order them, and a plaintext map handed a key decodes to
 				// nothing exactly as an encrypted one handed none does.
-				if keyBeforeMap {
+				if keyAtMap != "" {
 					out.initKey = currentKey
 				}
 			// Compared whole, not by URL. One resource can hold several
@@ -453,25 +462,35 @@ func refuseImplicitMapOffset(m *m3u8.Map, explicit bool) error {
 	return nil
 }
 
-// keyPrecedesMap reports whether an EXT-X-KEY appears before the first
-// EXT-X-MAP.
+// headerKeys reports which EXT-X-KEY tag is in effect at the first EXT-X-MAP,
+// and which is in effect at the first segment, as the raw tag lines.
 //
-// The parser cannot answer it: a key and a map written above the first segment
-// both attach to that segment, in no recorded order. The question decides
-// whether the initialization section is encrypted, and both wrong answers
-// produce a file that decodes to nothing without an error naming the cause.
-func keyPrecedesMap(text string) bool {
-	keyAt, mapAt := -1, -1
-	for i, line := range strings.Split(text, "\n") {
+// The parser cannot answer either: every tag above the first segment attaches
+// to that segment, and when two keys sit there it keeps only the last. So the
+// key protecting the initialization section is simply absent from the parse,
+// and the question decides whether that section decodes at all -- with both
+// wrong answers producing a file that plays as nothing, and no error naming a
+// cause.
+//
+// atMap is empty when no key precedes the map, or when there is no map.
+func headerKeys(text string) (atMap, atFirstSegment string) {
+	seenMap := false
+	current := ""
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if keyAt < 0 && strings.HasPrefix(line, "#EXT-X-KEY:") {
-			keyAt = i
-		}
-		if mapAt < 0 && strings.HasPrefix(line, "#EXT-X-MAP:") {
-			mapAt = i
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-KEY:"):
+			current = line
+		case strings.HasPrefix(line, "#EXT-X-MAP:"):
+			if !seenMap {
+				seenMap = true
+				atMap = current
+			}
+		case strings.HasPrefix(line, "#EXTINF:"):
+			return atMap, current
 		}
 	}
-	return keyAt >= 0 && (mapAt < 0 || keyAt < mapAt)
+	return atMap, current
 }
 
 // explicitMapOffsets is explicitByteRangeOffsets for EXT-X-MAP, whose byte

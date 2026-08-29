@@ -150,7 +150,7 @@ func TestImplicitByteRangeOffsetsAdvance(t *testing.T) {
 		"#EXT-X-BYTERANGE:200\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestExplicitByteRangeOffsetZeroIsKept(t *testing.T) {
 		"#EXT-X-BYTERANGE:100@100\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50@0\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ func TestAChangedInitializationRangeIsRefused(t *testing.T) {
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@0"` + "\n#EXTINF:1.0,\na.m4s\n" +
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@100"` + "\n#EXTINF:1.0,\nb.m4s\n" +
 		"#EXT-X-ENDLIST\n"
-	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	_, err := readMediaFor(t, text)
 	assertUnsupported(t, err, "initialization")
 }
 
@@ -547,8 +547,7 @@ func TestAKeyStaysInEffectUntilAnotherReplacesIt(t *testing.T) {
 		`#EXT-X-KEY:METHOD=AES-128,URI="k2.bin"` + "\n" +
 		"#EXTINF:1.0,\nc.ts\n#EXTINF:1.0,\nd.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,8 +574,7 @@ func TestAMidStreamMethodNoneClearsTheKey(t *testing.T) {
 		"#EXT-X-KEY:METHOD=NONE\n" +
 		"#EXTINF:1.0,\nb.ts\n#EXTINF:1.0,\nc.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,8 +597,7 @@ func TestAnEncryptedInitialisationSectionGetsItsKeyFirst(t *testing.T) {
 		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
 		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
 		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -721,10 +718,34 @@ func TestAPlaintextMapIsNotGivenALaterKey(t *testing.T) {
 
 func parseMedia(t *testing.T, text string) *media {
 	t.Helper()
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	m, err := readMediaFor(t, text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// readMediaFor parses a playlist the way parse() does, so a test exercises the
+// same raw-text scans the real path uses rather than a simplified stand-in.
+func readMediaFor(t *testing.T, text string) (*media, error) {
+	t.Helper()
+	keyAtMap, keyAtFirstSegment := headerKeys(text)
+	return readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyAtMap, keyAtFirstSegment)
+}
+
+// TestASeparatelyKeyedInitialisationSectionIsRefused. The parser keeps only the
+// last of the keys above the first segment, so a map protected by its own key
+// is not in the parse at all -- assembling with the segment key produces a file
+// that decodes to nothing, with no error naming a cause.
+func TestASeparatelyKeyedInitialisationSectionIsRefused(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="map-key.bin"` + "\n" +
+		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="segment-key.bin"` + "\n" +
+		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
+	keyAtMap, keyAtFirstSegment := headerKeys(text)
+	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyAtMap, keyAtFirstSegment)
+	assertUnsupported(t, err, "initialization")
 }

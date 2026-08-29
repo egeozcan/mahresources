@@ -47,6 +47,14 @@ const maxFrameWidth = 4096
 // useful field varies by caller -- duration, codec, rotation, channel layout,
 // frame rate -- and a curated list is a list somebody has to keep extending.
 func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId uint) (map[string]any, error) {
+	// Before the resource read, the gate and -- on a filesystem with no local
+	// path -- a copy of the whole file. A server with no ffprobe should say so
+	// rather than spend all of that and return an exec error naming a binary
+	// the caller never chose.
+	if _, err := exec.LookPath(ctx.ffprobePath()); err != nil {
+		return nil, fmt.Errorf("%w (ffprobe was not found either)", ErrFfmpegUnavailable)
+	}
+
 	var resource models.Resource
 	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
 		return nil, err
@@ -236,10 +244,13 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
+	if err := reqCtx.Err(); err != nil {
+		return err, true
+	}
 
 	acquired, runErr := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
 		resourceID,
-		orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout),
+		ctx.videoLockWait(reqCtx),
 		timeout,
 		func() error {
 			// Started here, not before the lock: waiting for a slot is not
@@ -275,8 +286,11 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 // frame extraction would refuse every clip longer than a few minutes. What is
 // bounded is concurrency, and the caller's own context still cancels the work.
 func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceID uint, start, end, comment string) error {
+	if err := reqCtx.Err(); err != nil {
+		return err
+	}
 	lock := ctx.locks.VideoThumbnailGenerationLock
-	if !lock.AcquireWithTimeout(resourceID, orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout)) {
+	if !lock.AcquireWithTimeout(resourceID, ctx.videoLockWait(reqCtx)) {
 		return errors.New("timed out waiting for a video processing slot")
 	}
 	defer lock.Release(resourceID)
@@ -316,8 +330,11 @@ func (ctx *MahresourcesContext) TrimVideoToNewResource(reqCtx context.Context, r
 		return nil, errors.New("resource must be a video")
 	}
 
+	if err := reqCtx.Err(); err != nil {
+		return nil, err
+	}
 	lock := ctx.locks.VideoThumbnailGenerationLock
-	if !lock.AcquireWithTimeout(resourceID, orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout)) {
+	if !lock.AcquireWithTimeout(resourceID, ctx.videoLockWait(reqCtx)) {
 		return nil, errors.New("timed out waiting for a video processing slot")
 	}
 	defer lock.Release(resourceID)
@@ -367,6 +384,29 @@ func (c *cancelableReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return c.r.Read(p)
+}
+
+// videoLockWait is how long to wait for a video slot, never longer than the
+// caller has left.
+//
+// The lock's own wait takes no context, so a cancelled request -- or an async
+// job whose deadline has passed -- would otherwise sit in it for the full
+// configured timeout, doing nothing anybody is waiting for. Under contention
+// that is a minute a schedule handler spends outside its own budget, and the
+// claim TTL that bounds a schedule is derived from budgets like it.
+func (ctx *MahresourcesContext) videoLockWait(reqCtx context.Context) time.Duration {
+	wait := orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout)
+	deadline, ok := reqCtx.Deadline()
+	if !ok {
+		return wait
+	}
+	if remaining := time.Until(deadline); remaining < wait {
+		if remaining < 0 {
+			return 0
+		}
+		return remaining
+	}
+	return wait
 }
 
 // The fallbacks for a context built from a bare config, which is what the CLI
