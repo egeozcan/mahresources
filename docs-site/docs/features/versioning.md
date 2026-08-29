@@ -97,7 +97,7 @@ For images, five comparison modes are available:
 | **Toggle** | Click or press Space to switch between versions |
 | **Difference** | Blend the versions so identical pixels are black and changes remain visible |
 
-In **Toggle**, **Blink** alternates the versions automatically. It starts paused on every visit; choose a rate from 2 to 8 flashes per second, then press **Blink** to play or pause. Blink stays unavailable when your system requests reduced motion and stops if that preference is enabled while it is playing.
+In **Toggle**, **Blink** alternates the versions automatically. It starts paused on every visit; choose a rate from 2 to 8 flashes per second, then press **Blink** to play or pause. Blink stays unavailable when your system requests reduced motion and stops if that preference is enabled while it is playing. Above three flashes per second, the comparator reduces image contrast to keep arbitrary image pairs below the accessibility flash threshold.
 
 The four overlay modes -- slider, onion skin, toggle and difference -- draw both versions inside one frame, so how each version is measured into that frame decides whether they line up at all. **Scale** sets that:
 
@@ -148,7 +148,7 @@ While Align is armed the arrow keys move the version rather than the reveal posi
 
 ##### Measuring changed pixels
 
-Press **Pixel diff** in any overlay mode to add a magenta mask over changed pixels. The comparison banner then reports the percentage of the painted overlap that changed. Pixels painted by only one version are excluded -- the banner's size and dimensions already describe missing area -- and tiny colour differences caused by image resampling are ignored. The mask stays armed when you switch modes and follows scale, anchor, flip and manual alignment.
+Press **Pixel diff** in any overlay mode to add a magenta mask over changed pixels. The comparison banner then reports the percentage of the painted overlap that changed. Pixels painted by only one version are excluded -- the banner's size and dimensions already describe missing area -- while every channel difference inside the overlap counts. The mask stays armed when you switch modes and follows scale, anchor, flip and manual alignment.
 
 For a large pair, the page shows the combined megapixel count and asks before computing. A pair with no browser-readable dimensions, such as an unsupported HEIC or TIFF, cannot be measured pixel by pixel; the control remains available to focus but states why it cannot act.
 

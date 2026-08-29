@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error -- plain JS module with no type declarations
-import { imageCompare, countChanged, heatMapCanvasTransform } from './imageCompare.js';
+import {
+  imageCompare, countChanged, formatHeatMapPercent, heatMapCanvasTransform,
+} from './imageCompare.js';
 
 /**
  * The compare page's overlay modes place two images in one coordinate space.
@@ -13,7 +15,12 @@ import { imageCompare, countChanged, heatMapCanvasTransform } from './imageCompa
  * size arriving from all four modes at once.
  */
 
-function component(leftSize: unknown, rightSize: unknown) {
+function component(
+  leftSize: unknown,
+  rightSize: unknown,
+  leftContentType = 'image/png',
+  rightContentType = 'image/png',
+) {
   return imageCompare({
     leftUrl: '/v1/resource/version/file?versionId=1',
     rightUrl: '/v1/resource/version/file?versionId=2',
@@ -21,6 +28,8 @@ function component(leftSize: unknown, rightSize: unknown) {
     rightLabel: 'Version 2',
     leftSize,
     rightSize,
+    leftContentType,
+    rightContentType,
   });
 }
 
@@ -2794,6 +2803,31 @@ describe('the blink comparator', () => {
     expect(c.blinkAnnouncement).toBe('');
   });
 
+  test('the 2 Hz lower bound flips once per half second', () => {
+    vi.useFakeTimers();
+    try {
+      const c = blinkComponent();
+      c.blinkRate = 2;
+      c.toggleBlink();
+      vi.advanceTimersByTime(499);
+      expect(c.showLeft).toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(c.showLeft).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('rates above three reduce contrast below the flash threshold', () => {
+    const c = blinkComponent();
+    c.blinkRate = 8;
+    c.toggleBlink();
+    expect(c.blinkFlashSafe).toBe(true);
+    expect(c.blinkAnnouncement).toContain('contrast reduced');
+    c.toggleBlink();
+    expect(c.blinkFlashSafe).toBe(false);
+  });
+
   test('a rate change while playing restarts the interval at the new period', () => {
     vi.useFakeTimers();
     try {
@@ -2944,14 +2978,20 @@ describe('the pixel-diff heatmap: pure math', () => {
     expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 2 });
   });
 
-  test('counting: a difference at or under the threshold is resampling noise', () => {
+  test('counting: a supplied threshold is strict at its boundary', () => {
     const lead = new Uint8ClampedArray([10, 20, 30, 255]);
-    // Max channel diff of exactly 32 is noise (the comparison is strict).
+    // A max channel diff of exactly 32 does not exceed a threshold of 32.
     const trail = new Uint8ClampedArray([10, 52, 30, 255]);
     expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 1 });
     // One more on any channel is a difference.
     const beyond = new Uint8ClampedArray([10, 53, 30, 255]);
     expect(countChanged(lead, beyond, 32)).toEqual({ changed: 1, overlap: 1 });
+  });
+
+  test('counting: a visible opacity change is a changed overlap pixel', () => {
+    const lead = new Uint8ClampedArray([80, 90, 100, 255]);
+    const trail = new Uint8ClampedArray([80, 90, 100, 96]);
+    expect(countChanged(lead, trail, 32)).toEqual({ changed: 1, overlap: 1 });
   });
 
   test('counting: a pixel only one version paints belongs to nobody', () => {
@@ -2960,6 +3000,12 @@ describe('the pixel-diff heatmap: pure math', () => {
     const lead = new Uint8ClampedArray([10, 20, 30, 255, 5, 5, 5, 255]);
     const trail = new Uint8ClampedArray([10, 20, 30, 255, 0, 0, 0, 0]);
     expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 1 });
+  });
+
+  test('formatting distinguishes a sparse change from an identical pair', () => {
+    expect(formatHeatMapPercent(0, 10000)).toBe(0);
+    expect(formatHeatMapPercent(1, 10000)).toBe('<0.1');
+    expect(formatHeatMapPercent(7, 300)).toBe(2.3);
   });
 
   test('counting: nothing overlapping means nothing to compare', () => {
@@ -3017,11 +3063,11 @@ describe('the pixel-diff heatmap: orchestration', () => {
       const c = heatComponent();
       c.toggleHeatMap();
       expect(c.heatMapOn).toBe(true);
-      expect(c.heatMapPercent).toBe(2); // round(100 * 7 / 300)
+      expect(c.heatMapPercent).toBe(2.3);
       expect(c.heatMapOverlapEmpty).toBe(false);
       const event = events.find((e) => e.type === 'compare-pixel-diff');
       expect(event).toBeDefined();
-      expect(event.detail).toEqual({ percent: 2, overlapEmpty: false });
+      expect(event.detail).toEqual({ percent: 2.3, overlapEmpty: false });
     });
   });
 
@@ -3037,9 +3083,31 @@ describe('the pixel-diff heatmap: orchestration', () => {
       expect(c.heatMapPercent).toBeNull();
       expect(events).toEqual([]);
       c.noteSizeFrom(img(2, 800, 600));
-      expect(c.heatMapPercent).toBe(2);
+      expect(c.heatMapPercent).toBe(2.3);
       expect(events).toHaveLength(1);
     });
+  });
+
+  test('reversed decode order produces the same final placement and percentage', () => {
+    const run = (order: number[]) => {
+      const c = component({ w: 800, h: 600 }, { w: 400, h: 300 });
+      c.$el = { addEventListener() {}, removeEventListener() {}, querySelectorAll: () => [] };
+      (c as any).$watch = () => {};
+      c.init();
+      vi.spyOn(c as any, '_repaintHeatMapDom').mockReturnValue({ changed: 9, overlap: 400 });
+      const reports = [img(1, 700, 500), img(2, 900, 600)];
+      c.noteSizeFrom(reports[order[0]]);
+      c.toggleHeatMap();
+      expect(c.heatMapPercent).toBeNull();
+      c.noteSizeFrom(reports[order[1]]);
+      return {
+        lead: c.heatMapPlacement(0),
+        trail: c.heatMapPlacement(1),
+        percent: c.heatMapPercent,
+      };
+    };
+
+    expect(run([0, 1])).toEqual(run([1, 0]));
   });
 
   test('disarming clears the number and tells the banner to hide', () => {
@@ -3049,8 +3117,23 @@ describe('the pixel-diff heatmap: orchestration', () => {
       c.toggleHeatMap();
       expect(c.heatMapOn).toBe(false);
       expect(c.heatMapPercent).toBeNull();
+      expect(c.heatMapAnnouncement).toContain('hidden');
       expect(events[events.length - 1].detail).toEqual({ percent: null, overlapEmpty: false });
     });
+  });
+
+  test('a TIFF with stored dimensions still refuses pixel diff', () => {
+    const c = component(
+      { w: 20, h: 10 },
+      { w: 20, h: 10 },
+      'image/tiff',
+      'image/tiff',
+    );
+    expect(c.scaleAvailable).toBe(true);
+    expect(c.heatMapAvailable).toBe(false);
+    expect(c.heatMapUnavailableTitle).toContain('TIFF');
+    c.toggleHeatMap();
+    expect(c.heatMapOn).toBe(false);
   });
 
   test('the large-pair gate confirms once and can be re-armed', () => {
@@ -3086,7 +3169,7 @@ describe('the pixel-diff heatmap: orchestration', () => {
     c.toggleHeatMap();
     const said = c.heatMapAnnouncement;
     expect(said).toContain('Pixel diff');
-    expect(said).toContain('2%');
+    expect(said).toContain('2.3%');
     // A silent repaint (what a drag frame triggers) changes nothing.
     (c as any)._repaintHeatMap();
     expect(c.heatMapAnnouncement).toBe(said);

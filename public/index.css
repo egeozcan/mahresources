@@ -2736,11 +2736,24 @@ html {
 }
 
 .compare-overlay-img--difference {
-    /* The whole point of the mode: a pixel both versions painted identically
-       reads black. The blend is against what sits under the image in the
-       overlay box -- the lead where the lead paints, the box background where
-       only the trail paints -- so one image alone never disappears to black. */
+    /* Flatten the trail onto the same backdrop the lead is seen over
+       before blending. Without this, two identical translucent pixels are not
+       black: source alpha is applied around the blend function. */
+    background: #fafaf9;
     mix-blend-mode: difference;
+}
+
+/* Eight alternations per second are useful for registration but arbitrary
+   full-frame images can otherwise cross WCAG's three-flashes threshold. At
+   high rates, confine every image channel to a narrow band around mid-grey:
+   the largest possible luminance swing stays below the flash definition. */
+.compare-box--flash-safe,
+.compare-box--flash-safe .compare-overlay-img {
+    background: #808080;
+}
+
+.compare-box--flash-safe .compare-overlay-img {
+    filter: contrast(8%);
 }
 
 .compare-slider-handle:focus-visible {

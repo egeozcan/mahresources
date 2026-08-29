@@ -58,17 +58,17 @@ test.describe.serial('compare page registration and scale', () => {
   }
 
   /**
-   * Onion skin is the only mode that paints both images at once, so it is the
-   * one that can be measured. Its container is identifiable without a test-only
-   * attribute: it is the only overlay box holding an `--over` image.
+   * Onion skin is the adjustable-opacity overlay. Difference also paints both
+   * images, so the non-difference `--over` image identifies this box without a
+   * test-only attribute.
    */
   function onionImages(page: Page): { box: Locator; lead: Locator; trail: Locator } {
-    const box = page.locator('.compare-overlay-box')
-      .filter({ has: page.locator('.compare-overlay-img--over') });
+    const over = page.locator('.compare-overlay-img--over:not(.compare-overlay-img--difference)');
+    const box = page.locator('.compare-overlay-box').filter({ has: over });
     return {
       box,
       lead: box.locator('.compare-overlay-img').first(),
-      trail: box.locator('.compare-overlay-img--over'),
+      trail: box.locator('.compare-overlay-img--over:not(.compare-overlay-img--difference)'),
     };
   }
 
@@ -227,7 +227,9 @@ test.describe.serial('compare page registration and scale', () => {
     await showOnionSkin(page);
     const boxes = page.locator('[x-data^="imageCompare"] .compare-overlay-box');
     const slider = boxes.filter({ has: page.locator('[role="slider"]') });
-    const onion = boxes.filter({ has: page.locator('.compare-overlay-img--over') });
+    const onion = boxes.filter({
+      has: page.locator('.compare-overlay-img--over:not(.compare-overlay-img--difference)'),
+    });
     const toggle = page.locator('button.compare-overlay-box');
 
     // Named, not counted: a count of one passes just as happily when the *wrong*

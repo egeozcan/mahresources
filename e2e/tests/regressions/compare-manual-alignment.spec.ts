@@ -54,14 +54,14 @@ test.describe.serial('compare page manual alignment', () => {
     expect(response.ok()).toBeTruthy();
   }
 
-  /** Onion skin is the only mode that paints both images at once. */
+  /** Onion skin is the adjustable-opacity mode; Difference also has an overlaid image. */
   function onionImages(page: Page): { box: Locator; lead: Locator; trail: Locator } {
-    const box = page.locator('.compare-overlay-box')
-      .filter({ has: page.locator('.compare-overlay-img--over') });
+    const over = page.locator('.compare-overlay-img--over:not(.compare-overlay-img--difference)');
+    const box = page.locator('.compare-overlay-box').filter({ has: over });
     return {
       box,
       lead: box.locator('.compare-overlay-img').first(),
-      trail: box.locator('.compare-overlay-img--over'),
+      trail: box.locator('.compare-overlay-img--over:not(.compare-overlay-img--difference)'),
     };
   }
 

@@ -49,11 +49,13 @@ const ANNOUNCE_MARK = '\u200B';
 // decode-and-downsample work on a very large pair, not an enforced bound.
 const HEATMAP_SAMPLE_SIDE = 512;
 const HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12;
-// A per-channel absolute difference above this counts as changed. Resampling
-// both versions through the same rectangle produces small errors everywhere;
-// 32/255 is far above them and far below any visible edit. An identical pair
-// measures exactly zero, because identical bytes take the identical path.
-const HEATMAP_THRESHOLD = 32;
+// Pixel diff is literal after composition: any channel change counts. An
+// identical pair still measures exactly zero because identical bytes take the
+// identical placement and sampling path.
+const HEATMAP_THRESHOLD = 0;
+const HEATMAP_UNSUPPORTED_CONTENT_TYPES = new Set([
+  'image/heic', 'image/heif', 'image/tiff', 'image/x-tiff',
+]);
 
 /**
  * Compare the two composed frames: per-pixel, count the overlap and mark the
@@ -80,6 +82,9 @@ export function heatMapDiff(lead, trail, threshold) {
       Math.abs(lead[i] - trail[i]),
       Math.abs(lead[i + 1] - trail[i + 1]),
       Math.abs(lead[i + 2] - trail[i + 2]),
+      // Both alphas are nonzero (the overlap rule above), but a partial
+      // opacity change still visibly changes the composed pixel.
+      Math.abs(lead[i + 3] - trail[i + 3]),
     );
     if (d > threshold) {
       changed++;
@@ -96,6 +101,15 @@ export function heatMapDiff(lead, trail, threshold) {
 export function countChanged(lead, trail, threshold) {
   const { changed, overlap } = heatMapDiff(lead, trail, threshold);
   return { changed, overlap };
+}
+
+/** A sparse real edit must never wear the identical pair's `0%` label. */
+export function formatHeatMapPercent(changed, overlap) {
+  if (!overlap) return null;
+  if (!changed) return 0;
+  const percent = (changed / overlap) * 100;
+  if (percent < 0.1) return '<0.1';
+  return Math.round(percent * 10) / 10;
 }
 
 /**
@@ -186,7 +200,10 @@ function signed(n) {
   return r > 0 ? `+${r}` : `${r}`;
 }
 
-export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize }) {
+export function imageCompare({
+  leftUrl, rightUrl, leftLabel, rightLabel, leftSize, rightSize,
+  leftContentType, rightContentType,
+}) {
   // The shared box as the server's stored dimensions draw it. The order-
   // independent frame: the load window's transient box is `max` of one real
   // measurement and one stored placeholder, so it differs per decode order
@@ -337,6 +354,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     _blinkAnnounceParity: false,
     _urls: [leftUrl, rightUrl],
     _labels: [leftLabel || '', rightLabel || ''],
+    _contentTypes: [leftContentType || '', rightContentType || ''],
     // Intrinsic sizes, so the overlay modes can place both images in one
     // coordinate space. Missing values fall back to the container, which is the
     // old behaviour and the best guess available.
@@ -1313,6 +1331,29 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return this.overlayRatio !== null;
     },
 
+    /**
+     * Pixel diff additionally needs a format the browser can decode into a
+     * canvas. TIFF often has stored dimensions from Go's decoder, so geometry
+     * alone cannot answer this: Chromium still cannot paint its pixels.
+     */
+    get heatMapUnsupportedFormat() {
+      return this._contentTypes.some((type) => HEATMAP_UNSUPPORTED_CONTENT_TYPES.has(type.toLowerCase()));
+    },
+
+    get heatMapAvailable() {
+      return this.scaleAvailable && !this.heatMapUnsupportedFormat;
+    },
+
+    get heatMapUnavailableTitle() {
+      if (this.heatMapUnsupportedFormat) {
+        return 'This browser cannot decode HEIC or TIFF pixels, so pixel diff is unavailable.';
+      }
+      if (!this.scaleAvailable) {
+        return 'One of the two versions reports no dimensions, so there is nothing to compare pixel by pixel.';
+      }
+      return 'Show which parts of the pair changed, and how much.';
+    },
+
     setScale(value, e) {
       if (!this.scaleAvailable) {
         this.returnFocusToCheckedScale(e);
@@ -1719,6 +1760,13 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       return !this._reducedMotion;
     },
 
+    // Above the WCAG three-flashes boundary, the image is deliberately
+    // flattened into a narrow luminance band. It still alternates at the rate
+    // the reader selected, without an arbitrary pair becoming a seizure risk.
+    get blinkFlashSafe() {
+      return this.blinking && this.blinkRate > 3;
+    },
+
     get reducedMotionTitle() {
       return this.blinkAvailable
         ? 'Alternate the two versions automatically.'
@@ -1798,7 +1846,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
     _announceBlinkState() {
       this._blinkAnnounceParity = !this._blinkAnnounceParity;
       const message = this.blinking
-        ? `Blinking at ${Math.round(this.blinkRate)} flashes per second`
+        ? `Blinking at ${Math.round(this.blinkRate)} flashes per second${this.blinkFlashSafe ? '; contrast reduced for flash safety' : ''}`
         : 'Blink paused';
       this.blinkAnnouncement = `${message}${this._blinkAnnounceParity ? ANNOUNCE_MARK : ''}`;
     },
@@ -1817,7 +1865,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * twice.
      */
     toggleHeatMap() {
-      if (!this.scaleAvailable) return;
+      if (!this.heatMapAvailable) return;
       if (this.heatMapOn) {
         this.heatMapOn = false;
         this.heatMapPercent = null;
@@ -1828,7 +1876,6 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       }
       if (this.heatMapRequiresConfirm() && !this.heatMapConfirmed) {
         this.heatMapNeedsConfirm = true;
-        this._announceHeatMapState();
         return;
       }
       this.heatMapOn = true;
@@ -1872,7 +1919,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * announcements happen at the discrete ends (`_announceHeatMapState`).
      */
     _repaintHeatMap() {
-      if (!this.heatMapOn || !this.scaleAvailable) return false;
+      if (!this.heatMapOn || !this.heatMapAvailable) return false;
       // A half-measured pair has no final frame: the box is max of one real
       // measurement and one stored placeholder, so a number computed there
       // depends on which version decoded first. The completing report paints.
@@ -1881,7 +1928,7 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
       if (!result) return false;
       const { changed, overlap } = result;
       this.heatMapOverlapEmpty = overlap === 0;
-      this.heatMapPercent = overlap === 0 ? null : Math.round((changed / overlap) * 100);
+      this.heatMapPercent = formatHeatMapPercent(changed, overlap);
       this._emitHeatMapPercent();
       return true;
     },
@@ -1895,10 +1942,10 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * requests are always honoured somewhere.
      */
     _scheduleHeatMapRepaint(announceAfter = false) {
-      // Only an armed heatmap can eventually produce an announcement. This
-      // keeps ordinary alignment announcements from leaving latent heatmap
-      // work behind while the mask is off.
-      if (announceAfter && this.heatMapOn) this._heatMapAnnounceAfterRepaint = true;
+      // Alignment is the default path and the mask is off by default. Do not
+      // allocate one rAF per drag frame for a computation that will refuse.
+      if (!this.heatMapOn) return;
+      if (announceAfter) this._heatMapAnnounceAfterRepaint = true;
       const repaint = () => {
         const complete = this._repaintHeatMap();
         // A half-measured arm keeps the request pending. The report that makes
@@ -1925,8 +1972,12 @@ export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel, leftSiz
      * say, and repeating an unchanged one announces nothing anyway.
      */
     _announceHeatMapState() {
-      if (!this.heatMapOn || (this.heatMapPercent === null && !this.heatMapOverlapEmpty)) return;
       this._heatMapAnnounceParity = !this._heatMapAnnounceParity;
+      if (!this.heatMapOn) {
+        this.heatMapAnnouncement = `Pixel diff hidden${this._heatMapAnnounceParity ? ANNOUNCE_MARK : ''}`;
+        return;
+      }
+      if (this.heatMapPercent === null && !this.heatMapOverlapEmpty) return;
       const message = this.heatMapOverlapEmpty
         ? 'Pixel diff: the two versions do not overlap, so nothing was compared'
         : `Pixel diff: ${this.heatMapPercent}% of the overlap changed`;

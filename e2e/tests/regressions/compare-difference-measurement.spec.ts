@@ -23,6 +23,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   let fixtureDir: string;
   let pairResourceId: number;
   let heicResourceId: number;
+  let tiffResourceId: number;
   let diffPairResourceId: number;
   let largePairResourceId: number;
 
@@ -94,6 +95,22 @@ test.describe.serial('compare page: difference and measurement', () => {
     await uploadVersion(request, baseURL!, heicResourceId,
       'pkg3-v2.heic', 'image/heic', heicV2.buffer, 'Second HEIC');
 
+    // TIFF is the other refusal shape: Go decodes and stores its dimensions,
+    // while Chromium cannot paint its pixels. Geometry must not make the
+    // heatmap look available when its canvas sources can never decode.
+    const tiffV1 = marked('compare-tiff-undecodable.tiff', 'v1');
+    const tiffResource = await apiClient.createResource({
+      filePath: tiffV1.path,
+      contentType: 'image/tiff',
+      exactBytes: true,
+      name: `Pkg3 TIFF ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    tiffResourceId = tiffResource.ID;
+    const tiffV2 = marked('compare-tiff-undecodable.tiff', 'v2');
+    await uploadVersion(request, baseURL!, tiffResourceId,
+      'pkg3-v2.tiff', 'image/tiff', tiffV2.buffer, 'Second TIFF');
+
     // Two genuinely different images: the pair where the percentage and the
     // mask have something to say.
     const diffV1 = path.join(__dirname, '../../test-assets/sample-image-24.png');
@@ -125,7 +142,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [pairResourceId, heicResourceId, diffPairResourceId, largePairResourceId]) {
+    for (const id of [pairResourceId, heicResourceId, tiffResourceId, diffPairResourceId, largePairResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -188,6 +205,10 @@ test.describe.serial('compare page: difference and measurement', () => {
       // The blend itself, from the computed style — the one property whose
       // whole job is to say this, and which no fallback branch overrides.
       await expect(trail).toHaveCSS('mix-blend-mode', 'difference');
+      // The trail is flattened onto the box backdrop before blending, so two
+      // identical translucent pixels retain the same black-is-identical rule.
+      await expect(trail).toHaveCSS('background-color', 'rgb(250, 250, 249)');
+      await expect(box).toHaveCSS('background-color', 'rgb(250, 250, 249)');
     });
 
     test('black means identical, with this pair as the proof', async ({ page }) => {
@@ -339,10 +360,23 @@ test.describe.serial('compare page: difference and measurement', () => {
       await rateInput(page).fill('8');
       await rateInput(page).dispatchEvent('change');
       await blinkButton(page).click();
+      await expect(toggleBox(page).locator('img:visible')).toHaveCSS('filter', 'contrast(0.08)');
+      await expect(page.getByText('Contrast is reduced above 3 flashes per second for flash safety.')).toBeVisible();
       const fast = await sampleSides(page, 1500);
       // 8 Hz over 1.5s ≈ 12 flips, sampled at 10ms: every flip is caught,
       // with slack for interval jitter.
       expect(fast.length).toBeGreaterThanOrEqual(10);
+    });
+
+    test('the 2 Hz lower bound flips at the selected rate', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await rateInput(page).fill('2');
+      await rateInput(page).dispatchEvent('change');
+      await blinkButton(page).click();
+      const slow = await sampleSides(page, 1600);
+      expect(slow.length).toBeGreaterThanOrEqual(3);
+      expect(slow.length).toBeLessThanOrEqual(5);
     });
 
     test('prefers-reduced-motion refuses with a stated reason', async ({ page }) => {
@@ -360,6 +394,20 @@ test.describe.serial('compare page: difference and measurement', () => {
       await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
       const sides = await sampleSides(page, 500);
       expect(sides.length).toBe(1);
+    });
+
+    test('enabling reduced motion mid-play stops the blink', async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
+      await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+      await blinkButton(page).click();
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'true');
+
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await expect(blinkButton(page)).toHaveAttribute('aria-pressed', 'false');
+      await expect(blinkButton(page)).toHaveAttribute('aria-disabled', 'true');
+      const rest = await sampleSides(page, 500);
+      expect(rest.length).toBe(1);
     });
 
     test('leaving toggle mode pauses the blink', async ({ page }) => {
@@ -431,7 +479,7 @@ test.describe.serial('compare page: difference and measurement', () => {
       await heatButton(page).click();
       await expect(bannerStat(page)).toBeVisible();
       const text = (await bannerStat(page).innerText()).trim();
-      const pct = Number(text.match(/(\d+)%/)?.[1]);
+      const pct = Number(text.match(/(\d+(?:\.\d+)?)%/)?.[1]);
       expect(pct).toBeGreaterThan(0);
       expect(pct).toBeLessThanOrEqual(100);
       // The mask paints what was counted: its coverage tracks the reported
@@ -473,7 +521,7 @@ test.describe.serial('compare page: difference and measurement', () => {
       // both answer.
       await expect(bannerStat(page)).toContainText(/\d+%/);
       expect(await maskCoverage(page)).toBeGreaterThan(0);
-      expect(Number((await bannerStat(page).innerText()).match(/(\d+)%/)?.[1])).toBeGreaterThan(0);
+      expect(Number((await bannerStat(page).innerText()).match(/(\d+(?:\.\d+)?)%/)?.[1])).toBeGreaterThan(0);
     });
 
     test('disarming clears the number and the mask', async ({ page }) => {
@@ -486,16 +534,38 @@ test.describe.serial('compare page: difference and measurement', () => {
       await expect(maskCanvas(page)).toHaveCount(0);
     });
 
-    test('a pair with no dimensions refuses with a stated reason', async ({ page }) => {
+    test('a HEIC pair refuses with a stated format reason', async ({ page }) => {
       await page.goto(`/resource/compare?r1=${heicResourceId}&v1=1&v2=2`);
       await page.getByRole('radio', { name: 'Onion skin' }).click();
       await expect(heatButton(page)).toBeVisible();
       await expect(heatButton(page)).toHaveAttribute('aria-disabled', 'true');
-      expect(await heatButton(page).getAttribute('title')).toContain('no dimensions');
+      expect(await heatButton(page).getAttribute('title')).toContain('HEIC');
 
       await heatButton(page).click({ force: true });
       await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'false');
       await expect(bannerStat(page)).toBeHidden();
+    });
+
+    test('a TIFF with stored dimensions refuses because the browser cannot decode it', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${tiffResourceId}&v1=1&v2=2`);
+      await page.getByRole('radio', { name: 'Onion skin' }).click();
+
+      await expect(heatButton(page)).toBeVisible();
+      await expect(heatButton(page)).toHaveAttribute('aria-disabled', 'true');
+      expect(await heatButton(page).getAttribute('title')).toContain('TIFF');
+      await heatButton(page).click({ force: true });
+      await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'false');
+      await expect(bannerStat(page)).toBeHidden();
+
+      // Pixel measurement refuses; the CSS/timer comparators do not need
+      // decoded canvas pixels and remain usable for this format.
+      await page.getByRole('radio', { name: /Difference/ }).click();
+      await expect(diffBox(page)).toBeVisible();
+      await page.getByRole('radio', { name: 'Toggle' }).click();
+      const blink = page.getByRole('button', { name: 'Blink between the two versions' });
+      await blink.click();
+      await expect(blink).toHaveAttribute('aria-pressed', 'true');
+      await blink.click();
     });
 
     test('a large pair asks before computing, and the confirm computes', async ({ page }) => {
@@ -514,7 +584,7 @@ test.describe.serial('compare page: difference and measurement', () => {
       await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
       await expect(bannerStat(page)).toBeVisible();
       // The pair is flat colour with two small distinct markers: a tiny share.
-      const pct = Number((await bannerStat(page).innerText()).match(/(\d+)%/)?.[1]);
+      const pct = Number((await bannerStat(page).innerText()).match(/(\d+(?:\.\d+)?)%/)?.[1]);
       expect(pct).toBeGreaterThan(0);
       expect(pct).toBeLessThan(10);
     });

@@ -6,6 +6,8 @@
     rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID|json }}',
     leftLabel: {{ panelTitle1|json }},
     rightLabel: {{ panelTitle2|json }},
+    leftContentType: {{ comparison.Version1.ContentType|json }},
+    rightContentType: {{ comparison.Version2.ContentType|json }},
     leftSize: { w: {{ comparison.Version1.Width|json }}, h: {{ comparison.Version1.Height|json }} },
     rightSize: { w: {{ comparison.Version2.Width|json }}, h: {{ comparison.Version2.Height|json }} }
 })">
@@ -153,8 +155,8 @@
         <button type="button" @click="toggleHeatMap()" class="compare-swap-btn-sm"
                 x-show="mode !== 'side-by-side'"
                 :aria-pressed="heatMapOn"
-                :aria-disabled="!scaleAvailable"
-                :title="scaleAvailable ? 'Show which parts of the pair changed, and how much.' : 'One of the two versions reports no dimensions, so there is nothing to compare pixel by pixel.'"
+                :aria-disabled="!heatMapAvailable"
+                :title="heatMapUnavailableTitle"
                 aria-label="Pixel diff">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h2m6 0h2M9 16h6" stroke-dasharray="2 2"/></svg>
             Pixel diff
@@ -310,7 +312,10 @@
     <button type="button" x-show="mode === 'toggle'"
             class="relative border rounded overflow-hidden cursor-pointer block w-full p-0 compare-overlay-box"
             :style="overlayBoxStyle"
-            :class="{ 'compare-box-aligning': aligning && alignAvailable }"
+            :class="{
+                'compare-box-aligning': aligning && alignAvailable,
+                'compare-box--flash-safe': blinkFlashSafe
+            }"
             :aria-label="'Showing ' + (showLeft ? leadLabel : trailLabel) + '. Activate to show the other.'"
             @mousedown="startAlignDrag($event)"
             @touchstart="startAlignDrag($event)"
@@ -324,4 +329,7 @@
         <img x-show="!showLeft" :src="trailUrl" :alt="trailAlt" class="compare-overlay-img" :style="trailScale" data-compare-image @load="noteSizeFrom($event.target)">
         <canvas class="compare-heatmap-mask" x-show="heatMapOn" data-compare-heatmap="toggle" aria-hidden="true"></canvas>
     </button>
+    <p x-show="blinkFlashSafe" class="mt-2 text-xs text-stone-600">
+        Contrast is reduced above 3 flashes per second for flash safety.
+    </p>
 </div>

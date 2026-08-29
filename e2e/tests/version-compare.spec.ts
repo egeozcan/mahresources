@@ -196,6 +196,7 @@ test.describe.serial('Version Compare UI', () => {
     await expect(page.locator('.compare-seg-btn:has-text("Slider")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toBeVisible();
     await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toBeVisible();
+    await expect(page.getByRole('radio', { name: /Difference blend/ })).toBeVisible();
     // By accessible name: `.compare-swap-btn-sm` is the toolbar's shared
     // small-button style, worn by the anchor toggle as well.
     await expect(page.getByRole('button', { name: 'Flip which image is shown first' }))
@@ -208,8 +209,9 @@ test.describe.serial('Version Compare UI', () => {
     await page.locator('.compare-seg-btn:has-text("Onion skin")').click();
     await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toHaveAttribute('aria-checked', 'true');
 
-    // Onion skin mode should show opacity slider
-    await expect(page.locator('input[type="range"]')).toBeVisible();
+    // Onion skin mode should show its own opacity slider; Blink has a separate
+    // range control in Toggle mode.
+    await expect(page.getByRole('slider', { name: 'Onion skin opacity' })).toBeVisible();
 
     await page.locator('.compare-seg-btn:has-text("Toggle")').click();
     await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toHaveAttribute('aria-checked', 'true');
