@@ -241,7 +241,13 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 		return "", fmt.Errorf("this download is already being retried")
 	}
 
-	job, err := dm.Submit(creator, owner)
+	// Replayed with the row's own origin, not as a fresh operator download. A
+	// plugin's fetch is confined to that plugin's declared network list; losing
+	// the origin here would widen the retry to the host policy, which allows
+	// every public host — and a retry is exactly where that is easy to miss,
+	// because it runs on a worker in a process that may never have seen the
+	// original job.
+	job, err := dm.SubmitForPlugin(creator, owner, entry.PluginName)
 	if err != nil {
 		// Hand the slot back, or a queue that was momentarily full would leave the
 		// row claimed by an attempt that never started.

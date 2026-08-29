@@ -170,6 +170,9 @@ type PluginManager struct {
 	logger          atomic.Value
 	kvStore         atomic.Value
 	mrqlExecutor    atomic.Value
+	// downloadSubmitter is the queue mah.download.submit enqueues onto. Unset
+	// until wiring, like kvStore.
+	downloadSubmitter atomic.Value
 	// consent holds the persistent ConsentStore. Unset until wiring, which is
 	// why fallbackConsent exists: an unwired manager must still enforce, not
 	// silently skip the check.
@@ -1720,6 +1723,11 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	}
 	if grants.Has(CapImage) {
 		pm.registerImageModule(L, mahMod)
+	}
+	// Gated on db:write for the reason registerDownloadModule gives: the power
+	// is create_resource_from_url's, without the wait.
+	if grants.Has(CapDBWrite) {
+		pm.registerDownloadModule(L, mahMod, pluginNamePtr, egress)
 	}
 	// Always installed: neither reads nor writes anything outside the plugin.
 	pm.registerJsonModule(L, mahMod)

@@ -440,6 +440,26 @@ func (pm *PluginManager) closeEgressClients() {
 // Layer (a) is not applied here: the caller checks the URL before it starts,
 // because it may hold several (AddRemoteResource splits its input on newlines
 // and fetches every line) and the error has to name which one was refused.
+// NetworkPolicyForPlugin returns the declared network policy of a *loaded*
+// plugin.
+//
+// "Loaded" is the whole of the contract. A plugin that is disabled, renamed or
+// was never installed is not found, and every caller treats that as a refusal
+// rather than a reason to fall back to a wider policy. The download queue asks
+// this on each attempt rather than capturing an answer, so a plugin disabled
+// between a submit and its retry stops being able to fetch — which is what
+// disabling it is supposed to mean.
+func (pm *PluginManager) NetworkPolicyForPlugin(name string) (NetworkPolicy, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, p := range pm.plugins {
+		if p.Name == name {
+			return p.Manifest.NetworkPolicy(), true
+		}
+	}
+	return NetworkPolicy{}, false
+}
+
 func ApplyEgressPolicy(client *http.Client, policy NetworkPolicy, dialTimeout time.Duration) *http.Client {
 	if client == nil {
 		return nil

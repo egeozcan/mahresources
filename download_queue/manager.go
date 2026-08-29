@@ -17,6 +17,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -139,8 +140,18 @@ type DownloadManager struct {
 	resourceCtx ResourceCreator
 	ffmpegPath  string
 	hlsOptions  hls.Options
-	settings    DownloadSettings
-	semaphore   chan struct{}
+
+	// policyResolver answers "which egress policy does this plugin fetch under".
+	//
+	// It is set after construction rather than through ManagerConfig, because
+	// this manager is built while the context is still assembling itself and the
+	// plugin manager does not exist yet — a closure captured here would capture
+	// nil. Same shape as SetKVStore, and the same doctrine: unset must fail
+	// closed. A plugin download with no resolver is refused, never fetched under
+	// the host's wider policy.
+	policyResolver atomic.Value
+	settings       DownloadSettings
+	semaphore      chan struct{}
 	// workers counts the download goroutines in flight, so Shutdown can wait for
 	// their terminal history writes rather than exiting under them.
 	workers       sync.WaitGroup
@@ -349,6 +360,18 @@ func (dm *DownloadManager) evictJob(id string, job *DownloadJob) {
 // attribute the created resource (CreatedByUserId) to the submitter without a
 // race, and so queue-visibility RBAC is applied before processing.
 func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint) (*DownloadJob, error) {
+	return dm.SubmitForPlugin(creator, ownerUserID, "")
+}
+
+// SubmitForPlugin enqueues a download on a plugin's behalf.
+//
+// pluginName is not decoration: it selects the egress policy every fetch this
+// job makes runs under. A plugin's declared network list is narrower than the
+// host policy, which allows any public host, so a plugin download that fell
+// back to the host policy would reach places the operator consented to nothing
+// about. An empty name is a person's download and takes the host policy, which
+// is what Submit passes.
+func (dm *DownloadManager) SubmitForPlugin(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string) (*DownloadJob, error) {
 	dm.mu.Lock()
 
 	if !dm.makeRoomForNewJob() {
@@ -371,6 +394,7 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 		ctx:             ctx,
 		cancel:          cancel,
 		ownerUserID:     ownerUserID,
+		pluginName:      pluginName,
 	}
 
 	dm.jobs[job.ID] = job
@@ -522,8 +546,57 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 // settings is snapshotted by the caller (downloadWithProgress) so timeout
 // values reflect the live runtime configuration at the moment the download
 // starts.
-func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
-	client := &http.Client{
+// createHTTPClient builds the client one transfer uses, under the policy its
+// origin calls for.
+//
+// pluginName selects that policy and the selection can fail, which is why this
+// returns an error rather than a client: a plugin whose policy cannot be
+// resolved — it was disabled, renamed, or the resolver was never wired — must
+// have its download refused, not fetched under the host's wider policy. Failing
+// open here is the confused deputy this whole seam exists to prevent.
+func (dm *DownloadManager) createHTTPClientFor(s DownloadSettings, pluginName string) (*http.Client, error) {
+	if pluginName == "" {
+		return dm.createHTTPClient(s), nil
+	}
+	resolve := dm.currentPolicyResolver()
+	if resolve == nil {
+		return nil, fmt.Errorf("refusing to fetch: this deployment cannot resolve plugin %q's network policy", pluginName)
+	}
+	policy, ok := resolve(pluginName)
+	if !ok || policy == nil {
+		return nil, fmt.Errorf("refusing to fetch: plugin %q's network policy is not available (is the plugin still enabled?)", pluginName)
+	}
+	client := dm.baseHTTPClient(s)
+	return policy(client, s.ConnectTimeout()), nil
+}
+
+// PolicyResolver answers which client decoration a named plugin's fetches run
+// under. ok is false when the plugin is unknown or no longer enabled, which is
+// a refusal rather than a reason to fall back.
+type PolicyResolver func(pluginName string) (policy func(*http.Client, time.Duration) *http.Client, ok bool)
+
+// SetPolicyResolver wires the plugin egress lookup, after the plugin manager
+// exists. See DownloadManager.policyResolver.
+func (dm *DownloadManager) SetPolicyResolver(r PolicyResolver) {
+	if r != nil {
+		dm.policyResolver.Store(r)
+	}
+}
+
+func (dm *DownloadManager) currentPolicyResolver() PolicyResolver {
+	v := dm.policyResolver.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(PolicyResolver)
+}
+
+// baseHTTPClient is the undecorated client one transfer uses. Built per
+// download rather than pooled: a policy replaces the dialler, so a client that
+// outlived one transfer could serve a connection opened under a policy that no
+// longer applies.
+func (dm *DownloadManager) baseHTTPClient(s DownloadSettings) *http.Client {
+	return &http.Client{
 		Timeout: s.OverallTimeout(),
 		Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: s.ConnectTimeout()}).DialContext,
@@ -532,6 +605,10 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
+}
+
+func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
+	client := dm.baseHTTPClient(s)
 	// Per download, and after the transport is built: the policy replaces the
 	// dialler, so decorating a client that outlived one transfer would let a
 	// pooled connection opened under one policy serve another.
@@ -658,7 +735,10 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	// Snapshot settings once so all timeout values are consistent for this
 	// download and the read-lock is held only briefly.
 	s := dm.currentSettings()
-	httpClient := dm.createHTTPClient(s)
+	httpClient, err := dm.createHTTPClientFor(s, job.PluginName())
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", job.URL, nil)
 	if err != nil {

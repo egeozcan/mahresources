@@ -41,6 +41,13 @@ var moduleCapabilities = map[string]string{
 	"registerHttpModule":  "CapHTTP",
 	"registerKvModule":    "CapKV",
 	"registerImageModule": "CapImage",
+	// mah.download is gated on db:write rather than a name of its own: it
+	// fetches a URL into the library exactly as mah.db.create_resource_from_url
+	// does, and that capability's label already says so. Only the waiting
+	// differs. Pinned here so folding it under a different capability -- or
+	// under none -- fails rather than silently widening what a "jobs" or
+	// "db:read" plugin can do.
+	"registerDownloadModule": "CapDBWrite",
 }
 
 // ungatedFunctions are the root-level mah functions installed for every plugin,

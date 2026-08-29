@@ -25,6 +25,10 @@ type HistoryRecord struct {
 	StartedAt       *time.Time
 	CompletedAt     *time.Time
 	CreatedByUserId *uint
+	// PluginName is the submitting plugin, empty for a person's download. See
+	// DownloadJob.pluginName: it has to survive the process for a retry to run
+	// under the right policy.
+	PluginName string
 	// Payload is the submitted query_models.ResourceFromRemoteCreator as JSON, so a
 	// retry is possible once the job itself has left the in-memory queue.
 	Payload []byte
@@ -118,6 +122,7 @@ func (dm *DownloadManager) recordTerminal(job *DownloadJob, snap *DownloadJob) {
 		StartedAt:       snap.StartedAt,
 		CompletedAt:     snap.CompletedAt,
 		CreatedByUserId: snap.ownerUserID,
+		PluginName:      snap.pluginName,
 	}
 
 	if creator := job.creatorCopy(); creator != nil {

@@ -82,6 +82,7 @@ function init() end
 		"mah.db.create_note", "mah.db.update_resource", "mah.db.delete_group",
 		"mah.db.add_tags", "mah.db.create_resource_from_url",
 		"mah.kv", "mah.http", "mah.image",
+		"mah.download", "mah.download.submit",
 		"mah.on", "mah.inject", "mah.page", "mah.menu", "mah.api",
 		"mah.action", "mah.start_job", "mah.job_progress",
 	}
@@ -107,6 +108,11 @@ function init() end
 	if !mahHas(t, pm, "writer", "mah.db.query_resources") {
 		t.Error("db:write must install the readers: patch already returns whole entities")
 	}
+	// Gated on db:write rather than on a name of its own: the power is
+	// create_resource_from_url's, minus the wait.
+	if !mahHas(t, pm, "writer", "mah.download.submit") {
+		t.Error("declared db:write did not install mah.download.submit")
+	}
 }
 
 func TestDbReadNeverImpliesDbWrite(t *testing.T) {
@@ -124,6 +130,10 @@ function init() end
 		// content of any resource — one word away from the read side.
 		"mah.db.create_resource_from_url", "mah.db.create_resource_from_data",
 		"mah.db.add_resource_version_from_url",
+		// The asynchronous twin of create_resource_from_url. It fetches a URL
+		// into the library exactly as that does; only the waiting differs, and
+		// a read-only plugin may do neither.
+		"mah.download.submit",
 	} {
 		if mahHas(t, pm, "reader", path) {
 			t.Errorf("%s installed for a db:read-only plugin", path)

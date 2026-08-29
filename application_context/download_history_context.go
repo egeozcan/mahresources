@@ -23,9 +23,13 @@ import (
 // it anyway, and neither outcome should be able to lose the record of a failed
 // download over a long error message.
 const (
-	maxHistoryURLLength   = 2048
-	maxHistoryNameLength  = 1000
-	maxHistoryErrorLength = 2000
+	maxHistoryURLLength  = 2048
+	maxHistoryNameLength = 1000
+	// Matches the column's size. A plugin name longer than this cannot name a
+	// loaded plugin anyway, so the truncated value resolves to no policy and the
+	// retry is refused rather than run unpoliced.
+	maxHistoryPluginNameLength = 128
+	maxHistoryErrorLength      = 2000
 )
 
 // historySweepBatch bounds one DELETE so a large backlog cannot hold a write
@@ -81,6 +85,7 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 		// keeps that same *uint as its owner: the write would silently reassign a
 		// live job's owner in memory, and with it every later visibility check.
 		CreatedByUserId: copyUintPtr(rec.CreatedByUserId),
+		PluginName:      truncateRunes(rec.PluginName, maxHistoryPluginNameLength),
 	}
 	if len(rec.Payload) > 0 {
 		entry.Payload = types.JSON(rec.Payload)
@@ -124,6 +129,11 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 			"url":          entry.URL,
 			"name":         entry.Name,
 			"payload":      entry.Payload,
+			// Carried on the update too: a row first written by a person's
+			// download and later retried by a plugin (or the reverse) must
+			// record which origin the stored outcome belongs to, or the next
+			// retry picks the wrong policy.
+			"plugin_name": entry.PluginName,
 			// Qualified with the table name so both dialects read the stored value
 			// rather than the excluded one. A write the guard above rejects bumps
 			// nothing, so attempts counts outcomes recorded *in order* — one lost

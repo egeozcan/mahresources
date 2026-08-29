@@ -78,6 +78,17 @@ type DownloadJob struct {
 	// label back rather than leaving the failed attempt's.
 	initialPhase string
 	ownerUserID  *uint // RBAC: user that created the job (export download ownership)
+	// pluginName names the plugin that submitted this download, empty for one a
+	// person submitted. It selects the egress policy the transfer runs under:
+	// a plugin's fetch is confined to that plugin's own declared network list,
+	// and falling back to the host policy would widen it to every public host —
+	// the confused deputy the plugin egress work closed from the other end.
+	//
+	// It is also persisted on the history row, because a retry replays the
+	// stored payload on a fresh worker, possibly in a process that never saw
+	// this job. A retry that forgot the origin would silently become a host
+	// fetch.
+	pluginName string
 }
 
 // Status transitions
@@ -590,6 +601,14 @@ func (j *DownloadJob) canRetryLocked() bool {
 	return j.Status == JobStatusFailed || j.Status == JobStatusCancelled
 }
 
+// PluginName reports the plugin that submitted this download, or "" for one a
+// person submitted.
+func (j *DownloadJob) PluginName() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.pluginName
+}
+
 // SetPhase safely sets the job's current phase name.
 func (j *DownloadJob) SetPhase(phase string) {
 	j.mu.Lock()
@@ -728,6 +747,7 @@ func (j *DownloadJob) snapshotLocked() *DownloadJob {
 		PhaseTotal:      j.PhaseTotal,
 		ResultPath:      j.ResultPath,
 		ownerUserID:     j.ownerUserID,
+		pluginName:      j.pluginName,
 	}
 	// Deep-copy the Warnings slice so subscribers can't observe a torn append.
 	if j.Warnings != nil {

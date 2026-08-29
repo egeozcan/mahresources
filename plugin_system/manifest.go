@@ -86,7 +86,7 @@ var CapabilityLabels = map[string]string{
 // surfaces only as "attempt to index a nil value" somewhere inside init().
 var CapabilitySurfaces = map[string]string{
 	CapDBRead:    "mah.db readers",
-	CapDBWrite:   "mah.db writers",
+	CapDBWrite:   "mah.db writers, mah.download",
 	CapHTTP:      "mah.http",
 	CapKV:        "mah.kv",
 	CapImage:     "mah.image",

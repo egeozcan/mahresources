@@ -55,6 +55,14 @@ type DownloadHistoryEntry struct {
 	// when a user is deleted.
 	CreatedByUserId *uint `gorm:"index:idx_dl_history_created_by" json:"createdByUserId,omitempty"`
 
+	// PluginName names the plugin that submitted this download, empty for one a
+	// person submitted. It is persisted rather than kept in memory because a
+	// retry replays this row's payload on a fresh worker, possibly in a process
+	// that never saw the original job: without it the retry would run under the
+	// host's egress policy instead of the plugin's own narrower one, which is
+	// the confused deputy the plugin network list exists to prevent.
+	PluginName string `gorm:"size:128;index:idx_dl_history_plugin" json:"pluginName,omitempty"`
+
 	// Payload is the original ResourceFromRemoteCreator as JSON. Never rendered to
 	// the page — it is only read back by the retry path.
 	Payload types.JSON `gorm:"type:json" json:"-"`

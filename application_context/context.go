@@ -763,11 +763,34 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			pm.SetPrincipalBinder(adapter)
 			pm.SetPluginLogger(adapter)
 			pm.SetKVStore(adapter)
+			// mah.download.submit. The context implements the seam directly
+			// rather than through the adapter: what it needs is the queue and
+			// the calling plugin's name, neither of which is db state.
+			pm.SetDownloadSubmitter(ctx)
 			// Without this the manager falls back to its in-memory consent
 			// store, which forgets every decision on restart.
 			pm.SetConsentStore(&pluginConsentStore{ctx: ctx})
 			mrqlAdapter := &pluginMRQLAdapter{ctx: ctx}
 			pm.SetMRQLExecutor(mrqlAdapter)
+
+			// A download a plugin submitted runs under that plugin's own
+			// network list, not the host policy. Wired here rather than through
+			// ManagerConfig because the manager is built while this context is
+			// still assembling itself, before pm exists — a closure captured
+			// there would capture nil. Unset, the manager refuses plugin
+			// downloads rather than fetching them unpoliced, which is why this
+			// is the only thing that may set it.
+			if ctx.downloadManager != nil {
+				ctx.downloadManager.SetPolicyResolver(func(pluginName string) (func(*http.Client, time.Duration) *http.Client, bool) {
+					policy, ok := pm.NetworkPolicyForPlugin(pluginName)
+					if !ok {
+						return nil, false
+					}
+					return func(client *http.Client, connectTimeout time.Duration) *http.Client {
+						return plugin_system.ApplyEgressPolicy(client, policy, connectTimeout)
+					}, true
+				})
+			}
 		}
 	}
 
