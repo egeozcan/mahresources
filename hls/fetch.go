@@ -207,7 +207,14 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 
 	p.report(PhasePlaylist, 0, 0)
 
-	m, err := resolveMedia(ctx, d, playlistURL, head, body, opt)
+	// One budget for the whole download, opened before the first playlist is
+	// read. Playlists are not free: a master can point at a media playlist that
+	// points at another, and each is read up to maxPlaylistBytes, so starting
+	// the count at the first segment let tens of megabytes cross the network
+	// outside a limit the operator set.
+	var spent atomic.Int64
+
+	m, err := resolveMedia(ctx, d, playlistURL, head, body, opt, &spent)
 	if err != nil {
 		return nil, err
 	}
@@ -224,11 +231,9 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 		}
 	}()
 
-	// One budget for the whole download, not one per playlist. A separate audio
-	// rendition is part of the same file the caller asked for, so counting it
-	// separately would let an attacker-controlled playlist spend twice the
-	// configured cap by splitting its streams.
-	var spent atomic.Int64
+	// The same budget covers a separate audio rendition: it is part of the file
+	// the caller asked for, so counting it separately would let a playlist
+	// spend twice the configured cap by splitting its streams.
 	if m.audio != nil && len(m.segments)+len(m.audio.segments) > opt.MaxSegments {
 		return nil, unsupported("this HLS stream has more than %d segments across its video and audio, which is over this server's limit", opt.MaxSegments)
 	}
@@ -273,8 +278,8 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 
 // resolveMedia reads the playlist the caller opened and, for a master playlist,
 // follows it to the media playlist of the chosen rendition.
-func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options) (*media, error) {
-	text, err := readPlaylistText(head, body)
+func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, spent *atomic.Int64) (*media, error) {
+	text, err := readPlaylistText(head, body, opt, spent)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +295,7 @@ func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, 
 				// A separate audio rendition: a second media playlist, fetched
 				// and validated exactly like the first, and muxed alongside it.
 				// Ignoring it would produce a silent video that plays fine.
-				audioText, audioBase, err := fetchText(ctx, d, audioURL)
+				audioText, audioBase, err := fetchText(ctx, d, audioURL, opt, spent)
 				if err != nil {
 					return nil, fmt.Errorf("could not read this stream's audio playlist: %w", err)
 				}
@@ -308,7 +313,7 @@ func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, 
 		// A master playlist: fetch the variant it named. This goes through the
 		// caller's client, so the variant URL is policed exactly as the original
 		// was — a master playlist is remote content and may name any host.
-		text, playlistURL, err = fetchText(ctx, d, next)
+		text, playlistURL, err = fetchText(ctx, d, next, opt, spent)
 		if err != nil {
 			return nil, err
 		}
@@ -316,11 +321,13 @@ func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, 
 }
 
 // readPlaylistText joins the sniffed head back onto the body.
-func readPlaylistText(head []byte, body io.Reader) (string, error) {
+func readPlaylistText(head []byte, body io.Reader, opt Options, spent *atomic.Int64) (string, error) {
 	var buf strings.Builder
 	buf.Write(head)
+	spent.Add(int64(len(head)))
 	if body != nil {
-		if _, err := io.Copy(&buf, io.LimitReader(body, maxPlaylistBytes)); err != nil {
+		src := &budgetReader{r: io.LimitReader(body, maxPlaylistBytes), total: spent, limit: opt.MaxTotalBytes}
+		if _, err := io.Copy(&buf, src); err != nil {
 			return "", fmt.Errorf("could not read the HLS playlist: %w", err)
 		}
 	}
@@ -334,14 +341,15 @@ func readPlaylistText(head []byte, body io.Reader) (string, error) {
 // redirect from /watch to /cdn/abc/index.m3u8 moves the base by a whole
 // directory, so resolving "segment.ts" against the URL we asked for produces a
 // 404 at best and somebody else's file at worst.
-func fetchText(ctx context.Context, d Deps, url string) (string, string, error) {
+func fetchText(ctx context.Context, d Deps, url string, opt Options, spent *atomic.Int64) (string, string, error) {
 	rc, resp, _, err := get(ctx, d, fetchTarget{url: url})
 	if err != nil {
 		return "", "", err
 	}
 	defer rc.Close()
 	var buf strings.Builder
-	if _, err := io.Copy(&buf, io.LimitReader(rc, maxPlaylistBytes)); err != nil {
+	src := &budgetReader{r: io.LimitReader(rc, maxPlaylistBytes), total: spent, limit: opt.MaxTotalBytes}
+	if _, err := io.Copy(&buf, src); err != nil {
 		return "", "", fmt.Errorf("could not read the HLS playlist: %w", err)
 	}
 	return buf.String(), finalURL(resp, url), nil

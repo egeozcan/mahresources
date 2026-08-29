@@ -28,6 +28,15 @@ import (
 	"github.com/grafov/m3u8"
 )
 
+// maxPlaylistTagLines bounds the tags one playlist may carry, derived from the
+// segment limit rather than configured separately: the limit an operator sets
+// is "how big a stream may be", and this is the same statement measured where
+// the memory is actually spent. Four per entry is loose on purpose -- a
+// legitimate segment carries EXTINF plus at most a byte range, a key and a map.
+func maxPlaylistTagLines(opt Options) int {
+	return 4*opt.MaxSegments + 64
+}
+
 // PlaylistHeader is the first line of every playlist, and how one is
 // recognised.
 const PlaylistHeader = "#EXTM3U"
@@ -173,6 +182,15 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 	}
 	if n := strings.Count(text, "#EXT-X-STREAM-INF:"); n > opt.MaxSegments {
 		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", n, opt.MaxSegments)
+	}
+	// And a backstop that no tag type escapes. Enumerating the ones the parser
+	// materializes -- EXTINF, STREAM-INF, I-FRAME-STREAM-INF, MEDIA -- is a
+	// list that has to be revisited every time the parser grows one, and being
+	// wrong about it means a playlist inside every named limit still allocating
+	// hundreds of megabytes. A playlist spends at most a couple of lines per
+	// entry, so bounding the tag lines bounds what any of them can build.
+	if n := strings.Count(text, "\n#EXT"); n > maxPlaylistTagLines(opt) {
+		return nil, "", unsupported("this HLS playlist has %d tags, which is over this server's limit", n)
 	}
 
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)

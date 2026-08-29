@@ -61,17 +61,22 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	// submit a download owned by a group outside its subtree, and the worker
 	// would create it: the queue runs unscoped by design, binding only
 	// attribution, so nothing downstream would refuse it.
-	if err := ctx.validatePluginDownloadScope(actorUserID, creator); err != nil {
-		return nil, err
-	}
-	// And whether they may write at all. A download creates a resource, and a
-	// plugin can reach this from a page a read-only principal is merely
-	// reading, where the URL rule that refuses a guest every mutating endpoint
-	// is not in the path. Scope cannot answer it: the guest's own subtree is
-	// exactly where the resource would land.
+	// Resolved once, and both questions asked of that one answer. Reading the
+	// principal twice let an account changed in between satisfy each check as a
+	// different identity: a guest scoped to A passes the target check, becomes
+	// a writable user scoped to B, and passes the write check -- with neither
+	// identity having authorized the download that lands in A.
 	if actorUserID != 0 {
 		scoped := ctx.WithPrincipal(ctx.principalForPluginActor(actorUserID))
+		// A download creates a resource, and a plugin can reach this from a
+		// page a read-only principal is merely reading, where the URL rule that
+		// refuses a guest every mutating endpoint is not in the path. Scope
+		// cannot answer it: the guest's own subtree is exactly where the
+		// resource would land.
 		if err := scoped.requireWriteRole("submit a download"); err != nil {
+			return nil, err
+		}
+		if err := scoped.validateDownloadTargetsInScope(creator); err != nil {
 			return nil, err
 		}
 	}
@@ -100,8 +105,9 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	}, nil
 }
 
-// validatePluginDownloadScope refuses targets outside the acting principal's
-// subtree.
+// validateDownloadTargetsInScope refuses targets outside this context's
+// principal's subtree. The caller binds that principal once and asks every
+// question of the same answer.
 //
 // It mirrors validateDownloadScope in server/api_handlers, which cannot be
 // reused: that one takes an *auth.Principal off a request, and there is no
@@ -109,14 +115,10 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 // omissions -- tags and categories are global entities, scoped to nobody.
 //
 // A principal that is not scope-limited passes everything, so the ordinary
-// deployment sees no change.
-func (ctx *MahresourcesContext) validatePluginDownloadScope(actorUserID uint, creator *query_models.ResourceFromRemoteCreator) error {
-	if actorUserID == 0 {
-		// No actor: auth is off, or the call arrived on a path that carries no
-		// identity. There is no subtree to confine it to.
-		return nil
-	}
-	scoped := ctx.WithPrincipal(ctx.principalForPluginActor(actorUserID))
+// deployment sees no change. A call with no actor at all -- auth off, or a path
+// carrying no identity -- never reaches here.
+func (ctx *MahresourcesContext) validateDownloadTargetsInScope(creator *query_models.ResourceFromRemoteCreator) error {
+	scoped := ctx
 	if !scoped.isScopedPrincipal() {
 		return nil
 	}

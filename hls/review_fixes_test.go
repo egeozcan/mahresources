@@ -820,3 +820,47 @@ func TestAnOversizedPlaylistIsRefusedBeforeParsing(t *testing.T) {
 		t.Errorf("the refusal %q does not say how many were listed", err)
 	}
 }
+
+// TestAPlaylistOfUncountedTagsIsRefused. Enumerating the tags the parser
+// materializes is a list that has to be revisited whenever the parser grows
+// one, and being wrong about it means a playlist inside every named limit still
+// allocating hundreds of megabytes. I-frame renditions are the case that got
+// through: they are materialized and then discarded as unplayable.
+func TestAPlaylistOfUncountedTagsIsRefused(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for i := 0; i < 30000; i++ {
+		b.WriteString("#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1,URI=\"i.m3u8\"\n")
+	}
+	_, _, err := parse(b.String(), "https://x/master.m3u8", Options{MaxSegments: 5000}.withDefaults(), 0, new(string))
+	assertUnsupported(t, err, "tags")
+}
+
+// TestPlaylistBytesCountAgainstTheBudget. A master can point at a media
+// playlist that points at another, each read up to the playlist limit, so
+// starting the count at the first segment let tens of megabytes cross the
+// network outside a cap the operator set.
+func TestPlaylistBytesCountAgainstTheBudget(t *testing.T) {
+	var media strings.Builder
+	media.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&media, "#EXTINF:1.0,\n%s.ts\n", strings.Repeat("x", 200))
+	}
+	media.WriteString("#EXT-X-ENDLIST\n")
+
+	dir := t.TempDir()
+	writePlaylist(t, dir, media.String())
+	srv, counter := serve(t, dir)
+
+	d := deps()
+	d.FfmpegPath = "/nonexistent"
+	// Smaller than the playlist itself, so only counting the playlist can
+	// produce a refusal -- and no segment is fetched at all.
+	_, err := fetchAll(t, d, srv.URL+"/index.m3u8", Options{MaxTotalBytes: 1024}, nil)
+	if err == nil {
+		t.Fatal("a playlist larger than the whole byte budget was read without complaint")
+	}
+	if counter.Get("/xxxxx.ts") != 0 {
+		t.Error("segments were fetched after the budget was already spent")
+	}
+}
