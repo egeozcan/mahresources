@@ -1724,6 +1724,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	if grants.Has(CapImage) {
 		pm.registerImageModule(L, mahMod)
 	}
+	if grants.Has(CapMedia) {
+		pm.registerMediaModule(L, mahMod)
+	}
 	// Gated on db:write for the reason registerDownloadModule gives: the power
 	// is create_resource_from_url's, without the wait.
 	if grants.Has(CapDBWrite) {

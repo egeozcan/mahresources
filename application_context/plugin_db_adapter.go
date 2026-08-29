@@ -1935,3 +1935,28 @@ func applyResourceOptions(base *query_models.ResourceQueryBase, options map[stri
 		base.Meta = meta
 	}
 }
+
+// --- mah.media ---
+//
+// These are on the adapter rather than on a seam of their own so they inherit
+// the binding every other plugin db call has: a is the clone BindInvocation
+// made, and a.ctx is therefore scoped to the acting principal. A group-limited
+// caller cannot probe or cut a resource outside its subtree, and that follows
+// from the handle rather than from a check written here.
+
+func (a *pluginDBAdapter) ProbeMedia(reqCtx context.Context, resourceID uint) (map[string]any, error) {
+	return a.ctx.ProbeMedia(reqCtx, resourceID)
+}
+
+func (a *pluginDBAdapter) FrameDataURI(reqCtx context.Context, resourceID uint, atSeconds float64, maxWidth int) (string, error) {
+	return a.ctx.FrameDataURI(reqCtx, resourceID, atSeconds, maxWidth)
+}
+
+func (a *pluginDBAdapter) TrimVideoClip(reqCtx context.Context, resourceID uint, start, end, comment string) error {
+	return a.ctx.TrimVideo(reqCtx, resourceID, start, end, comment)
+}
+
+// Compile-time proof the adapter still satisfies the media seam. Without it,
+// mediaProcessorFor's type assertion would simply start answering nil and
+// mah.media would report "not available" with nothing failing to build.
+var _ plugin_system.MediaProcessor = (*pluginDBAdapter)(nil)

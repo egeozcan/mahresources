@@ -30,13 +30,19 @@ const (
 	CapHTTP    = "http"     // mah.http
 	CapKV      = "kv"       // mah.kv
 	CapImage   = "image"    // mah.image
-	CapHooks   = "hooks"    // mah.on
-	CapInject  = "inject"   // mah.inject
-	CapRender  = "render"   // mah.shortcode, mah.block_type, mah.display_type
-	CapPages   = "pages"    // mah.page, mah.menu
-	CapAPI     = "api"      // mah.api
-	CapActions = "actions"  // mah.action
-	CapJobs    = "jobs"     // mah.start_job and the job_* reporters
+	// CapMedia is separate from CapImage for the reason CapSchedule is separate
+	// from CapJobs. mah.image transforms bytes the plugin already holds and
+	// touches nothing else; mah.media reads video and audio *out of the user's
+	// library* and spends an ffmpeg process doing it. Folding them together
+	// would silently widen every plugin already consented to image transforms.
+	CapMedia   = "media"   // mah.media
+	CapHooks   = "hooks"   // mah.on
+	CapInject  = "inject"  // mah.inject
+	CapRender  = "render"  // mah.shortcode, mah.block_type, mah.display_type
+	CapPages   = "pages"   // mah.page, mah.menu
+	CapAPI     = "api"     // mah.api
+	CapActions = "actions" // mah.action
+	CapJobs    = "jobs"    // mah.start_job and the job_* reporters
 	// CapSchedule is deliberately not part of CapJobs. Folding it in would
 	// silently turn every plugin already consented to "jobs" into one that can
 	// run unattended work on a timer, which is a different power from running
@@ -57,7 +63,7 @@ const (
 // AllCapabilities is every grantable capability, in the order the manage UI
 // lists them.
 var AllCapabilities = []string{
-	CapDBRead, CapDBWrite, CapHTTP, CapKV, CapImage,
+	CapDBRead, CapDBWrite, CapHTTP, CapKV, CapImage, CapMedia,
 	CapHooks, CapInject, CapRender, CapPages, CapAPI, CapActions, CapJobs, CapSchedule,
 	CapJobEvents,
 }
@@ -70,6 +76,7 @@ var CapabilityLabels = map[string]string{
 	CapHTTP:      "Make outbound network requests",
 	CapKV:        "Store its own key-value data",
 	CapImage:     "Transform images",
+	CapMedia:     "Read and cut the video and audio in your library",
 	CapHooks:     "React to entity changes, and veto them",
 	CapInject:    "Inject HTML and scripts into every page",
 	CapRender:    "Render shortcodes, note blocks and metadata displays",
@@ -90,6 +97,7 @@ var CapabilitySurfaces = map[string]string{
 	CapHTTP:      "mah.http",
 	CapKV:        "mah.kv",
 	CapImage:     "mah.image",
+	CapMedia:     "mah.media",
 	CapHooks:     "mah.on",
 	CapInject:    "mah.inject",
 	CapRender:    "mah.shortcode, mah.block_type, mah.display_type",

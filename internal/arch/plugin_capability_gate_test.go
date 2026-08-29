@@ -41,6 +41,7 @@ var moduleCapabilities = map[string]string{
 	"registerHttpModule":  "CapHTTP",
 	"registerKvModule":    "CapKV",
 	"registerImageModule": "CapImage",
+	"registerMediaModule": "CapMedia",
 	// mah.download is gated on db:write rather than a name of its own: it
 	// fetches a URL into the library exactly as mah.db.create_resource_from_url
 	// does, and that capability's label already says so. Only the waiting

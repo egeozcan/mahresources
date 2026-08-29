@@ -83,6 +83,9 @@ function init() end
 		"mah.db.add_tags", "mah.db.create_resource_from_url",
 		"mah.kv", "mah.http", "mah.image",
 		"mah.download", "mah.download.submit",
+		// Its own capability, not part of "image": mah.image transforms bytes
+		// the plugin already holds, mah.media reads files out of the library.
+		"mah.media", "mah.media.probe", "mah.media.extract_frame", "mah.media.trim",
 		"mah.on", "mah.inject", "mah.page", "mah.menu", "mah.api",
 		"mah.action", "mah.start_job", "mah.job_progress",
 	}
