@@ -345,7 +345,9 @@ cancel and retry like any other download.
 
 The URL is checked against the plugin's `network` rules immediately, so a host
 outside them comes back as `nil, error_string` rather than failing minutes
-later. **Every attempt is re-checked against those same rules**, including a
+later. The download's `owner_id`, `groups` and `notes` are checked against the
+calling user's own scope, exactly as the download form checks them -- a
+group-limited caller cannot submit a download into a group it cannot see. **Every attempt is re-checked against those same rules**, including a
 retry made long afterwards -- so a download submitted by a plugin that has
 since been disabled is refused rather than run.
 

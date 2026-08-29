@@ -353,13 +353,30 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 			// fetching, the host's otherwise. That is the whole reason the
 			// segments are fetched here rather than by ffmpeg.
 			head := make([]byte, hls.SniffLen())
-			read, _ := io.ReadFull(timeoutBody, head)
+			read, readErr := io.ReadFull(timeoutBody, head)
+			// A short read is ordinary -- most files are longer than the sniff,
+			// but a four-byte one is not -- while any other error is the
+			// transfer failing. Swallowing it stored the bytes that had already
+			// arrived as a complete resource, so a connection dropped ten bytes
+			// in produced a ten-byte file reported as a successful download.
+			if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+				setError(readErr)
+				return
+			}
 			head = head[:read]
 			var content contracts.File = io.NopCloser(io.MultiReader(bytes.NewReader(head), timeoutBody))
 			fileName := resourceQuery.FileName
 
 			if hls.IsPlaylist(head) {
-				assembled, hlsErr := hls.Fetch(reqCtx, ctx.hlsDeps(httpClient), url, head, timeoutBody, ctx.hlsOptions(), nil)
+				// The URL the playlist was *served from*, not the one asked
+				// for. A redirect from /watch to /cdn/abc/index.m3u8 moves the
+				// base by a directory, and every relative segment reference
+				// resolves against it.
+				base := url
+				if resp.Request != nil && resp.Request.URL != nil {
+					base = resp.Request.URL.String()
+				}
+				assembled, hlsErr := hls.Fetch(reqCtx, ctx.hlsDeps(httpClient, policy), base, head, timeoutBody, ctx.hlsOptions(), nil)
 				if hlsErr != nil {
 					setError(hlsErr)
 					return

@@ -79,6 +79,12 @@ type media struct {
 	// their codec configuration in. Without it an fMP4 stream muxes to a file
 	// no player can open.
 	initSegment *fetchTarget
+	// audio is a separate audio rendition to mux in, when the master playlist
+	// carried one. Video and audio in separate playlists is ordinary -- it is
+	// how one audio track is shared across five video bitrates -- and a
+	// download that ignored it would succeed and be silent, which is the worst
+	// possible failure: nothing to see until someone plays it.
+	audio *media
 }
 
 // segment is one media segment to fetch.
@@ -119,7 +125,7 @@ type segmentKey struct {
 // Exactly one of the two is returned. depth guards against a master playlist
 // pointing at another master playlist, which is not legal but is trivial to
 // serve and would otherwise recurse.
-func parse(text, playlistURL string, opt Options, depth int) (*media, string, error) {
+func parse(text, playlistURL string, opt Options, depth int, pendingAudio *string) (*media, string, error) {
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)
 	if err != nil {
 		return nil, "", fmt.Errorf("could not parse the HLS playlist: %w", err)
@@ -130,13 +136,23 @@ func parse(text, playlistURL string, opt Options, depth int) (*media, string, er
 		if depth >= maxPlaylistDepth {
 			return nil, "", unsupported("this HLS master playlist points at another master playlist more than %d levels deep", maxPlaylistDepth)
 		}
-		variant, err := pickVariant(list.(*m3u8.MasterPlaylist), opt)
+		variant, audio, err := pickVariant(list.(*m3u8.MasterPlaylist), opt)
 		if err != nil {
 			return nil, "", err
 		}
 		abs, err := resolveRef(playlistURL, variant)
 		if err != nil {
 			return nil, "", err
+		}
+		if audio != "" {
+			audioAbs, err := resolveRef(playlistURL, audio)
+			if err != nil {
+				return nil, "", err
+			}
+			// Carried out of band: parse answers "which playlist next", and the
+			// audio rendition is a second one to fetch beside it rather than
+			// instead of it.
+			*pendingAudio = audioAbs
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
@@ -154,11 +170,13 @@ func parse(text, playlistURL string, opt Options, depth int) (*media, string, er
 // no taller than the cap, or — when every variant is taller — the smallest one,
 // because refusing to download anything is a worse answer to "at most 720p"
 // than handing back the closest thing available.
-func pickVariant(master *m3u8.MasterPlaylist, opt Options) (string, error) {
+func pickVariant(master *m3u8.MasterPlaylist, opt Options) (variantURI, audioURI string, err error) {
 	type candidate struct {
-		uri       string
-		bandwidth uint32
-		height    int
+		uri        string
+		bandwidth  uint32
+		height     int
+		audioGroup string
+		alts       []*m3u8.Alternative
 	}
 	var candidates []candidate
 	for _, v := range master.Variants {
@@ -170,10 +188,13 @@ func pickVariant(master *m3u8.MasterPlaylist, opt Options) (string, error) {
 		if v.Iframe {
 			continue
 		}
-		candidates = append(candidates, candidate{uri: v.URI, bandwidth: v.Bandwidth, height: resolutionHeight(v.Resolution)})
+		candidates = append(candidates, candidate{
+			uri: v.URI, bandwidth: v.Bandwidth, height: resolutionHeight(v.Resolution),
+			audioGroup: v.Audio, alts: v.Alternatives,
+		})
 	}
 	if len(candidates) == 0 {
-		return "", unsupported("this HLS master playlist lists no playable video renditions")
+		return "", "", unsupported("this HLS master playlist lists no playable video renditions")
 	}
 
 	best := -1
@@ -194,7 +215,41 @@ func pickVariant(master *m3u8.MasterPlaylist, opt Options) (string, error) {
 			}
 		}
 	}
-	return candidates[best].uri, nil
+	return candidates[best].uri, audioRenditionURI(candidates[best].audioGroup, candidates[best].alts), nil
+}
+
+// audioRenditionURI finds the audio playlist a chosen variant depends on.
+//
+// A variant that names AUDIO="group" carries no audio of its own: the tracks
+// live in an EXT-X-MEDIA rendition of that group. Downloading only the variant
+// therefore produces a silent video that plays perfectly and is wrong, so the
+// rendition is fetched and muxed alongside.
+//
+// A rendition with no URI is one multiplexed into the variant's own segments,
+// which is the case that needs nothing extra. The DEFAULT one is preferred,
+// then the first with a URI -- there is no better answer without asking the
+// user which language they wanted.
+func audioRenditionURI(group string, alts []*m3u8.Alternative) string {
+	if group == "" {
+		return ""
+	}
+	fallback := ""
+	for _, a := range alts {
+		if a == nil || a.GroupId != group || !strings.EqualFold(a.Type, "AUDIO") {
+			continue
+		}
+		if a.URI == "" {
+			// Multiplexed into the video segments already.
+			return ""
+		}
+		if a.Default {
+			return a.URI
+		}
+		if fallback == "" {
+			fallback = a.URI
+		}
+	}
+	return fallback
 }
 
 // resolutionHeight reads the height out of an "WxH" RESOLUTION attribute.
@@ -240,6 +295,13 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media,
 		out.initSegment = &t
 	}
 
+	// EXT-X-BYTERANGE with no @offset means "the byte after the previous
+	// sub-range of this same resource". The parser reports that as offset 0, so
+	// without this every sub-range of a byte-range playlist requests the *first*
+	// n bytes: the same opening fragment repeated, muxed into nonsense. Tracked
+	// per URL, since two resources interleave their ranges independently.
+	rangeEnd := map[string]int64{}
+
 	for _, seg := range pl.Segments {
 		// Segments is a fixed-capacity ring buffer, so trailing entries are nil
 		// rather than absent.
@@ -276,6 +338,14 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options) (*media,
 		t, err := resolveTarget(playlistURL, seg.URI, seg.Limit, seg.Offset)
 		if err != nil {
 			return nil, err
+		}
+		if t.hasRange() {
+			if t.offset == 0 {
+				if prev, seen := rangeEnd[t.url]; seen {
+					t.offset = prev
+				}
+			}
+			rangeEnd[t.url] = t.offset + t.length
 		}
 		out.segments = append(out.segments, segment{
 			target:        t,

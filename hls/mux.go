@@ -37,7 +37,7 @@ var ErrFfmpegUnavailable = errors.New("ffmpeg is not available on this server; i
 // No -bsf:a aac_adtstoasc: the mp4 muxer inserts it itself when the audio needs
 // it, whereas naming it unconditionally is a hard failure on any stream whose
 // audio is not ADTS AAC.
-func mux(ctx context.Context, d Deps, playlistPath, outPath string, m *media, opt Options) error {
+func mux(ctx context.Context, d Deps, playlistPath, audioPath, outPath string, opt Options) error {
 	timeout := opt.MuxTimeout
 	if timeout <= 0 {
 		timeout = defaultMuxTimeout
@@ -52,11 +52,25 @@ func mux(ctx context.Context, d Deps, playlistPath, outPath string, m *media, op
 		"-protocol_whitelist", "file,crypto",
 		"-allowed_extensions", "ALL",
 		"-i", playlistPath,
+	}
+	if audioPath != "" {
+		// A second input, for a stream whose audio lives in its own rendition.
+		// The maps are explicit: with two inputs ffmpeg's default selection
+		// takes one stream of each type from the *whole set*, which happens to
+		// be right here and is not something to rely on.
+		args = append(args,
+			"-protocol_whitelist", "file,crypto",
+			"-allowed_extensions", "ALL",
+			"-i", audioPath,
+			"-map", "0:v:0", "-map", "1:a:0",
+		)
+	}
+	args = append(args,
 		"-c", "copy",
 		"-movflags", "+faststart",
 		"-f", "mp4",
 		"-y", outPath,
-	}
+	)
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, d.FfmpegPath, args...)

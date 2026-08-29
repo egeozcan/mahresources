@@ -181,3 +181,42 @@ func firstBytes(b []byte) string {
 	}
 	return string(b)
 }
+
+// TestATruncatedTransferIsNotStoredAsASuccess. Recognising a playlist means
+// reading the first bytes off the response before deciding what to do with it,
+// and the error from that read used to be discarded -- so a connection that
+// dropped ten bytes in produced a ten-byte resource reported as a completed
+// download.
+func TestATruncatedTransferIsNotStoredAsASuccess(t *testing.T) {
+	created := &recordingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = created
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A body far shorter than the announced length, then a hang-up: the
+		// client sees an unexpected EOF mid-read rather than a clean end.
+		w.Header().Set("Content-Length", "100000")
+		_, _ = w.Write([]byte("ten bytes."))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+
+	job := &DownloadJob{
+		ID:      "truncated",
+		URL:     srv.URL + "/big.bin",
+		Status:  JobStatusDownloading,
+		creator: &query_models.ResourceFromRemoteCreator{},
+		ctx:     context.Background(),
+	}
+
+	_, err := dm.downloadWithProgress(job.GetContext(), 0, job)
+	if err == nil {
+		t.Fatalf("a truncated transfer was stored as a %d byte resource and reported as complete", len(created.body))
+	}
+	if created.body != nil {
+		t.Errorf("stored %d bytes from a failed transfer", len(created.body))
+	}
+}

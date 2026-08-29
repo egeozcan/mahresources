@@ -80,8 +80,8 @@ func TestPluginDownloadIsRefusedWhenThePluginIsGone(t *testing.T) {
 	dm := createTestManager()
 	dm.resourceCtx = &recordingResourceCreator{}
 	dm.clientPolicy = func(c *http.Client, _ time.Duration) *http.Client { return c }
-	dm.SetPolicyResolver(func(string) (func(*http.Client, time.Duration) *http.Client, bool) {
-		return nil, false
+	dm.SetPolicyResolver(func(string) (EgressPolicy, bool) {
+		return EgressPolicy{}, false
 	})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -107,9 +107,12 @@ func TestPluginDownloadUsesThePluginsPolicyNotTheHosts(t *testing.T) {
 
 	refused := errors.New("that host is not in this plugin's network list")
 	var asked string
-	dm.SetPolicyResolver(func(name string) (func(*http.Client, time.Duration) *http.Client, bool) {
+	dm.SetPolicyResolver(func(name string) (EgressPolicy, bool) {
 		asked = name
-		return denyingPolicy(refused), true
+		return EgressPolicy{
+			Decorate: denyingPolicy(refused),
+			CheckURL: func(string) error { return nil },
+		}, true
 	})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,9 +140,9 @@ func TestAPersonsDownloadStillUsesTheHostPolicy(t *testing.T) {
 		hostApplied++
 		return c
 	}
-	dm.SetPolicyResolver(func(string) (func(*http.Client, time.Duration) *http.Client, bool) {
+	dm.SetPolicyResolver(func(string) (EgressPolicy, bool) {
 		t.Error("the plugin resolver was consulted for a person's download")
-		return nil, false
+		return EgressPolicy{}, false
 	})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,9 @@ package application_context
 import (
 	"strings"
 	"testing"
+
+	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // mah.download.submit end-to-end, against a real PluginManager and a real
@@ -113,5 +116,64 @@ end
 	}
 	if jobs := ctx.DownloadManager().GetJobs(); len(jobs) != 0 {
 		t.Errorf("%d jobs were queued from inside a transaction", len(jobs))
+	}
+}
+
+// TestPluginDownloadSubmitRefusesATargetOutsideTheCallersScope is the hole a
+// review found. The queue's worker runs unscoped by design -- it binds
+// attribution and nothing else -- and /v1/download/submit compensates by
+// validating the targets against the submitting principal before enqueueing.
+// This path did not, so a plugin's Lua running on a confined user's own write
+// could plant a resource in a group that user cannot see.
+func TestPluginDownloadSubmitRefusesATargetOutsideTheCallersScope(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{
+		"scoped-downloader": `
+plugin = { name = "scoped-downloader", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "hooks", "inject" },
+           network = { "example.invalid" } }
+local report = "not-run"
+function init()
+    mah.on("after_note_create", function(data)
+        local job, err = mah.download.submit("https://example.invalid/x.mp4",
+                                             { owner_id = tonumber(data.description) })
+        if job then report = "submitted" else report = tostring(err) end
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`,
+	})
+
+	principal, inside := scopeProbeFixture(t, ctx)
+	outside := &models.Group{Name: "far-away"}
+	if err := ctx.db.Create(outside).Error; err != nil {
+		t.Fatal(err)
+	}
+	scoped := ctx.WithPrincipal(principal)
+
+	submitTargeting := func(owner uint) string {
+		t.Helper()
+		if _, err := scoped.CreateOrUpdateNote(&query_models.NoteEditor{
+			NoteCreator: query_models.NoteCreator{
+				Name: "trigger", OwnerId: inside.ID, Description: itoa(owner),
+			},
+		}); err != nil {
+			t.Fatalf("confined user could not create a note in its own subtree: %v", err)
+		}
+		return runSlot(ctx, "page_top")
+	}
+
+	// The control: the same call inside the caller's own subtree is allowed, so
+	// the refusal below is about scope rather than about the call never working.
+	if got := submitTargeting(inside.ID); got != "submitted" {
+		t.Fatalf("a download into the caller's own subtree reported %q", got)
+	}
+	queued := len(ctx.DownloadManager().GetJobs())
+
+	if got := submitTargeting(outside.ID); got == "submitted" {
+		t.Fatalf("a caller confined to %q submitted a download owned by a group outside it", inside.Name)
+	}
+	if now := len(ctx.DownloadManager().GetJobs()); now != queued {
+		t.Errorf("%d jobs are queued, want %d — the out-of-scope submission was enqueued anyway", now, queued)
 	}
 }

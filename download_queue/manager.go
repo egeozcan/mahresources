@@ -68,6 +68,11 @@ type ManagerConfig struct {
 	FfmpegPath string
 	HLSOptions hls.Options
 
+	// HostCheckURL is the allowlist half of the host policy, applied to every
+	// URL a person's download reaches -- including the ones only a playlist
+	// named. nil allows everything, which is this path's historic behaviour.
+	HostCheckURL func(url string) error
+
 	// RefusalMessage renders a policy refusal for the job's error field, which
 	// its submitter reads. It exists so the address a hostname resolved to does
 	// not travel to whoever submitted the URL; ok is false for any error that is
@@ -140,6 +145,7 @@ type DownloadManager struct {
 	resourceCtx ResourceCreator
 	ffmpegPath  string
 	hlsOptions  hls.Options
+	hostCheck   func(string) error
 
 	// policyResolver answers "which egress policy does this plugin fetch under".
 	//
@@ -210,6 +216,7 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, settings Download
 		clientPolicy:   cfg.ClientPolicy,
 		ffmpegPath:     cfg.FfmpegPath,
 		hlsOptions:     cfg.HLSOptions,
+		hostCheck:      cfg.HostCheckURL,
 		refusalMessage: cfg.RefusalMessage,
 	}
 
@@ -554,26 +561,57 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 // resolved — it was disabled, renamed, or the resolver was never wired — must
 // have its download refused, not fetched under the host's wider policy. Failing
 // open here is the confused deputy this whole seam exists to prevent.
-func (dm *DownloadManager) createHTTPClientFor(s DownloadSettings, pluginName string) (*http.Client, error) {
+func (dm *DownloadManager) createHTTPClientFor(s DownloadSettings, pluginName string) (*http.Client, func(string) error, error) {
 	if pluginName == "" {
-		return dm.createHTTPClient(s), nil
+		return dm.createHTTPClient(s), dm.hostCheckURL(), nil
 	}
 	resolve := dm.currentPolicyResolver()
 	if resolve == nil {
-		return nil, fmt.Errorf("refusing to fetch: this deployment cannot resolve plugin %q's network policy", pluginName)
+		return nil, nil, fmt.Errorf("refusing to fetch: this deployment cannot resolve plugin %q's network policy", pluginName)
 	}
 	policy, ok := resolve(pluginName)
-	if !ok || policy == nil {
-		return nil, fmt.Errorf("refusing to fetch: plugin %q's network policy is not available (is the plugin still enabled?)", pluginName)
+	if !ok || policy.Decorate == nil {
+		return nil, nil, fmt.Errorf("refusing to fetch: plugin %q's network policy is not available (is the plugin still enabled?)", pluginName)
+	}
+	check := policy.CheckURL
+	if check == nil {
+		// A resolver that decorates but cannot check would let a plugin's
+		// playlist name any public host. Refused rather than assumed open.
+		return nil, nil, fmt.Errorf("refusing to fetch: plugin %q's network policy carries no host check", pluginName)
 	}
 	client := dm.baseHTTPClient(s)
-	return policy(client, s.ConnectTimeout()), nil
+	return policy.Decorate(client, s.ConnectTimeout()), check, nil
 }
 
-// PolicyResolver answers which client decoration a named plugin's fetches run
-// under. ok is false when the plugin is unknown or no longer enabled, which is
-// a refusal rather than a reason to fall back.
-type PolicyResolver func(pluginName string) (policy func(*http.Client, time.Duration) *http.Client, ok bool)
+// hostCheckURL is the allowlist for a person's download. A deployment that
+// injected no check gets one that allows everything, which is the historic
+// behaviour of this path: the host policy's real protection is the dial-time
+// deny, which the client carries either way.
+func (dm *DownloadManager) hostCheckURL() func(string) error {
+	if dm.hostCheck != nil {
+		return dm.hostCheck
+	}
+	return func(string) error { return nil }
+}
+
+// EgressPolicy is one caller's outbound rules, in the two forms a transfer
+// needs them.
+//
+// Decorate is the client-level half: the dial-time deny of private addresses
+// and the per-redirect re-check. CheckURL is the allowlist -- "may this caller
+// talk to this host at all" -- which the decoration deliberately does not
+// carry, because every ordinary caller holds one URL and checks it once before
+// starting. An HLS playlist names more URLs than the caller ever saw, so the
+// check has to travel with the transfer.
+type EgressPolicy struct {
+	Decorate func(*http.Client, time.Duration) *http.Client
+	CheckURL func(url string) error
+}
+
+// PolicyResolver answers which egress rules a named plugin's fetches run under.
+// ok is false when the plugin is unknown or no longer enabled, which is a
+// refusal rather than a reason to fall back.
+type PolicyResolver func(pluginName string) (EgressPolicy, bool)
 
 // SetPolicyResolver wires the plugin egress lookup, after the plugin manager
 // exists. See DownloadManager.policyResolver.
@@ -631,9 +669,10 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 // counters, because the size of an HLS stream is not known until every segment
 // has been fetched -- TotalSize stays -1, which is what the queue already
 // means by "unknown".
-func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, head []byte, body io.Reader) (*hls.Result, error) {
+func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, checkURL func(string) error, base string, head []byte, body io.Reader) (*hls.Result, error) {
 	var lastNotify time.Time
-	result, err := hls.Fetch(ctx, hls.Deps{Client: client, FfmpegPath: dm.ffmpegPath}, job.URL, head, body, dm.hlsOptions,
+	deps := hls.Deps{Client: client, CheckURL: checkURL, FfmpegPath: dm.ffmpegPath}
+	result, err := hls.Fetch(ctx, deps, base, head, body, dm.hlsOptions,
 		func(phase string, done, total int64) {
 			job.SetPhase(phase)
 			job.SetPhaseProgress(done, total)
@@ -735,7 +774,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	// Snapshot settings once so all timeout values are consistent for this
 	// download and the read-lock is held only briefly.
 	s := dm.currentSettings()
-	httpClient, err := dm.createHTTPClientFor(s, job.PluginName())
+	httpClient, checkURL, err := dm.createHTTPClientFor(s, job.PluginName())
 	if err != nil {
 		return nil, err
 	}
@@ -774,13 +813,26 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	// bytes back before the progress reader sees them -- otherwise the first
 	// sixty-four bytes of every download are silently dropped.
 	head := make([]byte, hls.SniffLen())
-	sniffed, _ := io.ReadFull(timeoutBody, head)
+	sniffed, sniffErr := io.ReadFull(timeoutBody, head)
+	// A short read is ordinary; any other error is the transfer failing.
+	// Swallowing it stored whatever had arrived as a complete resource, so a
+	// connection dropped ten bytes in produced a ten-byte file the job then
+	// reported as a successful download.
+	if sniffErr != nil && !errors.Is(sniffErr, io.EOF) && !errors.Is(sniffErr, io.ErrUnexpectedEOF) {
+		return nil, dm.describeFetchError(job.URL, sniffErr)
+	}
 	head = head[:sniffed]
 
 	var progressBody contracts.File
 	assembledHLS := false
 	if hls.IsPlaylist(head) {
-		assembled, hlsErr := dm.assembleHLS(ctx, runID, job, httpClient, head, timeoutBody)
+		// The URL the playlist was served from, not the one submitted: a
+		// redirect moves the base every relative reference resolves against.
+		base := job.URL
+		if resp.Request != nil && resp.Request.URL != nil {
+			base = resp.Request.URL.String()
+		}
+		assembled, hlsErr := dm.assembleHLS(ctx, runID, job, httpClient, checkURL, base, head, timeoutBody)
 		if hlsErr != nil {
 			return nil, hlsErr
 		}

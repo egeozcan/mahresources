@@ -38,6 +38,21 @@ type Deps struct {
 	// Client fetches every playlist, key and segment. It is expected to already
 	// carry the caller's egress policy; this package adds none of its own.
 	Client *http.Client
+	// CheckURL is the caller's allowlist check, applied to every URL this
+	// package is about to request.
+	//
+	// It is separate from Client because the decoration on that client does not
+	// carry it: the policy's dial-time deny covers private addresses and its
+	// redirect hook re-checks each hop, but the *allowlist* -- "may this plugin
+	// talk to this host at all" -- is applied by whoever holds the URL before
+	// the request starts. Every caller elsewhere in the tree holds exactly one
+	// URL and checks it once. A playlist names more, and none of them passed
+	// through any caller, so without this a plugin confined to a.example
+	// fetches b.example simply by being served a playlist that says to.
+	//
+	// Required. A nil CheckURL refuses everything rather than allowing it: a
+	// caller that forgot to pass one is exactly the case that must not fetch.
+	CheckURL func(url string) error
 	// FfmpegPath is the ffmpeg binary. Empty means no mux is possible.
 	FfmpegPath string
 	// TempDir is where segments land. Empty uses the system default.
@@ -135,6 +150,12 @@ type Result struct {
 func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io.Reader, opt Options, p Progress) (*Result, error) {
 	opt = opt.withDefaults()
 
+	if d.CheckURL == nil {
+		// Checked here so a caller that forgot it hears about it before the
+		// first segment rather than through a refusal that reads like the
+		// policy denied something.
+		return nil, errors.New("refusing to fetch: no network policy was supplied for this download")
+	}
 	if strings.TrimSpace(d.FfmpegPath) == "" {
 		// Checked before anything is fetched. Downloading four hundred segments
 		// and only then discovering there is nothing to assemble them with
@@ -162,19 +183,23 @@ func Fetch(ctx context.Context, d Deps, playlistURL string, head []byte, body io
 		}
 	}()
 
-	local, err := downloadParts(ctx, d, m, dir, opt, p)
+	playlistPath, err := downloadInto(ctx, d, m, dir, "video", opt, p)
 	if err != nil {
 		return nil, err
 	}
 
-	playlistPath := filepath.Join(dir, "local.m3u8")
-	if err := os.WriteFile(playlistPath, []byte(local), 0o600); err != nil {
-		return nil, fmt.Errorf("could not write the local playlist: %w", err)
+	audioPath := ""
+	if m.audio != nil {
+		// Its own subdirectory: both playlists number their segments from zero,
+		// and one directory would have the audio overwrite the video.
+		if audioPath, err = downloadInto(ctx, d, m.audio, dir, "audio", opt, p); err != nil {
+			return nil, fmt.Errorf("could not download this stream's audio: %w", err)
+		}
 	}
 
 	p.report(PhaseMuxing, 0, 0)
 	outPath := filepath.Join(dir, "output.mp4")
-	if err := mux(ctx, d, playlistPath, outPath, m, opt); err != nil {
+	if err := mux(ctx, d, playlistPath, audioPath, outPath, opt); err != nil {
 		return nil, err
 	}
 
@@ -204,19 +229,36 @@ func resolveMedia(ctx context.Context, d Deps, playlistURL string, head []byte, 
 		return nil, err
 	}
 
+	audioURL := ""
 	for depth := 0; ; depth++ {
-		m, next, err := parse(text, playlistURL, opt, depth)
+		m, next, err := parse(text, playlistURL, opt, depth, &audioURL)
 		if err != nil {
 			return nil, err
 		}
 		if m != nil {
+			if audioURL != "" {
+				// A separate audio rendition: a second media playlist, fetched
+				// and validated exactly like the first, and muxed alongside it.
+				// Ignoring it would produce a silent video that plays fine.
+				audioText, audioBase, err := fetchText(ctx, d, audioURL)
+				if err != nil {
+					return nil, fmt.Errorf("could not read this stream's audio playlist: %w", err)
+				}
+				am, next, err := parse(audioText, audioBase, opt, maxPlaylistDepth, new(string))
+				if err != nil {
+					return nil, err
+				}
+				if am == nil {
+					return nil, unsupported("this stream's audio rendition (%s) is not a media playlist", next)
+				}
+				m.audio = am
+			}
 			return m, nil
 		}
 		// A master playlist: fetch the variant it named. This goes through the
 		// caller's client, so the variant URL is policed exactly as the original
 		// was — a master playlist is remote content and may name any host.
-		playlistURL = next
-		text, err = fetchText(ctx, d, playlistURL)
+		text, playlistURL, err = fetchText(ctx, d, next)
 		if err != nil {
 			return nil, err
 		}
@@ -235,39 +277,100 @@ func readPlaylistText(head []byte, body io.Reader) (string, error) {
 	return buf.String(), nil
 }
 
-// fetchText retrieves a nested playlist.
-func fetchText(ctx context.Context, d Deps, url string) (string, error) {
-	rc, err := get(ctx, d, fetchTarget{url: url})
+// fetchText retrieves a nested playlist and reports the URL it was finally
+// served from.
+//
+// The final URL is what relative references inside it resolve against. A
+// redirect from /watch to /cdn/abc/index.m3u8 moves the base by a whole
+// directory, so resolving "segment.ts" against the URL we asked for produces a
+// 404 at best and somebody else's file at worst.
+func fetchText(ctx context.Context, d Deps, url string) (string, string, error) {
+	rc, resp, err := get(ctx, d, fetchTarget{url: url})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer rc.Close()
 	var buf strings.Builder
 	if _, err := io.Copy(&buf, io.LimitReader(rc, maxPlaylistBytes)); err != nil {
-		return "", fmt.Errorf("could not read the HLS playlist: %w", err)
+		return "", "", fmt.Errorf("could not read the HLS playlist: %w", err)
 	}
-	return buf.String(), nil
+	return buf.String(), finalURL(resp, url), nil
 }
 
-// get performs one GET through the caller's client, applying a byte range when
-// the playlist asked for one.
-func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, error) {
+// finalURL is the URL a response was actually served from, after redirects.
+func finalURL(resp *http.Response, requested string) string {
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
+		return resp.Request.URL.String()
+	}
+	return requested
+}
+
+// get performs one GET through the caller's client, after asking the caller
+// whether this URL may be fetched at all, and applying a byte range when the
+// playlist asked for one.
+//
+// The returned reader is already positioned and bounded: a server that ignores
+// Range and answers 200 with the whole object is handled by skipping and
+// truncating here, so a caller never has to wonder which it got.
+func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Response, error) {
+	// Every request, not just the one the caller handed us. This is the layer
+	// the playlist would otherwise walk straight past.
+	if d.CheckURL == nil {
+		return nil, nil, errors.New("refusing to fetch: no network policy was supplied for this download")
+	}
+	if err := d.CheckURL(t.url); err != nil {
+		return nil, nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.url, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if t.hasRange() {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", t.offset, t.offset+t.length-1))
 	}
 	resp, err := d.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
-	return resp.Body, nil
+
+	if t.hasRange() && resp.StatusCode != http.StatusPartialContent {
+		// The server ignored the Range and sent the whole object. Storing that
+		// for each of a hundred sub-ranges would multiply one file into a
+		// hundred copies of itself and mux to nonsense, so the range is applied
+		// here instead.
+		if _, err := io.CopyN(io.Discard, resp.Body, t.offset); err != nil {
+			_ = resp.Body.Close()
+			return nil, nil, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
+		}
+		return struct {
+			io.Reader
+			io.Closer
+		}{io.LimitReader(resp.Body, t.length), resp.Body}, resp, nil
+	}
+	return resp.Body, resp, nil
+}
+
+// downloadInto fetches one media playlist's parts into its own subdirectory of
+// dir and writes the local playlist ffmpeg will read, returning its path.
+func downloadInto(ctx context.Context, d Deps, m *media, dir, name string, opt Options, p Progress) (string, error) {
+	sub := filepath.Join(dir, name)
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		return "", fmt.Errorf("could not create a working directory for the download: %w", err)
+	}
+	local, err := downloadParts(ctx, d, m, sub, opt, p)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(sub, "local.m3u8")
+	if err := os.WriteFile(path, []byte(local), 0o600); err != nil {
+		return "", fmt.Errorf("could not write the local playlist: %w", err)
+	}
+	return path, nil
 }
 
 // downloadParts fetches the initialization segment, the keys and every media
@@ -406,7 +509,7 @@ func isPermanent(err error) bool {
 }
 
 func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
-	rc, err := get(ctx, d, t)
+	rc, _, err := get(ctx, d, t)
 	if err != nil {
 		return 0, err
 	}

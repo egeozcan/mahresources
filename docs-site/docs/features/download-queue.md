@@ -74,7 +74,9 @@ What is refused, and why the message says so rather than failing obscurely:
 | No ffmpeg on the server | Reported before any segment is downloaded, so a doomed transfer is not paid for |
 
 AES-128 encrypted playlists are supported: the key is fetched through the same
-policed client and handed to ffmpeg as a local file.
+policed client and handed to ffmpeg as a local file. So are streams whose audio
+is a separate rendition (`#EXT-X-MEDIA`), which are downloaded and muxed in --
+without that the result would be a silent video that plays perfectly.
 
 `-hls-concurrency` (default 4) sets how many segments are fetched at once.
 

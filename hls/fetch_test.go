@@ -108,7 +108,13 @@ func fetchAll(t *testing.T, d Deps, url string, opt Options, p Progress) (*Resul
 	return Fetch(context.Background(), d, url, head, resp.Body, opt, p)
 }
 
-func deps() Deps { return Deps{Client: http.DefaultClient, FfmpegPath: ffmpegPath()} }
+func deps() Deps {
+	return Deps{
+		Client:     http.DefaultClient,
+		FfmpegPath: ffmpegPath(),
+		CheckURL:   func(string) error { return nil },
+	}
+}
 
 // TestFetchAssemblesSegmentsIntoOneVideo is the end-to-end case: a real
 // playlist in, one playable MP4 out.
@@ -408,7 +414,7 @@ func TestPickVariantPrefersTheBestWithinTheHeightCap(t *testing.T) {
 		{720, "mid.m3u8"},
 		{240, "low.m3u8"},
 	} {
-		_, next, err := parse(master, "https://x/master.m3u8", Options{MaxHeight: tc.cap}.withDefaults(), 0)
+		_, next, err := parse(master, "https://x/master.m3u8", Options{MaxHeight: tc.cap}.withDefaults(), 0, new(string))
 		if err != nil {
 			t.Fatalf("cap %d: %v", tc.cap, err)
 		}

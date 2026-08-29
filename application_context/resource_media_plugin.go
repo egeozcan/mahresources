@@ -62,25 +62,35 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	probeCtx, cancel := context.WithTimeout(reqCtx, mediaProbeTimeout)
-	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(probeCtx, ctx.ffprobePath(),
-		"-v", "error",
-		"-print_format", "json",
-		"-show_format",
-		"-show_streams",
-		path,
-	)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		if probeCtx.Err() != nil {
-			return nil, fmt.Errorf("probing the file timed out after %s", mediaProbeTimeout)
+	// Through the same gate as every other ffmpeg-family call on a resource.
+	// Probing is cheap per call and a plugin can make it in a loop, so an
+	// ungated probe is an unbounded number of concurrent processes reached
+	// through the cheapest surface in the API.
+	runErr, gated := ctx.runVideoTool(reqCtx, resource.ID, mediaProbeTimeout, func(runCtx context.Context) error {
+		cmd := exec.CommandContext(runCtx, ctx.ffprobePath(),
+			"-v", "error",
+			"-print_format", "json",
+			"-show_format",
+			"-show_streams",
+			path,
+		)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if runCtx.Err() != nil {
+				return fmt.Errorf("probing the file timed out after %s", mediaProbeTimeout)
+			}
+			return fmt.Errorf("could not probe the file: %w (ffprobe: %s)", err, truncateStderr(stderr.String(), 500))
 		}
-		return nil, fmt.Errorf("could not probe the file: %w (ffprobe: %s)", err, truncateStderr(stderr.String(), 500))
+		return nil
+	})
+	if !gated {
+		return nil, errors.New("timed out waiting for a video processing slot")
+	}
+	if runErr != nil {
+		return nil, runErr
 	}
 
 	var out map[string]any
@@ -137,11 +147,9 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 	}
 
 	var frame []byte
-	lockAcquired, runErr := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
-		resource.ID,
-		orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout),
+	runErr, gated := ctx.runVideoTool(reqCtx, resource.ID,
 		orDefault(ctx.Config.VideoThumbnailTimeout, defaultVideoRunTimeout),
-		func() error {
+		func(runCtx context.Context) error {
 			args := []string{
 				"-nostdin",
 				// Before -i: input seeking, which jumps rather than decoding
@@ -158,7 +166,7 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 			args = append(args, "-c:v", "mjpeg", "-q:v", "3", "-f", "image2pipe", "pipe:1")
 
 			var out, stderr bytes.Buffer
-			cmd := exec.CommandContext(reqCtx, ctx.Config.FfmpegPath, args...)
+			cmd := exec.CommandContext(runCtx, ctx.Config.FfmpegPath, args...)
 			cmd.Stdout = &out
 			cmd.Stderr = &stderr
 			if err := cmd.Run(); err != nil {
@@ -171,9 +179,8 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 			}
 			frame = out.Bytes()
 			return nil
-		},
-	)
-	if !lockAcquired {
+		})
+	if !gated {
 		return nil, errors.New("timed out waiting for a video processing slot")
 	}
 	if runErr != nil {
@@ -193,6 +200,34 @@ func (ctx *MahresourcesContext) FrameDataURI(reqCtx context.Context, resourceId 
 		return "", err
 	}
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(frame), nil
+}
+
+// runVideoTool runs one ffmpeg-family process under the deployment's video
+// concurrency gate, with a deadline that actually reaches the process.
+//
+// The deadline is the part worth stating. RunWithLockTimeout's own run timeout
+// bounds only how long *it* waits: it returns while the function keeps running,
+// so an exec.CommandContext built on the caller's context would leave a wedged
+// ffmpeg alive with nothing left holding a reference to it. The command is
+// therefore built on a context derived here, so the timeout kills the process
+// rather than merely abandoning it.
+//
+// gated is false when the lock could not be taken in time, which is "the server
+// is busy", not "this failed".
+func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID uint, timeout time.Duration, fn func(context.Context) error) (err error, gated bool) {
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	runCtx, cancel := context.WithTimeout(reqCtx, timeout)
+	defer cancel()
+
+	acquired, runErr := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
+		resourceID,
+		orDefault(ctx.Config.VideoThumbnailLockTimeout, defaultVideoLockTimeout),
+		timeout,
+		func() error { return fn(runCtx) },
+	)
+	return runErr, acquired
 }
 
 // The fallbacks for a context built from a bare config, which is what the CLI

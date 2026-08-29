@@ -685,6 +685,11 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			// deployment's limits.
 			FfmpegPath: config.FfmpegPath,
 			HLSOptions: hlsOptionsFromConfig(config),
+			// The host allowlist, applied to every URL a playlist names as well
+			// as to the one submitted.
+			HostCheckURL: func(u string) error {
+				return plugin_system.CheckEgressURL(hostFetchPolicy, u)
+			},
 			// The queue fetches a user-supplied URL on a background worker with
 			// no request and no principal, so it is the operator fetch path
 			// with the least context of its own. It gets the same host policy
@@ -781,13 +786,21 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			// downloads rather than fetching them unpoliced, which is why this
 			// is the only thing that may set it.
 			if ctx.downloadManager != nil {
-				ctx.downloadManager.SetPolicyResolver(func(pluginName string) (func(*http.Client, time.Duration) *http.Client, bool) {
+				ctx.downloadManager.SetPolicyResolver(func(pluginName string) (download_queue.EgressPolicy, bool) {
 					policy, ok := pm.NetworkPolicyForPlugin(pluginName)
 					if !ok {
-						return nil, false
+						return download_queue.EgressPolicy{}, false
 					}
-					return func(client *http.Client, connectTimeout time.Duration) *http.Client {
-						return plugin_system.ApplyEgressPolicy(client, policy, connectTimeout)
+					return download_queue.EgressPolicy{
+						Decorate: func(client *http.Client, connectTimeout time.Duration) *http.Client {
+							return plugin_system.ApplyEgressPolicy(client, policy, connectTimeout)
+						},
+						// The allowlist half. Without it a playlist a plugin
+						// fetched could name segments on any public host, since
+						// the decoration polices addresses rather than names.
+						CheckURL: func(u string) error {
+							return plugin_system.CheckEgressURL(policy, u)
+						},
 					}, true
 				})
 			}
