@@ -179,6 +179,14 @@ func main() {
 	videoThumbLockTimeout := flag.Duration("video-thumb-lock-timeout", parseDurationEnv("VIDEO_THUMB_LOCK_TIMEOUT", 60*time.Second), "Timeout waiting for video thumbnail lock (env: VIDEO_THUMB_LOCK_TIMEOUT)")
 	videoThumbConcurrency := flag.Int("video-thumb-concurrency", parseIntEnv("VIDEO_THUMB_CONCURRENCY", 4), "Max concurrent video thumbnail generations (env: VIDEO_THUMB_CONCURRENCY)")
 
+	// HLS ingest options. An HLS URL is one request that becomes hundreds, so
+	// these bound what one submitted playlist can spend. Both limits refuse
+	// rather than truncate: half a video stored as a success is worse than a
+	// refusal that says why.
+	hlsMaxSegments := flag.Int("hls-max-segments", parseIntEnv("HLS_MAX_SEGMENTS", 5000), "Maximum segments in one HLS download (env: HLS_MAX_SEGMENTS)")
+	hlsMaxBytes := flag.Int64("hls-max-bytes", parseInt64Env("HLS_MAX_BYTES", 16<<30), "Maximum total bytes for one HLS download (env: HLS_MAX_BYTES)")
+	hlsConcurrency := flag.Int("hls-concurrency", parseIntEnv("HLS_CONCURRENCY", 4), "Segments fetched at once during an HLS download (env: HLS_CONCURRENCY)")
+
 	// Thumbnail worker options
 	thumbWorkerCount := flag.Int("thumb-worker-count", parseIntEnv("THUMB_WORKER_COUNT", 2), "Number of concurrent thumbnail generation workers (env: THUMB_WORKER_COUNT)")
 	thumbWorkerDisabled := flag.Bool("thumb-worker-disabled", os.Getenv("THUMB_WORKER_DISABLED") == "1", "Disable thumbnail worker (env: THUMB_WORKER_DISABLED=1)")
@@ -315,6 +323,9 @@ func main() {
 		VideoThumbnailTimeout:        *videoThumbTimeout,
 		VideoThumbnailLockTimeout:    *videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    uint(*videoThumbConcurrency),
+		HLSMaxSegments:               *hlsMaxSegments,
+		HLSMaxTotalBytes:             *hlsMaxBytes,
+		HLSConcurrency:               *hlsConcurrency,
 		PluginPath:                   *pluginPath,
 		PluginsDisabled:              *pluginsDisabled,
 		HashWorkerEnabled:            !*hashWorkerDisabled,

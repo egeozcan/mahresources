@@ -284,6 +284,17 @@ it is safe because a failed attempt rolled back and the file is already on disk,
 and `res.ID` is reset each attempt or a re-run `Save` would be an UPDATE of a row
 the rollback removed. Measured 0 failures in 220 uploads after.
 
+### HLS ingest
+
+A fetched URL that returns an HLS playlist is assembled into one MP4 rather than stored as the few kilobytes of text that listed the media. It lives in `hls/`, a leaf package in the shape `groupio/` and `search/` established, because **two** independent fetch paths need it and neither can host it: `AddRemoteResource` (`application_context`, behind `/v1/resource/remote`, the CLI and a plugin's `create_resource_from_url`) and `downloadWithProgress` (`download_queue`, which does its own HTTP and sits *below* `application_context`). It takes its `http.Client`, ffmpeg path and limits per call, never at construction.
+
+- **The package fetches every segment itself, through the caller's client, and ffmpeg is never given a URL.** Handing ffmpeg the playlist is a dozen lines shorter and hands it the network too: ffmpeg's HLS demuxer opens `http`, `https` and `crypto` targets named from *inside* the playlist, with none of the caller's egress policy applied to any of them — so a crafted playlist reaches `169.254.169.254` unchecked, through the exact door `-allow-private-fetch` exists to close. Instead the playlist, the key and every segment go through the client the caller already decorated: the plugin's own allowlist for a plugin fetch, the host policy otherwise. The mux runs `-protocol_whitelist file,crypto` and cannot open a socket. `TestEverySegmentGoesThroughTheCallersClient` and `TestAddRemoteResource_HLSSegmentsAreSubjectToTheFetchPolicy` are that property from both ends.
+- **A playlist is recognised from its bytes**, not its extension or Content-Type. The URLs this exists for are generated endpoints carrying neither. The sniff reads the head off the response, so both callers must put those bytes back for everything that is *not* a playlist — the one regression this introduces, covered at sizes below, equal to and above the sniff length in both packages.
+- **Refusals, not truncation, and each says which.** A playlist with no `EXT-X-ENDLIST` is a live stream, whose sliding window would make the byte and segment caps yield an arbitrary clip rather than an answer. `SAMPLE-AES` and any non-identity `KEYFORMAT` are DRM, so the message says DRM rather than "unsupported", which a user would otherwise retry. A non-HTTP reference is refused because the fetch policy classifies *addresses*, and `file:///etc/passwd` has none. `ErrNotSupported` distinguishes all of these from a failure.
+- **AES-128 is handled by fetching the key ourselves** through the same policed client and rewriting the local playlist to name it as a file. The local playlist is *generated* from the parsed structure rather than edited by substitution, so ffmpeg sees only tags this package validated — a substitution would carry through whatever else the origin wrote, including tags naming URLs nobody policed. `EXT-X-MEDIA-SEQUENCE` is reproduced because a key with no `IV` derives one from the sequence number, and dropping it decrypts every segment with the wrong IV and yields noise rather than an error.
+- **Progress rides the queue's phase counters, not its byte counters.** An HLS stream's size is unknown until the last segment lands, which is what the queue's `TotalSize: -1` already means. Notifications are throttled at `progressNotifyInterval` like the byte progress, or a four-hundred-segment stream is four hundred SSE events.
+- **Byte ranges are resolved by us, not passed on.** `EXT-X-BYTERANGE` becomes an HTTP `Range` header and each range lands in its own local file, so the generated playlist carries no byte-range tags.
+
 ### Job lifecycle events
 
 `after_job_completed`, `after_job_failed` and `after_job_cancelled` fire when a background job reaches a terminal state, for **every** job kind the download queue runs — downloads, group export and import, and plugin action jobs submitted through it.
@@ -340,6 +351,9 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for a video thumbnail ffmpeg invocation (default: 30s) |
 | `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | Timeout waiting for the video thumbnail lock (default: 60s) |
 | `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | Max concurrent video thumbnail generations (default: 4) |
+| `-hls-max-segments` | `HLS_MAX_SEGMENTS` | Maximum segments one HLS download may fetch (default: 5000). Refuses rather than truncating. |
+| `-hls-max-bytes` | `HLS_MAX_BYTES` | Maximum total bytes one HLS download may fetch (default: 16 GiB). Refuses rather than truncating. |
+| `-hls-concurrency` | `HLS_CONCURRENCY` | Segments fetched at once during an HLS download (default: 4) |
 | `-thumb-worker-count` | `THUMB_WORKER_COUNT` | Concurrent thumbnail generation workers (default: 2) |
 | `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | Disable the background thumbnail worker |
 | `-thumb-batch-size` | `THUMB_BATCH_SIZE` | Videos to process per backfill cycle (default: 10) |

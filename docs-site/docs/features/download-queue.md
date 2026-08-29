@@ -39,6 +39,45 @@ A finished job whose source is `download` is also written to a durable history r
 
 See [Downloads page](../user-guide/managing-resources.md#downloads-page) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
+## Streaming playlists (HLS)
+
+A URL that returns an HLS playlist is assembled rather than stored. The server
+fetches the playlist, picks the highest-bandwidth rendition of a master
+playlist, downloads every segment, and muxes them into a single MP4 with
+ffmpeg. The resource that lands is the video, not the few kilobytes of text
+that listed it.
+
+This applies wherever the server fetches a URL for you: the download queue, the
+remote-resource form, `POST /v1/resource/remote`, the `mr` CLI, and a plugin's
+`mah.db.create_resource_from_url`. Nothing needs to be enabled, and a playlist
+is recognised from its content rather than from an `.m3u8` extension, because
+these URLs are usually generated endpoints with no extension at all.
+
+Progress is reported through the job's phase counters (`downloading segments
+42/380`, then `assembling video`) rather than its byte counters, since the size
+of a stream is not known until its last segment has arrived.
+
+**Every segment and key is fetched by the server itself, through the same
+policy the submitted URL was checked against** — see [Where downloads may
+point](#where-downloads-may-point). ffmpeg is handed local files only and
+cannot open a network connection, so a playlist cannot be used to reach an
+address the deployment does not allow.
+
+What is refused, and why the message says so rather than failing obscurely:
+
+| Case | Reason |
+|------|--------|
+| A live stream (no `#EXT-X-ENDLIST`) | Its segment window slides, so a download would capture an arbitrary clip of whatever was current, not the broadcast |
+| DRM (`SAMPLE-AES`, FairPlay, Widevine, PlayReady) | The content is licensed; this is not a missing parser |
+| A playlist naming a `file:` or other non-HTTP URL | The fetch policy checks addresses, not schemes |
+| More segments or bytes than the deployment allows | `-hls-max-segments` (default 5000) and `-hls-max-bytes` (default 16 GiB) |
+| No ffmpeg on the server | Reported before any segment is downloaded, so a doomed transfer is not paid for |
+
+AES-128 encrypted playlists are supported: the key is fetched through the same
+policed client and handed to ffmpeg as a local file.
+
+`-hls-concurrency` (default 4) sets how many segments are fetched at once.
+
 ## Job Lifecycle
 
 Each download job goes through these statuses:
