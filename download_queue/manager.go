@@ -779,7 +779,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 
 	var progressBody contracts.File
 	assembledHLS := false
-	if hls.IsPlaylist(head, resp.Header.Get("Content-Type"), job.URL) {
+	if hls.IsPlaylist(head) {
 		assembled, hlsErr := dm.assembleHLS(ctx, runID, job, httpClient, head, timeoutBody)
 		if hlsErr != nil {
 			return nil, hlsErr

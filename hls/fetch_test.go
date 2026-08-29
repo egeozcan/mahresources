@@ -102,7 +102,7 @@ func fetchAll(t *testing.T, d Deps, url string, opt Options, p Progress) (*Resul
 	t.Helper()
 	head, resp := open(t, d.Client, url)
 	defer resp.Body.Close()
-	if !IsPlaylist(head, resp.Header.Get("Content-Type"), url) {
+	if !IsPlaylist(head) {
 		t.Fatalf("the served document was not recognised as a playlist: %q", head)
 	}
 	return Fetch(context.Background(), d, url, head, resp.Body, opt, p)
@@ -382,10 +382,9 @@ func TestIsPlaylistReadsTheBytesNotTheURL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The URL says .m3u8 in every case: a generated endpoint carries no
-			// extension, and a non-playlist served from an .m3u8 path is not a
-			// playlist.
-			if got := IsPlaylist([]byte(tc.head), "", "https://x/v.m3u8"); got != tc.want {
+			// Bytes only: a generated endpoint carries no extension, and a
+			// non-playlist served from an .m3u8 path is not a playlist.
+			if got := IsPlaylist([]byte(tc.head)); got != tc.want {
 				t.Errorf("IsPlaylist(%q) = %v, want %v", tc.head, got, tc.want)
 			}
 		})

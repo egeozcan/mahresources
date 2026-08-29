@@ -37,16 +37,13 @@ const sniffLen = 64
 
 // IsPlaylist reports whether a response is an HLS playlist.
 //
-// It answers from the bytes, not from the URL or the Content-Type. Both of
-// those are hints: the URLs this feature exists for routinely carry neither an
-// .m3u8 extension nor application/vnd.apple.mpegurl, because they are generated
-// endpoints. The header tag is mandatory in the specification and is the only
-// signal that is actually reliable.
-//
-// contentType and rawURL are accepted so a caller can pass what it has; they
-// are used only to *reject* faster, never to accept something whose bytes do
-// not say playlist.
-func IsPlaylist(head []byte, contentType, rawURL string) bool {
+// It takes only the bytes, deliberately. The URL and the Content-Type are the
+// obvious things to ask, and both are unreliable here: the endpoints this
+// feature exists for routinely carry neither an .m3u8 extension nor
+// application/vnd.apple.mpegurl, because they are generated. The header tag is
+// mandatory in the specification, so accepting the other two as arguments would
+// only invite someone to weaken this to an OR.
+func IsPlaylist(head []byte) bool {
 	text := strings.TrimLeft(string(head), "\ufeff \t\r\n")
 	return strings.HasPrefix(text, PlaylistHeader)
 }

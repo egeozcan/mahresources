@@ -358,7 +358,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 			var content contracts.File = io.NopCloser(io.MultiReader(bytes.NewReader(head), timeoutBody))
 			fileName := resourceQuery.FileName
 
-			if hls.IsPlaylist(head, resp.Header.Get("Content-Type"), url) {
+			if hls.IsPlaylist(head) {
 				assembled, hlsErr := hls.Fetch(reqCtx, ctx.hlsDeps(httpClient), url, head, timeoutBody, ctx.hlsOptions(), nil)
 				if hlsErr != nil {
 					setError(hlsErr)

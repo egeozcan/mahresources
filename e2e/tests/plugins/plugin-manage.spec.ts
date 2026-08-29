@@ -166,11 +166,12 @@ test.describe('Plugin Management - Access panel', () => {
   // whenever plugin_system.AllCapabilities grows, and this failing is the
   // intended way to find out: a new capability silently widening what a
   // manifest-less plugin holds is exactly what the legacy warning exists to
-  // make visible. Last moved for `job_events`, which a manifest-less plugin now
-  // also holds — it can observe every background job in the deployment without
-  // ever having declared anything, which is the legacy bargain working as
-  // written rather than a hole this opened.
-  const ALL_CAPABILITY_COUNT = 14;
+  // make visible. Last moved for `media`, which a manifest-less plugin now also
+  // holds — it can read and cut the video and audio in the library without ever
+  // having declared anything, which is the legacy bargain working as written
+  // rather than a hole this opened. (`job_events` moved it before that, for the
+  // same reason: observing every background job in the deployment.)
+  const ALL_CAPABILITY_COUNT = 15;
 
   test('legacy plugin is flagged and holds every capability', async ({ page }) => {
     await page.goto('/plugins/manage');
