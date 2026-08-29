@@ -1014,3 +1014,14 @@ func TestTheWorkingDirectoryIsTheConfiguredOne(t *testing.T) {
 		t.Errorf("assembled into %s, want a path under the configured %s", f.Name(), work)
 	}
 }
+
+// TestAnIFramesOnlyPlaylistIsRefused. A trick-play rendition is one key frame
+// every few seconds, for scrubbing. Master playlists list those separately and
+// pickVariant skips them; a URL pointing straight at one has no variant list to
+// skip it in, and would assemble a video of sparse stills.
+func TestAnIFramesOnlyPlaylistIsRefused(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:1\n#EXT-X-I-FRAMES-ONLY\n" +
+		"#EXT-X-BYTERANGE:100@0\n#EXTINF:1.0,\na.ts\n#EXT-X-ENDLIST\n"
+	_, _, err := parse(text, "https://x/index.m3u8", Defaults(), 0, new(string))
+	assertUnsupported(t, err, "trick-play")
+}

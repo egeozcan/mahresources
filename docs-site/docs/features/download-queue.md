@@ -83,7 +83,9 @@ without that the result would be a silent video that plays perfectly.
 `-hls-temp-dir` sets where the assembly works. It defaults to the system temp
 directory, which in most container images is the root filesystem -- and an
 assembly holds every segment plus the finished video, so a long recording wants
-a multiple of its own size somewhere that has it.
+a multiple of its own size somewhere that has it. It also covers the copy made
+while the finished file is stored, since assembling onto a media volume and then
+copying to the root filesystem is the same problem one step later.
 
 ## Job Lifecycle
 

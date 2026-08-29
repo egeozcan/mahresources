@@ -450,6 +450,15 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 	// only into an arbitrary clip of whichever window happened to be current
 	// when we asked — a confusing partial result rather than an answer. Refuse
 	// by name so the message says what is actually true.
+	// An I-frames-only playlist is a trick-play stream: one key frame every few
+	// seconds, for scrubbing. Master playlists list those as separate
+	// renditions and pickVariant skips them; a URL pointing straight at one has
+	// no variant list to skip it in, and the result would be a video of sparse
+	// stills rather than the recording that was asked for.
+	if pl.Iframe {
+		return nil, unsupported("this URL points at an HLS trick-play (I-frames only) rendition rather than a playable stream")
+	}
+
 	if !pl.Closed {
 		return nil, unsupported("this is a live HLS stream (the playlist has no #EXT-X-ENDLIST); only complete recordings can be downloaded")
 	}

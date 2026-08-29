@@ -1048,7 +1048,13 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 		resourceQuery.Meta = hMeta
 	}
 
-	tempFile, err := os.CreateTemp("", "upload-")
+	// The same directory an HLS assembly works in, when one is configured.
+	// AddResource copies its whole input through here, so an 8 GiB video
+	// assembled onto the media volume was then copied to the root filesystem
+	// anyway -- which is exactly the outage -hls-temp-dir exists to prevent,
+	// arriving one step later. Empty keeps the system default, so a deployment
+	// that sets nothing is unchanged.
+	tempFile, err := os.CreateTemp(ctx.Config.HLSTempDir, "upload-")
 	if err != nil {
 		return nil, err
 	}

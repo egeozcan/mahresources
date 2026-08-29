@@ -394,7 +394,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-hls-max-segments` | `HLS_MAX_SEGMENTS` | Maximum segments one HLS download may fetch (default: 5000). Refuses rather than truncating. |
 | `-hls-max-bytes` | `HLS_MAX_BYTES` | Maximum total bytes one HLS download may fetch (default: 16 GiB). Refuses rather than truncating. |
 | `-hls-concurrency` | `HLS_CONCURRENCY` | Segments fetched at once during an HLS download (default: 4) |
-| `-hls-temp-dir` | `HLS_TEMP_DIR` | Working directory for HLS assembly (default: the system temp directory). Worth setting: an assembly holds every segment *plus* the muxed output, so a long recording wants a multiple of its own size — and the system default is the root filesystem in most container images, where filling it takes more than the download down with it. |
+| `-hls-temp-dir` | `HLS_TEMP_DIR` | Working directory for HLS assembly **and for the upload copy `AddResource` makes** (default: the system temp directory). Worth setting: an assembly holds every segment *plus* the muxed output, so a long recording wants a multiple of its own size — and the system default is the root filesystem in most container images, where filling it takes more than the download down with it. It covers the upload copy too, since assembling onto the media volume and then copying to the root filesystem is the same outage one step later. |
 | `-thumb-worker-count` | `THUMB_WORKER_COUNT` | Concurrent thumbnail generation workers (default: 2) |
 | `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | Disable the background thumbnail worker |
 | `-thumb-batch-size` | `THUMB_BATCH_SIZE` | Videos to process per backfill cycle (default: 10) |
