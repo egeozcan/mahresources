@@ -53,9 +53,19 @@ const HEATMAP_CONFIRM_ABOVE_MEGAPIXELS = 12;
 // identical pair still measures exactly zero because identical bytes take the
 // identical placement and sampling path.
 const HEATMAP_THRESHOLD = 0;
+// `.compare-overlay-box`'s painted backdrop. Source alpha participates in the
+// visible RGB through this colour while source alpha itself still decides the
+// overlap denominator.
+const HEATMAP_BACKDROP = [250, 250, 249];
 const HEATMAP_UNSUPPORTED_CONTENT_TYPES = new Set([
-  'image/heic', 'image/heif', 'image/tiff', 'image/x-tiff',
+  'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
+  'image/x-heic', 'image/x-heif',
+  'image/tiff', 'image/tif', 'image/x-tiff', 'image/x-tif',
 ]);
+
+function normalizedContentType(value) {
+  return String(value || '').split(';', 1)[0].trim().toLowerCase();
+}
 
 /**
  * Compare the two composed frames: per-pixel, count the overlap and mark the
@@ -75,16 +85,20 @@ export function heatMapDiff(lead, trail, threshold) {
   let overlap = 0;
   const n = Math.min(lead.length, trail.length);
   const mask = new Uint8ClampedArray(n);
+  const painted = (data, index, channel) => Math.round((
+    data[index + channel] * data[index + 3]
+    + HEATMAP_BACKDROP[channel] * (255 - data[index + 3])
+  ) / 255);
   for (let i = 0; i < n; i += 4) {
     if (lead[i + 3] === 0 || trail[i + 3] === 0) continue;
     overlap++;
+    // Compare what the two RGBA samples visibly paint over the frame's real
+    // backdrop, not their unpremultiplied storage. Different RGBA tuples can
+    // produce the same frame pixel, and the heatmap must call those identical.
     const d = Math.max(
-      Math.abs(lead[i] - trail[i]),
-      Math.abs(lead[i + 1] - trail[i + 1]),
-      Math.abs(lead[i + 2] - trail[i + 2]),
-      // Both alphas are nonzero (the overlap rule above), but a partial
-      // opacity change still visibly changes the composed pixel.
-      Math.abs(lead[i + 3] - trail[i + 3]),
+      Math.abs(painted(lead, i, 0) - painted(trail, i, 0)),
+      Math.abs(painted(lead, i, 1) - painted(trail, i, 1)),
+      Math.abs(painted(lead, i, 2) - painted(trail, i, 2)),
     );
     if (d > threshold) {
       changed++;
@@ -109,6 +123,7 @@ export function formatHeatMapPercent(changed, overlap) {
   if (!changed) return 0;
   const percent = (changed / overlap) * 100;
   if (percent < 0.1) return '<0.1';
+  if (changed < overlap && percent > 99.9) return '>99.9';
   return Math.round(percent * 10) / 10;
 }
 
@@ -1332,12 +1347,14 @@ export function imageCompare({
     },
 
     /**
-     * Pixel diff additionally needs a format the browser can decode into a
-     * canvas. TIFF often has stored dimensions from Go's decoder, so geometry
-     * alone cannot answer this: Chromium still cannot paint its pixels.
+     * Pixel diff deliberately refuses HEIC/TIFF (the Package 3 format
+     * contract), even in a browser that happens to gain a decoder. TIFF often
+     * has stored dimensions from Go, so geometry alone cannot enforce that
+     * contract. Strip media-type parameters and accept common aliases so an
+     * upload cannot arm a computation that this feature promises to refuse.
      */
     get heatMapUnsupportedFormat() {
-      return this._contentTypes.some((type) => HEATMAP_UNSUPPORTED_CONTENT_TYPES.has(type.toLowerCase()));
+      return this._contentTypes.some((type) => HEATMAP_UNSUPPORTED_CONTENT_TYPES.has(normalizedContentType(type)));
     },
 
     get heatMapAvailable() {
@@ -1839,8 +1856,14 @@ export function imageCompare({
         this._startBlinkInterval();
       }
       // A rate change is one discrete event, announced once -- never once
-      // per `input` the range fires while the reader drags it.
-      if (this.blinking) this._announceBlinkState();
+      // per `input` the range fires while the reader drags it. While paused,
+      // name the new setting without falsely saying playback started.
+      if (this.blinking) {
+        this._announceBlinkState();
+      } else {
+        this._blinkAnnounceParity = !this._blinkAnnounceParity;
+        this.blinkAnnouncement = `Blink rate set to ${Math.round(this.blinkRate)} flashes per second${this._blinkAnnounceParity ? ANNOUNCE_MARK : ''}`;
+      }
     },
 
     _announceBlinkState() {
@@ -1876,6 +1899,14 @@ export function imageCompare({
       }
       if (this.heatMapRequiresConfirm() && !this.heatMapConfirmed) {
         this.heatMapNeedsConfirm = true;
+        // The gate appears away from the toolbar button. Move keyboard focus
+        // to its primary action after Alpine reveals it, so the request and
+        // its real megapixel count cannot appear silently off-focus.
+        if (typeof this.$nextTick === 'function') {
+          this.$nextTick(() => {
+            this._root?.querySelector('[data-heatmap-confirm]')?.focus();
+          });
+        }
         return;
       }
       this.heatMapOn = true;

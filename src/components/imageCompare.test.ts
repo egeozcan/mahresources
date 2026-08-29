@@ -2803,6 +2803,14 @@ describe('the blink comparator', () => {
     expect(c.blinkAnnouncement).toBe('');
   });
 
+  test('a paused rate change announces the selected rate without starting', () => {
+    const c = blinkComponent();
+    c.blinkRate = 2;
+    c.blinkRateChanged();
+    expect(c.blinking).toBe(false);
+    expect(c.blinkAnnouncement).toContain('rate set to 2 flashes per second');
+  });
+
   test('the 2 Hz lower bound flips once per half second', () => {
     vi.useFakeTimers();
     try {
@@ -2944,6 +2952,23 @@ describe('the pixel-diff heatmap: pure math', () => {
     expect(c.heatMapPlacement(1)).toMatchObject({ dx: 0, dy: 0, k: 1 });
   });
 
+  test('scale, anchor, offset and flip compose in one placement', () => {
+    const c = component({ w: 400, h: 300 }, { w: 800, h: 800 });
+    c.scale = 'fit';
+    c.anchor = 'top-left';
+    c._setTrailOffset({ dx: 12, dy: -8, k: 1.5 });
+    c.swapped = true;
+
+    const trailing = c.heatMapPlacement(0)!;
+    const reference = c.heatMapPlacement(1)!;
+    expect(trailing).toMatchObject({ dx: -8, dy: 8 / 1.5, k: 1 / 1.5 });
+    expect(trailing.originX).toBe(trailing.x);
+    expect(trailing.originY).toBe(trailing.y);
+    expect(reference).toMatchObject({ dx: 0, dy: 0, k: 1 });
+    expect(reference.originX).toBe(reference.x);
+    expect(reference.originY).toBe(reference.y);
+  });
+
   test('the transform origin follows the anchor', () => {
     const c = component({ w: 400, h: 300 }, { w: 800, h: 600 });
     c._setTrailOffset({ dx: 4, dy: 0, k: 1 });
@@ -2994,6 +3019,12 @@ describe('the pixel-diff heatmap: pure math', () => {
     expect(countChanged(lead, trail, 32)).toEqual({ changed: 1, overlap: 1 });
   });
 
+  test('counting: different RGBA that paints the same backdrop pixel is unchanged', () => {
+    const translucentBlack = new Uint8ClampedArray([0, 0, 0, 128]);
+    const equivalentOpaque = new Uint8ClampedArray([125, 125, 124, 255]);
+    expect(countChanged(translucentBlack, equivalentOpaque, 0)).toEqual({ changed: 0, overlap: 1 });
+  });
+
   test('counting: a pixel only one version paints belongs to nobody', () => {
     // Lead opaque, trail transparent: not an overlap, and not a change --
     // "missing in one" is the banner's Size story, not the heatmap's.
@@ -3002,10 +3033,12 @@ describe('the pixel-diff heatmap: pure math', () => {
     expect(countChanged(lead, trail, 32)).toEqual({ changed: 0, overlap: 1 });
   });
 
-  test('formatting distinguishes a sparse change from an identical pair', () => {
+  test('formatting distinguishes sparse and almost-complete changes from exact endpoints', () => {
     expect(formatHeatMapPercent(0, 10000)).toBe(0);
     expect(formatHeatMapPercent(1, 10000)).toBe('<0.1');
     expect(formatHeatMapPercent(7, 300)).toBe(2.3);
+    expect(formatHeatMapPercent(9999, 10000)).toBe('>99.9');
+    expect(formatHeatMapPercent(10000, 10000)).toBe(100);
   });
 
   test('counting: nothing overlapping means nothing to compare', () => {
@@ -3126,8 +3159,8 @@ describe('the pixel-diff heatmap: orchestration', () => {
     const c = component(
       { w: 20, h: 10 },
       { w: 20, h: 10 },
-      'image/tiff',
-      'image/tiff',
+      ' IMAGE/X-TIFF; charset=binary ',
+      'image/tif',
     );
     expect(c.scaleAvailable).toBe(true);
     expect(c.heatMapAvailable).toBe(false);

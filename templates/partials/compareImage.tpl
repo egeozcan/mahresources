@@ -12,7 +12,7 @@
     rightSize: { w: {{ comparison.Version2.Width|json }}, h: {{ comparison.Version2.Height|json }} }
 })">
     <!-- Mode selector -->
-    <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
+    <div class="compare-toolbar flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
         {# Each button carries an aria-label as well as its visible one: the visible #}
         {# label is hidden below 768px, which would otherwise leave the button with #}
         {# nothing but an aria-hidden icon and no accessible name. #}
@@ -198,13 +198,14 @@
 
     {# The size gate, before work rather than after: over the megapixel mark #}
     {# the computation asks first, with the real number attached. #}
-    <div x-show="heatMapNeedsConfirm" x-cloak class="compare-diff-gate mb-4">
+    <div x-show="heatMapNeedsConfirm" x-cloak class="compare-diff-gate mb-4"
+         role="status" aria-live="polite" aria-atomic="true">
         <p>
             These images come to <span class="font-mono" x-text="heatMapMegapixelsLabel()"></span> together.
             Comparing them pixel by pixel decodes and samples both versions and may take a while.
         </p>
         <div class="flex gap-2">
-            <button type="button" class="compare-gate-btn" @click="confirmHeatMap()">Compute anyway</button>
+            <button type="button" class="compare-gate-btn" data-heatmap-confirm @click="confirmHeatMap()">Compute anyway</button>
             <button type="button" class="compare-gate-btn compare-gate-btn--secondary" @click="dismissHeatMapConfirm()">Not now</button>
         </div>
     </div>

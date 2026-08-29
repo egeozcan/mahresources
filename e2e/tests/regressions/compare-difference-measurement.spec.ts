@@ -22,6 +22,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   let ownerGroupId: number;
   let fixtureDir: string;
   let pairResourceId: number;
+  let alphaResourceId: number;
   let heicResourceId: number;
   let tiffResourceId: number;
   let diffPairResourceId: number;
@@ -79,6 +80,22 @@ test.describe.serial('compare page: difference and measurement', () => {
     const v2 = marked('compare-scale-400x300.png', 'v2');
     await uploadVersion(request, baseURL!, pairResourceId,
       'pkg3-v2.png', 'image/png', v2.buffer, 'Re-exported, same pixels');
+
+    // The transparency edge of black-is-identical. CSS difference blending
+    // applies source alpha around the blend function unless each side is
+    // flattened onto the same backdrop first.
+    const alphaV1 = marked('compare-alpha-identical.png', 'v1');
+    const alphaResource = await apiClient.createResource({
+      filePath: alphaV1.path,
+      contentType: 'image/png',
+      exactBytes: true,
+      name: `Pkg3 Alpha Pair ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    alphaResourceId = alphaResource.ID;
+    const alphaV2 = marked('compare-alpha-identical.png', 'v2');
+    await uploadVersion(request, baseURL!, alphaResourceId,
+      'pkg3-alpha-v2.png', 'image/png', alphaV2.buffer, 'Same translucent pixels');
 
     // Neither Go nor Chromium can decode HEIC, so no coordinate space exists
     // on either side: 3.2 must refuse, 3.3 may still work.
@@ -142,7 +159,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [pairResourceId, heicResourceId, tiffResourceId, diffPairResourceId, largePairResourceId]) {
+    for (const id of [pairResourceId, alphaResourceId, heicResourceId, tiffResourceId, diffPairResourceId, largePairResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -248,6 +265,25 @@ test.describe.serial('compare page: difference and measurement', () => {
       expect(maxChannel).toBe(0);
     });
 
+    test('identical translucent pixels render black too', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${alphaResourceId}&v1=1&v2=2`);
+      await page.getByRole('radio', { name: /Difference/ }).click();
+      await waitDecoded(page);
+
+      const screenshot = await diffBox(page).screenshot();
+      const center = await page.evaluate(async (base64) => {
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(bitmap, 0, 0);
+        return [...ctx.getImageData(Math.floor(bitmap.width / 2), Math.floor(bitmap.height / 2), 1, 1).data.slice(0, 3)];
+      }, screenshot.toString('base64'));
+      expect(Math.max(...center)).toBeLessThanOrEqual(2);
+    });
+
     test('scale, anchor and alignment compose with the difference mode', async ({ page }) => {
       // The blend is a mode like the others, not a separate page: the controls
       // packages 1 and 2 added must keep working under it, or the composite
@@ -280,7 +316,7 @@ test.describe.serial('compare page: difference and measurement', () => {
       await page.getByRole('radio', { name: /Difference/ }).click();
       const { AxeBuilder } = await import('@axe-core/playwright');
       const results = await new AxeBuilder({ page })
-        .include('.compare-segmented-control')
+        .include('.compare-toolbar')
         .analyze();
       expect(results.violations).toEqual([]);
     });
@@ -432,7 +468,7 @@ test.describe.serial('compare page: difference and measurement', () => {
       await blinkButton(page).click();
       const { AxeBuilder } = await import('@axe-core/playwright');
       const results = await new AxeBuilder({ page })
-        .include('.compare-segmented-control')
+        .include('.compare-toolbar')
         .analyze();
       expect(results.violations).toEqual([]);
     });
@@ -490,6 +526,18 @@ test.describe.serial('compare page: difference and measurement', () => {
       expect(Math.abs(coverage * 100 - pct)).toBeLessThan(2);
     });
 
+    test('the armed heatmap and its controls pass an axe scan', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
+      await showOnion(page);
+      await heatButton(page).click();
+      await expect(bannerStat(page)).toBeVisible();
+      const { AxeBuilder } = await import('@axe-core/playwright');
+      const results = await new AxeBuilder({ page })
+        .include('.compare-toolbar')
+        .analyze();
+      expect(results.violations).toEqual([]);
+    });
+
     test('the armed mask follows mode switches without waiting for visibility', async ({ page }) => {
       await page.goto(`/resource/compare?r1=${diffPairResourceId}&v1=1&v2=2`);
       await showOnion(page);
@@ -505,6 +553,14 @@ test.describe.serial('compare page: difference and measurement', () => {
         await expect(maskCanvas(page)).toHaveAttribute('data-compare-heatmap', mode);
         await expect.poll(() => maskCoverage(page)).toBeGreaterThan(0);
       }
+
+      // The armed mask also follows the shared geometry controls rather than
+      // retaining the canvas from the mode switch above.
+      await page.getByRole('radio', { name: 'Fit to frame' }).click();
+      await page.getByRole('button', { name: 'Anchor both versions to the top left corner' }).click();
+      await page.getByRole('button', { name: 'Flip which image is shown first' }).click();
+      await expect.poll(() => maskCoverage(page)).toBeGreaterThan(0);
+      await expect(bannerStat(page)).toBeVisible();
       await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
     });
 
@@ -544,6 +600,15 @@ test.describe.serial('compare page: difference and measurement', () => {
       await heatButton(page).click({ force: true });
       await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'false');
       await expect(bannerStat(page)).toBeHidden();
+
+      // Format refusal is local to measurement: the CSS blend and timer
+      // comparator remain selectable even when Chromium paints an empty box.
+      await page.getByRole('radio', { name: /Difference/ }).click();
+      await expect(page.getByRole('radio', { name: /Difference/ })).toBeChecked();
+      await page.getByRole('radio', { name: 'Toggle' }).click();
+      const blink = page.getByRole('button', { name: 'Blink between the two versions' });
+      await blink.click();
+      await expect(blink).toHaveAttribute('aria-pressed', 'true');
     });
 
     test('a TIFF with stored dimensions refuses because the browser cannot decode it', async ({ page }) => {
@@ -577,7 +642,13 @@ test.describe.serial('compare page: difference and measurement', () => {
       const gate = page.locator('.compare-diff-gate');
       await expect(gate).toBeVisible();
       await expect(gate).toContainText(/megapixels/);
+      await expect(page.getByRole('button', { name: 'Compute anyway' })).toBeFocused();
       await expect(bannerStat(page)).toBeHidden();
+      const { AxeBuilder } = await import('@axe-core/playwright');
+      const results = await new AxeBuilder({ page })
+        .include('.compare-diff-gate')
+        .analyze();
+      expect(results.violations).toEqual([]);
 
       await page.getByRole('button', { name: 'Compute anyway' }).click();
       await expect(gate).toBeHidden();
