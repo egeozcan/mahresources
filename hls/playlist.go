@@ -188,7 +188,8 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
-		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt, explicitByteRangeOffsets(text), explicitMapOffsets(text))
+		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt,
+			explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 		return m, "", err
 	default:
 		return nil, "", unsupported("the URL is an HLS playlist of a kind this server does not handle")
@@ -303,7 +304,7 @@ func resolutionHeight(res string) int {
 }
 
 // readMedia validates a media playlist and flattens it into the segment list.
-func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets, explicitMaps []bool) (*media, error) {
+func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicitOffsets, explicitMaps []bool, keyBeforeMap bool) (*media, error) {
 	mapIndex := 0
 	nextMapExplicit := func() bool {
 		explicit := mapIndex < len(explicitMaps) && explicitMaps[mapIndex]
@@ -325,23 +326,18 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		out.targetDuration = 10
 	}
 
-	// The key in effect, carried forward across segments that carry no tag.
-	currentKey, err := readKey(pl.Key, playlistURL)
-	if err != nil {
-		return nil, err
-	}
+	// The key in effect, carried forward across segments that carry no tag. It
+	// starts as nil rather than as the playlist's: a stream may begin in the
+	// clear.
+	var currentKey *segmentKey
 
-	if pl.Map != nil && pl.Map.URI != "" {
-		if err := refuseImplicitMapOffset(pl.Map, nextMapExplicit()); err != nil {
-			return nil, err
-		}
-		t, err := resolveTarget(playlistURL, pl.Map.URI, pl.Map.Limit, pl.Map.Offset)
-		if err != nil {
-			return nil, err
-		}
-		out.initSegment = &t
-		out.initKey = currentKey
-	}
+	// Neither pl.Map nor pl.Key is read. The parser publishes the *first* of
+	// each tag twice -- once on the playlist "for convenient playlist
+	// generation" and once on the segment it actually precedes -- and pl.Key is
+	// set from the first KEY tag wherever it appears, so a stream that starts
+	// in the clear and turns encrypted seeds as encrypted. Driving everything
+	// from the segments alone is both correct and one source rather than two:
+	// every KEY and MAP tag attaches to exactly one segment, in text order.
 
 	// EXT-X-BYTERANGE with no @offset means "the byte after the previous
 	// sub-range of this same resource". The parser reports that as offset 0, so
@@ -364,6 +360,23 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 		}
 		// A per-segment EXT-X-MAP after the first is a format change mid-stream
 		// that a single -c copy mux cannot represent.
+		// An EXT-X-KEY applies to every segment *after* it until another one
+		// replaces it, and the parser attaches it only to the segment it
+		// preceded. Reading a playlist-level default for every segment with no
+		// tag of its own decrypted a rotated stream entirely with its first key
+		// -- and read a mid-stream METHOD=NONE as "still encrypted", since that
+		// arrives as a tag whose parsed key is nil, indistinguishable from no
+		// tag at all unless the tag itself is what is tracked.
+		//
+		// Updated before the map below, so a key written above an EXT-X-MAP is
+		// in effect when the map is recorded.
+		if seg.Key != nil {
+			var err error
+			if currentKey, err = readKey(seg.Key, playlistURL); err != nil {
+				return nil, err
+			}
+		}
+
 		if seg.Map != nil && seg.Map.URI != "" {
 			if err := refuseImplicitMapOffset(seg.Map, nextMapExplicit()); err != nil {
 				return nil, err
@@ -375,7 +388,13 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 			switch {
 			case out.initSegment == nil:
 				out.initSegment = &t
-				out.initKey = currentKey
+				// Only when a KEY tag actually precedes the MAP in the text.
+				// Both attach to the same segment, so the parse alone cannot
+				// order them, and a plaintext map handed a key decodes to
+				// nothing exactly as an encrypted one handed none does.
+				if keyBeforeMap {
+					out.initKey = currentKey
+				}
 			// Compared whole, not by URL. One resource can hold several
 			// initialization sections at different byte ranges, so comparing
 			// names alone silently kept the first and decoded the rest of the
@@ -385,19 +404,6 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 			}
 		}
 
-		// An EXT-X-KEY applies to every segment *after* it until another one
-		// replaces it, and the parser attaches it only to the segment it
-		// preceded. Falling back to the playlist-level key for every segment
-		// with no tag of its own therefore decrypted a rotated stream entirely
-		// with its first key -- and read a mid-stream METHOD=NONE as "still
-		// encrypted", since that arrives as a tag whose parsed key is nil,
-		// indistinguishable from no tag at all unless the tag itself is the
-		// thing being tracked.
-		if seg.Key != nil {
-			if currentKey, err = readKey(seg.Key, playlistURL); err != nil {
-				return nil, err
-			}
-		}
 		key := currentKey
 
 		t, err := resolveTarget(playlistURL, seg.URI, seg.Limit, seg.Offset)
@@ -445,6 +451,27 @@ func refuseImplicitMapOffset(m *m3u8.Map, explicit bool) error {
 		return unsupported("this HLS stream's initialization section uses a byte range with no explicit offset, which this server cannot place")
 	}
 	return nil
+}
+
+// keyPrecedesMap reports whether an EXT-X-KEY appears before the first
+// EXT-X-MAP.
+//
+// The parser cannot answer it: a key and a map written above the first segment
+// both attach to that segment, in no recorded order. The question decides
+// whether the initialization section is encrypted, and both wrong answers
+// produce a file that decodes to nothing without an error naming the cause.
+func keyPrecedesMap(text string) bool {
+	keyAt, mapAt := -1, -1
+	for i, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if keyAt < 0 && strings.HasPrefix(line, "#EXT-X-KEY:") {
+			keyAt = i
+		}
+		if mapAt < 0 && strings.HasPrefix(line, "#EXT-X-MAP:") {
+			mapAt = i
+		}
+	}
+	return keyAt >= 0 && (mapAt < 0 || keyAt < mapAt)
 }
 
 // explicitMapOffsets is explicitByteRangeOffsets for EXT-X-MAP, whose byte

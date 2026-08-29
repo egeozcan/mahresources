@@ -86,6 +86,8 @@ type Options struct {
 	// SegmentRetries is how many extra attempts one segment gets. Segment
 	// servers under load 503 routinely, and a single failure at segment 340 of
 	// 380 otherwise discards the whole transfer.
+	//
+	// Zero means the default; a negative value means none.
 	SegmentRetries int
 	// MuxTimeout bounds the ffmpeg mux. Zero uses defaultMuxTimeout.
 	MuxTimeout time.Duration
@@ -124,6 +126,13 @@ func (opt Options) withDefaults() Options {
 	}
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = d.Concurrency
+	}
+	// Zero is "unset", not "no retries": every production caller leaves this
+	// field alone, so treating it as none meant the documented default of two
+	// never applied anywhere. A caller that genuinely wants no retry passes a
+	// negative value.
+	if opt.SegmentRetries == 0 {
+		opt.SegmentRetries = d.SegmentRetries
 	}
 	if opt.SegmentRetries < 0 {
 		opt.SegmentRetries = 0
@@ -323,7 +332,7 @@ func readPlaylistText(head []byte, body io.Reader) (string, error) {
 // directory, so resolving "segment.ts" against the URL we asked for produces a
 // 404 at best and somebody else's file at worst.
 func fetchText(ctx context.Context, d Deps, url string) (string, string, error) {
-	rc, resp, err := get(ctx, d, fetchTarget{url: url})
+	rc, resp, _, err := get(ctx, d, fetchTarget{url: url})
 	if err != nil {
 		return "", "", err
 	}
@@ -420,33 +429,33 @@ func finalURL(resp *http.Response, requested string) string {
 // The returned reader is already positioned and bounded: a server that ignores
 // Range and answers 200 with the whole object is handled by skipping and
 // truncating here, so a caller never has to wonder which it got.
-func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Response, error) {
+func get(ctx context.Context, d Deps, t fetchTarget) (body io.ReadCloser, resp *http.Response, rangeIgnored bool, err error) {
 	// Every request, not just the one the caller handed us. This is the layer
 	// the playlist would otherwise walk straight past.
 	if d.CheckURL == nil {
-		return nil, nil, errors.New("refusing to fetch: no network policy was supplied for this download")
+		return nil, nil, false, errors.New("refusing to fetch: no network policy was supplied for this download")
 	}
 	if err := d.CheckURL(t.url); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.url, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if t.hasRange() {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", t.offset, t.offset+t.length-1))
 	}
-	resp, err := d.Client.Do(req)
+	resp, err = d.Client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = resp.Body.Close()
-		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, nil, false, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	body := idleGuard(resp.Body, d.IdleTimeout)
+	body = idleGuard(resp.Body, d.IdleTimeout)
 
 	if t.hasRange() {
 		if resp.StatusCode == http.StatusPartialContent {
@@ -459,29 +468,28 @@ func get(ctx context.Context, d Deps, t fetchTarget) (io.ReadCloser, *http.Respo
 			start, ok := contentRangeStart(resp.Header.Get("Content-Range"))
 			if !ok {
 				_ = body.Close()
-				return nil, nil, fmt.Errorf("the server answered a partial response with no usable Content-Range for bytes %d-%d", t.offset, t.offset+t.length-1)
+				return nil, nil, false, fmt.Errorf("the server answered a partial response with no usable Content-Range for bytes %d-%d", t.offset, t.offset+t.length-1)
 			}
 			if start != t.offset {
 				_ = body.Close()
-				return nil, nil, fmt.Errorf("the server answered byte %d for a request that asked for byte %d", start, t.offset)
+				return nil, nil, false, fmt.Errorf("the server answered byte %d for a request that asked for byte %d", start, t.offset)
 			}
 		} else {
-			// The server ignored the Range and sent the whole object. Storing
-			// that for each of a hundred sub-ranges would multiply one file
-			// into a hundred copies of itself, so the range is applied here.
-			if _, err := io.CopyN(io.Discard, body, t.offset); err != nil {
-				_ = body.Close()
-				return nil, nil, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
-			}
+			// The server ignored the Range and sent the whole object. The
+			// caller applies the range itself, charging the skipped bytes
+			// against the download's budget: they cross the network exactly as
+			// the kept ones do, and discarding them here meant a playlist of
+			// one-byte ranges at gigabyte offsets could pull down gigabytes
+			// under a one-byte cap.
+			rangeIgnored = true
 		}
-		// Bounded either way: a 206 whose body runs past the range it promised
-		// is the same corruption as a 200 nobody sliced.
-		return struct {
-			io.Reader
-			io.Closer
-		}{io.LimitReader(body, t.length), body}, resp, nil
+		// Not bounded here: the caller charges what it reads and applies the
+		// range, so bounding it here would hide the skipped bytes from the
+		// budget. A 206 that runs past the range it promised is truncated by
+		// the caller in the same step.
+		return body, resp, rangeIgnored, nil
 	}
-	return body, resp, nil
+	return body, resp, false, nil
 }
 
 // downloadInto fetches one media playlist's parts into its own subdirectory of
@@ -647,7 +655,7 @@ func isPermanent(err error) bool {
 }
 
 func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, opt Options, total *atomic.Int64) (int64, error) {
-	rc, _, err := get(ctx, d, t)
+	rc, _, rangeIgnored, err := get(ctx, d, t)
 	if err != nil {
 		return 0, err
 	}
@@ -661,7 +669,29 @@ func fetchToFileOnce(ctx context.Context, d Deps, t fetchTarget, path string, op
 
 	// The budget is charged as bytes land, not after: a single segment served
 	// as an endless stream would otherwise defeat the whole cap.
-	n, err := io.Copy(f, &budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes})
+	src := io.Reader(&budgetReader{r: rc, total: total, limit: opt.MaxTotalBytes})
+
+	if rangeIgnored {
+		// Charged, not discarded: these bytes crossed the network too, and
+		// skipping them for free let a playlist of one-byte ranges at gigabyte
+		// offsets pull down gigabytes under a one-byte cap.
+		if _, err := io.CopyN(io.Discard, src, t.offset); err != nil {
+			return 0, fmt.Errorf("could not skip to byte %d: %w", t.offset, err)
+		}
+	}
+	if t.hasRange() {
+		// Applied to a 206 as well: one that runs past the range it promised is
+		// the same corruption as a 200 nobody sliced.
+		src = io.LimitReader(src, t.length)
+	}
+	if t.maxBytes > 0 {
+		// One byte past the ceiling, so exceeding it is detectable rather than
+		// silently truncated -- and stopped there, rather than after the whole
+		// of whatever a hostile endpoint felt like sending.
+		src = io.LimitReader(src, t.maxBytes+1)
+	}
+
+	n, err := io.Copy(f, src)
 	if err != nil {
 		return 0, err
 	}

@@ -150,7 +150,7 @@ func TestImplicitByteRangeOffsetsAdvance(t *testing.T) {
 		"#EXT-X-BYTERANGE:200\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestExplicitByteRangeOffsetZeroIsKept(t *testing.T) {
 		"#EXT-X-BYTERANGE:100@100\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-BYTERANGE:50@0\n#EXTINF:1.0,\nall.ts\n" +
 		"#EXT-X-ENDLIST\n"
-	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,9 @@ func dirSize(t *testing.T, dir, prefix string) int64 {
 }
 
 // TestARangeIgnoringServerIsSlicedLocally. A server that answers 200 with the
-// whole object would otherwise store that object once per sub-range.
+// whole object would otherwise store that object once per sub-range -- and the
+// bytes it skips are charged to the budget, because they crossed the network
+// exactly as the kept ones did.
 func TestARangeIgnoringServerIsSlicedLocally(t *testing.T) {
 	body := []byte(strings.Repeat("A", 100) + strings.Repeat("B", 100))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,16 +244,28 @@ func TestARangeIgnoringServerIsSlicedLocally(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := deps()
-	rc, _, err := get(context.Background(), d, fetchTarget{url: srv.URL + "/all.ts", offset: 100, length: 100})
+	path := filepath.Join(t.TempDir(), "seg.ts")
+	var spent atomicInt64
+	n, err := fetchToFileOnce(context.Background(), deps(),
+		fetchTarget{url: srv.URL + "/all.ts", offset: 100, length: 100}, path, Defaults(), spent.ptr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
-	got := make([]byte, 200)
-	n := readAllUpTo(rc, got)
-	if n != 100 || strings.Trim(string(got[:n]), "B") != "" {
-		t.Fatalf("read %d bytes %q, want the 100 requested bytes", n, got[:n])
+	if n != 100 {
+		t.Fatalf("kept %d bytes, want the 100 requested", n)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Trim(string(got), "B") != "" {
+		t.Fatalf("stored %q, want the second half", got)
+	}
+	// 200 across the wire, not 100: skipping for free let a playlist of
+	// one-byte ranges at gigabyte offsets pull down gigabytes under a
+	// one-byte cap.
+	if charged := spent.ptr().Load(); charged != 200 {
+		t.Errorf("charged %d bytes to the budget, want the 200 that crossed the network", charged)
 	}
 }
 
@@ -421,7 +435,7 @@ func TestA206FromTheWrongOffsetIsRefused(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/all.ts", offset: 500, length: 100})
+	_, _, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/all.ts", offset: 500, length: 100})
 	if err == nil {
 		t.Fatal("a 206 answering byte 0 was accepted for a request that asked for byte 500")
 	}
@@ -440,14 +454,36 @@ func TestAnOversized206IsTruncated(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rc, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/all.ts", offset: 0, length: 100})
+	var spent atomicInt64
+	n, err := fetchToFileOnce(context.Background(), deps(),
+		fetchTarget{url: srv.URL + "/all.ts", offset: 0, length: 100},
+		filepath.Join(t.TempDir(), "seg.ts"), Defaults(), spent.ptr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
-	got := make([]byte, 1000)
-	if n := readAllUpTo(rc, got); n != 100 {
-		t.Errorf("read %d bytes from a 100-byte sub-range", n)
+	if n != 100 {
+		t.Errorf("kept %d bytes from a 100-byte sub-range", n)
+	}
+}
+
+// TestAnOversizedKeyStopsAtTheCeiling. The ceiling used to be checked after the
+// copy, so a hostile key endpoint could spend the whole download budget before
+// being refused.
+func TestAnOversizedKeyStopsAtTheCeiling(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytesRepeat('K', 64*1024))
+	}))
+	defer srv.Close()
+
+	var spent atomicInt64
+	_, err := fetchToFileOnce(context.Background(), deps(),
+		fetchTarget{url: srv.URL + "/k.bin", maxBytes: maxKeyBytes},
+		filepath.Join(t.TempDir(), "k.bin"), Defaults(), spent.ptr())
+	if err == nil {
+		t.Fatal("a 64 KiB key was accepted")
+	}
+	if charged := spent.ptr().Load(); charged > maxKeyBytes*2 {
+		t.Errorf("read %d bytes before refusing a %d byte ceiling", charged, maxKeyBytes)
 	}
 }
 
@@ -479,7 +515,7 @@ func TestA206WithNoContentRangeIsRefused(t *testing.T) {
 			_, _ = w.Write(bytesRepeat('X', 100))
 		}))
 
-		_, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/a.ts", offset: 500, length: 100})
+		_, _, _, err := get(context.Background(), deps(), fetchTarget{url: srv.URL + "/a.ts", offset: 500, length: 100})
 		if err == nil {
 			t.Errorf("a 206 with Content-Range %q was accepted", header)
 		}
@@ -496,7 +532,7 @@ func TestAChangedInitializationRangeIsRefused(t *testing.T) {
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@0"` + "\n#EXTINF:1.0,\na.m4s\n" +
 		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@100"` + "\n#EXTINF:1.0,\nb.m4s\n" +
 		"#EXT-X-ENDLIST\n"
-	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text))
+	_, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(), explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	assertUnsupported(t, err, "initialization")
 }
 
@@ -512,7 +548,7 @@ func TestAKeyStaysInEffectUntilAnotherReplacesIt(t *testing.T) {
 		"#EXTINF:1.0,\nc.ts\n#EXTINF:1.0,\nd.ts\n" +
 		"#EXT-X-ENDLIST\n"
 	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +576,7 @@ func TestAMidStreamMethodNoneClearsTheKey(t *testing.T) {
 		"#EXTINF:1.0,\nb.ts\n#EXTINF:1.0,\nc.ts\n" +
 		"#EXT-X-ENDLIST\n"
 	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +600,7 @@ func TestAnEncryptedInitialisationSectionGetsItsKeyFirst(t *testing.T) {
 		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
 		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
 	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
-		explicitByteRangeOffsets(text), explicitMapOffsets(text))
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,4 +666,65 @@ func TestAStalledSegmentFailsOnTheIdleTimeout(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("the stall was detected after %s, not by the idle timeout", elapsed)
 	}
+}
+
+// TestAStreamThatStartsInTheClearIsNotDecrypted. The parser publishes the first
+// EXT-X-KEY as a playlist-level default wherever it appears, so seeding from it
+// handed a key to the segments that came *before* the tag.
+func TestAStreamThatStartsInTheClearIsNotDecrypted(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n" +
+		"#EXTINF:1.0,\nclear.ts\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
+		"#EXTINF:1.0,\nencrypted.ts\n#EXT-X-ENDLIST\n"
+	m := parseMedia(t, text)
+	if m.segments[0].key != nil {
+		t.Error("the clear segment was given a key — its bytes would be run through a decryptor")
+	}
+	if m.segments[1].key == nil {
+		t.Error("the encrypted segment lost its key")
+	}
+}
+
+// TestAnExplicitInitialMapRangeIsAccepted. The parser publishes the first
+// EXT-X-MAP twice -- once on the playlist and once on the segment it precedes
+// -- so a check that consumed one explicit-offset marker per publication saw
+// none left for the second and refused an ordinary ranged fMP4 playlist.
+func TestAnExplicitInitialMapRangeIsAccepted(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-MAP:URI="all.mp4",BYTERANGE="100@0"` + "\n" +
+		"#EXT-X-BYTERANGE:200@100\n#EXTINF:1.0,\nall.mp4\n#EXT-X-ENDLIST\n"
+	m := parseMedia(t, text)
+	if m.initSegment == nil {
+		t.Fatal("the initialization section was dropped")
+	}
+	if m.initSegment.offset != 0 || m.initSegment.length != 100 {
+		t.Errorf("the initialization section is bytes %d+%d, want 0+100", m.initSegment.offset, m.initSegment.length)
+	}
+}
+
+// TestAPlaintextMapIsNotGivenALaterKey. A key written *below* the map applies
+// to the segments, not to the initialization section -- and both attach to the
+// same segment, so only the raw order distinguishes them.
+func TestAPlaintextMapIsNotGivenALaterKey(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k1.bin"` + "\n" +
+		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
+	m := parseMedia(t, text)
+	if m.initKey != nil {
+		t.Error("a plaintext initialization section was given the segments' key — it would decode to nothing")
+	}
+	if m.segments[0].key == nil {
+		t.Error("the segment lost its key")
+	}
+}
+
+func parseMedia(t *testing.T, text string) *media {
+	t.Helper()
+	m, err := readMedia(mustParseMedia(t, text), "https://x/index.m3u8", Defaults(),
+		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyPrecedesMap(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

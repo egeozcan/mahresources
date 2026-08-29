@@ -56,11 +56,6 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 	if err != nil {
 		return nil, err
 	}
-	path, cleanup, err := localOrTempPath(fs, resource.GetCleanLocation())
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
 
 	if reqCtx == nil {
 		reqCtx = context.Background()
@@ -72,6 +67,16 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 	// ungated probe is an unbounded number of concurrent processes reached
 	// through the cheapest surface in the API.
 	runErr, gated := ctx.runVideoTool(reqCtx, resource.ID, mediaProbeTimeout, func(runCtx context.Context) error {
+		// Inside the gate, and under its deadline: on a filesystem with no
+		// local path this copies the whole file, and doing that before taking a
+		// slot meant an unbounded number of concurrent copies, each of which
+		// could outlive the caller's own budget.
+		path, cleanup, err := localOrTempPath(runCtx, fs, resource.GetCleanLocation())
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+
 		cmd := exec.CommandContext(runCtx, ctx.ffprobePath(),
 			"-v", "error",
 			"-print_format", "json",
@@ -147,11 +152,6 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 	if err != nil {
 		return nil, err
 	}
-	path, cleanup, err := localOrTempPath(fs, resource.GetCleanLocation())
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
 
 	if reqCtx == nil {
 		reqCtx = context.Background()
@@ -161,6 +161,13 @@ func (ctx *MahresourcesContext) ExtractVideoFrame(reqCtx context.Context, resour
 	runErr, gated := ctx.runVideoTool(reqCtx, resource.ID,
 		orDefault(ctx.Config.VideoThumbnailTimeout, defaultVideoRunTimeout),
 		func(runCtx context.Context) error {
+			// Inside the gate: see ProbeMedia.
+			path, cleanup, err := localOrTempPath(runCtx, fs, resource.GetCleanLocation())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
 			args := []string{
 				"-nostdin",
 				// Before -i: input seeking, which jumps rather than decoding
@@ -348,6 +355,20 @@ func ownerOrZero(id *uint) uint {
 	return *id
 }
 
+// cancelableReader stops a copy when its context ends. afero readers take no
+// context, so this is the only place to ask.
+type cancelableReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *cancelableReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
 // The fallbacks for a context built from a bare config, which is what the CLI
 // and every test construct. Zero there means "nobody said", and passing it
 // through as a timeout would mean "already expired" -- every frame refused,
@@ -372,7 +393,7 @@ func orDefault(v, fallback time.Duration) time.Duration {
 // this hands back the file itself and cleanup does nothing; on any other
 // (memory, or an alternative backend) it copies to a temp file, which costs a
 // copy and always works.
-func localOrTempPath(fs afero.Fs, location string) (string, func(), error) {
+func localOrTempPath(ctx context.Context, fs afero.Fs, location string) (string, func(), error) {
 	noop := func() {}
 	if path, ok := resolveLocalFilePath(fs, location); ok {
 		return path, noop, nil
@@ -392,7 +413,9 @@ func localOrTempPath(fs afero.Fs, location string) (string, func(), error) {
 		tmp.Close()
 		_ = os.Remove(tmp.Name())
 	}
-	if _, err := io.Copy(tmp, src); err != nil {
+	// Through the context, so a caller whose budget runs out mid-copy stops
+	// rather than finishing a copy nobody is waiting for any more.
+	if _, err := io.Copy(tmp, &cancelableReader{ctx: ctx, r: src}); err != nil {
 		cleanup()
 		return "", noop, err
 	}
