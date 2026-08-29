@@ -40,6 +40,24 @@ func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 	return ctx.requireRole(op, func() bool { return ctx.Principal().CanEditorWrite() })
 }
 
+// requireWriteRole refuses op unless the acting principal may write at all.
+//
+// The role guards above name capabilities above ordinary writing, because the
+// URL-path rule already refuses a guest every mutating endpoint. That rule is
+// the thing a plugin does not go through: a shortcode or an injection runs on
+// a page a *guest* is entitled to read, so plugin code calling a write
+// operation reaches it as the guest, with a scope filter that confines where
+// the write lands and nothing that asks whether it may happen. Scope cannot
+// answer it either -- a guest's own subtree is exactly where the write would
+// land.
+//
+// It is on the operations a plugin surface reaches directly rather than on
+// every write in the tree: the ones below server/ that only a request can
+// reach are already covered by the path rule.
+func (ctx *MahresourcesContext) requireWriteRole(op string) error {
+	return ctx.requireRole(op, func() bool { return ctx.Principal().CanWrite() })
+}
+
 // requireRole is the shared body, and the one place the fail-open rule is
 // stated.
 //

@@ -64,6 +64,17 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	if err := ctx.validatePluginDownloadScope(actorUserID, creator); err != nil {
 		return nil, err
 	}
+	// And whether they may write at all. A download creates a resource, and a
+	// plugin can reach this from a page a read-only principal is merely
+	// reading, where the URL rule that refuses a guest every mutating endpoint
+	// is not in the path. Scope cannot answer it: the guest's own subtree is
+	// exactly where the resource would land.
+	if actorUserID != 0 {
+		scoped := ctx.WithPrincipal(ctx.principalForPluginActor(actorUserID))
+		if err := scoped.requireWriteRole("submit a download"); err != nil {
+			return nil, err
+		}
+	}
 
 	var owner *uint
 	if actorUserID != 0 {

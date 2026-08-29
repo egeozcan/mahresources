@@ -35,6 +35,12 @@ import (
 // file that takes longer than this is pathological rather than large.
 const mediaProbeTimeout = 30 * time.Second
 
+// maxProbeOutput caps what ffprobe may write back. A file's metadata is
+// normally a few kilobytes; a container can carry megabytes of tags, and every
+// byte of it is duplicated again by the JSON decode and once more by the
+// conversion into Lua values.
+const maxProbeOutput = 4 << 20
+
 // maxFrameWidth caps what a plugin may ask for when extracting a frame. The
 // frame comes back as a base64 data URI through the Lua VM, and an 8K still is
 // tens of megabytes of string.
@@ -92,7 +98,7 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 			"-show_streams",
 			path,
 		)
-		cmd.Stdout = &stdout
+		cmd.Stdout = &boundedBuffer{buf: &stdout, limit: maxProbeOutput}
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			if runCtx.Err() != nil {
@@ -110,6 +116,9 @@ func (ctx *MahresourcesContext) ProbeMedia(reqCtx context.Context, resourceId ui
 	}
 
 	var out map[string]any
+	if stdout.Len() >= maxProbeOutput {
+		return nil, fmt.Errorf("this file's metadata is larger than the %d bytes this server will read", maxProbeOutput)
+	}
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		return nil, fmt.Errorf("could not read what ffprobe reported: %w", err)
 	}
@@ -282,6 +291,13 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 // frame extraction would refuse every clip longer than a few minutes. What is
 // bounded is concurrency, and the caller's own context still cancels the work.
 func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceID uint, start, end, comment string) error {
+	// A trim replaces a resource's content. Reached from a plugin, that can
+	// happen on a page a *guest* is merely reading -- an injection or a
+	// shortcode runs as whoever loaded the page, and the URL rule that refuses
+	// a guest every mutating endpoint is not in the path.
+	if err := ctx.requireWriteRole("trim a video"); err != nil {
+		return err
+	}
 	if !ctx.acquireVideoSlot(reqCtx, resourceID) {
 		if err := reqCtx.Err(); err != nil {
 			return err
@@ -307,6 +323,11 @@ func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceI
 // group memberships or its tags: those describe the whole recording, and a
 // caller who wants them can add them to the resource this hands back.
 func (ctx *MahresourcesContext) TrimVideoToNewResource(reqCtx context.Context, resourceID uint, start, end, name string) (*models.Resource, error) {
+	// See trimVideoGated: this creates a resource, which a read-only principal
+	// may not do however it reached here.
+	if err := ctx.requireWriteRole("trim a video into a new resource"); err != nil {
+		return nil, err
+	}
 	startSec, endSec, err := parseTrimRange(start, end)
 	if err != nil {
 		return nil, err
@@ -364,6 +385,25 @@ func ownerOrZero(id *uint) uint {
 		return 0
 	}
 	return *id
+}
+
+// boundedBuffer stops collecting once the limit is reached, without failing the
+// write -- a subprocess whose stdout errors mid-run reports a broken pipe
+// rather than the reason. The caller checks the length afterwards.
+type boundedBuffer struct {
+	buf   *bytes.Buffer
+	limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := b.limit - b.buf.Len(); room > 0 {
+		if len(p) <= room {
+			b.buf.Write(p)
+		} else {
+			b.buf.Write(p[:room])
+		}
+	}
+	return len(p), nil
 }
 
 // cancelableReader stops a copy when its context ends. afero readers take no

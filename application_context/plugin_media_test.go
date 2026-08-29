@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 )
 
 // mah.media against a real PluginManager, a real database and real ffmpeg. The
@@ -392,5 +395,99 @@ end
 	}
 	if !strings.Contains(out, "transaction") {
 		t.Errorf("the refusal %q does not say what is wrong", out)
+	}
+}
+
+// TestPluginMediaTrimRefusesAReadOnlyPrincipal is the authorization case a
+// scope filter cannot answer. A shortcode or an injection runs on a page a
+// *guest* is entitled to read, as that guest, so a plugin calling trim reaches
+// a write with the URL rule that refuses guests every mutating endpoint nowhere
+// in the path -- and the resource it would replace is inside the guest's own
+// subtree, which is exactly where a scope filter says a write may land.
+func TestPluginMediaTrimRefusesAReadOnlyPrincipal(t *testing.T) {
+	ffmpeg := mediaTestFfmpeg(t)
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "media", "hooks", "inject" } }
+local report = "not-run"
+function init()
+    mah.on("after_note_create", function(data)
+        local ok, err = mah.media.trim(tonumber(data.description) or 0, "0", "1", "clip")
+        if ok then report = "trimmed" else report = tostring(err) end
+        return data
+    end)
+    mah.inject("page_top", function(c) return report end)
+end
+`})
+	ctx.Config.FfmpegPath = ffmpeg
+
+	group := &models.Group{Name: "readable"}
+	if err := ctx.db.Create(group).Error; err != nil {
+		t.Fatal(err)
+	}
+	res := putVideo(t, ctx, "recording", group, tinyVideo(t, ffmpeg))
+
+	guest, err := ctx.CreateUser(&UserInput{
+		Username: "readonly", Password: "password1",
+		Role: models.RoleGuest, ScopeGroupId: &group.ID,
+	})
+	if err != nil {
+		t.Fatalf("create guest: %v", err)
+	}
+
+	// The write is triggered the way a plugin's own code would be: an actor id
+	// on the invocation, which is what a render seam carries.
+	adapter := &pluginDBAdapter{ctx: ctx}
+	q, _ := adapter.BindInvocation(&plugin_system.Invocation{ActorUserID: guest.ID})
+	mp, ok := q.(plugin_system.MediaProcessor)
+	if !ok {
+		t.Fatal("the bound adapter is not a MediaProcessor")
+	}
+
+	if err := mp.TrimVideoClip(context.Background(), res.ID, "0", "1", "clip"); err == nil {
+		t.Fatal("a read-only principal replaced a resource's content through mah.media.trim")
+	} else if !errors.Is(err, ErrRoleCapability) {
+		t.Errorf("the refusal was %v, want ErrRoleCapability so it maps to 403", err)
+	}
+
+	var versions int64
+	if err := ctx.db.Table("resource_versions").Where("resource_id = ?", res.ID).Count(&versions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if versions != 0 {
+		t.Errorf("the guest's refused trim still wrote %d versions", versions)
+	}
+}
+
+// TestPluginDownloadSubmitRefusesAReadOnlyPrincipal is the same rule on the
+// other new write surface: a download creates a resource.
+func TestPluginDownloadSubmitRefusesAReadOnlyPrincipal(t *testing.T) {
+	ctx := newTwoPluginContext(t, map[string]string{"media": `
+plugin = { name = "media", version = "1.0", api_version = 1, capabilities = { "db:write" } }
+function init() end
+`})
+
+	group := &models.Group{Name: "readable"}
+	if err := ctx.db.Create(group).Error; err != nil {
+		t.Fatal(err)
+	}
+	guest, err := ctx.CreateUser(&UserInput{
+		Username: "readonly-dl", Password: "password1",
+		Role: models.RoleGuest, ScopeGroupId: &group.ID,
+	})
+	if err != nil {
+		t.Fatalf("create guest: %v", err)
+	}
+
+	_, err = ctx.SubmitDownload("media", guest.ID, "https://example.invalid/v.mp4",
+		map[string]any{"owner_id": float64(group.ID)})
+	if err == nil {
+		t.Fatal("a read-only principal queued a download that would create a resource")
+	}
+	if !errors.Is(err, ErrRoleCapability) {
+		t.Errorf("the refusal was %v, want ErrRoleCapability", err)
+	}
+	if jobs := ctx.DownloadManager().GetJobs(); len(jobs) != 0 {
+		t.Errorf("%d jobs were queued for a read-only principal", len(jobs))
 	}
 }

@@ -165,8 +165,14 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 	// megabytes before a check that runs on the result could refuse it. A few
 	// of those at once is the server's memory. This is a *bound on parsing*;
 	// readMedia still enforces the same limit on what it accepts.
+	// Both kinds of entry, because both are materialized: a master playlist
+	// carries no #EXTINF at all, so counting only those left a 16 MiB list of
+	// several hundred thousand EXT-X-STREAM-INF variants to be built in full.
 	if n := strings.Count(text, "#EXTINF:"); n > opt.MaxSegments {
 		return nil, "", unsupported("this HLS playlist lists %d segments, which is over this server's limit of %d", n, opt.MaxSegments)
+	}
+	if n := strings.Count(text, "#EXT-X-STREAM-INF:"); n > opt.MaxSegments {
+		return nil, "", unsupported("this HLS master playlist lists %d renditions, which is over this server's limit of %d", n, opt.MaxSegments)
 	}
 
 	list, listType, err := m3u8.DecodeFrom(strings.NewReader(text), false)
