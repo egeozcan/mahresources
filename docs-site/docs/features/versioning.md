@@ -148,9 +148,9 @@ While Align is armed the arrow keys move the version rather than the reveal posi
 
 ##### Measuring changed pixels
 
-Press **Pixel diff** in any overlay mode to add a magenta mask over changed pixels. The comparison banner then reports the percentage of the painted overlap that changed. Pixels painted by only one version are excluded -- the banner's size and dimensions already describe missing area -- while every visible colour difference inside the overlap counts. Partially transparent pixels are compared as they appear over the frame background, so two different RGBA values that paint the same colour remain unchanged. The mask stays armed when you switch modes and follows scale, anchor, flip and manual alignment.
+Press **Pixel diff** in any overlay mode to add a magenta mask over changed pixels. The comparison banner then reports the percentage of the painted overlap that changed. Pixels painted by only one version are excluded -- the banner's size and dimensions already describe missing area -- while every visible colour difference inside the overlap counts. Partially transparent pixels are compared as they appear over the frame background, so two different RGBA values that paint the same colour remain unchanged. In flash-safe Blink, the measurement follows the grey background and reduced contrast too. The mask stays armed when you switch modes and follows scale, anchor, flip and manual alignment.
 
-For a large pair, the page shows the combined megapixel count and asks before computing. A pair with no browser-readable dimensions, such as an unsupported HEIC or TIFF, cannot be measured pixel by pixel; the control remains available to focus but states why it cannot act.
+For a large pair, the page shows the combined megapixel count and asks before computing. Pixel diff does not support HEIC or TIFF, even where a browser can display one of those formats; the control remains available to focus but states why it cannot act.
 
 #### Text Comparison
 

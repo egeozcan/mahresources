@@ -34,6 +34,9 @@ const ALIGN_ZOOM_STEP_LARGE = 0.1;
 const BLINK_RATE_MIN = 2;
 const BLINK_RATE_MAX = 8;
 const BLINK_RATE_DEFAULT = 4;
+// Kept in lockstep with `.compare-box--flash-safe` in public/index.css.
+const BLINK_FLASH_BACKDROP = [128, 128, 128];
+const BLINK_FLASH_CONTRAST = 0.08;
 
 // The zero-width space that makes a repeated announcement a *changed* string.
 // `aria-live` fires on text change, so nudging away from a value and back would
@@ -80,15 +83,22 @@ function normalizedContentType(value) {
  * the mask colour where changed, transparent elsewhere) so the canvas half
  * paints exactly what this counted -- one pixel loop, not two.
  */
-export function heatMapDiff(lead, trail, threshold) {
+export function heatMapDiff(lead, trail, threshold, rendering = {}) {
   let changed = 0;
   let overlap = 0;
   const n = Math.min(lead.length, trail.length);
   const mask = new Uint8ClampedArray(n);
-  const painted = (data, index, channel) => Math.round((
-    data[index + channel] * data[index + 3]
-    + HEATMAP_BACKDROP[channel] * (255 - data[index + 3])
-  ) / 255);
+  const backdrop = rendering.backdrop || HEATMAP_BACKDROP;
+  const contrast = rendering.contrast ?? 1;
+  const painted = (data, index, channel) => {
+    const composite = Math.round((
+      data[index + channel] * data[index + 3]
+      + backdrop[channel] * (255 - data[index + 3])
+    ) / 255);
+    // CSS contrast pivots around half intensity after the element has painted
+    // its source over its own background.
+    return Math.max(0, Math.min(255, Math.round((composite - 127.5) * contrast + 127.5)));
+  };
   for (let i = 0; i < n; i += 4) {
     if (lead[i + 3] === 0 || trail[i + 3] === 0) continue;
     overlap++;
@@ -359,6 +369,7 @@ export function imageCompare({
     blinking: false,
     blinkRate: BLINK_RATE_DEFAULT,
     _blinkTimer: null,
+    _blinkAppliedRate: BLINK_RATE_DEFAULT,
     // Resolved lazily from `prefers-reduced-motion` and updated by its change
     // listener, so a reader who toggles the OS preference mid-play is answered
     // too. Null until first asked; the unit suite (no DOM) never asks.
@@ -1363,7 +1374,7 @@ export function imageCompare({
 
     get heatMapUnavailableTitle() {
       if (this.heatMapUnsupportedFormat) {
-        return 'This browser cannot decode HEIC or TIFF pixels, so pixel diff is unavailable.';
+        return 'Pixel diff does not support HEIC or TIFF; Difference and Blink remain available.';
       }
       if (!this.scaleAvailable) {
         return 'One of the two versions reports no dimensions, so there is nothing to compare pixel by pixel.';
@@ -1827,6 +1838,7 @@ export function imageCompare({
       if (!this.blinkAvailable) return;
       this.blinking = true;
       this._startBlinkInterval();
+      if (this.blinkFlashSafe) this._scheduleHeatMapRepaint(true);
       this._announceBlinkState();
     },
 
@@ -1835,16 +1847,19 @@ export function imageCompare({
      *  an interval tick is neither. */
     _startBlinkInterval() {
       const rate = Math.max(BLINK_RATE_MIN, Math.min(BLINK_RATE_MAX, this.blinkRate || BLINK_RATE_DEFAULT));
+      this._blinkAppliedRate = rate;
       this._blinkTimer = setInterval(() => { this.showLeft = !this.showLeft; }, Math.round(1000 / rate));
     },
 
     pauseBlink() {
       if (!this.blinking) return;
+      const wasFlashSafe = this.blinkFlashSafe;
       this.blinking = false;
       if (this._blinkTimer !== null) {
         clearInterval(this._blinkTimer);
         this._blinkTimer = null;
       }
+      if (wasFlashSafe) this._scheduleHeatMapRepaint(true);
       this._announceBlinkState();
     },
 
@@ -1852,8 +1867,10 @@ export function imageCompare({
       // Restart only an interval that is running; a rate set while stopped
       // takes effect at the next start.
       if (this.blinking) {
+        const wasFlashSafe = this._blinkAppliedRate > 3;
         if (this._blinkTimer !== null) clearInterval(this._blinkTimer);
         this._startBlinkInterval();
+        if (wasFlashSafe !== this.blinkFlashSafe) this._scheduleHeatMapRepaint(true);
       }
       // A rate change is one discrete event, announced once -- never once
       // per `input` the range fires while the reader drags it. While paused,
@@ -1923,10 +1940,19 @@ export function imageCompare({
       this.heatMapConfirmed = true;
       this.heatMapNeedsConfirm = false;
       this.toggleHeatMap();
+      this._restoreHeatMapToggleFocus();
     },
 
     dismissHeatMapConfirm() {
       this.heatMapNeedsConfirm = false;
+      this._restoreHeatMapToggleFocus();
+    },
+
+    _restoreHeatMapToggleFocus() {
+      if (typeof this.$nextTick !== 'function') return;
+      this.$nextTick(() => {
+        this._root?.querySelector('[data-heatmap-toggle]')?.focus();
+      });
     },
 
     /**
@@ -2074,7 +2100,12 @@ export function imageCompare({
 
       const leadData = contexts[0].getImageData(0, 0, sample.w, sample.h);
       const trailData = contexts[1].getImageData(0, 0, sample.w, sample.h);
-      const { changed, overlap, mask } = heatMapDiff(leadData.data, trailData.data, HEATMAP_THRESHOLD);
+      const rendering = this.blinkFlashSafe
+        ? { backdrop: BLINK_FLASH_BACKDROP, contrast: BLINK_FLASH_CONTRAST }
+        : undefined;
+      const { changed, overlap, mask } = heatMapDiff(
+        leadData.data, trailData.data, HEATMAP_THRESHOLD, rendering,
+      );
 
       // The mask is already in pixel order. Pick the canvas by component state,
       // not rendered visibility: Alpine applies `x-show` after the state change,

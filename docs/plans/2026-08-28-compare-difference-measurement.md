@@ -96,6 +96,8 @@ The final pre-commit re-measurement is unchanged: **3.1 XS, 3.2 M at the top of 
 
 **Independent review round 2 also found majors, all addressed before round 3:** heatmap samples now compare the visible RGB composed over the real frame backdrop while retaining source alpha for the overlap rule; sparse formatting is symmetric at both endpoints (`<0.1%` / `>99.9%`); HEIC/TIFF media types are normalized and cover common aliases and parameters; the large-pair gate is a polite status and moves focus to **Compute anyway**; a paused Blink rate change is announced; and one test combines scale × anchor × offset × flip. Axe now scans the complete `.compare-toolbar` in Difference, active Blink, and armed Pixel-diff states, plus the visible gate. A browser screenshot regression proves identical partially transparent versions render black, rather than merely asserting the CSS declaration.
 
+**Independent review round 3 found two standards majors, both addressed before round 4:** flash-safe Blink now hands the heatmap its grey backdrop and 8% contrast transform and schedules a discrete repaint when entering/leaving that rendering; a partially-transparent browser fixture proves a normal-frame 100% difference collapses to 0% under the filter and returns on pause. Both large-pair gate exits now return focus to **Pixel diff**, with the E2E walking dismiss and confirm. The refusal text and docs now state the durable policy (Pixel diff does not support HEIC/TIFF) instead of blaming the current browser decoder.
+
 ## Order
 
 | Batch | Contents |

@@ -152,7 +152,7 @@
         {# the two versions disagree about, and reports the share of the #}
         {# overlap that changed in the summary banner. Available in every #}
         {# overlay mode because it reads what each mode paints. #}
-        <button type="button" @click="toggleHeatMap()" class="compare-swap-btn-sm"
+        <button type="button" @click="toggleHeatMap()" class="compare-swap-btn-sm" data-heatmap-toggle
                 x-show="mode !== 'side-by-side'"
                 :aria-pressed="heatMapOn"
                 :aria-disabled="!heatMapAvailable"

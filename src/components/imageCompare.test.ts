@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error -- plain JS module with no type declarations
 import {
-  imageCompare, countChanged, formatHeatMapPercent, heatMapCanvasTransform,
+  imageCompare, countChanged, formatHeatMapPercent, heatMapCanvasTransform, heatMapDiff,
 } from './imageCompare.js';
 
 /**
@@ -2803,6 +2803,23 @@ describe('the blink comparator', () => {
     expect(c.blinkAnnouncement).toBe('');
   });
 
+  test('flash-safe playback changes repaint an armed heatmap', () => {
+    vi.useFakeTimers();
+    try {
+      const c = blinkComponent();
+      c.heatMapOn = true;
+      c.blinkRate = 4;
+      const repaint = vi.spyOn(c, '_scheduleHeatMapRepaint');
+      c.toggleBlink();
+      expect(repaint).toHaveBeenLastCalledWith(true);
+      c.pauseBlink();
+      expect(repaint).toHaveBeenCalledTimes(2);
+      expect(repaint).toHaveBeenLastCalledWith(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a paused rate change announces the selected rate without starting', () => {
     const c = blinkComponent();
     c.blinkRate = 2;
@@ -3023,6 +3040,16 @@ describe('the pixel-diff heatmap: pure math', () => {
     const translucentBlack = new Uint8ClampedArray([0, 0, 0, 128]);
     const equivalentOpaque = new Uint8ClampedArray([125, 125, 124, 255]);
     expect(countChanged(translucentBlack, equivalentOpaque, 0)).toEqual({ changed: 0, overlap: 1 });
+  });
+
+  test('counting: flash-safe Blink compares its filtered grey frame', () => {
+    const black = new Uint8ClampedArray([0, 0, 0, 255]);
+    const almostBlack = new Uint8ClampedArray([1, 1, 1, 255]);
+    expect(heatMapDiff(black, almostBlack, 0).changed).toBe(1);
+    expect(heatMapDiff(black, almostBlack, 0, {
+      backdrop: [128, 128, 128],
+      contrast: 0.08,
+    }).changed).toBe(0);
   });
 
   test('counting: a pixel only one version paints belongs to nobody', () => {

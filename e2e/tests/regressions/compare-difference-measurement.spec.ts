@@ -23,6 +23,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   let fixtureDir: string;
   let pairResourceId: number;
   let alphaResourceId: number;
+  let flashPairResourceId: number;
   let heicResourceId: number;
   let tiffResourceId: number;
   let diffPairResourceId: number;
@@ -97,6 +98,21 @@ test.describe.serial('compare page: difference and measurement', () => {
     await uploadVersion(request, baseURL!, alphaResourceId,
       'pkg3-alpha-v2.png', 'image/png', alphaV2.buffer, 'Same translucent pixels');
 
+    // Two partially transparent colours that differ over the normal stone
+    // frame but collapse to one value through Blink's flash-safe rendering.
+    const flashV1 = marked('compare-flash-v1.png', 'v1');
+    const flashResource = await apiClient.createResource({
+      filePath: flashV1.path,
+      contentType: 'image/png',
+      exactBytes: true,
+      name: `Pkg3 Flash Pair ${runId}`,
+      ownerId: ownerGroupId,
+    });
+    flashPairResourceId = flashResource.ID;
+    const flashV2 = marked('compare-flash-v2.png', 'v2');
+    await uploadVersion(request, baseURL!, flashPairResourceId,
+      'pkg3-flash-v2.png', 'image/png', flashV2.buffer, 'Collapsed by safe contrast');
+
     // Neither Go nor Chromium can decode HEIC, so no coordinate space exists
     // on either side: 3.2 must refuse, 3.3 may still work.
     const heicV1 = marked('compare-heic-undecodable.heic', 'v1');
@@ -159,7 +175,7 @@ test.describe.serial('compare page: difference and measurement', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
-    for (const id of [pairResourceId, alphaResourceId, heicResourceId, tiffResourceId, diffPairResourceId, largePairResourceId]) {
+    for (const id of [pairResourceId, alphaResourceId, flashPairResourceId, heicResourceId, tiffResourceId, diffPairResourceId, largePairResourceId]) {
       if (id) {
         try { await apiClient.deleteResource(id); } catch { /* already gone */ }
       }
@@ -415,6 +431,28 @@ test.describe.serial('compare page: difference and measurement', () => {
       expect(slow.length).toBeLessThanOrEqual(5);
     });
 
+    test('an armed heatmap follows flash-safe rendering and its partial alpha', async ({ page }) => {
+      await page.goto(`/resource/compare?r1=${flashPairResourceId}&v1=1&v2=2`);
+      await page.getByRole('radio', { name: 'Toggle' }).click();
+      await waitDecoded(page);
+      const heat = page.getByRole('button', { name: 'Pixel diff' });
+      const stat = page.locator('.compare-summary .compare-stat', { hasText: 'Pixels changed' });
+      await heat.click();
+      await expect(stat).toHaveText(/Pixels changed\s+100%/);
+
+      await blinkButton(page).click();
+      await expect(stat).toHaveText(/Pixels changed\s+0%/);
+      const maskAlpha = () => page.evaluate(() => {
+        const canvas = document.querySelector('canvas[data-compare-heatmap="toggle"]') as HTMLCanvasElement;
+        const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+        return data.filter((_value, index) => index % 4 === 3 && data[index] > 0).length;
+      });
+      await expect.poll(maskAlpha).toBe(0);
+
+      await blinkButton(page).click();
+      await expect(stat).toHaveText(/Pixels changed\s+100%/);
+    });
+
     test('prefers-reduced-motion refuses with a stated reason', async ({ page }) => {
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
@@ -650,8 +688,16 @@ test.describe.serial('compare page: difference and measurement', () => {
         .analyze();
       expect(results.violations).toEqual([]);
 
+      await page.getByRole('button', { name: 'Not now' }).click();
+      await expect(gate).toBeHidden();
+      await expect(heatButton(page)).toBeFocused();
+
+      await heatButton(page).click();
+      await expect(gate).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Compute anyway' })).toBeFocused();
       await page.getByRole('button', { name: 'Compute anyway' }).click();
       await expect(gate).toBeHidden();
+      await expect(heatButton(page)).toBeFocused();
       await expect(heatButton(page)).toHaveAttribute('aria-pressed', 'true');
       await expect(bannerStat(page)).toBeVisible();
       // The pair is flat colour with two small distinct markers: a tiny share.
