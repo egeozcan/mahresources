@@ -22,6 +22,7 @@ package hls
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/grafov/m3u8"
@@ -267,23 +268,29 @@ func audioRenditionURI(group string, alts []*m3u8.Alternative) string {
 	if group == "" {
 		return ""
 	}
-	fallback := ""
+	// The rendition is chosen first and its URI read second. Returning early on
+	// the first URI-less entry meant a group listing a multiplexed alternative
+	// ahead of the declared default silently used the multiplexed track --
+	// which is a different language, not a different encoding of the same one.
+	var chosen *m3u8.Alternative
 	for _, a := range alts {
 		if a == nil || a.GroupId != group || !strings.EqualFold(a.Type, "AUDIO") {
 			continue
 		}
-		if a.URI == "" {
-			// Multiplexed into the video segments already.
-			return ""
-		}
 		if a.Default {
-			return a.URI
+			chosen = a
+			break
 		}
-		if fallback == "" {
-			fallback = a.URI
+		if chosen == nil {
+			chosen = a
 		}
 	}
-	return fallback
+	if chosen == nil {
+		return ""
+	}
+	// No URI means this rendition is already multiplexed into the video
+	// segments, which is the case that needs nothing extra.
+	return chosen.URI
 }
 
 // resolutionHeight reads the height out of an "WxH" RESOLUTION attribute.
@@ -311,7 +318,7 @@ func readMedia(pl *m3u8.MediaPlaylist, playlistURL string, opt Options, explicit
 	// last of the keys above that segment, so the map's own key is not in the
 	// parse at all. Refused rather than assembled with the wrong key, which
 	// yields a file that decodes to nothing.
-	if keyAtMap != "" && keyAtFirstSegment != "" && keyAtMap != keyAtFirstSegment {
+	if keyAtMap != "" && keyAtFirstSegment != "" && !sameKeyTag(keyAtMap, keyAtFirstSegment) {
 		return nil, unsupported("this HLS stream protects its initialization section with a different key from its segments, which this server cannot download")
 	}
 	mapIndex := 0
@@ -491,6 +498,25 @@ func headerKeys(text string) (atMap, atFirstSegment string) {
 		}
 	}
 	return atMap, current
+}
+
+// sameKeyTag reports whether two EXT-X-KEY lines describe the same key.
+//
+// By attributes rather than by spelling: METHOD=AES-128,URI="k" and
+// URI="k",METHOD=AES-128 are one key written two ways, and refusing the second
+// as "differently keyed" would reject a perfectly ordinary playlist.
+func sameKeyTag(a, b string) bool {
+	return keyTagFingerprint(a) == keyTagFingerprint(b)
+}
+
+func keyTagFingerprint(line string) string {
+	const prefix = "#EXT-X-KEY:"
+	attrs := strings.Split(strings.TrimPrefix(strings.TrimSpace(line), prefix), ",")
+	for i := range attrs {
+		attrs[i] = strings.TrimSpace(attrs[i])
+	}
+	sort.Strings(attrs)
+	return strings.Join(attrs, ",")
 }
 
 // explicitMapOffsets is explicitByteRangeOffsets for EXT-X-MAP, whose byte

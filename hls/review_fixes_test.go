@@ -749,3 +749,39 @@ func TestASeparatelyKeyedInitialisationSectionIsRefused(t *testing.T) {
 		explicitByteRangeOffsets(text), explicitMapOffsets(text), keyAtMap, keyAtFirstSegment)
 	assertUnsupported(t, err, "initialization")
 }
+
+// TestKeysAreComparedByAttributesNotSpelling. METHOD=AES-128,URI="k" and
+// URI="k",METHOD=AES-128 are one key written two ways; refusing the second as
+// "differently keyed" would reject a perfectly ordinary playlist.
+func TestKeysAreComparedByAttributesNotSpelling(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n" +
+		`#EXT-X-KEY:METHOD=AES-128,URI="k.bin"` + "\n" +
+		`#EXT-X-MAP:URI="init.mp4"` + "\n" +
+		`#EXT-X-KEY:URI="k.bin",METHOD=AES-128` + "\n" +
+		"#EXTINF:1.0,\na.m4s\n#EXT-X-ENDLIST\n"
+	m, err := readMediaFor(t, text)
+	if err != nil {
+		t.Fatalf("one key written two ways was refused as two keys: %v", err)
+	}
+	if m.initKey == nil {
+		t.Error("the initialization section lost its key")
+	}
+}
+
+// TestTheDefaultAudioRenditionWinsOverAnEarlierMultiplexedOne. Returning on the
+// first URI-less entry meant a group listing a multiplexed alternative ahead of
+// the declared default silently used the multiplexed track -- which is a
+// different language, not a different encoding of the same one.
+func TestTheDefaultAudioRenditionWinsOverAnEarlierMultiplexedOne(t *testing.T) {
+	master := "#EXTM3U\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Muxed",DEFAULT=NO` + "\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="French",DEFAULT=YES,URI="fr.m3u8"` + "\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=160x120,AUDIO="a"` + "\nv.m3u8\n"
+	var audio string
+	if _, _, err := parse(master, "https://x/master.m3u8", Defaults(), 0, &audio); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(audio, "fr.m3u8") {
+		t.Errorf("chose audio %q, want the declared default rendition", audio)
+	}
+}

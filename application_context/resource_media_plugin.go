@@ -244,26 +244,22 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	if err := reqCtx.Err(); err != nil {
-		return err, true
+	if !ctx.acquireVideoSlot(reqCtx, resourceID) {
+		if err := reqCtx.Err(); err != nil {
+			return err, true
+		}
+		return nil, false
 	}
+	defer ctx.locks.VideoThumbnailGenerationLock.Release(resourceID)
 
-	acquired, runErr := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
-		resourceID,
-		ctx.videoLockWait(reqCtx),
-		timeout,
-		func() error {
-			// Started here, not before the lock: waiting for a slot is not
-			// running. A deadline taken outside would be spent by the queue in
-			// front of this call, so a request that waited 25 of its 60
-			// permitted seconds would give ffmpeg five -- and one that waited
-			// the full lock timeout would hand it a context already cancelled.
-			runCtx, cancel := context.WithTimeout(reqCtx, timeout)
-			defer cancel()
-			return fn(runCtx)
-		},
-	)
-	return runErr, acquired
+	// Started after the lock: waiting for a slot is not running. A deadline
+	// taken outside would be spent by the queue in front of this call, so a
+	// request that waited 25 of its 60 permitted seconds would give ffmpeg
+	// five -- and one that waited the full lock timeout would hand it a
+	// context already cancelled.
+	runCtx, cancel := context.WithTimeout(reqCtx, timeout)
+	defer cancel()
+	return fn(runCtx), true
 }
 
 // trimVideoGated is TrimVideo under the deployment's video concurrency gate.
@@ -286,14 +282,13 @@ func (ctx *MahresourcesContext) runVideoTool(reqCtx context.Context, resourceID 
 // frame extraction would refuse every clip longer than a few minutes. What is
 // bounded is concurrency, and the caller's own context still cancels the work.
 func (ctx *MahresourcesContext) trimVideoGated(reqCtx context.Context, resourceID uint, start, end, comment string) error {
-	if err := reqCtx.Err(); err != nil {
-		return err
-	}
-	lock := ctx.locks.VideoThumbnailGenerationLock
-	if !lock.AcquireWithTimeout(resourceID, ctx.videoLockWait(reqCtx)) {
+	if !ctx.acquireVideoSlot(reqCtx, resourceID) {
+		if err := reqCtx.Err(); err != nil {
+			return err
+		}
 		return errors.New("timed out waiting for a video processing slot")
 	}
-	defer lock.Release(resourceID)
+	defer ctx.locks.VideoThumbnailGenerationLock.Release(resourceID)
 	return ctx.TrimVideo(reqCtx, resourceID, start, end, comment)
 }
 
@@ -330,14 +325,13 @@ func (ctx *MahresourcesContext) TrimVideoToNewResource(reqCtx context.Context, r
 		return nil, errors.New("resource must be a video")
 	}
 
-	if err := reqCtx.Err(); err != nil {
-		return nil, err
-	}
-	lock := ctx.locks.VideoThumbnailGenerationLock
-	if !lock.AcquireWithTimeout(resourceID, ctx.videoLockWait(reqCtx)) {
+	if !ctx.acquireVideoSlot(reqCtx, resourceID) {
+		if err := reqCtx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, errors.New("timed out waiting for a video processing slot")
 	}
-	defer lock.Release(resourceID)
+	defer ctx.locks.VideoThumbnailGenerationLock.Release(resourceID)
 
 	clip, err := ctx.trimVideoBytes(reqCtx, &resource, start, endSec-startSec)
 	if err != nil {
@@ -384,6 +378,35 @@ func (c *cancelableReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return c.r.Read(p)
+}
+
+// acquireVideoSlot takes the video gate, giving up when the caller does.
+//
+// idlock's wait takes no context, so this races it against the caller's own
+// cancellation. Losing that race is not the end of it: the acquire may still
+// succeed afterwards, so a watcher releases the slot it was handed rather than
+// leaking one out of the pool for the rest of the process's life.
+func (ctx *MahresourcesContext) acquireVideoSlot(reqCtx context.Context, resourceID uint) bool {
+	if reqCtx.Err() != nil {
+		return false
+	}
+	lock := ctx.locks.VideoThumbnailGenerationLock
+	wait := ctx.videoLockWait(reqCtx)
+
+	got := make(chan bool, 1)
+	go func() { got <- lock.AcquireWithTimeout(resourceID, wait) }()
+
+	select {
+	case acquired := <-got:
+		return acquired
+	case <-reqCtx.Done():
+		go func() {
+			if <-got {
+				lock.Release(resourceID)
+			}
+		}()
+		return false
+	}
 }
 
 // videoLockWait is how long to wait for a video slot, never longer than the
