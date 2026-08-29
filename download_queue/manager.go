@@ -670,6 +670,10 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 // has been fetched -- TotalSize stays -1, which is what the queue already
 // means by "unknown".
 func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *DownloadJob, client *http.Client, checkURL func(string) error, base string, head []byte, body io.Reader) (*hls.Result, error) {
+	// Guarded because hls reports from each of its segment workers: the
+	// throttle is shared mutable state read and written from several
+	// goroutines at once.
+	var notifyMu sync.Mutex
 	var lastNotify time.Time
 	deps := hls.Deps{
 		Client:     client,
@@ -699,8 +703,13 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 			// four-hundred-segment stream would otherwise be four hundred SSE
 			// events. A phase change is always sent, since those are rare and
 			// are the part a watcher is actually waiting for.
-			if done == 0 || time.Since(lastNotify) >= progressNotifyInterval {
+			notifyMu.Lock()
+			due := done == 0 || time.Since(lastNotify) >= progressNotifyInterval
+			if due {
 				lastNotify = time.Now()
+			}
+			notifyMu.Unlock()
+			if due {
 				dm.notifyJob("updated", job)
 			}
 		})

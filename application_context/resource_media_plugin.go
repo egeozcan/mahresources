@@ -398,6 +398,15 @@ func (ctx *MahresourcesContext) acquireVideoSlot(reqCtx context.Context, resourc
 
 	select {
 	case acquired := <-got:
+		// Both cases can be ready at once, and select picks arbitrarily -- so a
+		// caller that gave up while the acquire was completing could otherwise
+		// be handed a slot and go on to run the work anyway, past the deadline
+		// that was supposed to stop it. The slot is handed back rather than
+		// held.
+		if acquired && reqCtx.Err() != nil {
+			lock.Release(resourceID)
+			return false
+		}
 		return acquired
 	case <-reqCtx.Done():
 		go func() {

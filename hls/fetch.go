@@ -146,6 +146,9 @@ func (opt Options) withDefaults() Options {
 // Progress reports what the download is doing, for a caller that has somewhere
 // to display it. done and total are segments during PhaseSegments and are both
 // zero during PhaseMuxing, whose length is not knowable in advance.
+//
+// **Called concurrently**, from each segment worker. A callback touching shared
+// state must guard it.
 type Progress func(phase string, done, total int64)
 
 // The phases reported to Progress. They are the job Phase strings the download

@@ -511,12 +511,37 @@ func sameKeyTag(a, b string) bool {
 
 func keyTagFingerprint(line string) string {
 	const prefix = "#EXT-X-KEY:"
-	attrs := strings.Split(strings.TrimPrefix(strings.TrimSpace(line), prefix), ",")
-	for i := range attrs {
-		attrs[i] = strings.TrimSpace(attrs[i])
-	}
+	attrs := splitAttributes(strings.TrimPrefix(strings.TrimSpace(line), prefix))
 	sort.Strings(attrs)
 	return strings.Join(attrs, ",")
+}
+
+// splitAttributes splits an attribute list on commas that are not inside
+// quotes.
+//
+// A plain strings.Split cuts URI="a,b,c" into fragments, and sorting those
+// makes URI="a,b,c" and URI="a,c,b" identical -- so two genuinely different
+// keys compare equal and the refusal they should have triggered never fires.
+func splitAttributes(list string) []string {
+	var out []string
+	var current strings.Builder
+	inQuotes := false
+	for _, r := range list {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+			current.WriteRune(r)
+		case r == ',' && !inQuotes:
+			out = append(out, strings.TrimSpace(current.String()))
+			current.Reset()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if s := strings.TrimSpace(current.String()); s != "" || len(out) > 0 {
+		out = append(out, s)
+	}
+	return out
 }
 
 // explicitMapOffsets is explicitByteRangeOffsets for EXT-X-MAP, whose byte

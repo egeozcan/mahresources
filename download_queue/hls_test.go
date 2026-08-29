@@ -175,6 +175,31 @@ func TestDownloadWithProgressStoresNonPlaylistBodiesWhole(t *testing.T) {
 	}
 }
 
+// TestHLSProgressIsSafeUnderConcurrentSegments. hls reports from each of its
+// segment workers, so the throttle the callback keeps is shared mutable state
+// touched from several goroutines at once. Run under -race, this is the test
+// that says so.
+func TestHLSProgressIsSafeUnderConcurrentSegments(t *testing.T) {
+	ffmpeg := hlsFfmpeg(t)
+	created := &recordingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = created
+	dm.ffmpegPath = ffmpeg
+	dm.hlsOptions.Concurrency = 4
+
+	srv := buildAndServeStream(t, ffmpeg)
+	job := &DownloadJob{
+		ID:      "hls-concurrent",
+		URL:     srv.URL + "/index.m3u8",
+		Status:  JobStatusDownloading,
+		creator: &query_models.ResourceFromRemoteCreator{},
+		ctx:     context.Background(),
+	}
+	if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
+		t.Fatalf("downloadWithProgress: %v", err)
+	}
+}
+
 func firstBytes(b []byte) string {
 	if len(b) > 16 {
 		b = b[:16]

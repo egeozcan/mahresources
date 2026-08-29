@@ -785,3 +785,19 @@ func TestTheDefaultAudioRenditionWinsOverAnEarlierMultiplexedOne(t *testing.T) {
 		t.Errorf("chose audio %q, want the declared default rendition", audio)
 	}
 }
+
+// TestKeyFingerprintsRespectQuotedCommas. Splitting on every comma cut
+// URI="a,b,c" into fragments, and sorting those made URI="a,b,c" and
+// URI="a,c,b" identical -- so two genuinely different keys compared equal and
+// the refusal they should have triggered never fired.
+func TestKeyFingerprintsRespectQuotedCommas(t *testing.T) {
+	a := `#EXT-X-KEY:METHOD=AES-128,URI="k?x=a,b,c,d"`
+	b := `#EXT-X-KEY:METHOD=AES-128,URI="k?x=a,c,b,d"`
+	if sameKeyTag(a, b) {
+		t.Error("two different key URIs compared equal — the map would be assembled with the segments' key")
+	}
+	reordered := `#EXT-X-KEY:URI="k?x=a,b,c,d",METHOD=AES-128`
+	if !sameKeyTag(a, reordered) {
+		t.Error("one key written two ways compared unequal")
+	}
+}
