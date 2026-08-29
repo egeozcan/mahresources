@@ -111,15 +111,16 @@ Reference implementation demonstrating the plugin API: injections, hooks, pages,
 
 ## fal-ai
 
-AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings. The plugin registers six resource actions (available from the resource detail view, and some from resource cards in list views) plus a **Generate Image** page.
+AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings. The plugin registers seven resource actions (available from the resource detail view, and some from resource cards in list views) plus a **Generate Image** page.
 
-Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP. The UI filter that decides which resources surface the actions also includes `image/svg+xml`, so the actions appear on SVG resources even though SVG is not a supported input format and the action fails at runtime.
+Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP. SVG inputs are filtered out; **Vectorize** produces SVG output from a raster source.
 
 ### Actions
 
 | Action | Placement | Description |
 |--------|-----------|-------------|
-| `colorize` | detail, card | Colorize black and white images (DDColor) |
+| `colorize` | detail, card | Colorize black and white images (DDColor or Topaz Colorize) |
+| `adjust` | detail, card | Correct exposure/lighting or white balance (Topaz Adjust) |
 | `upscale` | detail, card | Increase resolution -- choose from several upscaling models |
 | `restore` | detail, card | Restore and enhance old or damaged photos -- several restoration models |
 | `edit` (AI Edit) | detail | Edit an image from a text prompt; supports multiple input images |
@@ -130,13 +131,16 @@ Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP. The UI filter that dec
 
 Several actions expose a `model` selector that switches the underlying fal.ai endpoint. Each model has its own parameters, which appear only when that model is selected (see [Conditional parameters](#conditional-parameters) below).
 
-- **`upscale` models:** `clarity` (default), `crystal`, `esrgan`, `creative`, `seedvr`, `bria_creative`, `topaz`, `drct`, `aura_sr`. `drct` and `aura_sr` are degradation-aware and handle JPEG-compressed sources better than pure super-resolution models. `crystal` is Clarity AI's newer upscaler, tuned for facial detail and portrait photography; its `creativity` parameter is `0` by default, which is a faithful upscale. `seedvr` has a **Seamless Tiling** toggle that switches to the seamless endpoint, for textures and repeating patterns.
-- **`restore` models:** `photo_restoration` (default -- the only one that removes scratches and fixes color fading in one pass), `codeformer` (face-focused), `swin2sr` (non-portrait scenes), `nafnet_denoise` (compression/ISO artifacts), `nafnet_deblur` (motion blur). The `photo_restoration` model always reshapes output to a fixed aspect-ratio enum; its `aspect_ratio` parameter defaults to `auto`, which picks the enum closest to the source's actual dimensions.
-- **`edit` (AI Edit) models:** `flux2` (default), `flux2pro`, `nanobanana2`, `nanobananapro`, `gptimage2`, `seedream5`, `grok2`, `flux1dev`. Their schemas differ in more than naming, and the exposed parameters follow each one: `gptimage2` and `seedream5` size their output with an `image_size` enum instead of an aspect ratio, `seedream5` takes a boolean safety checker rather than a numeric tolerance, and `gptimage2` and `grok2` have no safety parameter at all (both expose a `quality` dial instead).
+- **`colorize` models:** `ddcolor` (default, fast photographic colorization) and `topaz_colorize` (Topaz Labs' current professional colorization pass).
+- **`adjust` models:** `adjust_v2` (default: exposure and lighting) and `white_balance` (color-cast correction). Both preserve source resolution.
+- **`upscale` models:** `clarity` (default), `crystal`, `esrgan`, `creative`, `seedvr`, `bria_creative`, `topaz` (Topaz Precision), `topaz_generative`, `topaz_creative`, `topaz_transparent`, `drct`, `aura_sr`. The August 2026 Topaz family is split by intent: faithful precision, missing-detail reconstruction, creative Bloom enhancement, or fixed 4x alpha-preserving PNG. `drct` and `aura_sr` remain degradation-aware choices for JPEG-compressed sources; `seedvr` offers a seamless-tiling endpoint for repeating textures.
+- **`restore` models:** `photo_restoration` (default), `codeformer`, `swin2sr`, `nafnet_denoise`, `nafnet_deblur`, `topaz_restore`, and `topaz_denoise`. Topaz Restore offers Recover 3 and Dust-Scratch V2; Topaz Denoise ranges from Normal through generative Denoise Max. The older `photo_restoration` endpoint is still the combined color/scratch fix, but always reshapes to a fixed 4K aspect-ratio enum.
+- **`edit` (AI Edit) models:** `flux2` (default), `flux2pro`, `nanobanana2`, `nanobananapro`, `nanobanana_lite`, `gptimage2`, `seedream5`, `grok2`, `muse`, `fibo15`, and `flux1dev`. Meta Muse focuses on precise coherent multi-reference edits; Bria Fibo Edit 1.5 is trained for commercially safe composites; Nano Banana Lite favors low latency. Each model reveals only its own live-schema controls, including seed, thinking, web search, system prompt, background, prompt expansion, and safety switches where supported.
+- **`polish` models:** `post_processing` (default: basic, smart, or CAS sharpening) and `topaz_sharpen` (blur-specific Topaz presets plus generative Super Focus).
 
 ### Conditional parameters
 
-Action parameters use `show_when` conditions, so the form reveals only the inputs relevant to the current selection. For example, choosing the `topaz` upscale model surfaces Topaz-specific controls (model preset, upscale factor, subject detection, face enhancement, output format), while the Clarity controls stay hidden. The `restore` and `polish` actions behave the same way for their model and sharpen-mode selectors.
+Action parameters use `show_when` conditions, so the form reveals only the inputs relevant to the current selection. Every fal.ai action parameter carries concise inline help, and every model selector reveals a short strengths/tradeoffs card before its controls. Nested controls are also conditional: for example, Topaz Redefine reveals prompt/creativity/texture fields that other Topaz Generative presets do not use.
 
 ### Output mode
 
@@ -149,19 +153,21 @@ Every action except `vectorize` includes a **Save Result As** toggle:
 
 ### Multiple input images
 
-The `edit` (AI Edit) action accepts more than one input image through an `extra_images` entity-reference parameter (a resource picker, up to nine images). It defaults to the triggering resource, and the user can add or remove images. Every model except `flux1dev` consumes the extra images; `flux1dev` takes a single image. The picker's nine-image maximum is one number shared by every model, so per-model limits are applied when the request is built: `grok2` accepts three and the action fails with a message naming the count if it is given more, `seedream5` uses the last ten of whatever it is sent, and `gptimage2` accepts sixteen (more than the picker allows).
+The `edit` (AI Edit) action accepts more than one input image through an `extra_images` entity-reference parameter (a resource picker, up to nine images). It defaults to the triggering resource, and the user can add or remove images. Every model except `flux1dev` consumes the extra images; `flux1dev` takes a single image. Per-model ceilings are enforced with explicit errors where fal.ai would truncate or reject opaquely: `grok2` accepts three; `flux2` and `fibo15` accept four. `seedream5` and `muse` accept ten, while `gptimage2` accepts sixteen (more than the picker allows).
 
 ### Generate Image page
 
-The plugin also adds a **Generate Image** page (`/plugins/fal-ai/generate`, linked from the plugin menu) for text-to-image generation. It runs as an asynchronous job and supports the `nanobanana2` (default), `nanobananapro`, `gptimage2`, `seedream5`, `grok2`, `imagen4`, `imagen4_fast`, and `imagen4_ultra` models. Generated images are saved as new resources.
+The plugin also adds a **Generate Image** page (`/plugins/fal-ai/generate`, linked from the plugin menu) for text-to-image generation. It runs as an asynchronous job and supports `nanobanana2` (default), `nanobananapro`, `nanobanana_lite`, `gptimage2`, `seedream5`, `grok2`, `muse`, and `fibo15`. The withdrawn Imagen 4 preview endpoints were removed after their live schemas and queue routes began returning 404. Generated images are saved as new resources.
 
-The page renders a single form -- prompt, model, resolution, aspect ratio, safety tolerance -- for every model, but the endpoints behind it do not share one input schema, so each model receives only the fields its own schema declares:
+The page renders a documented union of prompt, sizing, format, seed, quality/background, safety, Nano Banana advanced controls, and Bria style preset. Each model receives only the fields its own schema declares:
 
 | Setting | How each model receives it |
 |---------|----------------------------|
-| Resolution | Snapped to the nearest value the model accepts. `nanobananapro` has no `0.5K`; `imagen4`, `imagen4_ultra` and `grok2` stop at `2K` (`grok2` spells them lowercase); `imagen4_fast`, `gptimage2` and `seedream5` have no resolution field at all. |
-| Aspect ratio | Passed through where the model has an `aspect_ratio` field. `gptimage2` and `seedream5` do not, so it maps to their `image_size` enum (`3:2` and `2:3` take the closest landscape/portrait size). `imagen4*` supports only `1:1`, `16:9`, `9:16`, `4:3` and `3:4`, so `3:2` and `2:3` snap to `4:3` and `3:4`. |
-| Safety tolerance | Sent as `safety_tolerance` to `nanobanana2`, `nanobananapro` and `imagen4*`. `seedream5` has a boolean safety checker instead, enabled only for the two strictest settings. `gptimage2` and `grok2` have no safety parameter and ignore it. |
+| Resolution | Snapped to the nearest native tier. Nano Banana Pro has no 0.5K; Grok stops at 2K; Lite, GPT Image 2, Seedream, and Muse auto-size; Fibo maps the union to 1MP or 4MP. |
+| Aspect ratio | Passed through where supported. GPT Image 2 and Seedream receive the closest `image_size` preset instead. |
+| Safety tolerance | Sent to the Nano Banana family. Seedream maps levels 1-2 to its boolean checker; models without a tolerance field ignore it. |
+| Format | Sent where supported. Seedream maps WebP to JPEG, while Fibo uses its endpoint-native result format. |
+| Advanced controls | Seed, GPT/Grok quality, GPT background, Nano Banana thinking/system prompt/web search, and Fibo style preset are each sent only to models that declare them. |
 
 ## Enabling a Plugin
 

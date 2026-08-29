@@ -71,8 +71,8 @@ func TestBundledPluginsLoad(t *testing.T) {
 }
 
 // The fal.ai plugin is the largest bundled plugin and the one whose model list
-// changes most often. Pin the shape its UI depends on: every model offered by a
-// `model` selector must be one build_request knows how to route.
+// changes most often. Pin the shape its UI depends on: the exact selector lists,
+// their configurable controls, and the few deliberately fixed/shared cases.
 func TestFalAIPluginRegistersModels(t *testing.T) {
 	pm, err := NewPluginManager(bundledPluginDir(t))
 	if err != nil {
@@ -91,19 +91,42 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 		}
 	}
 
-	for _, id := range []string{"colorize", "upscale", "restore", "edit", "vectorize", "polish"} {
+	for _, id := range []string{"colorize", "adjust", "upscale", "restore", "edit", "vectorize", "polish"} {
 		if _, ok := actions[id]; !ok {
 			t.Errorf("action %q not registered", id)
 		}
 	}
 
-	// Each model option must have at least one parameter gated on it, which is
-	// how the form knows to reveal that model's controls. A model added to the
-	// selector but never wired up shows an empty form and fails at request time.
+	// fal.ai has many similarly named controls whose meaning changes by model.
+	// Keep the user-facing help complete as the live schemas evolve.
+	for actionID, action := range actions {
+		for _, p := range action.Params {
+			if p.Description == "" {
+				t.Errorf("action %q param %q has no inline description", actionID, p.Name)
+			}
+		}
+	}
+
+	// Each configurable model must have at least one non-info parameter gated on
+	// it. Static help does not prove that a request option was actually wired.
+	// Models with a fixed payload or only shared controls are named explicitly so
+	// a newly added, accidentally empty model cannot silently weaken this check.
+	modelsWithoutOwnControls := map[string]map[string]bool{
+		// DDColor has no endpoint controls; Save Result As is shared.
+		"colorize": {"ddcolor": true},
+		// Both Topaz Adjust presets share output_format and differ only by the
+		// endpoint's model value selected in build_request.
+		"adjust": {"adjust_v2": true, "white_balance": true},
+		// Topaz Transparent is deliberately a fixed 4x PNG operation.
+		"upscale": {"topaz_transparent": true},
+	}
 	for actionID, wantModels := range map[string][]string{
-		"upscale": {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria_creative", "topaz", "drct", "aura_sr"},
-		"restore": {"photo_restoration", "codeformer", "swin2sr", "nafnet_denoise", "nafnet_deblur"},
-		"edit":    {"flux2", "flux2pro", "nanobanana2", "nanobananapro", "gptimage2", "seedream5", "grok2", "flux1dev"},
+		"colorize": {"ddcolor", "topaz_colorize"},
+		"adjust":   {"adjust_v2", "white_balance"},
+		"upscale":  {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria_creative", "topaz", "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
+		"restore":  {"photo_restoration", "codeformer", "swin2sr", "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
+		"edit":     {"flux2", "flux2pro", "nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage2", "seedream5", "grok2", "muse", "fibo15", "flux1dev"},
+		"polish":   {"post_processing", "topaz_sharpen"},
 	} {
 		action, ok := actions[actionID]
 		if !ok {
@@ -115,6 +138,9 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 			p := &action.Params[i]
 			if p.Name == "model" {
 				selector = p
+			}
+			if p.Type == "info" {
+				continue
 			}
 			for _, v := range showWhenValues(p, "model") {
 				gated[v] = true
@@ -131,11 +157,19 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 		for _, o := range selector.Options {
 			offered[o] = true
 		}
+		for m := range modelsWithoutOwnControls[actionID] {
+			if !offered[m] {
+				t.Errorf("action %q: control exemption names unoffered model %q", actionID, m)
+			}
+			if gated[m] {
+				t.Errorf("action %q: model %q now has a gated control; remove its exemption", actionID, m)
+			}
+		}
 		for _, m := range wantModels {
 			if !offered[m] {
 				t.Errorf("action %q: model %q missing from the selector", actionID, m)
 			}
-			if !gated[m] {
+			if !gated[m] && !modelsWithoutOwnControls[actionID][m] {
 				t.Errorf("action %q: model %q has no parameter gated on it", actionID, m)
 			}
 		}
@@ -168,8 +202,8 @@ func TestFalAIGeneratePageListsModels(t *testing.T) {
 	}
 
 	for _, model := range []string{
-		"nanobanana2", "nanobananapro", "gptimage2", "seedream5", "grok2",
-		"imagen4", "imagen4_fast", "imagen4_ultra",
+		"nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage2",
+		"seedream5", "grok2", "muse", "fibo15",
 	} {
 		if !strings.Contains(html, `<option value="`+model+`">`) {
 			t.Errorf("generate form is missing the %q model option", model)
