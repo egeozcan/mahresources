@@ -673,6 +673,20 @@ func (dm *DownloadManager) currentFfmpegPath() string {
 	return dm.ffmpegPath()
 }
 
+// cancelableReader stops a read once its context ends. The file it wraps is a
+// local one, whose Read blocks on nothing a context could reach.
+type cancelableReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *cancelableReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
 // assembleHLS downloads a streaming playlist and returns the single file it
 // assembles to.
 //
@@ -907,7 +921,10 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 		}
 		defer assembled.Cleanup()
 		defer assembled.Body.Close()
-		progressBody = io.NopCloser(assembled.Body)
+		// Through the context: cancelling a job cancels the transfer, and
+		// without this the copy of a multi-gigabyte assembled file carried on
+		// afterwards and the job completed despite an accepted cancellation.
+		progressBody = io.NopCloser(&cancelableReader{ctx: ctx, r: assembled.Body})
 		assembledHLS = true
 	} else {
 		// Wrap with progress reader

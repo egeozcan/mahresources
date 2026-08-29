@@ -875,3 +875,26 @@ func TestPlaylistBytesCountAgainstTheBudget(t *testing.T) {
 		t.Error("segments were fetched after the budget was already spent")
 	}
 }
+
+// TestAGapPlaylistIsRefused. A gap is a segment the origin says is
+// deliberately unavailable; a player skips it and fetching its URI is expected
+// to fail. The parser does not expose the tag, so this would otherwise end in a
+// 404 that reads like a broken server.
+func TestAGapPlaylistIsRefused(t *testing.T) {
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n" +
+		"#EXTINF:1.0,\na.ts\n#EXT-X-GAP\n#EXTINF:1.0,\nb.ts\n#EXT-X-ENDLIST\n"
+	_, _, err := parse(text, "https://x/index.m3u8", Defaults(), 0, new(string))
+	assertUnsupported(t, err, "unavailable")
+}
+
+// TestCountTagsDoesNotAllocatePerLine. A split allocates a header per line, and
+// a permitted 16 MiB playlist of two-character lines is eight million of them
+// -- 128 MiB spent inside the function that exists to stop a playlist spending
+// memory.
+func TestCountTagsDoesNotAllocatePerLine(t *testing.T) {
+	text := strings.Repeat("#\n", 200_000)
+	allocs := testing.AllocsPerRun(1, func() { countTags(text) })
+	if allocs > 8 {
+		t.Errorf("countTags made %.0f allocations over a 200k-line playlist, want a constant few", allocs)
+	}
+}

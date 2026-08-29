@@ -60,6 +60,16 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 			return 2
 		}
 
+		// The same liveness question querierFor asks for every mah.db call. An
+		// async job can outlive a disable, and a VM revoked while it slept must
+		// not go on writing -- least of all after the operator was told the
+		// plugin was off.
+		if !pm.stateIsLive(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("this plugin is no longer enabled"))
+			return 2
+		}
+
 		submitter := pm.getDownloadSubmitter()
 		if submitter == nil {
 			L.Push(lua.LNil)

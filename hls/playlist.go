@@ -36,7 +36,17 @@ import (
 // document-wide count anchored on "\n#EXT". Two hundred and fifty thousand of
 // those still fit inside the byte limit.
 func countTags(text string) (segments, variants, tags int) {
-	for _, line := range strings.Split(text, "\n") {
+	// Walked by index rather than strings.Split: a split allocates a header per
+	// line, and a permitted 16 MiB playlist of two-character lines is eight
+	// million of them -- 128 MiB spent inside the very function that exists to
+	// stop a playlist spending memory.
+	for len(text) > 0 {
+		line := text
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			line, text = text[:i], text[i+1:]
+		} else {
+			text = ""
+		}
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "#EXT") {
 			continue
@@ -50,6 +60,28 @@ func countTags(text string) (segments, variants, tags int) {
 		}
 	}
 	return segments, variants, tags
+}
+
+// hasGapSegments reports whether the playlist marks any segment EXT-X-GAP.
+//
+// A gap is a segment the origin says is deliberately unavailable: a player
+// skips it, and fetching its URI is expected to fail. The parser does not
+// expose the tag, so downloading such a playlist ends in a 404 that reads like
+// a broken server. Refused by name instead -- the recording is genuinely
+// incomplete, and saying so beats handing back a file with a hole in it.
+func hasGapSegments(text string) bool {
+	for len(text) > 0 {
+		line := text
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			line, text = text[:i], text[i+1:]
+		} else {
+			text = ""
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "#EXT-X-GAP") {
+			return true
+		}
+	}
+	return false
 }
 
 // maxPlaylistTagLines bounds the tags one playlist may carry, derived from the
@@ -245,6 +277,9 @@ func parse(text, playlistURL string, opt Options, depth int, pendingAudio *strin
 		}
 		return nil, abs, nil
 	case m3u8.MEDIA:
+		if hasGapSegments(text) {
+			return nil, "", unsupported("this HLS stream marks some of its segments as unavailable (#EXT-X-GAP), so it cannot be downloaded complete")
+		}
 		keyAtMap, keyAtFirstSegment := headerKeys(text)
 		m, err := readMedia(list.(*m3u8.MediaPlaylist), playlistURL, opt,
 			explicitByteRangeOffsets(text), explicitMapOffsets(text), keyAtMap, keyAtFirstSegment)

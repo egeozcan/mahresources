@@ -396,8 +396,14 @@ func ownerOrZero(id *uint) uint {
 }
 
 // isProbableMedia reports whether a resource is the kind mah.media describes.
+// It reads the stored content type, which is what the rest of the tree does
+// (IsVideo included) and is declared metadata rather than proof -- a resource
+// imported with a wrong type is described wrongly everywhere, not only here.
+// Lower-cased, because "Video/MP4" is a valid spelling of the same type and
+// refusing it would be a bug of this function's own making.
 func isProbableMedia(r models.Resource) bool {
-	return r.IsVideo() || strings.HasPrefix(r.ContentType, "audio/")
+	kind := strings.ToLower(strings.TrimSpace(r.ContentType))
+	return strings.HasPrefix(kind, "video/") || strings.HasPrefix(kind, "audio/")
 }
 
 // boundedBuffer stops collecting once the limit is reached, without failing the
