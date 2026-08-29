@@ -89,6 +89,12 @@ type MahresourcesConfig struct {
 	HLSMaxSegments   int
 	HLSMaxTotalBytes int64
 	HLSConcurrency   int
+	// HLSTempDir is where an assembly's segments and muxed output live. Empty
+	// uses the system temp directory, which in most container images is the
+	// root filesystem -- and an assembly holds every segment plus the output,
+	// so a long recording wants a multiple of its own size somewhere that has
+	// it.
+	HLSTempDir string
 	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
@@ -261,6 +267,12 @@ type MahresourcesInputConfig struct {
 	HLSMaxSegments   int
 	HLSMaxTotalBytes int64
 	HLSConcurrency   int
+	// HLSTempDir is where an assembly's segments and muxed output live. Empty
+	// uses the system temp directory, which in most container images is the
+	// root filesystem -- and an assembly holds every segment plus the output,
+	// so a long recording wants a multiple of its own size somewhere that has
+	// it.
+	HLSTempDir string
 	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
@@ -688,6 +700,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			// empty one from before the detection.
 			FfmpegPath: func() string { return ctx.Config.FfmpegPath },
 			HLSOptions: hlsOptionsFromConfig(config),
+			HLSTempDir: config.HLSTempDir,
 			// The host allowlist, applied to every URL a playlist names as well
 			// as to the one submitted.
 			HostCheckURL: func(u string) error {
@@ -1449,6 +1462,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		HLSMaxSegments:               cfg.HLSMaxSegments,
 		HLSMaxTotalBytes:             cfg.HLSMaxTotalBytes,
 		HLSConcurrency:               cfg.HLSConcurrency,
+		HLSTempDir:                   cfg.HLSTempDir,
 		VideoThumbnailTimeout:        videoThumbTimeout,
 		VideoThumbnailLockTimeout:    videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,

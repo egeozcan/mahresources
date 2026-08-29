@@ -75,6 +75,8 @@ type ManagerConfig struct {
 	// and worked, which made the two disagree.
 	FfmpegPath func() string
 	HLSOptions hls.Options
+	// HLSTempDir is where an assembly's working files live. See hls.Deps.
+	HLSTempDir string
 
 	// HostCheckURL is the allowlist half of the host policy, applied to every
 	// URL a person's download reaches -- including the ones only a playlist
@@ -153,6 +155,7 @@ type DownloadManager struct {
 	resourceCtx ResourceCreator
 	ffmpegPath  func() string
 	hlsOptions  hls.Options
+	hlsTempDir  string
 	hostCheck   func(string) error
 
 	// policyResolver answers "which egress policy does this plugin fetch under".
@@ -224,6 +227,7 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, settings Download
 		clientPolicy:   cfg.ClientPolicy,
 		ffmpegPath:     cfg.FfmpegPath,
 		hlsOptions:     cfg.HLSOptions,
+		hlsTempDir:     cfg.HLSTempDir,
 		hostCheck:      cfg.HostCheckURL,
 		refusalMessage: cfg.RefusalMessage,
 	}
@@ -710,6 +714,7 @@ func (dm *DownloadManager) assembleHLS(ctx context.Context, runID uint64, job *D
 		Client:     client,
 		CheckURL:   checkURL,
 		FfmpegPath: dm.currentFfmpegPath(),
+		TempDir:    dm.hlsTempDir,
 		// Live, like every other timeout on this path.
 		IdleTimeout: dm.currentSettings().IdleTimeout(),
 	}

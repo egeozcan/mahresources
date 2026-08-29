@@ -80,6 +80,11 @@ without that the result would be a silent video that plays perfectly.
 
 `-hls-concurrency` (default 4) sets how many segments are fetched at once.
 
+`-hls-temp-dir` sets where the assembly works. It defaults to the system temp
+directory, which in most container images is the root filesystem -- and an
+assembly holds every segment plus the finished video, so a long recording wants
+a multiple of its own size somewhere that has it.
+
 ## Job Lifecycle
 
 Each download job goes through these statuses:

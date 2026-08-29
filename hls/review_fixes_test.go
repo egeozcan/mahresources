@@ -957,3 +957,60 @@ func TestAGaplessMetadataTagIsNotMistakenForAGap(t *testing.T) {
 		t.Fatalf("a playlist with no gaps was refused as gapped: %v", err)
 	}
 }
+
+// TestAnOversizedPlaylistIsRefusedNotTruncated. Cutting a playlist at the read
+// limit is the worse outcome: cut after an EXT-X-ENDLIST it is still
+// syntactically valid, so it muxes happily into a video missing everything
+// after the cut.
+func TestAnOversizedPlaylistIsRefusedNotTruncated(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n")
+	b.WriteString("#EXTINF:1.0,\na.ts\n#EXT-X-ENDLIST\n")
+	// Padding past the read limit, after a point where the prefix already
+	// parses as a complete playlist.
+	b.WriteString(strings.Repeat("# padding\n", (maxPlaylistBytes/10)+10))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, b.String())
+	}))
+	defer srv.Close()
+
+	d := deps()
+	d.FfmpegPath = "/nonexistent"
+	_, err := fetchAll(t, d, srv.URL+"/index.m3u8", Options{}, nil)
+	if err == nil {
+		t.Fatal("an oversized playlist was truncated into a valid-looking one and assembled")
+	}
+	if !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("the failure was %v, want it to name the size limit", err)
+	}
+}
+
+// TestTheWorkingDirectoryIsTheConfiguredOne. An assembly holds every segment
+// plus the muxed output, and the system default is the root filesystem in most
+// container images.
+func TestTheWorkingDirectoryIsTheConfiguredOne(t *testing.T) {
+	ffmpeg := ffmpegPath()
+	if ffmpeg == "" {
+		t.Skip("ffmpeg is not installed")
+	}
+	work := t.TempDir()
+	srv, _ := serve(t, buildStream(t, false))
+
+	d := deps()
+	d.TempDir = work
+	res, err := fetchAll(t, d, srv.URL+"/index.m3u8", Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Cleanup()
+	defer res.Body.Close()
+
+	f, ok := res.Body.(*os.File)
+	if !ok {
+		t.Fatal("the result is not a file")
+	}
+	if !strings.HasPrefix(f.Name(), work) {
+		t.Errorf("assembled into %s, want a path under the configured %s", f.Name(), work)
+	}
+}

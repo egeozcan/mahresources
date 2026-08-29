@@ -18,6 +18,7 @@ func (ctx *MahresourcesContext) hlsDeps(client *http.Client, policy plugin_syste
 	return hls.Deps{
 		Client:     client,
 		FfmpegPath: ctx.Config.FfmpegPath,
+		TempDir:    ctx.Config.HLSTempDir,
 		// The deployment's idle bound, applied to every request this makes.
 		// The client's own timeouts govern the request the caller already
 		// issued; these are new ones.

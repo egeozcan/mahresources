@@ -61,6 +61,11 @@ type Deps struct {
 	// FfmpegPath is the ffmpeg binary. Empty means no mux is possible.
 	FfmpegPath string
 	// TempDir is where segments land. Empty uses the system default.
+	//
+	// Worth setting. An assembly holds every segment plus the muxed output, so
+	// a long recording wants a multiple of its own size, and the system default
+	// is the root filesystem in most container images -- where filling it takes
+	// more than the download down with it.
 	TempDir string
 	// IdleTimeout fails a transfer that stops producing bytes.
 	//
@@ -326,10 +331,17 @@ func readPlaylistText(head []byte, body io.Reader, opt Options, spent *atomic.In
 	buf.Write(head)
 	spent.Add(int64(len(head)))
 	if body != nil {
-		src := &budgetReader{r: io.LimitReader(body, maxPlaylistBytes), total: spent, limit: opt.MaxTotalBytes}
+		// One byte past the limit, so an oversized playlist is *detected* here
+		// rather than truncated. A truncated playlist is the worse outcome: cut
+		// after an EXT-X-ENDLIST it is still syntactically valid, so it muxes
+		// happily into a video missing everything after the cut.
+		src := &budgetReader{r: io.LimitReader(body, maxPlaylistBytes+1), total: spent, limit: opt.MaxTotalBytes}
 		if _, err := io.Copy(&buf, src); err != nil {
 			return "", fmt.Errorf("could not read the HLS playlist: %w", err)
 		}
+	}
+	if buf.Len() > maxPlaylistBytes {
+		return "", unsupported("this HLS playlist is larger than the %d bytes this server will read", maxPlaylistBytes)
 	}
 	return buf.String(), nil
 }
@@ -348,9 +360,13 @@ func fetchText(ctx context.Context, d Deps, url string, opt Options, spent *atom
 	}
 	defer rc.Close()
 	var buf strings.Builder
-	src := &budgetReader{r: io.LimitReader(rc, maxPlaylistBytes), total: spent, limit: opt.MaxTotalBytes}
+	// See readPlaylistText: detected rather than truncated.
+	src := &budgetReader{r: io.LimitReader(rc, maxPlaylistBytes+1), total: spent, limit: opt.MaxTotalBytes}
 	if _, err := io.Copy(&buf, src); err != nil {
 		return "", "", fmt.Errorf("could not read the HLS playlist: %w", err)
+	}
+	if buf.Len() > maxPlaylistBytes {
+		return "", "", unsupported("this HLS playlist is larger than the %d bytes this server will read", maxPlaylistBytes)
 	}
 	return buf.String(), finalURL(resp, url), nil
 }

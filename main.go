@@ -186,6 +186,7 @@ func main() {
 	hlsMaxSegments := flag.Int("hls-max-segments", parseIntEnv("HLS_MAX_SEGMENTS", 5000), "Maximum segments in one HLS download (env: HLS_MAX_SEGMENTS)")
 	hlsMaxBytes := flag.Int64("hls-max-bytes", parseInt64Env("HLS_MAX_BYTES", 16<<30), "Maximum total bytes for one HLS download (env: HLS_MAX_BYTES)")
 	hlsConcurrency := flag.Int("hls-concurrency", parseIntEnv("HLS_CONCURRENCY", 4), "Segments fetched at once during an HLS download (env: HLS_CONCURRENCY)")
+	hlsTempDir := flag.String("hls-temp-dir", os.Getenv("HLS_TEMP_DIR"), "Working directory for HLS assembly; empty uses the system temp directory (env: HLS_TEMP_DIR)")
 
 	// Thumbnail worker options
 	thumbWorkerCount := flag.Int("thumb-worker-count", parseIntEnv("THUMB_WORKER_COUNT", 2), "Number of concurrent thumbnail generation workers (env: THUMB_WORKER_COUNT)")
@@ -326,6 +327,7 @@ func main() {
 		HLSMaxSegments:               *hlsMaxSegments,
 		HLSMaxTotalBytes:             *hlsMaxBytes,
 		HLSConcurrency:               *hlsConcurrency,
+		HLSTempDir:                   *hlsTempDir,
 		PluginPath:                   *pluginPath,
 		PluginsDisabled:              *pluginsDisabled,
 		HashWorkerEnabled:            !*hashWorkerDisabled,
