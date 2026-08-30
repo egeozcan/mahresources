@@ -340,9 +340,14 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	if value == "" {
 		return 0, false
 	}
-	if seconds, err := strconv.Atoi(value); err == nil {
-		if seconds < 0 {
-			return 0, false
+	if retryAfterIsSeconds(value) {
+		const maxDuration = time.Duration(1<<63 - 1)
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return maxDuration, true
+		}
+		if maxSeconds := int64(maxDuration / time.Second); seconds > maxSeconds {
+			return maxDuration, true
 		}
 		return time.Duration(seconds) * time.Second, true
 	}
@@ -354,4 +359,13 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 		return 0, true
 	}
 	return when.Sub(now), true
+}
+
+func retryAfterIsSeconds(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

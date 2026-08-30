@@ -370,6 +370,103 @@ func TestDomainGateBackoffUsesSubmittedHostAndClampsRetryAfter(t *testing.T) {
 	}
 }
 
+func TestDomainGateBackoffSaturatesOverflowingRetryAfterToPolicyCeiling(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		current := requests
+		mu.Unlock()
+		if current == 1 {
+			w.Header().Set("Retry-After", "10000000000")
+			http.Error(w, "try later", http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	dm := createTestManager()
+	dm.resourceCtx = threadSafeDiscardCreator{}
+	dm.SetPolicyResolver(allowAllEgressResolver)
+	dm.SetThrottleResolver(func(plugin string) (DomainPolicy, bool) {
+		return exactHostPolicy(t, server.URL, 0, 0, 180*time.Millisecond), true
+	})
+
+	first, err := dm.SubmitForPlugin(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/first"}, nil, "feeds")
+	if err != nil {
+		t.Fatalf("submit first: %v", err)
+	}
+	waitForStatus(t, first, JobStatusFailed)
+
+	second, err := dm.SubmitForPlugin(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/second"}, nil, "feeds")
+	if err != nil {
+		t.Fatalf("submit second: %v", err)
+	}
+	time.Sleep(90 * time.Millisecond)
+	mu.Lock()
+	midRequests := requests
+	mu.Unlock()
+	if midRequests != 1 {
+		t.Fatalf("overflowing Retry-After disabled the declared backoff: requests=%d", midRequests)
+	}
+	waitForStatus(t, second, JobStatusCompleted)
+}
+
+func TestDomainGateBackoffUsesSubmittedHostAcrossRedirected503(t *testing.T) {
+	var mu sync.Mutex
+	submittedRequests := 0
+	finalRequests := 0
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		finalRequests++
+		current := finalRequests
+		mu.Unlock()
+		if current == 1 {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer final.Close()
+
+	submitted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		submittedRequests++
+		mu.Unlock()
+		http.Redirect(w, r, final.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer submitted.Close()
+	submittedURL := localHostURL(t, submitted.URL)
+
+	dm := createTestManager()
+	dm.resourceCtx = threadSafeDiscardCreator{}
+	dm.SetPolicyResolver(allowAllEgressResolver)
+	dm.SetThrottleResolver(func(plugin string) (DomainPolicy, bool) {
+		return exactHostPolicy(t, submittedURL, 0, 0, 160*time.Millisecond), true
+	})
+
+	first, err := dm.SubmitForPlugin(&query_models.ResourceFromRemoteCreator{URL: submittedURL + "/first"}, nil, "feeds")
+	if err != nil {
+		t.Fatalf("submit first: %v", err)
+	}
+	waitForStatus(t, first, JobStatusFailed)
+
+	second, err := dm.SubmitForPlugin(&query_models.ResourceFromRemoteCreator{URL: submittedURL + "/second"}, nil, "feeds")
+	if err != nil {
+		t.Fatalf("submit second: %v", err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	midSubmittedRequests := submittedRequests
+	mu.Unlock()
+	if midSubmittedRequests != 1 {
+		t.Fatalf("redirected 503 did not back off the submitted host: submitted requests=%d", midSubmittedRequests)
+	}
+	waitForStatus(t, second, JobStatusCompleted)
+}
+
 func TestDomainGateZeroValueAndPersonDownloadsAreInert(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
