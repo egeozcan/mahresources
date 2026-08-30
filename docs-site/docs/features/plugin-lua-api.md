@@ -356,7 +356,9 @@ plugin's VM lock for the whole transfer, so nothing else in that plugin runs
 meanwhile, and inside a background job it is bounded by the five-minute job
 limit. `mah.download.submit` has neither problem: the host does the work, and
 the job appears in the jobs panel and the download history with progress,
-cancel and retry like any other download.
+cancel and retry like any other download. If the plugin declares
+`download_limits`, this job is paced by the first matching host rule before it
+occupies a shared download slot; see [Plugin download pacing and deferral](./download-queue.md#plugin-download-pacing-and-deferral).
 
 The URL is checked against the plugin's `network` rules immediately, so a host
 outside them comes back as `nil, error_string` rather than failing minutes
@@ -369,6 +371,34 @@ since been disabled is refused rather than run.
 `options` are the same as `create_resource_from_url`'s, `headers` included --
 and here they are stored on the download history row, so a retry made long
 afterwards replays them. Refused inside `mah.db.transaction`.
+
+To defer a host download, pass exactly one of:
+
+| Option | Meaning |
+|---|---|
+| `start_at` | Unix seconds; must be in the future and no more than 30 days away |
+| `delay` | Duration string such as `"2h"`; must be at least zero and no more than 30 days |
+
+A deferred call stores a durable scheduled-download row instead of creating a
+queue job immediately, and returns
+`{ scheduled = true, scheduled_id = <row id>, start_at = <unix seconds> }`.
+The result deliberately uses `scheduled_id`, not `id`, because no queue job
+exists yet. The plugin scheduler tick later claims the row, re-checks the
+stored plugin's network policy and the stored user's write scope, and then
+submits the ordinary download. If the submitting user is deleted before a
+pending row fires, the row stops rather than falling back to an administrator.
+A pending row can be cancelled from the plugin management page or
+`POST /v1/plugin/scheduled-downloads/cancel`.
+
+```lua
+local scheduled, err = mah.download.submit(
+    "https://example.com/archive.zip",
+    { owner_id = 5, delay = "2h" }
+)
+if scheduled then
+    print("scheduled for " .. scheduled.start_at)
+end
+```
 
 To act on the result, listen for the job event (requires `job_events`):
 
