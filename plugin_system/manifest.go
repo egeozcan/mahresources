@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	lua "github.com/yuin/gopher-lua"
@@ -152,17 +153,38 @@ func newCapabilitySet(names []string) CapabilitySet {
 // the network rules — those are a vulnerability fix, and exempting the plugins
 // that exist today would exempt exactly the population that has the hole.
 type Manifest struct {
-	Declared          bool     `json:"declared"`
-	APIVersion        int      `json:"api_version,omitempty"`
-	CapabilityList    []string `json:"capabilities,omitempty"`
-	Network           []string `json:"network,omitempty"`
-	AllowPrivateHosts bool     `json:"allow_private_hosts,omitempty"`
-	Dependencies      []string `json:"dependencies,omitempty"`
-	MinAppVersion     string   `json:"min_app_version,omitempty"`
+	Declared          bool            `json:"declared"`
+	APIVersion        int             `json:"api_version,omitempty"`
+	CapabilityList    []string        `json:"capabilities,omitempty"`
+	Network           []string        `json:"network,omitempty"`
+	DownloadLimits    []DownloadLimit `json:"download_limits,omitempty"`
+	AllowPrivateHosts bool            `json:"allow_private_hosts,omitempty"`
+	Dependencies      []string        `json:"dependencies,omitempty"`
+	MinAppVersion     string          `json:"min_app_version,omitempty"`
 
 	// rules is Network parsed, kept so matching never re-parses and never has
 	// to handle a parse failure at request time.
 	rules []NetworkRule
+}
+
+// DownloadLimit is one manifest-declared per-domain pacing rule. Concurrency 0
+// means unlimited, and zero durations mean the corresponding wait is disabled.
+// The rule field is the parsed Host and keeps matching on the same grammar as
+// plugin network allowlists.
+type DownloadLimit struct {
+	Host        string        `json:"host"`
+	Concurrency int           `json:"concurrency,omitempty"`
+	MinInterval time.Duration `json:"min_interval,omitempty"`
+	Backoff     time.Duration `json:"backoff,omitempty"`
+
+	rule NetworkRule
+}
+
+// DownloadPolicy is the effective pacing rule for a submitted download host.
+type DownloadPolicy struct {
+	Concurrency int
+	MinInterval time.Duration
+	Backoff     time.Duration
 }
 
 // Capabilities returns the set this manifest grants: everything for a legacy
@@ -196,6 +218,22 @@ func (m Manifest) NetworkPolicy() NetworkPolicy {
 	}
 }
 
+// DownloadPolicy returns the first manifest download limit that matches host.
+// First match wins because rule order is the author's way to put a specific
+// exception before a broader wildcard.
+func (m Manifest) DownloadPolicy(host string) (DownloadPolicy, bool) {
+	for _, limit := range m.DownloadLimits {
+		if limit.rule.Matches(host) {
+			return DownloadPolicy{
+				Concurrency: limit.Concurrency,
+				MinInterval: limit.MinInterval,
+				Backoff:     limit.Backoff,
+			}, true
+		}
+	}
+	return DownloadPolicy{}, false
+}
+
 // Equal reports whether two manifests declare the same thing. Used to detect a
 // plugin.lua that changed between discovery and load: the grants were built
 // from the discovered read, so a different file is a different package.
@@ -208,7 +246,8 @@ func (m Manifest) Equal(other Manifest) bool {
 	}
 	return sameStrings(m.CapabilityList, other.CapabilityList) &&
 		sameStrings(m.Network, other.Network) &&
-		sameStrings(m.Dependencies, other.Dependencies)
+		sameStrings(m.Dependencies, other.Dependencies) &&
+		sameDownloadLimits(m.DownloadLimits, other.DownloadLimits)
 }
 
 func sameStrings(a, b []string) bool {
@@ -227,10 +266,25 @@ func sameStrings(a, b []string) bool {
 	return true
 }
 
+func sameDownloadLimits(a, b []DownloadLimit) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Host != b[i].Host ||
+			a[i].Concurrency != b[i].Concurrency ||
+			a[i].MinInterval != b[i].MinInterval ||
+			a[i].Backoff != b[i].Backoff {
+			return false
+		}
+	}
+	return true
+}
+
 // manifestKeys are the fields that only mean something inside a manifest.
 // Declaring one without api_version is an error rather than a silent grant of
 // everything, because the plugin plainly meant to declare a manifest.
-var manifestKeys = []string{"capabilities", "network", "allow_private_hosts", "dependencies", "min_app_version"}
+var manifestKeys = []string{"capabilities", "network", "download_limits", "allow_private_hosts", "dependencies", "min_app_version"}
 
 // ParseManifest reads the manifest fields off a plugin's `plugin` table.
 // A table with no api_version is legacy, provided it declares no other manifest
@@ -314,6 +368,12 @@ func ParseManifest(tbl *lua.LTable) (Manifest, error) {
 		m.Network = append(m.Network, h)
 		m.rules = append(m.rules, rule)
 	}
+
+	limits, err := manifestDownloadLimits(tbl)
+	if err != nil {
+		return m, err
+	}
+	m.DownloadLimits = limits
 
 	if v := tbl.RawGetString("allow_private_hosts"); v != lua.LNil {
 		b, ok := v.(lua.LBool)
@@ -540,6 +600,158 @@ func manifestStrings(tbl *lua.LTable, key string) ([]string, error) {
 		out = append(out, trimmed)
 	}
 	return out, nil
+}
+
+func manifestDownloadLimits(tbl *lua.LTable) ([]DownloadLimit, error) {
+	v := tbl.RawGetString("download_limits")
+	if v == lua.LNil {
+		return nil, nil
+	}
+	arr, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("download_limits must be an array of tables, got %s", v.Type())
+	}
+
+	n := arr.Len()
+	var extra error
+	arr.ForEach(func(k, _ lua.LValue) {
+		if extra != nil {
+			return
+		}
+		idx, ok := k.(lua.LNumber)
+		if !ok || float64(idx) != float64(int(idx)) || int(idx) < 1 || int(idx) > n {
+			extra = fmt.Errorf("download_limits must be an array: unexpected key %v", k)
+		}
+	})
+	if extra != nil {
+		return nil, extra
+	}
+
+	out := make([]DownloadLimit, 0, n)
+	for i := 1; i <= n; i++ {
+		item := arr.RawGetInt(i)
+		entry, ok := item.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("download_limits[%d] must be a table, got %s", i, item.Type())
+		}
+		limit, err := parseDownloadLimit(entry, i)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, limit)
+	}
+	return out, nil
+}
+
+func parseDownloadLimit(tbl *lua.LTable, idx int) (DownloadLimit, error) {
+	if err := rejectDownloadLimitKeys(tbl, idx); err != nil {
+		return DownloadLimit{}, err
+	}
+
+	label := fmt.Sprintf("download_limits[%d]", idx)
+	hostValue := tbl.RawGetString("host")
+	if hostValue == lua.LNil {
+		return DownloadLimit{}, fmt.Errorf("%s.host is required", label)
+	}
+	hostString, ok := hostValue.(lua.LString)
+	if !ok {
+		return DownloadLimit{}, fmt.Errorf("%s.host must be a string, got %s", label, hostValue.Type())
+	}
+	host := strings.TrimSpace(string(hostString))
+	if host == "" {
+		return DownloadLimit{}, fmt.Errorf("%s.host must not be empty", label)
+	}
+	rule, err := parseNetworkRule(host)
+	if err != nil {
+		return DownloadLimit{}, fmt.Errorf("%s.host %q: %w", label, host, err)
+	}
+
+	concurrency, err := optionalPositiveWholeNumber(tbl, "concurrency", label)
+	if err != nil {
+		return DownloadLimit{}, err
+	}
+	minInterval, err := optionalDuration(tbl, "min_interval", label)
+	if err != nil {
+		return DownloadLimit{}, err
+	}
+	backoff, err := optionalDuration(tbl, "backoff", label)
+	if err != nil {
+		return DownloadLimit{}, err
+	}
+
+	return DownloadLimit{
+		Host:        host,
+		Concurrency: concurrency,
+		MinInterval: minInterval,
+		Backoff:     backoff,
+		rule:        rule,
+	}, nil
+}
+
+var downloadLimitKeys = []string{"host", "concurrency", "min_interval", "backoff"}
+
+func rejectDownloadLimitKeys(tbl *lua.LTable, idx int) error {
+	var bad error
+	tbl.ForEach(func(k, _ lua.LValue) {
+		if bad != nil {
+			return
+		}
+		key, ok := k.(lua.LString)
+		if !ok {
+			bad = fmt.Errorf("download_limits[%d] has unexpected key %v", idx, k)
+			return
+		}
+		name := string(key)
+		for _, known := range downloadLimitKeys {
+			if name == known {
+				return
+			}
+		}
+		for _, known := range downloadLimitKeys {
+			if normalizeKey(name) == normalizeKey(known) ||
+				editDistanceWithin1(name, known) ||
+				editDistanceWithin1(normalizeKey(name), normalizeKey(known)) {
+				bad = fmt.Errorf("download_limits[%d].%s is not a download limit field — did you mean %q?", idx, name, known)
+				return
+			}
+		}
+		bad = fmt.Errorf("download_limits[%d].%s is not a download limit field", idx, name)
+	})
+	return bad
+}
+
+func optionalPositiveWholeNumber(tbl *lua.LTable, key, label string) (int, error) {
+	v := tbl.RawGetString(key)
+	if v == lua.LNil {
+		return 0, nil
+	}
+	n, ok := v.(lua.LNumber)
+	if !ok {
+		return 0, fmt.Errorf("%s.%s must be a positive whole number, got %s", label, key, v.Type())
+	}
+	if float64(n) != float64(int(n)) || int(n) <= 0 {
+		return 0, fmt.Errorf("%s.%s must be a positive whole number when present, got %v", label, key, n)
+	}
+	return int(n), nil
+}
+
+func optionalDuration(tbl *lua.LTable, key, label string) (time.Duration, error) {
+	v := tbl.RawGetString(key)
+	if v == lua.LNil {
+		return 0, nil
+	}
+	s, ok := v.(lua.LString)
+	if !ok {
+		return 0, fmt.Errorf("%s.%s must be a duration string such as \"5s\", got %s", label, key, v.Type())
+	}
+	d, err := time.ParseDuration(string(s))
+	if err != nil {
+		return 0, fmt.Errorf("%s.%s %q is not a duration: %v", label, key, string(s), err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s.%s must not be negative, got %q", label, key, string(s))
+	}
+	return d, nil
 }
 
 // --- network rules ---
