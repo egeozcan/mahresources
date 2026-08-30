@@ -10,6 +10,7 @@ import (
 	"mahresources/server/http_utils"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -289,6 +290,81 @@ func GetPluginScheduleRunHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 			"scheduleId": scheduleID,
 			"started":    true,
 		})
+	}
+}
+
+// GetPluginScheduledDownloadsHandler lists deferred downloads submitted by one plugin.
+//
+// Admin-only by the same exact-path rule as GetPluginSchedulesHandler. A
+// scheduled download stores the submitted URL and the last submit error, so it
+// belongs on the same system-management surface rather than on plugin read
+// endpoints that group-limited users may be opened to.
+func GetPluginScheduledDownloadsHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			http_utils.HandleError(fmt.Errorf("missing plugin name"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		rows, err := ctx.PluginScheduledDownloadsFor(name)
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+
+		out := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			entry := map[string]any{
+				"id":         row.ID,
+				"pluginName": row.PluginName,
+				"url":        row.URL,
+				"dueAt":      row.DueAt,
+				"status":     row.Status,
+				"jobId":      row.JobID,
+				"lastError":  row.LastError,
+				"attempts":   row.Attempts,
+				"owned":      row.CreatedByUserId != nil,
+				"createdAt":  row.CreatedAt,
+				"updatedAt":  row.UpdatedAt,
+			}
+			if row.ClaimedAt != nil {
+				entry["claimedAt"] = row.ClaimedAt
+			}
+			out = append(out, entry)
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+// GetPluginScheduledDownloadCancelHandler cancels a deferred plugin download
+// before it has been submitted to the in-memory queue.
+func GetPluginScheduledDownloadCancelHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseUint(strings.TrimSpace(r.FormValue("id")), 10, 0)
+		if err != nil || id == 0 {
+			http_utils.HandleError(fmt.Errorf("invalid scheduled download id"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		cancelled, err := ctx.CancelScheduledDownload(uint(id))
+		if err != nil {
+			http_utils.HandleError(err, w, r, statusCodeForError(err, http.StatusInternalServerError))
+			return
+		}
+		if !cancelled {
+			http_utils.HandleError(fmt.Errorf("scheduled download cannot be cancelled"), w, r, http.StatusConflict)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(w, r, "/plugins/manage") {
+			return
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id, "status": "cancelled"})
 	}
 }
 

@@ -5474,6 +5474,44 @@ paths:
             summary: Run a plugin schedule now
             tags:
                 - plugins
+    /v1/plugin/scheduled-downloads:
+        get:
+            description: The stored one-shot downloads a plugin deferred with mah.download.submit. Pending rows have not yet become queue jobs; submitted rows carry the produced jobId. Rows without an owner are inert rather than falling back to an administrator.
+            operationId: listPluginScheduledDownloads
+            parameters:
+                - description: Plugin name
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List a plugin's deferred downloads
+            tags:
+                - plugins
+    /v1/plugin/scheduled-downloads/cancel:
+        post:
+            description: Cancels one scheduled download before it is submitted to the in-memory queue. Already submitted, failed, cancelled, or actively claimed rows are refused with 409.
+            operationId: cancelPluginScheduledDownload
+            parameters:
+                - description: Scheduled download row id
+                  in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Cancel a pending deferred plugin download
+            tags:
+                - plugins
     /v1/plugin/schedules:
         get:
             description: The stored schedules for one plugin, as recorded when it was enabled. `registered` is false when the row exists but the plugin no longer declares that id -- a disabled plugin, a renamed schedule, or a removed mah.schedule call all look like this, and none of them run. `owned` is false when the operator who enabled the plugin has since been deleted, at which point the schedule has stopped rather than merely lost its attribution.

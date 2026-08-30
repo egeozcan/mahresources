@@ -56,6 +56,10 @@ type pluginDisplay struct {
 	// differ in exactly the cases an operator needs to see: a row whose plugin
 	// is disabled is inert but still there, and a row with no owner never runs.
 	Schedules []scheduleDisplay
+
+	// ScheduledDownloads are one-shot deferred host downloads a plugin submitted.
+	// They are stored rows until the scheduler turns them into queue jobs.
+	ScheduledDownloads []scheduledDownloadDisplay
 }
 
 // scheduleRefRE is `<plugin>/<schedule>` in the grammars the two halves are
@@ -94,6 +98,13 @@ type scheduleLister interface {
 	PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error)
 }
 
+// scheduledDownloadLister is the optional capability this page uses to read
+// one-shot deferred plugin downloads, kept optional for the same reason as
+// scheduleLister.
+type scheduledDownloadLister interface {
+	PluginScheduledDownloadsFor(pluginName string) ([]models.ScheduledDownload, error)
+}
+
 // buildScheduleDisplays reads one plugin's rows and marks each against the live
 // registry.
 func buildScheduleDisplays(appCtx PluginManagePageContext, pm *plugin_system.PluginManager, name string) []scheduleDisplay {
@@ -119,6 +130,45 @@ func buildScheduleDisplays(appCtx PluginManagePageContext, pm *plugin_system.Plu
 			Runs:       row.Runs,
 			Owned:      row.CreatedByUserId != nil,
 			Registered: pm.ScheduleIsRegistered(name, row.ScheduleID),
+		})
+	}
+	return out
+}
+
+// scheduledDownloadDisplay is one ScheduledDownload row, flattened for the
+// plugin management template.
+type scheduledDownloadDisplay struct {
+	ID        uint
+	URL       string
+	DueAt     time.Time
+	Status    string
+	JobID     string
+	LastError string
+	Attempts  int
+	Owned     bool
+}
+
+func buildScheduledDownloadDisplays(appCtx PluginManagePageContext, name string) []scheduledDownloadDisplay {
+	lister, ok := appCtx.(scheduledDownloadLister)
+	if !ok {
+		return nil
+	}
+	rows, err := lister.PluginScheduledDownloadsFor(name)
+	if err != nil {
+		log.Printf("[plugin] warning: failed to load scheduled downloads for %q: %v", name, err)
+		return nil
+	}
+	out := make([]scheduledDownloadDisplay, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, scheduledDownloadDisplay{
+			ID:        row.ID,
+			URL:       row.URL,
+			DueAt:     row.DueAt,
+			Status:    row.Status,
+			JobID:     row.JobID,
+			LastError: row.LastError,
+			Attempts:  row.Attempts,
+			Owned:     row.CreatedByUserId != nil,
 		})
 	}
 	return out
@@ -184,21 +234,22 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 		for _, dp := range discovered {
 			caps := dp.Manifest.Capabilities().Sorted()
 			pd := pluginDisplay{
-				Name:              dp.Name,
-				Version:           dp.Version,
-				Description:       dp.Description,
-				HasDocs:           pm.PluginHasDocs(dp.Name),
-				Settings:          dp.Settings,
-				Values:            make(map[string]any),
-				Legacy:            !dp.Manifest.Declared,
-				APIVersion:        dp.Manifest.APIVersion,
-				Capabilities:      caps,
-				CapabilityLabels:  capabilityLabels(caps),
-				Network:           dp.Manifest.NetworkDisplay(),
-				AllowPrivateHosts: dp.Manifest.AllowPrivateHosts,
-				Dependencies:      dp.Manifest.Dependencies,
-				MinAppVersion:     dp.Manifest.MinAppVersion,
-				Schedules:         buildScheduleDisplays(appCtx, pm, dp.Name),
+				Name:               dp.Name,
+				Version:            dp.Version,
+				Description:        dp.Description,
+				HasDocs:            pm.PluginHasDocs(dp.Name),
+				Settings:           dp.Settings,
+				Values:             make(map[string]any),
+				Legacy:             !dp.Manifest.Declared,
+				APIVersion:         dp.Manifest.APIVersion,
+				Capabilities:       caps,
+				CapabilityLabels:   capabilityLabels(caps),
+				Network:            dp.Manifest.NetworkDisplay(),
+				AllowPrivateHosts:  dp.Manifest.AllowPrivateHosts,
+				Dependencies:       dp.Manifest.Dependencies,
+				MinAppVersion:      dp.Manifest.MinAppVersion,
+				Schedules:          buildScheduleDisplays(appCtx, pm, dp.Name),
+				ScheduledDownloads: buildScheduledDownloadDisplays(appCtx, dp.Name),
 			}
 			if s, ok := stateMap[dp.Name]; ok {
 				pd.Enabled = s.enabled

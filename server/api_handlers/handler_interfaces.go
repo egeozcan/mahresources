@@ -136,6 +136,8 @@ type PluginAPIContext interface {
 	PluginKVPurge(pluginName string) error
 	PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error)
 	RunPluginScheduleNow(pluginName, scheduleID string) error
+	PluginScheduledDownloadsFor(pluginName string) ([]models.ScheduledDownload, error)
+	CancelScheduledDownload(id uint) (bool, error)
 	GetNote(id uint) (*models.Note, error)
 	GetBlock(id uint) (*models.NoteBlock, error)
 }

@@ -103,6 +103,8 @@ func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
 	endpoints := []struct{ method, path string }{
 		{http.MethodGet, "/v1/plugins/manage"},
 		{http.MethodGet, "/v1/plugin/schedules?name=whatever"},
+		{http.MethodGet, "/v1/plugin/scheduled-downloads?name=whatever"},
+		{http.MethodPost, "/v1/plugin/scheduled-downloads/cancel"},
 		{http.MethodPost, "/v1/plugin/enable"},
 		{http.MethodPost, "/v1/plugin/disable"},
 		{http.MethodPost, "/v1/plugin/settings?name=whatever"},

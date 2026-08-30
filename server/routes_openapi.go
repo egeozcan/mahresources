@@ -2976,6 +2976,32 @@ func registerPluginRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/plugin/scheduled-downloads",
+		OperationID: "listPluginScheduledDownloads",
+		Summary:     "List a plugin's deferred downloads",
+		Description: "The stored one-shot downloads a plugin deferred with mah.download.submit. Pending rows have not yet become queue jobs; submitted rows carry the produced jobId. Rows without an owner are inert rather than falling back to an administrator.",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugin/scheduled-downloads/cancel",
+		OperationID: "cancelPluginScheduledDownload",
+		Summary:     "Cancel a pending deferred plugin download",
+		Description: "Cancels one scheduled download before it is submitted to the in-memory queue. Already submitted, failed, cancelled, or actively claimed rows are refused with 409.",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Required: true, Description: "Scheduled download row id"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
 		Path:        "/v1/plugin/purge-data",
 		OperationID: "purgePluginData",
