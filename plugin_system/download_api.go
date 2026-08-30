@@ -13,11 +13,21 @@ const (
 	// unattended work belongs to mah.schedule and its own capability.
 	DownloadMaxDeferral = 30 * 24 * time.Hour
 
-	// DownloadSubmitStartAtOption is the typed bridge marker mah.download.submit
-	// adds after validating `start_at` or `delay`. Lua cannot manufacture the
-	// time.Time value, so direct option names remain ordinary resource options.
-	DownloadSubmitStartAtOption = "__mah_download_start_at"
+	// downloadSubmitStartAtOption is the typed bridge marker mah.download.submit
+	// adds after validating `start_at` or `delay`. It stays unexported so callers
+	// use the typed helpers below rather than sharing a magic map key.
+	downloadSubmitStartAtOption = "__mah_download_start_at"
 )
+
+// SetDownloadSubmitStartAt stores a parsed deferred start in the bridge options
+// map. Lua cannot manufacture the time.Time value, so direct option names remain
+// ordinary resource options.
+func SetDownloadSubmitStartAt(opts map[string]any, startAt time.Time) {
+	if opts == nil {
+		return
+	}
+	opts[downloadSubmitStartAtOption] = startAt
+}
 
 // DownloadSubmitStartAt returns the parsed deferred start carried through the
 // mah.download.submit bridge.
@@ -25,7 +35,7 @@ func DownloadSubmitStartAt(opts map[string]any) (time.Time, bool) {
 	if opts == nil {
 		return time.Time{}, false
 	}
-	startAt, ok := opts[DownloadSubmitStartAtOption].(time.Time)
+	startAt, ok := opts[downloadSubmitStartAtOption].(time.Time)
 	return startAt, ok
 }
 
@@ -127,7 +137,7 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 			delete(opts, "start_at")
 			delete(opts, "delay")
 			if scheduled {
-				opts[DownloadSubmitStartAtOption] = startAt
+				SetDownloadSubmitStartAt(opts, startAt)
 			}
 		}
 

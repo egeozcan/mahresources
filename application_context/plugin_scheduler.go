@@ -65,11 +65,12 @@ type PluginScheduler struct {
 	// here is a claim nobody releases until it expires.
 	runs sync.WaitGroup
 
-	// Test seams for deferred downloads. Production leaves both nil, selecting
+	// Test seams for deferred downloads. Production leaves these nil, selecting
 	// the live queue helpers below; tests install fakes so a scheduler tick can
 	// prove claim bookkeeping without opening a socket.
-	scheduledDownloadSubmit ScheduledDownloadSubmitFunc
-	scheduledDownloadActive ScheduledDownloadActiveFunc
+	scheduledDownloadSubmit  ScheduledDownloadSubmitFunc
+	scheduledDownloadActive  ScheduledDownloadActiveFunc
+	pluginScheduleClaimToken func() (string, error)
 }
 
 func NewPluginScheduler(ctx *MahresourcesContext, interval time.Duration) *PluginScheduler {
@@ -137,10 +138,10 @@ func (s *PluginScheduler) Tick(now time.Time) {
 			if !pm.ScheduleIsRegistered(row.PluginName, row.ScheduleID) {
 				continue
 			}
-			token, err := newScheduleClaimToken()
+			token, err := s.newPluginScheduleClaimToken()
 			if err != nil {
 				log.Printf("warning: plugin scheduler could not mint a claim token: %v", err)
-				return
+				break
 			}
 			claimed, err := s.ctx.ClaimPluginSchedule(row.ID, token, now)
 			if err != nil {
@@ -162,6 +163,13 @@ func (s *PluginScheduler) Tick(now time.Time) {
 	}
 
 	s.fireScheduledDownloads(now)
+}
+
+func (s *PluginScheduler) newPluginScheduleClaimToken() (string, error) {
+	if s.pluginScheduleClaimToken != nil {
+		return s.pluginScheduleClaimToken()
+	}
+	return newScheduleClaimToken()
 }
 
 func (s *PluginScheduler) fireScheduledDownloads(now time.Time) {

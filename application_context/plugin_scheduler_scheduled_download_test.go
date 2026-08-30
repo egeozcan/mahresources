@@ -27,6 +27,26 @@ function init() end
 	}
 }
 
+func writeScheduledDownloadAndSchedulePlugin(t *testing.T, dir, name string) {
+	t.Helper()
+	pluginDir := filepath.Join(dir, name)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin: %v", err)
+	}
+	src := `
+plugin = { api_version = 1, name = "` + name + `", version = "1.0",
+           capabilities = { "schedule", "kv", "db:write" }, network = { "example.test" } }
+function init()
+    mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
+        mah.kv.set("runs", "1")
+    end })
+end
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.lua"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write plugin: %v", err)
+	}
+}
+
 func scheduledDownloadSchedulerTest(t *testing.T) (*MahresourcesContext, *PluginScheduler, models.User) {
 	t.Helper()
 	dir := t.TempDir()
@@ -122,6 +142,71 @@ func TestPluginSchedulerTickDoesNotFireScheduledDownloadForDisabledPlugin(t *tes
 	got := scheduledDownloadRow(t, ctx, row.ID)
 	if got.Status != models.ScheduledDownloadStatusFailed || got.LastError == "" {
 		t.Fatalf("disabled plugin status/error = %q/%q, want failed with an error", got.Status, got.LastError)
+	}
+}
+
+func TestPluginSchedulerTickDoesNotFireScheduledDownloadForMissingPlugin(t *testing.T) {
+	ctx, scheduler, owner := scheduledDownloadSchedulerTest(t)
+	row, err := ctx.CreateScheduledDownload("gone", owner.ID, &query_models.ResourceFromRemoteCreator{
+		URL: "https://example.test/file.mp4",
+	}, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("create scheduled download for missing plugin: %v", err)
+	}
+	scheduler.scheduledDownloadSubmit = func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+		t.Fatal("missing plugin reached scheduled download submit")
+		return "", nil
+	}
+
+	scheduler.Tick(time.Now())
+
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusFailed || got.LastError == "" {
+		t.Fatalf("missing plugin status/error = %q/%q, want failed with an error", got.Status, got.LastError)
+	}
+}
+
+func TestPluginSchedulerTickStillFiresScheduledDownloadsWhenPluginScheduleClaimTokenFails(t *testing.T) {
+	dir := t.TempDir()
+	writeScheduledDownloadAndSchedulePlugin(t, dir, "poller")
+	ctx := schedulerTestContext(t, dir)
+	pm := ctx.PluginManager()
+	if pm == nil {
+		t.Fatal("no plugin manager")
+	}
+	if err := pm.EnablePlugin("poller"); err != nil {
+		t.Fatalf("enable plugin: %v", err)
+	}
+	if err := ctx.SyncPluginSchedules("poller", pm.DeclaredSchedules("poller")); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	if err := ctx.db.Model(&models.PluginSchedule{}).Where("plugin_name = ?", "poller").
+		Update("next_due_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatalf("make schedule due: %v", err)
+	}
+	owner := models.User{Username: "download-owner", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&owner).Error; err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	row, err := ctx.CreateScheduledDownload("poller", owner.ID, &query_models.ResourceFromRemoteCreator{
+		URL: "https://example.test/file.mp4",
+	}, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("create scheduled download: %v", err)
+	}
+
+	scheduler := NewPluginScheduler(ctx, time.Minute)
+	scheduler.pluginScheduleClaimToken = func() (string, error) { return "", errors.New("random source broke") }
+	scheduler.scheduledDownloadSubmit = func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+		return "download-job", nil
+	}
+
+	scheduler.Tick(time.Now())
+
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != "download-job" {
+		t.Fatalf("scheduled download status/job = %q/%q, want submitted/download-job", got.Status, got.JobID)
 	}
 }
 

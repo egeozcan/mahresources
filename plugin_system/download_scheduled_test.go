@@ -136,6 +136,7 @@ func TestDownloadSubmitRejectsInvalidDeferralOptions(t *testing.T) {
 		{"both", `{ start_at = 4102444800, delay = "1h" }`, "start_at and delay"},
 		{"bad delay type", `{ delay = 3 }`, "delay"},
 		{"bad delay string", `{ delay = "soon" }`, "delay"},
+		{"negative delay", `{ delay = "-1s" }`, "delay"},
 		{"too long delay", `{ delay = "721h" }`, "30 days"},
 		{"past start_at", `{ start_at = 1 }`, "start_at"},
 		{"bad start_at type", `{ start_at = "tomorrow" }`, "start_at"},

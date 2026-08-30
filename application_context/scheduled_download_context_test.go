@@ -92,10 +92,11 @@ func TestSubmitDownloadWithDeferredStartPersistsScheduledRowWithoutQueueJob(t *t
 	ownerUser := createDownloadOwner(t, ctx)
 	startAt := time.Now().Add(time.Hour).Truncate(time.Second)
 
-	resp, err := ctx.SubmitDownload("feeds", ownerUser.ID, "https://example.test/file", map[string]any{
-		plugin_system.DownloadSubmitStartAtOption: startAt,
+	opts := map[string]any{
 		"headers": map[string]any{"Referer": "https://example.test/watch"},
-	})
+	}
+	plugin_system.SetDownloadSubmitStartAt(opts, startAt)
+	resp, err := ctx.SubmitDownload("feeds", ownerUser.ID, "https://example.test/file", opts)
 	if err != nil {
 		t.Fatalf("submit deferred download: %v", err)
 	}
