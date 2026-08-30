@@ -206,9 +206,6 @@ func parseDownloadSubmitDeferral(tbl *lua.LTable, now time.Time) (time.Time, boo
 	if startAt.Before(now) {
 		return time.Time{}, false, fmt.Errorf("start_at must not be in the past")
 	}
-	if startAt.After(now.Add(DownloadMaxDeferral)) {
-		return time.Time{}, false, fmt.Errorf("start_at exceeds the 30 days maximum")
-	}
 	return startAt, true, nil
 }
 

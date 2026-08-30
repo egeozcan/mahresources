@@ -25,6 +25,11 @@ const (
 	// timer. Rows that never submitted (for example because the same URL is
 	// already running) keep Attempts at zero and remain pending for a later tick.
 	scheduledDownloadMaxSubmitAttempts = 1
+
+	// A row blocked by a live download of the same URL moves out of the immediate
+	// due set instead of being released unchanged. Otherwise the oldest colliding
+	// rows can occupy the sweep's fixed page forever and starve later due rows.
+	scheduledDownloadActiveURLDefer = time.Minute
 )
 
 // ScheduledDownloadSubmitFunc is the queue-submission seam used by the scheduler
@@ -179,12 +184,28 @@ func (ctx *MahresourcesContext) scheduledDownloadByClaim(id uint, claimToken str
 }
 
 // ReleaseScheduledDownloadClaim hands a row back to the next tick without
-// recording an attempt. Used when no submit was made, for example because a live
-// job is already fetching the same URL.
+// recording an attempt. Used when no submit was made for a transient reason that
+// should keep the row immediately due.
 func (ctx *MahresourcesContext) ReleaseScheduledDownloadClaim(id uint, claimToken string) error {
 	return ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ? AND claim_token = ?", id, claimToken).
 		Updates(map[string]any{"claim_token": "", "claimed_at": nil}).Error
+}
+
+// DeferScheduledDownloadClaim releases a claimed row and moves its due time out
+// of the current sweep's head. The claim token predicate is the CAS: a stale
+// fire path must not move a row it no longer owns.
+func (ctx *MahresourcesContext) DeferScheduledDownloadClaim(id uint, claimToken string, dueAt, at time.Time) error {
+	res := ctx.db.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusPending).
+		Updates(map[string]any{
+			"claim_token": "",
+			"claimed_at":  nil,
+			"due_at":      dueAt,
+			"updated_at":  at,
+		})
+	return res.Error
 }
 
 // ReserveScheduledDownloadSubmit moves a claimed row out of the claimable set
@@ -354,7 +375,7 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	}
 	if cfg.ActiveDownload != nil {
 		if _, active := cfg.ActiveDownload(creator.URL); active {
-			return false, ctx.ReleaseScheduledDownloadClaim(row.ID, claim)
+			return false, ctx.DeferScheduledDownloadClaim(row.ID, claim, now.Add(scheduledDownloadActiveURLDefer), now)
 		}
 	}
 	if cfg.Submit == nil {

@@ -80,7 +80,7 @@ in-memory queue avoids the 100-job cap and pending-job eviction rules. The
 plugin scheduler tick claims due rows, re-validates the plugin and submitting
 user, and submits the ordinary queue job. If the submitting user is deleted before a pending row fires, the
 row becomes ownerless and is never claimed. Pending rows can be inspected with `mr plugin scheduled-downloads <name>` and
-cancelled from `/plugins/manage` or `POST /v1/plugin/scheduled-downloads/cancel`.
+cancelled through the admin-only `POST /v1/plugin/scheduled-downloads/cancel` endpoint.
 
 ## Streaming playlists (HLS)
 

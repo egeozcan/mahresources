@@ -387,8 +387,8 @@ exists yet. The plugin scheduler tick later claims the row, re-checks the
 stored plugin's network policy and the stored user's write scope, and then
 submits the ordinary download. If the submitting user is deleted before a
 pending row fires, the row stops rather than falling back to an administrator.
-A pending row can be cancelled from the plugin management page or
-`POST /v1/plugin/scheduled-downloads/cancel`.
+A pending row can be inspected on the plugin management page and cancelled through
+the admin-only `POST /v1/plugin/scheduled-downloads/cancel` endpoint.
 
 ```lua
 local scheduled, err = mah.download.submit(

@@ -85,6 +85,24 @@ __job, __err = mah.download.submit("https://example.invalid/v.mp4", { start_at =
 	}
 }
 
+func TestDownloadSubmitStartAtAcceptsFarFutureAbsoluteTimes(t *testing.T) {
+	L, sink := newScheduledSubmitTestState(t)
+	startAt := time.Now().Add(60 * 24 * time.Hour).Unix()
+	if err := L.DoString(`
+__job, __err = mah.download.submit("https://example.invalid/v.mp4", { start_at = ` + strconvFormatInt(startAt) + ` })
+`); err != nil {
+		t.Fatalf("mah.download.submit: %v", err)
+	}
+	if errVal := L.GetGlobal("__err"); errVal != lua.LNil {
+		t.Fatalf("submit reported %v", errVal)
+	}
+	_, opts := sink.snapshot()
+	start, ok := DownloadSubmitStartAt(opts)
+	if !ok || start.Unix() != startAt {
+		t.Fatalf("bridge start_at = %v/%v, want unix %d", start, ok, startAt)
+	}
+}
+
 func TestDownloadSubmitDelaySchedulesFromNow(t *testing.T) {
 	L, sink := newScheduledSubmitTestState(t)
 	before := time.Now().Add(2 * time.Hour)

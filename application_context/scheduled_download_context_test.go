@@ -132,6 +132,55 @@ func TestSubmitDownloadWithDeferredStartPersistsScheduledRowWithoutQueueJob(t *t
 	}
 }
 
+func TestSubmitDownloadWithDeferredStartUsesRootActorWhenAuthIsOff(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	root := models.User{Username: "root", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&root).Error; err != nil {
+		t.Fatalf("seed root admin: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	startAt := time.Now().Add(time.Hour).Truncate(time.Second)
+	opts := map[string]any{}
+	plugin_system.SetDownloadSubmitStartAt(opts, startAt)
+
+	resp, err := ctx.SubmitDownload("feeds", 0, "https://example.test/file", opts)
+	if err != nil {
+		t.Fatalf("auth-off deferred submit with implicit root actor: %v", err)
+	}
+	rowID, ok := resp["scheduled_id"].(uint)
+	if !ok || rowID == 0 {
+		t.Fatalf("scheduled_id = %#v, want row id", resp["scheduled_id"])
+	}
+	got := scheduledDownloadRow(t, ctx, rowID)
+	if got.CreatedByUserId == nil || *got.CreatedByUserId != root.ID {
+		t.Fatalf("owner = %v, want root admin %d", got.CreatedByUserId, root.ID)
+	}
+}
+
+func TestSubmitDownloadWithDeferredStartRejectsZeroActorWhenAuthIsOn(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ctx.Config.AuthEnabled = true
+	root := models.User{Username: "root", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&root).Error; err != nil {
+		t.Fatalf("seed root admin: %v", err)
+	}
+	ctx.refreshRootAdmin()
+	opts := map[string]any{}
+	plugin_system.SetDownloadSubmitStartAt(opts, time.Now().Add(time.Hour))
+
+	_, err := ctx.SubmitDownload("feeds", 0, "https://example.test/file", opts)
+	if err == nil {
+		t.Fatal("auth-on deferred submit accepted an unidentified actor")
+	}
+	var count int64
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Count(&count).Error; err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("auth-on zero actor created %d scheduled download rows", count)
+	}
+}
+
 func TestCreateScheduledDownloadBindsTheSubmitterAsOwner(t *testing.T) {
 	ctx := newScheduledDownloadTestContext(t)
 	admin := models.User{Username: "root", Role: models.RoleAdmin, PasswordHash: "x"}
@@ -586,6 +635,70 @@ func TestFireScheduledDownloadDefersWhenURLIsAlreadyDownloading(t *testing.T) {
 	}
 	if got.Attempts != 0 {
 		t.Fatalf("Attempts = %d, want 0 when nothing was submitted", got.Attempts)
+	}
+}
+
+func TestFireScheduledDownloadDefersCollidingRowsSoLaterRowsCanFire(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	now := time.Now().Truncate(time.Second)
+	activeURL := "https://example.test/active"
+	for i := 0; i < 100; i++ {
+		payload := mustScheduledPayload(t, &query_models.ResourceFromRemoteCreator{URL: activeURL})
+		row := models.ScheduledDownload{
+			PluginName:      "feeds",
+			URL:             activeURL,
+			Payload:         payload,
+			DueAt:           now.Add(-2 * time.Minute),
+			Status:          models.ScheduledDownloadStatusPending,
+			CreatedByUserId: &owner,
+		}
+		if err := ctx.db.Create(&row).Error; err != nil {
+			t.Fatalf("seed colliding row %d: %v", i, err)
+		}
+	}
+	cleanURL := "https://example.test/clean"
+	payload := mustScheduledPayload(t, &query_models.ResourceFromRemoteCreator{URL: cleanURL})
+	clean := models.ScheduledDownload{
+		PluginName:      "feeds",
+		URL:             cleanURL,
+		Payload:         payload,
+		DueAt:           now.Add(-time.Minute),
+		Status:          models.ScheduledDownloadStatusPending,
+		CreatedByUserId: &owner,
+	}
+	if err := ctx.db.Create(&clean).Error; err != nil {
+		t.Fatalf("seed clean row: %v", err)
+	}
+
+	submits := 0
+	cfg := ScheduledDownloadFireConfig{
+		Now:             now,
+		PluginAvailable: func(string) bool { return true },
+		ActiveDownload: func(url string) (string, bool) {
+			return "live-job", url == activeURL
+		},
+		Submit: func(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string) (string, error) {
+			if creator.URL != cleanURL {
+				t.Fatalf("submitted URL = %q, want only the clean URL", creator.URL)
+			}
+			submits++
+			return "clean-job", nil
+		},
+	}
+	if fired, err := ctx.FireDueScheduledDownloads(cfg); err != nil || fired != 0 {
+		t.Fatalf("first sweep fired/err = %d/%v, want 0/<nil> while the first page collides", fired, err)
+	}
+	if fired, err := ctx.FireDueScheduledDownloads(cfg); err != nil || fired != 1 {
+		t.Fatalf("second sweep fired/err = %d/%v, want 1/<nil> after colliding rows moved out of the head", fired, err)
+	}
+	if submits != 1 {
+		t.Fatalf("submits = %d, want 1", submits)
+	}
+	got := scheduledDownloadRow(t, ctx, clean.ID)
+	if got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != "clean-job" {
+		t.Fatalf("clean row status/job = %q/%q, want submitted/clean-job", got.Status, got.JobID)
 	}
 }
 
