@@ -50,13 +50,14 @@ plugin = {
 | `api_version` | No | Declares a permission manifest. See [Plugin Permissions](./plugin-permissions.md) |
 | `capabilities` | No | The `mah` modules to install. Requires `api_version` |
 | `network` | No | Outbound host allowlist. Requires `api_version` |
+| `download_limits` | No | Per-domain pacing for this plugin's own `mah.download.submit` jobs. Requires `api_version` |
 | `allow_private_hosts` | No | Permission to reach private addresses. Requires `api_version` |
 | `dependencies` | No | Plugin names that must be enabled first. Requires `api_version` |
 | `min_app_version` | No | Recorded and displayed, never enforced. Requires `api_version` |
 
 The name is validated at discovery: lower case, starting with a letter, up to 50 characters of `a-z`, `0-9`, `-` and `_`. It is a URL segment in every menu href and the prefix of every shortcode the plugin registers, so a name outside that grammar is skipped with a warning rather than loaded. Two directories declaring the same name are both skipped, because the name is what a plugin's enabled state, settings and KV namespace belong to.
 
-A plugin that declares `api_version` receives only the capabilities it lists -- plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
+A plugin that declares `api_version` receives only the capabilities it lists -- plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. It may also declare `download_limits` to throttle only its own `mah.download.submit` jobs by domain; those limits grant no new capability and do not affect other users or plugins. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
 
 ## Plugin Lifecycle
 
@@ -122,6 +123,7 @@ Navigate to the plugin management page to see all discovered plugins with their 
 - Review the capabilities, network allowlist, and dependencies the plugin declares
 - Open or close the plugin to group-limited accounts
 - Inspect its schedules and run one now
+- Inspect one-shot deferred downloads submitted by `mah.download.submit`
 - Purge its stored data
 - Open its generated documentation page
 
@@ -137,6 +139,8 @@ Navigate to the plugin management page to see all discovered plugins with their 
 | `POST` | `/v1/plugin/scopedAccess` | Allow or refuse group-limited accounts per plugin (form: `name`, `allowed`). See [Plugin Permissions](./plugin-permissions.md) |
 | `GET` | `/v1/plugin/schedules` | List recorded plugin schedules. See [`mah.schedule`](./plugin-lua-api.md#mahschedule----recurring-work) |
 | `POST` | `/v1/plugin/schedule/run` | Run one schedule now |
+| `GET` | `/v1/plugin/scheduled-downloads` | List one-shot deferred downloads for a plugin |
+| `POST` | `/v1/plugin/scheduled-downloads/cancel` | Cancel a pending deferred download |
 
 ### Enable a Plugin
 

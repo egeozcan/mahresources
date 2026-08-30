@@ -39,6 +39,49 @@ A finished job whose source is `download` is also written to a durable history r
 
 See [Downloads page](../user-guide/managing-resources.md#downloads-page) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
+## Plugin download pacing and deferral
+
+A plugin can throttle only the downloads it submits through `mah.download.submit`
+by declaring `download_limits` in its manifest:
+
+```lua
+plugin = {
+  api_version = 1,
+  capabilities = { "db:write" },
+  network = { "*.example.com" },
+  download_limits = {
+    { host = "*.example.com", concurrency = 2, min_interval = "5s", backoff = "60s" },
+  },
+}
+```
+
+`host` uses the same grammar as the plugin `network` allowlist. The first
+matching rule wins. `concurrency` limits this plugin's jobs for that rule;
+leaving it out means unlimited concurrency for the rule. `min_interval`
+spaces job starts, and `backoff` pauses later matching jobs after the submitted
+URL answers `429` or `503`; `Retry-After` is honored when present and clamped
+to the declared backoff ceiling. A zero or absent backoff disables that part.
+All waits happen before the shared job semaphore, so one throttled domain does
+not occupy the deployment-wide download slots while it sleeps.
+
+This is a **job-level** gate. One HLS download may still fetch segments in
+parallel according to `-hls-concurrency`, and segment-level `429` handling stays
+inside the HLS fetcher. Generic jobs (exports, imports and plugin action jobs)
+do not enter this gate because they have no submitted remote URL. The pacing
+state is process-local memory: a restart forgets last-start and backoff timing,
+while durable permissions and download history remain in the database.
+
+`mah.download.submit` can also defer a single host download with `{ delay =
+"2h" }` or `{ start_at = <unix seconds> }`, one or the other. A delay must
+satisfy `0 <= delay <= 30 days`; an absolute `start_at` must be in the
+future and has no upper bound. The row is durable and survives a restart, but
+it is not a resident queue job until it is due; keeping future work out of the
+in-memory queue avoids the 100-job cap and pending-job eviction rules. The
+plugin scheduler tick claims due rows, re-validates the plugin and submitting
+user, and submits the ordinary queue job. If the submitting user is deleted before a pending row fires, the
+row becomes ownerless and is never claimed. Pending rows can be inspected with `mr plugin scheduled-downloads <name>` and
+cancelled through the admin-only `POST /v1/plugin/scheduled-downloads/cancel` endpoint.
+
 ## Streaming playlists (HLS)
 
 A URL that returns an HLS playlist is assembled rather than stored. The server

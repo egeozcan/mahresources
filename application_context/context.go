@@ -831,6 +831,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 						},
 					}, true
 				})
+				ctx.downloadManager.SetThrottleResolver(newDownloadThrottleResolver(pm))
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"strings"
 	"testing"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -299,6 +300,175 @@ func TestHostnameRulesNeverMatchIPLiterals(t *testing.T) {
 	// IPv4-mapped IPv6 is the same address written differently.
 	if !ipRule.Matches("::ffff:127.0.0.1") {
 		t.Error("an IP rule must match the same address in IPv4-mapped IPv6 form")
+	}
+}
+
+func TestDownloadLimitsFromManifest(t *testing.T) {
+	m, err := manifestFromLua(t, `plugin = {
+		name = "x",
+		api_version = 1,
+		capabilities = { "db:write" },
+		network = { "*.example.com" },
+		download_limits = {
+			{ host = "*.example.com", concurrency = 2, min_interval = "5s", backoff = "60s" },
+			{ host = "api.other.test", min_interval = "250ms" },
+		},
+	}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.DownloadLimits) != 2 {
+		t.Fatalf("DownloadLimits = %#v, want 2 entries", m.DownloadLimits)
+	}
+
+	policy, ok := m.DownloadPolicy("cdn.example.com")
+	if !ok {
+		t.Fatal("wildcard download limit did not match the host")
+	}
+	if policy.Concurrency != 2 {
+		t.Errorf("Concurrency = %d, want 2", policy.Concurrency)
+	}
+	if policy.MinInterval != 5*time.Second {
+		t.Errorf("MinInterval = %s, want 5s", policy.MinInterval)
+	}
+	if policy.Backoff != time.Minute {
+		t.Errorf("Backoff = %s, want 1m", policy.Backoff)
+	}
+
+	if _, ok := m.DownloadPolicy("example.com"); ok {
+		t.Error("wildcard download limit matched the suffix host itself")
+	}
+
+	other, ok := m.DownloadPolicy("api.other.test:443")
+	if !ok {
+		t.Fatal("exact download limit did not match a host carrying a port")
+	}
+	if other.Concurrency != 0 {
+		t.Errorf("absent concurrency = %d, want 0 (unlimited)", other.Concurrency)
+	}
+	if other.MinInterval != 250*time.Millisecond {
+		t.Errorf("MinInterval = %s, want 250ms", other.MinInterval)
+	}
+	if other.Backoff != 0 {
+		t.Errorf("absent backoff = %s, want 0 (disabled)", other.Backoff)
+	}
+}
+
+func TestDownloadPolicyUsesTheFirstMatchingLimit(t *testing.T) {
+	m, err := manifestFromLua(t, `plugin = { name = "x", api_version = 1,
+		download_limits = {
+			{ host = "*.example.com", concurrency = 2 },
+			{ host = "api.example.com", concurrency = 1 },
+		},
+	}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	policy, ok := m.DownloadPolicy("api.example.com")
+	if !ok {
+		t.Fatal("expected api.example.com to match at least one limit")
+	}
+	if policy.Concurrency != 2 {
+		t.Fatalf("Concurrency = %d, want first matching wildcard's 2", policy.Concurrency)
+	}
+}
+
+func TestManifestRejectsMalformedDownloadLimits(t *testing.T) {
+	cases := map[string]struct {
+		code string
+		want string
+	}{
+		"download_limits not a table": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = "nope" }`,
+			want: "download_limits",
+		},
+		"entry not a table": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { "nope" } }`,
+			want: "download_limits[1]",
+		},
+		"non-array entries": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { named = { host = "example.com" } } }`,
+			want: "download_limits",
+		},
+		"missing host": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { concurrency = 1 } } }`,
+			want: "host",
+		},
+		"host not a string": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = 7 } } }`,
+			want: "host",
+		},
+		"host malformed": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "http://example.com/path" } } }`,
+			want: "host",
+		},
+		"concurrency not a number": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", concurrency = "2" } } }`,
+			want: "concurrency",
+		},
+		"concurrency not whole": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", concurrency = 1.5 } } }`,
+			want: "concurrency",
+		},
+		"concurrency zero": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", concurrency = 0 } } }`,
+			want: "concurrency",
+		},
+		"concurrency negative": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", concurrency = -1 } } }`,
+			want: "concurrency",
+		},
+		"min_interval not a string": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", min_interval = 5 } } }`,
+			want: "min_interval",
+		},
+		"min_interval unparseable": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", min_interval = "later" } } }`,
+			want: "min_interval",
+		},
+		"backoff not a string": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", backoff = 60 } } }`,
+			want: "backoff",
+		},
+		"backoff unparseable": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", backoff = "a minute" } } }`,
+			want: "backoff",
+		},
+		"mistyped field": {
+			code: `plugin = { name = "x", api_version = 1, download_limits = { { host = "example.com", concurency = 2 } } }`,
+			want: "concurrency",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := manifestFromLua(t, c.code)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error %q does not name %q", err.Error(), c.want)
+			}
+		})
+	}
+}
+
+func TestDownloadLimitsRequireAPIVersion(t *testing.T) {
+	_, err := manifestFromLua(t, `plugin = { name = "x", download_limits = { { host = "example.com" } } }`)
+	if err == nil {
+		t.Fatal("expected download_limits without api_version to be refused")
+	}
+	if !strings.Contains(err.Error(), "download_limits") {
+		t.Fatalf("error must name download_limits, got %v", err)
+	}
+}
+
+func TestManifestCatchesDownloadLimitNearMissFieldName(t *testing.T) {
+	_, err := manifestFromLua(t, `plugin = { name = "x", api_version = 1, download_limit = { { host = "example.com" } } }`)
+	if err == nil {
+		t.Fatal("a misspelled download_limits key was accepted")
+	}
+	if !strings.Contains(err.Error(), "download_limits") {
+		t.Errorf("the error must name what was meant, got %v", err)
 	}
 }
 

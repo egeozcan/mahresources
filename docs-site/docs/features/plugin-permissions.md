@@ -20,6 +20,9 @@ plugin = {
     api_version = 1,
     capabilities = { "db:read", "db:write", "http", "image", "actions", "jobs", "pages" },
     network = { "queue.fal.run", "*.fal.run" },
+    download_limits = {
+        { host = "*.fal.run", concurrency = 2, min_interval = "5s", backoff = "60s" },
+    },
     allow_private_hosts = false,
     dependencies = { "other-plugin" },
     min_app_version = "1.2.0",
@@ -33,6 +36,7 @@ plugin = {
 | `api_version` | Yes, for a manifest to exist | Compared against the host's `PluginAPIVersion`. A higher value is refused at load. |
 | `capabilities` | No | The `mah` modules to install. Unknown names are an error. |
 | `network` | No | Host allowlist for outbound requests. **Absent means any public host.** |
+| `download_limits` | No | Per-domain pacing for this plugin's own `mah.download.submit` jobs. Requires `api_version`; grants no new capability. |
 | `allow_private_hosts` | No | Permission to reach private addresses named in `network`. Defaults to false. |
 | `dependencies` | No | Plugin names that must be enabled first. |
 | `min_app_version` | No | **Never enforced.** Parsed, stored and displayed only. |
@@ -46,6 +50,10 @@ The `plugin` table must not have a metatable. The manifest is read field by fiel
 **A misspelled field is an error, not a shrug.** `apiVersion`, `API_VERSION`, `netowrk`, or any key within one edit of a real field is refused, as is any key containing non-ASCII characters. Without that, a typo means "no manifest" -- which means the full surface -- and the plugin author sees nothing wrong.
 
 Some values are refused at parse time for being broader than they look: `network = {}` (omit the field entirely if you mean "any public host"), a CIDR with host bits set (`10.0.0.5/8` must be written `10.0.0.0/8`), a default route, a hostname that is really an address (`0x7f000001`, `2130706433`, or any name whose last label is all digits), and a plugin depending on itself.
+
+`download_limits` uses the same host grammar as `network` -- exact host, `*.suffix`, IP literal or CIDR -- but it is a throttle, not an allowlist. Each entry may set `concurrency` (positive integer; absent means unlimited), `min_interval` (duration string such as `"5s"`) and `backoff` (duration string; absent or `"0s"` disables). The first matching entry wins, so put specific hosts before wildcards. Wrong shapes are refused by name at parse time: a misspelled field, a non-table entry, a missing or invalid `host`, non-positive `concurrency`, or an unparseable duration is an error rather than silently meaning "unlimited".
+
+The limits are **job-level**: one HLS download still makes segment requests under `-hls-concurrency`, and segment-level `429` retry/backoff remains inside the HLS fetcher. Their interval and backoff memory is also process-local, so a restart forgets last-start and backoff timing. They still narrow only this plugin's own host downloads, not the deployment's queue as a whole.
 
 ## Capabilities
 
@@ -75,7 +83,7 @@ Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `ma
 
 **`media` is separate from `image`.** `mah.image` transforms bytes the plugin already holds and touches nothing else; `mah.media` reads the video and audio in the user's library and spends an ffmpeg process doing it. Folding them together would silently widen every plugin already consented to image transforms into one that can read media out of the library.
 
-**`mah.download.submit` is part of `db:write`, not a name of its own.** It fetches a URL into the library exactly as `mah.db.create_resource_from_url` does -- which `db:write`'s own label already describes -- and differs only in whether the caller waits. It is not `jobs` either: `jobs` means the *plugin's own code* runs in the background, and here none of it does.
+**`mah.download.submit` is part of `db:write`, not a name of its own.** It fetches a URL into the library exactly as `mah.db.create_resource_from_url` does -- which `db:write`'s own label already describes -- and differs only in whether the caller waits. Its deferred form (`delay` or `start_at`) keeps the same capability because it still produces one host download, not recurring unattended plugin code. A relative `delay` is capped at 30 days. An absolute `start_at` must be in the future and has no upper bound. It is not `jobs` either: `jobs` means the *plugin's own code* runs in the background, and here none of it does.
 
 **`job_events` is separate from `hooks`** for the same reason `schedule` is separate from `jobs`. An entity hook fires on a write the caller just made, so a plugin holding `hooks` observes what its own users are doing. A job event fires when *any* background job in the deployment finishes, whoever submitted it, including work the plugin had nothing to do with. That is unattended observation of other people's activity, so it gets its own name and `CompareGrants` reports the widening. A plugin holding only `hooks` that registers `mah.on("after_job_completed", ...)` is refused at load, and the error names the capability it needs rather than reporting an unknown event.
 
@@ -117,6 +125,7 @@ The manifest alone cannot be the grant. If the live `plugin.lua` were the source
 |---|---|---|
 | `capabilities` | a capability appears | fewer capabilities |
 | `network` | a host is added, or **the list is dropped** (widening to any public host) | a shorter list |
+| `download_limits` | never | any change; limits only throttle a power already granted |
 | `allow_private_hosts` | `false` → `true` | `true` → `false` |
 | `api_version` | raised | unchanged or lower |
 | legacy | manifest → legacy | legacy → manifest |

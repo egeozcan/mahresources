@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"mahresources/download_queue"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
 
@@ -62,6 +64,13 @@ type PluginScheduler struct {
 	// can: an ActionJob lives in this process's memory only, so a run abandoned
 	// here is a claim nobody releases until it expires.
 	runs sync.WaitGroup
+
+	// Test seams for deferred downloads. Production leaves these nil, selecting
+	// the live queue helpers below; tests install fakes so a scheduler tick can
+	// prove claim bookkeeping without opening a socket.
+	scheduledDownloadSubmit  ScheduledDownloadSubmitFunc
+	scheduledDownloadActive  ScheduledDownloadActiveFunc
+	pluginScheduleClaimToken func() (string, error)
 }
 
 func NewPluginScheduler(ctx *MahresourcesContext, interval time.Duration) *PluginScheduler {
@@ -124,33 +133,89 @@ func (s *PluginScheduler) Tick(now time.Time) {
 	rows, err := s.ctx.DuePluginSchedules(now, maxSchedulesPerTick)
 	if err != nil {
 		log.Printf("warning: plugin scheduler could not list due schedules: %v", err)
+	} else {
+		for _, row := range rows {
+			if !pm.ScheduleIsRegistered(row.PluginName, row.ScheduleID) {
+				continue
+			}
+			token, err := s.newPluginScheduleClaimToken()
+			if err != nil {
+				log.Printf("warning: plugin scheduler could not mint a claim token: %v", err)
+				break
+			}
+			claimed, err := s.ctx.ClaimPluginSchedule(row.ID, token, now)
+			if err != nil {
+				log.Printf("warning: plugin scheduler could not claim %s/%s: %v",
+					row.PluginName, row.ScheduleID, err)
+				continue
+			}
+			if !claimed {
+				// Another process got there, or it stopped being due. Both ordinary.
+				continue
+			}
+
+			s.runs.Add(1)
+			go func(row models.PluginSchedule, token string) {
+				defer s.runs.Done()
+				s.dispatch(row, token)
+			}(row, token)
+		}
+	}
+
+	s.fireScheduledDownloads(now)
+}
+
+func (s *PluginScheduler) newPluginScheduleClaimToken() (string, error) {
+	if s.pluginScheduleClaimToken != nil {
+		return s.pluginScheduleClaimToken()
+	}
+	return newScheduleClaimToken()
+}
+
+func (s *PluginScheduler) fireScheduledDownloads(now time.Time) {
+	if s == nil || s.ctx == nil {
 		return
 	}
-	for _, row := range rows {
-		if !pm.ScheduleIsRegistered(row.PluginName, row.ScheduleID) {
-			continue
-		}
-		token, err := newScheduleClaimToken()
-		if err != nil {
-			log.Printf("warning: plugin scheduler could not mint a claim token: %v", err)
-			return
-		}
-		claimed, err := s.ctx.ClaimPluginSchedule(row.ID, token, now)
-		if err != nil {
-			log.Printf("warning: plugin scheduler could not claim %s/%s: %v",
-				row.PluginName, row.ScheduleID, err)
-			continue
-		}
-		if !claimed {
-			// Another process got there, or it stopped being due. Both ordinary.
-			continue
-		}
+	fired, err := s.ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:            now,
+		Limit:          maxSchedulesPerTick,
+		ActiveDownload: s.scheduledDownloadActiveFunc(),
+		Submit:         s.scheduledDownloadSubmitFunc(),
+	})
+	if err != nil {
+		log.Printf("warning: plugin scheduler could not fire scheduled downloads: %v", err)
+		return
+	}
+	if fired > 0 {
+		log.Printf("plugin scheduler submitted %d scheduled download(s)", fired)
+	}
+}
 
-		s.runs.Add(1)
-		go func(row models.PluginSchedule, token string) {
-			defer s.runs.Done()
-			s.dispatch(row, token)
-		}(row, token)
+func (s *PluginScheduler) scheduledDownloadSubmitFunc() ScheduledDownloadSubmitFunc {
+	if s.scheduledDownloadSubmit != nil {
+		return s.scheduledDownloadSubmit
+	}
+	return func(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string) (string, error) {
+		if s.ctx == nil || s.ctx.downloadManager == nil {
+			return "", fmt.Errorf("the download queue is not available")
+		}
+		job, err := s.ctx.downloadManager.SubmitForPlugin(creator, ownerUserID, pluginName)
+		if err != nil {
+			return "", err
+		}
+		return job.Snapshot().ID, nil
+	}
+}
+
+func (s *PluginScheduler) scheduledDownloadActiveFunc() ScheduledDownloadActiveFunc {
+	if s.scheduledDownloadActive != nil {
+		return s.scheduledDownloadActive
+	}
+	return func(url string) (string, bool) {
+		if s.ctx == nil || s.ctx.downloadManager == nil {
+			return "", false
+		}
+		return download_queue.ActiveDownloadForURL(s.ctx.downloadManager, url)
 	}
 }
 

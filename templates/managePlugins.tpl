@@ -386,6 +386,60 @@
             </p>
         </div>
         {% endif %}
+
+        {% if plugin.ScheduledDownloads %}
+        <div class="card-body border-t border-stone-200 pt-3" data-testid="plugin-scheduled-downloads-{{ plugin.Name }}">
+            <h3 class="text-sm font-semibold text-stone-700 mb-2">Deferred downloads</h3>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <caption class="sr-only">Deferred downloads submitted by {{ plugin.Name }}</caption>
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wide text-stone-500">
+                            <th class="py-1 pr-4 font-medium" scope="col">Due</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">URL</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">State</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Attempts</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Job / error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for scheduled in plugin.ScheduledDownloads %}
+                        <tr class="border-t border-stone-100" data-testid="plugin-scheduled-download-{{ plugin.Name }}-{{ scheduled.ID }}">
+                            <td class="py-1 pr-4 font-mono">{{ scheduled.DueAt|date:"2006-01-02 15:04" }}</td>
+                            <td class="py-1 pr-4 break-all"><span class="font-mono">{{ scheduled.URL }}</span></td>
+                            <td class="py-1 pr-4">
+                                {% if scheduled.StatusLabel == "stopped" %}
+                                <span class="card-badge card-badge--danger">Stopped &mdash; no owner</span>
+                                {% elif scheduled.StatusLabel == "failed" %}
+                                <span class="text-red-700">failed</span>
+                                {% elif scheduled.StatusLabel == "cancelled" %}
+                                <span class="text-stone-600">cancelled</span>
+                                {% else %}
+                                <span class="text-stone-600">{{ scheduled.StatusLabel }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-1 pr-4 font-mono">{{ scheduled.Attempts }}</td>
+                            <td class="py-1 pr-4">
+                                {% if scheduled.JobID %}
+                                <span class="font-mono">{{ scheduled.JobID }}</span>
+                                {% endif %}
+                                {% if scheduled.LastError %}
+                                <span class="text-stone-500">{% if scheduled.JobID %} &mdash; {% endif %}{{ scheduled.LastError }}</span>
+                                {% elif not scheduled.JobID %}
+                                <span class="text-stone-500 italic">&mdash;</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-xs text-stone-500 mt-2">
+                Deferred downloads run once under the plugin's network policy and as the user who submitted them.
+                If that user is deleted before a pending row fires, the row stops rather than falling back to an administrator.
+            </p>
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
 </div>

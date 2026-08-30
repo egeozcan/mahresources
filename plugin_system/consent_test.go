@@ -113,6 +113,16 @@ func TestIdenticalDeclarationNeedsNoReConsent(t *testing.T) {
 	}
 }
 
+func TestDownloadLimitsDoNotAffectConsent(t *testing.T) {
+	consented := grantsFor(t, declaring(`capabilities = {"db:write"}, network = {"*.example.com"}`))
+	declared := manifestFor(t, declaring(`capabilities = {"db:write"}, network = {"*.example.com"},
+		download_limits = { { host = "*.example.com", concurrency = 2, min_interval = "5s", backoff = "60s" } }`))
+
+	if delta := CompareGrants(consented, declared); !delta.Empty() {
+		t.Fatalf("adding a narrowing download limit asked for re-consent: %s", delta.Describe())
+	}
+}
+
 func TestANewCapabilityRequiresReConsent(t *testing.T) {
 	consented := grantsFor(t, declaring(`capabilities = {"db:read"}`))
 	declared := manifestFor(t, declaring(`capabilities = {"db:read","db:write"}`))

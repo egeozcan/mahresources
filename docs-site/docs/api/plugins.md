@@ -242,6 +242,77 @@ curl -X POST http://localhost:8181/v1/plugin/schedule/run \
 
 The response is sent once the run has *started*, not when it has finished; the run then reports itself through the `action_*` events on the SSE stream. `404` means there is no such row. `409` means the plugin no longer declares that id, the row has no owner, or the claim is already held by a run in progress.
 
+### List Scheduled Downloads
+
+```http
+GET /v1/plugin/scheduled-downloads?name={pluginName}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Plugin name |
+
+```bash
+curl "http://localhost:8181/v1/plugin/scheduled-downloads?name=image-processor"
+```
+
+```json
+[
+  {
+    "id": 17,
+    "pluginName": "image-processor",
+    "url": "https://example.com/archive.zip",
+    "dueAt": "2025-03-01T12:00:00Z",
+    "status": "pending",
+    "jobId": "",
+    "lastError": "",
+    "attempts": 0,
+    "owned": true,
+    "createdAt": "2025-03-01T10:00:00Z",
+    "updatedAt": "2025-03-01T10:00:00Z"
+  }
+]
+```
+
+Rows are one-shot deferred host downloads created by `mah.download.submit` with
+`delay` or `start_at`. `status` is `pending`, `submitted`, `failed` or
+`cancelled`. A `submitted` row normally carries the queue `jobId`; the accepted
+fail-closed exception is a crash between reserving the row and submitting to the
+queue, which can strand a `submitted` row without a job id until operational
+reconciliation. `claimedAt` appears briefly while a scheduler tick holds the
+submit claim. `owned: false` on a pending row means the submitting user was
+deleted and the row has stopped rather than firing as an administrator. Naming
+a plugin that has no rows returns an empty array.
+
+### Cancel a Scheduled Download
+
+```http
+POST /v1/plugin/scheduled-downloads/cancel
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | uint | Scheduled download row id |
+
+```bash
+curl -X POST http://localhost:8181/v1/plugin/scheduled-downloads/cancel \
+  -d "id=17"
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "id": 17,
+  "status": "cancelled"
+}
+```
+
+Only pending rows can be cancelled. A row that has already been submitted,
+failed or cancelled answers `409 Conflict`.
+
 ## Plugin Actions
 
 ### List Available Actions

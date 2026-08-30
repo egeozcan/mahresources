@@ -468,6 +468,7 @@ func main() {
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
 		&models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{}, // no FK association; created_by_user_id is a scalar
 		// No FK association either; plugin_name/schedule_id is its own key and
 		// created_by_user_id is a scalar.
 		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar

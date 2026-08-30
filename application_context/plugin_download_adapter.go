@@ -58,6 +58,16 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 		return nil, err
 	}
 
+	startAt, scheduled := plugin_system.DownloadSubmitStartAt(opts)
+	validationActorID := actorUserID
+	if scheduled {
+		var err error
+		validationActorID, err = ctx.scheduledDownloadActorID(actorUserID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// The targets are validated against the *acting* principal's scope, the way
 	// /v1/download/submit validates them. Without this a confined caller --
 	// a plugin's Lua running on a group-limited user's own write -- could
@@ -69,8 +79,8 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	// different identity: a guest scoped to A passes the target check, becomes
 	// a writable user scoped to B, and passes the write check -- with neither
 	// identity having authorized the download that lands in A.
-	if actorUserID != 0 {
-		scoped := ctx.WithPrincipal(ctx.principalForPluginActor(actorUserID))
+	if validationActorID != 0 {
+		scoped := ctx.WithPrincipal(ctx.principalForPluginActor(validationActorID))
 		// A download creates a resource, and a plugin can reach this from a
 		// page a read-only principal is merely reading, where the URL rule that
 		// refuses a guest every mutating endpoint is not in the path. Scope
@@ -82,6 +92,18 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 		if err := scoped.validateDownloadTargetsInScope(creator); err != nil {
 			return nil, err
 		}
+	}
+
+	if scheduled {
+		row, err := ctx.CreateScheduledDownload(pluginName, validationActorID, creator, startAt)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"scheduled":    true,
+			"scheduled_id": row.ID,
+			"start_at":     row.DueAt.Unix(),
+		}, nil
 	}
 
 	var owner *uint
@@ -106,6 +128,23 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 		"url":    snap.URL,
 		"status": string(snap.Status),
 	}, nil
+}
+
+func (ctx *MahresourcesContext) scheduledDownloadActorID(actorUserID uint) (uint, error) {
+	if actorUserID != 0 {
+		return actorUserID, nil
+	}
+	if ctx.AuthEnabled() {
+		return 0, errors.New("refusing to schedule: the acting user is not identified")
+	}
+	p, err := ctx.RootAdminPrincipal()
+	if err != nil {
+		return 0, fmt.Errorf("refusing to schedule: resolve the no-auth root actor: %w", err)
+	}
+	if p == nil || p.UserID == 0 {
+		return 0, errors.New("refusing to schedule: the no-auth root actor is not identified")
+	}
+	return p.UserID, nil
 }
 
 // validateDownloadTargetsInScope refuses targets outside this context's

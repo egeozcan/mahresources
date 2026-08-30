@@ -36,6 +36,7 @@ func newHistoryTestContext(t *testing.T, cfg *MahresourcesConfig) *MahresourcesC
 	}
 	if err := db.AutoMigrate(
 		&models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{},
 		&models.PluginSchedule{}, &models.User{}, &models.Group{},
 		&models.RuntimeSetting{}, &models.LogEntry{}, &models.Session{}, &models.ApiToken{},
 	); err != nil {

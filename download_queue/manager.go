@@ -175,9 +175,11 @@ type DownloadManager struct {
 	// nil. Same shape as SetKVStore, and the same doctrine: unset must fail
 	// closed. A plugin download with no resolver is refused, never fetched under
 	// the host's wider policy.
-	policyResolver atomic.Value
-	settings       DownloadSettings
-	semaphore      chan struct{}
+	policyResolver   atomic.Value
+	throttleResolver atomic.Value
+	domainGate       domainGate
+	settings         DownloadSettings
+	semaphore        chan struct{}
 	// workers counts the download goroutines in flight, so Shutdown can wait for
 	// their terminal history writes rather than exiting under them.
 	workers       sync.WaitGroup
@@ -525,22 +527,22 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// its own pause had cancelled.
 	runID, ctx := job.attempt()
 
-	// Acquire semaphore slot (limits concurrent downloads)
+	domainLease, ok := dm.acquireDomainGate(ctx, job)
+	if !ok {
+		dm.finishCancelledBeforeStarting(job, runID)
+		return
+	}
+	defer domainLease.release()
+
+	// Acquire semaphore slot (limits concurrent downloads). Every domain-gate wait
+	// happens above this point, or a plugin sleeping out its own host policy would
+	// spend one of the deployment-wide slots doing nothing and starve unrelated
+	// downloads.
 	select {
 	case dm.semaphore <- struct{}{}:
 		defer func() { <-dm.semaphore }()
 	case <-ctx.Done():
-		// finish is a no-op on a paused job: Pause cancels the context too, and a
-		// paused job waits for Resume rather than being retired here.
-		if snap, stamped := job.finishSnapshot(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()); stamped {
-			dm.notifyJob("updated", job)
-			// Recorded like any other terminal state. A download cancelled while it
-			// was still queued is exactly the kind the user wants to find later and
-			// press Retry on — leaving it out made the queue's own eviction the only
-			// record of it, which is what history exists to outlive.
-			dm.recordTerminal(job, snap)
-			dm.emitJobEvent(job, snap)
-		}
+		dm.finishCancelledBeforeStarting(job, runID)
 		return
 	}
 
@@ -555,6 +557,9 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 
 	// Perform the download with progress tracking
 	resource, err := dm.downloadWithProgress(ctx, runID, job)
+	if err != nil && ctx.Err() == nil {
+		domainLease.reportBackoff(err)
+	}
 
 	status, errMsg, resourceID := JobStatusCompleted, "", uint(0)
 	switch {
@@ -588,6 +593,40 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// same way.
 	dm.recordTerminal(job, snap)
 	dm.emitJobEvent(job, snap)
+}
+
+func (dm *DownloadManager) acquireDomainGate(ctx context.Context, job *DownloadJob) (domainGateLease, bool) {
+	pluginName := job.PluginName()
+	if pluginName == "" {
+		return domainGateLease{}, true
+	}
+	resolve := dm.currentThrottleResolver()
+	if resolve == nil {
+		return domainGateLease{}, true
+	}
+	policy, ok := resolve(pluginName)
+	if !ok {
+		return domainGateLease{}, true
+	}
+	lease, err := dm.domainGate.acquire(ctx, pluginName, job.URL, policy)
+	if err != nil {
+		return domainGateLease{}, false
+	}
+	return lease, true
+}
+
+func (dm *DownloadManager) finishCancelledBeforeStarting(job *DownloadJob, runID uint64) {
+	// finish is a no-op on a paused job: Pause cancels the context too, and a
+	// paused job waits for Resume rather than being retired here.
+	if snap, stamped := job.finishSnapshot(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()); stamped {
+		dm.notifyJob("updated", job)
+		// Recorded like any other terminal state. A download cancelled while it
+		// was still queued is exactly the kind the user wants to find later and
+		// press Retry on — leaving it out made the queue's own eviction the only
+		// record of it, which is what history exists to outlive.
+		dm.recordTerminal(job, snap)
+		dm.emitJobEvent(job, snap)
+	}
 }
 
 // createHTTPClient creates an HTTP client with context support.
@@ -668,6 +707,25 @@ func (dm *DownloadManager) currentPolicyResolver() PolicyResolver {
 		return nil
 	}
 	return v.(PolicyResolver)
+}
+
+// SetThrottleResolver wires the plugin download pacing lookup, after the plugin
+// manager exists. See DownloadManager.policyResolver for why this follows the
+// setter shape rather than ManagerConfig. nil and ok=false both leave the gate
+// inert: plugins that declare no limits, and person downloads, must behave as
+// they did before this feature.
+func (dm *DownloadManager) SetThrottleResolver(r ThrottleResolver) {
+	if r != nil {
+		dm.throttleResolver.Store(r)
+	}
+}
+
+func (dm *DownloadManager) currentThrottleResolver() ThrottleResolver {
+	v := dm.throttleResolver.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(ThrottleResolver)
 }
 
 // baseHTTPClient is the undecorated client one transfer uses. Built per
@@ -919,7 +977,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, newHTTPStatusError(resp.StatusCode, resp.Status, resp.Header.Get("Retry-After"), time.Now())
 	}
 
 	// Get content length if available

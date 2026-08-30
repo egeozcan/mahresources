@@ -31,6 +31,7 @@ func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	pluginCmd.AddCommand(newPluginDisableCmd(c, opts))
 	pluginCmd.AddCommand(newPluginScopedAccessCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSchedulesCmd(c, opts))
+	pluginCmd.AddCommand(newPluginScheduledDownloadsCmd(c, opts))
 	pluginCmd.AddCommand(newPluginScheduleRunCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSettingsCmd(c, opts))
 	pluginCmd.AddCommand(newPluginPurgeDataCmd(c, opts))
@@ -204,6 +205,72 @@ func newPluginSchedulesCmd(c *client.Client, opts *output.Options) *cobra.Comman
 			return nil
 		},
 	}
+}
+
+func newPluginScheduledDownloadsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin_scheduled_downloads.md")
+
+	return &cobra.Command{
+		Use:         "scheduled-downloads <name>",
+		Short:       "List a plugin's deferred downloads",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := url.Values{}
+			query.Set("name", args[0])
+
+			var raw json.RawMessage
+			if err := c.Get("/v1/plugin/scheduled-downloads", query, &raw); err != nil {
+				return err
+			}
+
+			var downloads []struct {
+				ID        uint   `json:"id"`
+				URL       string `json:"url"`
+				DueAt     string `json:"dueAt"`
+				Status    string `json:"status"`
+				JobID     string `json:"jobId"`
+				LastError string `json:"lastError"`
+				Attempts  int    `json:"attempts"`
+				Owned     bool   `json:"owned"`
+			}
+			if err := json.Unmarshal(raw, &downloads); err != nil {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+
+			rows := make([][]string, 0, len(downloads))
+			for _, dl := range downloads {
+				state := pluginScheduledDownloadDisplayState(dl.Status, dl.Owned)
+				detail := dl.JobID
+				if dl.LastError != "" {
+					if detail != "" {
+						detail += " — "
+					}
+					detail += dl.LastError
+				}
+				rows = append(rows, []string{
+					strconv.FormatUint(uint64(dl.ID), 10),
+					dl.DueAt,
+					state,
+					strconv.Itoa(dl.Attempts),
+					dl.URL,
+					detail,
+				})
+			}
+			output.Print(*opts, []string{"ID", "DUE", "STATE", "ATTEMPTS", "URL", "JOB / ERROR"}, rows, raw)
+			return nil
+		},
+	}
+}
+
+func pluginScheduledDownloadDisplayState(status string, owned bool) string {
+	if !owned && status == "pending" {
+		return "stopped (no owner)"
+	}
+	return status
 }
 
 func newPluginScheduleRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
