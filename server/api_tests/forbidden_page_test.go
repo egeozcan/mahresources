@@ -127,15 +127,17 @@ func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
 		}
 	}
 
-	// The control: an admin is not refused. A 403 here would mean the assertions
-	// above pass because the route does not exist, which measures nothing.
+	// The control: an admin is not refused and the route exists. A 403 here would
+	// mean the assertions above pass because the system rule also blocks admins;
+	// a 404 means they pass because the route does not exist. Either measures
+	// nothing.
 	admin := roleBearer(t, tc, models.RoleAdmin)
 	for _, e := range endpoints {
 		res := doReq(tc, e.method, e.path,
 			map[string]string{"Accept": "application/json", "Authorization": admin}, nil, nil)
-		if res.Code == http.StatusForbidden {
-			t.Errorf("admin %s %s got 403; this endpoint is unreachable and the assertions above are vacuous",
-				e.method, e.path)
+		if res.Code == http.StatusForbidden || res.Code == http.StatusNotFound {
+			t.Errorf("admin %s %s got %d; this endpoint is unreachable and the assertions above are vacuous",
+				e.method, e.path, res.Code)
 		}
 	}
 }

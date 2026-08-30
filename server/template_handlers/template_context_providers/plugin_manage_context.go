@@ -142,10 +142,18 @@ type scheduledDownloadDisplay struct {
 	URL       string
 	DueAt     time.Time
 	Status    string
+	State     string
 	JobID     string
 	LastError string
 	Attempts  int
 	Owned     bool
+}
+
+func scheduledDownloadTemplateState(status string, owned bool) string {
+	if !owned && status == models.ScheduledDownloadStatusPending {
+		return "stopped"
+	}
+	return status
 }
 
 func buildScheduledDownloadDisplays(appCtx PluginManagePageContext, name string) []scheduledDownloadDisplay {
@@ -160,15 +168,17 @@ func buildScheduledDownloadDisplays(appCtx PluginManagePageContext, name string)
 	}
 	out := make([]scheduledDownloadDisplay, 0, len(rows))
 	for _, row := range rows {
+		owned := row.CreatedByUserId != nil
 		out = append(out, scheduledDownloadDisplay{
 			ID:        row.ID,
 			URL:       row.URL,
 			DueAt:     row.DueAt,
 			Status:    row.Status,
+			State:     scheduledDownloadTemplateState(row.Status, owned),
 			JobID:     row.JobID,
 			LastError: row.LastError,
 			Attempts:  row.Attempts,
-			Owned:     row.CreatedByUserId != nil,
+			Owned:     owned,
 		})
 	}
 	return out

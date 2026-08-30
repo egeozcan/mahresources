@@ -1,5 +1,5 @@
 ---
-outputShape: Array of scheduled download objects with id, pluginName, url, dueAt, status, jobId, lastError, attempts, owned, createdAt, updatedAt and claimedAt while a scheduler tick holds the submit claim, in JSON mode; a table in human mode whose STATE column reports stopped (no owner) for rows that can no longer fire
+outputShape: Array of scheduled download objects with id, pluginName, url, dueAt, status, jobId, lastError, attempts, owned, createdAt, updatedAt and claimedAt while a scheduler tick holds the submit claim, in JSON mode; a table in human mode whose STATE column reports stopped (no owner) for ownerless pending rows that can no longer fire
 exitCodes: 0 on success; 1 on any error
 relatedCmds: plugin schedules, plugin enable, plugin disable
 ---
@@ -14,9 +14,10 @@ terminal.
 
 Every row fires under the plugin name that submitted it, so a restart does
 not turn it into an unrestricted host download. It also fires as the user
-who submitted it and is re-validated at fire time. If that user is deleted,
+who submitted it and is re-validated at fire time. If that user is deleted before a pending row fires,
 the row becomes `owned: false` and stops rather than falling back to an
-administrator.
+administrator. Submitted, failed and cancelled rows keep their terminal
+status even if their owner is later deleted.
 
 Naming a plugin the server does not have returns an empty list rather than
 an error.

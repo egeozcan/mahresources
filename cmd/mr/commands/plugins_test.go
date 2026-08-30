@@ -157,3 +157,25 @@ func TestPluginScopedAccessShipsAHelpPage(t *testing.T) {
 		t.Fatalf("plugins_help/plugin_scoped_access.md must exist: %v", err)
 	}
 }
+
+func TestPluginScheduledDownloadsOnlyOwnerlessPendingIsStopped(t *testing.T) {
+	cases := []struct {
+		name   string
+		status string
+		owned  bool
+		want   string
+	}{
+		{name: "owned pending", status: "pending", owned: true, want: "pending"},
+		{name: "ownerless pending", status: "pending", owned: false, want: "stopped (no owner)"},
+		{name: "ownerless submitted", status: "submitted", owned: false, want: "submitted"},
+		{name: "ownerless failed", status: "failed", owned: false, want: "failed"},
+		{name: "ownerless cancelled", status: "cancelled", owned: false, want: "cancelled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pluginScheduledDownloadDisplayState(tc.status, tc.owned); got != tc.want {
+				t.Fatalf("display state = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

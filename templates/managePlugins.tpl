@@ -408,14 +408,14 @@
                             <td class="py-1 pr-4 font-mono">{{ scheduled.DueAt|date:"2006-01-02 15:04" }}</td>
                             <td class="py-1 pr-4 break-all"><span class="font-mono">{{ scheduled.URL }}</span></td>
                             <td class="py-1 pr-4">
-                                {% if not scheduled.Owned %}
+                                {% if scheduled.State == "stopped" %}
                                 <span class="card-badge card-badge--danger">Stopped &mdash; no owner</span>
-                                {% elif scheduled.Status == "failed" %}
+                                {% elif scheduled.State == "failed" %}
                                 <span class="text-red-700">failed</span>
-                                {% elif scheduled.Status == "cancelled" %}
+                                {% elif scheduled.State == "cancelled" %}
                                 <span class="text-stone-600">cancelled</span>
                                 {% else %}
-                                <span class="text-stone-600">{{ scheduled.Status }}</span>
+                                <span class="text-stone-600">{{ scheduled.State }}</span>
                                 {% endif %}
                             </td>
                             <td class="py-1 pr-4 font-mono">{{ scheduled.Attempts }}</td>
@@ -436,7 +436,7 @@
             </div>
             <p class="text-xs text-stone-500 mt-2">
                 Deferred downloads run once under the plugin's network policy and as the user who submitted them.
-                If that user is deleted, the row stops rather than falling back to an administrator.
+                If that user is deleted before a pending row fires, the row stops rather than falling back to an administrator.
             </p>
         </div>
         {% endif %}

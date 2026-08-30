@@ -243,10 +243,7 @@ func newPluginScheduledDownloadsCmd(c *client.Client, opts *output.Options) *cob
 
 			rows := make([][]string, 0, len(downloads))
 			for _, dl := range downloads {
-				state := dl.Status
-				if !dl.Owned {
-					state = "stopped (no owner)"
-				}
+				state := pluginScheduledDownloadDisplayState(dl.Status, dl.Owned)
 				detail := dl.JobID
 				if dl.LastError != "" {
 					if detail != "" {
@@ -267,6 +264,13 @@ func newPluginScheduledDownloadsCmd(c *client.Client, opts *output.Options) *cob
 			return nil
 		},
 	}
+}
+
+func pluginScheduledDownloadDisplayState(status string, owned bool) string {
+	if !owned && status == "pending" {
+		return "stopped (no owner)"
+	}
+	return status
 }
 
 func newPluginScheduleRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
