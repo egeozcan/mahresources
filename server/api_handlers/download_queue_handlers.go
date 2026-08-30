@@ -360,7 +360,7 @@ func GetDownloadRetryHandler(ctx DownloadSubmitter) func(writer http.ResponseWri
 		// fetching this URL means running this one too would transfer it twice.
 		if dm := ctx.DownloadManager(); dm != nil {
 			if job, exists := dm.GetJob(jobID); exists {
-				if live, running := activeDownloadForURL(dm, job.GetURL()); running {
+				if live, running := download_queue.ActiveDownloadForURL(dm, job.GetURL()); running {
 					http_utils.HandleError(
 						fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
 						writer, request, http.StatusConflict)

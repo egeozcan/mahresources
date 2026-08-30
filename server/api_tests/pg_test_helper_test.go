@@ -67,6 +67,7 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		&models.Session{},
 		&models.ApiToken{},
 		&models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{},
 		&models.ResourceReduction{},
 		&models.PluginSchedule{},
 	)

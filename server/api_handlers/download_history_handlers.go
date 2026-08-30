@@ -208,7 +208,7 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// jobs that were fetching one URL, and retrying each in place ran both at once.
 	// The queue is the authority on what is being downloaded, so it is asked first,
 	// whichever way this row is about to be run again.
-	if live, running := activeDownloadForURL(dm, entry.URL); running {
+	if live, running := download_queue.ActiveDownloadForURL(dm, entry.URL); running {
 		return "", fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live)
 	}
 
@@ -320,31 +320,6 @@ func linkedRetry(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry)
 		return marker, retryLinkSucceeded
 	}
 	return marker, retryLinkNone
-}
-
-// activeDownloadForURL reports a job that is already fetching this URL.
-//
-// The last line of defence against running one transfer twice, and the general
-// form of the rules above: `last_retry_job_id` links a row to the attempt it
-// spawned, but the link can be lost (a marker written for a submit whose bookkeeping
-// update failed) or simply absent (two rows recording the same URL, each retryable
-// on its own). The queue itself always knows what it is downloading.
-func activeDownloadForURL(dm *download_queue.DownloadManager, url string) (string, bool) {
-	if dm == nil || url == "" {
-		return "", false
-	}
-	for _, job := range dm.GetJobs() {
-		if job.Source != download_queue.JobSourceDownload || job.URL != url {
-			continue
-		}
-		// Snapshots, so this reads the status the copy carries rather than taking
-		// the live job's lock.
-		if job.Status == download_queue.JobStatusPaused || job.Status == download_queue.JobStatusPending ||
-			job.Status == download_queue.JobStatusDownloading || job.Status == download_queue.JobStatusProcessing {
-			return job.ID, true
-		}
-	}
-	return "", false
 }
 
 // GetDownloadHistoryDeleteHandler handles POST /v1/downloads/delete.// GetDownloadHistoryDeleteHandler handles POST /v1/downloads/delete.

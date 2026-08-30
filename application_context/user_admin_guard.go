@@ -33,6 +33,11 @@ func stampedModels() []any {
 		// history. The rows survive with a NULL creator, which the visibility
 		// predicate then hides from every non-admin.
 		&models.DownloadHistoryEntry{},
+		// Likewise not content: the owner is the identity a deferred plugin
+		// download is re-validated against before it is submitted. Nulling it on
+		// user deletion makes the claim predicate fail, so the row stops rather
+		// than firing as root or as a deleted account.
+		&models.ScheduledDownload{},
 		// Likewise not content, and here the sweep is load-bearing rather than
 		// tidy: the owner of a schedule is the identity its Lua executes as, so
 		// "the operator was deleted" has to resolve to "this stops" rather than

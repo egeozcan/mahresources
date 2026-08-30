@@ -49,6 +49,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.Session{},
 		&models.ApiToken{},
 		&models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{},
 		&models.PluginSchedule{},
 		&models.ResourceReduction{},
 	); err != nil {
