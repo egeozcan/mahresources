@@ -18,7 +18,7 @@ type ScheduledDownload struct {
 	ID uint `gorm:"primarykey" json:"id"`
 
 	PluginName string     `gorm:"size:128;index:idx_sched_dl_plugin;not null" json:"pluginName"`
-	URL        string     `gorm:"size:2048;index:idx_sched_dl_url" json:"url"`
+	URL        string     `gorm:"type:text" json:"url"`
 	Payload    types.JSON `gorm:"type:json" json:"-"`
 
 	DueAt time.Time `gorm:"index:idx_sched_dl_due;not null" json:"dueAt"`

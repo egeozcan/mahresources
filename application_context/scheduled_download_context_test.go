@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -121,6 +122,44 @@ func TestCreateScheduledDownloadBindsTheSubmitterAsOwner(t *testing.T) {
 	}
 	if creator.Headers["Referer"] != "https://example.test/" {
 		t.Fatalf("payload headers were not preserved: %#v", creator.Headers)
+	}
+}
+
+func TestCreateScheduledDownloadRejectsZeroActor(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	admin := models.User{Username: "root", Role: models.RoleAdmin, PasswordHash: "x"}
+	if err := ctx.db.Create(&admin).Error; err != nil {
+		t.Fatalf("seed root admin: %v", err)
+	}
+	ctx.refreshRootAdmin()
+
+	_, err := ctx.CreateScheduledDownload("feeds", 0, &query_models.ResourceFromRemoteCreator{
+		URL: "https://example.test/file",
+	}, time.Now().Add(time.Hour))
+	if err == nil {
+		t.Fatal("zero actor scheduled a download; under no-auth the stamp callback would assign it to root")
+	}
+	var count int64
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Count(&count).Error; err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("zero actor created %d scheduled download rows", count)
+	}
+}
+
+func TestCreateScheduledDownloadStoresTheFullURLColumn(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	owner := createDownloadOwner(t, ctx)
+	longURL := "https://example.test/" + strings.Repeat("a", maxHistoryURLLength+32)
+
+	row, err := ctx.CreateScheduledDownload("feeds", owner.ID, &query_models.ResourceFromRemoteCreator{URL: longURL}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("create scheduled download: %v", err)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.URL != longURL {
+		t.Fatalf("stored URL length = %d, want full length %d; lossy row URL breaks later collision checks", len(got.URL), len(longURL))
 	}
 }
 
@@ -267,6 +306,50 @@ func TestFireScheduledDownloadRevalidatesTheStoredActorScope(t *testing.T) {
 	}
 }
 
+func TestFireScheduledDownloadUsesPayloadURLForCollisionCheck(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	longURL := "https://example.test/" + strings.Repeat("b", maxHistoryURLLength+64)
+	payload := mustScheduledPayload(t, &query_models.ResourceFromRemoteCreator{URL: longURL})
+	row := models.ScheduledDownload{
+		PluginName:      "feeds",
+		URL:             "https://example.test/truncated",
+		Payload:         payload,
+		DueAt:           time.Now().Add(-time.Minute),
+		Status:          models.ScheduledDownloadStatusPending,
+		CreatedByUserId: &owner,
+	}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatalf("seed scheduled download: %v", err)
+	}
+
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now(),
+		PluginAvailable: func(string) bool { return true },
+		ActiveDownload: func(url string) (string, bool) {
+			if url != longURL {
+				return "", false
+			}
+			return "live-job", true
+		},
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatal("submit was called even though the payload URL is already downloading")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire due downloads: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("fired = %d, want 0 while payload URL is already downloading", fired)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusPending || got.ClaimToken != "" {
+		t.Fatalf("status/token = %q/%q, want pending/released", got.Status, got.ClaimToken)
+	}
+}
+
 func TestFireScheduledDownloadDoesNotSubmitForDisabledPlugin(t *testing.T) {
 	ctx := newScheduledDownloadTestContext(t)
 	owner := uint(7)
@@ -333,6 +416,95 @@ func TestFireScheduledDownloadSubmitsOneClaimWinnerAndMarksSubmitted(t *testing.
 	}
 }
 
+func TestTwoConcurrentScheduledDownloadTicksSubmitOnce(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(2)
+	var mu sync.Mutex
+	submits := 0
+	errs := []error{}
+	fires := 0
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer done.Done()
+			start.Wait()
+			fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+				Now:             time.Now(),
+				PluginAvailable: func(string) bool { return true },
+				Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+					mu.Lock()
+					submits++
+					mu.Unlock()
+					time.Sleep(20 * time.Millisecond)
+					return "job-123", nil
+				},
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			}
+			fires += fired
+		}()
+	}
+	start.Done()
+	done.Wait()
+	for _, err := range errs {
+		t.Errorf("tick errored: %v", err)
+	}
+	if submits != 1 || fires != 1 {
+		t.Fatalf("submits/fires = %d/%d, want 1/1 for two concurrent ticks", submits, fires)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != "job-123" {
+		t.Fatalf("status/job = %q/%q, want submitted/job-123", got.Status, got.JobID)
+	}
+}
+
+func TestFireScheduledDownloadDoesNotLoseTheJobWhenAStaleClaimWouldBeReclaimed(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+
+	stolen := false
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now:             time.Now(),
+		PluginAvailable: func(string) bool { return true },
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			stale := time.Now().Add(-(ScheduledDownloadClaimTTL + time.Minute))
+			if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Update("claimed_at", stale).Error; err != nil {
+				t.Fatalf("age claim: %v", err)
+			}
+			claimed, err := ctx.ClaimScheduledDownload(row.ID, "other-process", time.Now())
+			if err != nil {
+				t.Fatalf("competing claim: %v", err)
+			}
+			stolen = claimed
+			return "job-123", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire due downloads: %v", err)
+	}
+	if stolen {
+		t.Fatal("a scheduled download was reclaimable after the queue side effect; the produced job could be lost from the row")
+	}
+	if fired != 1 {
+		t.Fatalf("fired = %d, want 1", fired)
+	}
+	got := scheduledDownloadRow(t, ctx, row.ID)
+	if got.Status != models.ScheduledDownloadStatusSubmitted || got.JobID != "job-123" || got.Attempts != 1 {
+		t.Fatalf("status/job/attempts = %q/%q/%d, want submitted/job-123/1", got.Status, got.JobID, got.Attempts)
+	}
+}
+
 func TestFireScheduledDownloadDefersWhenURLIsAlreadyDownloading(t *testing.T) {
 	ctx := newScheduledDownloadTestContext(t)
 	ownerUser := createDownloadOwner(t, ctx)
@@ -396,6 +568,63 @@ func TestFireScheduledDownloadMarksSubmitFailureTerminal(t *testing.T) {
 	}
 	if got.Attempts != 1 || got.LastError != "queue full" {
 		t.Fatalf("attempts/error = %d/%q, want 1/queue full", got.Attempts, got.LastError)
+	}
+}
+
+func TestFireScheduledDownloadDefaultPluginAvailabilityUsesLoadedNetworkPolicy(t *testing.T) {
+	dir := t.TempDir()
+	writeConsentTestPlugin(t, dir, "feeds", `
+plugin = { name = "feeds", version = "1.0", api_version = 1,
+           capabilities = { "db:write" }, network = { "example.test" } }
+function init() end
+`)
+	ctx := createTestContextWithPlugins(t, dir)
+	t.Cleanup(ctx.PluginManager().Close)
+	if err := ctx.db.AutoMigrate(&models.ScheduledDownload{}, &models.Session{}, &models.ApiToken{}); err != nil {
+		t.Fatalf("migrate scheduled downloads: %v", err)
+	}
+	if err := ctx.PluginManager().EnablePlugin("feeds"); err != nil {
+		t.Fatalf("enable plugin: %v", err)
+	}
+	ownerUser := createDownloadOwner(t, ctx)
+	owner := ownerUser.ID
+	row := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+
+	fired, err := ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now: time.Now(),
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			return "job-enabled", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire enabled plugin: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("enabled plugin fired = %d, want 1", fired)
+	}
+	if got := scheduledDownloadRow(t, ctx, row.ID); got.JobID != "job-enabled" {
+		t.Fatalf("enabled plugin job = %q", got.JobID)
+	}
+
+	if err := ctx.PluginManager().DisablePlugin("feeds"); err != nil {
+		t.Fatalf("disable plugin: %v", err)
+	}
+	second := seedScheduledDownload(t, ctx, time.Now().Add(-time.Minute), &owner)
+	fired, err = ctx.FireDueScheduledDownloads(ScheduledDownloadFireConfig{
+		Now: time.Now(),
+		Submit: func(*query_models.ResourceFromRemoteCreator, *uint, string) (string, error) {
+			t.Fatal("disabled plugin reached submit through the default availability path")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("fire disabled plugin: %v", err)
+	}
+	if fired != 0 {
+		t.Fatalf("disabled plugin fired = %d, want 0", fired)
+	}
+	if got := scheduledDownloadRow(t, ctx, second.ID); got.Status != models.ScheduledDownloadStatusFailed {
+		t.Fatalf("disabled plugin status = %q, want failed", got.Status)
 	}
 }
 

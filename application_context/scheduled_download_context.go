@@ -66,6 +66,9 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	if pluginName == "" {
 		return nil, errors.New("refusing to schedule: the calling plugin is not identified")
 	}
+	if actorUserID == 0 {
+		return nil, errors.New("refusing to schedule: the acting user is not identified")
+	}
 	if creator == nil {
 		return nil, errors.New("scheduled download needs a payload")
 	}
@@ -73,30 +76,24 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	if err != nil {
 		return nil, err
 	}
+	owner := actorUserID
 	row := models.ScheduledDownload{
-		PluginName:      truncateRunes(pluginName, maxHistoryPluginNameLength),
-		URL:             truncateRunes(creator.URL, maxHistoryURLLength),
+		PluginName: truncateRunes(pluginName, maxHistoryPluginNameLength),
+		// Exact, not truncated: this column is the management surface's copy of
+		// the payload URL, and Task 4's active-download check uses the payload URL
+		// itself. A lossy row URL would make the two disagree and hide duplicates.
+		URL:             creator.URL,
 		Payload:         payload,
 		DueAt:           dueAt,
 		Status:          models.ScheduledDownloadStatusPending,
-		CreatedByUserId: copyUintPtr(nonZeroUintPtr(actorUserID)),
+		CreatedByUserId: &owner,
 	}
 
-	db := ctx.db
-	if actorUserID != 0 {
-		db = ctx.WithPrincipal(&auth.Principal{UserID: actorUserID}).db
-	}
+	db := ctx.WithPrincipal(&auth.Principal{UserID: actorUserID}).db
 	if err := db.Create(&row).Error; err != nil {
 		return nil, err
 	}
 	return &row, nil
-}
-
-func nonZeroUintPtr(v uint) *uint {
-	if v == 0 {
-		return nil
-	}
-	return &v
 }
 
 func scheduledDownloadPayload(creator *query_models.ResourceFromRemoteCreator) (types.JSON, error) {
@@ -190,39 +187,78 @@ func (ctx *MahresourcesContext) ReleaseScheduledDownloadClaim(id uint, claimToke
 		Updates(map[string]any{"claim_token": "", "claimed_at": nil}).Error
 }
 
+// ReserveScheduledDownloadSubmit moves a claimed row out of the claimable set
+// before the queue side effect. The claim stays on the row until the job id is
+// recorded, but status=submitted makes a stale claim unreclaimable: if this
+// process stalls after SubmitForPlugin, a later tick cannot create a second job.
+func (ctx *MahresourcesContext) ReserveScheduledDownloadSubmit(id uint, claimToken string, at time.Time) (bool, error) {
+	res := ctx.db.Model(&models.ScheduledDownload{}).
+		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusPending).
+		Updates(map[string]any{
+			"status":     models.ScheduledDownloadStatusSubmitted,
+			"attempts":   gorm.Expr("attempts + 1"),
+			"updated_at": at,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // MarkScheduledDownloadSubmitted records the queue job a fire produced and
 // releases the claim in the same update.
 func (ctx *MahresourcesContext) MarkScheduledDownloadSubmitted(id uint, claimToken, jobID string, at time.Time) error {
-	return ctx.db.Model(&models.ScheduledDownload{}).
+	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ? AND claim_token = ?", id, claimToken).
+		Where("status = ?", models.ScheduledDownloadStatusSubmitted).
 		Updates(map[string]any{
 			"claim_token": "",
 			"claimed_at":  nil,
-			"status":      models.ScheduledDownloadStatusSubmitted,
 			"job_id":      jobID,
 			"last_error":  "",
-			"attempts":    gorm.Expr("attempts + 1"),
 			"updated_at":  at,
-		}).Error
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 1 {
+		return nil
+	}
+	return fmt.Errorf("scheduled download %d no longer carries this submit claim", id)
 }
 
 // MarkScheduledDownloadFailed records a terminal refusal/failure and releases
 // the claim. Failed scheduled downloads are not retried forever by the tick.
 func (ctx *MahresourcesContext) MarkScheduledDownloadFailed(id uint, claimToken string, runErr error, at time.Time) error {
+	return ctx.markScheduledDownloadFailed(id, claimToken, runErr, at, true)
+}
+
+func (ctx *MahresourcesContext) markScheduledDownloadFailed(id uint, claimToken string, runErr error, at time.Time, incrementAttempt bool) error {
 	msg := ""
 	if runErr != nil {
 		msg = truncateRunes(runErr.Error(), maxHistoryErrorLength)
 	}
-	return ctx.db.Model(&models.ScheduledDownload{}).
+	updates := map[string]any{
+		"claim_token": "",
+		"claimed_at":  nil,
+		"status":      models.ScheduledDownloadStatusFailed,
+		"last_error":  msg,
+		"updated_at":  at,
+	}
+	if incrementAttempt {
+		updates["attempts"] = gorm.Expr("attempts + 1")
+	}
+	res := ctx.db.Model(&models.ScheduledDownload{}).
 		Where("id = ? AND claim_token = ?", id, claimToken).
-		Updates(map[string]any{
-			"claim_token": "",
-			"claimed_at":  nil,
-			"status":      models.ScheduledDownloadStatusFailed,
-			"last_error":  msg,
-			"attempts":    gorm.Expr("attempts + 1"),
-			"updated_at":  at,
-		}).Error
+		Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 1 {
+		return nil
+	}
+	return fmt.Errorf("scheduled download %d no longer carries this failure claim", id)
 }
 
 // CancelScheduledDownload cancels a pending scheduled download before it is
@@ -317,20 +353,27 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, err, now)
 	}
 	if cfg.ActiveDownload != nil {
-		if _, active := cfg.ActiveDownload(row.URL); active {
+		if _, active := cfg.ActiveDownload(creator.URL); active {
 			return false, ctx.ReleaseScheduledDownloadClaim(row.ID, claim)
 		}
 	}
 	if cfg.Submit == nil {
 		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, errors.New("scheduled download submitter is not configured"), now)
 	}
+	reserved, err := ctx.ReserveScheduledDownloadSubmit(row.ID, claim, now)
+	if err != nil {
+		return false, err
+	}
+	if !reserved {
+		return false, nil
+	}
 	owner := actorID
 	jobID, err := cfg.Submit(creator, &owner, row.PluginName)
 	if err != nil {
-		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, err, now)
+		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
 	}
 	if jobID == "" {
-		return false, ctx.MarkScheduledDownloadFailed(row.ID, claim, errors.New("scheduled download submitter returned no job id"), now)
+		return false, ctx.markScheduledDownloadFailed(row.ID, claim, errors.New("scheduled download submitter returned no job id"), now, false)
 	}
 	if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
 		return false, err
