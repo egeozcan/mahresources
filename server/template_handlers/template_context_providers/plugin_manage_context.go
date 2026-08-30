@@ -138,18 +138,18 @@ func buildScheduleDisplays(appCtx PluginManagePageContext, pm *plugin_system.Plu
 // scheduledDownloadDisplay is one ScheduledDownload row, flattened for the
 // plugin management template.
 type scheduledDownloadDisplay struct {
-	ID        uint
-	URL       string
-	DueAt     time.Time
-	Status    string
-	State     string
-	JobID     string
-	LastError string
-	Attempts  int
-	Owned     bool
+	ID          uint
+	URL         string
+	DueAt       time.Time
+	Status      string
+	StatusLabel string
+	JobID       string
+	LastError   string
+	Attempts    int
+	Owned       bool
 }
 
-func scheduledDownloadTemplateState(status string, owned bool) string {
+func scheduledDownloadStatusLabel(status string, owned bool) string {
 	if !owned && status == models.ScheduledDownloadStatusPending {
 		return "stopped"
 	}
@@ -170,15 +170,15 @@ func buildScheduledDownloadDisplays(appCtx PluginManagePageContext, name string)
 	for _, row := range rows {
 		owned := row.CreatedByUserId != nil
 		out = append(out, scheduledDownloadDisplay{
-			ID:        row.ID,
-			URL:       row.URL,
-			DueAt:     row.DueAt,
-			Status:    row.Status,
-			State:     scheduledDownloadTemplateState(row.Status, owned),
-			JobID:     row.JobID,
-			LastError: row.LastError,
-			Attempts:  row.Attempts,
-			Owned:     owned,
+			ID:          row.ID,
+			URL:         row.URL,
+			DueAt:       row.DueAt,
+			Status:      row.Status,
+			StatusLabel: scheduledDownloadStatusLabel(row.Status, owned),
+			JobID:       row.JobID,
+			LastError:   row.LastError,
+			Attempts:    row.Attempts,
+			Owned:       owned,
 		})
 	}
 	return out

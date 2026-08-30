@@ -2,7 +2,7 @@ package template_context_providers
 
 import "testing"
 
-func TestScheduledDownloadTemplateStateOnlyStopsOwnerlessPending(t *testing.T) {
+func TestScheduledDownloadStatusLabelOnlyStopsOwnerlessPending(t *testing.T) {
 	cases := []struct {
 		name   string
 		status string
@@ -17,8 +17,8 @@ func TestScheduledDownloadTemplateStateOnlyStopsOwnerlessPending(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := scheduledDownloadTemplateState(tc.status, tc.owned); got != tc.want {
-				t.Fatalf("template state = %q, want %q", got, tc.want)
+			if got := scheduledDownloadStatusLabel(tc.status, tc.owned); got != tc.want {
+				t.Fatalf("template status label = %q, want %q", got, tc.want)
 			}
 		})
 	}

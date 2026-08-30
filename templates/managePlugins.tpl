@@ -408,14 +408,14 @@
                             <td class="py-1 pr-4 font-mono">{{ scheduled.DueAt|date:"2006-01-02 15:04" }}</td>
                             <td class="py-1 pr-4 break-all"><span class="font-mono">{{ scheduled.URL }}</span></td>
                             <td class="py-1 pr-4">
-                                {% if scheduled.State == "stopped" %}
+                                {% if scheduled.StatusLabel == "stopped" %}
                                 <span class="card-badge card-badge--danger">Stopped &mdash; no owner</span>
-                                {% elif scheduled.State == "failed" %}
+                                {% elif scheduled.StatusLabel == "failed" %}
                                 <span class="text-red-700">failed</span>
-                                {% elif scheduled.State == "cancelled" %}
+                                {% elif scheduled.StatusLabel == "cancelled" %}
                                 <span class="text-stone-600">cancelled</span>
                                 {% else %}
-                                <span class="text-stone-600">{{ scheduled.State }}</span>
+                                <span class="text-stone-600">{{ scheduled.StatusLabel }}</span>
                                 {% endif %}
                             </td>
                             <td class="py-1 pr-4 font-mono">{{ scheduled.Attempts }}</td>
