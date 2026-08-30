@@ -34,7 +34,7 @@ func schedulerTestContext(t *testing.T, pluginDir string) *MahresourcesContext {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&models.PluginSchedule{}, &models.PluginKV{}, &models.PluginState{},
+		&models.PluginSchedule{}, &models.ScheduledDownload{}, &models.PluginKV{}, &models.PluginState{},
 		&models.LogEntry{}, &models.User{}, &models.Group{}, &models.Note{},
 		&models.Resource{}, &models.Tag{},
 	); err != nil {

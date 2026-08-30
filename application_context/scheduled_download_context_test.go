@@ -17,6 +17,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 )
 
 // newScheduledDownloadTestContext uses a temp-file WAL database for the same
@@ -84,6 +85,50 @@ func createDownloadOwner(t *testing.T, ctx *MahresourcesContext) models.User {
 		t.Fatalf("create owner: %v", err)
 	}
 	return user
+}
+
+func TestSubmitDownloadWithDeferredStartPersistsScheduledRowWithoutQueueJob(t *testing.T) {
+	ctx := newScheduledDownloadTestContext(t)
+	ownerUser := createDownloadOwner(t, ctx)
+	startAt := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	resp, err := ctx.SubmitDownload("feeds", ownerUser.ID, "https://example.test/file", map[string]any{
+		plugin_system.DownloadSubmitStartAtOption: startAt,
+		"headers": map[string]any{"Referer": "https://example.test/watch"},
+	})
+	if err != nil {
+		t.Fatalf("submit deferred download: %v", err)
+	}
+	if resp["scheduled"] != true {
+		t.Fatalf("scheduled = %v, want true", resp["scheduled"])
+	}
+	if _, hasJobID := resp["id"]; hasJobID {
+		t.Fatalf("deferred submit returned an immediate job id: %#v", resp)
+	}
+	rowID, ok := resp["scheduled_id"].(uint)
+	if !ok || rowID == 0 {
+		t.Fatalf("scheduled_id = %#v, want row id", resp["scheduled_id"])
+	}
+	if resp["start_at"] != startAt.Unix() {
+		t.Fatalf("start_at = %#v, want %d", resp["start_at"], startAt.Unix())
+	}
+	if jobs := ctx.downloadManager.GetJobs(); len(jobs) != 0 {
+		t.Fatalf("deferred submit enqueued %d queue job(s); no job exists until the scheduler tick", len(jobs))
+	}
+	got := scheduledDownloadRow(t, ctx, rowID)
+	if got.Status != models.ScheduledDownloadStatusPending || !got.DueAt.Equal(startAt) {
+		t.Fatalf("status/dueAt = %q/%s, want pending/%s", got.Status, got.DueAt, startAt)
+	}
+	if got.CreatedByUserId == nil || *got.CreatedByUserId != ownerUser.ID {
+		t.Fatalf("owner = %v, want %d", got.CreatedByUserId, ownerUser.ID)
+	}
+	creator, err := ctx.ScheduledDownloadPayload(&got)
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if creator.URL != "https://example.test/file" || creator.Headers["Referer"] != "https://example.test/watch" {
+		t.Fatalf("payload = %#v, want URL and headers preserved", creator)
+	}
 }
 
 func TestCreateScheduledDownloadBindsTheSubmitterAsOwner(t *testing.T) {

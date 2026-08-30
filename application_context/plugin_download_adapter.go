@@ -84,6 +84,18 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 		}
 	}
 
+	if startAt, scheduled := plugin_system.DownloadSubmitStartAt(opts); scheduled {
+		row, err := ctx.CreateScheduledDownload(pluginName, actorUserID, creator, startAt)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"scheduled":    true,
+			"scheduled_id": row.ID,
+			"start_at":     row.DueAt.Unix(),
+		}, nil
+	}
+
 	var owner *uint
 	if actorUserID != 0 {
 		// A fresh pointer: the job holds this as its owner and reads it under

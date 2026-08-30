@@ -1,8 +1,33 @@
 package plugin_system
 
 import (
+	"fmt"
+	"math"
+	"time"
+
 	lua "github.com/yuin/gopher-lua"
 )
+
+const (
+	// DownloadMaxDeferral bounds one-shot deferred host downloads. Longer-lived,
+	// unattended work belongs to mah.schedule and its own capability.
+	DownloadMaxDeferral = 30 * 24 * time.Hour
+
+	// DownloadSubmitStartAtOption is the typed bridge marker mah.download.submit
+	// adds after validating `start_at` or `delay`. Lua cannot manufacture the
+	// time.Time value, so direct option names remain ordinary resource options.
+	DownloadSubmitStartAtOption = "__mah_download_start_at"
+)
+
+// DownloadSubmitStartAt returns the parsed deferred start carried through the
+// mah.download.submit bridge.
+func DownloadSubmitStartAt(opts map[string]any) (time.Time, bool) {
+	if opts == nil {
+		return time.Time{}, false
+	}
+	startAt, ok := opts[DownloadSubmitStartAtOption].(time.Time)
+	return startAt, ok
+}
 
 // DownloadSubmitter enqueues a download the host performs.
 //
@@ -92,7 +117,18 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 		opts := make(map[string]any)
 		if optTbl := L.OptTable(2, nil); optTbl != nil {
 			checkEntityIDOpts(L, 2, optTbl)
+			startAt, scheduled, err := parseDownloadSubmitDeferral(optTbl, time.Now())
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
 			opts = luaTableToGoMap(optTbl)
+			delete(opts, "start_at")
+			delete(opts, "delay")
+			if scheduled {
+				opts[DownloadSubmitStartAtOption] = startAt
+			}
 		}
 
 		name := ""
@@ -116,4 +152,67 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 	}))
 
 	mahMod.RawSetString("download", mod)
+}
+
+func parseDownloadSubmitDeferral(tbl *lua.LTable, now time.Time) (time.Time, bool, error) {
+	if tbl == nil {
+		return time.Time{}, false, nil
+	}
+	startVal := tbl.RawGetString("start_at")
+	delayVal := tbl.RawGetString("delay")
+	if startVal != lua.LNil && delayVal != lua.LNil {
+		return time.Time{}, false, fmt.Errorf("start_at and delay are mutually exclusive")
+	}
+	if delayVal != lua.LNil {
+		delayStr, ok := delayVal.(lua.LString)
+		if !ok {
+			return time.Time{}, false, fmt.Errorf("delay must be a duration string such as \"2h\", got %s", delayVal.Type())
+		}
+		delay, err := time.ParseDuration(string(delayStr))
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("delay %q is not a duration: %v", string(delayStr), err)
+		}
+		if delay < 0 {
+			return time.Time{}, false, fmt.Errorf("delay must not be negative, got %q", string(delayStr))
+		}
+		if delay > DownloadMaxDeferral {
+			return time.Time{}, false, fmt.Errorf("delay %q exceeds the 30 days maximum", string(delayStr))
+		}
+		return now.Add(delay), true, nil
+	}
+	if startVal == lua.LNil {
+		return time.Time{}, false, nil
+	}
+	startNum, ok := startVal.(lua.LNumber)
+	if !ok {
+		return time.Time{}, false, fmt.Errorf("start_at must be a unix seconds number, got %s", startVal.Type())
+	}
+	startAt, err := downloadStartAtFromUnixSeconds(float64(startNum))
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	// Refuse past absolute times rather than accepting a row that will fire on
+	// the next tick: a typo should fail at submit time, not become "run now".
+	if startAt.Before(now) {
+		return time.Time{}, false, fmt.Errorf("start_at must not be in the past")
+	}
+	if startAt.After(now.Add(DownloadMaxDeferral)) {
+		return time.Time{}, false, fmt.Errorf("start_at exceeds the 30 days maximum")
+	}
+	return startAt, true, nil
+}
+
+func downloadStartAtFromUnixSeconds(seconds float64) (time.Time, error) {
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return time.Time{}, fmt.Errorf("start_at must be a finite unix seconds number")
+	}
+	if seconds < 0 {
+		return time.Time{}, fmt.Errorf("start_at must not be negative")
+	}
+	whole, frac := math.Modf(seconds)
+	const maxUnixSeconds = float64(1<<63 - 1)
+	if whole > maxUnixSeconds {
+		return time.Time{}, fmt.Errorf("start_at is too large")
+	}
+	return time.Unix(int64(whole), int64(frac*float64(time.Second))).UTC(), nil
 }
