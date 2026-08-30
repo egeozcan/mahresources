@@ -36,6 +36,7 @@ boot value.
 | `remote_connect_timeout` | duration | 1s–10m | `-remote-connect-timeout` | next remote download |
 | `remote_idle_timeout` | duration | 1s–1h | `-remote-idle-timeout` | next remote download |
 | `remote_overall_timeout` | duration | 10s–24h | `-remote-overall-timeout` | next remote download |
+| `remote_user_agent` | string | at most 8192 bytes, no control characters; empty = browser-like default | `-remote-user-agent` | next remote download |
 | `download_failed_retention` | duration | 1h–365d | `-download-failed-retention` | next history sweep |
 | `download_history_retention` | duration | 1h–365d | `-download-history-retention` | next history sweep |
 | `download_cockpit_limit` | int | 1–200 | `-download-cockpit-limit` | next jobs-panel render |

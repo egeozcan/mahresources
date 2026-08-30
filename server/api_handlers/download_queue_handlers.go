@@ -7,6 +7,7 @@ import (
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
+	"mahresources/hostfetch"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
@@ -123,9 +124,12 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 		live, err := ctx.DownloadManager().SubmitMultiple(&creator, owner)
 		if err != nil {
 			// "no valid URLs provided" is a client validation error (400),
-			// while "download queue is full" is a capacity issue (503).
+			// while "download queue is full" is a capacity issue (503). A
+			// refused header is the first kind too, and typed rather than
+			// matched on wording: telling a submitter to retry a header that
+			// can never be sent is an instruction to fail again.
 			status := http.StatusServiceUnavailable
-			if strings.Contains(err.Error(), "no valid URLs") {
+			if strings.Contains(err.Error(), "no valid URLs") || errors.Is(err, hostfetch.ErrInvalidHeaders) {
 				status = http.StatusBadRequest
 			}
 			http_utils.HandleError(err, writer, request, status)

@@ -8,6 +8,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
+	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -415,7 +416,13 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 				owner := principalOwnerID(principalFor(request))
 				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator, owner)
 				if err != nil {
-					http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
+					// A refused header is the submitter's mistake, not a busy
+					// queue; every other failure here is still capacity.
+					status := http.StatusServiceUnavailable
+					if errors.Is(err, hostfetch.ErrInvalidHeaders) {
+						status = http.StatusBadRequest
+					}
+					http_utils.HandleError(err, writer, request, status)
 					return
 				}
 

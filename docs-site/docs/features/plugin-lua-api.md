@@ -304,6 +304,21 @@ Requires both `db:write` and `http`, because the URL is fetched by the applicati
 | `options.tags` | table | Array of Tag IDs |
 | `options.groups` | table | Array of Group IDs |
 | `options.meta` | string | JSON-encoded metadata string |
+| `options.headers` | table | Extra request headers for this fetch, e.g. `{ Referer = "https://example.com/watch" }` |
+
+A `User-Agent` in `options.headers` replaces the deployment's for the whole
+download, including every segment of an HLS stream — an endpoint that refuses
+one agent refuses it on its CDN too. Every other header is sent to the
+submitted URL's own host and nowhere else: an
+HLS playlist names further URLs, and a `Cookie` replayed onto whatever the
+playlist says would be your user's credential handed to a server the content
+chose. Connection-level headers (`Host`, `Content-Length`, `Connection`,
+`Keep-Alive`, `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer` and every
+`Proxy-*`) and `Range` are refused at the call, the last because the HLS
+assembler sets its own. Every request the host
+makes already carries the deployment's `User-Agent`, which is browser-like by
+default because some media endpoints answer Go's with HTTP 403 -- so a header
+map is only needed for the endpoint-specific extras.
 
 Returns a Resource table (`id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `owner_id`) on success. Returns `nil, error_string` on failure.
 
@@ -351,8 +366,9 @@ group-limited caller cannot submit a download into a group it cannot see. **Ever
 retry made long afterwards -- so a download submitted by a plugin that has
 since been disabled is refused rather than run.
 
-`options` are the same as `create_resource_from_url`'s. Refused inside
-`mah.db.transaction`.
+`options` are the same as `create_resource_from_url`'s, `headers` included --
+and here they are stored on the download history row, so a retry made long
+afterwards replays them. Refused inside `mah.db.transaction`.
 
 To act on the result, listen for the job event (requires `job_events`):
 

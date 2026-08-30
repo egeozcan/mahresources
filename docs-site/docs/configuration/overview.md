@@ -86,6 +86,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
+| `-remote-user-agent` | `REMOTE_USER_AGENT` | User-Agent the server's own fetches send | browser-like default |
 | `-allow-private-fetch` | `ALLOW_PRIVATE_FETCH` | Private addresses/CIDR blocks the server's own fetches may reach ([details](#fetching-from-your-own-network)) | (none) |
 | `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | Maximum execution time for MRQL queries | `10s` |
 | `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` for MRQL queries without an explicit LIMIT | `500` |

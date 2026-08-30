@@ -9,6 +9,7 @@ import (
 	"io"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
@@ -624,6 +625,10 @@ func (a *pluginDBAdapter) CreateResourceFromURL(reqCtx context.Context, url stri
 	}
 	applyResourceOptions(&creator.ResourceQueryBase, options)
 
+	if err := applyRemoteHeaders(creator, options); err != nil {
+		return nil, err
+	}
+
 	// AddRemoteResource uses FileName (not ResourceQueryBase.Name) for naming.
 	// Propagate the Name option so the plugin-specified name is used instead of
 	// falling back to path.Base(url).
@@ -679,6 +684,12 @@ func (a *pluginDBAdapter) AddResourceVersionFromURL(reqCtx context.Context, reso
 		return nil, err
 	}
 	client = plugin_system.ApplyEgressPolicy(client, *a.ctx.pluginEgress, connectTimeout)
+	// The same agent as every other host fetch. A version upload from a URL is
+	// the same request against the same endpoints as the resource upload from
+	// one, so leaving it on Go's default meant one of the two 403'd and the
+	// other did not, for no reason an author could see. It takes no per-call
+	// headers: this surface has no options table to carry them.
+	client = hostfetch.Decorate(client, a.ctx.RemoteUserAgent(), nil, rawURL)
 
 	// Bounded by the caller's own budget rather than only by the host's remote
 	// timeout, which is up to 30 minutes and is held with the plugin's VM lock.
@@ -1904,6 +1915,44 @@ func (a *pluginDBAdapter) RemoveResourcesFromNote(noteId uint, resourceIds []uin
 		return nil
 	}
 	return a.ctx.RemoveResourcesFromNote(noteId, resourceIds)
+}
+
+// applyRemoteHeaders reads the `headers` option both fetching surfaces accept,
+// so a plugin writes one shape of options whether it calls
+// mah.db.create_resource_from_url or mah.download.submit.
+//
+// Validated here rather than at the request, for the reason every intake check
+// in this tree is: mah.download.submit returns before anything is fetched, so
+// a refusal that waited would reach the author as a failed history row instead
+// of an error at the call.
+func applyRemoteHeaders(creator *query_models.ResourceFromRemoteCreator, options map[string]any) error {
+	value, present := options["headers"]
+	if !present || value == nil {
+		return nil
+	}
+	raw, ok := value.(map[string]any)
+	if !ok {
+		// Named but not a table. Ignoring it would report success on a call
+		// whose headers never went anywhere, which is the failure this whole
+		// feature is a remedy for.
+		return fmt.Errorf("the `headers` option must be a table of header name to string value")
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	headers := make(map[string]string, len(raw))
+	for k, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("request header %q must be a string", k)
+		}
+		headers[k] = s
+	}
+	if err := hostfetch.ValidateHeaders(headers); err != nil {
+		return err
+	}
+	creator.Headers = headers
+	return nil
 }
 
 // applyResourceOptions sets common fields from plugin options map.

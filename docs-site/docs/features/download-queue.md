@@ -139,8 +139,62 @@ Remote download timeouts are configurable via command-line flags or environment 
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | 30s | Timeout for establishing a connection |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | 60s | Timeout when the remote server stops sending data |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | 30m | Maximum total time for a download |
+| `-remote-user-agent` | `REMOTE_USER_AGENT` | browser-like | User-Agent every request this server makes on your behalf sends |
 
-The same three values are also runtime-editable at `/admin/settings`, and the queue reads them at the start of every download, so a change applies without a restart.
+The same four values are also runtime-editable at `/admin/settings`, and the queue reads them at the start of every download, so a change applies without a restart.
+
+### Request headers
+
+The server identifies itself with a browser-like `User-Agent`, because some
+media endpoints answer Go's default with HTTP 403. Set `-remote-user-agent` (or
+the runtime `remote_user_agent`) to send something else; it applies to the
+synchronous remote upload, the download queue, every HLS playlist, key and
+segment beneath them, and the calendar block's ICS fetch.
+
+One download can also carry extra headers of its own — a `Referer` or a
+`Cookie` a particular endpoint wants. They are accepted as a `headers` object
+on the JSON body of `POST /v1/download/submit` and `POST /v1/resource/remote`,
+and as a `headers` option on the plugin calls `mah.download.submit` and
+`mah.db.create_resource_from_url`:
+
+```lua
+mah.download.submit("https://example.com/media/123", {
+  owner_id = 42,
+  headers = { Referer = "https://example.com/watch/123" },
+})
+```
+
+Three rules govern them:
+
+- **A `User-Agent` among them replaces the deployment's, for the whole
+  download.** An endpoint that refuses one agent refuses it on its CDN too, so
+  binding it to the submitted host would fix the playlist and leave every
+  segment failing. It names the fetcher rather than the user, which is why it
+  is safe on any host — which also means it is the wrong place for a secret.
+  Put anything that must not travel in a header of its own, which stays bound
+  to the submitted origin.
+- **Every other header is sent to the submitted URL's own host and nowhere
+  else.** An HLS
+  playlist names further URLs, and the host fetch policy permits any public
+  host, so replaying a `Cookie` onto whatever a playlist says would hand your
+  credential to a server the content chose. The `User-Agent` has no such
+  restriction: it identifies the fetcher, not you.
+- **Connection-level headers are refused** — `Host`, `Content-Length`,
+  `Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`
+  and the whole `Proxy-*` family — along with `Range`, which the HLS assembler
+  sets itself per byte range. So are two spellings of one header (`Cookie` and
+  `cookie`), which would otherwise resolve by map order. The refusal
+  happens when you submit, not when the transfer runs.
+- **Headers follow the origin, not just the host.** A redirect from `https` to
+  the same name over plain `http` is a downgrade, and the caller's headers stay
+  behind rather than going out in clear.
+- **They are stored on the download history row** so a retry replays them, and
+  a stored credential outlives the browser tab you typed it into. The payload
+  is never rendered to a page, but it is in the database until the row is
+  swept.
+
+Headers travel on JSON bodies only. The create-resource form posts no header
+map.
 
 ### History retention
 

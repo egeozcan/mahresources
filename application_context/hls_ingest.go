@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"mahresources/hls"
+	"mahresources/hostfetch"
 	"mahresources/plugin_system"
 )
 
@@ -52,4 +53,31 @@ func hlsOptionsFromConfig(config *MahresourcesConfig) hls.Options {
 		// requests. Zero leaves the package's default.
 		OverallTimeout: config.RemoteResourceOverallTimeout,
 	}
+}
+
+// RemoteUserAgent is the User-Agent the host's own fetches send.
+//
+// Read through the runtime settings when they exist, so an operator who meets
+// a 403 from one platform can change it without a restart, and falling back to
+// the boot config for a context built from a bare one (the CLI, every test).
+// An empty answer anywhere means "not configured" and selects the browser-like
+// default -- never "send no User-Agent", which is the value that produced the
+// 403 in the first place.
+func (ctx *MahresourcesContext) RemoteUserAgent() string {
+	// The runtime settings are seeded from the boot config, so when they exist
+	// they are the whole answer: consulting the config after an empty runtime
+	// value would make an operator who *cleared* the setting get the boot value
+	// back on this path while the download queue -- which reads only the
+	// settings -- fell to the default. Two host fetches disagreeing about what
+	// they identify as is the defect this feature is a remedy for.
+	if s := ctx.settings; s != nil {
+		if ua := s.RemoteUserAgent(); ua != "" {
+			return ua
+		}
+		return hostfetch.DefaultUserAgent
+	}
+	if ctx.Config != nil && ctx.Config.RemoteUserAgent != "" {
+		return ctx.Config.RemoteUserAgent
+	}
+	return hostfetch.DefaultUserAgent
 }

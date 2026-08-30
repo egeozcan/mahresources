@@ -21,6 +21,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/hash_worker"
+	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/seed"
 	"mahresources/plugin_system"
@@ -203,6 +204,7 @@ func main() {
 	remoteConnectTimeout := flag.Duration("remote-connect-timeout", parseDurationEnv("REMOTE_CONNECT_TIMEOUT", 30*time.Second), "Timeout for connecting to remote URLs (env: REMOTE_CONNECT_TIMEOUT)")
 	remoteIdleTimeout := flag.Duration("remote-idle-timeout", parseDurationEnv("REMOTE_IDLE_TIMEOUT", 60*time.Second), "Timeout for idle remote transfers (env: REMOTE_IDLE_TIMEOUT)")
 	remoteOverallTimeout := flag.Duration("remote-overall-timeout", parseDurationEnv("REMOTE_OVERALL_TIMEOUT", 30*time.Minute), "Maximum total time for remote downloads (env: REMOTE_OVERALL_TIMEOUT)")
+	remoteUserAgent := flag.String("remote-user-agent", os.Getenv("REMOTE_USER_AGENT"), "User-Agent the server's own fetches send (/v1/resource/remote, the download queue, HLS segments). Empty uses a browser-like default, because some media endpoints answer 403 to Go's (env: REMOTE_USER_AGENT)")
 	allowPrivateFetch := flag.String("allow-private-fetch", os.Getenv("ALLOW_PRIVATE_FETCH"), "Comma-separated private addresses or CIDR blocks the server's own fetches may reach (/v1/resource/remote, the download queue, calendar blocks). Empty (default) denies every private, loopback and link-local address, plus Azure's host-internal 168.63.129.16, which is what stops a user-supplied URL from reaching the cloud metadata endpoint or an internal service. Name addresses, not hostnames. IPv4 blocks must be /8 or longer, IPv6 blocks /32 or longer (env: ALLOW_PRIVATE_FETCH)")
 
 	// Share server options
@@ -295,6 +297,13 @@ func main() {
 		log.Fatalf("invalid %v", err)
 	}
 
+	// Checked at startup for the same reason: a User-Agent net/http refuses
+	// breaks *every* host fetch, and the runtime setting's own validator does
+	// not see a value that arrived by flag or environment.
+	if err := hostfetch.ValidateUserAgent(*remoteUserAgent); err != nil {
+		log.Fatalf("invalid -remote-user-agent: %v", err)
+	}
+
 	// Create configuration
 	cfg := &application_context.MahresourcesInputConfig{
 		FileSavePath:                 *fileSavePath,
@@ -319,6 +328,7 @@ func main() {
 		RemoteResourceConnectTimeout: *remoteConnectTimeout,
 		RemoteResourceIdleTimeout:    *remoteIdleTimeout,
 		RemoteResourceOverallTimeout: *remoteOverallTimeout,
+		RemoteUserAgent:              *remoteUserAgent,
 		AllowPrivateFetch:            allowPrivateFetchEntries,
 		MaxDBConnections:             *maxDBConnections,
 		VideoThumbnailTimeout:        *videoThumbTimeout,

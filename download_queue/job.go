@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"context"
+	"mahresources/hostfetch"
 	"mahresources/models/query_models"
 	"sync"
 	"time"
@@ -722,6 +723,12 @@ func (j *DownloadJob) creatorCopy() *query_models.ResourceFromRemoteCreator {
 		return nil
 	}
 	c := *j.creator
+	// The struct copy is shallow, and Headers is a map -- so without this the
+	// "copy" hands every caller the same map the job is reading on its worker,
+	// which is the aliasing the copy exists to prevent, restored by a field
+	// added later. Slices in this struct are read-only ID lists; the map is the
+	// one whose contents a caller could edit in place.
+	c.Headers = hostfetch.CopyHeaders(c.Headers)
 	return &c
 }
 

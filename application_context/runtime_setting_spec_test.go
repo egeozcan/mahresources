@@ -59,7 +59,7 @@ func TestBuildSpecs_AllKeys(t *testing.T) {
 	specs := buildSpecs()
 	expected := []string{
 		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLPageQueryBudget, KeyMRQLQueryTimeout,
-		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout, KeySharePublicURL,
+		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout, KeyRemoteUserAgent, KeySharePublicURL,
 		KeyDocsSiteBaseURL, KeyDocsLinksDisabled, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 		KeyDownloadFailedRetention, KeyDownloadHistoryRetention, KeyDownloadCockpitLimit,
 		KeyUploadConcurrency, KeyUploadWidgetFileCount, KeyUploadWidgetSizeBytes,

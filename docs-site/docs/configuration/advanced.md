@@ -139,6 +139,7 @@ Configure timeouts for downloading remote resources:
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | `30s` | Timeout for establishing connection |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | `60s` | Timeout when no data is received |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Maximum total download time |
+| `-remote-user-agent` | `REMOTE_USER_AGENT` | browser-like | User-Agent the server's own fetches send |
 
 ### For Slow Networks
 
@@ -381,6 +382,7 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | `30s` | Connection timeout |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | `60s` | Idle timeout |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Total download timeout |
+| `-remote-user-agent` | `REMOTE_USER_AGENT` | browser-like | User-Agent for the server's own fetches |
 | `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | `10s` | Maximum MRQL query execution time |
 | `-skip-fts` | `SKIP_FTS=1` | `false` | Skip full-text search initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` | Skip version migration |

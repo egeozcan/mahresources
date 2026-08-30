@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/url"
 	"time"
+
+	"mahresources/hostfetch"
 )
 
 // SettingType discriminates value encoding on disk.
@@ -164,6 +166,7 @@ const (
 	KeyRemoteConnectTimeout     = "remote_connect_timeout"
 	KeyRemoteIdleTimeout        = "remote_idle_timeout"
 	KeyRemoteOverallTimeout     = "remote_overall_timeout"
+	KeyRemoteUserAgent          = "remote_user_agent"
 	KeyDownloadFailedRetention  = "download_failed_retention"
 	KeyDownloadHistoryRetention = "download_history_retention"
 	KeyDownloadCockpitLimit     = "download_cockpit_limit"
@@ -235,6 +238,12 @@ func buildSpecs() map[string]SettingSpec {
 			Description: "Maximum total time for a remote resource download.",
 			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
 			MinNumeric: int64(10 * time.Second), MaxNumeric: int64(24 * time.Hour),
+		},
+		KeyRemoteUserAgent: {
+			Key: KeyRemoteUserAgent, Label: "Remote fetch User-Agent",
+			Description: "User-Agent the server's own fetches send — the remote resource upload, the download queue, and every HLS playlist, key and segment beneath them. Empty uses a browser-like default, because some media endpoints answer 403 to Go's. Runtime-editable on purpose: a 403 from one platform is a thing to fix without a restart.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeString,
+			StringValidator: validateRemoteUserAgent,
 		},
 		KeyDownloadFailedRetention: {
 			Key: KeyDownloadFailedRetention, Label: "Failed download retention",
@@ -318,6 +327,16 @@ func validateSharePublicURL(s string) error {
 	return validateHTTPBaseURL(s)
 }
 
+// validateRemoteUserAgent refuses a value net/http would refuse to send.
+//
+// One definition shared with the boot flag (hostfetch.ValidateUserAgent), so a
+// value an operator can set at runtime and a value they can pass at startup are
+// held to the same rule. Without the check, the failure is every remote fetch
+// erroring at request time while the settings page reported success.
+func validateRemoteUserAgent(s string) error {
+	return hostfetch.ValidateUserAgent(s)
+}
+
 func validateDocsSiteBaseURL(s string) error {
 	if s == "" {
 		return fmt.Errorf("must not be empty")
@@ -366,6 +385,7 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyRemoteConnectTimeout:     cfg.RemoteResourceConnectTimeout,
 		KeyRemoteIdleTimeout:        cfg.RemoteResourceIdleTimeout,
 		KeyRemoteOverallTimeout:     cfg.RemoteResourceOverallTimeout,
+		KeyRemoteUserAgent:          cfg.RemoteUserAgent,
 		KeyDownloadFailedRetention:  cfg.DownloadFailedRetention,
 		KeyDownloadHistoryRetention: cfg.DownloadHistoryRetention,
 		KeyDownloadCockpitLimit:     cfg.DownloadCockpitLimit,

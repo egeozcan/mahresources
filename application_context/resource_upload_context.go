@@ -13,6 +13,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/hash_worker"
 	"mahresources/hls"
+	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
@@ -252,6 +253,14 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 	}
 	httpClient = plugin_system.ApplyEgressPolicy(httpClient, policy, connectTimeout)
 
+	// The caller's headers are refused here rather than at request time: by
+	// then the submitter is gone, and a malformed header would surface as
+	// every URL in the batch failing with net/http's own wording.
+	if err := hostfetch.ValidateHeaders(resourceQuery.Headers); err != nil {
+		return nil, err
+	}
+	userAgent := ctx.RemoteUserAgent()
+
 	// hostFetch is true when nothing but the host policy applies. A plugin's
 	// refusals are sanitized at the plugin boundary instead, in that origin's
 	// own wording.
@@ -293,12 +302,24 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 			// NewRequestWithContext rather than Get: the client's own Timeout
 			// bounds the transfer, but only the context can end it early when
 			// the caller's budget runs out first.
+			// Decorated per URL, not once for the batch: the custom headers
+			// are bound to the host of the URL they were submitted for, and
+			// AddRemoteResource fetches every line of a newline-separated
+			// list. One decoration for all of them would send the first URL's
+			// Cookie to the last URL's host.
+			//
+			// The same decorated client is handed to hls.Fetch below, so every
+			// playlist, key and segment carries the User-Agent too -- which is
+			// the point, since the 403 this exists for is answered by the
+			// media endpoints, not only by the page that lists them.
+			urlClient := hostfetch.Decorate(httpClient, userAgent, resourceQuery.Headers, url)
+
 			req, err := http.NewRequestWithContext(urlCtx, http.MethodGet, url, nil)
 			if err != nil {
 				setError(err)
 				return
 			}
-			resp, err := httpClient.Do(req)
+			resp, err := urlClient.Do(req)
 
 			if err != nil {
 				setError(err)
@@ -391,7 +412,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 				if resp.Request != nil && resp.Request.URL != nil {
 					base = resp.Request.URL.String()
 				}
-				assembled, hlsErr := hls.Fetch(urlCtx, ctx.hlsDeps(httpClient, policy), base, head, timeoutBody, ctx.hlsOptions(), nil)
+				assembled, hlsErr := hls.Fetch(urlCtx, ctx.hlsDeps(urlClient, policy), base, head, timeoutBody, ctx.hlsOptions(), nil)
 				if hlsErr != nil {
 					setError(hlsErr)
 					return

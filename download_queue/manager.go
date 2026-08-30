@@ -10,6 +10,7 @@ import (
 	"io"
 	"mahresources/contracts"
 	"mahresources/hls"
+	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"net"
@@ -116,6 +117,9 @@ type TimeoutConfig struct {
 	ConnectTimeout time.Duration
 	IdleTimeout    time.Duration
 	OverallTimeout time.Duration
+	// UserAgent is what every request this download makes identifies itself
+	// as. Empty selects hostfetch.DefaultUserAgent.
+	UserAgent string
 }
 
 // DownloadSettings is the runtime configuration surface for the download
@@ -126,6 +130,10 @@ type DownloadSettings interface {
 	IdleTimeout() time.Duration
 	OverallTimeout() time.Duration
 	ExportRetention() time.Duration
+	// UserAgent is read per download like the timeouts, so an operator who
+	// meets a 403 can change it without a restart. Empty means none was
+	// configured, and the caller substitutes hostfetch.DefaultUserAgent.
+	UserAgent() string
 }
 
 // NewStaticDownloadSettings returns a DownloadSettings whose values never
@@ -143,6 +151,7 @@ func (s staticDownloadSettings) ConnectTimeout() time.Duration  { return s.tc.Co
 func (s staticDownloadSettings) IdleTimeout() time.Duration     { return s.tc.IdleTimeout }
 func (s staticDownloadSettings) OverallTimeout() time.Duration  { return s.tc.OverallTimeout }
 func (s staticDownloadSettings) ExportRetention() time.Duration { return s.er }
+func (s staticDownloadSettings) UserAgent() string              { return s.tc.UserAgent }
 
 // DownloadManager manages background download jobs.
 // Concurrency discipline: settings is written under mu.Lock (SetSettings,
@@ -391,6 +400,26 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 // about. An empty name is a person's download and takes the host policy, which
 // is what Submit passes.
 func (dm *DownloadManager) SubmitForPlugin(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string) (*DownloadJob, error) {
+	// At submit, not at fetch. Every door into the queue passes through here --
+	// POST /v1/download/submit, the plugin submitter, SubmitMultiple, and a
+	// retry replaying a stored payload -- and the submitter is present at
+	// exactly this moment and gone by the time a worker builds the request.
+	if err := hostfetch.ValidateHeaders(creator.Headers); err != nil {
+		return nil, err
+	}
+	// The job takes its own creator, not the caller's. The struct is the
+	// caller's to keep, and its Headers map is reachable from there for as long
+	// as the caller holds it -- so a submitter could edit the headers after the
+	// validation that approved them, while a worker is building requests from
+	// them and the history row is being serialized. SubmitMultiple makes this
+	// concrete: it hands every job a shallow copy of one creator, so all of
+	// them would share one map.
+	if creator != nil {
+		owned := *creator
+		owned.Headers = hostfetch.CopyHeaders(creator.Headers)
+		creator = &owned
+	}
+
 	dm.mu.Lock()
 
 	if !dm.makeRoomForNewJob() {
@@ -866,6 +895,17 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 	if err := checkURL(job.URL); err != nil {
 		return nil, err
 	}
+
+	// One decoration, applied before the first request and carried into the
+	// HLS assembly below, so the deployment's User-Agent reaches every
+	// playlist, key and segment as well as the submitted URL. The job's own
+	// headers ride with it and are sent to that URL's host only -- see
+	// hostfetch.Decorate, which is where the reason lives.
+	//
+	// The headers come off the stored creator, which is the payload a retry
+	// replays: a download that only worked with a Referer must still work when
+	// it is retried months later on another worker.
+	httpClient = hostfetch.Decorate(httpClient, s.UserAgent(), job.creator.Headers, job.URL)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", job.URL, nil)
 	if err != nil {

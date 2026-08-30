@@ -502,6 +502,16 @@ func (s *RuntimeSettings) RemoteIdleTimeout() time.Duration {
 	v, _ := s.getRaw(KeyRemoteIdleTimeout)
 	return v.(time.Duration)
 }
+
+// RemoteUserAgent is the User-Agent the host's own fetches send. Empty means
+// no operator has configured one, and the caller substitutes
+// hostfetch.DefaultUserAgent.
+func (s *RuntimeSettings) RemoteUserAgent() string {
+	v, _ := s.getRaw(KeyRemoteUserAgent)
+	ua, _ := v.(string)
+	return ua
+}
+
 func (s *RuntimeSettings) RemoteOverallTimeout() time.Duration {
 	v, _ := s.getRaw(KeyRemoteOverallTimeout)
 	return v.(time.Duration)
@@ -552,6 +562,7 @@ func (s *RuntimeSettings) UploadWidgetSizeBytes() int64 {
 func (s *RuntimeSettings) ConnectTimeout() time.Duration { return s.RemoteConnectTimeout() }
 func (s *RuntimeSettings) IdleTimeout() time.Duration    { return s.RemoteIdleTimeout() }
 func (s *RuntimeSettings) OverallTimeout() time.Duration { return s.RemoteOverallTimeout() }
+func (s *RuntimeSettings) UserAgent() string             { return s.RemoteUserAgent() }
 
 // ExportRetention already exists on RuntimeSettings (see above).
 func (s *RuntimeSettings) SharePublicURL() string {

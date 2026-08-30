@@ -291,7 +291,8 @@ components:
                 counts:
                     $ref: '#/components/schemas/Counts'
                 danglingByKind:
-                    additionalProperties: true
+                    additionalProperties:
+                        type: integer
                     type: object
                 estimatedBytes:
                     type: integer
@@ -905,7 +906,8 @@ components:
                 noteId:
                     type: integer
                 positions:
-                    additionalProperties: true
+                    additionalProperties:
+                        type: string
                     type: object
             type: object
         NoteEditor:
@@ -1577,6 +1579,10 @@ components:
                     items:
                         type: integer
                     type: array
+                Headers:
+                    additionalProperties:
+                        type: string
+                    type: object
                 Height:
                     type: integer
                 Meta:
@@ -2921,7 +2927,7 @@ paths:
                 - downloads
     /v1/download/submit:
         post:
-            description: Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines.
+            description: Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines. `Headers` are extra request headers for this download, accepted on a JSON body only (a form post carries no header map); they are sent to the submitted URL's own origin and nowhere else, and connection-level headers, `Proxy-*`, `Keep-Alive` and `Range` are refused with HTTP 400.
             operationId: submitDownload
             requestBody:
                 content:
@@ -6258,6 +6264,7 @@ paths:
             tags:
                 - resources
         post:
+            description: Uploads one or more files, or fetches a URL. `Headers` are extra request headers for a URL fetch, accepted on a JSON body only (a multipart or form post carries no header map); they are sent to the submitted URL's own origin and nowhere else, and connection-level headers, `Proxy-*`, `Keep-Alive` and `Range` are refused with HTTP 400.
             operationId: createResource
             requestBody:
                 content:

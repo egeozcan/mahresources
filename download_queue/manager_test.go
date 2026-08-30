@@ -1222,6 +1222,7 @@ func (m *mutableSettings) OverallTimeout() time.Duration {
 	defer m.mu.RUnlock()
 	return m.v
 }
+func (m *mutableSettings) UserAgent() string { return "" }
 func (m *mutableSettings) ExportRetention() time.Duration {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

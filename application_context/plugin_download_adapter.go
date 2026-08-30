@@ -54,6 +54,9 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	if name, ok := opts["name"].(string); ok && name != "" {
 		creator.FileName = name
 	}
+	if err := applyRemoteHeaders(creator, opts); err != nil {
+		return nil, err
+	}
 
 	// The targets are validated against the *acting* principal's scope, the way
 	// /v1/download/submit validates them. Without this a confined caller --

@@ -38,6 +38,19 @@ type ResourceFromRemoteCreator struct {
 	GroupName         string
 	GroupMeta         string
 	PathName          string // BH-023: optional alt-fs key; empty = default filesystem
+	// Headers are extra request headers this one download sends, on top of the
+	// deployment's User-Agent. They exist because a media endpoint may want a
+	// Referer or a Cookie that no deployment-wide setting could carry.
+	//
+	// JSON only (`schema:"-"`): gorilla/schema decodes no map field, so a form
+	// post cannot set one, and pretending otherwise would half-support the
+	// create-resource form. They are persisted verbatim on the download
+	// history row -- which is what makes a retry replay them -- so a Cookie
+	// put here is stored in the database; the payload is never rendered to a
+	// page.
+	//
+	// They are sent only to the submitted URL's own host. See hostfetch.
+	Headers map[string]string `schema:"-"`
 }
 
 type ResourceEditor struct {

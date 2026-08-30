@@ -183,9 +183,14 @@ func (g *SchemaGenerator) generateSchemaInternal(t reflect.Type, asPartial bool,
 		return openapi3.NewSchemaRef("", openapi3.NewSchema())
 	case reflect.Map:
 		schema := openapi3.NewObjectSchema()
-		schema.AdditionalProperties = openapi3.AdditionalProperties{
-			Has:    boolPtr(true),
-			Schema: g.generateSchemaInternal(t.Elem(), false, depth+1),
+		// The element schema alone, not alongside Has. kin-openapi marshals
+		// `additionalProperties: true` when Has is set and drops the schema
+		// beside it, so a map[string]string was published as "any value here"
+		// -- which is exactly what the decoder refuses.
+		if elem := g.generateSchemaInternal(t.Elem(), false, depth+1); elem != nil {
+			schema.AdditionalProperties = openapi3.AdditionalProperties{Schema: elem}
+		} else {
+			schema.AdditionalProperties = openapi3.AdditionalProperties{Has: boolPtr(true)}
 		}
 		return openapi3.NewSchemaRef("", schema)
 	}

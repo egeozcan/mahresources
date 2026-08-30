@@ -66,6 +66,14 @@ type MahresourcesConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// RemoteUserAgent is the User-Agent the host's own fetches send — the
+	// synchronous remote upload, the download queue, and every HLS playlist,
+	// key and segment request beneath them. Empty selects
+	// hostfetch.DefaultUserAgent, which is a browser string: at least one
+	// supported platform's media endpoint answers 403 to Go's default, and an
+	// honest-but-unknown agent is refused by the same rule. Runtime overrides
+	// live in RuntimeSettings.
+	RemoteUserAgent string
 	// AllowPrivateFetch lists the private addresses and CIDR blocks the
 	// application's own fetches may reach — /v1/resource/remote, the download
 	// queue, and the calendar block's ICS fetch. Empty (the default) means none
@@ -248,6 +256,9 @@ type MahresourcesInputConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// RemoteUserAgent is the User-Agent the host's own fetches send. See
+	// MahresourcesConfig.RemoteUserAgent.
+	RemoteUserAgent string
 	// AllowPrivateFetch lists private addresses/CIDR blocks the application's
 	// own fetches may reach. See MahresourcesConfig.AllowPrivateFetch.
 	AllowPrivateFetch []string
@@ -689,6 +700,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			ConnectTimeout: config.RemoteResourceConnectTimeout,
 			IdleTimeout:    config.RemoteResourceIdleTimeout,
 			OverallTimeout: config.RemoteResourceOverallTimeout,
+			UserAgent:      config.RemoteUserAgent,
 		}, config.ExportRetention),
 		download_queue.ManagerConfig{
 			Concurrency: config.MaxJobConcurrency,
@@ -1458,6 +1470,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
+		RemoteUserAgent:              cfg.RemoteUserAgent,
 		AllowPrivateFetch:            cfg.AllowPrivateFetch,
 		HLSMaxSegments:               cfg.HLSMaxSegments,
 		HLSMaxTotalBytes:             cfg.HLSMaxTotalBytes,

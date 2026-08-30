@@ -758,6 +758,11 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 		return nil, time.Time{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// The same User-Agent as the other host fetches. A calendar endpoint that
+	// refuses Go's default is the same refusal the download path exists to
+	// avoid, and there is nothing about an .ics that makes it exempt.
+	req.Header.Set("User-Agent", ctx.RemoteUserAgent())
+
 	// Add conditional headers if we have a previous entry
 	if existingEntry != nil {
 		if existingEntry.ETag != "" {
