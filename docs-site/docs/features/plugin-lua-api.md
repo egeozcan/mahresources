@@ -376,8 +376,8 @@ To defer a host download, pass exactly one of:
 
 | Option | Meaning |
 |---|---|
-| `start_at` | Unix seconds; must be in the future and no more than 30 days away |
-| `delay` | Duration string such as `"2h"`; must be at least zero and no more than 30 days |
+| `start_at` | Unix seconds; must be in the future. There is no upper bound on an absolute start time. |
+| `delay` | Duration string such as `"2h"`; must satisfy `0 <= delay <= 30 days`. |
 
 A deferred call stores a durable scheduled-download row instead of creating a
 queue job immediately, and returns

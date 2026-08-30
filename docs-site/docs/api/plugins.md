@@ -244,7 +244,7 @@ The response is sent once the run has *started*, not when it has finished; the r
 
 ### List Scheduled Downloads
 
-```
+```http
 GET /v1/plugin/scheduled-downloads?name={pluginName}
 ```
 
@@ -276,15 +276,17 @@ curl "http://localhost:8181/v1/plugin/scheduled-downloads?name=image-processor"
 
 Rows are one-shot deferred host downloads created by `mah.download.submit` with
 `delay` or `start_at`. `status` is `pending`, `submitted`, `failed` or
-`cancelled`. A `submitted` row carries the queue `jobId`; `claimedAt` appears
-briefly while a scheduler tick holds the submit claim. `owned: false` on a
-pending row means the submitting user was deleted and the row has stopped
-rather than firing as an administrator. Naming a plugin that has no rows returns
-an empty array.
+`cancelled`. A `submitted` row normally carries the queue `jobId`; the accepted
+fail-closed exception is a crash between reserving the row and submitting to the
+queue, which can strand a `submitted` row without a job id until operational
+reconciliation. `claimedAt` appears briefly while a scheduler tick holds the
+submit claim. `owned: false` on a pending row means the submitting user was
+deleted and the row has stopped rather than firing as an administrator. Naming
+a plugin that has no rows returns an empty array.
 
 ### Cancel a Scheduled Download
 
-```
+```http
 POST /v1/plugin/scheduled-downloads/cancel
 Content-Type: application/x-www-form-urlencoded
 ```
