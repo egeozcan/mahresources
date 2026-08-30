@@ -218,6 +218,12 @@ func (m Manifest) NetworkPolicy() NetworkPolicy {
 	}
 }
 
+// Matches reports whether this download limit applies to host, using the same
+// grammar as the plugin network allowlist.
+func (l DownloadLimit) Matches(host string) bool {
+	return l.rule.Matches(host)
+}
+
 // DownloadPolicy returns the first manifest download limit that matches host.
 // First match wins because rule order is the author's way to put a specific
 // exception before a broader wildcard.

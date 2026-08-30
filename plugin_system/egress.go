@@ -460,6 +460,23 @@ func (pm *PluginManager) NetworkPolicyForPlugin(name string) (NetworkPolicy, boo
 	return NetworkPolicy{}, false
 }
 
+// DownloadLimitsForPlugin returns the declared per-domain download pacing rules
+// of a *loaded* plugin. It mirrors NetworkPolicyForPlugin's lifecycle contract:
+// disabled, renamed or unknown plugins answer false rather than falling back to
+// any wider policy.
+func (pm *PluginManager) DownloadLimitsForPlugin(name string) ([]DownloadLimit, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, p := range pm.plugins {
+		if p.Name == name {
+			out := make([]DownloadLimit, len(p.Manifest.DownloadLimits))
+			copy(out, p.Manifest.DownloadLimits)
+			return out, true
+		}
+	}
+	return nil, false
+}
+
 func ApplyEgressPolicy(client *http.Client, policy NetworkPolicy, dialTimeout time.Duration) *http.Client {
 	if client == nil {
 		return nil
