@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -343,6 +345,66 @@ func TestDownloadHistoryURLFilterMatchesName(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("matches = %d, want 2 (one by name, one by url)", len(entries))
+	}
+}
+
+// The retries filter answers "was this download ever run again", which is true
+// of both shapes a rerun takes: an in-place retry, which bumps attempts, and a
+// resubmission, which links back through last_retry_job_id. Every row must land
+// under exactly one of the two answers — including one whose retry column is
+// NULL, which a plain `<> ”` comparison would drop from both.
+func TestDownloadHistoryRetriedFilter(t *testing.T) {
+	ctx := newHistoryTestContext(t, nil)
+	now := time.Now()
+	mustRecord(t, ctx, download_queue.HistoryRecord{JobID: "fresh", Status: models.DownloadHistoryStatusFailed, CreatedAt: now, CompletedAt: &now})
+	// Recorded twice: the second terminal outcome for one job is the in-place
+	// retry, which is what bumps attempts to 2.
+	mustRecord(t, ctx, download_queue.HistoryRecord{JobID: "inplace", Status: models.DownloadHistoryStatusFailed, CreatedAt: now, CompletedAt: &now})
+	mustRecord(t, ctx, download_queue.HistoryRecord{JobID: "inplace", Status: models.DownloadHistoryStatusFailed, CreatedAt: now, CompletedAt: &now})
+	mustRecord(t, ctx, download_queue.HistoryRecord{JobID: "resubmitted", Status: models.DownloadHistoryStatusFailed, CreatedAt: now, CompletedAt: &now})
+	if err := ctx.db.Model(&models.DownloadHistoryEntry{}).Where("job_id = ?", "resubmitted").
+		Update("last_retry_job_id", "abc123").Error; err != nil {
+		t.Fatalf("link the retry: %v", err)
+	}
+	// A row written before the column existed holds NULL, not "".
+	if err := ctx.db.Model(&models.DownloadHistoryEntry{}).Where("job_id = ?", "fresh").
+		Update("last_retry_job_id", gorm.Expr("NULL")).Error; err != nil {
+		t.Fatalf("null the retry column: %v", err)
+	}
+
+	jobIDs := func(q *query_models.DownloadHistoryQuery) []string {
+		t.Helper()
+		entries, err := ctx.GetDownloadHistory(0, 50, q)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, e.JobID)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	retried := jobIDs(&query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedYes})
+	if !reflect.DeepEqual(retried, []string{"inplace", "resubmitted"}) {
+		t.Fatalf("retried = %v, want [inplace resubmitted]", retried)
+	}
+	never := jobIDs(&query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedNo})
+	if !reflect.DeepEqual(never, []string{"fresh"}) {
+		t.Fatalf("never retried = %v, want [fresh]", never)
+	}
+	all := jobIDs(&query_models.DownloadHistoryQuery{})
+	if len(all) != 3 {
+		t.Fatalf("unfiltered = %v, want all three rows", all)
+	}
+
+	count, err := ctx.GetDownloadHistoryCount(&query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedYes})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("retried count = %d, want 2 — the count must match the listing", count)
 	}
 }
 

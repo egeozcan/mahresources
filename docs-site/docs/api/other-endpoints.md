@@ -875,6 +875,7 @@ GET /v1/downloads
 | `page` | integer | Page number (default: 1) |
 | `Status` | string[] | Filter by status (`completed`, `failed`, `cancelled`); empty matches all |
 | `URL` | string | Partial match over URL and resource name |
+| `Retried` | string | `yes` keeps only downloads that were run again (retried in place, or resubmitted from the stored payload); `no` keeps only those that were not; empty matches all |
 | `CreatedBefore` | string | Filter by date |
 | `CreatedAfter` | string | Filter by date |
 | `SortBy` | string[] | Sort order |

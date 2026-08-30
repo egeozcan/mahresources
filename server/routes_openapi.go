@@ -2482,6 +2482,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "status", Type: "string", Description: "Filter by terminal status (completed, failed, cancelled). Repeat for several."},
 			{Name: "url", Type: "string", Description: "Substring match over the URL and the download name."},
+			{Name: "retried", Type: "string", Description: "`yes` keeps only downloads that were run again (an in-place retry, or a resubmission from the stored payload); `no` keeps only those that were not. Omit for both."},
 			{Name: "createdAfter", Type: "string", Description: "Only downloads submitted on or after this date (YYYY-MM-DD or RFC 3339)."},
 			{Name: "createdBefore", Type: "string", Description: "Only downloads submitted at or before this instant. A bare YYYY-MM-DD is midnight at the start of that day, so it excludes the day itself; pass the next day, or an RFC 3339 instant, to include it."},
 			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},

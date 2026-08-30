@@ -382,7 +382,7 @@ Each download shows:
 
 It lists finished downloads plus any that are still running, and lets you:
 
-- Filter by status (failed, cancelled, completed), by a word in the URL or name, and by date
+- Filter by status (failed, cancelled, completed), by whether the download was ever retried, by a word in the URL or name, and by date. **Retries** answers both shapes a rerun takes: a download retried in place, and one resubmitted from its stored payload, which links the old row to the new attempt
 - Retry a failed or cancelled download, whether or not its job is still in the queue. Completed downloads are not retryable: the file is already stored, and fetching it again would transfer it for nothing. A retry is also refused while any job in the queue is already downloading the same URL
 - Delete rows individually or in bulk. A download that is still running or paused is refused -- cancel it first
 - Select rows with the checkboxes to retry or delete several at once

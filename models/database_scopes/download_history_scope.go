@@ -36,6 +36,21 @@ func DownloadHistoryQuery(query *query_models.DownloadHistoryQuery, ignoreSort b
 			dbQuery = dbQuery.Where("(url "+likeOperator+" ?"+esc+" OR name "+likeOperator+" ?"+esc+")", p, p)
 		}
 
+		// "Has been retried" covers both shapes a rerun takes: an in-place retry,
+		// which bumps attempts on the row it already has, and a resubmission,
+		// which starts a new job and links back through last_retry_job_id. The
+		// transient "claiming-" marker a retry writes before it submits counts as
+		// retried too — a claim means a rerun was initiated, and a stale one is
+		// the record of an attempt that died mid-submit. COALESCE, because the
+		// column is nullable for rows written before it existed, and a plain
+		// `<> ''` would drop those from *both* answers rather than one.
+		switch query.Retried {
+		case query_models.DownloadRetriedYes:
+			dbQuery = dbQuery.Where("(attempts > 1 OR COALESCE(last_retry_job_id, '') <> '')")
+		case query_models.DownloadRetriedNo:
+			dbQuery = dbQuery.Where("(attempts <= 1 AND COALESCE(last_retry_job_id, '') = '')")
+		}
+
 		if query.OwnerRestricted {
 			// Fail-closed: a NULL owner is nobody's, so a non-admin sees none of
 			// them. Matches jobVisibleToPrincipal, which the in-memory queue and the

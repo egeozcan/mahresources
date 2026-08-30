@@ -33,6 +33,14 @@ var downloadStatuses = []SelectOption{
 	{Link: models.DownloadHistoryStatusCompleted, Title: "Completed"},
 }
 
+// downloadRetriedOptions is a single-choice filter, so it goes through
+// makeFilterOptions rather than the repeatable list above.
+var downloadRetriedOptions = []SelectOption{
+	{Link: "", Title: "Retried or not", Active: true},
+	{Link: query_models.DownloadRetriedYes, Title: "Retried"},
+	{Link: query_models.DownloadRetriedNo, Title: "Never retried"},
+}
+
 // downloadRow is one line of the table: a stored row, a live job, or a stored
 // row that a live job has since moved past.
 type downloadRow struct {
@@ -100,6 +108,7 @@ func DownloadListContextProvider(context DownloadsPageContext) func(request *htt
 			"downloads":        rows,
 			"downloadsCount":   count,
 			"downloadStatuses": makeMultiFilterOptions(downloadStatuses, query.Status),
+			"downloadRetried":  makeFilterOptions(downloadRetriedOptions, query.Retried),
 			"pagination":       pagination,
 			"queryValues":      request.URL.Query(),
 		}.Update(baseContext)
@@ -287,6 +296,20 @@ func liveRowMatchesFilter(query *query_models.DownloadHistoryQuery, row download
 	if query.URL != "" {
 		term := strings.ToLower(query.URL)
 		if !strings.Contains(strings.ToLower(row.URL), term) && !strings.Contains(strings.ToLower(row.Name), term) {
+			return false
+		}
+	}
+	// A live-only row has no history row behind it, so it has been retried
+	// exactly zero times: it belongs under "never retried" and must not appear
+	// under "retried". A stored row a live job has moved past keeps its own
+	// counters and was already filtered by SQL.
+	switch query.Retried {
+	case query_models.DownloadRetriedYes:
+		if row.Attempts <= 1 && row.LastRetryJobID == "" {
+			return false
+		}
+	case query_models.DownloadRetriedNo:
+		if row.Attempts > 1 || row.LastRetryJobID != "" {
 			return false
 		}
 	}

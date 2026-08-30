@@ -44,6 +44,15 @@ async function createGroup(request: APIRequestContext, name: string) {
   return (body.ID ?? body.id) as number;
 }
 
+/** The history row id for a job id — what the retry and delete endpoints take. */
+async function rowIdFor(request: APIRequestContext, jobId: string) {
+  const res = await request.get('/v1/downloads');
+  expect(res.ok()).toBeTruthy();
+  const entry = ((await res.json()).downloads as any[]).find(d => d.jobId === jobId);
+  expect(entry, `no history row for ${jobId}`).toBeTruthy();
+  return entry.id as number;
+}
+
 /** The card for a given job id, whichever page-level container it sits in. */
 function rowFor(page: Page, jobId: string) {
   return page.locator(`[data-testid="downloads-row"][data-job-id="${jobId}"]`);
@@ -122,6 +131,40 @@ test.describe('/downloads', () => {
     await filters.getByRole('button', { name: 'Apply Filters' }).click();
     await expect(rowFor(page, jobId)).toBeVisible();
     await expect(page.getByTestId('downloads-row')).toHaveCount(1);
+  });
+
+  test('the retries filter separates rerun downloads from untouched ones', async ({ page, request }) => {
+    const groupId = await createGroup(request, `dl-retries-${Date.now()}`);
+    const stamp = Date.now();
+    const retriedJob = await submitFailingDownload(request, groupId, `rerun-${stamp}.bin`);
+    const untouchedJob = await submitFailingDownload(request, groupId, `untouched-${stamp}.bin`);
+    await waitForHistory(request, [retriedJob, untouchedJob]);
+
+    // Retried in place, which is what bumps the row's attempt count. The other
+    // row is left alone, so the two differ in exactly the thing being filtered.
+    const retry = await request.post('/v1/downloads/retry', {
+      data: { ids: [await rowIdFor(request, retriedJob)] },
+    });
+    expect(retry.ok()).toBeTruthy();
+    await expect.poll(async () => {
+      const res = await request.get('/v1/downloads');
+      const body = await res.json();
+      return (body.downloads as any[]).find(d => d.jobId === retriedJob)?.attempts ?? 0;
+    }, { timeout: 15000, message: 'the retry never reached a second terminal outcome' }).toBeGreaterThan(1);
+
+    await page.goto('/downloads');
+    const filters = page.getByRole('form', { name: 'Filter downloads' });
+    await filters.getByLabel('Retries').selectOption('yes');
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/Retried=yes/);
+    await expect(rowFor(page, retriedJob)).toBeVisible();
+    await expect(rowFor(page, untouchedJob)).toHaveCount(0);
+
+    await page.goto('/downloads');
+    await filters.getByLabel('Retries').selectOption('no');
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(rowFor(page, untouchedJob)).toBeVisible();
+    await expect(rowFor(page, retriedJob)).toHaveCount(0);
   });
 
   test('rows can be selected and deleted in bulk', async ({ page, request }) => {

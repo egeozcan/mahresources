@@ -2961,6 +2961,11 @@ paths:
                   name: url
                   schema:
                     type: string
+                - description: '`yes` keeps only downloads that were run again (an in-place retry, or a resubmission from the stored payload); `no` keeps only those that were not. Omit for both.'
+                  in: query
+                  name: retried
+                  schema:
+                    type: string
                 - description: Only downloads submitted on or after this date (YYYY-MM-DD or RFC 3339).
                   in: query
                   name: createdAfter

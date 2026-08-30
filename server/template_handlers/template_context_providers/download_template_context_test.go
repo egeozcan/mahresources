@@ -30,6 +30,11 @@ func TestLiveRowsAreFilteredNotDropped(t *testing.T) {
 		{"before the range", query_models.DownloadHistoryQuery{CreatedAfter: "2026-04-01"}, false},
 		{"after the range", query_models.DownloadHistoryQuery{CreatedBefore: "2026-03-01"}, false},
 		{"malformed date drops the row", query_models.DownloadHistoryQuery{CreatedAfter: "last tuesday"}, false},
+		// A live-only row has no history row behind it, so it has been run once
+		// and never retried: it belongs under "never retried", and a page asking
+		// for retried downloads must not print it.
+		{"never retried keeps a live row", query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedNo}, true},
+		{"retried drops a live row", query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedYes}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,5 +109,27 @@ func TestRowsFollowTheirRunningRetry(t *testing.T) {
 	}
 	if rows[0].Status != string(download_queue.JobStatusDownloading) {
 		t.Fatalf("status = %q, want downloading", rows[0].Status)
+	}
+}
+
+// The retries filter is not a status-class exclusion: a running download can
+// itself be a retry, so live rows are asked the question rather than dropped.
+func TestRetriedFilterDoesNotExcludeLiveRowsWholesale(t *testing.T) {
+	for _, value := range []string{query_models.DownloadRetriedYes, query_models.DownloadRetriedNo} {
+		if downloadFilterExcludesLive(&query_models.DownloadHistoryQuery{Retried: value}) {
+			t.Fatalf("Retried=%q must not exclude live rows as a class", value)
+		}
+	}
+
+	created := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	// A live row that *is* a retry: the stored row it came from carries the
+	// counters, and the merge keeps them.
+	retriedLive := downloadRow{JobID: "old", Attempts: 2, CreatedAt: created, Live: true}
+	if !liveRowMatchesFilter(&query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedYes}, retriedLive) {
+		t.Fatal("a live row with a retry behind it must survive Retried=yes")
+	}
+	linkedLive := downloadRow{JobID: "old", LastRetryJobID: "new", CreatedAt: created, Live: true}
+	if liveRowMatchesFilter(&query_models.DownloadHistoryQuery{Retried: query_models.DownloadRetriedNo}, linkedLive) {
+		t.Fatal("a row whose retry is running must not appear under Retried=no")
 	}
 }

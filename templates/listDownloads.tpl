@@ -49,6 +49,13 @@
                 {% endfor %}
             </fieldset>
 
+            <label for="Retried" class="block text-sm font-medium font-mono text-stone-700 mt-2">Retries</label>
+            <select name="Retried" id="Retried" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+                {% for option in downloadRetried %}
+                <option value="{{ option.Link }}" {% if option.Active %}selected{% endif %}>{{ option.Title }}</option>
+                {% endfor %}
+            </select>
+
             {% include "/partials/form/textInput.tpl" with name='URL' label='URL or name contains' value=queryValues.URL.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='After' value=queryValues.CreatedAfter.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Before' value=queryValues.CreatedBefore.0 %}
