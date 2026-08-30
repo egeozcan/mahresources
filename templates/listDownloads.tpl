@@ -56,9 +56,19 @@
                 {% endfor %}
             </select>
 
+            <label for="Reason" class="block text-sm font-medium font-mono text-stone-700 mt-2">Failure reason</label>
+            <select name="Reason" id="Reason" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+                {% for option in downloadReasons %}
+                <option value="{{ option.Link }}" {% if option.Active %}selected{% endif %}>{{ option.Title }}</option>
+                {% endfor %}
+            </select>
+
             {% include "/partials/form/textInput.tpl" with name='URL' label='URL or name contains' value=queryValues.URL.0 %}
-            {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='After' value=queryValues.CreatedAfter.0 %}
-            {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Before' value=queryValues.CreatedBefore.0 %}
+            {% include "/partials/form/textInput.tpl" with name='Error' label='Error contains' value=queryValues.Error.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Submitted after' value=queryValues.CreatedAfter.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Submitted before' value=queryValues.CreatedBefore.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CompletedAfter' label='Finished after' value=queryValues.CompletedAfter.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CompletedBefore' label='Finished before' value=queryValues.CompletedBefore.0 %}
             {% include "/partials/form/searchButton.tpl" %}
         </div>
     </form>

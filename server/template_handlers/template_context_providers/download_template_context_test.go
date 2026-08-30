@@ -133,3 +133,144 @@ func TestRetriedFilterDoesNotExcludeLiveRowsWholesale(t *testing.T) {
 		t.Fatal("a row whose retry is running must not appear under Retried=no")
 	}
 }
+
+// The scope answers a term no stored text can contain by matching nothing, and
+// the live rows merged onto the same page must answer the same. Go's substring
+// search is happy to match a NUL or invalid UTF-8 in a job's own name, which
+// would put a live row on a page whose stored half is empty by construction.
+func TestUnmatchableTermsDropLiveRowsToo(t *testing.T) {
+	created := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	row := downloadRow{JobID: "l1", Name: "a\x00b", URL: "http://example.com/a\xffb", CreatedAt: created, Live: true}
+	for _, term := range []string{"\x00", "\xff"} {
+		if liveRowMatchesFilter(&query_models.DownloadHistoryQuery{URL: term}, row) {
+			t.Fatalf("URL=%q matched a live row; the scope answers it with no rows at all", term)
+		}
+	}
+}
+
+// The finish-time window and the two failure filters exclude live rows as a
+// class, exactly as the status filter does — and for a reason about the row
+// rather than about its values. An in-flight download has no completion time,
+// and buildDownloadRows clears Error on every live row, so asking either
+// question of one could only ever answer no. This is what keeps the reason
+// classification in the SQL scope alone: liveRowMatchesFilter never runs it.
+func TestFinishAndFailureFiltersExcludeLiveRows(t *testing.T) {
+	for name, query := range map[string]query_models.DownloadHistoryQuery{
+		"finished after":  {CompletedAfter: "2026-03-01"},
+		"finished before": {CompletedBefore: "2026-03-01"},
+		"reason":          {Reason: query_models.DownloadReasonHTTP},
+		"error text":      {Error: "404"},
+	} {
+		if !downloadFilterExcludesLive(&query) {
+			t.Errorf("%s must exclude live rows: a running download has no finish time and no stored error", name)
+		}
+	}
+
+	// A stored failure whose retry is running is relabelled by the merge, and
+	// must be dropped by these filters too — printing it would answer "which
+	// downloads failed with a 404?" with one that says "downloading".
+	entries := []models.DownloadHistoryEntry{{
+		ID: 1, JobID: "j1", URL: "http://example.com/x", Error: "HTTP 404: 404 Not Found",
+		Status: models.DownloadHistoryStatusFailed, CreatedAt: time.Now(),
+	}}
+	live := map[string]*download_queue.DownloadJob{"j1": {ID: "j1", Status: download_queue.JobStatusDownloading}}
+	query := query_models.DownloadHistoryQuery{Reason: query_models.DownloadReasonHTTP}
+	if rows := buildDownloadRows(entries, live, &query, true); len(rows) != 0 {
+		t.Fatalf("rows = %d, want 0: a relabelled live row survived a reason filter", len(rows))
+	}
+	if rows := buildDownloadRows(entries, map[string]*download_queue.DownloadJob{}, &query, true); len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1: the stored failure itself must still be listed", len(rows))
+	}
+}
+
+// The card reads FinishedAt, so an unfinished download must leave it empty: the
+// pointer cannot be tested in the template, where a typed nil is truthy.
+func TestFinishedAtIsEmptyUntilTheDownloadEnds(t *testing.T) {
+	// Distinct from the submission time on purpose: with one timestamp for both,
+	// a row that formatted CreatedAt into the finish field would pass.
+	started := time.Date(2026, 3, 4, 9, 15, 0, 0, time.UTC)
+	done := time.Date(2026, 3, 4, 12, 30, 0, 0, time.UTC)
+	entries := []models.DownloadHistoryEntry{
+		{ID: 1, JobID: "unfinished", Status: models.DownloadHistoryStatusFailed, CreatedAt: started},
+		{ID: 2, JobID: "finished", Status: models.DownloadHistoryStatusCompleted, CreatedAt: started, CompletedAt: &done},
+	}
+	rows := buildDownloadRows(entries, map[string]*download_queue.DownloadJob{}, &query_models.DownloadHistoryQuery{}, true)
+	byJob := map[string]downloadRow{}
+	for _, row := range rows {
+		byJob[row.JobID] = row
+	}
+	if got := byJob["unfinished"].FinishedAt; got != "" {
+		t.Fatalf("FinishedAt = %q for a download that has not finished, want empty", got)
+	}
+	if got := byJob["finished"].FinishedAt; got != "2026-03-04 12:30" {
+		t.Fatalf("FinishedAt = %q, want 2026-03-04 12:30", got)
+	}
+	if got := byJob["finished"].FinishedAtISO; got != "2026-03-04T12:30:00Z" {
+		t.Fatalf("FinishedAtISO = %q, want an RFC 3339 instant for the <time> element", got)
+	}
+	// A stored row a live job has moved past has not finished either: the merge
+	// relabels it as running, and printing the previous attempt's finish time
+	// beside a "downloading" badge says the download it describes is over.
+	relabelled := []models.DownloadHistoryEntry{{ID: 3, JobID: "j1", Status: models.DownloadHistoryStatusFailed, CreatedAt: started, CompletedAt: &done}}
+	running := map[string]*download_queue.DownloadJob{"j1": {ID: "j1", Status: download_queue.JobStatusDownloading}}
+	for _, row := range buildDownloadRows(relabelled, running, &query_models.DownloadHistoryQuery{}, true) {
+		if row.FinishedAt != "" {
+			t.Fatalf("relabelled row FinishedAt = %q, want empty — the attempt it now describes is still running", row.FinishedAt)
+		}
+	}
+
+	// Only a nil CompletedAt means unfinished. The zero time.Time is a real
+	// instant in a nullable column, and rejecting it as "not finished" dropped a
+	// finish time the row carried.
+	zero := time.Time{}
+	rows = buildDownloadRows(
+		[]models.DownloadHistoryEntry{{ID: 4, JobID: "epoch", Status: models.DownloadHistoryStatusCompleted, CreatedAt: started, CompletedAt: &zero}},
+		map[string]*download_queue.DownloadJob{}, &query_models.DownloadHistoryQuery{}, true,
+	)
+	if rows[0].FinishedAt == "" {
+		t.Fatal("a stored zero completion time is a completion, not a missing one")
+	}
+
+	// A live-only row has not finished either.
+	live := map[string]*download_queue.DownloadJob{"l1": {ID: "l1", Status: download_queue.JobStatusDownloading, URL: "http://example.com/l"}}
+	for _, row := range buildDownloadRows(nil, live, &query_models.DownloadHistoryQuery{}, true) {
+		if row.FinishedAt != "" {
+			t.Fatalf("live row FinishedAt = %q, want empty", row.FinishedAt)
+		}
+	}
+}
+
+// The select is built from the shared table, so it cannot offer a bucket the
+// scope does not implement, and "Other" is appended rather than listed there.
+func TestReasonOptionsMirrorTheClassification(t *testing.T) {
+	options := buildDownloadReasonOptions()
+	if len(options) != len(query_models.DownloadFailureReasons)+2 {
+		t.Fatalf("options = %d, want every reason plus \"any\" and \"other\"", len(options))
+	}
+	if options[0].Link != "" || options[len(options)-1].Link != query_models.DownloadReasonOther {
+		t.Fatalf("options = %+v, want \"any\" first and \"other\" last", options)
+	}
+	for i, reason := range query_models.DownloadFailureReasons {
+		if options[i+1].Link != reason.Key || options[i+1].Title != reason.Title {
+			t.Fatalf("option %d = %+v, want %s/%s", i+1, options[i+1], reason.Key, reason.Title)
+		}
+	}
+}
+
+// A reason the scope does not filter on must not hide live rows. The scope is
+// deliberately lenient about an unrecognised key — it keeps every stored row —
+// and a page that answered the same question differently for the two sources
+// would show all of the history and none of what is running.
+func TestAnUnrecognisedReasonDoesNotHideLiveRows(t *testing.T) {
+	if downloadFilterExcludesLive(&query_models.DownloadHistoryQuery{Reason: "not-a-reason"}) {
+		t.Fatal("an unrecognised reason is not a filter, so it must not exclude live rows")
+	}
+	if !downloadFilterExcludesLive(&query_models.DownloadHistoryQuery{Reason: query_models.DownloadReasonOther}) {
+		t.Fatal("\"other\" is a bucket the scope filters on")
+	}
+	for _, bucket := range query_models.DownloadFailureReasons {
+		if !downloadFilterExcludesLive(&query_models.DownloadHistoryQuery{Reason: bucket.Key}) {
+			t.Fatalf("Reason=%s must exclude live rows", bucket.Key)
+		}
+	}
+}

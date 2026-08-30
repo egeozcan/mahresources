@@ -2473,7 +2473,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:        "/v1/downloads",
 		OperationID: "listDownloadHistory",
 		Summary:     "List finished downloads",
-		Description: "Returns the persisted history of downloads that reached a terminal state, filtered by status, URL or name, and date. Admins see every user's downloads; every other principal sees only their own.",
+		Description: "Returns the persisted history of downloads that reached a terminal state, filtered by status, URL or name, whether it was retried, when it was submitted, when it finished, and why it failed. Admins see every user's downloads; every other principal sees only their own.",
 		Tags:        []string{"downloads"},
 		// Spelled out rather than derived from DownloadHistoryQuery: that struct
 		// also carries the two owner fields, which are the visibility decision and
@@ -2485,6 +2485,10 @@ func registerDownloadRoutes(r *openapi.Registry) {
 			{Name: "retried", Type: "string", Description: "`yes` keeps only downloads that were run again (an in-place retry, or a resubmission from the stored payload); `no` keeps only those that were not. Omit for both."},
 			{Name: "createdAfter", Type: "string", Description: "Only downloads submitted on or after this date (YYYY-MM-DD or RFC 3339)."},
 			{Name: "createdBefore", Type: "string", Description: "Only downloads submitted at or before this instant. A bare YYYY-MM-DD is midnight at the start of that day, so it excludes the day itself; pass the next day, or an RFC 3339 instant, to include it."},
+			{Name: "completedAfter", Type: "string", Description: "Only downloads that finished on or after this date (YYYY-MM-DD or RFC 3339). Bounds when the download ended, not when it was submitted; a download that never finished is outside every such window."},
+			{Name: "completedBefore", Type: "string", Description: "Only downloads that finished at or before this instant. A bare YYYY-MM-DD is midnight at the start of that day, so it excludes the day itself; pass the next day, or an RFC 3339 instant, to include it. The two shapes ask different questions: a bare date names a calendar day in the database's own time zone, an RFC 3339 value names an instant, so use the second when the distinction matters."},
+			{Name: "reason", Type: "string", Description: "Only downloads whose stored error falls in the named failure bucket: `http`, `timeout`, `blocked`, `unsupported`, `limit`, `storage`, `cancelled`, or `other` for a failure none of those claim. Best-effort matching on the error text, and the buckets overlap — an `HTTP 504: Gateway Timeout` is in both `http` and `timeout`. A download that carries no error is in no bucket, `other` included. Omit for all."},
+			{Name: "error", Type: "string", Description: "Substring match over the stored error text, case-insensitive (ASCII-folded on SQLite). AND-ed with `reason`."},
 			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},
 		},
 		Paginated:            true,

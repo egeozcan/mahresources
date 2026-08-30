@@ -876,8 +876,12 @@ GET /v1/downloads
 | `Status` | string[] | Filter by status (`completed`, `failed`, `cancelled`); empty matches all |
 | `URL` | string | Partial match over URL and resource name |
 | `Retried` | string | `yes` keeps only downloads that were run again (retried in place, or resubmitted from the stored payload); `no` keeps only those that were not; empty matches all |
-| `CreatedBefore` | string | Filter by date |
-| `CreatedAfter` | string | Filter by date |
+| `CreatedBefore` | string | Filter by when the download was submitted |
+| `CreatedAfter` | string | Filter by when the download was submitted |
+| `CompletedBefore` | string | Only downloads that finished at or before this instant. Bounds the finish time, not the submission time; a download that never finished is outside every such window. A bare `YYYY-MM-DD` is midnight at the start of that day, so it excludes the day itself -- pass the next day, or an RFC 3339 instant, to include it |
+| `CompletedAfter` | string | Only downloads that finished on or after this date. A bare `YYYY-MM-DD` names a calendar day in the database's own time zone; an RFC 3339 value names an instant. Use the second when the distinction matters |
+| `Reason` | string | Only downloads whose stored error falls in the named failure bucket: `http`, `timeout`, `blocked`, `unsupported`, `limit`, `storage`, `cancelled`, or `other` for a failure none of those claim. The buckets match the error text, so they are best-effort and they overlap — an `HTTP 504: Gateway Timeout` is in both `http` and `timeout`, which is the useful answer to either question. A download that carries no error is in no bucket, `other` included. Empty matches all |
+| `Error` | string | Substring match over the stored error text, case-insensitive (ASCII-folded on SQLite, as every text filter here is). AND-ed with `Reason` |
 | `SortBy` | string[] | Sort order |
 
 #### Response

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +89,74 @@ func TestDownloadHistoryListFiltersByStatusAndTerm(t *testing.T) {
 	}
 	if got := rows[0].(map[string]any)["jobId"]; got != "h-failed" {
 		t.Fatalf("term-filtered row = %v, want h-failed", got)
+	}
+}
+
+// The finish window, the reason bucket and the error box reach the endpoint the
+// same way the status and term filters do. Here as well as in the context
+// package because this is where the query is decoded from a real query string —
+// a field the decoder cannot see is a filter the page silently ignores.
+func TestDownloadHistoryListFiltersByFinishTimeAndFailure(t *testing.T) {
+	tc := SetupTestEnv(t)
+	monday := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
+	wednesday := time.Date(2026, 3, 4, 9, 0, 0, 0, time.UTC)
+	recordDownload(t, tc, "early", models.DownloadHistoryStatusCompleted, nil, "http://example.invalid/early.bin", monday)
+	late := recordDownload(t, tc, "late", models.DownloadHistoryStatusFailed, nil, "http://example.invalid/late.bin", wednesday)
+	if err := tc.DB.Model(&models.DownloadHistoryEntry{}).Where("id = ?", late.ID).
+		Update("error", "HTTP 404: 404 Not Found").Error; err != nil {
+		t.Fatalf("set the error text: %v", err)
+	}
+	// One submission date for both rows. recordDownload derives CreatedAt from
+	// the completion time, which put each row's two timestamps on the same side
+	// of every boundary below — so a filter secretly still reading created_at
+	// would have satisfied every assertion in this test.
+	submitted := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	if err := tc.DB.Model(&models.DownloadHistoryEntry{}).
+		Where("job_id IN ?", []string{"early", "late"}).
+		Update("created_at", submitted).Error; err != nil {
+		t.Fatalf("align the submission dates: %v", err)
+	}
+
+	jobIDs := func(query string) []string {
+		t.Helper()
+		res := doReq(tc, http.MethodGet, "/v1/downloads?"+query, nil, nil, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s: status %d (%s)", query, res.Code, res.Body.String())
+		}
+		out := []string{}
+		for _, row := range decodeJSON(t, res)["downloads"].([]any) {
+			out = append(out, row.(map[string]any)["jobId"].(string))
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	for query, want := range map[string][]string{
+		"completedAfter=2026-03-03":  {"late"},
+		"completedBefore=2026-03-03": {"early"},
+		// RFC 3339 bounds, which each engine reaches by a different route: a
+		// normalised strftime comparison on SQLite, a canonical timestamptz on
+		// Postgres. A comma fraction is valid RFC 3339 to Go and is rejected by
+		// both engines' own parsers, so it has to survive the round trip here.
+		"completedAfter=2026-03-03T12%3A00%3A00Z":   {"late"},
+		"completedBefore=2026-03-03T12%3A00%3A00Z":  {"early"},
+		"completedAfter=2026-03-03T12%3A00%3A00,5Z": {"late"},
+		"reason=http":            {"late"},
+		"reason=timeout":         {},
+		"error=404":              {"late"},
+		"reason=http&error=nope": {},
+	} {
+		if got := jobIDs(query); !reflect.DeepEqual(got, want) {
+			t.Errorf("?%s = %v, want %v", query, got, want)
+		}
+	}
+
+	// A date the caller mistyped is the caller's mistake, and it used to be
+	// reported as an outage: "is not a valid date" matches nothing in
+	// statusCodeForError's message scan, so the error fell through to 500.
+	res := doReq(tc, http.MethodGet, "/v1/downloads?completedAfter=last+tuesday", nil, nil, nil)
+	if res.Code != http.StatusBadRequest {
+		t.Errorf("a malformed date answered %d (%s), want 400", res.Code, res.Body.String())
 	}
 }
 

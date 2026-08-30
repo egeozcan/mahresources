@@ -28,9 +28,21 @@
                     {% if download.TotalSize > 0 %}{{ download.TotalSize|filesizeformat }}{% elif download.Progress > 0 %}{{ download.Progress|filesizeformat }}{% else %}unknown{% endif %}
                 </span>
                 <span class="card-meta-item">
-                    <span class="card-meta-label">Started:</span>
+                    {# CreatedAt is the submission time, not the moment the transfer #}
+                    {# began -- a queued download waits. "Submitted" is what it is,    #}
+                    {# and it is what the sidebar's own date filter is labelled.       #}
+                    <span class="card-meta-label">Submitted:</span>
                     <time datetime="{{ download.CreatedAt|date:"2006-01-02T15:04:05Z07:00" }}">{{ download.CreatedAt|date:"2006-01-02 15:04" }}</time>
                 </span>
+                {# Pre-formatted in Go: CompletedAt is a *time.Time, and a nil one is  #}
+                {# truthy here while the date filter renders nothing from it — so the   #}
+                {# guard is the display string, which is empty until a download ends.   #}
+                {% if download.FinishedAt %}
+                <span class="card-meta-item">
+                    <span class="card-meta-label">Finished:</span>
+                    <time datetime="{{ download.FinishedAtISO }}">{{ download.FinishedAt }}</time>
+                </span>
+                {% endif %}
                 {% if download.Attempts > 1 %}
                 <span class="card-meta-item">{{ download.Attempts }} attempts</span>
                 {% endif %}

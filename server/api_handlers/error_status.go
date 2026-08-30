@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"mahresources/application_context"
+	"mahresources/models/database_scopes"
 	"mahresources/plugin_system"
 )
 
@@ -92,6 +93,14 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) ||
 		errors.Is(err, application_context.ErrReductionRestoreUnpaired) ||
 		errors.Is(err, application_context.ErrReductionRestoreOutsider) {
+		return http.StatusBadRequest
+	}
+
+	// A malformed date bound: `?createdAfter=last%20tuesday`, or a year no
+	// database here can hold. Typed for the same reason the refusals above are —
+	// "is not a valid date" matches nothing in the scan below, so it fell through
+	// to 500 and reported the caller's own typo as an outage.
+	if errors.Is(err, database_scopes.ErrInvalidDateFilter) {
 		return http.StatusBadRequest
 	}
 

@@ -13,6 +13,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/models"
+	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
@@ -41,21 +42,41 @@ var downloadRetriedOptions = []SelectOption{
 	{Link: query_models.DownloadRetriedNo, Title: "Never retried"},
 }
 
+// downloadReasonOptions is built from the shared classification so the select
+// cannot offer a bucket the scope does not implement. "Other" is appended rather
+// than listed there: it is the complement of every entry, not an entry.
+var downloadReasonOptions = buildDownloadReasonOptions()
+
+func buildDownloadReasonOptions() []SelectOption {
+	options := make([]SelectOption, 0, len(query_models.DownloadFailureReasons)+2)
+	options = append(options, SelectOption{Link: "", Title: "Any reason", Active: true})
+	for _, reason := range query_models.DownloadFailureReasons {
+		options = append(options, SelectOption{Link: reason.Key, Title: reason.Title})
+	}
+	return append(options, SelectOption{Link: query_models.DownloadReasonOther, Title: "Other"})
+}
+
 // downloadRow is one line of the table: a stored row, a live job, or a stored
 // row that a live job has since moved past.
 type downloadRow struct {
-	ID              uint
-	JobID           string
-	Name            string
-	URL             string
-	Status          string
-	Error           string
-	ResourceID      *uint
-	TotalSize       int64
-	Progress        int64
-	Attempts        int
-	CreatedAt       time.Time
-	CompletedAt     *time.Time
+	ID          uint
+	JobID       string
+	Name        string
+	URL         string
+	Status      string
+	Error       string
+	ResourceID  *uint
+	TotalSize   int64
+	Progress    int64
+	Attempts    int
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+	// FinishedAt and FinishedAtISO are CompletedAt, formatted here rather than in
+	// the template: it is a *time.Time, Pongo2 has no nil literal — a typed nil
+	// pointer is truthy — and its date filter does not follow a pointer. Both are
+	// empty when the download has not finished, which is what the template tests.
+	FinishedAt      string
+	FinishedAtISO   string
 	LastRetryJobID  string
 	LastRetryAt     *time.Time
 	Live            bool // the queue is still working on this one
@@ -109,6 +130,7 @@ func DownloadListContextProvider(context DownloadsPageContext) func(request *htt
 			"downloadsCount":   count,
 			"downloadStatuses": makeMultiFilterOptions(downloadStatuses, query.Status),
 			"downloadRetried":  makeFilterOptions(downloadRetriedOptions, query.Retried),
+			"downloadReasons":  makeFilterOptions(downloadReasonOptions, query.Reason),
 			"pagination":       pagination,
 			"queryValues":      request.URL.Query(),
 		}.Update(baseContext)
@@ -187,11 +209,13 @@ func buildDownloadRows(
 			LastRetryJobID: displayRetryJobID(e.LastRetryJobID), LastRetryAt: e.LastRetryAt,
 			CreatedByUserId: e.CreatedByUserId,
 		}
+		row.FinishedAt, row.FinishedAtISO = formatFinishedAt(e.CompletedAt)
 		seen[e.JobID] = struct{}{}
 		if job, running := live[e.JobID]; running {
 			row.Live = true
 			row.Status = string(job.GetStatus())
 			row.Error = ""
+			row.FinishedAt, row.FinishedAtISO = "", ""
 		} else if retry, retrying := live[e.LastRetryJobID]; retrying && e.LastRetryJobID != "" {
 			// The attempt this row spawned is a *different* job, so the row's own id
 			// says nothing about it: without this the old failure kept its Retry and
@@ -200,8 +224,11 @@ func buildDownloadRows(
 			row.Status = string(retry.GetStatus())
 			// Cleared for the same reason the own-job branch clears it: the row now
 			// describes an attempt that is running, and the previous attempt's error
-			// under a "downloading" pill reads as a download that is failing.
+			// under a "downloading" pill reads as a download that is failing. The
+			// finish time goes with it — the attempt being described has not
+			// finished, and printing the previous one's says it has.
 			row.Error = ""
+			row.FinishedAt, row.FinishedAtISO = "", ""
 			seen[e.LastRetryJobID] = struct{}{}
 		}
 		if row.Live && downloadFilterExcludesLive(query) {
@@ -268,6 +295,31 @@ func downloadFilterExcludesLive(query *query_models.DownloadHistoryQuery) bool {
 			return true
 		}
 	}
+	// The finish-time window and the two failure filters exclude live rows for
+	// the same reason the status filter does, and it is a property of the row
+	// rather than of its values: an in-flight download has no completion time,
+	// and the merge above clears Error on every live row — so asking either
+	// question of one could only ever answer no. This is what keeps the reason
+	// classification in the scope alone: liveRowMatchesFilter never has to run it.
+	// A reason the scope does not recognise is not a filter — it keeps every
+	// stored row — so it must not drop the live ones either. Asking the same
+	// question of the two sources and getting different answers is how a page
+	// ends up showing all of the history and none of what is running.
+	return query.CompletedAfter != "" || query.CompletedBefore != "" ||
+		query.Error != "" || isDownloadReason(query.Reason)
+}
+
+// isDownloadReason reports whether a value selects a bucket the scope filters
+// on, matching applyDownloadReason's own leniency towards anything else.
+func isDownloadReason(reason string) bool {
+	if reason == query_models.DownloadReasonOther {
+		return true
+	}
+	for _, bucket := range query_models.DownloadFailureReasons {
+		if bucket.Key == reason {
+			return true
+		}
+	}
 	return false
 }
 
@@ -294,6 +346,13 @@ func liveRowMatchesFilter(query *query_models.DownloadHistoryQuery, row download
 		return true
 	}
 	if query.URL != "" {
+		// The same answer the scope gives a term no stored text can contain: it
+		// forces "no matches" rather than sending bytes Postgres refuses, and a
+		// live row matched by Go's own substring search would contradict that on
+		// the very page the two are merged into.
+		if database_scopes.LikeTermIsUnmatchable(query.URL) {
+			return false
+		}
 		term := strings.ToLower(query.URL)
 		if !strings.Contains(strings.ToLower(row.URL), term) && !strings.Contains(strings.ToLower(row.Name), term) {
 			return false
@@ -326,6 +385,20 @@ func liveRowMatchesFilter(query *query_models.DownloadHistoryQuery, row download
 		}
 	}
 	return true
+}
+
+// formatFinishedAt renders a completion time for the card: the display string
+// the reader sees, and the RFC 3339 instant the <time> element carries. A row
+// that has not finished gets neither.
+//
+// nil is the only "unfinished": the column is nullable, so a zero time.Time is a
+// completion at the first instant Go can express rather than a missing one, and
+// treating it as missing hid a finish time the row actually carried.
+func formatFinishedAt(at *time.Time) (display, iso string) {
+	if at == nil {
+		return "", ""
+	}
+	return at.Format("2006-01-02 15:04"), at.Format(time.RFC3339)
 }
 
 // parseFilterDate accepts the two shapes the query models document, in the order

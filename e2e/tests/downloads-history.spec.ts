@@ -133,6 +133,86 @@ test.describe('/downloads', () => {
     await expect(page.getByTestId('downloads-row')).toHaveCount(1);
   });
 
+  test('the card names when a download finished, and the finish window filters on it', async ({ page, request }) => {
+    const groupId = await createGroup(request, `dl-finished-${Date.now()}`);
+    const stamp = Date.now();
+    const jobId = await submitFailingDownload(request, groupId, `finished-${stamp}.bin`);
+    await waitForHistory(request, [jobId]);
+
+    await page.goto('/downloads');
+    const row = rowFor(page, jobId);
+    // The stored completion time, rendered: the page showed only "Started",
+    // which for a download that failed hours later is the wrong half of the
+    // record. Compared against the API's own completedAt rather than merely
+    // asserted to exist, so rendering the submission time under this label —
+    // the two are seconds apart here — would not pass.
+    await expect(row.getByText('Finished:')).toBeVisible();
+    const stored = await request.get('/v1/downloads');
+    const entry = ((await stored.json()).downloads as any[]).find(d => d.jobId === jobId);
+    expect(entry?.completedAt, 'the failed download stored no completion time').toBeTruthy();
+    const finished = row.locator('.card-meta-item', { hasText: 'Finished:' }).locator('time');
+    const rendered = await finished.getAttribute('datetime');
+    // Compared as instants: the page writes RFC 3339 in whatever offset the row
+    // came back in, and the point of the assertion is which timestamp it is.
+    //
+    // A download against a dead port fails inside the same second it was
+    // submitted, so this alone cannot prove the card is not rendering the
+    // submission time under the finish label. That is what the unit test's
+    // distinct started/finished fixture is for; here the assertion is that the
+    // element carries the real stored completion, not a placeholder.
+    expect(new Date(rendered!).getTime()).toBe(
+      Math.floor(new Date(entry.completedAt).getTime() / 1000) * 1000,
+    );
+
+    const day = 24 * 60 * 60 * 1000;
+    const asDate = (at: number) => new Date(at).toISOString().slice(0, 10);
+    const filters = page.getByRole('form', { name: 'Filter downloads' });
+
+    await filters.getByLabel('Finished after').fill(asDate(Date.now() - day));
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/CompletedAfter=/);
+    await expect(rowFor(page, jobId)).toBeVisible();
+
+    await page.goto('/downloads');
+    await filters.getByLabel('Finished after').fill(asDate(Date.now() + day));
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(rowFor(page, jobId)).toHaveCount(0);
+  });
+
+  test('the failure filters separate one kind of failure from another', async ({ page, request }) => {
+    const groupId = await createGroup(request, `dl-reason-${Date.now()}`);
+    const stamp = Date.now();
+    const jobId = await submitFailingDownload(request, groupId, `reason-${stamp}.bin`);
+    await waitForHistory(request, [jobId]);
+
+    // Whatever the platform's refusal reads as, it is not an HTTP status: the
+    // connection never opened. Taking the term out of the stored row keeps the
+    // assertion about the filter rather than about the operating system's
+    // wording.
+    const res = await request.get('/v1/downloads');
+    const stored = ((await res.json()).downloads as any[]).find(d => d.jobId === jobId);
+    expect(stored?.error, 'the failed download stored no error to filter on').toBeTruthy();
+    const term = String(stored.error).split(' ').pop() as string;
+
+    await page.goto('/downloads');
+    const filters = page.getByRole('form', { name: 'Filter downloads' });
+
+    await filters.getByLabel('Failure reason').selectOption('http');
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page).toHaveURL(/Reason=http/);
+    await expect(rowFor(page, jobId)).toHaveCount(0);
+
+    await page.goto('/downloads');
+    await filters.getByLabel('Error contains').fill(term);
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(rowFor(page, jobId)).toBeVisible();
+
+    await page.goto('/downloads');
+    await filters.getByLabel('Error contains').fill(`no-download-ever-said-this-${stamp}`);
+    await filters.getByRole('button', { name: 'Apply Filters' }).click();
+    await expect(page.getByTestId('downloads-row')).toHaveCount(0);
+  });
+
   test('the retries filter separates rerun downloads from untouched ones', async ({ page, request }) => {
     const groupId = await createGroup(request, `dl-retries-${Date.now()}`);
     const stamp = Date.now();
