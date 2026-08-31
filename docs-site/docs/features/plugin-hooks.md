@@ -105,7 +105,7 @@ as an ordinary error whose message was scanned for familiar phrases, so
 
 ### Complete Hook Reference
 
-These 30 entity events, plus the three job events below, are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
+These 30 entity events, plus the job and mass-edit events below, are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
 
 A refusal takes the whole load with it. Everything the plugin registered before the error is swept, so a plugin reported as failed is never half-installed.
 
@@ -118,6 +118,29 @@ The hooks, organized by entity type:
 | Group | `before_group_create` | `after_group_create` | `before_group_update` | `after_group_update` | `before_group_delete` | `after_group_delete` |
 | Tag | `before_tag_create` | `after_tag_create` | `before_tag_update` | `after_tag_update` | `before_tag_delete` | `after_tag_delete` |
 | Category | `before_category_create` | `after_category_create` | `before_category_update` | `after_category_update` | `before_category_delete` | `after_category_delete` |
+
+### Mass-edit events
+
+One request-scoped pair brackets a **mass edit** — the bulk operation that applies several
+edits (tags, related groups/notes/resources, owner, meta) to a whole selection, or to every
+entity matching a list page's filter, in one transaction:
+
+| Event | When |
+|-------|------|
+| `before_mass_edit` | before the edit's transaction opens; `mah.abort` vetoes the whole edit |
+| `after_mass_edit` | after the transaction has committed |
+
+The `before_mass_edit` payload carries `entity` (`resource`, `note` or `group`), `count`, the
+op list (`ops`, e.g. `["tags.add", "owner.set"]`), and — for a filter-targeted edit —
+`target: "filter"` and the raw `filter` string. The full id list is included only up to 100
+entities; above that the plugin gets the count only.
+
+Two deliberate limits: the pair is **veto-only** (`mah.abort` refuses the entire edit; there
+are no field rewrites, because there are no fields to rewrite), and there is **no per-row
+hook**. A per-row `before_resource_update` on a 10,000-entity edit would mean 10,000 Lua
+invocations inside one write transaction on single-writer SQLite — the same mistake the bulk
+delete hook pair exists to avoid at scale. `after_mass_edit` receives `entity`, `matched`,
+`affected` and `ops`.
 
 ### Job lifecycle events
 

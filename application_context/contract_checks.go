@@ -33,6 +33,9 @@ var (
 	_ contracts.ResourceMerger          = (*MahresourcesContext)(nil)
 	_ contracts.ResourceMediaProcessor  = (*MahresourcesContext)(nil)
 	_ contracts.ResourceWriter          = (*MahresourcesContext)(nil) // composite
+	_ contracts.MassResourceEditor      = (*MahresourcesContext)(nil)
+	_ contracts.MassNoteEditor          = (*MahresourcesContext)(nil)
+	_ contracts.MassGroupEditor         = (*MahresourcesContext)(nil)
 
 	// Granular Group interfaces
 	_ contracts.GroupCreator        = (*MahresourcesContext)(nil)

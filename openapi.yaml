@@ -767,6 +767,81 @@ components:
                         type: string
                     type: array
             type: object
+        MassEditOpResultPartial:
+            type: object
+        MassEditQuery:
+            properties:
+                DryRun:
+                    type: boolean
+                ExpectedCount:
+                    nullable: true
+                    type: integer
+                Filter:
+                    type: string
+                GroupIds:
+                    items:
+                        type: integer
+                    type: array
+                GroupsOp:
+                    type: string
+                ID:
+                    items:
+                        type: integer
+                    type: array
+                Meta:
+                    type: string
+                MetaKeys:
+                    items:
+                        type: string
+                    type: array
+                MetaOp:
+                    type: string
+                NoteIds:
+                    items:
+                        type: integer
+                    type: array
+                NotesOp:
+                    type: string
+                OwnerId:
+                    type: integer
+                OwnerOp:
+                    type: string
+                RelatedGroupIds:
+                    items:
+                        type: integer
+                    type: array
+                RelatedGroupsOp:
+                    type: string
+                ResourceIds:
+                    items:
+                        type: integer
+                    type: array
+                ResourcesOp:
+                    type: string
+                TagIds:
+                    items:
+                        type: integer
+                    type: array
+                TagsOp:
+                    type: string
+                Target:
+                    type: string
+            type: object
+        MassEditResult:
+            properties:
+                affected:
+                    type: integer
+                dryRun:
+                    type: boolean
+                entity:
+                    type: string
+                matched:
+                    type: integer
+                ops:
+                    items:
+                        $ref: '#/components/schemas/MassEditOpResultPartial'
+                    type: array
+            type: object
         MergeQuery:
             properties:
                 KeepAsVersion:
@@ -3548,6 +3623,28 @@ paths:
             summary: Upload an import tar and start parsing
             tags:
                 - imports
+    /v1/groups/massEdit:
+        post:
+            operationId: massEditGroups
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MassEditResult'
+                    description: Successful response
+            summary: Mass edit groups in one transaction
+            tags:
+                - groups
     /v1/groups/merge:
         post:
             operationId: mergeGroups
@@ -5226,6 +5323,28 @@ paths:
                 "200":
                     description: Successful response
             summary: Bulk delete notes
+            tags:
+                - notes
+    /v1/notes/massEdit:
+        post:
+            operationId: massEditNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MassEditResult'
+                    description: Successful response
+            summary: Mass edit notes in one transaction
             tags:
                 - notes
     /v1/notes/meta/keys:
@@ -7335,6 +7454,28 @@ paths:
                 "200":
                     description: Successful response
             summary: Bulk delete resources
+            tags:
+                - resources
+    /v1/resources/massEdit:
+        post:
+            operationId: massEditResources
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/MassEditQuery'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MassEditResult'
+                    description: Successful response
+            summary: Mass edit resources in one transaction
             tags:
                 - resources
     /v1/resources/merge:

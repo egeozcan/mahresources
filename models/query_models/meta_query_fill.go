@@ -2,6 +2,7 @@ package query_models
 
 import (
 	"net/http"
+	"net/url"
 	"reflect"
 )
 
@@ -17,7 +18,15 @@ import (
 // "MetaQuery" of type []ColumnMeta. If the field doesn't exist or the
 // request has no MetaQuery parameters, this is a no-op.
 func FillMetaQueryFromRequest(request *http.Request, dst interface{}) {
-	rawValues := request.URL.Query()["MetaQuery"]
+	FillMetaQueryFromValues(request.URL.Query(), dst)
+}
+
+// FillMetaQueryFromValues parses MetaQuery values out of a url.Values the way
+// FillMetaQueryFromRequest parses them off a request, for callers that hold a
+// filter as a parsed query string rather than an *http.Request — the mass-edit
+// filter target re-decodes the list page's query string away from any request.
+func FillMetaQueryFromValues(values url.Values, dst interface{}) {
+	rawValues := values["MetaQuery"]
 	if len(rawValues) == 0 {
 		return
 	}

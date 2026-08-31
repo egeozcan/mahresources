@@ -427,3 +427,29 @@ func GetDuplicateGroupHandler(ctx contracts.GroupDuplicator) func(writer http.Re
 		_ = json.NewEncoder(writer).Encode(&group)
 	}
 }
+
+// GetMassEditGroupsHandler is the one mass-edit entry point for groups.
+// On success it answers a browser form post with the same redirect the other
+// bulk buttons give, and everything else with the MassEditResult body.
+func GetMassEditGroupsHandler(ctx contracts.MassGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(contracts.MassGroupEditor)
+
+		var query query_models.MassEditQuery
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		result, err := effectiveCtx.MassEditGroups(&query)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
+			return
+		}
+
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(result)
+		}
+	}
+}

@@ -269,71 +269,50 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 	var metaExpr, ownMetaExpr clause.Expr
 
 	if ctx.Config.DbType == constants.DbTypePosgres {
-		metaExpr = gorm.Expr("meta || ?", query.Meta)
-		ownMetaExpr = gorm.Expr("COALESCE(own_meta, '{}'::jsonb) || ?", query.Meta)
+		// The COALESCE/NULLIF wrapper is not decoration: both engines return NULL
+		// for a NULL input, so a bare `meta || ?` / `json_patch(meta, ?)` blows
+		// the column away on a row whose meta is SQL NULL. Every other meta path
+		// in the tree already has the wrapper; this one was the odd one out.
+		metaExpr = gorm.Expr("COALESCE(NULLIF(meta,'null'::jsonb),'{}'::jsonb) || ?", query.Meta)
+		ownMetaExpr = gorm.Expr("COALESCE(NULLIF(own_meta,'null'::jsonb),'{}'::jsonb) || ?", query.Meta)
 	} else {
-		metaExpr = gorm.Expr("json_patch(meta, ?)", query.Meta)
-		ownMetaExpr = gorm.Expr("json_patch(COALESCE(own_meta, '{}'), ?)", query.Meta)
+		metaExpr = gorm.Expr("json_patch(COALESCE(NULLIF(meta,'null'),'{}'), ?)", query.Meta)
+		ownMetaExpr = gorm.Expr("json_patch(COALESCE(NULLIF(own_meta,'null'),'{}'), ?)", query.Meta)
 	}
 
-	err := ctx.db.
-		Model(&resource).
-		Where("id in ?", query.ID).
-		Updates(map[string]interface{}{
-			"Meta":    metaExpr,
-			"OwnMeta": ownMetaExpr,
-		}).Error
+	// One transaction around the update AND the series-null fixup. The fixup
+	// used to run on ctx.db after the update, outside any transaction, so a
+	// crash between them left a key gone from meta and un-suppressed in
+	// own_meta — it silently reappeared.
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		if err := txCtx.db.
+			Model(&resource).
+			Where("id in ?", query.ID).
+			Updates(map[string]interface{}{
+				"Meta":    metaExpr,
+				"OwnMeta": ownMetaExpr,
+			}).Error; err != nil {
+			return err
+		}
+
+		// For resources in a series, json_patch (SQLite) / jsonb || (Postgres)
+		// removes null-valued keys from OwnMeta instead of storing them. We need
+		// explicit null entries in OwnMeta so that mergeMeta knows to suppress
+		// series-inherited keys.
+		nullKeys := nullValuedMetaKeys(query.Meta)
+		if len(nullKeys) == 0 {
+			return nil
+		}
+		for _, chunk := range chunkUints(deduplicateUints(query.ID), massEditChunkSize) {
+			if err := applySeriesNullOverrides(txCtx, chunk, nullKeys); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 
 	if err != nil {
 		return err
-	}
-
-	// For resources in a series, json_patch (SQLite) / jsonb || (Postgres) removes
-	// null-valued keys from OwnMeta instead of storing them. We need explicit null
-	// entries in OwnMeta so that mergeMeta knows to suppress series-inherited keys.
-	var patchMap map[string]interface{}
-	if err := json.Unmarshal([]byte(query.Meta), &patchMap); err == nil {
-		var nullKeys []string
-		for k, v := range patchMap {
-			if v == nil {
-				nullKeys = append(nullKeys, k)
-			}
-		}
-
-		if len(nullKeys) > 0 {
-			// Find affected resources that are in a series
-			var seriesResources []models.Resource
-			ctx.db.Preload("Series").Where("id IN ? AND series_id IS NOT NULL", query.ID).Find(&seriesResources)
-
-			for _, res := range seriesResources {
-				if res.Series == nil {
-					continue
-				}
-
-				var seriesMeta map[string]interface{}
-				if err := json.Unmarshal(res.Series.Meta, &seriesMeta); err != nil {
-					continue
-				}
-
-				var ownMap map[string]interface{}
-				if err := json.Unmarshal(res.OwnMeta, &ownMap); err != nil {
-					ownMap = make(map[string]interface{})
-				}
-
-				changed := false
-				for _, k := range nullKeys {
-					if _, inSeries := seriesMeta[k]; inSeries {
-						ownMap[k] = nil // explicit null override
-						changed = true
-					}
-				}
-
-				if changed {
-					newOwnMeta, _ := json.Marshal(ownMap)
-					ctx.db.Model(&models.Resource{}).Where("id = ?", res.ID).Update("own_meta", newOwnMeta)
-				}
-			}
-		}
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added meta to resources", map[string]interface{}{

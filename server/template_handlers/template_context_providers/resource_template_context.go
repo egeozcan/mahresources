@@ -114,6 +114,11 @@ func ResourceListContextProvider(context ResourcePageContext) func(request *http
 			"pageTitle":                "Resources",
 			"resources":                resources,
 			"pagination":               pagination,
+			// The mass-edit panel's "edit all N results" reads this; the count is
+			// already computed on every render, it just was not published before.
+			"totalCount":               resourceCount,
+			"massEditEntity":           "resource",
+			"massEditMetaKeysUrl":      "/v1/resources/meta/keys",
 			"mrqlError":                mrqlError,
 			"tags":                     tags,
 			"popularTags":              popularTags,

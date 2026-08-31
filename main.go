@@ -163,6 +163,7 @@ func main() {
 	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
 	maxJSONBody := flag.Int64("max-json-body", parseInt64Env("MAX_JSON_BODY", 0), "Maximum application/json request body size in bytes; 0 disables the limit (default: 0/unlimited, env: MAX_JSON_BODY)")
 	maxActionEntities := flag.Int("max-action-entities", int(parseInt64Env("MAX_ACTION_ENTITIES", 0)), "Maximum entities one plugin-action run may name; 0 selects the default of 1000 (env: MAX_ACTION_ENTITIES)")
+	maxMassEditEntities := flag.Int("max-mass-edit-entities", int(parseInt64Env("MAX_MASS_EDIT_ENTITIES", 0)), "Maximum entities one mass edit may change; 0 selects the default of 10000 (env: MAX_MASS_EDIT_ENTITIES)")
 	maxUserTokens := flag.Int("max-user-tokens", parseIntEnv("MAX_USER_TOKENS", 100), "Maximum API tokens a single user may hold; 0 disables the cap (default: 100, env: MAX_USER_TOKENS)")
 	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
 
@@ -359,6 +360,7 @@ func main() {
 		MaxUploadSize:                *maxUploadSize,
 		MaxJSONBodySize:              *maxJSONBody,
 		MaxActionEntities:            *maxActionEntities,
+		MaxMassEditEntities:          *maxMassEditEntities,
 		MaxUserTokens:                *maxUserTokens,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
 		MRQLPageQueryBudget:          *mrqlPageQueryBudget,

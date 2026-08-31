@@ -124,6 +124,10 @@ func GroupsListContextProvider(context GroupPageContext) func(request *http.Requ
 			"categories":        categories,
 			"listHeaderCarrier": listHeaderCarrier,
 			"pagination":        pagination,
+			// The mass-edit panel's "edit all N results" reads this.
+			"totalCount":        groupsCount,
+			"massEditEntity":    "group",
+			"massEditMetaKeysUrl": "/v1/groups/meta/keys",
 			"mrqlError":         mrqlError,
 			"tags":              tags,
 			"popularTags":       popularTags,

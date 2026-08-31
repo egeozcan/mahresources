@@ -852,6 +852,8 @@ func registerNoteRoutes(r *openapi.Registry) {
 	bulkQueryType := reflect.TypeOf(query_models.BulkQuery{})
 	bulkEditQueryType := reflect.TypeOf(query_models.BulkEditQuery{})
 	bulkEditMetaQueryType := reflect.TypeOf(query_models.BulkEditMetaQuery{})
+	massEditQueryType := reflect.TypeOf(query_models.MassEditQuery{})
+	massEditResultType := reflect.TypeOf(contracts.MassEditResult{})
 
 	r.Register(openapi.RouteInfo{
 		Method:              http.MethodPost,
@@ -861,6 +863,18 @@ func registerNoteRoutes(r *openapi.Registry) {
 		Tags:                []string{"notes"},
 		RequestType:         bulkEditQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/notes/massEdit",
+		OperationID:          "massEditNotes",
+		Summary:              "Mass edit notes in one transaction",
+		Tags:                 []string{"notes"},
+		RequestType:          massEditQueryType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         massEditResultType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -970,6 +984,8 @@ func registerGroupRoutes(r *openapi.Registry) {
 	bulkEditQueryType := reflect.TypeOf(query_models.BulkEditQuery{})
 	bulkEditMetaQueryType := reflect.TypeOf(query_models.BulkEditMetaQuery{})
 	mergeQueryType := reflect.TypeOf(query_models.MergeQuery{})
+	massEditQueryType := reflect.TypeOf(query_models.MassEditQuery{})
+	massEditResultType := reflect.TypeOf(contracts.MassEditResult{})
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
@@ -1072,6 +1088,18 @@ func registerGroupRoutes(r *openapi.Registry) {
 		Tags:                []string{"groups"},
 		RequestType:         bulkEditQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/groups/massEdit",
+		OperationID:          "massEditGroups",
+		Summary:              "Mass edit groups in one transaction",
+		Tags:                 []string{"groups"},
+		RequestType:          massEditQueryType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         massEditResultType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -1224,6 +1252,8 @@ func registerResourceRoutes(r *openapi.Registry) {
 	rotateQueryType := reflect.TypeOf(query_models.RotateResourceQuery{})
 	cropQueryType := reflect.TypeOf(query_models.CropResourceQuery{})
 	trimQueryType := reflect.TypeOf(query_models.TrimVideoQuery{})
+	massEditQueryType := reflect.TypeOf(query_models.MassEditQuery{})
+	massEditResultType := reflect.TypeOf(contracts.MassEditResult{})
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
@@ -1416,6 +1446,18 @@ func registerResourceRoutes(r *openapi.Registry) {
 		Tags:                []string{"resources"},
 		RequestType:         bulkEditQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resources/massEdit",
+		OperationID:          "massEditResources",
+		Summary:              "Mass edit resources in one transaction",
+		Tags:                 []string{"resources"},
+		RequestType:          massEditQueryType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         massEditResultType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{

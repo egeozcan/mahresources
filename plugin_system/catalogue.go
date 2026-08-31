@@ -50,6 +50,14 @@ var AllHookEvents = []string{
 	// observing every job in the deployment is a different power from reacting
 	// to a write the caller just made.
 	"after_job_completed", "after_job_failed", "after_job_cancelled",
+
+	// Mass edit. One request-scoped pair for the highest-blast-radius write in
+	// the application, veto-only, with no field rewriting (there are no fields
+	// to rewrite). Per-row before_resource_update hooks here would mean up to
+	// 10,000 Lua invocations inside one write transaction on single-writer
+	// SQLite, which is exactly the mistake BulkDeleteResources' hook pair
+	// exists to avoid repeating at scale.
+	"before_mass_edit", "after_mass_edit",
 }
 
 // AllInjectionSlots is every slot a template declares with {% plugin_slot %},

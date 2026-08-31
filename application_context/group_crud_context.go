@@ -228,6 +228,15 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	// transaction the caller already opened.
 	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if groupQuery.OwnerId != 0 {
+			// Serialise re-parents against every other re-parent (the mass
+			// edit's owner op included): the cycle walk below reads an
+			// ancestor CHAIN that a concurrent re-parent could extend between
+			// the walk and the write, and row locks cannot freeze a chain.
+			// First operation in the transaction, before any group row is
+			// read or locked — see group_tree_lock.go.
+			if err := ctx.lockGroupTreeMutation(tx); err != nil {
+				return err
+			}
 			if groupQuery.OwnerId == groupQuery.ID {
 				return errors.New("a group cannot be its own owner")
 			}

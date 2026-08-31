@@ -1,9 +1,23 @@
 <div class="pb-3" x-data x-show="[...$store.bulkSelection.selectedIds].length === 0" x-collapse>
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
+    <button
+            type="button"
+            class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+            @click="$dispatch('mass-edit-open', { entityType: 'note', target: 'filter' })"
+    >
+        Mass edit all {{ totalCount|default:0 }} results
+    </button>
 </div>
 <div x-cloak class="sticky top-0 z-30 flex pl-4 pb-2 lg:gap-4 gap-1 flex-wrap bulk-editors items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
     {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
+    <button
+            type="button"
+            class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+            @click="$dispatch('mass-edit-open', { entityType: 'note', target: 'ids' })"
+    >
+        Mass Edit Selected
+    </button>
     <form class="px-4" method="post" :action="'/v1/notes/addTags?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">

@@ -33,6 +33,9 @@
     <meta name="x-download-cockpit-limit" content="{{ downloadCockpitLimit|default:10 }}">
     {# CSRF synchronizer token: read by the JS fetch/form layer. Empty when auth is off. #}
     <meta name="csrf-token" content="{{ csrfToken|default:'' }}">
+    {# The list page's row count, published for the mass-edit panel's "edit all N #}
+    {# results" mode. 0 on pages that do not render a mass-edit panel.            #}
+    <meta name="x-total-count" content="{{ totalCount|default:0 }}">
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>
@@ -172,6 +175,7 @@
         {% include "/partials/lightbox.tpl" %}
         {% include "/partials/pasteUpload.tpl" %}
         {% include "/partials/pluginActionModal.tpl" %}
+        {% include "/partials/massEditModal.tpl" %}
         {% include "partials/entityPicker.tpl" %}
         {# Last, so that when it is open it is the last painted sibling in the      #}
         {# overlay layer. A destructive confirm can be raised from inside another   #}

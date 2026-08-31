@@ -163,6 +163,10 @@ type MahresourcesConfig struct {
 	// fan-out is the defect this exists to stop, and every programmatic config
 	// (api_tests, embeds) carries a zero it never meant as a policy.
 	MaxActionEntities int
+	// MaxMassEditEntities bounds how many entities one mass edit may change.
+	// 0 selects the default. It is a lock-duration budget, not a memory
+	// budget: on SQLite the write lock is held for the whole edit.
+	MaxMassEditEntities int
 	// MaxUserTokens caps how many API tokens a single user may hold. 0 =
 	// unlimited. Zero-value (test/programmatic configs) keeps the historical
 	// uncapped behaviour; main.go sets a non-zero default for real deployments.
@@ -332,6 +336,9 @@ type MahresourcesInputConfig struct {
 	// MaxActionEntities bounds the entities one plugin-action run may name.
 	// 0 selects the default.
 	MaxActionEntities int
+	// MaxMassEditEntities bounds the entities one mass edit may change.
+	// 0 selects the default.
+	MaxMassEditEntities int
 	// MaxUserTokens caps how many API tokens a single user may hold. 0 = unlimited.
 	MaxUserTokens int
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
@@ -1505,6 +1512,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MaxJSONBodySize:              cfg.MaxJSONBodySize,
 		MaxActionEntities:            cfg.MaxActionEntities,
+		MaxMassEditEntities:          cfg.MaxMassEditEntities,
 		MaxUserTokens:                cfg.MaxUserTokens,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 		MRQLPageQueryBudget:          cfg.MRQLPageQueryBudget,
@@ -1563,7 +1571,8 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		// one action run name" is the operator's rather than the default. A
 		// bad value reads as 0, which selects the default — the same shape
 		// every other limit here uses.
-		MaxActionEntities: maxActionEntitiesFromEnv(),
+		MaxActionEntities:   maxActionEntitiesFromEnv(),
+		MaxMassEditEntities: maxMassEditEntitiesFromEnv(),
 	})
 }
 
@@ -1572,6 +1581,17 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 // flag; this exists because CreateContext never reaches that code.
 func maxActionEntitiesFromEnv() int {
 	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAX_ACTION_ENTITIES")))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// maxMassEditEntitiesFromEnv reads MAX_MASS_EDIT_ENTITIES for the same
+// constructor, in the same shape: a bad value reads as 0, which selects the
+// default.
+func maxMassEditEntitiesFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAX_MASS_EDIT_ENTITIES")))
 	if err != nil || n < 0 {
 		return 0
 	}

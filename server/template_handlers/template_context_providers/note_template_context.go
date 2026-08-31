@@ -122,6 +122,10 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 			"groups":            groups,
 			"owners":            owners,
 			"pagination":        pagination,
+			// The mass-edit panel's "edit all N results" reads this.
+			"totalCount":        noteCount,
+			"massEditEntity":    "note",
+			"massEditMetaKeysUrl": "/v1/notes/meta/keys",
 			"mrqlError":         mrqlError,
 			"tags":              tags,
 			"popularTags":       popularTags,

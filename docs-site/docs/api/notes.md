@@ -336,6 +336,24 @@ curl -X POST http://localhost:8181/v1/notes/addMeta \
   }'
 ```
 
+### Mass Edit
+
+Apply several edits — tags, related groups, related resources, owner and metadata — to many
+notes in **one transaction**. Target an explicit `ID` list, or set `Target=filter` with the
+list page's raw query string and an `ExpectedCount` the server re-checks with **409** on
+mismatch. Ops: `TagsOp`/`TagIds`, `GroupsOp`/`GroupIds` (related groups),
+`ResourcesOp`/`ResourceIds` (related resources), `OwnerOp`/`OwnerId`, and
+`MetaOp`/`Meta`/`MetaKeys`; `DryRun` resolves the set and echoes the parsed ops, committing nothing (the far-endpoint and cycle checks run on the real submit).
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/massEdit \
+  -H "Content-Type: application/json" \
+  -d '{"ID": [1, 2], "TagsOp": "replace", "TagIds": [10]}'
+```
+
+The verbs, the all-or-nothing transaction, the typed errors and the response shape are the
+same as [the resources endpoint](resources.md#mass-edit); notes have no series meta.
+
 ### Bulk Delete
 
 ```

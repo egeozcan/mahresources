@@ -456,6 +456,98 @@ POST /v1/resources/addMeta
 | `ID` | integer[] | Resource IDs to modify |
 | `Meta` | string | JSON metadata to merge |
 
+
+### Mass Edit
+
+Apply several edits — tags, related groups, related notes, owner and metadata — to many
+resources in **one transaction**. The target set is either an explicit id list or every
+resource matching a list page's filter (the raw query string of `/resources`, re-run
+server-side and scoped to the caller like any other request).
+
+```
+POST /v1/resources/massEdit
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer[] | Explicit selection (target `ids`, the default). Duplicates are removed. |
+| `Target` | string | `""`/`ids` (default) or `filter` |
+| `Filter` | string | The list page's raw query string, e.g. `tags=3&ownerId=9&mrql=...`. An empty string means every resource visible to you — the set the unfiltered list page shows. |
+| `ExpectedCount` | integer | Required when `Target=filter`. The server re-counts the filtered set and refuses with **409** unless the count matches exactly. |
+| `TagsOp` | string | `add`, `remove` or `replace`; empty = leave tags unchanged |
+| `TagIds` | integer[] | tag ids for the tags op |
+| `GroupsOp` / `GroupIds` | string / integer[] | add/remove/replace the resources' related groups |
+| `NotesOp` / `NoteIds` | string / integer[] | add/remove/replace the resources' related notes |
+| `OwnerOp` | string | `set` or `clear` |
+| `OwnerId` | integer | the new owner group, for `OwnerOp=set` |
+| `MetaOp` | string | `merge`, `replace` or `removeKeys` |
+| `Meta` | string | JSON object, for `merge` and `replace` |
+| `MetaKeys` | string[] | top-level keys to remove, for `removeKeys` |
+| `DryRun` | boolean | resolve the target set and echo the parsed ops, committing nothing (the far-endpoint and cycle checks run on the real submit) |
+
+An unrecognised verb is refused, never defaulted. Every op runs inside one transaction: if
+any op fails, nothing changes. A group-limited principal may only reference far endpoints
+(group/note/resource ids) inside its subtree: `add` and `replace` validate the named ids,
+`remove` refuses to break a link to an entity the caller cannot see, and `replace` spares
+existing links to out-of-subtree entities instead of deleting them — while still clearing
+dangling join rows whose far entity no longer exists. Validated rows are locked for the
+transaction on Postgres, so a concurrent delete cannot leave a dangling join row behind. For resources in a series, `merge` with an explicit `null`
+value and `removeKeys` write the explicit-null override into the resource's own meta, so the
+series does not re-inherit the removed key. Setting the owner always runs last, because
+re-parenting changes what a group-limited caller can see.
+
+#### Response
+
+```json
+{
+  "entity": "resource",
+  "matched": 4211,
+  "affected": 4211,
+  "ops": [
+    {"op": "tags.add", "rowsAffected": 8410},
+    {"op": "owner.set", "rowsAffected": 4211}
+  ],
+  "dryRun": false
+}
+```
+
+`matched` is what targeting resolved to; `affected` is the number of resources the ops were
+applied to; `ops[].rowsAffected` sums join rows for relation ops and entity rows for owner
+and meta ops.
+
+#### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/resources/massEdit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "Target": "filter",
+    "Filter": "tags=3",
+    "ExpectedCount": 12,
+    "TagsOp": "add",
+    "TagIds": [10],
+    "OwnerOp": "set",
+    "OwnerId": 2
+  }'
+```
+
+#### Errors
+
+| Status | Meaning |
+|--------|---------|
+| 400 | malformed request, unknown verb, a filter matching more than the configured ceiling, or a malformed `mrql=` expression inside `Filter` |
+| 403 | a group-limited principal asked to clear the owner |
+| 404 | a named id or far endpoint is missing or outside the caller's subtree |
+| 409 | the filter's re-count did not match `ExpectedCount`, or a group re-parent would create an ownership cycle |
+
+The same endpoint exists as `POST /v1/notes/massEdit` and `POST /v1/groups/massEdit`, with
+the entity-appropriate relation ops: notes take Tags/Groups/Resources, groups take
+Tags/RelatedGroups (`RelatedGroupsOp`/`RelatedGroupIds`)/Notes/Resources. For groups the
+owner op re-parents, and self-ownership and ownership cycles are refused rather than
+repaired.
+
 ### Bulk Delete
 
 Delete multiple resources.

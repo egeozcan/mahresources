@@ -42,6 +42,14 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		if err := altCtx.lockUserManagementMutation(altCtx.db); err != nil {
 			return err
 		}
+		// A merge re-parents the losers' owned groups onto the winner, so it
+		// extends ancestor chains exactly like an ordinary group update or the
+		// mass edit's owner op — it joins the tree-mutation protocol, after the
+		// user-management lock (the documented advisory order) and before any
+		// group row is read or locked. See group_tree_lock.go.
+		if err := altCtx.lockGroupTreeMutation(altCtx.db); err != nil {
+			return err
+		}
 		// Group rows follow the shared security-boundary mutation lock. Lock the complete merge
 		// set in ID order so concurrent merges agree with each other, and so scope
 		// updates (which also lock their target group before users) cannot form the

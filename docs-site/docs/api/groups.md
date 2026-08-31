@@ -338,6 +338,28 @@ POST /v1/groups/addMeta
 | `ID` | integer[] | Group IDs to modify |
 | `Meta` | string | JSON metadata to merge |
 
+### Mass Edit
+
+Apply several edits — tags, related groups, related notes, related resources, owner (the
+parent group) and metadata — to many groups in **one transaction**. Target an explicit `ID`
+list, or set `Target=filter` with the list page's raw query string and an `ExpectedCount`
+the server re-checks with **409** on mismatch. Ops: `TagsOp`/`TagIds`,
+`RelatedGroupsOp`/`RelatedGroupIds`, `NotesOp`/`NoteIds`, `ResourcesOp`/`ResourceIds`,
+`OwnerOp`/`OwnerId`, and `MetaOp`/`Meta`/`MetaKeys`; `DryRun` resolves the set and echoes the parsed ops, committing nothing (the far-endpoint and cycle checks run on the real submit).
+
+A group's owner **is** its parent, so `OwnerOp=set` re-parents: self-ownership and
+re-parents that would create an ownership cycle are refused (409) rather than repaired, and
+nothing else about the tree is touched.
+
+```bash
+curl -X POST http://localhost:8181/v1/groups/massEdit \
+  -H "Content-Type: application/json" \
+  -d '{"ID": [4, 5], "OwnerOp": "set", "OwnerId": 2}'
+```
+
+The verbs, the all-or-nothing transaction, the typed errors and the response shape are the
+same as [the resources endpoint](resources.md#mass-edit).
+
 ### Bulk Delete
 
 Delete multiple groups. If any of them is assigned as a user's scope group, the request returns `409 Conflict` with `group is assigned as a user scope`; reassign or clear that user's scope first.

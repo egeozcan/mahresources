@@ -104,6 +104,23 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusBadRequest
 	}
 
+	// Mass-edit refusals, typed before the substring scan for the same reason
+	// as every block above. ErrMassEditSetChanged and ErrMassEditOwnershipCycle
+	// are 409: the request is well formed and what refuses is the state of the
+	// world. ErrMassEditOwnerClearScoped is an authorization answer (403) whose
+	// wording contains no generic pattern. ErrMassEditTooLarge is 400 — it asks
+	// for more than policy allows — and its message names the cap.
+	if errors.Is(err, application_context.ErrMassEditSetChanged) ||
+		errors.Is(err, application_context.ErrMassEditOwnershipCycle) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, application_context.ErrMassEditOwnerClearScoped) {
+		return http.StatusForbidden
+	}
+	if errors.Is(err, application_context.ErrMassEditTooLarge) {
+		return http.StatusBadRequest
+	}
+
 	// A plugin veto from a before-hook. The status used to come from the scan
 	// below, over the message "plugin aborted: <the plugin author's own
 	// words>" — so a reason phrased "this cannot be deleted" produced 400 and

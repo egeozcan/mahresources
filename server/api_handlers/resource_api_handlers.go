@@ -1140,3 +1140,29 @@ func GetResourceSetDimensionsHandler(ctx contracts.ResourceMediaProcessor) func(
 		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
 	}
 }
+
+// GetMassEditResourcesHandler is the one mass-edit entry point for resources.
+// On success it answers a browser form post with the same redirect the other
+// bulk buttons give, and everything else with the MassEditResult body.
+func GetMassEditResourcesHandler(ctx contracts.MassResourceEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(contracts.MassResourceEditor)
+
+		var query query_models.MassEditQuery
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		result, err := effectiveCtx.MassEditResources(&query)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
+			return
+		}
+
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(result)
+		}
+	}
+}

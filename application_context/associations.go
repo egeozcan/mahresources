@@ -109,8 +109,39 @@ func ValidateAssociationIDs[T any](db *gorm.DB, ids []uint, entityName string) e
 // Aggregates cannot be locked, so this selects the ids rather than counting
 // them.
 func ValidateAndLockAssociationIDs[T any](db *gorm.DB, ids []uint, entityName string) error {
+	return validateAndLockIDs(db, new(T), ids, entityName)
+}
+
+// validateAndLockIDs is the non-generic core of
+// ValidateAndLockAssociationIDs, so callers holding a model value rather than a
+// type parameter (the mass edit's spec-driven op table) get the same
+// sorted-then-locked existence check.
+func validateAndLockIDs(db *gorm.DB, model any, ids []uint, entityName string) error {
+	// The comparison is against the DEDUPLICATED count: lockIDs dedupes (the
+	// original implementation did too), and a caller legitimately passing the
+	// same id twice would otherwise be falsely refused.
+	seen := make(map[uint]struct{}, len(ids))
+	for _, id := range ids {
+		seen[id] = struct{}{}
+	}
+	found, err := lockIDs(db, model, ids)
+	if err != nil {
+		return err
+	}
+	if len(found) != len(seen) {
+		return fmt.Errorf("one or more %s not found", entityName)
+	}
+	return nil
+}
+
+// lockIDs is validateAndLockIDs without the verdict: it returns the ids that
+// resolved (sorted ascending, locked on Postgres), so a caller that unions
+// several requirements into one lock statement can still attribute a failure
+// to the right one WITHOUT re-querying — re-querying a failed phase with the
+// lock clause could acquire fresh, out-of-order row locks on the failure path.
+func lockIDs(db *gorm.DB, model any, ids []uint) ([]uint, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	unique := make(map[uint]bool, len(ids))
 	for _, id := range ids {
@@ -128,19 +159,16 @@ func ValidateAndLockAssociationIDs[T any](db *gorm.DB, ids []uint, entityName st
 	// abort one with 40P01.
 	sort.Slice(uniqueSlice, func(i, j int) bool { return uniqueSlice[i] < uniqueSlice[j] })
 
-	query := db.Model(new(T)).Where("id IN ?", uniqueSlice).Order("id")
+	query := db.Model(model).Where("id IN ?", uniqueSlice).Order("id")
 	if db.Dialector.Name() == "postgres" {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 
 	var found []uint
 	if err := query.Pluck("id", &found).Error; err != nil {
-		return err
+		return nil, err
 	}
-	if len(found) != len(uniqueSlice) {
-		return fmt.Errorf("one or more %s not found", entityName)
-	}
-	return nil
+	return found, nil
 }
 
 // BuildAssociationSlice converts a slice of IDs to a slice of model structs.
