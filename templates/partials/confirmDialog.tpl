@@ -12,7 +12,15 @@
         {# destructive confirm is precisely the accident window.confirm cannot have,   #}
         {# and re-earning that property is the point of replacing it. Escape cancels,  #}
         {# and cancelling means the action does not happen.                            #}
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        {# `confirm-dialog-overlay` carries the z-index, not a `z-50` utility. Being    #}
+        {# the last sibling in `.overlays` orders this dialog only against siblings at  #}
+        {# the *same* z-index, and two of them are higher: the plugin action / mass     #}
+        {# edit overlay (60) and the raised entity picker (70). A confirm raised from   #}
+        {# inside one of those painted underneath it — invisible, while `_applyInert`   #}
+        {# froze the modal that covered it, so the reader saw a dead page. It is not    #}
+        {# even reported as occluded by a hit test, because an inert element is skipped #}
+        {# in hit testing, which is why the e2e that clicks this dialog kept passing.   #}
+        <div class="confirm-dialog-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-4"
              @keydown.escape.window="$store.confirmDialog.cancel()">
             {# x-init rather than a directive on the template: the subtree only exists  #}
             {# while open, so this is the moment the dialog has a root to make the rest #}

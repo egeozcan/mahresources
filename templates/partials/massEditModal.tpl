@@ -22,8 +22,9 @@
                         <div class="plugin-action-modal-error" role="alert" x-text="error"></div>
                     </template>
 
-                    <fieldset class="mb-3">
-                        <legend class="block text-xs font-mono font-medium text-stone-600 mb-1">Which <span x-text="noun()"></span>?</legend>
+                    <div class="mass-edit-body">
+                    <fieldset class="mass-edit-section mass-edit-section--first">
+                        <legend class="mass-edit-legend">Which <span x-text="noun()"></span>?</legend>
                         <label class="flex items-center gap-2 text-sm">
                             <input type="radio" name="massEditTarget" value="ids" x-model="target">
                             <span>Selected items (<span x-text="selectedIds.length"></span>)</span>
@@ -35,10 +36,10 @@
                     </fieldset>
 
                     {% if massEditEntity == 'resource' or massEditEntity == 'note' or massEditEntity == 'group' %}
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Tags</span>
-                            <select aria-label="Tags operation" name="TagsOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Tags</span>
+                            <select aria-label="Tags operation" name="TagsOp" class="mass-edit-select">
                                 <option value="">— leave tags unchanged —</option>
                                 <option value="add">Add</option>
                                 <option value="remove">Remove</option>
@@ -50,67 +51,67 @@
                     {% endif %}
 
                     {% if massEditEntity == 'resource' or massEditEntity == 'note' %}
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Related groups</span>
-                            <select aria-label="Related groups operation" name="GroupsOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Related groups</span>
+                            <select aria-label="Related groups operation" name="GroupsOp" class="mass-edit-select">
                                 <option value="">— leave groups unchanged —</option>
                                 <option value="add">Add</option>
                                 <option value="remove">Remove</option>
                                 <option value="replace">Replace with</option>
                             </select>
                         </div>
-                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='GroupIds' title='Related groups' onChange='onGroupsChange' id=getNextId("massedit_groups") %}
+                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='GroupIds' title='Groups to apply' onChange='onGroupsChange' id=getNextId("massedit_groups") %}
                     </fieldset>
                     {% endif %}
 
                     {% if massEditEntity == 'resource' or massEditEntity == 'group' %}
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Related notes</span>
-                            <select aria-label="Related notes operation" name="NotesOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Related notes</span>
+                            <select aria-label="Related notes operation" name="NotesOp" class="mass-edit-select">
                                 <option value="">— leave notes unchanged —</option>
                                 <option value="add">Add</option>
                                 <option value="remove">Remove</option>
                                 <option value="replace">Replace with</option>
                             </select>
                         </div>
-                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='note' elName='NoteIds' title='Related notes' onChange='onNotesChange' id=getNextId("massedit_notes") %}
+                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='note' elName='NoteIds' title='Notes to apply' onChange='onNotesChange' id=getNextId("massedit_notes") %}
                     </fieldset>
                     {% endif %}
 
                     {% if massEditEntity == 'note' or massEditEntity == 'group' %}
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Related resources</span>
-                            <select aria-label="Related resources operation" name="ResourcesOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Related resources</span>
+                            <select aria-label="Related resources operation" name="ResourcesOp" class="mass-edit-select">
                                 <option value="">— leave resources unchanged —</option>
                                 <option value="add">Add</option>
                                 <option value="remove">Remove</option>
                                 <option value="replace">Replace with</option>
                             </select>
                         </div>
-                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='resource' elName='ResourceIds' title='Related resources' onChange='onResourcesChange' id=getNextId("massedit_resources") %}
+                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='resource' elName='ResourceIds' title='Resources to apply' onChange='onResourcesChange' id=getNextId("massedit_resources") %}
                     </fieldset>
                     {% endif %}
 
                     {% if massEditEntity == 'group' %}
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Related groups</span>
-                            <select aria-label="Related groups operation" name="RelatedGroupsOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Related groups</span>
+                            <select aria-label="Related groups operation" name="RelatedGroupsOp" class="mass-edit-select">
                                 <option value="">— leave related groups unchanged —</option>
                                 <option value="add">Add</option>
                                 <option value="remove">Remove</option>
                                 <option value="replace">Replace with</option>
                             </select>
                         </div>
-                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' usage='group' elName='RelatedGroupIds' title='Related groups' onChange='onRelatedGroupsChange' id=getNextId("massedit_related_groups") %}
+                        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='RelatedGroupIds' title='Groups to apply' onChange='onRelatedGroupsChange' id=getNextId("massedit_related_groups") %}
                     </fieldset>
                     {% endif %}
 
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <legend class="block text-xs font-mono font-medium text-stone-600 mb-1">Owner{% if massEditEntity == 'group' %} (the parent group){% endif %}</legend>
+                    <fieldset class="mass-edit-section">
+                        <legend class="mass-edit-legend">Owner{% if massEditEntity == 'group' %} (the parent group){% endif %}</legend>
                         <label class="flex items-center gap-2 text-sm">
                             <input type="radio" name="massEditOwner" value="set" x-model="ownerMode">
                             <span>Set owner</span>
@@ -124,10 +125,10 @@
                         </label>
                     </fieldset>
 
-                    <fieldset class="mb-3 border-t border-stone-200 pt-2">
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-xs font-mono font-medium text-stone-600">Meta</span>
-                            <select aria-label="Meta operation" name="MetaOp" class="text-sm border-stone-300 rounded">
+                    <fieldset class="mass-edit-section">
+                        <div class="mass-edit-row">
+                            <span class="mass-edit-legend">Meta</span>
+                            <select aria-label="Meta operation" name="MetaOp" class="mass-edit-select">
                                 <option value="">— leave meta unchanged —</option>
                                 <option value="merge">Merge</option>
                                 <option value="replace">Replace with</option>
@@ -148,6 +149,8 @@
                             <button type="button" class="text-sm text-teal-700 mt-1" @click="metaKeyRows.push('')">Add another key</button>
                         </div>
                     </fieldset>
+
+                    </div>
 
                     <div class="plugin-action-modal-actions">
                         <button type="button" @click="close()" class="btn btn-secondary">Cancel</button>

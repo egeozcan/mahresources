@@ -1396,6 +1396,13 @@ html {
     z-index: 70;
 }
 
+/* The destructive confirm sits above every other overlay. It can be raised from
+   inside one — the block editor, the jobs panel, the mass edit modal — and the
+   thing that raised it must not paint over it. */
+.confirm-dialog-overlay {
+    z-index: 90;
+}
+
 /* Plugin action modal */
 .plugin-action-overlay {
     position: fixed;
@@ -1419,6 +1426,10 @@ html {
 }
 
 .plugin-action-modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: white;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1491,6 +1502,9 @@ html {
 }
 
 .plugin-action-modal-error {
+    /* The modal header is sticky, so an error scrolled to the top of the
+       scrollport lands underneath it. Clear it. */
+    scroll-margin-top: 4.5rem;
     margin: 0.75rem 1.25rem 0;
     padding: 0.5rem 0.75rem;
     border-radius: var(--radius-sm);
@@ -1588,12 +1602,119 @@ html {
     font-size: 0.75rem;
 }
 
+/* Mass edit modal — the plugin action modal's chrome with a padded form body.
+   The plugin variant pads each field individually (.plugin-action-modal-field);
+   this form is built from fieldsets, so the padding lives on one wrapper and the
+   section rules supply the rhythm between them. */
+.mass-edit-body {
+    padding: 0.25rem 1.25rem 1rem;
+}
+
+.mass-edit-section {
+    margin-top: 0.875rem;
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--nav-border);
+}
+
+.mass-edit-section--first {
+    margin-top: 0.75rem;
+    padding-top: 0;
+    border-top: none;
+}
+
+.mass-edit-legend {
+    display: block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #57534e;
+    padding: 0;
+}
+
+.mass-edit-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.mass-edit-row .mass-edit-legend {
+    flex: none;
+}
+
+.mass-edit-select {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font-size: 0.875rem;
+    border: 1px solid #d6d3d1;
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+    background-color: white;
+}
+
+.mass-edit-select:focus {
+    outline: none;
+    border-color: #b45309;
+    box-shadow: 0 0 0 1px #b45309;
+}
+
 .plugin-action-modal-actions {
+    position: sticky;
+    bottom: 0;
+    background: white;
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
     padding: 1rem 1.25rem;
     border-top: 1px solid var(--nav-border);
+}
+
+/* `.btn`, `.btn-primary` and `.btn-secondary` are named by both modals' footers
+   and are defined nowhere, so Cancel/Apply rendered as bare text. Scoped to the
+   footer rather than defined globally: `.btn` is also on the timeline and
+   compare links, whose current appearance is not this feature's to change. */
+.plugin-action-modal-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25rem;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.plugin-action-modal-actions .btn:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.plugin-action-modal-actions .btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.plugin-action-modal-actions .btn-primary {
+    background: #b45309;
+    color: white;
+}
+
+.plugin-action-modal-actions .btn-primary:hover:not(:disabled) {
+    background: #92400e;
+}
+
+.plugin-action-modal-actions .btn-secondary {
+    background: white;
+    color: #44403c;
+    border-color: #d6d3d1;
+}
+
+.plugin-action-modal-actions .btn-secondary:hover:not(:disabled) {
+    background: #f5f5f4;
 }
 
 .card-description {

@@ -246,6 +246,19 @@ export function massEditModal() {
             return { payload, ops, ownerSet };
         },
 
+        // The error banner sits at the top of a form long enough to scroll, and
+        // Apply is at the bottom: setting `error` alone put the message where
+        // the reader clicking Apply could not see it, which reads as the button
+        // doing nothing. Announce it and bring it into view.
+        showError(message) {
+            this.error = message;
+            _liveRegion?.announce(message);
+            this.$nextTick(() => {
+                this.$root.querySelector('.plugin-action-modal-error')
+                    ?.scrollIntoView({ block: 'start' });
+            });
+        },
+
         async submit() {
             const form = this.$refs.form;
             if (!form) return;
@@ -253,7 +266,7 @@ export function massEditModal() {
             const { payload, ops, ownerSet } = this.buildPayload(form, { dryRun: false, expectedCount: null });
             const opCount = [...payload.keys()].filter((k) => k.endsWith('Op')).length;
             if (opCount === 0) {
-                this.error = 'Choose at least one operation to apply.';
+                this.showError('Choose at least one operation to apply.');
                 return;
             }
 
@@ -274,7 +287,7 @@ export function massEditModal() {
                     // re-counts on the real submit and refuses on a mismatch.
                     payload.set('ExpectedCount', String(expectedCount));
                 } catch (err) {
-                    this.error = `Could not count the matching ${this.noun()}: ${err.message}`;
+                    this.showError(`Could not count the matching ${this.noun()}: ${err.message}`);
                     return;
                 }
             }
@@ -300,8 +313,7 @@ export function massEditModal() {
                 _liveRegion?.announce(this.describeResult(result));
                 this.close();
             } catch (err) {
-                this.error = err.message;
-                _liveRegion?.announce(`Mass edit failed: ${err.message}`);
+                this.showError(`Mass edit failed: ${err.message}`);
             } finally {
                 this.submitting = false;
             }

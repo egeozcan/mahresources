@@ -177,4 +177,71 @@ test.describe('Mass Edit', () => {
       expect(tagNames).toEqual(before.sort());
     }
   });
+
+  // The confirm dialog is a sibling of this modal in `.overlays`, and sibling
+  // order decides paint only among siblings at the same z-index. The modal
+  // overlay is z-60, so a z-50 confirm painted *underneath* it — invisible,
+  // while the confirm's own `_applyInert` froze the modal covering it, so
+  // Apply read as doing nothing. A hit test does not catch it: an inert
+  // element is skipped in hit testing, so `.click()` on the confirm kept
+  // working and the test above kept passing. Assert the stacking directly.
+  test('the confirm dialog paints above the modal that raised it', async ({ page, resourcePage }) => {
+    await resourcePage.gotoList();
+    await page.goto(`/resources?tags=${tagId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: /Mass edit all \d+ results/ }).click();
+    const dialog = page.getByRole('dialog', { name: /Mass edit/ });
+    await expect(dialog).toBeVisible();
+
+    // Clearing the owner is destructive, so it demands the confirm with no
+    // taxonomy fixture to pick first.
+    await dialog.getByRole('radio', { name: 'Clear owner' }).check();
+    await dialog.getByRole('button', { name: 'Apply' }).click();
+
+    const confirm = page.getByRole('alertdialog', { name: 'Mass edit' });
+    await expect(confirm).toBeVisible();
+
+    const zIndexes = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const el = document.querySelector(selector);
+        return el ? parseInt(getComputedStyle(el).zIndex, 10) : NaN;
+      };
+      return { confirm: read('.confirm-dialog-overlay'), modal: read('.plugin-action-overlay') };
+    });
+    expect(Number.isNaN(zIndexes.confirm)).toBe(false);
+    expect(Number.isNaN(zIndexes.modal)).toBe(false);
+    expect(zIndexes.confirm).toBeGreaterThan(zIndexes.modal);
+
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+  });
+
+  // The error banner is at the top of a form long enough to scroll and Apply is
+  // at the bottom, so setting the message alone left it off-screen — which is
+  // the same "the button does nothing" report.
+  test('a validation error is scrolled into view', async ({ page, resourcePage }) => {
+    await resourcePage.gotoList();
+    await page.goto(`/resources?tags=${tagId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: /Mass edit all \d+ results/ }).click();
+    const dialog = page.getByRole('dialog', { name: /Mass edit/ });
+    await expect(dialog).toBeVisible();
+
+    // Scroll to the bottom, where Apply is, before submitting with no op set.
+    await dialog.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await dialog.getByRole('button', { name: 'Apply' }).click();
+
+    const error = dialog.getByRole('alert');
+    await expect(error).toHaveText(/Choose at least one operation/);
+    await expect(error).toBeInViewport();
+    // And clear of the sticky header, which would otherwise cover it.
+    await expect.poll(() => dialog.evaluate((el) => {
+      const banner = el.querySelector('.plugin-action-modal-error');
+      const header = el.querySelector('.plugin-action-modal-header');
+      if (!banner || !header) return false;
+      return banner.getBoundingClientRect().top >= header.getBoundingClientRect().bottom - 1;
+    })).toBe(true);
+  });
 });

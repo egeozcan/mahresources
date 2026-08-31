@@ -183,6 +183,11 @@
         {# actions — and it has to be on top of the thing that raised it. The store #}
         {# also makes every sibling here inert while it is open, so ordering is the #}
         {# paint story and inert is the interaction story.                          #}
+        {#                                                                          #}
+        {# Order alone is not enough, and was not: sibling order decides paint only #}
+        {# among siblings at the same z-index, and the plugin action / mass edit    #}
+        {# overlay (60) and the raised entity picker (70) sit above the confirm's   #}
+        {# old z-50. It carries `.confirm-dialog-overlay` (90) for that reason.     #}
         {% include "/partials/confirmDialog.tpl" %}
         {% plugin_slot "scripts" %}
     </div>
