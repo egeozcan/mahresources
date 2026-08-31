@@ -2,7 +2,6 @@ package hls
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -372,16 +371,6 @@ func probeStreams(t *testing.T, res *Result) string {
 		}
 	}
 	return strings.Join(kinds, ",")
-}
-
-// readAllUpTo reads until EOF or the buffer is full, which is what a bounded
-// range reader should give back.
-func readAllUpTo(r io.Reader, p []byte) int {
-	n, err := io.ReadFull(r, p)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return n
-	}
-	return n
 }
 
 // TestTheWholeAssemblyIsBounded. http.Client.Timeout applies to each request

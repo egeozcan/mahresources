@@ -144,14 +144,20 @@ func TestDomainGateLimitsPluginJobsPerMatchingHost(t *testing.T) {
 	gotRequests := requests
 	gotMax := maxInFlight
 	mu.Unlock()
+	gotJob2Status := job2.GetStatus()
+	// Unblock the server before asserting the snapshots. A fatal assertion while
+	// the handler is held would otherwise make the deferred server.Close hang.
+	close(release)
 	if gotRequests != 1 {
 		t.Fatalf("requests while first job held = %d, want 1 (second job must wait on domain gate)", gotRequests)
 	}
-	if got := job2.GetStatus(); got != JobStatusPending {
-		t.Fatalf("second job status while waiting = %s, want pending", got)
+	if gotMax != 1 {
+		t.Fatalf("max concurrent requests while first job held = %d, want 1", gotMax)
+	}
+	if gotJob2Status != JobStatusPending {
+		t.Fatalf("second job status while waiting = %s, want pending", gotJob2Status)
 	}
 
-	close(release)
 	waitForStatus(t, job1, JobStatusCompleted)
 	waitForStatus(t, job2, JobStatusCompleted)
 	mu.Lock()

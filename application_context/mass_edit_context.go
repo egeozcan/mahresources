@@ -702,16 +702,6 @@ func (spec *massEditSpec) mrqlEntity() mrql.EntityType {
 	}
 }
 
-// countRefsInScope resolves the named far-endpoint ids through the scoped db
-// and refuses any that did not resolve — and on Postgres it LOCKS the rows it
-// resolved (validateAndLockIDs): the join-table inserts that follow are raw
-// Exec, Postgres migrations create no foreign keys, so a far row deleted
-// concurrently after a plain Count would leave a dangling join row behind.
-// The lock holds it in place until this transaction ends.
-func countRefsInScope(txCtx *MahresourcesContext, model any, ids []uint, what string) error {
-	return validateAndLockIDs(txCtx.db, model, ids, what)
-}
-
 // addMassEditRows accumulates rowsAffected into the result's op entry.
 func addMassEditRows(result *contracts.MassEditResult, op string, n int64) {
 	for i := range result.Ops {

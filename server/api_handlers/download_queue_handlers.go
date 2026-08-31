@@ -494,7 +494,7 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			allActions := pm.GetAllActionJobs()
 			for i := range allActions {
 				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
-					visibleActions = append(visibleActions, &allActions[i])
+					visibleActions = append(visibleActions, allActions[i])
 				}
 			}
 		}

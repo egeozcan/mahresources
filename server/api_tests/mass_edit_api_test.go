@@ -270,15 +270,6 @@ func TestMassEditRoutesRequireCSRF(t *testing.T) {
 	assert.NotEqual(t, http.StatusForbidden, rr.Code, "the form-field token should be accepted: %s", body(t, rr))
 }
 
-// loginCookieAndCSRFToken logs in and returns only the CSRF token; the session
-// cookie stays inside loginCookieAndCSRF because cookie jars are the caller's
-// business in these tests.
-func loginCookieAndCSRFToken(t *testing.T, tc *TestContext) string {
-	t.Helper()
-	_, token := loginCookieAndCSRF(t, tc)
-	return token
-}
-
 // A group-limited principal may not clear owners over the wire: an owner-less
 // row is in nobody's subtree, so the eviction is permanent from their point of
 // view. Typed ErrMassEditOwnerClearScoped, mapped before the substring scan.

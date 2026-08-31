@@ -57,11 +57,11 @@ type ActionJobEvent struct {
 }
 
 // Snapshot returns a copy of the ActionJob safe for serialization.
-func (j *ActionJob) Snapshot() ActionJob { //nolint:govet // returns a field-by-field copy; mu is intentionally zero-valued
+func (j *ActionJob) Snapshot() *ActionJob {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
-	snap := ActionJob{
+	snap := &ActionJob{
 		ID:          j.ID,
 		Source:      j.Source,
 		PluginName:  j.PluginName,
@@ -437,8 +437,7 @@ func (pm *PluginManager) GetActionJob(jobID string) *ActionJob {
 		return nil
 	}
 
-	snap := job.Snapshot()
-	return &snap
+	return job.Snapshot()
 }
 
 // actionWaitGroup returns (or creates) the WaitGroup for tracking in-flight async actions of a plugin.
@@ -455,11 +454,11 @@ func (pm *PluginManager) actionWaitGroup(pluginName string) *sync.WaitGroup {
 }
 
 // GetAllActionJobs returns snapshots of all action jobs.
-func (pm *PluginManager) GetAllActionJobs() []ActionJob {
+func (pm *PluginManager) GetAllActionJobs() []*ActionJob {
 	pm.actionJobsMu.RLock()
 	defer pm.actionJobsMu.RUnlock()
 
-	result := make([]ActionJob, 0, len(pm.actionJobs))
+	result := make([]*ActionJob, 0, len(pm.actionJobs))
 	for _, job := range pm.actionJobs {
 		result = append(result, job.Snapshot())
 	}
@@ -487,8 +486,7 @@ func (pm *PluginManager) UnsubscribeActionJobs(ch chan ActionJobEvent) {
 
 // notifyActionJobSubscribers snapshots the job and sends the event to all subscribers (non-blocking).
 func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *ActionJob) {
-	snap := job.Snapshot() //nolint:govet // snapshot intentionally copies with zero-valued mutex
-	event := ActionJobEvent{Type: eventType, Job: &snap}
+	event := ActionJobEvent{Type: eventType, Job: job.Snapshot()}
 
 	pm.actionSubsMu.RLock()
 	defer pm.actionSubsMu.RUnlock()

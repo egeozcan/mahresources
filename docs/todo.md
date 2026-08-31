@@ -1,3 +1,36 @@
+# Master CI repair at cc913daa (2026-08-23)
+
+**Goal:** Restore the `test` and `cli-docs-fresh` jobs without changing runtime behavior or masking test intent.
+
+## Plan
+
+- [x] Reproduce staticcheck and CLI-doc drift using the workflow's exact commands.
+- [x] Trace each unused helper through callers and recent history; delete only genuinely orphaned code.
+- [x] Inspect `gotMax`'s test data flow and restore the intended assertion if the assignment exposes a missing check.
+- [x] Regenerate `docs-site/docs/cli/` and determine whether the diff is deterministic generated drift or missing help source.
+- [x] Run the requested build, vet, staticcheck, focused tagged tests, docs freshness check, and staged-file check.
+- [x] Record the fixes, evidence, and any suspicious untouched findings in a review section below.
+
+## Review
+
+The three U1000 helpers were orphaned code: mass edit had replaced its per-set
+wrapper with canonical unioned lock ordering; HLS range tests had moved to the
+file-writing path; and the mass-edit CSRF test already used the shared helper
+that returns both cookie and token. The first `gotMax` snapshot was instead a
+missing positive control; its assertion was mutation-checked, and the blocked
+HTTP handler is now released before fatal snapshot assertions so a failure
+cannot hang server cleanup.
+
+The deferred-download command's hand-written help was complete and lint-clean.
+Two independent dumps were identical; regeneration added its omitted index row
+and generated page. Verification also exposed a pre-existing `go vet` copy-lock
+failure, fixed by returning pointer snapshots of `ActionJob`, matching the
+existing download-job snapshot shape. Requested build, vet, staticcheck,
+focused tagged tests, affected plugin/server tests, docs freshness, and diff
+checks all pass. No files are staged.
+
+---
+
 # Ten rounds of adversarial review on the [meta inline] safety warning (2026-08-22)
 
 `[meta inline="true"]` was added so a Meta value could be placed in an HTML
