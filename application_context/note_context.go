@@ -226,6 +226,9 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 	var note models.Note
 
 	return &note, ctx.db.Preload(clause.Associations).
+		Preload("Owner.Category").
+		Preload("Owner.Owner").
+		Preload("Owner.Owner.Category").
 		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
 			return db.Order("position ASC, id ASC")
 		}).
@@ -242,7 +245,13 @@ func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_mo
 		return nil, err
 	}
 
-	return notes, db.Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
+	return notes, db.Limit(maxResults).Offset(offset).
+		Preload("Tags").
+		Preload("NoteType").
+		Preload("Owner.Category").
+		Preload("Owner.Owner").
+		Preload("Owner.Owner.Category").
+		Find(&notes).Error
 }
 
 func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) ([]*models.Note, error) {

@@ -291,6 +291,11 @@ export function blockEditor(noteId, initialBlocks = []) {
       return type.charAt(0).toUpperCase() + type.slice(1);
     },
 
+    getBlockTypeLabel(type) {
+      const blockType = this.blockTypes.find(bt => bt.type === type);
+      return blockType?.label || this._formatLabel(type.split(':').pop() || type);
+    },
+
     _getIconForType(type) {
       const icons = {
         text: '📝',

@@ -1,12 +1,25 @@
 package search
 
 import (
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestEntityDisplayTypeUsesTaxonomyName(t *testing.T) {
+	if got := entityDisplayType(models.Note{NoteType: &models.NoteType{Name: "PM Task"}}); got != "PM Task" {
+		t.Fatalf("note display type = %q", got)
+	}
+	if got := entityDisplayType(models.Group{Category: &models.Category{Name: "PM Epic"}}); got != "PM Epic" {
+		t.Fatalf("group display type = %q", got)
+	}
+	if got := entityDisplayType(models.Note{}); got != "" {
+		t.Fatalf("untyped note display type = %q, want fallback", got)
+	}
+}
 
 func TestCalculateRelevanceScore(t *testing.T) {
 	tests := []struct {

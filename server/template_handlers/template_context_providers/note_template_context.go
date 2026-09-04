@@ -117,21 +117,21 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 		}
 
 		return pongo2.Context{
-			"pageTitle":         "Notes",
-			"notes":             cards,
-			"groups":            groups,
-			"owners":            owners,
-			"pagination":        pagination,
+			"pageTitle":  "Notes",
+			"notes":      cards,
+			"groups":     groups,
+			"owners":     owners,
+			"pagination": pagination,
 			// The mass-edit panel's "edit all N results" reads this.
-			"totalCount":        noteCount,
-			"massEditEntity":    "note",
+			"totalCount":          noteCount,
+			"massEditEntity":      "note",
 			"massEditMetaKeysUrl": "/v1/notes/meta/keys",
-			"mrqlError":         mrqlError,
-			"tags":              tags,
-			"popularTags":       popularTags,
-			"noteTypes":         noteTypes,
-			"listHeaderCarrier": listHeaderCarrier,
-			"parsedQuery":       query,
+			"mrqlError":           mrqlError,
+			"tags":                tags,
+			"popularTags":         popularTags,
+			"noteTypes":           noteTypes,
+			"listHeaderCarrier":   listHeaderCarrier,
+			"parsedQuery":         query,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/note/new",
@@ -337,15 +337,19 @@ func NoteContextProvider(context NotePageContext) func(request *http.Request) po
 		}
 
 		var sectionConfig models.NoteSectionConfig
+		displayType := "Note"
 		if note.NoteType != nil {
 			sectionConfig = models.ResolveNoteSectionConfig(&note.NoteType.SectionConfig)
+			if strings.TrimSpace(note.NoteType.Name) != "" {
+				displayType = note.NoteType.Name
+			}
 		} else {
 			sectionConfig = models.ResolveNoteSectionConfig(nil)
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Note: " + note.GetName(),
-			"prefix":    "Note",
+			"pageTitle": displayType + ": " + note.GetName(),
+			"prefix":    displayType,
 			"note":      note,
 			"sc":        sectionConfig,
 			"action": template_entities.Entry{

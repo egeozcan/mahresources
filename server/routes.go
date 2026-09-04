@@ -383,7 +383,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			if !access(pluginName) {
 				return "", shortcodes.ErrPluginUnavailable
 			}
-			return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+			return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
 		}
 	}
 
@@ -406,6 +406,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				ParentGroupID: parentID,
 				RootGroupID:   rootID,
 			}
+			template_filters.EnrichMetaContextPresentation(&metaCtx, r)
 			r.ResourceCategory.CustomHeader = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomSummary = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer, executor)
@@ -429,6 +430,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				ParentGroupID: parentID,
 				RootGroupID:   appCtx.ResolveRootScopeID(g.ID),
 			}
+			template_filters.EnrichMetaContextPresentation(&metaCtx, g)
 			g.Category.CustomHeader = shortcodes.Process(reqCtx, g.Category.CustomHeader, metaCtx, pluginRenderer, executor)
 			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
 			g.Category.CustomSummary = shortcodes.Process(reqCtx, g.Category.CustomSummary, metaCtx, pluginRenderer, executor)
@@ -450,6 +452,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				ParentGroupID: parentID,
 				RootGroupID:   rootID,
 			}
+			template_filters.EnrichMetaContextPresentation(&metaCtx, n)
 			n.NoteType.CustomHeader = shortcodes.Process(reqCtx, n.NoteType.CustomHeader, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomSummary = shortcodes.Process(reqCtx, n.NoteType.CustomSummary, metaCtx, pluginRenderer, executor)
@@ -940,6 +943,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Plugin block render endpoint (must be before the catch-all). Request-scoped
 	// so a group-limited principal can only render blocks whose owning note is in
 	// its subtree (GetBlock/GetNote enforce visibility on the scoped context).
+	router.Methods(http.MethodPost).Path("/v1/plugins/block/render-batch").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetPluginBlockBatchRenderHandler(scopedCtx(appContext, r))(w, r)
+	})
 	router.Methods(http.MethodGet).Path("/v1/plugins/{pluginName}/block/render").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api_handlers.GetPluginBlockRenderHandler(scopedCtx(appContext, r))(w, r)
 	})

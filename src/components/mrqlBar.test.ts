@@ -239,6 +239,18 @@ describe('MRQL list form synchronization', () => {
         expect(mrqlToFormValues('note', 'shared = false').compatible).toBe(false);
     });
 
+    test('deduplicates repeated schema-bootstrap predicates', () => {
+        const noteValues = new FormData();
+        noteValues.append('NoteTypeId', '4');
+        noteValues.append('NoteTypeId', '4');
+        expect(formValuesToMRQL('note', noteValues)).toBe('noteType = 4');
+
+        const groupValues = new FormData();
+        groupValues.append('categories', '7');
+        groupValues.append('categories', '7');
+        expect(formValuesToMRQL('group', groupValues)).toBe('category = 7');
+    });
+
     test('translates the canonical subset back to form values', () => {
         const result = mrqlToFormValues(
             'note',

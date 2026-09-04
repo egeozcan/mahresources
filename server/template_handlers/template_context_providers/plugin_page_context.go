@@ -35,6 +35,9 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 			ctx["pluginPageTitle"] = "Not Found"
 			return ctx
 		}
+		if pm.PageHidesSidebar(pluginName, pagePath) {
+			ctx["hideSidebar"] = true
+		}
 
 		// Build query map
 		queryMap := make(map[string]any)

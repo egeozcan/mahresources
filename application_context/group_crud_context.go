@@ -404,11 +404,22 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 		Preload("OwnGroups.Category").
 		Preload("OwnResources", pageLimitCustom(5)).
 		Preload("OwnNotes", pageLimit).
+		Preload("OwnNotes.NoteType").
+		Preload("OwnNotes.Owner.Category").
+		Preload("OwnNotes.Owner.Owner").
+		Preload("OwnNotes.Owner.Owner.Category").
 		Preload("RelatedResources", pageLimitCustom(5)).
 		Preload("RelatedNotes", pageLimit).
+		Preload("RelatedNotes.NoteType").
+		Preload("RelatedNotes.Owner.Category").
+		Preload("RelatedNotes.Owner.Owner").
+		Preload("RelatedNotes.Owner.Owner.Category").
 		Preload("RelatedGroups", pageLimit).
 		Preload("Tags").
 		Preload("Owner").
+		Preload("Owner.Category").
+		Preload("Owner.Owner").
+		Preload("Owner.Owner.Category").
 		Preload("Category", pageLimit).
 		Preload("Relationships", relCond("to_group_id")).
 		Preload("Relationships.ToGroup").
@@ -439,7 +450,13 @@ func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_m
 	}
 
 	return groups, db.Limit(maxResults).
-		Offset(offset).Preload("Tags").Preload("Category").Find(&groups).Error
+		Offset(offset).
+		Preload("Tags").
+		Preload("Category").
+		Preload("Owner.Category").
+		Preload("Owner.Owner").
+		Preload("Owner.Owner.Category").
+		Find(&groups).Error
 }
 
 func (ctx *MahresourcesContext) GetGroupsWithIds(ids *[]uint) ([]*models.Group, error) {

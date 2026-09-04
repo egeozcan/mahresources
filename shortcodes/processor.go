@@ -57,17 +57,23 @@ type QueryResult struct {
 
 // QueryResultItem represents a single entity returned by a query.
 type QueryResultItem struct {
-	EntityType       string
-	EntityID         uint
-	Entity           any
-	Meta             json.RawMessage
-	MetaSchema       string
-	CustomMRQLResult string
-	CustomCSS        string // category-level CustomCSS, injected once per category as a <style> block
-	CategoryID       uint   // category/type ID, used to dedupe CustomCSS emission
-	ScopeGroupID     uint   // precomputed: owning group ID (or sentinel for ownerless)
-	ParentGroupID    uint   // precomputed: owner's owner ID
-	RootGroupID      uint   // precomputed: root of ownership chain
+	EntityType         string
+	EntityID           uint
+	Entity             any
+	Meta               json.RawMessage
+	MetaSchema         string
+	CustomMRQLResult   string
+	CustomCSS          string // category-level CustomCSS, injected once per category as a <style> block
+	CategoryID         uint   // category/type ID, used to dedupe CustomCSS emission
+	ScopeGroupID       uint   // precomputed: owning group ID (or sentinel for ownerless)
+	ParentGroupID      uint   // precomputed: owner's owner ID
+	RootGroupID        uint   // precomputed: root of ownership chain
+	ScopeGroupName     string
+	ScopeCategoryName  string
+	ParentGroupName    string
+	ParentCategoryName string
+	RootGroupName      string
+	RootCategoryName   string
 }
 
 // QueryResultGroup is a bucket of QueryResultItems sharing a common key.

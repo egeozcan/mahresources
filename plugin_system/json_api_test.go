@@ -87,6 +87,32 @@ end
 	}
 }
 
+func TestJsonEncode_ExplicitEmptyArray(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "json-test", `
+plugin = { name = "json-test", version = "1.0", description = "json api test" }
+function init()
+    mah.inject("page_bottom", function(ctx)
+        return mah.json.encode({items = mah.json.array({})})
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.EnablePlugin("json-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
+	if html != `{"items":[]}` {
+		t.Errorf("expected an explicit empty JSON array, got %q", html)
+	}
+}
+
 func TestJsonEncode_NestedArrayInObject(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "json-test", `

@@ -25,6 +25,7 @@
 /*.output.png
 /=file
 /server.log
+/.pm-demo-state
 .aider*
 
 # MRQL benchmark artifacts (reviewed baselines remain tracked)

@@ -11,6 +11,7 @@ type GlobalSearchQuery struct {
 type SearchResultItem struct {
 	ID          uint              `json:"id"`
 	Type        string            `json:"type"`
+	DisplayType string            `json:"displayType,omitempty"`
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Score       int               `json:"score"`

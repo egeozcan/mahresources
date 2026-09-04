@@ -111,6 +111,35 @@ func TestShortcodeRenderContext(t *testing.T) {
 	assert.Equal(t, "resource:42", html)
 }
 
+func TestShortcodePresentationContext(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-presentation", `
+		plugin = { name = "sc-presentation", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "owner",
+				label = "Owner",
+				render = function(ctx)
+					return ctx.presentation.scope.name .. ":" .. ctx.presentation.scope.category
+						.. ">" .. ctx.presentation.parent.name
+				end
+			})
+		end
+	`)
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("sc-presentation"))
+
+	html, err := pm.RenderShortcodeContext(context.Background(), "sc-presentation", "plugin:sc-presentation:owner", shortcodes.MetaShortcodeContext{
+		EntityType: "note", EntityID: 42,
+		ScopeGroupID: 7, ScopeGroupName: "Epic", ScopeCategoryName: "PM Epic",
+		ParentGroupID: 3, ParentGroupName: "Project", ParentCategoryName: "PM Project",
+	}, nil, "", false)
+	require.NoError(t, err)
+	assert.Equal(t, "Epic:PM Epic>Project", html)
+}
+
 func TestShortcodeNonStringReturnErrors(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "sc-badret", `

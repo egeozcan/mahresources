@@ -6,6 +6,12 @@ import (
 	"mahresources/models"
 )
 
+type presentationScopeResolver struct{ root uint }
+
+func (r presentationScopeResolver) DeferredSigningKey() []byte             { return nil }
+func (r presentationScopeResolver) ResolveParentScopeID(groupID uint) uint { return r.root }
+func (r presentationScopeResolver) ResolveRootScopeID(groupID uint) uint   { return r.root }
+
 // Carrier types (Category/ResourceCategory/NoteType) drive the CustomListHeader
 // list-header slot. buildMetaContext must accept them, resolve global scope
 // (0/0/0 — a carrier is not a group), and leave Meta empty.
@@ -49,5 +55,24 @@ func TestBuildMetaContextForCarrier(t *testing.T) {
 				t.Error("Entity should be the carrier itself, got nil")
 			}
 		})
+	}
+}
+
+func TestBuildMetaContextUsesPreloadedOwnerPresentation(t *testing.T) {
+	projectCategory := &models.Category{Name: "PM Project"}
+	epicCategory := &models.Category{Name: "PM Epic"}
+	project := &models.Group{ID: 3, Name: "Launch", Category: projectCategory}
+	projectID := project.ID
+	epic := &models.Group{ID: 7, Name: "Frontend", Category: epicCategory, OwnerId: &projectID, Owner: project}
+	epicID := epic.ID
+	note := &models.Note{ID: 11, Name: "Ship", OwnerId: &epicID, Owner: epic}
+
+	mctx := BuildMetaContextForEntity(note, presentationScopeResolver{root: project.ID})
+	if mctx == nil {
+		t.Fatal("missing meta context")
+	}
+	if mctx.ScopeGroupName != "Frontend" || mctx.ScopeCategoryName != "PM Epic" ||
+		mctx.ParentGroupName != "Launch" || mctx.ParentCategoryName != "PM Project" {
+		t.Fatalf("presentation names = %#v", mctx)
 	}
 }

@@ -12,8 +12,14 @@ import (
 // MRQLRenderScope contains the hierarchy values used by scoped shortcodes for a
 // group. Unresolved values use mrql.UnresolvedScopeSentinel.
 type MRQLRenderScope struct {
-	ParentGroupID uint
-	RootGroupID   uint
+	ScopeGroupName     string
+	ScopeCategoryName  string
+	ParentGroupID      uint
+	ParentGroupName    string
+	ParentCategoryName string
+	RootGroupID        uint
+	RootGroupName      string
+	RootCategoryName   string
 }
 
 // MRQLRenderData is the batch-loaded scalar data needed to render MRQL cards.
@@ -218,10 +224,12 @@ func (ctx *MahresourcesContext) loadMRQLScopes(reqCtx context.Context, cache *mr
 	}
 
 	type ancestryRow struct {
-		StartID uint  `gorm:"column:start_id"`
-		ID      uint  `gorm:"column:id"`
-		OwnerID *uint `gorm:"column:owner_id"`
-		Depth   int   `gorm:"column:depth"`
+		StartID      uint   `gorm:"column:start_id"`
+		ID           uint   `gorm:"column:id"`
+		OwnerID      *uint  `gorm:"column:owner_id"`
+		Name         string `gorm:"column:name"`
+		CategoryName string `gorm:"column:category_name"`
+		Depth        int    `gorm:"column:depth"`
 	}
 	var rows []ancestryRow
 	err := ctx.db.WithContext(reqCtx).Raw(`
@@ -233,8 +241,11 @@ func (ctx *MahresourcesContext) loadMRQLScopes(reqCtx context.Context, cache *mr
 			JOIN groups g ON g.id = a.owner_id
 			WHERE a.depth < 50
 		)
-		SELECT start_id, id, owner_id, depth
-		FROM mrql_ancestry
+		SELECT a.start_id, a.id, a.owner_id, g.name,
+			COALESCE(c.name, '') AS category_name, a.depth
+		FROM mrql_ancestry a
+		JOIN groups g ON g.id = a.id
+		LEFT JOIN categories c ON c.id = g.category_id
 		ORDER BY start_id, depth
 	`, missing).Scan(&rows).Error
 	if err != nil {
@@ -250,12 +261,22 @@ func (ctx *MahresourcesContext) loadMRQLScopes(reqCtx context.Context, cache *mr
 	}
 	for _, row := range rows {
 		scope := cache.scopes[row.StartID]
-		if row.Depth == 0 && row.OwnerID != nil && *row.OwnerID > 0 {
-			scope.ParentGroupID = *row.OwnerID
+		if row.Depth == 0 {
+			scope.ScopeGroupName = row.Name
+			scope.ScopeCategoryName = row.CategoryName
+			if row.OwnerID != nil && *row.OwnerID > 0 {
+				scope.ParentGroupID = *row.OwnerID
+			}
+		}
+		if row.Depth == 1 {
+			scope.ParentGroupName = row.Name
+			scope.ParentCategoryName = row.CategoryName
 		}
 		// Rows are depth ordered; the deepest existing ancestor is the root, or
 		// the same bounded fallback returned by ResolveRootScopeID for a cycle.
 		scope.RootGroupID = row.ID
+		scope.RootGroupName = row.Name
+		scope.RootCategoryName = row.CategoryName
 		cache.scopes[row.StartID] = scope
 	}
 	for _, id := range missing {

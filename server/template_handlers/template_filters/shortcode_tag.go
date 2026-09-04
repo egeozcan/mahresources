@@ -81,7 +81,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 				if !access(pluginName) {
 					return "", shortcodes.ErrPluginUnavailable
 				}
-				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+				return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
 			}
 		}
 	}
@@ -237,7 +237,7 @@ func buildMetaContext(entity any, appCtx MetaScopeResolver) *shortcodes.MetaShor
 	// Extract scope fields — DB-backed when appCtx is available
 	scopeID, parentID, rootID := resolveScopeFromEntity(v, entityType, id, appCtx)
 
-	return &shortcodes.MetaShortcodeContext{
+	metaCtx := &shortcodes.MetaShortcodeContext{
 		EntityType:    entityType,
 		EntityID:      id,
 		Meta:          metaJSON,
@@ -247,6 +247,84 @@ func buildMetaContext(entity any, appCtx MetaScopeResolver) *shortcodes.MetaShor
 		ParentGroupID: parentID,
 		RootGroupID:   rootID,
 	}
+	populatePresentationNames(metaCtx, v)
+	return metaCtx
+}
+
+// EnrichMetaContextPresentation is used by non-template render paths that
+// already assembled a MetaShortcodeContext but still have the preloaded entity.
+func EnrichMetaContextPresentation(ctx *shortcodes.MetaShortcodeContext, entity any) {
+	v := reflect.ValueOf(entity)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return
+		}
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Struct {
+		populatePresentationNames(ctx, v)
+	}
+}
+
+type presentationGroup struct {
+	id       uint
+	name     string
+	category string
+}
+
+// populatePresentationNames reads only associations the page query already
+// preloaded. It never performs a lookup; callers that render collections can
+// therefore add ownership context without turning each card into another DB
+// round trip.
+func populatePresentationNames(ctx *shortcodes.MetaShortcodeContext, entity reflect.Value) {
+	groups := make([]presentationGroup, 0, 4)
+	if ctx.EntityType == "group" {
+		if group, ok := presentationGroupFromValue(entity); ok {
+			groups = append(groups, group)
+		}
+	}
+	owner := entity.FieldByName("Owner")
+	for depth := 0; depth < 8 && owner.IsValid() && owner.Kind() == reflect.Ptr && !owner.IsNil(); depth++ {
+		value := owner.Elem()
+		group, ok := presentationGroupFromValue(value)
+		if !ok {
+			break
+		}
+		groups = append(groups, group)
+		owner = value.FieldByName("Owner")
+	}
+
+	for _, group := range groups {
+		switch group.id {
+		case ctx.ScopeGroupID:
+			ctx.ScopeGroupName, ctx.ScopeCategoryName = group.name, group.category
+		case ctx.ParentGroupID:
+			ctx.ParentGroupName, ctx.ParentCategoryName = group.name, group.category
+		}
+		if group.id == ctx.RootGroupID {
+			ctx.RootGroupName, ctx.RootCategoryName = group.name, group.category
+		}
+	}
+}
+
+func presentationGroupFromValue(value reflect.Value) (presentationGroup, bool) {
+	if value.Kind() != reflect.Struct {
+		return presentationGroup{}, false
+	}
+	id := value.FieldByName("ID")
+	name := value.FieldByName("Name")
+	if !id.IsValid() || id.Kind() != reflect.Uint || !name.IsValid() || name.Kind() != reflect.String {
+		return presentationGroup{}, false
+	}
+	group := presentationGroup{id: uint(id.Uint()), name: name.String()}
+	category := value.FieldByName("Category")
+	if category.IsValid() && category.Kind() == reflect.Ptr && !category.IsNil() {
+		categoryName := category.Elem().FieldByName("Name")
+		if categoryName.IsValid() && categoryName.Kind() == reflect.String {
+			group.category = categoryName.String()
+		}
+	}
+	return group, group.id > 0
 }
 
 // carrierEntityType maps a carrier struct name (Category/ResourceCategory/NoteType)

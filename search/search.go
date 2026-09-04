@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"gorm.io/gorm"
 )
 
 // Entity type constants
@@ -400,6 +402,40 @@ func entityExtra(v any) map[string]string {
 	return nil
 }
 
+// entityDisplayType preserves the storage kind for routing while exposing the
+// taxonomy name people actually work with in search (for example PM Task or PM
+// Epic). Empty means the client should use its generic type label.
+func entityDisplayType(v any) string {
+	switch e := v.(type) {
+	case models.Note:
+		if e.NoteType != nil {
+			return e.NoteType.Name
+		}
+	case models.Group:
+		if e.Category != nil {
+			return e.Category.Name
+		}
+	case models.Resource:
+		if e.ResourceCategory != nil {
+			return e.ResourceCategory.Name
+		}
+	}
+	return ""
+}
+
+func preloadSearchDisplayType(db *gorm.DB, entityType string) *gorm.DB {
+	switch entityType {
+	case EntityTypeNote:
+		return db.Preload("NoteType")
+	case EntityTypeGroup:
+		return db.Preload("Category")
+	case EntityTypeResource:
+		return db.Preload("ResourceCategory")
+	default:
+		return db
+	}
+}
+
 // entityExtraText returns additional searchable text fields for relevance scoring.
 // For resources, this includes the original_name so that matches on the original
 // filename are scored appropriately (instead of falling through to the minimum score).
@@ -450,7 +486,7 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 	}
 
 	var entities []T
-	ctx.db.
+	preloadSearchDisplayType(ctx.db, entityType).
 		Where(strings.Join(whereParts, " OR "), args...).
 		Limit(limit).
 		Find(&entities)
@@ -461,6 +497,7 @@ func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string,
 		results = append(results, query_models.SearchResultItem{
 			ID:          id,
 			Type:        info.entityType,
+			DisplayType: entityDisplayType(e),
 			Name:        name,
 			Description: truncateDescription(description, 100),
 			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)),
@@ -489,7 +526,7 @@ func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.Pa
 	info := entitySearchInfo[entityType]
 
 	var entities []T
-	ctx.db.Model(new(T)).
+	preloadSearchDisplayType(ctx.db.Model(new(T)), entityType).
 		Scopes(state.provider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit).
 		Find(&entities)
@@ -504,6 +541,7 @@ func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.Pa
 		results = append(results, query_models.SearchResultItem{
 			ID:          id,
 			Type:        info.entityType,
+			DisplayType: entityDisplayType(e),
 			Name:        name,
 			Description: truncateDescription(description, 100),
 			Score:       score,

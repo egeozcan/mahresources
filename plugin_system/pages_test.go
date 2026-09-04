@@ -50,6 +50,36 @@ end
 	}
 }
 
+func TestPageRegistration_HideSidebarOption(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "wide-page", `
+plugin = { name = "wide-page", version = "1.0", description = "wide page" }
+function init()
+    mah.page("wide", function() return "<p>wide</p>" end, { hide_sidebar = true })
+    mah.page("standard", function() return "<p>standard</p>" end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("wide-page"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	if !pm.PageHidesSidebar("wide-page", "wide") {
+		t.Fatal("expected wide page to hide the host sidebar")
+	}
+	if pm.PageHidesSidebar("wide-page", "standard") {
+		t.Fatal("standard page should retain the host sidebar")
+	}
+	if pm.PageHidesSidebar("wide-page", "docs") {
+		t.Fatal("unregistered and generated pages should retain the host sidebar")
+	}
+}
+
 func TestHandlePage_Success(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "myapp", `

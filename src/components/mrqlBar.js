@@ -238,8 +238,9 @@ export function formValuesToMRQL(entity, formData, relationValues = new Map()) {
     if (entity === 'resource' && formData.get('Untagged')) clauses.push('tags IS EMPTY');
     if (entity === 'resource' && formData.get('ShowWithSimilar')) clauses.push('similarImages IS NOT EMPTY');
     clauses.push(...metadataValuesToMRQL(entity, formData));
+    const uniqueClauses = [...new Set(clauses)];
     const orderBy = sortValuesToMRQL(entity, formData.getAll('SortBy'));
-    return clauses.join(' AND ') + (orderBy ? `${clauses.length ? ' ' : ''}ORDER BY ${orderBy}` : '');
+    return uniqueClauses.join(' AND ') + (orderBy ? `${uniqueClauses.length ? ' ' : ''}ORDER BY ${orderBy}` : '');
 }
 
 function sortValuesToMRQL(entity, sortValues) {

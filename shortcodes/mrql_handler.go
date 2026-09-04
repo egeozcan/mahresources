@@ -217,14 +217,17 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 			}
 			seen[key] = true
 			childCtx := MetaShortcodeContext{
-				EntityType:    it.EntityType,
-				EntityID:      it.EntityID,
-				Meta:          it.Meta,
-				MetaSchema:    it.MetaSchema,
-				Entity:        it.Entity,
-				ScopeGroupID:  it.ScopeGroupID,
-				ParentGroupID: it.ParentGroupID,
-				RootGroupID:   it.RootGroupID,
+				EntityType:     it.EntityType,
+				EntityID:       it.EntityID,
+				Meta:           it.Meta,
+				MetaSchema:     it.MetaSchema,
+				Entity:         it.Entity,
+				ScopeGroupID:   it.ScopeGroupID,
+				ParentGroupID:  it.ParentGroupID,
+				RootGroupID:    it.RootGroupID,
+				ScopeGroupName: it.ScopeGroupName, ScopeCategoryName: it.ScopeCategoryName,
+				ParentGroupName: it.ParentGroupName, ParentCategoryName: it.ParentCategoryName,
+				RootGroupName: it.RootGroupName, RootCategoryName: it.RootCategoryName,
 			}
 			css := processWithDepth(reqCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
 			b.WriteString(`<style data-mr-custom-css="` + key + `">` + css + `</style>`)
@@ -294,14 +297,17 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, rende
 	for _, item := range items {
 		if item.CustomMRQLResult != "" {
 			childCtx := MetaShortcodeContext{
-				EntityType:    item.EntityType,
-				EntityID:      item.EntityID,
-				Meta:          item.Meta,
-				MetaSchema:    item.MetaSchema,
-				Entity:        item.Entity,
-				ScopeGroupID:  item.ScopeGroupID,
-				ParentGroupID: item.ParentGroupID,
-				RootGroupID:   item.RootGroupID,
+				EntityType:     item.EntityType,
+				EntityID:       item.EntityID,
+				Meta:           item.Meta,
+				MetaSchema:     item.MetaSchema,
+				Entity:         item.Entity,
+				ScopeGroupID:   item.ScopeGroupID,
+				ParentGroupID:  item.ParentGroupID,
+				RootGroupID:    item.RootGroupID,
+				ScopeGroupName: item.ScopeGroupName, ScopeCategoryName: item.ScopeCategoryName,
+				ParentGroupName: item.ParentGroupName, ParentCategoryName: item.ParentCategoryName,
+				RootGroupName: item.RootGroupName, RootCategoryName: item.RootCategoryName,
 			}
 			rendered := processWithDepth(reqCtx, item.CustomMRQLResult, childCtx, renderer, executor, depth+1)
 			b.WriteString(rendered)

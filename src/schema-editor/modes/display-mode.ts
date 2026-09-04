@@ -262,7 +262,7 @@ export class SchemaDisplayMode extends LitElement {
       <div class="detail-panel mb-6" aria-label="Schema metadata">
         <div class="detail-panel-header" style="background: #fafaf9;">
           <h2 class="detail-panel-title">Metadata</h2>
-          ${this.name ? html`<span class="text-xs font-mono text-stone-400">${this.name}</span>` : nothing}
+          ${this.name ? html`<span class="text-xs font-mono text-stone-500">${this.name}</span>` : nothing}
         </div>
         <div class="detail-panel-body" style="padding: 1rem;">
           ${shortFields.length > 0 ? html`
@@ -278,7 +278,7 @@ export class SchemaDisplayMode extends LitElement {
           ${emptyFields.length > 0 ? html`
             <div class="mt-3 pt-3 border-t border-stone-100">
               <button
-                class="text-xs font-mono text-stone-400 hover:text-stone-600 cursor-pointer bg-transparent border-none p-0"
+                class="text-xs font-mono text-stone-500 hover:text-stone-700 cursor-pointer bg-transparent border-none p-0"
                 @click=${() => { this._showEmpty = !this._showEmpty; }}
               >${this._showEmpty
                 ? 'Hide empty fields'
@@ -294,7 +294,7 @@ export class SchemaDisplayMode extends LitElement {
   private _renderShortField(field: DisplayField): TemplateResult {
     return html`
       <div class="group relative">
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
+        <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
           @click=${() => this._copyText(field.path)}
@@ -308,7 +308,7 @@ export class SchemaDisplayMode extends LitElement {
   private _renderLongField(field: DisplayField): TemplateResult {
     return html`
       <div class="mb-3 last:mb-0">
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
+        <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
           @click=${() => this._copyText(field.path)}
@@ -359,7 +359,7 @@ export class SchemaDisplayMode extends LitElement {
       if (color) {
         return html`<span
           class="inline-block text-xs px-2.5 py-0.5 rounded-full font-medium"
-          style=${`background: color-mix(in srgb, ${color} 15%, white); color: ${color}`}
+          style=${`background: color-mix(in srgb, ${color} 15%, white); color: color-mix(in srgb, ${color} 50%, black)`}
           title=${tooltip || nothing}
         >${label}</span>`;
       }
@@ -447,7 +447,7 @@ export class SchemaDisplayMode extends LitElement {
         ${entries.map(([k, v]) => {
           const keyPath = path ? `${path}.${k}` : k;
           return html`
-            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline cursor-pointer hover:text-stone-600" style="letter-spacing:0.05em;"
+            <span class="text-[10px] font-mono uppercase text-stone-500 tracking-wider self-baseline cursor-pointer hover:text-stone-700" style="letter-spacing:0.05em;"
               title=${keyPath}
               @click=${(e: Event) => { e.stopPropagation(); this._copyText(keyPath); }}
             >${titleCase(k)}</span>

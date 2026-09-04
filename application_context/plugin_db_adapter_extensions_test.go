@@ -401,3 +401,25 @@ func TestPluginDBAdapter_PatchIgnoresMistypedStrings(t *testing.T) {
 		t.Errorf("an explicit empty string should clear, got %q", after["description"])
 	}
 }
+
+func TestPluginDBAdapter_NoteTypeShareTemplateFlagRoundTrips(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+	created, err := adapter.CreateNoteType(map[string]any{
+		"name": "Shared PM Task", "apply_templates_to_shares": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created["apply_templates_to_shares"] != true {
+		t.Fatalf("created flag = %#v", created["apply_templates_to_shares"])
+	}
+	id := uint(created["id"].(float64))
+	patched, err := adapter.PatchNoteType(id, map[string]any{"apply_templates_to_shares": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched["apply_templates_to_shares"] != false {
+		t.Fatalf("patched flag = %#v", patched["apply_templates_to_shares"])
+	}
+}

@@ -20,6 +20,16 @@ type MetaShortcodeContext struct {
 	ScopeGroupID  uint            // resolved "entity" scope (owning group or sentinel for ownerless)
 	ParentGroupID uint            // resolved "parent" scope (owner's owner)
 	RootGroupID   uint            // resolved "root" scope (top of chain)
+	// Presentation names accompany the resolved IDs so plugin templates can
+	// render ownership breadcrumbs without issuing one lookup per card. They are
+	// populated from preloaded associations on native pages and from the MRQL
+	// renderer's request-local ancestry batch on query-result surfaces.
+	ScopeGroupName     string
+	ScopeCategoryName  string
+	ParentGroupName    string
+	ParentCategoryName string
+	RootGroupName      string
+	RootCategoryName   string
 	// decodedMeta memoizes the parsed Meta for every reader of it — the [meta]
 	// widget's value, its schema slice, inline values, and the paths [each] and
 	// [conditional] resolve. It is a pointer because this struct travels by value

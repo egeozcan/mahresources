@@ -161,7 +161,8 @@ strings)
 #### Note Type Fields
 
 The Category fields above except `custom_own_entities`, plus `section_config`
-(string, JSON-encoded).
+(string, JSON-encoded) and `apply_templates_to_shares` (boolean). The latter
+opts the note type's safe template subset into public shares.
 
 #### Resource Category Fields
 
@@ -1224,6 +1225,20 @@ if data then
 end
 ```
 
+### mah.json.array(table)
+
+Marks a table as a JSON array and returns the same table. This is mainly needed
+for empty lists: Lua's `{}` has no object/array distinction, so it otherwise
+encodes as `{}`. The marked table works normally with `ipairs` and numeric
+indexes, and both `mah.json.encode` and API `ctx.json` responses preserve its
+array shape.
+
+```lua
+mah.json.encode({ items = mah.json.array({}) }) -- '{"items":[]}'
+```
+
+The table must contain only consecutive integer keys starting at 1.
+
 ## mah.image -- Image Processing
 
 Image manipulation utilities that operate on base64 data URIs.
@@ -1620,6 +1635,7 @@ The `render` function receives a single `ctx` table:
 | `ctx.inner_content` | Content between opening and closing tags (empty for self-closing shortcodes) |
 | `ctx.is_block` | `true` if the shortcode was used as a block `[name]...[/name]`, `false` otherwise |
 | `ctx.entity` | The full entity as a Lua table (fields vary by type). Present only when the render was given an entity |
+| `ctx.presentation` | Host-resolved `scope`, `parent`, and `root` group tables (`id`, `name`, `category`) when available. Collection and MRQL surfaces batch these values so renderers can show ownership without per-item DB calls |
 
 ### Name Rules
 

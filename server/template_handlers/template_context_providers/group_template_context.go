@@ -125,15 +125,15 @@ func GroupsListContextProvider(context GroupPageContext) func(request *http.Requ
 			"listHeaderCarrier": listHeaderCarrier,
 			"pagination":        pagination,
 			// The mass-edit panel's "edit all N results" reads this.
-			"totalCount":        groupsCount,
-			"massEditEntity":    "group",
+			"totalCount":          groupsCount,
+			"massEditEntity":      "group",
 			"massEditMetaKeysUrl": "/v1/groups/meta/keys",
-			"mrqlError":         mrqlError,
-			"tags":              tags,
-			"popularTags":       popularTags,
-			"notes":             notes,
-			"resources":         resources,
-			"parsedQuery":       query,
+			"mrqlError":           mrqlError,
+			"tags":                tags,
+			"popularTags":         popularTags,
+			"notes":               notes,
+			"resources":           resources,
+			"parsedQuery":         query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -353,9 +353,11 @@ func groupContextProviderImpl(context contracts.GroupReader) func(request *http.
 		}
 
 		var prefix string
+		displayType := "Group"
 
 		if group.Category != nil {
 			prefix = group.Category.Name
+			displayType = group.Category.Name
 		} else {
 			prefix = "Uncategorized"
 		}
@@ -368,7 +370,7 @@ func groupContextProviderImpl(context contracts.GroupReader) func(request *http.
 		}
 
 		result := pongo2.Context{
-			"pageTitle": "Group: " + group.GetName(),
+			"pageTitle": displayType + ": " + group.GetName(),
 			"prefix":    prefix,
 			"group":     group,
 			"sc":        sectionConfig,

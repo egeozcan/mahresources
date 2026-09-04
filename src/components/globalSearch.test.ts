@@ -88,3 +88,19 @@ describe('globalSearch refuses to open under another dialog', () => {
         expect(component.isOpen).toBe(false);
     });
 });
+
+describe('globalSearch result identity', () => {
+    test('prefers the server-provided taxonomy display type', () => {
+        expect(component.getResultLabel({ type: 'note', displayType: 'PM Task' })).toBe('PM Task');
+        expect(component.getResultLabel({ type: 'note' })).toBe('Note');
+    });
+
+    test('announces the taxonomy display type for keyboard selection', () => {
+        const announce = vi.fn();
+        component.announce = announce;
+        component.results = [{ id: 1, type: 'note', displayType: 'PM Task', name: 'Ship', url: '/note?id=1' }];
+        component.selectedIndex = 0;
+        component.announceSelectedResult();
+        expect(announce).toHaveBeenCalledWith('Ship, PM Task, 1 of 1');
+    });
+});

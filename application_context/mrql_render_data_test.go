@@ -34,12 +34,20 @@ func setupMRQLRenderDataTest(t *testing.T) (*MahresourcesContext, *gorm.DB) {
 
 func TestLoadMRQLRenderDataBatchesScopesAndCaches(t *testing.T) {
 	ctx, db := setupMRQLRenderDataTest(t)
-	root := &models.Group{Name: "root"}
+	projectCategory := &models.Category{Name: "PM Project"}
+	epicCategory := &models.Category{Name: "PM Epic"}
+	if err := db.Create(projectCategory).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(epicCategory).Error; err != nil {
+		t.Fatal(err)
+	}
+	root := &models.Group{Name: "root", CategoryId: &projectCategory.ID}
 	if err := db.Create(root).Error; err != nil {
 		t.Fatal(err)
 	}
 	rootID := root.ID
-	child := &models.Group{Name: "child", OwnerId: &rootID}
+	child := &models.Group{Name: "child", OwnerId: &rootID, CategoryId: &epicCategory.ID}
 	if err := db.Create(child).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +77,10 @@ func TestLoadMRQLRenderDataBatchesScopesAndCaches(t *testing.T) {
 	scope := data.Scopes[child.ID]
 	if scope.ParentGroupID != root.ID || scope.RootGroupID != root.ID {
 		t.Fatalf("scope = %#v, want parent/root %d", scope, root.ID)
+	}
+	if scope.ScopeGroupName != "child" || scope.ScopeCategoryName != "PM Epic" ||
+		scope.ParentGroupName != "root" || scope.ParentCategoryName != "PM Project" {
+		t.Fatalf("presentation scope = %#v", scope)
 	}
 	firstCount := queries.Load()
 	if firstCount > 2 {

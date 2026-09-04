@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"mahresources/constants"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ActivityEntry represents a single item in the dashboard activity feed.
 type ActivityEntry struct {
-	EntityType string    `gorm:"column:entity_type"`
-	EntityID   uint      `gorm:"column:entity_id"`
-	Name       string    `gorm:"column:name"`
-	Action     string    `gorm:"column:action"`
-	Timestamp  time.Time `gorm:"column:timestamp"`
+	EntityType  string    `gorm:"column:entity_type"`
+	DisplayType string    `gorm:"-"`
+	EntityID    uint      `gorm:"column:entity_id"`
+	Name        string    `gorm:"column:name"`
+	Action      string    `gorm:"column:action"`
+	Timestamp   time.Time `gorm:"column:timestamp"`
 }
 
 // GetRecentActivity returns a mixed timeline of recently created and updated entities.
@@ -91,6 +94,75 @@ func (ctx *MahresourcesContext) GetRecentActivity(limit int) ([]ActivityEntry, e
 	}
 	params = append(params, limit, limit, limit) // tag created, tag updated, final
 
-	err := ctx.db.Raw(query, params...).Scan(&entries).Error
-	return entries, err
+	if err := ctx.db.Raw(query, params...).Scan(&entries).Error; err != nil {
+		return nil, err
+	}
+	if err := ctx.populateActivityDisplayTypes(entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+type activityDisplayTypeRow struct {
+	ID          uint   `gorm:"column:id"`
+	DisplayType string `gorm:"column:display_type"`
+}
+
+// populateActivityDisplayTypes resolves taxonomy labels in at most one query
+// per storage kind, regardless of feed length. EntityType remains unchanged so
+// links and colour classes retain their stable routing key.
+func (ctx *MahresourcesContext) populateActivityDisplayTypes(entries []ActivityEntry) error {
+	ids := map[string][]uint{"resource": {}, "note": {}, "group": {}}
+	for i := range entries {
+		switch entries[i].EntityType {
+		case "resource", "note", "group":
+			ids[entries[i].EntityType] = append(ids[entries[i].EntityType], entries[i].EntityID)
+		case "tag":
+			entries[i].DisplayType = "Tag"
+		default:
+			entries[i].DisplayType = entries[i].EntityType
+		}
+	}
+
+	labels := make(map[string]map[uint]string, 3)
+	queries := map[string]*gorm.DB{
+		"resource": ctx.db.Table("resources r").Select("r.id, COALESCE(rc.name, 'Resource') AS display_type").Joins("LEFT JOIN resource_categories rc ON rc.id = r.resource_category_id"),
+		"note":     ctx.db.Table("notes n").Select("n.id, COALESCE(nt.name, 'Note') AS display_type").Joins("LEFT JOIN note_types nt ON nt.id = n.note_type_id"),
+		"group":    ctx.db.Table("groups g").Select("g.id, COALESCE(c.name, 'Group') AS display_type").Joins("LEFT JOIN categories c ON c.id = g.category_id"),
+	}
+	for _, entityType := range []string{"resource", "note", "group"} {
+		uniqueIDs := uniqueNonZeroIDs(ids[entityType])
+		if len(uniqueIDs) == 0 {
+			continue
+		}
+		var rows []activityDisplayTypeRow
+		if err := queries[entityType].Where(entityTypeTableIDColumn(entityType)+" IN ?", uniqueIDs).Scan(&rows).Error; err != nil {
+			return err
+		}
+		labels[entityType] = make(map[uint]string, len(rows))
+		for _, row := range rows {
+			labels[entityType][row.ID] = row.DisplayType
+		}
+	}
+	for i := range entries {
+		if entries[i].DisplayType != "" {
+			continue
+		}
+		entries[i].DisplayType = labels[entries[i].EntityType][entries[i].EntityID]
+		if entries[i].DisplayType == "" {
+			entries[i].DisplayType = map[string]string{"resource": "Resource", "note": "Note", "group": "Group"}[entries[i].EntityType]
+		}
+	}
+	return nil
+}
+
+func entityTypeTableIDColumn(entityType string) string {
+	switch entityType {
+	case "resource":
+		return "r.id"
+	case "note":
+		return "n.id"
+	default:
+		return "g.id"
+	}
 }

@@ -195,7 +195,7 @@ func customCSSPluginRenderer(ctx *pongo2.ExecutionContext, reqCtx context.Contex
 		if !access(pluginName) {
 			return "", shortcodes.ErrPluginUnavailable
 		}
-		return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+		return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 	"time"
 
@@ -31,7 +32,19 @@ func goToLuaTable(L *lua.LState, data map[string]any) *lua.LTable {
 
 // goToLuaValue converts a Go value to its Lua equivalent.
 func goToLuaValue(L *lua.LState, v any) lua.LValue {
+	return goToLuaValueDepth(L, v, 0)
+}
+
+// goToLuaValueDepth is goToLuaValue with a pointer-chain depth budget. The
+// recursive pointer unwrap in the default branch cannot cycle through values
+// produced by database scans or json — the inputs that reach this converter —
+// but the guard keeps a hand-constructed cyclic chain from recursing to stack
+// exhaustion instead of to a value.
+func goToLuaValueDepth(L *lua.LState, v any, depth int) lua.LValue {
 	if v == nil {
+		return lua.LNil
+	}
+	if depth > 64 {
 		return lua.LNil
 	}
 	switch val := v.(type) {
@@ -56,10 +69,24 @@ func goToLuaValue(L *lua.LState, v any) lua.LValue {
 	case []any:
 		tbl := L.NewTable()
 		for i, item := range val {
-			tbl.RawSetInt(i+1, goToLuaValue(L, item))
+			tbl.RawSetInt(i+1, goToLuaValueDepth(L, item, depth+1))
 		}
 		return tbl
 	default:
+		// GORM's scan into []map[string]any hands back pointers for the map's
+		// values — empirically *interface{} wrapping the real scalar — because
+		// it does not know which columns may be NULL. The encoding/json paths
+		// that also serve these rows dereference them, so the JSON API and
+		// mah.db.mrql_query used to disagree: an aggregated GROUP BY ... COUNT()
+		// row reached Lua as "0x..." pointer strings. Unwrap pointer layers and
+		// convert what they hold; a typed nil pointer is nil, not "<nil>".
+		pv := reflect.ValueOf(v)
+		if pv.Kind() == reflect.Pointer {
+			if pv.IsNil() {
+				return lua.LNil
+			}
+			return goToLuaValueDepth(L, pv.Elem().Interface(), depth+1)
+		}
 		return lua.LString(fmt.Sprintf("%v", val))
 	}
 }

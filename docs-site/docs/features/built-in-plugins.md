@@ -5,7 +5,7 @@ title: Built-in Plugins
 
 # Built-in Plugins
 
-Mahresources ships with six plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
+Mahresources ships with seven plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
 The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
 
@@ -19,6 +19,7 @@ All six ship an `api_version = 1` manifest, and enabling one is your consent to 
 | example-blocks | `render` | none |
 | example-plugin | `hooks`, `inject`, `pages` | none |
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
+| project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv` | none |
 
 fal-ai is the only one that reaches the network.
 
@@ -168,6 +169,26 @@ The page renders a documented union of prompt, sizing, format, seed, quality/bac
 | Safety tolerance | Sent to the Nano Banana family. Seedream maps levels 1-2 to its boolean checker; models without a tolerance field ignore it. |
 | Format | Sent where supported. Seedream maps WebP to JPEG, while Fibo uses its endpoint-native result format. |
 | Advanced controls | Seed, GPT/Grok quality, GPT background, Nano Banana thinking/system prompt/web search, and Fibo style preset are each sent only to models that declare them. |
+
+## project-management
+
+A project tracker built on the host's own entities: projects are groups in the
+**PM Project** category, epics are groups in the **PM Epic** category owned by
+their project, and tasks are notes of the **PM Task** type (status, priority
+and an order key in the note meta, due/start on the note's native dates). The
+plugin page serves a kanban board, a filterable backlog, a dashboard and a
+due-date timeline, all rendered client-side from the ordinary `/v1/notes`
+endpoint; every mutation runs through the plugin's own API, which validates
+statuses and dates and does the ordering inside a transaction. Tasks remain
+plain notes — searchable, mass-edit-able and group-export-able. The provisioned
+taxonomies also carry native detail, summary, hover, list and MRQL templates,
+and PM Task notes gain filtered **Acceptance criteria** and **Status update**
+block types.
+
+Because it needs two categories and a note type, the plugin provisions them in
+an explicit **Set up** step (admin only) rather than in `init()`. See
+[Project Management](./project-management.md) for the full story, the settings
+and the known limits.
 
 ## Enabling a Plugin
 

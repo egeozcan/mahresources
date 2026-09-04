@@ -819,6 +819,11 @@ func getStringOpt(opts map[string]any, key string) string {
 	return ""
 }
 
+func getBoolOpt(opts map[string]any, key string) bool {
+	v, _ := opts[key].(bool)
+	return v
+}
+
 // getUintOpt extracts a uint value from an options map (expects float64 from Lua).
 //
 // A fractional value is not read as its floor: Lua has one number type, so an
@@ -907,6 +912,14 @@ func patchString(opts map[string]any, key, current string) string {
 		return current
 	}
 	return getStringOpt(opts, key)
+}
+
+func patchBool(opts map[string]any, key string, current bool) bool {
+	v, ok := opts[key].(bool)
+	if !ok {
+		return current
+	}
+	return v
 }
 
 // patchUint returns opts[key] if present, otherwise current.
@@ -1082,21 +1095,22 @@ func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
 
 func noteTypeToMap(nt *models.NoteType) map[string]any {
 	return map[string]any{
-		"id":                   float64(nt.ID),
-		"name":                 nt.Name,
-		"description":          nt.Description,
-		"custom_header":        nt.CustomHeader,
-		"custom_sidebar":       nt.CustomSidebar,
-		"custom_summary":       nt.CustomSummary,
-		"custom_avatar":        nt.CustomAvatar,
-		"custom_list_header":   nt.CustomListHeader,
-		"custom_detail_footer": nt.CustomDetailFooter,
-		"custom_list_footer":   nt.CustomListFooter,
-		"custom_hover_card":    nt.CustomHoverCard,
-		"custom_mrql_result":   nt.CustomMRQLResult,
-		"custom_css":           nt.CustomCSS,
-		"meta_schema":          nt.MetaSchema,
-		"section_config":       string(nt.SectionConfig),
+		"id":                        float64(nt.ID),
+		"name":                      nt.Name,
+		"description":               nt.Description,
+		"custom_header":             nt.CustomHeader,
+		"custom_sidebar":            nt.CustomSidebar,
+		"custom_summary":            nt.CustomSummary,
+		"custom_avatar":             nt.CustomAvatar,
+		"custom_list_header":        nt.CustomListHeader,
+		"custom_detail_footer":      nt.CustomDetailFooter,
+		"custom_list_footer":        nt.CustomListFooter,
+		"custom_hover_card":         nt.CustomHoverCard,
+		"apply_templates_to_shares": nt.ApplyTemplatesToShares,
+		"custom_mrql_result":        nt.CustomMRQLResult,
+		"custom_css":                nt.CustomCSS,
+		"meta_schema":               nt.MetaSchema,
+		"section_config":            string(nt.SectionConfig),
 	}
 }
 
@@ -1537,21 +1551,22 @@ func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (m
 
 func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, error) {
 	editor := &query_models.NoteTypeEditor{
-		ID:                 0, // ID=0 means create
-		Name:               getStringOpt(opts, "name"),
-		Description:        getStringOpt(opts, "description"),
-		CustomHeader:       getStringOpt(opts, "custom_header"),
-		CustomSidebar:      getStringOpt(opts, "custom_sidebar"),
-		CustomSummary:      getStringOpt(opts, "custom_summary"),
-		CustomAvatar:       getStringOpt(opts, "custom_avatar"),
-		CustomListHeader:   getStringOpt(opts, "custom_list_header"),
-		CustomDetailFooter: getStringOpt(opts, "custom_detail_footer"),
-		CustomListFooter:   getStringOpt(opts, "custom_list_footer"),
-		CustomHoverCard:    getStringOpt(opts, "custom_hover_card"),
-		CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
-		CustomCSS:          getStringOpt(opts, "custom_css"),
-		MetaSchema:         getStringOpt(opts, "meta_schema"),
-		SectionConfig:      getStringOpt(opts, "section_config"),
+		ID:                     0, // ID=0 means create
+		Name:                   getStringOpt(opts, "name"),
+		Description:            getStringOpt(opts, "description"),
+		CustomHeader:           getStringOpt(opts, "custom_header"),
+		CustomSidebar:          getStringOpt(opts, "custom_sidebar"),
+		CustomSummary:          getStringOpt(opts, "custom_summary"),
+		CustomAvatar:           getStringOpt(opts, "custom_avatar"),
+		CustomListHeader:       getStringOpt(opts, "custom_list_header"),
+		CustomDetailFooter:     getStringOpt(opts, "custom_detail_footer"),
+		CustomListFooter:       getStringOpt(opts, "custom_list_footer"),
+		CustomHoverCard:        getStringOpt(opts, "custom_hover_card"),
+		ApplyTemplatesToShares: getBoolOpt(opts, "apply_templates_to_shares"),
+		CustomMRQLResult:       getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:              getStringOpt(opts, "custom_css"),
+		MetaSchema:             getStringOpt(opts, "meta_schema"),
+		SectionConfig:          getStringOpt(opts, "section_config"),
 	}
 	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {
@@ -1562,21 +1577,22 @@ func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, e
 
 func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[string]any, error) {
 	editor := &query_models.NoteTypeEditor{
-		ID:                 id,
-		Name:               getStringOpt(opts, "name"),
-		Description:        getStringOpt(opts, "description"),
-		CustomHeader:       getStringOpt(opts, "custom_header"),
-		CustomSidebar:      getStringOpt(opts, "custom_sidebar"),
-		CustomSummary:      getStringOpt(opts, "custom_summary"),
-		CustomAvatar:       getStringOpt(opts, "custom_avatar"),
-		CustomListHeader:   getStringOpt(opts, "custom_list_header"),
-		CustomDetailFooter: getStringOpt(opts, "custom_detail_footer"),
-		CustomListFooter:   getStringOpt(opts, "custom_list_footer"),
-		CustomHoverCard:    getStringOpt(opts, "custom_hover_card"),
-		CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
-		CustomCSS:          getStringOpt(opts, "custom_css"),
-		MetaSchema:         getStringOpt(opts, "meta_schema"),
-		SectionConfig:      getStringOpt(opts, "section_config"),
+		ID:                     id,
+		Name:                   getStringOpt(opts, "name"),
+		Description:            getStringOpt(opts, "description"),
+		CustomHeader:           getStringOpt(opts, "custom_header"),
+		CustomSidebar:          getStringOpt(opts, "custom_sidebar"),
+		CustomSummary:          getStringOpt(opts, "custom_summary"),
+		CustomAvatar:           getStringOpt(opts, "custom_avatar"),
+		CustomListHeader:       getStringOpt(opts, "custom_list_header"),
+		CustomDetailFooter:     getStringOpt(opts, "custom_detail_footer"),
+		CustomListFooter:       getStringOpt(opts, "custom_list_footer"),
+		CustomHoverCard:        getStringOpt(opts, "custom_hover_card"),
+		ApplyTemplatesToShares: getBoolOpt(opts, "apply_templates_to_shares"),
+		CustomMRQLResult:       getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:              getStringOpt(opts, "custom_css"),
+		MetaSchema:             getStringOpt(opts, "meta_schema"),
+		SectionConfig:          getStringOpt(opts, "section_config"),
 	}
 	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {
@@ -1595,21 +1611,22 @@ func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[strin
 		return nil, err
 	}
 	editor := &query_models.NoteTypeEditor{
-		ID:                 id,
-		Name:               patchString(opts, "name", nt.Name),
-		Description:        patchString(opts, "description", nt.Description),
-		CustomHeader:       patchString(opts, "custom_header", nt.CustomHeader),
-		CustomSidebar:      patchString(opts, "custom_sidebar", nt.CustomSidebar),
-		CustomSummary:      patchString(opts, "custom_summary", nt.CustomSummary),
-		CustomAvatar:       patchString(opts, "custom_avatar", nt.CustomAvatar),
-		CustomListHeader:   patchString(opts, "custom_list_header", nt.CustomListHeader),
-		CustomDetailFooter: patchString(opts, "custom_detail_footer", nt.CustomDetailFooter),
-		CustomListFooter:   patchString(opts, "custom_list_footer", nt.CustomListFooter),
-		CustomHoverCard:    patchString(opts, "custom_hover_card", nt.CustomHoverCard),
-		CustomMRQLResult:   patchString(opts, "custom_mrql_result", nt.CustomMRQLResult),
-		CustomCSS:          patchString(opts, "custom_css", nt.CustomCSS),
-		MetaSchema:         patchString(opts, "meta_schema", nt.MetaSchema),
-		SectionConfig:      patchString(opts, "section_config", string(nt.SectionConfig)),
+		ID:                     id,
+		Name:                   patchString(opts, "name", nt.Name),
+		Description:            patchString(opts, "description", nt.Description),
+		CustomHeader:           patchString(opts, "custom_header", nt.CustomHeader),
+		CustomSidebar:          patchString(opts, "custom_sidebar", nt.CustomSidebar),
+		CustomSummary:          patchString(opts, "custom_summary", nt.CustomSummary),
+		CustomAvatar:           patchString(opts, "custom_avatar", nt.CustomAvatar),
+		CustomListHeader:       patchString(opts, "custom_list_header", nt.CustomListHeader),
+		CustomDetailFooter:     patchString(opts, "custom_detail_footer", nt.CustomDetailFooter),
+		CustomListFooter:       patchString(opts, "custom_list_footer", nt.CustomListFooter),
+		CustomHoverCard:        patchString(opts, "custom_hover_card", nt.CustomHoverCard),
+		ApplyTemplatesToShares: patchBool(opts, "apply_templates_to_shares", nt.ApplyTemplatesToShares),
+		CustomMRQLResult:       patchString(opts, "custom_mrql_result", nt.CustomMRQLResult),
+		CustomCSS:              patchString(opts, "custom_css", nt.CustomCSS),
+		MetaSchema:             patchString(opts, "meta_schema", nt.MetaSchema),
+		SectionConfig:          patchString(opts, "section_config", string(nt.SectionConfig)),
 	}
 	result, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {

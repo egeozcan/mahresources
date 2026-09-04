@@ -221,6 +221,12 @@ func loadResultRenderData(reqCtx context.Context, appCtx mrqlShortcodeRunner, id
 	return appCtx.LoadMRQLRenderData(reqCtx, ids.resourceCategories, ids.noteTypes, ids.categories, ids.scopeGroups)
 }
 
+func applyResultPresentation(item *shortcodes.QueryResultItem, scope application_context.MRQLRenderScope) {
+	item.ScopeGroupName, item.ScopeCategoryName = scope.ScopeGroupName, scope.ScopeCategoryName
+	item.ParentGroupName, item.ParentCategoryName = scope.ParentGroupName, scope.ParentCategoryName
+	item.RootGroupName, item.RootCategoryName = scope.RootGroupName, scope.RootCategoryName
+}
+
 // convertResultItems converts MRQLResult entities into QueryResultItems using
 // batch-loaded scalar carriers and hierarchy data.
 func convertResultItems(reqCtx context.Context, result *application_context.MRQLResult, appCtx mrqlShortcodeRunner) ([]shortcodes.QueryResultItem, error) {
@@ -257,6 +263,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 			item.ScopeGroupID = *r.OwnerId
 			if scope, ok := data.Scopes[*r.OwnerId]; ok {
 				item.ParentGroupID, item.RootGroupID = scope.ParentGroupID, scope.RootGroupID
+				applyResultPresentation(&item, scope)
 			}
 		}
 		items = append(items, item)
@@ -282,6 +289,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 			item.ScopeGroupID = *n.OwnerId
 			if scope, ok := data.Scopes[*n.OwnerId]; ok {
 				item.ParentGroupID, item.RootGroupID = scope.ParentGroupID, scope.RootGroupID
+				applyResultPresentation(&item, scope)
 			}
 		}
 		items = append(items, item)
@@ -307,6 +315,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 		}
 		if scope, ok := data.Scopes[g.ID]; ok {
 			item.RootGroupID = scope.RootGroupID
+			applyResultPresentation(&item, scope)
 		}
 		items = append(items, item)
 	}

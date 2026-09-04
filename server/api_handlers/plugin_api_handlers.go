@@ -1,11 +1,13 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
@@ -519,46 +521,10 @@ func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 			return
 		}
 
-		var contentMap map[string]any
-		if block.Content != nil {
-			_ = json.Unmarshal(block.Content, &contentMap)
-		}
-		if contentMap == nil {
-			contentMap = map[string]any{}
-		}
-
-		var stateMap map[string]any
-		if block.State != nil {
-			_ = json.Unmarshal(block.State, &stateMap)
-		}
-		if stateMap == nil {
-			stateMap = map[string]any{}
-		}
-
-		var noteTypeID uint
-		if note.NoteTypeId != nil {
-			noteTypeID = *note.NoteTypeId
-		}
-
-		renderCtx := plugin_system.BlockRenderContext{
-			Block: plugin_system.BlockRenderData{
-				ID:       block.ID,
-				Content:  contentMap,
-				State:    stateMap,
-				Position: block.Position,
-			},
-			Note: plugin_system.NoteRenderData{
-				ID:         note.ID,
-				Name:       note.Name,
-				NoteTypeID: noteTypeID,
-			},
-			Settings: pm.GetPluginSettings(pluginName),
-		}
-
 		// The request context, so an abandoned render stops instead of holding
 		// this plugin's VM lock, and so identical MRQL queries inside the
 		// render collapse to one execution.
-		html, err := pm.RenderBlock(plugin_system.WithMRQLCache(r.Context()), pluginName, block.Type, mode, renderCtx)
+		html, err := renderPluginBlock(plugin_system.WithMRQLCache(r.Context()), pm, pluginName, block, note, mode)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -566,6 +532,105 @@ func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(html))
+	}
+}
+
+func renderPluginBlock(reqCtx context.Context, pm *plugin_system.PluginManager, pluginName string, block *models.NoteBlock, note *models.Note, mode string) (string, error) {
+	var contentMap map[string]any
+	if block.Content != nil {
+		_ = json.Unmarshal(block.Content, &contentMap)
+	}
+	if contentMap == nil {
+		contentMap = map[string]any{}
+	}
+	var stateMap map[string]any
+	if block.State != nil {
+		_ = json.Unmarshal(block.State, &stateMap)
+	}
+	if stateMap == nil {
+		stateMap = map[string]any{}
+	}
+	var noteTypeID uint
+	if note.NoteTypeId != nil {
+		noteTypeID = *note.NoteTypeId
+	}
+	return pm.RenderBlock(reqCtx, pluginName, block.Type, mode, plugin_system.BlockRenderContext{
+		Block:    plugin_system.BlockRenderData{ID: block.ID, Content: contentMap, State: stateMap, Position: block.Position},
+		Note:     plugin_system.NoteRenderData{ID: note.ID, Name: note.Name, NoteTypeID: noteTypeID},
+		Settings: pm.GetPluginSettings(pluginName),
+	})
+}
+
+type pluginBlockBatchRequest struct {
+	NoteID   uint   `json:"noteId"`
+	Mode     string `json:"mode"`
+	BlockIDs []uint `json:"blockIds"`
+}
+
+type pluginBlockBatchResponse struct {
+	Renders map[uint]string `json:"renders"`
+	Errors  map[uint]string `json:"errors,omitempty"`
+}
+
+// GetPluginBlockBatchRenderHandler collapses the initial plugin-block render
+// fan-out to one authorized note query, one block query, and one HTTP response.
+func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pm := ctx.PluginManager()
+		if pm == nil {
+			http.Error(w, "plugins not available", http.StatusServiceUnavailable)
+			return
+		}
+		var req pluginBlockBatchRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.NoteID == 0 || (req.Mode != "view" && req.Mode != "edit") || len(req.BlockIDs) == 0 || len(req.BlockIDs) > 100 {
+			http.Error(w, "noteId, mode, and 1-100 blockIds are required", http.StatusBadRequest)
+			return
+		}
+		note, err := ctx.GetNote(req.NoteID)
+		if err != nil {
+			http.Error(w, "note not found", http.StatusNotFound)
+			return
+		}
+		blocks, err := ctx.GetBlocksForNote(req.NoteID)
+		if err != nil {
+			http.Error(w, "blocks not found", http.StatusNotFound)
+			return
+		}
+		byID := make(map[uint]*models.NoteBlock, len(blocks))
+		for i := range blocks {
+			byID[blocks[i].ID] = &blocks[i]
+		}
+		response := pluginBlockBatchResponse{Renders: map[uint]string{}, Errors: map[uint]string{}}
+		renderCtx := plugin_system.WithMRQLCache(r.Context())
+		seen := map[uint]bool{}
+		for _, id := range req.BlockIDs {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			block := byID[id]
+			if block == nil || !strings.HasPrefix(block.Type, "plugin:") {
+				response.Errors[id] = "plugin block not found"
+				continue
+			}
+			parts := strings.SplitN(block.Type, ":", 3)
+			if len(parts) != 3 || parts[1] == "" {
+				response.Errors[id] = "invalid plugin block type"
+				continue
+			}
+			html, renderErr := renderPluginBlock(renderCtx, pm, parts[1], block, note, req.Mode)
+			if renderErr != nil {
+				response.Errors[id] = renderErr.Error()
+				continue
+			}
+			response.Renders[id] = html
+		}
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }
 

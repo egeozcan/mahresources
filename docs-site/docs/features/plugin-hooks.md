@@ -252,7 +252,7 @@ Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting in
 
 ## Pages
 
-Plugins can serve custom pages at `/plugins/{pluginName}/{path}`. Register them during `init()` using `mah.page(path, handler)`.
+Plugins can serve custom pages at `/plugins/{pluginName}/{path}`. Register them during `init()` using `mah.page(path, handler, [opts])`.
 
 ```lua
 function init()
@@ -269,6 +269,17 @@ end
 ```
 
 Page handlers have a **30-second timeout**.
+
+Pages use the host's standard content-and-sidebar layout by default. A page
+whose UI needs the full content width can opt out of the sidebar:
+
+```lua
+mah.page("board", function(ctx)
+    return '<div class="board"></div>'
+end, { hide_sidebar = true })
+```
+
+`hide_sidebar` must be a boolean. It applies only to that registered page.
 
 ### Path Validation
 

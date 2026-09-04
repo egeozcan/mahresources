@@ -26,6 +26,9 @@
                         {% for item in group.Items %}
                             <li>
                                 <a href="{{ item.URL }}" class="text-amber-700 hover:text-amber-900 underline">{{ item.Name }}</a>
+                                {% if item.DisplayType %}
+                                    <span class="ml-2 text-xs font-medium text-stone-600">{{ item.DisplayType }}</span>
+                                {% endif %}
                                 {% if item.Description %}
                                     <div class="text-sm text-stone-600">{{ item.Description|truncatechars:160 }}</div>
                                 {% endif %}

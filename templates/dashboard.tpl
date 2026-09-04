@@ -85,8 +85,8 @@
         <ol class="dashboard-activity">
             {% for entry in activityFeed %}
             <li class="dashboard-activity-item">
-                <span class="dashboard-activity-dot dashboard-activity-dot--{{ entry.EntityType }}" role="img" aria-label="{{ entry.EntityType }}"></span>
-                <span class="dashboard-activity-type">{{ entry.EntityType }}</span>
+                <span class="dashboard-activity-dot dashboard-activity-dot--{{ entry.EntityType }}" aria-hidden="true"></span>
+                <span class="dashboard-activity-type">{{ entry.DisplayType }}</span>
                 <a href="{{ entry.EntityType|entityPath }}?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
                 <span class="dashboard-activity-action">{{ entry.Action }}</span>
                 {# Z07:00, not a bare Z — a trailing Z in a Go layout is a literal, so local time was stamped as UTC. #}

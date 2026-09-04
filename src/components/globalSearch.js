@@ -347,7 +347,7 @@ export function globalSearch() {
             const items = this.navResults;
             const result = items[this.selectedIndex];
             if (result) {
-                const typeLabel = this.getLabel(result.type);
+                const typeLabel = this.getResultLabel(result);
                 this.announce(`${result.name}, ${typeLabel}, ${this.selectedIndex + 1} of ${items.length}`);
             }
         },
@@ -448,6 +448,10 @@ export function globalSearch() {
 
         getLabel(type) {
             return this.typeLabels[type] || type;
+        },
+
+        getResultLabel(result) {
+            return result?.displayType || this.getLabel(result?.type);
         },
 
         highlightMatch(text, query) {

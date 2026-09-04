@@ -135,7 +135,7 @@
                                             ></span>
                                             <span
                                                 class="flex-shrink-0 text-xs font-mono px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium"
-                                                x-text="getLabel(result.type)"
+                                                x-text="getResultLabel(result)"
                                             ></span>
                                         </div>
                                         <p

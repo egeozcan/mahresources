@@ -32,7 +32,7 @@
                  :class="{ 'ring-2 ring-amber-200': editMode }">
                 {# Block controls (edit mode only) #}
                 <div x-show="editMode" class="flex items-center justify-between px-3 py-2 bg-stone-50 border-b border-stone-200">
-                    <span class="text-xs font-medium font-mono text-stone-500 uppercase" x-text="block.type"></span>
+                    <span class="text-xs font-medium text-stone-600" x-text="getBlockTypeLabel(block.type)"></span>
                     <div class="flex gap-1">
                         <button
                             @click="moveBlock(block.id, 'up')"
@@ -951,10 +951,10 @@
 
                     {# Plugin block (enabled) #}
                     <template x-if="block.type.startsWith('plugin:') && blockTypes.find(bt => bt.type === block.type)">
-                        <div x-data="blockPlugin(block, () => editMode)"
+                        <div x-data="blockPlugin(block, () => editMode, () => getBlockTypeLabel(block.type))"
                              x-effect="loadRender()">
                             <template x-if="renderLoading && !renderedHtml">
-                                <div class="text-stone-400 text-sm py-4 text-center">Loading plugin block...</div>
+                                <div class="text-stone-500 text-sm py-4 text-center" role="status" x-text="'Loading ' + label + '…'"></div>
                             </template>
                             <template x-if="renderError">
                                 <div class="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm" x-text="renderError"></div>

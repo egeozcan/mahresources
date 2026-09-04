@@ -34,6 +34,7 @@ func TestPluginEndpoints_ConfinedPrincipalsDenied(t *testing.T) {
 		{http.MethodGet, "/v1/plugins/foo/some/action", ""},
 		{http.MethodPost, "/v1/plugins/foo/display/render", `{"type":"x"}`},
 		{http.MethodGet, "/v1/plugins/foo/block/render?blockId=1&mode=view", ""},
+		{http.MethodPost, "/v1/plugins/block/render-batch", `{"noteId":1,"mode":"view","blockIds":[1]}`},
 	}
 
 	reqBody := func(e ep) io.Reader {

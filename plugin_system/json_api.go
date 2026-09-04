@@ -6,8 +6,11 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+const luaJSONArrayMarker = "__mah_json_array"
+
 // registerJsonModule registers the mah.json sub-table in the Lua VM.
-// Provides mah.json.encode(value) and mah.json.decode(string).
+// Provides mah.json.encode(value), mah.json.decode(string), and
+// mah.json.array(table).
 func (pm *PluginManager) registerJsonModule(L *lua.LState, mahMod *lua.LTable) {
 	jsonMod := L.NewTable()
 
@@ -38,6 +41,29 @@ func (pm *PluginManager) registerJsonModule(L *lua.LState, mahMod *lua.LTable) {
 		return 1
 	}))
 
+	// mah.json.array(table) -> table
+	//
+	// Lua's empty table has no shape, so the normal encoder must treat {} as an
+	// object. Plugins that expose a JSON list need a way to preserve [] when it
+	// happens to be empty. Marking the table keeps ordinary Lua indexing and
+	// ipairs behavior while giving both mah.json.encode and ctx.json the missing
+	// shape information.
+	jsonMod.RawSetString("array", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		maxN := tbl.MaxN()
+		totalKeys := 0
+		tbl.ForEach(func(_, _ lua.LValue) { totalKeys++ })
+		if totalKeys != maxN {
+			L.ArgError(1, "array must contain only consecutive integer keys starting at 1")
+			return 0
+		}
+		metatable := L.NewTable()
+		metatable.RawSetString(luaJSONArrayMarker, lua.LTrue)
+		tbl.Metatable = metatable
+		L.Push(tbl)
+		return 1
+	}))
+
 	mahMod.RawSetString("json", jsonMod)
 }
 
@@ -65,7 +91,11 @@ func luaValueToGoForJson(v lua.LValue) any {
 // A table is array-like if it has only consecutive integer keys starting from 1 with no gaps.
 func luaTableToGoForJson(tbl *lua.LTable) any {
 	maxN := tbl.MaxN() // highest consecutive integer key from 1
-	if maxN > 0 {
+	explicitArray := false
+	if metatable, ok := tbl.Metatable.(*lua.LTable); ok {
+		explicitArray = lua.LVAsBool(metatable.RawGetString(luaJSONArrayMarker))
+	}
+	if maxN > 0 || explicitArray {
 		// Check if the table is purely array-like (no string keys beyond the array part).
 		totalKeys := 0
 		tbl.ForEach(func(_, _ lua.LValue) {

@@ -125,14 +125,16 @@ type injectionEntry struct {
 
 // pageEntry stores a Lua page handler and its parent VM.
 type pageEntry struct {
-	state *lua.LState
-	fn    *lua.LFunction
+	state       *lua.LState
+	fn          *lua.LFunction
+	hideSidebar bool
 }
 
 // PageRegistration represents a plugin-contributed page.
 type PageRegistration struct {
-	PluginName string
-	Path       string
+	PluginName  string
+	Path        string
+	HideSidebar bool
 }
 
 // MenuRegistration represents a plugin-contributed menu item.
@@ -1234,6 +1236,18 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf(CapPages, "page", func(L *lua.LState) int {
 		path := L.CheckString(1)
 		handler := L.CheckFunction(2)
+		hideSidebar := false
+		if L.GetTop() >= 3 && L.Get(3) != lua.LNil {
+			opts := L.CheckTable(3)
+			if value := opts.RawGetString("hide_sidebar"); value != lua.LNil {
+				flag, ok := value.(lua.LBool)
+				if !ok {
+					L.ArgError(3, "hide_sidebar must be a boolean")
+					return 0
+				}
+				hideSidebar = bool(flag)
+			}
+		}
 
 		if !validPagePath.MatchString(path) {
 			L.ArgError(1, "invalid page path: must contain only alphanumeric characters, hyphens, underscores, and slashes")
@@ -1249,7 +1263,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		if pm.pages[name] == nil {
 			pm.pages[name] = make(map[string]pageEntry)
 		}
-		pm.pages[name][path] = pageEntry{state: mainState(L), fn: handler}
+		pm.pages[name][path] = pageEntry{state: mainState(L), fn: handler, hideSidebar: hideSidebar}
 		pm.mu.Unlock()
 		return 0
 	})
@@ -2271,8 +2285,10 @@ func (pm *PluginManager) GetPages() []PageRegistration {
 	defer pm.mu.RUnlock()
 	var result []PageRegistration
 	for pluginName, pages := range pm.pages {
-		for path := range pages {
-			result = append(result, PageRegistration{PluginName: pluginName, Path: path})
+		for path, entry := range pages {
+			result = append(result, PageRegistration{
+				PluginName: pluginName, Path: path, HideSidebar: entry.hideSidebar,
+			})
 		}
 	}
 	return result
@@ -2291,6 +2307,17 @@ func (pm *PluginManager) HasPage(pluginName, path string) bool {
 
 	// Check auto-generated docs pages.
 	return pm.HasDocsPage(pluginName, path)
+}
+
+// PageHidesSidebar reports whether a registered plugin page opted into the
+// host's existing full-width layout. Auto-generated documentation pages keep
+// the standard layout.
+func (pm *PluginManager) PageHidesSidebar(pluginName, path string) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	pages := pm.pages[pluginName]
+	entry, exists := pages[path]
+	return exists && entry.hideSidebar
 }
 
 // GetBlockTypes returns all plugin-registered block types.

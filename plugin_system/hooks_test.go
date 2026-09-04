@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRunBeforeHooks_ModifiesFields(t *testing.T) {
@@ -232,5 +234,40 @@ func TestRunBeforeHooks_NoHooksRegistered(t *testing.T) {
 
 	if result["name"] != "unchanged" {
 		t.Errorf("expected name 'unchanged', got %q", result["name"])
+	}
+}
+
+func TestGoToLuaValue_DereferencesScanPointers(t *testing.T) {
+	// GORM's scan into []map[string]any hands back *interface{} wrappers for
+	// map values (aggregated MRQL rows arrive this way), and encoding/json
+	// dereferences them on the HTTP path while goToLuaValue once stringified
+	// them as "0x..." addresses. The Lua value a plugin sees must match what
+	// the JSON API answers.
+	L := lua.NewState()
+	defer L.Close()
+
+	// wrap boxes a scalar into the *interface{} shape a database scan yields.
+	wrap := func(v any) any { return &v }
+
+	tests := []struct {
+		name string
+		in   any
+		want lua.LValue
+	}{
+		{"wrapped string", wrap("done"), lua.LString("done")},
+		{"wrapped int64", wrap(int64(7)), lua.LNumber(7)},
+		{"wrapped float64", wrap(1.5), lua.LNumber(1.5)},
+		{"wrapped uint64", wrap(uint64(3)), lua.LNumber(3)},
+		{"wrapped bool", wrap(true), lua.LBool(true)},
+		{"plain string", "done", lua.LString("done")},
+		{"plain int64", int64(7), lua.LNumber(7)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := goToLuaValue(L, tt.in)
+			if got != tt.want {
+				t.Fatalf("goToLuaValue(%v) = %#v, want %#v", tt.in, got, tt.want)
+			}
+		})
 	}
 }

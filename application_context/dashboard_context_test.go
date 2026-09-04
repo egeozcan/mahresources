@@ -147,3 +147,40 @@ func TestGetRecentActivity_UpdatedEntriesAppearForRealUpdates(t *testing.T) {
 		t.Error("expected an 'updated' entry for the tag with updated_at >> created_at")
 	}
 }
+
+func TestGetRecentActivityUsesTaxonomyDisplayTypes(t *testing.T) {
+	ctx := setupTestContext(t)
+	category := &models.Category{Name: "PM Epic"}
+	noteType := &models.NoteType{Name: "PM Task"}
+	if err := ctx.db.Create(category).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Create(noteType).Error; err != nil {
+		t.Fatal(err)
+	}
+	group := &models.Group{Name: "Launch", CategoryId: &category.ID}
+	note := &models.Note{Name: "Ship", NoteTypeId: &noteType.ID}
+	if err := ctx.db.Create(group).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Create(note).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ctx.GetRecentActivity(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"Launch": "PM Epic", "Ship": "PM Task"}
+	for _, entry := range entries {
+		if displayType, ok := want[entry.Name]; ok {
+			if entry.DisplayType != displayType {
+				t.Errorf("%s display type = %q, want %q", entry.Name, entry.DisplayType, displayType)
+			}
+			delete(want, entry.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing activity rows: %#v", want)
+	}
+}

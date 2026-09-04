@@ -11,6 +11,8 @@ import (
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
+	"mahresources/mrql"
+	"mahresources/shortcodes"
 )
 
 const luaShortcodeRenderTimeout = 5 * time.Second
@@ -193,6 +195,20 @@ func (pm *PluginManager) GetPluginShortcode(fullTypeName string) *PluginShortcod
 }
 
 func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, fullTypeName, entityType string, entityID uint, meta json.RawMessage, attrs map[string]string, entity any, innerContent string, isBlock bool) (string, error) {
+	return pm.RenderShortcodeContext(reqCtx, pluginName, fullTypeName, shortcodes.MetaShortcodeContext{
+		EntityType: entityType,
+		EntityID:   entityID,
+		Meta:       meta,
+		Entity:     entity,
+	}, attrs, innerContent, isBlock)
+}
+
+// RenderShortcodeContext is the context-preserving shortcode entry point used
+// by host render surfaces. Keeping the resolved presentation context intact is
+// what lets plugins render scope/parent/root labels from the host's batched
+// loaders instead of querying each card independently. RenderShortcode remains
+// as the compatibility entry point for tests and callers with scalar context.
+func (pm *PluginManager) RenderShortcodeContext(reqCtx context.Context, pluginName, fullTypeName string, mctx shortcodes.MetaShortcodeContext, attrs map[string]string, innerContent string, isBlock bool) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -218,8 +234,8 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	defer mu.Unlock()
 
 	var metaMap map[string]any
-	if len(meta) > 0 {
-		_ = json.Unmarshal(meta, &metaMap)
+	if len(mctx.Meta) > 0 {
+		_ = json.Unmarshal(mctx.Meta, &metaMap)
 	}
 	if metaMap == nil {
 		metaMap = map[string]any{}
@@ -236,8 +252,8 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	}
 
 	ctxData := map[string]any{
-		"entity_type":   entityType,
-		"entity_id":     float64(entityID),
+		"entity_type":   mctx.EntityType,
+		"entity_id":     float64(mctx.EntityID),
 		"value":         metaMap,
 		"attrs":         attrsMap,
 		"settings":      settings,
@@ -245,9 +261,10 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 		"is_block":      isBlock,
 	}
 
-	if entity != nil {
-		ctxData["entity"] = entityToMap(entity)
+	if mctx.Entity != nil {
+		ctxData["entity"] = entityToMap(mctx.Entity)
 	}
+	ctxData["presentation"] = presentationContextToMap(mctx)
 
 	tbl := goToLuaTable(L, ctxData)
 
@@ -281,6 +298,20 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	}
 
 	return "", fmt.Errorf("shortcode %q render function must return a string, got %s", fullTypeName, ret.Type())
+}
+
+func presentationContextToMap(ctx shortcodes.MetaShortcodeContext) map[string]any {
+	group := func(id uint, name, category string) map[string]any {
+		if id == 0 || id == mrql.UnresolvedScopeSentinel {
+			return nil
+		}
+		return map[string]any{"id": float64(id), "name": name, "category": category}
+	}
+	return map[string]any{
+		"scope":  group(ctx.ScopeGroupID, ctx.ScopeGroupName, ctx.ScopeCategoryName),
+		"parent": group(ctx.ParentGroupID, ctx.ParentGroupName, ctx.ParentCategoryName),
+		"root":   group(ctx.RootGroupID, ctx.RootGroupName, ctx.RootCategoryName),
+	}
 }
 
 // entityToMap converts an entity struct to a map[string]any using reflection.

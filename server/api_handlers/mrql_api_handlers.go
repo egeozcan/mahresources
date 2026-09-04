@@ -185,7 +185,7 @@ func buildPluginRenderer(appCtx MRQLAPIContext, reqCtx context.Context) shortcod
 		if !access(pluginName) {
 			return "", shortcodes.ErrPluginUnavailable
 		}
-		return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+		return pm.RenderShortcodeContext(reqCtx, pluginName, sc.Name, mctx, sc.Attrs, sc.InnerContent, sc.IsBlock)
 	}
 }
 
@@ -211,6 +211,23 @@ func resolveAPIScopeFields(data *application_context.MRQLRenderData, entityType 
 		}
 	}
 	return
+}
+
+func applyAPIPresentationContext(mctx *shortcodes.MetaShortcodeContext, data *application_context.MRQLRenderData, entityType string, ownerID *uint, entityID uint) {
+	scopeKey := entityID
+	if entityType != "group" {
+		if ownerID == nil || *ownerID == 0 {
+			return
+		}
+		scopeKey = *ownerID
+	}
+	scope, ok := data.Scopes[scopeKey]
+	if !ok {
+		return
+	}
+	mctx.ScopeGroupName, mctx.ScopeCategoryName = scope.ScopeGroupName, scope.ScopeCategoryName
+	mctx.ParentGroupName, mctx.ParentCategoryName = scope.ParentGroupName, scope.ParentCategoryName
+	mctx.RootGroupName, mctx.RootCategoryName = scope.RootGroupName, scope.RootCategoryName
 }
 
 func buildMRQLAPIRenderContext(parent context.Context, appCtx mrqlRenderContext, deferredSigner bool) (context.Context, context.CancelFunc) {
@@ -335,6 +352,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 				Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
+			applyAPIPresentationContext(&mctx, data, "resource", r.OwnerId, r.ID)
 			r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.CustomCSS, mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -355,6 +373,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
 				Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
+			applyAPIPresentationContext(&mctx, data, "note", n.OwnerId, n.ID)
 			n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.CustomCSS, mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -375,6 +394,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
 				Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
+			applyAPIPresentationContext(&mctx, data, "group", g.OwnerId, g.ID)
 			g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.CustomCSS, mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -417,6 +437,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 						Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
+					applyAPIPresentationContext(&mctx, data, "resource", r.OwnerId, r.ID)
 					r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.CustomCSS, mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
@@ -438,6 +459,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
 						Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
+					applyAPIPresentationContext(&mctx, data, "note", n.OwnerId, n.ID)
 					n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.CustomCSS, mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
@@ -459,6 +481,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
 						Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
+					applyAPIPresentationContext(&mctx, data, "group", g.OwnerId, g.ID)
 					g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.CustomCSS, mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}

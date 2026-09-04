@@ -142,6 +142,15 @@ type PluginAPIContext interface {
 	GetBlock(id uint) (*models.NoteBlock, error)
 }
 
+// PluginBlockBatchContext is intentionally narrower than PluginAPIContext: the
+// batch render endpoint only needs one authorized note load and its already
+// scoped block collection.
+type PluginBlockBatchContext interface {
+	PluginManagerProvider
+	GetNote(id uint) (*models.Note, error)
+	GetBlocksForNote(noteID uint) ([]models.NoteBlock, error)
+}
+
 // TimelineContext serves the per-entity timeline count endpoints.
 type TimelineContext interface {
 	GetResourceTimelineCounts(query *query_models.ResourceSearchQuery, boundaries []application_context.BucketBoundary) ([]models.TimelineBucket, error)
