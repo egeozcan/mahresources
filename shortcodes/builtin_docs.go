@@ -97,6 +97,23 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
+			Name:        "pills",
+			Syntax:      `[pills path="..." editable="true"]`,
+			Description: "Displays a Meta field as a pill selector. Choices come from the field's enum or labeled oneOf schema unless options supplies a manual JSON array. The selected entry uses its x-color as a background tint and dark text color, defaulting to purple. Selecting a choice saves immediately when editable is true. Values retain their JSON types; public shares are read-only.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path into the entity Meta."},
+				{Name: "editable", Type: "boolean", Default: "false", Description: "Save immediately when a pill is selected.", Enum: []string{"true", "false"}},
+				{Name: "options", Type: "string", Description: "Manual JSON array of scalar values or {value, label} objects. Overrides schema options. Values may be strings, numbers, booleans or null."},
+				{Name: "hide-empty", Type: "boolean", Default: "false", Description: "Hide the selector when the stored value is empty. Leave false to allow setting an empty field.", Enum: []string{"true", "false"}},
+			},
+			Examples: []DocExample{
+				{Title: "Schema enum", Code: `[pills path="priority" editable="true"]`},
+				{Title: "Manual choices", Code: `[pills path="priority" editable="true" options='["Low","Medium","High"]']`},
+				{Title: "Labels and typed values", Code: `[pills path="priority" editable="true" options='[{"value":1,"label":"Low"},{"value":2,"label":"Medium"},{"value":3,"label":"High"}]']`},
+			},
+		},
+		{
 			Name:        "property",
 			Syntax:      `[property path="..."]`,
 			Description: "Renders a scalar property of the entity itself (a struct field such as Name or Description), HTML-escaped by default. The path may traverse preloaded related structs and slices with dot notation (e.g. Owner.Name, Tags.0.Name); it never triggers DB loads, so related structs render only where the page already loaded them.",

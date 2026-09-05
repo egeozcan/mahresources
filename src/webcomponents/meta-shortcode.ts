@@ -1,11 +1,13 @@
 // src/webcomponents/meta-shortcode.ts
 import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
 import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
+import { pillOptions, type PillOption } from '../utils/pillOptions';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -20,6 +22,9 @@ export class MetaShortcode extends LitElement {
   @property({ attribute: 'data-date-time' }) dateTime = 'false';
   @property({ attribute: 'data-layout' }) layout = '';
   @property({ attribute: 'data-input-layout' }) inputLayout = '';
+  @property({ attribute: 'data-pills' }) pills = 'false';
+  @property({ attribute: 'data-options' }) optionsStr = '';
+  @state() private _pillError = false;
 
   private _dateEditor: ReturnType<typeof dateTimeField> | null = null;
   @state() private _dateInput = '';
@@ -82,11 +87,14 @@ export class MetaShortcode extends LitElement {
       changedProperties.has('entityId') ||
       changedProperties.has('dateTime') ||
       changedProperties.has('layout') ||
-      changedProperties.has('inputLayout');
+      changedProperties.has('inputLayout') ||
+      changedProperties.has('pills') ||
+      changedProperties.has('optionsStr');
 
     if (identityChanged) {
       this._editing = false;
       this._editValue = undefined;
+      this._pillError = false;
     }
 
     // identityChanged is included, not just recomputed above it: entityType and
@@ -159,6 +167,8 @@ export class MetaShortcode extends LitElement {
       return nothing;
     }
 
+    if (this.pills === 'true') return this._renderPills();
+
     const flashClass = this._flash === 'success'
       ? 'bg-green-100 transition-colors duration-300'
       : this._flash === 'error'
@@ -170,6 +180,64 @@ export class MetaShortcode extends LitElement {
         ${this._editing ? this._renderEditMode() : this._renderDisplayMode()}
       </span>
     `;
+  }
+
+  private _renderPills(): TemplateResult {
+    const options = pillOptions(this.optionsStr, this._schema);
+    const selected = options.findIndex(option => option.value === this._value);
+    return html`
+      <span class="meta-pills-field">
+        ${options.length ? html`
+          <span class="meta-pills" role="radiogroup" aria-label=${this._label}
+            aria-busy=${this._saving ? 'true' : 'false'}>
+            ${options.map((option, index) => html`
+              <button type="button" role="radio" class="meta-pill"
+                style=${styleMap(this._pillColors(index === selected ? option.color : undefined))}
+                aria-checked=${index === selected ? 'true' : 'false'}
+                aria-disabled=${!this._isEditable || this._saving ? 'true' : 'false'}
+                tabindex=${index === (selected < 0 ? 0 : selected) ? '0' : '-1'}
+                @click=${() => this._selectPill(option)}
+                @keydown=${(event: KeyboardEvent) => this._onPillKeyDown(event, index, options)}
+              >${option.label}</button>
+            `)}
+          </span>
+        ` : html`<span class="text-sm text-stone-600">No options configured for ${this._label}.</span>`}
+        ${selected < 0 && !this._isEmpty
+          ? html`<span class="text-sm text-stone-600">Current: ${String(this._value)}</span>` : nothing}
+        <span role="status" class="text-sm ${this._pillError ? 'text-red-700' : 'text-stone-600'}">
+          ${this._pillError ? 'Could not save. Try again.' : this._saving ? 'Saving…' : ''}
+        </span>
+      </span>
+    `;
+  }
+
+  private _pillColors(color?: string): Record<string, string> {
+    if (typeof color !== 'string' || !CSS.supports('color', color)) return {};
+    // Match schema enum badges with a light tint and dark text. Binding the
+    // properties separately also keeps a color from introducing declarations.
+    return {
+      '--meta-pill-background': `color-mix(in srgb, ${color} 15%, white)`,
+      '--meta-pill-text': `color-mix(in srgb, ${color} 40%, black)`,
+    };
+  }
+
+  private _selectPill(option: PillOption) {
+    if (!this._isEditable || this._saving || option.value === this._value) return;
+    this._pillError = false;
+    this._editValue = option.value;
+    void this._save();
+  }
+
+  private _onPillKeyDown(event: KeyboardEvent, index: number, options: PillOption[]) {
+    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1
+      : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+    if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    if (!this._isEditable || this._saving) return;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+      : (index + direction + options.length) % options.length;
+    this.querySelectorAll<HTMLButtonElement>('.meta-pill')[next]?.focus();
+    this._selectPill(options[next]);
   }
 
   private _renderDisplayMode(): TemplateResult {
@@ -412,6 +480,7 @@ export class MetaShortcode extends LitElement {
   }
 
   private async _save() {
+    if (this._saving) return;
     if (this.dateTime === 'true' && this._dateInvalid) return;
     this._saving = true;
 
@@ -459,6 +528,7 @@ export class MetaShortcode extends LitElement {
     } catch (err) {
       console.error('Meta shortcode save error:', err);
       this._flash = 'error';
+      if (this.pills === 'true') this._pillError = true;
       setTimeout(() => { this._flash = null; }, 1000);
     } finally {
       this._saving = false;

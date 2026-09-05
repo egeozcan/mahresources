@@ -27,6 +27,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | Shortcode | Form | Use |
 |-----------|------|-----|
 | `[meta]` | Inline | Render a value from the current entity's Meta JSON |
+| `[pills]` | Inline | Pill selector with schema enum or manual options |
 | `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
@@ -189,6 +190,34 @@ So pick the form by what consumes the output. Use `[meta path="status"]` where a
   Status: [meta path="status"]
 </div>
 ```
+
+## `[pills]` -- Pill Selector
+
+Use this in a category's Custom Header, Sidebar, or another entity template slot:
+
+```html
+[pills path="priority" editable="true"]
+```
+
+The selector gets its choices from the field's MetaSchema `enum`, or from a labeled `oneOf` enum (`const` values with `title` labels). A selected entry's `x-color` supplies its background tint and dark text color; entries without a valid color use the default purple styling. It also works in Resource Category and Note Type templates. Selecting a pill saves immediately and updates other metadata shortcodes for the same entity. Arrow keys, Home, and End select choices; Tab enters and leaves the selector.
+
+Supply `options` to override the schema choices, or to use a field without a schema:
+
+```html
+[pills path="priority" editable="true" options='["Low","Medium","High"]']
+[pills path="priority" editable="true" options='[{"value":1,"label":"Low"},{"value":2,"label":"Medium"},{"value":3,"label":"High"}]']
+```
+
+Manual options are a JSON array of strings, numbers, booleans, or null, or objects with `value` and `label`. Stored values retain their JSON types: numeric `1` differs from string `"1"`. Labels are plain text. Manual options still must satisfy any schema validation when saved.
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | Yes | — | Dot-notation Meta field path |
+| `editable` | No | `false` | Save immediately on selection; otherwise show a read-only selector |
+| `options` | No | Schema choices | JSON array of values or `{value, label}` objects; overrides schema choices |
+| `hide-empty` | No | `false` | Hide the entire selector when the value is empty; leave false to fill an empty field |
+
+Empty fields start with no selection and are only written when a pill is selected. A stored value outside the choices is shown alongside the selector. Missing or invalid options show “No options configured”; failed saves keep the previous selection and offer a retry message. Public note shares always render read-only.
 
 ## `[datetime]` -- Date/Time Display and Editor
 

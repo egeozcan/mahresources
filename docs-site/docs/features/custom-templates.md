@@ -468,6 +468,7 @@ Note Types carry the shared slots only. The four carrier-specific slots (Custom 
 Shortcodes let you embed dynamic content in custom templates without writing Alpine.js code. The built-in shortcodes are:
 
 - **`[meta]`** -- Schema-aware metadata display with optional inline editing
+- **`[pills]`** -- Pill selector using enum or manual choices, e.g. `[pills path="priority" editable="true"]`
 - **`[property]`** -- Entity field values (Name, CreatedAt, etc.)
 - **`[mrql]`** -- Inline MRQL query results in various formats
 - **`[conditional]`** -- Show or hide content based on a field, property, or MRQL result

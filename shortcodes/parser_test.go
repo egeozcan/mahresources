@@ -17,6 +17,17 @@ func TestParseNoShortcodes(t *testing.T) {
 	assert.Empty(t, result)
 }
 
+func TestParseQuotedBrackets(t *testing.T) {
+	input := `[pills path="priority" options='["Low","High"]'] [meta path="other"]`
+	for _, parse := range []func(string) []Shortcode{Parse, ParseWithBlocks} {
+		result := parse(input)
+		require.Len(t, result, 2)
+		assert.Equal(t, `["Low","High"]`, result[0].Attrs["options"])
+		assert.Equal(t, `[pills path="priority" options='["Low","High"]']`, result[0].Raw)
+		assert.Equal(t, "other", result[1].Attrs["path"])
+	}
+}
+
 func TestParseMetaShortcode(t *testing.T) {
 	result := Parse(`[meta path="cooking.time"]`)
 	require.Len(t, result, 1)

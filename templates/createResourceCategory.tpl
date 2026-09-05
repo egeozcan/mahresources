@@ -165,6 +165,10 @@
                         </span>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[pills path="priority" editable="true"]</code>
+                        &mdash; pill selector from a schema enum; override with <code>options='["Low","Medium","High"]'</code>. Selection saves immediately.
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>
                         &mdash; render a struct field of the resource. Output is HTML-escaped by default.
                         <br><span class="text-stone-400 ml-4">

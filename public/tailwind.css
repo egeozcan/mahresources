@@ -4810,6 +4810,54 @@
     }
   }
 }
+.meta-pills-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+}
+.meta-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border: 1px solid #ded5c6;
+  border-radius: 0.625rem;
+  background: #fff;
+}
+.meta-pill {
+  flex: 1 0 auto;
+  border: 0;
+  border-radius: 0.4375rem;
+  padding: 0.4375rem 1rem;
+  background: transparent;
+  color: #736653;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.meta-pill:hover:not([aria-disabled="true"]) {
+  background: #f5f3ef;
+}
+.meta-pill[aria-checked="true"] {
+  background: var(--meta-pill-background, #ede9fe);
+  color: var(--meta-pill-text, #5b35f5);
+}
+.meta-pill[aria-checked="true"]:hover:not([aria-disabled="true"]) {
+  background: var(--meta-pill-background, #e5ddfe);
+}
+.meta-pill:focus-visible {
+  outline: 2px solid #6d4aff;
+  outline-offset: 1px;
+}
+.meta-pill[aria-disabled="true"] {
+  cursor: default;
+}
+.meta-pills[aria-busy="true"] {
+  opacity: 0.65;
+}
 @layer base {
   input[type='text'], input[type='email'], input[type='url'], input[type='password'], input[type='number'], input[type='date'], input[type='datetime-local'], input[type='month'], input[type='search'], input[type='tel'], input[type='time'], input[type='week'], input:not([type]), textarea, select {
     border-width: 1px;

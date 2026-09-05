@@ -61,6 +61,12 @@ func RenderDateTimeShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	return renderMetaWidget(sc, ctx, attrs)
 }
 
+// RenderPillsShortcode presents a single Meta value as a segmented selector.
+func RenderPillsShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
+	attrs := fmt.Sprintf(` data-pills="true" data-options="%s"`, html.EscapeString(sc.Attrs["options"]))
+	return renderMetaWidget(sc, ctx, attrs)
+}
+
 func renderMetaWidget(sc Shortcode, ctx MetaShortcodeContext, extraAttrs string) string {
 	path := sc.Attrs["path"]
 	if path == "" {

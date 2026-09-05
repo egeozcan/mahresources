@@ -183,6 +183,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderConditionalShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "datetime":
 			replacement = RenderDateTimeShortcode(sc, ctx)
+		case sc.Name == "pills":
+			replacement = RenderPillsShortcode(sc, ctx)
 		case sc.Name == "meta":
 			replacement = RenderMetaShortcode(sc, ctx)
 		case sc.Name == "property":

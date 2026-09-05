@@ -24,8 +24,9 @@ type Shortcode struct {
 // shortcodePattern matches [name ...attrs] where name is "meta", "property", "mrql",
 // "conditional", or "plugin:word:word". Plugin name segments allow lowercase letters,
 // digits, hyphens, and underscores to match the plugin system's naming conventions.
+// Quoted attributes may contain brackets, e.g. a pills options JSON array.
 var shortcodePattern = regexp.MustCompile(
-	`\[(meta|datetime|property|mrql|conditional|link|each|item|partial|lazy|details|reload|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\s*([^\]]*)\]`,
+	`\[(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\s*((?:"[^"]*"|'[^']*'|[^\]])*)\]`,
 )
 
 // attrPattern matches key="value", key='value', or key=value pairs.
@@ -68,7 +69,7 @@ func Parse(input string) []Shortcode {
 
 // closingTagPattern matches [/name] closing tags.
 var closingTagPattern = regexp.MustCompile(
-	`\[/(meta|datetime|property|mrql|conditional|link|each|item|partial|lazy|details|reload|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\]`,
+	`\[/(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\]`,
 )
 
 // token represents a parsed opening or closing tag.
