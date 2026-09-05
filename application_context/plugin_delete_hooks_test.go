@@ -769,3 +769,53 @@ end
 			"ShouldRemoveSource decision", createAt, removeAt, events)
 	}
 }
+
+func TestNoteHooksCarryTaxonomyAndOwnerWithoutAllowingRewrite(t *testing.T) {
+	ctx := newPluginHookTestContext(t, `plugin={name="hooktest",version="1"}
+ local events={}
+ function init()
+  for _,event in ipairs({"before_note_create","before_note_update","after_note_create","after_note_update","after_note_delete"}) do
+   mah.on(event,function(data)
+    events[#events+1]=event..":"..data.note_type_id..":"..data.owner_id
+    data.note_type_id=999999
+    data.owner_id=999999
+    return data
+   end)
+  end
+  mah.inject("page_bottom",function() return table.concat(events,",") end)
+ end`)
+	a := &pluginDBAdapter{ctx: ctx}
+	nt, err := a.CreateNoteType(map[string]any{"name": "Typed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := a.CreateGroup(map[string]any{"name": "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := a.CreateNote(map[string]any{"name": "Typed note", "note_type_id": nt["id"], "owner_id": owner["id"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uint(note["id"].(float64))
+	if _, err := a.PatchNote(id, map[string]any{"name": "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := a.GetNoteData(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored["note_type_id"] != nt["id"] || stored["owner_id"] != owner["id"] {
+		t.Fatalf("context keys rewrote note: %v", stored)
+	}
+	if err := a.DeleteNote(id); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", nil, nil)
+	for _, event := range []string{"before_note_create", "before_note_update", "after_note_create", "after_note_update", "after_note_delete"} {
+		want := fmt.Sprintf("%s:%.0f:%.0f", event, nt["id"], owner["id"])
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in %s", want, out)
+		}
+	}
+}

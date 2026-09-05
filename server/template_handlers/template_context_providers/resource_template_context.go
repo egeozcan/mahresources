@@ -110,10 +110,11 @@ func ResourceListContextProvider(context ResourcePageContext) func(request *http
 		}
 
 		return pongo2.Context{
-			"listHeaderCarrier":        listHeaderCarrier,
-			"pageTitle":                "Resources",
-			"resources":                resources,
-			"pagination":               pagination,
+			"listTaxonomyID":    query.ResourceCategoryId,
+			"listHeaderCarrier": listHeaderCarrier,
+			"pageTitle":         "Resources",
+			"resources":         resources,
+			"pagination":        pagination,
 			// The mass-edit panel's "edit all N results" reads this; the count is
 			// already computed on every render, it just was not published before.
 			"totalCount":               resourceCount,

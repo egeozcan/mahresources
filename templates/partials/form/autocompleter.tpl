@@ -6,7 +6,7 @@
         {% if entity %}entity: '{{ entity }}',{% endif %}
         {% if usage %}{% if profile == 'tag' %}usage: '{{ usage }}',{% else %}tagSuggestions: { usage: '{{ usage }}' },{% endif %}{% endif %}
         selected: {{ selectedItems|json }} || [],
-        form: { name: '{{ elName }}', minimum: parseInt('{{ min }}') || 0 },
+        {% if not standalone %}form: { name: '{{ elName }}', minimum: parseInt('{{ min }}') || 0 },{% endif %}
         {% if max %}maximum: parseInt('{{ max }}') || 0,{% endif %}
         {% if categoryDecoration %}categoryDecoration: true,{% endif %}
         {% if parameters %}parameters: () => ({{ parameters }}),{% endif %}
@@ -96,9 +96,9 @@
             >Cancel</button>
         </div>
     </template>
-    <template x-for="(result, index) in selectedResults">
+    {% if not standalone %}<template x-for="(result, index) in selectedResults">
         <input type="hidden" name="{{ elName }}" :value="result.ID">
     </template>
-    <input type="hidden" name="{{ elName }}" value="" :disabled="selectedResults.length > 0">
+    <input type="hidden" name="{{ elName }}" value="" :disabled="selectedResults.length > 0">{% endif %}
 </div>
 {% endwith %}

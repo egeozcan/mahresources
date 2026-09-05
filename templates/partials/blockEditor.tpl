@@ -951,7 +951,7 @@
 
                     {# Plugin block (enabled) #}
                     <template x-if="block.type.startsWith('plugin:') && blockTypes.find(bt => bt.type === block.type)">
-                        <div x-data="blockPlugin(block, () => editMode, () => getBlockTypeLabel(block.type))"
+                        <div x-data="blockPlugin(() => block, () => editMode, () => getBlockTypeLabel(block.type))"
                              x-effect="loadRender()">
                             <template x-if="renderLoading && !renderedHtml">
                                 <div class="text-stone-500 text-sm py-4 text-center" role="status" x-text="'Loading ' + label + '…'"></div>
@@ -960,7 +960,9 @@
                                 <div class="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm" x-text="renderError"></div>
                             </template>
                             <template x-if="renderedHtml">
-                                <div x-html="renderedHtml" class="plugin-block-content"></div>
+                                <div x-html="renderedHtml" class="plugin-block-content"
+                                     :inert="renderLoading || !!renderError"
+                                     :aria-busy="renderLoading"></div>
                             </template>
                         </div>
                     </template>

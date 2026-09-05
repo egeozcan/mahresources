@@ -1,6 +1,7 @@
 import type { SelectorOption, SelectorSource } from './types';
 
-export type SelectorHttpParameter = string | number | boolean | null | undefined;
+type SelectorHttpScalar = string | number | boolean | null | undefined;
+export type SelectorHttpParameter = SelectorHttpScalar | readonly SelectorHttpScalar[];
 
 export interface HttpSelectorSourceConfig<TRaw> {
     readonly searchUrl: string;
@@ -29,7 +30,9 @@ function requestUrl(
 ): string {
     const searchParameters = new URLSearchParams();
     for (const [key, value] of Object.entries(parameters)) {
-        if (value !== null && value !== undefined) searchParameters.set(key, String(value));
+        for (const item of Array.isArray(value) ? value : [value]) {
+            if (item !== null && item !== undefined) searchParameters.append(key, String(item));
+        }
     }
     searchParameters.set('name', query);
     const separator = endpoint.includes('?') ? '&' : '?';

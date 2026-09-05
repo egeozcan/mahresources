@@ -1,6 +1,7 @@
 // CSRF token wiring — imported first so window.fetch is wrapped before any
 // other module can capture a reference to it.
 import './csrf.js';
+import { mountSingleEntitySelector } from './selector/mountEntitySelector.js';
 
 // Import Alpine.js and plugins
 import Alpine from 'alpinejs';
@@ -254,6 +255,7 @@ Alpine.data('reductionBulkAction', reductionBulkAction);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
+window.mahSelectors = { mountSingle: mountSingleEntitySelector };
 
 // Start Alpine
 Alpine.start();

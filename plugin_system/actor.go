@@ -304,3 +304,11 @@ func (pm *PluginManager) luaContext(L *lua.LState) context.Context {
 	}
 	return context.Background()
 }
+
+// shortcodeCanWrite exposes capability, never the principal, to renderers.
+func shortcodeCanWrite(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	return auth.PrincipalFromContext(ctx).CanWrite()
+}

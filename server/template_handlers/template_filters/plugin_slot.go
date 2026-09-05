@@ -61,6 +61,27 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 				if idField := v.FieldByName("ID"); idField.IsValid() && idField.Kind() == reflect.Uint {
 					slotCtx["entity_id"] = float64(idField.Uint())
 				}
+				for _, taxonomy := range []string{"NoteType", "Category", "ResourceCategory"} {
+					field := v.FieldByName(taxonomy + "Id")
+					if field.IsValid() && field.Kind() == reflect.Ptr && !field.IsNil() {
+						field = field.Elem()
+					}
+					if !field.IsValid() || field.Kind() != reflect.Uint {
+						continue
+					}
+					slotCtx["entity_type_id"] = float64(field.Uint())
+					association := v.FieldByName(taxonomy)
+					if association.IsValid() && association.Kind() == reflect.Ptr && !association.IsNil() {
+						association = association.Elem()
+					}
+					if association.IsValid() && association.Kind() == reflect.Struct {
+						name := association.FieldByName("Name")
+						if name.IsValid() && name.Kind() == reflect.String {
+							slotCtx["entity_type_name"] = name.String()
+						}
+					}
+					break
+				}
 			}
 			break
 		}

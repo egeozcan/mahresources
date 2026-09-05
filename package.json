@@ -32,6 +32,7 @@
     "@tailwindcss/cli": "^4.1.18",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/typography": "^0.5.19",
+    "happy-dom": "^20.14.0",
     "husky": "^9.1.7",
     "tailwindcss": "^4.1.18",
     "typescript": "^6.0.2",

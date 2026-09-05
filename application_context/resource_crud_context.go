@@ -229,10 +229,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	}
 
 	hookData := map[string]any{
-		"id":          float64(resourceQuery.ID),
-		"name":        resourceQuery.Name,
-		"description": resourceQuery.Description,
-		"meta":        resourceQuery.Meta,
+		"id":                   float64(resourceQuery.ID),
+		"name":                 resourceQuery.Name,
+		"description":          resourceQuery.Description,
+		"meta":                 resourceQuery.Meta,
+		"resource_category_id": float64(resourceQuery.ResourceCategoryId),
+		"owner_id":             float64(resourceQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_update", hookData)
 	if hookErr != nil {
@@ -464,10 +466,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	ctx.Logger().Info(models.LogActionUpdate, "resource", &resource.ID, resource.Name, "Updated resource", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_update", map[string]any{
-		"id":          float64(resource.ID),
-		"name":        resource.Name,
-		"description": resource.Description,
-		"meta":        string(resource.Meta),
+		"id":                   float64(resource.ID),
+		"name":                 resource.Name,
+		"description":          resource.Description,
+		"meta":                 string(resource.Meta),
+		"resource_category_id": float64(resource.ResourceCategoryId),
+		"owner_id":             hookID(resource.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)

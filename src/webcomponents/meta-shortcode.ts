@@ -183,7 +183,7 @@ export class MetaShortcode extends LitElement {
         `;
       }
       return html`
-        <span class="text-stone-400 text-sm">${this._label}: —</span>
+        <span class="text-stone-600 text-sm">${this._label}: —</span>
         ${editButton}
       `;
     }

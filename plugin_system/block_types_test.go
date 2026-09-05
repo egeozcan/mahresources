@@ -492,3 +492,17 @@ end
 		assert.True(t, strings.Contains(err.Error(), "invalid type name"))
 	})
 }
+
+func TestPluginBlockDefaultsPreserveExplicitEmptyArrays(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "arrays", `plugin={name="arrays",version="1"}
+ function init() mah.block_type({type="checklist",label="Checklist",default_content={items=mah.json.array({})},default_state={checked=mah.json.array({})},render_edit=function() return "" end,render_view=function() return "" end}) end`)
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("arrays"))
+	block := pm.GetPluginBlockType("plugin:arrays:checklist")
+	require.NotNil(t, block)
+	assert.JSONEq(t, `{"items":[]}`, string(block.DefaultContent()))
+	assert.JSONEq(t, `{"checked":[]}`, string(block.DefaultState()))
+}

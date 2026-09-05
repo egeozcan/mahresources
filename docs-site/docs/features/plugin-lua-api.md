@@ -111,6 +111,9 @@ as absent clears an owner or widens a filter. This applies to a positional ID
 | `description` | string | Note description |
 | `meta` | string | JSON-encoded metadata string |
 | `note_type` | string | Note Type name (if set) |
+| `note_type_id` | number | Note Type ID, or zero |
+| `start_date`, `end_date` | string | RFC3339 timestamps, or empty strings |
+| `blocks` | table | Ordered `{id,type,content,state}` records on `get_note`; content/state are decoded tables |
 | `owner_id` | number | Owner Group ID (if set) |
 | `tags` | table | Array of `{ id, name }` |
 
@@ -143,6 +146,7 @@ as absent clears an owner or widens a filter. This applies to a positional ID
 | `meta` | string | JSON-encoded metadata string |
 | `owner_id` | number | Owner Group ID (if set) |
 | `category` | string | Category name (if set) |
+| `category_id` | number | Category ID, or zero |
 | `tags` | table | Array of `{ id, name }` |
 
 #### Tag Fields
@@ -155,13 +159,15 @@ as absent clears an owner or widens a filter. This applies to a positional ID
 `id` (number), `name` (string), `description` (string), `custom_header`,
 `custom_detail_footer`, `custom_sidebar`, `custom_summary`, `custom_avatar`,
 `custom_hover_card`, `custom_own_entities`, `custom_list_header`,
-`custom_list_footer`, `custom_mrql_result`, `custom_css`, `meta_schema` (all
-strings)
+`custom_list_footer`, `custom_mrql_result`, `custom_css`, `meta_schema` and
+`section_config` (all strings; `section_config` is JSON-encoded). Section
+configuration round-trips through create, update and patch for both Category
+and Resource Category.
 
 #### Note Type Fields
 
-The Category fields above except `custom_own_entities`, plus `section_config`
-(string, JSON-encoded) and `apply_templates_to_shares` (boolean). The latter
+The Category fields above except `custom_own_entities`, plus
+`apply_templates_to_shares` (boolean). The latter
 opts the note type's safe template subset into public shares.
 
 #### Resource Category Fields
@@ -207,9 +213,9 @@ end, so pass a `limit` when you expect many near-matches.
 
 | Function | Filter Fields | Result Fields |
 |----------|--------------|---------------|
-| `mah.db.query_notes(filter)` | `name`, `owner_id`, `note_type_id`, `tags`, `groups`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `created_at`, `updated_at` |
+| `mah.db.query_notes(filter)` | `name`, `owner_id`, `note_type_id`, `tags`, `groups`, `mrql`, `include_blocks`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `note_type_id`, `start_date`, `end_date`, `tags`, `created_at`, `updated_at`; `blocks` when requested (loaded in a batch) |
 | `mah.db.query_resources(filter)` | `name`, `content_type`, `owner_id`, `resource_category_id`, `tags`, `groups`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `meta`, `owner_id`, `created_at`, `updated_at` |
-| `mah.db.query_groups(filter)` | `name`, `owner_id`, `category_id`, `tags`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `created_at`, `updated_at` |
+| `mah.db.query_groups(filter)` | `name`, `owner_id`, `category_id`, `tags`, `mrql`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `category_id`, `created_at`, `updated_at` |
 
 **Limits**: Default 20, maximum 100. **Offset**: Default 0, maximum 10,000.
 
@@ -1416,6 +1422,7 @@ Register a custom block type for the note block editor. Call during `init()`.
 | `config.render_edit` | function | Yes | Lua function that returns an HTML string for edit mode |
 | `config.icon` | string | No | Icon for the block type picker |
 | `config.description` | string | No | Description of the block type |
+| `config.scripts` | table | No | Ordered JavaScript paths relative to this plugin's `public/` directory, e.g. `{"core.js", "editor.js"}` |
 | `config.content_schema` | table | No | JSON Schema (as Lua table) for content validation |
 | `config.state_schema` | table | No | JSON Schema (as Lua table) for state validation |
 | `config.default_content` | table | No | Default content for new blocks |
@@ -1459,6 +1466,22 @@ Both `render_view` and `render_edit` receive a context table:
 Each function must return an HTML string. Use `mah.html_escape(str)` to escape user-provided content.
 
 The rendered HTML is served via `GET /v1/plugins/{pluginName}/block/render?blockId={id}&mode=view|edit` (see [Custom Block Types](./custom-block-types.md#plugin-block-render-endpoint)).
+
+The native block editor uses `POST /v1/plugins/block/render-batch`. Successful
+renders may also return `scripts`, keyed by block ID, containing the registered
+asset URLs under `/plugins/<pluginName>/public/`. The editor loads these scripts
+in declaration order before mounting the returned block HTML, and shares each
+load across blocks and mode changes on the page. A failed load reports a block
+render error instead of exposing inactive controls. No scripts are loaded for a
+failed or unauthorized render, and declarations cannot name remote URLs or paths
+outside the plugin's public directory. Omitting `scripts` preserves existing
+block behavior; the single-block HTML endpoint's response is unchanged.
+
+Use this option for block event handlers instead of depending on a taxonomy's
+`CustomHeader`, which an operator can customize. Runtime scripts should install
+delegated handlers or custom elements and guard against repeat initialization
+when the same script also appears in a page template. Scripts placed inside the
+rendered HTML are not executed by the native editor.
 
 ### Example
 
@@ -1630,6 +1653,7 @@ The `render` function receives a single `ctx` table:
 | `ctx.entity_type` | `"group"`, `"resource"`, or `"note"` |
 | `ctx.entity_id` | Entity ID |
 | `ctx.value` | Entity's full Meta as a Lua table |
+| `ctx.read_only`, `ctx.can_write` | Opposite booleans derived from the request write capability. Forced read-only rendering overrides permission; a missing principal is read-only. |
 | `ctx.attrs` | Shortcode attributes as a key-value table |
 | `ctx.settings` | Plugin settings key-value pairs |
 | `ctx.inner_content` | Content between opening and closing tags (empty for self-closing shortcodes) |
@@ -1851,3 +1875,31 @@ end
 - [Plugin Actions](./plugin-actions.md) -- action registration, parameters, filters, and execution
 - [Plugin Hooks, Injections, Pages & Menus](./plugin-hooks.md) -- hooks, HTML injections, custom pages, and menu items
 - [Custom Block Types](./custom-block-types.md) -- adding new block types (built-in and plugin-based)
+
+
+### Plugin elements and block rendering
+
+Plugin custom elements can set `data-morph-client-owned` to keep their child
+DOM during host Alpine morphs. Attributes still update; an optional
+`refreshFromMorph(toElement)` method is called afterwards. Use this only when
+the server renders a placeholder and the client owns the contents.
+
+Plugin block render contexts also expose `read_only` and `can_write`. Block
+defaults preserve empty arrays explicitly tagged with `mah.json.array({})`.
+`window.mahBlock` provides `getBlock(id)`, `saveContent(id, content)` and
+`updateState(id, state)` for edit controls. The host renders a replaced block
+again after content/state saves, so row controls should emit data attributes
+and let the plugin's static script handle events.
+
+For an entity picker, use the host's shared selector instead of fetching an entire
+entity list. After Alpine initializes,
+`await window.mahSelectors.mountSingle(container, { entity: 'group', title: 'Owner',
+selected: [{ ID: 42, Name: 'Example' }], parameters: () => ({ Categories: [7, 9] }),
+onChange: change => saveOwner(change.current[0]?.raw.ID) })` mounts the same
+searchable field used by host forms. The profile owns the search endpoint and
+pagination bound; repeated filters and the viewer's scope apply on every search.
+The field does not join a surrounding form. Persist changes through your plugin's
+API, use the returned handle's `setDisabled(boolean)` while saving, and use
+`replaceRawValues(values)` or `replaceByKeys(keys)` for silent rollback or morph
+refreshes. `getRawValues()` reads the selection; `destroy()` releases the field
+when its owner is removed. An optional `signal` cancels the initial markup fetch.

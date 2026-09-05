@@ -187,7 +187,11 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int, c *luaConversion) any {
 	}
 	defer c.leave(tbl)
 	maxN := tbl.MaxN()
-	if maxN > 0 {
+	explicitArray := false
+	if mt, ok := tbl.Metatable.(*lua.LTable); ok {
+		explicitArray = lua.LVAsBool(mt.RawGetString(luaJSONArrayMarker))
+	}
+	if maxN > 0 || explicitArray {
 		totalKeys := 0
 		tbl.ForEach(func(_, _ lua.LValue) {
 			totalKeys++

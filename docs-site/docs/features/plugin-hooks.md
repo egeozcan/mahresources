@@ -103,6 +103,17 @@ as an ordinary error whose message was scanned for familiar phrases, so
 `"this cannot be deleted"` came back 400 and `"protected by policy"` came back
 500 for the same event.
 
+### Entity context keys
+
+Note create/update hooks (before and after) and `after_note_delete` carry
+`note_type_id` and `owner_id`. Groups carry `category_id` and `owner_id`;
+resources carry `resource_category_id` and `owner_id`. Missing IDs are zero.
+Resource before-create context contains the requested category (zero can mean
+host auto-detection); the after-create payload contains the resolved category.
+These keys are context only. Returning changed IDs does not reassign the entity:
+create/update read-back remains limited to `name`, `description`, and `meta`.
+Before-delete hooks continue to receive only the entity ID.
+
 ### Complete Hook Reference
 
 These 30 entity events, plus the job and mass-edit events below, are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
@@ -241,6 +252,12 @@ Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting in
 | `note_list_after` | Note list page, after the list |
 | `group_list_before` | Group list page, before the list |
 | `group_list_after` | Group list page, after the list |
+
+Detail-slot context contains `entity_key`, `entity_id`, `entity_type_id` and
+`entity_type_name` when available, plus `path`. Taxonomy IDs and names come from
+the entity and its preloaded association, with no per-slot entity lookup. Wide
+note display includes the note detail slots, and disabling the Share section
+does not hide plugin actions or the sidebar slot.
 
 ### How Injections Render
 

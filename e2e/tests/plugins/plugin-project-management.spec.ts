@@ -161,6 +161,34 @@ test('setup installs schemas and the native presentation templates', async ({ pa
   }
 });
 
+test('setup upgrades presentation fixes once while preserving existing custom CSS', async ({page, request, baseURL}) => {
+  await page.goto(`/noteType/edit?id=${pm.taskType}`);
+  const original = await page.locator('form[action="/v1/note/noteType/edit"]').evaluate(form =>
+    Object.fromEntries(new FormData(form as HTMLFormElement).entries()) as Record<string, string>);
+  const correction = /\/\* project-management:accent-corners:v1 \*\/\s*\.pm-entity-detail\{[^}]+\}/g;
+  const rowCorrection = /\/\* project-management:block-row:v2 \*\/\s*(?:\.pm-(?:block-row|time-entry)[^}]+\}\s*){8}/g;
+  const customized = {
+    ...original,
+    CustomCSS: original.CustomCSS.replace(correction, '').replace(rowCorrection, '') + '\n.operator-accent{color:rebeccapurple}',
+  };
+  try {
+    const saved = await request.post(`${baseURL}/v1/note/noteType/edit`, {form: customized});
+    expect(saved.ok(), await saved.text()).toBe(true);
+    for (let run = 0; run < 2; run++) {
+      const setup = await pluginRequest(request, 'post', '/api/setup', {}, baseURL);
+      expect(setup.status).toBe(200);
+      await page.reload();
+      const css = await page.locator('input[name="CustomCSS"]').inputValue();
+      expect(css).toContain(customized.CustomCSS);
+      expect(css.match(/project-management:accent-corners:v1/g)).toHaveLength(1);
+      expect(css.match(/project-management:block-row:v2/g)).toHaveLength(1);
+    }
+  } finally {
+    const restored = await request.post(`${baseURL}/v1/note/noteType/edit`, {form: original});
+    expect(restored.ok(), await restored.text()).toBe(true);
+  }
+});
+
 test('native detail, list summary and MRQL result surfaces carry PM context', async ({ page, request, baseURL }) => {
   await page.goto(`/group?id=${pm.projectId}`);
   const projectDetail = page.getByTestId('pm-project-detail');
@@ -175,7 +203,7 @@ test('native detail, list summary and MRQL result surfaces carry PM context', as
   await expect(page.getByTestId('pm-epic-detail').getByTestId('pm-entity-context')).toHaveCount(0);
   await expect(page.getByTestId('pm-entity-context').last()).toContainText('View on board');
   const fixLoginCard = page.getByRole('article').filter({ hasText: 'Fix login' });
-  await expect(fixLoginCard.getByTestId('pm-task-summary')).toContainText('PM Demo');
+  await expect(fixLoginCard.getByRole('combobox', {name: 'Task status'})).toHaveValue('todo');
 
   await page.goto(`/note?id=${pm.epicTask}`);
   await expect(page).toHaveTitle(/PM Task: Fix login/);
@@ -268,6 +296,45 @@ test('effective status and overdue semantics agree across native and board surfa
   } finally {
     await apiClient.deleteNote(implicit.ID).catch(() => {});
     await apiClient.deleteNote(completed.body.id).catch(() => {});
+  }
+});
+
+test('customized task headers retain working existing and new block editors after setup', async ({page,request,apiClient,baseURL}) => {
+  await page.goto(`/noteType/edit?id=${pm.taskType}`);
+  await expect(page.locator('input[name="CustomHeader"]')).toHaveValue(/pm-task-detail/);
+  const original = await page.locator('form[action="/v1/note/noteType/edit"]').evaluate(form =>
+    Object.fromEntries(new FormData(form as HTMLFormElement).entries()) as Record<string,string>);
+  const customized = {...original,CustomHeader:'<h2 data-testid="operator-task-header">Team workflow</h2>'};
+  const acceptance = await apiClient.createBlock(pm.epicTask,'plugin:project-management:acceptance-criteria','x',{criteria:'Original criterion',verification:''});
+  const subtasks = await apiClient.createBlock(pm.epicTask,'plugin:project-management:subtasks','y',{items:[]});
+  try {
+    const saved = await request.post(`${baseURL}/v1/note/noteType/edit`,{form:customized});
+    expect(saved.ok(),await saved.text()).toBe(true);
+    const setup = await pluginRequest(request,'post','/api/setup',{},baseURL);
+    expect(setup.status).toBe(200);
+    await page.goto(`/note?id=${pm.epicTask}`);
+    await expect(page.getByTestId('operator-task-header')).toHaveText('Team workflow');
+    await expect(page.getByTestId('pm-task-detail')).toHaveCount(0);
+    await expect(page.getByTestId('pm-acceptance-criteria')).toBeVisible();
+    await page.getByRole('button',{name:'Edit Blocks',exact:true}).click();
+    const criteria = page.getByTestId('pm-acceptance-criteria-editor').getByLabel(/Criteria \(one per line\)/);
+    await criteria.fill('Customized header still saves');
+    await criteria.press('Tab');
+    await expect.poll(async () => (await apiClient.getBlock(acceptance.id)).content.criteria).toBe('Customized header still saves');
+    const editor = page.getByTestId('pm-subtasks-editor');
+    await editor.getByRole('button',{name:'Add subtask',exact:true}).click();
+    await editor.getByLabel('Subtask',{exact:true}).fill('New block also saves');
+    await editor.getByLabel('Subtask',{exact:true}).press('Tab');
+    await expect.poll(async () => (await apiClient.getBlock(subtasks.id)).content.items[0]?.label).toBe('New block also saves');
+    await page.reload();
+    await expect(page.getByTestId('operator-task-header')).toBeVisible();
+    await expect(page.getByTestId('pm-acceptance-criteria')).toContainText('Customized header still saves');
+    await expect(page.getByTestId('pm-subtasks')).toContainText('New block also saves');
+  } finally {
+    const restored = await request.post(`${baseURL}/v1/note/noteType/edit`,{form:original});
+    expect(restored.ok(),await restored.text()).toBe(true);
+    await apiClient.deleteBlock(acceptance.id);
+    await apiClient.deleteBlock(subtasks.id);
   }
 });
 
@@ -605,6 +672,37 @@ test('dashboard counts match the stats endpoint', async ({ page, request, baseUR
   expect(await readStat('overdue')).toBe(stats.body.overdue || 0);
 });
 
+test('stats compares same-day times and exact week boundaries', async ({request, apiClient, baseURL}) => {
+  const project = await apiClient.createGroup({name: unique('Date boundary QA'), categoryId: pm.projectCategory});
+  const ids: number[] = [];
+  try {
+    for (const due of ['2026-09-07T00:00', '2026-09-09T09:00', '2026-09-09T17:00', '2026-09-14T00:00']) {
+      const created = await pluginRequest(request, 'post', '/api/task/create', {
+        owner_id: project.ID, name: `Due ${due}`, due, status: 'todo',
+      }, baseURL);
+      expect(created.status).toBe(200);
+      ids.push(created.body.id);
+    }
+    const stats = await pluginRequest(request, 'get',
+      `/api/stats?project=${project.ID}&now=2026-09-09T12:00&week_start=2026-09-07T00:00&week_end=2026-09-14T00:00`, undefined, baseURL);
+    expect(stats.status).toBe(200);
+    expect(stats.body.overdue).toBe(2);
+    expect(stats.body.due_this_week).toBe(3);
+    for (const [start, end, count] of [
+      ['2026-09-07T00:00', '2026-09-07T01:00', 1],
+      ['2026-09-13T23:00', '2026-09-14T00:00', 0],
+    ] as const) {
+      const boundary = await pluginRequest(request, 'get',
+        `/api/stats?project=${project.ID}&week_start=${start}&week_end=${end}`, undefined, baseURL);
+      expect(boundary.status).toBe(200);
+      expect(boundary.body.due_this_week).toBe(count);
+    }
+  } finally {
+    for (const id of ids) await apiClient.deleteNote(id);
+    await apiClient.deleteGroup(project.ID);
+  }
+});
+
 test('timeline places a task in its due-date column', async ({ page }) => {
   await page.goto(`/plugins/project-management/board?project=${pm.projectId}&view=timeline`);
   await page.waitForSelector('[data-testid="pm-timeline"]', { timeout: 15000 });
@@ -635,4 +733,331 @@ test('task badges are styled on the native note-type page', async ({ page }) => 
   await expect(pill).toBeVisible();
   await expect(pill).toHaveCSS('border-radius', '9999px');
   await expect(pill).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+});
+
+
+test('native note creation stamps the configured task status', async ({ page, apiClient, request, baseURL }) => {
+  await page.goto(`/note/new?noteTypeId=${pm.taskType}&ownerId=${pm.projectId}`);
+  await page.locator('input[name="Name"]').fill('Native PM task');
+  await page.locator('button[type="submit"]').first().click();
+  await expect(page).toHaveURL(/\/note\?id=/);
+  const id = Number(new URL(page.url()).searchParams.get('id'));
+  try {
+    const response = await request.get(`${baseURL}/v1/note?id=${id}`);
+    const note = await response.json();
+    expect(note.Meta.status).toBe('todo');
+    expect(note.Meta.order).toBeUndefined();
+  } finally {
+    await apiClient.deleteNote(id);
+  }
+});
+
+test('native owner selector searches scoped PM categories and restores failed saves', async ({page, request, baseURL, apiClient}) => {
+  const unrelatedCategory = await apiClient.createCategory('Unrelated owner category');
+  const unrelated = await apiClient.createGroup({name:'Backend unrelated category',categoryId:unrelatedCategory.ID});
+  const searches: URL[] = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/v1/groups') searches.push(url);
+  });
+  try {
+    await page.goto(`/note?id=${pm.epicTask}`);
+    const owner = page.locator('pm-owner-control').first();
+    const input = owner.getByRole('combobox', {name:'Task epic or project'});
+    await expect(input).toBeVisible();
+    await expect(owner).toContainText('Frontend');
+    expect(searches).toHaveLength(0);
+    await input.fill('Backend');
+    await expect(owner.getByRole('option')).toHaveCount(1);
+    expect(searches).toHaveLength(1);
+    expect(searches[0].searchParams.getAll('Categories')).toEqual([String(pm.projectCategory),String(pm.epicCategory)]);
+    expect(searches[0].searchParams.get('name')).toBe('Backend');
+    expect(searches[0].searchParams.has('page')).toBe(false);
+    await input.press('Enter');
+    await expect(owner).toContainText('Saved');
+    const saved = await request.get(`${baseURL}/v1/note?id=${pm.epicTask}`);
+    expect((await saved.json()).OwnerId).toBe(pm.epicBackend);
+    await page.reload();
+    await expect(owner).toContainText('Backend');
+    await page.route('**/v1/plugins/project-management/api/task/update', route => route.fulfill({
+      status: 400, contentType:'application/json', body:JSON.stringify({error:'Owner change rejected'}),
+    }));
+    await input.fill('Frontend');
+    await expect(owner.getByRole('option')).toHaveCount(1);
+    await input.press('Enter');
+    await expect(owner).toContainText('Owner change rejected');
+    await expect(owner.locator(':scope > [role="status"]')).toBeVisible();
+    await expect(owner.getByRole('button', {name:'Remove Backend',exact:true})).toBeVisible();
+    await expect(input).toBeEnabled();
+    await owner.getByRole('button', {name:'Remove Backend',exact:true}).click();
+    await expect(owner.getByRole('button', {name:'Remove Backend',exact:true})).toBeVisible();
+    // The same silently applied state path is used when Alpine morphs new server attributes.
+    await owner.evaluate(element => {
+      element.dataset.value = '123456';
+      (element as HTMLElement & {refreshFromMorph():void}).refreshFromMorph();
+    });
+    await expect(owner.getByRole('button', {name:'Remove #123456',exact:true})).toBeVisible();
+  } finally {
+    await apiClient.deleteGroup(unrelated.ID);
+    await apiClient.deleteCategory(unrelatedCategory.ID);
+    await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,owner_id:pm.epicFrontend},baseURL);
+  }
+});
+
+test('native status controls agree with the board after reload', async ({page, request, baseURL}) => {
+  await page.goto(`/note?id=${pm.epicTask}`);
+  const status = page.locator('pm-status-control select').first();
+  await expect(status).toHaveValue('todo');
+  await status.selectOption('in_progress');
+  await expect(page.locator('pm-status-control').first()).toContainText('Saved');
+  await page.reload();
+  await expect(status).toHaveValue('in_progress');
+  await page.goto(`/plugins/project-management/board?project=${pm.projectId}`);
+  await expect(page.locator('.pm-column[data-status="in_progress"] .pm-card').filter({hasText:'Fix login'})).toBeVisible();
+  await pluginRequest(request, 'post', '/api/task/update', {id:pm.epicTask,status:'todo'}, baseURL);
+});
+
+test('notes list offers taxonomy-filtered bulk actions and saves each selected task', async ({page, request, baseURL, apiClient}) => {
+  const one = await apiClient.createNote({name:'Bulk PM one',noteTypeId:pm.taskType,ownerId:pm.projectId});
+  const two = await apiClient.createNote({name:'Bulk PM two',noteTypeId:pm.taskType,ownerId:pm.projectId});
+  try {
+    await page.goto(`/notes?noteTypeIds=${pm.taskType}`);
+    await page.getByRole('checkbox',{name:'Select Bulk PM one',exact:true}).check();
+    await page.getByRole('checkbox',{name:'Select Bulk PM two',exact:true}).check();
+    await page.getByRole('button',{name:'Set task status',exact:true}).filter({visible:true}).last().click();
+    const dialog = page.getByRole('dialog');
+    await dialog.locator('#plugin-param-status').selectOption('in_progress');
+    const finished = page.waitForResponse(response => response.url().includes('/v1/jobs/action/run'));
+    await dialog.getByRole('button',{name:'Run',exact:true}).click();
+    const outcome = await finished;
+    expect(outcome.ok(), await outcome.text()).toBe(true);
+    await expect.poll(async () => (await (await request.get(`${baseURL}/v1/note?id=${one.ID}`)).json()).Meta.status).toBe('in_progress');
+    expect((await (await request.get(`${baseURL}/v1/note?id=${two.ID}`)).json()).Meta.status).toBe('in_progress');
+    await page.goto('/notes?noteTypeId=999999');
+    await expect(page.getByRole('button',{name:'Set task status',exact:true})).toHaveCount(0);
+  } finally { await apiClient.deleteNote(one.ID); await apiClient.deleteNote(two.ID); }
+});
+
+for (const spec of [
+  {type:'subtasks',content:{items:[]},add:'Add subtask',field:'Subtask',value:'Verify native workflow',text:'Verify native workflow'},
+  {type:'time-log',content:{estimate_hours:8,entries:[]},add:'Add time entry',field:'Note',value:'Implementation',text:'Implementation'},
+]) {
+  test(`native ${spec.type} block supports add, edit and reload`,async ({page,apiClient}) => {
+    const block = await apiClient.createBlock(pm.epicTask,`plugin:project-management:${spec.type}`,'z',spec.content);
+    try {
+      await page.goto(`/note?id=${pm.epicTask}`);
+      await page.getByRole('button',{name:'Edit Blocks',exact:true}).click();
+      const editor = page.getByTestId(`pm-${spec.type}-editor`);
+      await editor.getByRole('button',{name:spec.add,exact:true}).click();
+      const field = editor.getByLabel(spec.field,{exact:true});
+      await field.fill(spec.value); await field.press('Tab');
+      await expect.poll(async () => JSON.stringify((await apiClient.getBlock(block.id)).content)).toContain(spec.text);
+      await page.reload();
+      await expect(page.getByTestId(`pm-${spec.type}`)).toContainText(spec.text);
+    } finally { await apiClient.deleteBlock(block.id); }
+  });
+}
+
+test('dependencies resolve task names and subtask promotion is idempotent', async ({page,apiClient,request,baseURL}) => {
+  const dependency = await apiClient.createBlock(pm.epicTask,'plugin:project-management:dependencies','x',{blocked_by:[pm.unepicTask],blocks:[]});
+  const subtask = await apiClient.createBlock(pm.epicTask,'plugin:project-management:subtasks','y',{items:[{id:'promote-me',label:'Promoted child'}]});
+  let promoted = 0;
+  try {
+    await page.goto(`/note?id=${pm.epicTask}`);
+    await expect(page.getByTestId('pm-dependencies')).toContainText('Unepic direct task');
+    await page.getByRole('button',{name:'Edit Blocks',exact:true}).click();
+    const editor = page.getByTestId('pm-dependencies-editor');
+    await editor.locator('[data-pm-new-reference=blocks]').fill(String(pm.directDone));
+    await editor.getByRole('button',{name:'Add blocked task',exact:true}).click();
+    await expect.poll(async () => (await apiClient.getBlock(dependency.id)).content.blocks).toEqual([pm.directDone]);
+    await page.reload();
+    await expect(page.getByTestId('pm-dependencies')).toContainText('Direct done item');
+    const body = {id:pm.epicTask,block_id:subtask.id,item_id:'promote-me'};
+    const first = await pluginRequest(request,'post','/api/task/promote',body,baseURL);
+    expect(first.status,JSON.stringify(first.body)).toBe(200); promoted=first.body.id;
+    const second = await pluginRequest(request,'post','/api/task/promote',body,baseURL);
+    expect(second.body.id).toBe(promoted);
+    expect(first.body.owner_id).toBe(pm.epicFrontend);
+  } finally { await apiClient.deleteBlock(dependency.id); await apiClient.deleteBlock(subtask.id); if(promoted) await apiClient.deleteNote(promoted); }
+});
+
+test('rollup reconciles native changes and mini-board counts match stats',async ({page,request,baseURL,apiClient}) => {
+  const block = await apiClient.createBlock(pm.epicTask,'plugin:project-management:subtasks','z',{items:[{id:'rollup-one',label:'Checked subtask'}]});
+  await apiClient.updateBlockState(block.id,{checked:['rollup-one']});
+  try {
+    const run = await request.post(`${baseURL}/v1/plugin/schedule/run`,{form:{name:'project-management',scheduleId:'rollup'}});
+    expect(run.ok(),await run.text()).toBe(true);
+    await expect.poll(async () => {
+      const schedules = await (await request.get(`${baseURL}/v1/plugin/schedules?name=project-management`)).json();
+      const rollup = schedules.find((row: any) => row.scheduleId === 'rollup');
+      return {status:rollup?.lastStatus,error:rollup?.lastError};
+    }).toEqual({status:'completed',error:''});
+    const meta = (await (await request.get(`${baseURL}/v1/group?id=${pm.projectId}`)).json()).Meta;
+    expect(meta.pm_counts?.total).toBe(6);
+    expect(meta.pm_subtasks).toBe(1);
+    expect(meta.pm_subtasks_done).toBe(1);
+    const stats = await pluginRequest(request,'get',`/api/stats?project=${pm.projectId}`,undefined,baseURL);
+    await page.goto(`/group?id=${pm.projectId}`);
+    for (const status of ['backlog','todo','in_progress','blocked','done']) {
+      await expect(page.locator(`.pm-mini-column[data-status="${status}"] .pm-mini-count`)).toHaveText(String(stats.body.by_status[status] || 0));
+    }
+  } finally { await apiClient.deleteBlock(block.id); }
+});
+
+
+test('moving to a paginated column keeps focus with bounded reads and correct later pages', async ({page,request,baseURL,apiClient}) => {
+  test.setTimeout(60000);
+  const ids: number[] = [];
+  try {
+    const prepared = await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,status:'todo'},baseURL);
+    expect(prepared.status).toBe(200);
+    for (let i=0;i<101;i++) {
+      const result = await pluginRequest(request,'post','/api/task/create',{owner_id:pm.projectId,name:`Paged task ${i}`,status:'backlog'},baseURL);
+      expect(result.status).toBe(200); ids.push(result.body.id);
+    }
+    await page.goto(`/plugins/project-management/board?project=${pm.projectId}`);
+    const control = page.locator(`.pm-card[data-id="${pm.epicTask}"] .pm-status-move`);
+    await control.focus();
+    const original = await control.elementHandle();
+    const reads: number[] = [];
+    page.on('request', req => {
+      const url = new URL(req.url());
+      if (url.pathname === '/v1/notes') reads.push(Number(url.searchParams.get('page')));
+    });
+    await control.selectOption('backlog');
+    const column = page.locator('.pm-column[data-status="backlog"]');
+    const destination = column.locator(`.pm-card[data-id="${pm.epicTask}"] .pm-status-move`);
+    await expect(destination).toBeVisible();
+    await expect(destination).toBeFocused();
+    expect(await destination.evaluate((element, previous) => element === previous, original)).toBe(true);
+    expect(reads).toEqual([1,1]);
+    await expect(column.locator('.pm-column-body .pm-card')).toHaveCount(50);
+    await expect(column.locator('.pm-moved-tasks .pm-card')).toHaveCount(1);
+    await expect(column.locator('.pm-moved-tasks .pm-move-up')).toBeDisabled();
+
+    await column.getByRole('button', {name:'Load more…'}).click();
+    await expect(column.locator('.pm-column-body .pm-card')).toHaveCount(100);
+    await expect(column.locator('.pm-moved-tasks .pm-card')).toHaveCount(1);
+    await column.getByRole('button', {name:'Load more…'}).click();
+    await expect(column.locator('.pm-column-body .pm-card')).toHaveCount(102);
+    await expect(column.locator('.pm-moved-tasks')).toHaveCount(0);
+    expect(reads).toEqual([1,1,2,3]);
+    const rendered = await column.locator('.pm-card').evaluateAll(cards => cards.map(card => Number((card as HTMLElement).dataset.id)));
+    expect(rendered).toEqual([...ids,pm.epicTask]);
+    expect(new Set(rendered).size).toBe(rendered.length);
+    expect(await destination.evaluate((element, previous) => element === previous, original)).toBe(true);
+    await expect(column.locator(`.pm-card[data-id="${pm.epicTask}"] .pm-move-up`)).toBeEnabled();
+  } finally {
+    await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,status:'todo'},baseURL);
+    for (const id of ids) await apiClient.deleteNote(id);
+  }
+});
+
+test('retained board tasks refresh native edits and disappear after leaving the project', async ({page,request,baseURL,apiClient}) => {
+  const ids: number[] = [];
+  const original = await (await request.get(`${baseURL}/v1/note?id=${pm.epicTask}`)).json();
+  let refreshIndex = 0;
+  async function refreshViaCreateModal() {
+    const name = `Retained refresh ${++refreshIndex}`;
+    await page.getByTestId('pm-add-done').click();
+    await page.getByLabel('Task name',{exact:true}).fill(name);
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/task/create'));
+    await page.getByTestId('pm-create-task').click();
+    const response = await saved;
+    expect(response.ok(),await response.text()).toBe(true);
+    ids.push((await response.json()).id);
+    await expect(page.locator('.pm-card').filter({hasText:name})).toBeVisible();
+  }
+  try {
+    const prepared = await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,status:'todo'},baseURL);
+    expect(prepared.status).toBe(200);
+    for (let index=0;index<51;index++) {
+      const created = await pluginRequest(request,'post','/api/task/create',{owner_id:pm.projectId,name:`Retained task ${index}`,status:'backlog'},baseURL);
+      expect(created.status).toBe(200); ids.push(created.body.id);
+    }
+    await page.goto(`/plugins/project-management/board?project=${pm.projectId}`);
+    const card = page.locator(`.pm-card[data-id="${pm.epicTask}"]`);
+    await card.locator('.pm-status-move').selectOption('backlog');
+    const retained = page.locator(`.pm-moved-tasks .pm-card[data-id="${pm.epicTask}"]`);
+    await expect(retained).toBeVisible();
+
+    const renamed = await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,name:'Renamed retained task'},baseURL);
+    expect(renamed.status).toBe(200);
+    await refreshViaCreateModal();
+    await expect(retained.locator('.pm-task-link')).toHaveText('Renamed retained task');
+
+    const moved = await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,status:'todo'},baseURL);
+    expect(moved.status).toBe(200);
+    await refreshViaCreateModal();
+    await expect(retained).toHaveCount(0);
+    await expect(page.locator(`.pm-column[data-status="todo"] .pm-card[data-id="${pm.epicTask}"]`)).toBeVisible();
+    await expect(card).toHaveCount(1);
+
+    await card.locator('.pm-status-move').selectOption('backlog');
+    await expect(retained).toBeVisible();
+    const relocated = await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,owner_id:pm.emptyProjectId},baseURL);
+    expect(relocated.status).toBe(200);
+    await refreshViaCreateModal();
+    await expect(card).toHaveCount(0);
+  } finally {
+    await pluginRequest(request,'post','/api/task/update',{id:pm.epicTask,name:original.Name,owner_id:original.OwnerId,status:original.Meta.status || 'backlog'},baseURL);
+    for (const id of ids) await apiClient.deleteNote(id);
+  }
+});
+
+test('row controls stay inert until replacement block HTML arrives', async ({page,apiClient}) => {
+  const block = await apiClient.createBlock(pm.epicTask,'plugin:project-management:subtasks','z',{
+    items:[{id:'a',label:'Row A'},{id:'b',label:'Row B'},{id:'c',label:'Row C'}],
+  });
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let held = false;
+  try {
+    await page.goto(`/note?id=${pm.epicTask}`);
+    await page.getByRole('button',{name:'Edit Blocks',exact:true}).click();
+    const editor = page.getByTestId('pm-subtasks-editor');
+    await expect(editor.getByRole('button',{name:'Remove row',exact:true})).toHaveCount(3);
+    await page.route('**/v1/plugins/block/render-batch',async route => {
+      if (!held && route.request().postDataJSON().blockIds.includes(block.id)) { held=true; await gate; }
+      await route.continue();
+    });
+    await editor.getByRole('button',{name:'Remove row',exact:true}).first().click();
+    await expect.poll(async () => (await apiClient.getBlock(block.id)).content.items.length).toBe(2);
+    await expect.poll(() => held).toBe(true);
+    await expect(page.locator(`[data-block-id="${block.id}"] .plugin-block-content`)).toHaveJSProperty('inert',true,{timeout:1000});
+    release();
+    await expect(editor.getByRole('button',{name:'Remove row',exact:true})).toHaveCount(2);
+    await editor.getByRole('button',{name:'Remove row',exact:true}).first().click();
+    await expect.poll(async () => (await apiClient.getBlock(block.id)).content.items).toEqual([{id:'c',label:'Row C'}]);
+  } finally { release(); await apiClient.deleteBlock(block.id); }
+});
+
+test('native priority editor opens with its scalar value and saves a labeled choice', async ({page,request,baseURL,apiClient}) => {
+  const created = await pluginRequest(request,'post','/api/task/create',{
+    owner_id:pm.projectId,name:'Priority editor regression',priority:'high',status:'todo',
+  },baseURL);
+  expect(created.status).toBe(200);
+  const id = created.body.id;
+  try {
+    await page.goto(`/note?id=${id}`);
+    const priority = page.locator('meta-shortcode[data-path="priority"]');
+    await priority.getByRole('button',{name:'Edit Priority',exact:true}).click();
+    const choice = priority.getByRole('combobox');
+    await expect(choice).toHaveValue('high',{timeout:1000});
+    await expect(choice.locator('option:checked')).toHaveText('High');
+    await choice.selectOption('urgent');
+    await priority.getByRole('button',{name:'Save',exact:true}).click();
+    await expect(priority.getByRole('button',{name:'Edit Priority',exact:true})).toBeVisible();
+    await expect(priority).toContainText('Urgent');
+    const note = await (await request.get(`${baseURL}/v1/note?id=${id}`)).json();
+    expect(note.Meta.priority).toBe('urgent');
+    expect(note.Meta.status).toBe('todo');
+    await page.reload();
+    await priority.getByRole('button',{name:'Edit Priority',exact:true}).click();
+    await expect(choice).toHaveValue('urgent');
+    await choice.selectOption('low');
+    await priority.getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(priority.getByRole('button',{name:'Edit Priority',exact:true})).toBeVisible();
+    await expect(priority).toContainText('Urgent');
+  } finally { await apiClient.deleteNote(id); }
 });

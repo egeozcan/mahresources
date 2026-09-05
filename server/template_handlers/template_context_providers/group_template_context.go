@@ -112,8 +112,11 @@ func GroupsListContextProvider(context GroupPageContext) func(request *http.Requ
 		// category's CustomListHeader slot against the category itself. Groups filter
 		// on the multi-value Categories slice, so "single" means exactly one.
 		var listHeaderCarrier *models.Category
-		if len(query.Categories) == 1 && len(categories) == 1 {
-			listHeaderCarrier = &categories[0]
+		if id := query_models.SingleTaxonomy(query.CategoryId, query.Categories); id != 0 {
+			selected, err := context.GetCategoriesWithIds(&[]uint{id}, 0)
+			if err == nil && len(selected) == 1 {
+				listHeaderCarrier = &selected[0]
+			}
 		}
 
 		return pongo2.Context{
@@ -122,6 +125,7 @@ func GroupsListContextProvider(context GroupPageContext) func(request *http.Requ
 			"owners":            owners,
 			"groupsSelection":   groupsSelection,
 			"categories":        categories,
+			"listTaxonomyID":    query_models.SingleTaxonomy(query.CategoryId, query.Categories),
 			"listHeaderCarrier": listHeaderCarrier,
 			"pagination":        pagination,
 			// The mass-edit panel's "edit all N results" reads this.
@@ -217,8 +221,11 @@ func GroupTimelineContextProvider(context GroupPageContext) func(request *http.R
 		}
 
 		var listHeaderCarrier *models.Category
-		if len(query.Categories) == 1 && len(categories) == 1 {
-			listHeaderCarrier = &categories[0]
+		if id := query_models.SingleTaxonomy(query.CategoryId, query.Categories); id != 0 {
+			selected, err := context.GetCategoriesWithIds(&[]uint{id}, 0)
+			if err == nil && len(selected) == 1 {
+				listHeaderCarrier = &selected[0]
+			}
 		}
 
 		return pongo2.Context{

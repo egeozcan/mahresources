@@ -19,7 +19,7 @@ All six ship an `api_version = 1` manifest, and enabling one is your consent to 
 | example-blocks | `render` | none |
 | example-plugin | `hooks`, `inject`, `pages` | none |
 | fal-ai | `db:read`, `db:write`, `http`, `image`, `actions`, `jobs`, `pages` | the `fal.run`, `fal.ai` and `fal.media` host families |
-| project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv` | none |
+| project-management | `db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule` | none |
 
 fal-ai is the only one that reaches the network.
 
@@ -182,8 +182,11 @@ endpoint; every mutation runs through the plugin's own API, which validates
 statuses and dates and does the ordering inside a transaction. Tasks remain
 plain notes — searchable, mass-edit-able and group-export-able. The provisioned
 taxonomies also carry native detail, summary, hover, list and MRQL templates,
-and PM Task notes gain filtered **Acceptance criteria** and **Status update**
-block types.
+and PM Task notes gain **Acceptance criteria**, **Status update**, **Subtasks**,
+**Dependencies** and **Time log** blocks. Native pages support task edits and bulk
+actions; project pages include mini boards backed by scheduled rollups. Version
+1.1.0 requires an administrator to re-enable the plugin for its new grants, then
+run Set up to upgrade bundled presentation defaults.
 
 Because it needs two categories and a note type, the plugin provisions them in
 an explicit **Set up** step (admin only) rather than in `init()`. See

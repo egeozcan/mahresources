@@ -70,6 +70,8 @@ func (pm *PluginManager) RenderBlock(reqCtx context.Context, pluginName, fullTyp
 
 	// Build context table
 	ctxData := map[string]any{
+		"can_write": shortcodeCanWrite(reqCtx),
+		"read_only": !shortcodeCanWrite(reqCtx),
 		"block": map[string]any{
 			"id":       ctx.Block.ID,
 			"content":  ctx.Block.Content,

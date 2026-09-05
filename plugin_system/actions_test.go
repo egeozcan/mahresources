@@ -761,3 +761,22 @@ end
 		t.Errorf("expected error about missing handler, got: %v", err)
 	}
 }
+
+func TestListActionsNarrowOnlyKnownTaxonomy(t *testing.T) {
+	pm := &PluginManager{actions: map[string][]ActionRegistration{"example": {
+		{ID: "image", Entity: "resource", Placement: []string{"card"}, Filters: ActionFilter{ContentTypes: []string{"image/png"}}},
+		{ID: "task", Entity: "note", Placement: []string{"bulk"}, Filters: ActionFilter{NoteTypeIDs: []uint{7}}},
+	}}}
+	if got := pm.GetListActionsForPlacement("resource", "card", map[string]any{"category_id": uint(3)}); len(got) != 1 {
+		t.Fatalf("unknown content type must preserve image action: %v", got)
+	}
+	if got := pm.GetListActionsForPlacement("note", "bulk", map[string]any{"note_type_id": uint(8)}); len(got) != 0 {
+		t.Fatalf("known mismatched note type: %v", got)
+	}
+	if got := pm.GetListActionsForPlacement("note", "bulk", map[string]any{"note_type_id": uint(7)}); len(got) != 1 {
+		t.Fatalf("matching note type: %v", got)
+	}
+	if got := pm.GetListActionsForPlacement("note", "bulk", nil); len(got) != 1 {
+		t.Fatalf("unfiltered list must preserve actions: %v", got)
+	}
+}

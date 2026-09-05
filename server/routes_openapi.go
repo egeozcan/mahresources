@@ -2885,6 +2885,11 @@ func registerImportRoutes(r *openapi.Registry) {
 
 func registerPluginRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/plugins/block/render-batch", OperationID: "renderPluginBlocks",
+		Summary: "Render plugin blocks for one note", Description: "Accepts noteId, blockIds and mode (view or edit). Returns HTML keyed by block ID in renders, per-block errors in errors, and optional ordered plugin runtime asset URLs per block in scripts.",
+		Tags: []string{"plugins", "blocks"}, RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON}, ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
 		Method:      http.MethodGet,
 		Path:        "/v1/plugins/{pluginName}/block/render",
 		OperationID: "renderPluginBlock",

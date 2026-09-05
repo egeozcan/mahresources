@@ -65,10 +65,12 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		hookEvent = "before_note_update"
 	}
 	hookData := map[string]any{
-		"id":          float64(noteQuery.ID),
-		"name":        noteQuery.Name,
-		"description": noteQuery.Description,
-		"meta":        noteQuery.Meta,
+		"id":           float64(noteQuery.ID),
+		"name":         noteQuery.Name,
+		"description":  noteQuery.Description,
+		"meta":         noteQuery.Meta,
+		"note_type_id": float64(noteQuery.NoteTypeId),
+		"owner_id":     float64(noteQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks(hookEvent, hookData)
 	if hookErr != nil {
@@ -212,10 +214,12 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		afterEvent = "after_note_update"
 	}
 	ctx.RunAfterPluginHooks(afterEvent, map[string]any{
-		"id":          float64(note.ID),
-		"name":        note.Name,
-		"description": note.Description,
-		"meta":        string(note.Meta),
+		"id":           float64(note.ID),
+		"name":         note.Name,
+		"description":  note.Description,
+		"meta":         string(note.Meta),
+		"note_type_id": hookID(note.NoteTypeId),
+		"owner_id":     hookID(note.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeNote)
@@ -300,8 +304,9 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 // noteDeleteEffect is the after-commit payload for one deleted note, mirroring
 // groupDeleteEffect.
 type noteDeleteEffect struct {
-	ID   uint
-	Name string
+	TaxonomyID, OwnerID float64
+	ID                  uint
+	Name                string
 }
 
 // prepareNoteDelete runs the before-delete hook, giving a plugin its veto.
@@ -321,7 +326,7 @@ func (ctx *MahresourcesContext) deleteNoteInTransaction(noteID uint) (noteDelete
 	if err := ctx.db.Select(clause.Associations).Delete(&note).Error; err != nil {
 		return noteDeleteEffect{}, err
 	}
-	return noteDeleteEffect{ID: noteID, Name: note.Name}, nil
+	return noteDeleteEffect{ID: noteID, Name: note.Name, TaxonomyID: hookID(note.NoteTypeId), OwnerID: hookID(note.OwnerId)}, nil
 }
 
 // emitNoteDeleteEffects runs the log line, after-hook and cache invalidation for
@@ -335,7 +340,7 @@ func (ctx *MahresourcesContext) emitNoteDeleteEffects(events []noteDeleteEffect)
 	for _, event := range events {
 		id := event.ID
 		ctx.Logger().Info(models.LogActionDelete, "note", &id, event.Name, "Deleted note", nil)
-		ctx.RunAfterPluginHooks("after_note_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
+		ctx.RunAfterPluginHooks("after_note_delete", map[string]any{"id": float64(event.ID), "name": event.Name, "note_type_id": event.TaxonomyID, "owner_id": event.OwnerID})
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
 }

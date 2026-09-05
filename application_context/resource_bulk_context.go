@@ -140,7 +140,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		_ = fs.Remove(resource.GetCleanLocation())
 	}
 
-	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name})
+	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name, "resource_category_id": float64(resource.ResourceCategoryId), "owner_id": hookID(resource.OwnerId)})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return nil
@@ -512,8 +512,9 @@ func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileClea
 // their transaction and emit them once it has committed, so a plugin is never
 // told a resource was deleted by a transaction that then rolled back.
 type resourceDeleteEffect struct {
-	ID   uint
-	Name string
+	TaxonomyID, OwnerID float64
+	ID                  uint
+	Name                string
 }
 
 // prepareResourceDelete runs the before-delete hook, giving a plugin its veto.
@@ -537,7 +538,7 @@ func (ctx *MahresourcesContext) emitResourceDeleteEffects(events []resourceDelet
 		return
 	}
 	for _, event := range events {
-		ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
+		ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(event.ID), "name": event.Name, "resource_category_id": event.TaxonomyID, "owner_id": event.OwnerID})
 	}
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 }
@@ -548,7 +549,7 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 		return nil, resourceDeleteEffect{}, err
 	}
 
-	effect := resourceDeleteEffect{ID: resourceId, Name: resource.Name}
+	effect := resourceDeleteEffect{ID: resourceId, Name: resource.Name, TaxonomyID: float64(resource.ResourceCategoryId), OwnerID: hookID(resource.OwnerId)}
 
 	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
 	if storageErr != nil {

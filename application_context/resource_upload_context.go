@@ -561,10 +561,12 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	hookData := map[string]any{
-		"id":          float64(0),
-		"name":        fileName,
-		"description": resourceQuery.Description,
-		"meta":        resourceQuery.Meta,
+		"id":                   float64(0),
+		"name":                 fileName,
+		"description":          resourceQuery.Description,
+		"meta":                 resourceQuery.Meta,
+		"resource_category_id": float64(resourceQuery.ResourceCategoryId),
+		"owner_id":             float64(resourceQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
 	if hookErr != nil {
@@ -714,10 +716,12 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource from local path", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
-		"id":          float64(res.ID),
-		"name":        res.Name,
-		"description": res.Description,
-		"meta":        string(res.Meta),
+		"id":                   float64(res.ID),
+		"name":                 res.Name,
+		"description":          res.Description,
+		"meta":                 string(res.Meta),
+		"resource_category_id": float64(res.ResourceCategoryId),
+		"owner_id":             hookID(res.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
@@ -1050,10 +1054,12 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	}
 
 	hookData := map[string]any{
-		"id":          float64(0),
-		"name":        resourceQuery.Name,
-		"description": resourceQuery.Description,
-		"meta":        resourceQuery.Meta,
+		"id":                   float64(0),
+		"name":                 resourceQuery.Name,
+		"description":          resourceQuery.Description,
+		"meta":                 resourceQuery.Meta,
+		"resource_category_id": float64(resourceQuery.ResourceCategoryId),
+		"owner_id":             float64(resourceQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
 	if hookErr != nil {
@@ -1369,10 +1375,12 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
-		"id":          float64(res.ID),
-		"name":        res.Name,
-		"description": res.Description,
-		"meta":        string(res.Meta),
+		"id":                   float64(res.ID),
+		"name":                 res.Name,
+		"description":          res.Description,
+		"meta":                 string(res.Meta),
+		"resource_category_id": float64(res.ResourceCategoryId),
+		"owner_id":             hookID(res.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)

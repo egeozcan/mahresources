@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css notes %}{% endblock %}
+
 {% block body %}
 
 {# Name is shown once via the title-bar h1 (mainEntity/mainEntityType set by the provider), matching displayCategory.tpl #}

@@ -44,6 +44,9 @@ test.beforeAll(async ({ request, baseURL, apiClient }) => {
   await apiClient.createBlock(taskId, 'plugin:project-management:acceptance-criteria', 'x', {
     criteria: 'Keyboard flow works\nStatus is announced', verification: 'Run the accessibility suite',
   });
+  await apiClient.createBlock(taskId, 'plugin:project-management:subtasks', 'u', {items:[{id:'one',label:'Check accessibility'}]});
+  await apiClient.createBlock(taskId, 'plugin:project-management:dependencies', 'v', {blocked_by:[],blocks:[]});
+  await apiClient.createBlock(taskId, 'plugin:project-management:time-log', 'w', {estimate_hours:4,entries:[{date:'2026-09-05',hours:1,note:'Accessibility pass'}]});
   await apiClient.createBlock(taskId, 'plugin:project-management:status-update', 'y', {
     summary: 'Native surfaces are covered', next_step: 'Verify narrow layout', blocker: '',
   });

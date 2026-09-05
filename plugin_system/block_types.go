@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
@@ -70,6 +71,7 @@ type PluginBlockType struct {
 	Label         string
 	Icon          string
 	Description   string
+	Scripts       []string // ordered URLs within this plugin's public assets
 	contentSchema *jsonschema.Schema
 	stateSchema   *jsonschema.Schema
 	DefContent    json.RawMessage
@@ -87,8 +89,9 @@ type PluginBlockTypeConfig struct {
 	Label         string
 	Icon          string
 	Description   string
-	ContentSchema string // JSON Schema string; empty means accept all
-	StateSchema   string // JSON Schema string; empty means accept all
+	Scripts       []string // paths relative to this plugin's public directory
+	ContentSchema string   // JSON Schema string; empty means accept all
+	StateSchema   string   // JSON Schema string; empty means accept all
 	DefContent    json.RawMessage
 	DefState      json.RawMessage
 	Filters       BlockTypeFilter
@@ -100,12 +103,20 @@ type PluginBlockTypeConfig struct {
 // NewPluginBlockType creates a PluginBlockType, compiling any JSON Schemas at
 // construction time. Returns an error if a schema is invalid.
 func NewPluginBlockType(cfg PluginBlockTypeConfig) (*PluginBlockType, error) {
+	var scripts []string
+	for _, script := range cfg.Scripts {
+		if !validBlockScriptPath.MatchString(script) || path.Clean(script) != script || strings.HasPrefix(script, "/") || strings.Contains(script, "../") {
+			return nil, fmt.Errorf("invalid block script %q: expected a relative .js path within the plugin public directory", script)
+		}
+		scripts = append(scripts, "/plugins/"+cfg.PluginName+"/public/"+script)
+	}
 	bt := &PluginBlockType{
 		PluginName:  cfg.PluginName,
 		TypeName:    cfg.TypeName,
 		Label:       cfg.Label,
 		Icon:        cfg.Icon,
 		Description: cfg.Description,
+		Scripts:     scripts,
 		DefContent:  cfg.DefContent,
 		DefState:    cfg.DefState,
 		Filters:     cfg.Filters,
@@ -201,10 +212,11 @@ func (bt *PluginBlockType) validateAgainstSchema(schema *jsonschema.Schema, data
 }
 
 var validBlockTypeName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,49}$`)
+var validBlockScriptPath = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_./-]*\.js$`)
 
 // parseBlockTypeTable parses a Lua table from mah.block_type({...}) into a PluginBlockType.
 // Required fields: type, label, render_view, render_edit.
-// Optional fields: icon, description, content_schema, state_schema, default_content, default_state, filters.
+// Optional fields: icon, description, scripts, content_schema, state_schema, default_content, default_state, filters.
 func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*PluginBlockType, error) {
 	cfg := PluginBlockTypeConfig{
 		PluginName: pluginName,
@@ -258,6 +270,27 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 	// Optional: description
 	if v := tbl.RawGetString("description"); v != lua.LNil {
 		cfg.Description = v.String()
+	}
+
+	// Optional: scripts, loaded in order before block HTML becomes interactive.
+	if v := tbl.RawGetString("scripts"); v != lua.LNil {
+		list, ok := v.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("'scripts' must be an array of relative .js paths")
+		}
+		var parseErr error
+		list.ForEach(func(key, value lua.LValue) {
+			index, indexed := key.(lua.LNumber)
+			script, isString := value.(lua.LString)
+			if !indexed || index != lua.LNumber(len(cfg.Scripts)+1) || !isString {
+				parseErr = fmt.Errorf("'scripts' must be an array of relative .js paths")
+				return
+			}
+			cfg.Scripts = append(cfg.Scripts, string(script))
+		})
+		if parseErr != nil {
+			return nil, parseErr
+		}
 	}
 
 	// Optional: content_schema (Lua table -> JSON)

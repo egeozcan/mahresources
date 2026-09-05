@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -187,6 +188,8 @@ func (a *pluginDBAdapter) GetNoteData(id uint) (map[string]any, error) {
 		"description": note.Description,
 		"meta":        string(note.Meta),
 	}
+	addNoteContext(result, note)
+	result["blocks"] = pluginBlocks(note.Blocks)
 	if note.NoteType != nil {
 		result["note_type"] = note.NoteType.Name
 	}
@@ -258,6 +261,7 @@ func (a *pluginDBAdapter) GetGroupData(id uint) (map[string]any, error) {
 		"description": group.Description,
 		"meta":        string(group.Meta),
 	}
+	result["category_id"] = hookID(group.CategoryId)
 	if group.OwnerId != nil {
 		result["owner_id"] = float64(*group.OwnerId)
 	}
@@ -418,7 +422,7 @@ func queryOffset(filter map[string]any) int {
 }
 
 func buildNoteQuery(filter map[string]any) *query_models.NoteQuery {
-	query := &query_models.NoteQuery{}
+	query := &query_models.NoteQuery{MRQL: getStringOpt(filter, "mrql")}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
 	}
@@ -467,7 +471,7 @@ func buildResourceQuery(filter map[string]any) *query_models.ResourceSearchQuery
 }
 
 func buildGroupQuery(filter map[string]any) *query_models.GroupQuery {
-	query := &query_models.GroupQuery{}
+	query := &query_models.GroupQuery{MRQL: getStringOpt(filter, "mrql")}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
 	}
@@ -494,6 +498,20 @@ func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, e
 	if err != nil {
 		return nil, err
 	}
+	blocksByNote := map[uint][]*models.NoteBlock{}
+	if include, _ := filter["include_blocks"].(bool); include && len(notes) > 0 {
+		ids := make([]uint, len(notes))
+		for i, note := range notes {
+			ids[i] = note.ID
+		}
+		var blocks []*models.NoteBlock
+		if err := a.ctx.db.Where("note_id IN ?", ids).Order("position ASC, id ASC").Find(&blocks).Error; err != nil {
+			return nil, err
+		}
+		for _, block := range blocks {
+			blocksByNote[block.NoteID] = append(blocksByNote[block.NoteID], block)
+		}
+	}
 	results := make([]map[string]any, len(notes))
 	for i, n := range notes {
 		m := map[string]any{
@@ -503,6 +521,10 @@ func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, e
 			"meta":        string(n.Meta),
 			"created_at":  n.CreatedAt.Format(time.RFC3339),
 			"updated_at":  n.UpdatedAt.Format(time.RFC3339),
+		}
+		addNoteContext(m, &n)
+		if include, _ := filter["include_blocks"].(bool); include {
+			m["blocks"] = pluginBlocks(blocksByNote[n.ID])
 		}
 		if n.OwnerId != nil {
 			m["owner_id"] = float64(*n.OwnerId)
@@ -559,6 +581,7 @@ func (a *pluginDBAdapter) QueryGroups(filter map[string]any) ([]map[string]any, 
 			"created_at":  g.CreatedAt.Format(time.RFC3339),
 			"updated_at":  g.UpdatedAt.Format(time.RFC3339),
 		}
+		m["category_id"] = hookID(g.CategoryId)
 		if g.OwnerId != nil {
 			m["owner_id"] = float64(*g.OwnerId)
 		}
@@ -1066,6 +1089,7 @@ func categoryToMap(c *models.Category) map[string]any {
 		"custom_own_entities":  c.CustomOwnEntities,
 		"custom_mrql_result":   c.CustomMRQLResult,
 		"custom_css":           c.CustomCSS,
+		"section_config":       string(c.SectionConfig),
 		"meta_schema":          c.MetaSchema,
 	}
 }
@@ -1088,6 +1112,7 @@ func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
 		"custom_cell":          rc.CustomCell,
 		"custom_mrql_result":   rc.CustomMRQLResult,
 		"custom_css":           rc.CustomCSS,
+		"section_config":       string(rc.SectionConfig),
 		"meta_schema":          rc.MetaSchema,
 		"auto_detect_rules":    rc.AutoDetectRules,
 	}
@@ -1379,6 +1404,7 @@ func (a *pluginDBAdapter) CreateCategory(opts map[string]any) (map[string]any, e
 		CustomOwnEntities:  getStringOpt(opts, "custom_own_entities"),
 		CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
 		CustomCSS:          getStringOpt(opts, "custom_css"),
+		SectionConfig:      getStringOpt(opts, "section_config"),
 		MetaSchema:         getStringOpt(opts, "meta_schema"),
 	}
 	cat, err := a.ctx.CreateCategory(creator)
@@ -1404,6 +1430,7 @@ func (a *pluginDBAdapter) UpdateCategory(id uint, opts map[string]any) (map[stri
 			CustomOwnEntities:  getStringOpt(opts, "custom_own_entities"),
 			CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
 			CustomCSS:          getStringOpt(opts, "custom_css"),
+			SectionConfig:      getStringOpt(opts, "section_config"),
 			MetaSchema:         getStringOpt(opts, "meta_schema"),
 		},
 		ID: id,
@@ -1439,6 +1466,7 @@ func (a *pluginDBAdapter) PatchCategory(id uint, opts map[string]any) (map[strin
 			CustomOwnEntities:  patchString(opts, "custom_own_entities", cat.CustomOwnEntities),
 			CustomMRQLResult:   patchString(opts, "custom_mrql_result", cat.CustomMRQLResult),
 			CustomCSS:          patchString(opts, "custom_css", cat.CustomCSS),
+			SectionConfig:      patchString(opts, "section_config", string(cat.SectionConfig)),
 			MetaSchema:         patchString(opts, "meta_schema", cat.MetaSchema),
 		},
 		ID: id,
@@ -1469,6 +1497,7 @@ func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[strin
 		CustomCell:         getStringOpt(opts, "custom_cell"),
 		CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
 		CustomCSS:          getStringOpt(opts, "custom_css"),
+		SectionConfig:      getStringOpt(opts, "section_config"),
 		MetaSchema:         getStringOpt(opts, "meta_schema"),
 		AutoDetectRules:    getStringOpt(opts, "auto_detect_rules"),
 	}
@@ -1497,6 +1526,7 @@ func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (
 			CustomCell:         getStringOpt(opts, "custom_cell"),
 			CustomMRQLResult:   getStringOpt(opts, "custom_mrql_result"),
 			CustomCSS:          getStringOpt(opts, "custom_css"),
+			SectionConfig:      getStringOpt(opts, "section_config"),
 			MetaSchema:         getStringOpt(opts, "meta_schema"),
 			AutoDetectRules:    getStringOpt(opts, "auto_detect_rules"),
 		},
@@ -1535,6 +1565,7 @@ func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (m
 			CustomCell:         patchString(opts, "custom_cell", rc.CustomCell),
 			CustomMRQLResult:   patchString(opts, "custom_mrql_result", rc.CustomMRQLResult),
 			CustomCSS:          patchString(opts, "custom_css", rc.CustomCSS),
+			SectionConfig:      patchString(opts, "section_config", string(rc.SectionConfig)),
 			MetaSchema:         patchString(opts, "meta_schema", rc.MetaSchema),
 			AutoDetectRules:    patchString(opts, "auto_detect_rules", rc.AutoDetectRules),
 		},
@@ -2034,3 +2065,30 @@ func (a *pluginDBAdapter) TrimVideoClipToResource(reqCtx context.Context, resour
 // mediaProcessorFor's type assertion would simply start answering nil and
 // mah.media would report "not available" with nothing failing to build.
 var _ plugin_system.MediaProcessor = (*pluginDBAdapter)(nil)
+
+func addNoteContext(result map[string]any, note *models.Note) {
+	result["note_type_id"] = hookID(note.NoteTypeId)
+	result["start_date"], result["end_date"] = "", ""
+	if note.StartDate != nil {
+		result["start_date"] = note.StartDate.Format(time.RFC3339)
+	}
+	if note.EndDate != nil {
+		result["end_date"] = note.EndDate.Format(time.RFC3339)
+	}
+	tags := make([]any, 0, len(note.Tags))
+	for _, tag := range note.Tags {
+		tags = append(tags, map[string]any{"id": float64(tag.ID), "name": tag.Name})
+	}
+	result["tags"] = tags
+}
+
+func pluginBlocks(blocks []*models.NoteBlock) []any {
+	result := make([]any, 0, len(blocks))
+	for _, block := range blocks {
+		var content, state any
+		_ = json.Unmarshal(block.Content, &content)
+		_ = json.Unmarshal(block.State, &state)
+		result = append(result, map[string]any{"id": float64(block.ID), "type": block.Type, "content": content, "state": state})
+	}
+	return result
+}

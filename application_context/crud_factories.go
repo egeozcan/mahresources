@@ -96,6 +96,7 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 		CustomOwnEntities:  creator.CustomOwnEntities,
 		CustomMRQLResult:   creator.CustomMRQLResult,
 		CustomCSS:          creator.CustomCSS,
+		SectionConfig:      []byte(creator.SectionConfig),
 		MetaSchema:         creator.MetaSchema,
 	}, nil
 }
@@ -143,6 +144,7 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		CustomCell:         creator.CustomCell,
 		CustomMRQLResult:   creator.CustomMRQLResult,
 		CustomCSS:          creator.CustomCSS,
+		SectionConfig:      []byte(creator.SectionConfig),
 		MetaSchema:         creator.MetaSchema,
 		AutoDetectRules:    creator.AutoDetectRules,
 	}, nil

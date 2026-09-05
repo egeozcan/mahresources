@@ -816,3 +816,22 @@ The **Start from preset** picker offers a few ready-made templates (a project da
 - [Meta Schemas](./meta-schemas.md) -- JSON Schema validation for entity metadata
 - [Custom Block Types](./custom-block-types.md) -- structured content blocks within Notes
 - [Entity Picker](./entity-picker.md) -- modal for selecting entities in block and form contexts
+
+
+### Native plugin controls
+
+Prefer `[meta path="field" editable=true]` for schema-backed values. It supplies
+labels, enum colours, saving, read-only share rendering and morph handling.
+Use plugin controls for semantics the metadata editor cannot express, such as
+allocating an order key when a task moves.
+
+Load a plugin's static script from its taxonomies' `CustomHeader` and
+`CustomListHeader` when only those surfaces need it. Keep shared styling in
+`CustomCSS` so native cards and public shares retain their styling without
+executing plugin Lua. Wide note display renders `CustomHeader`,
+`CustomDetailFooter`, `CustomSidebar`, and all note detail plugin slots.
+A note-type detail page also loads CSS for its displayed note cards.
+
+A custom element with `data-morph-client-owned` keeps its client-rendered children
+during host page refreshes. Its attributes are still patched, and
+`refreshFromMorph(toElement)` can reconcile the new attributes.

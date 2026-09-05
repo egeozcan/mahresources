@@ -51,15 +51,6 @@
     return node;
   }
 
-  function escapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
   function csrfToken() {
     var m = document.querySelector('meta[name="csrf-token"]');
     return m ? m.getAttribute('content') : '';
@@ -75,6 +66,7 @@
       if (params[k] == null || params[k] === '') url.searchParams.delete(k);
       else url.searchParams.set(k, params[k]);
     });
+    if (params.view) url.pathname = PLUGIN_BASE + '/' + params.view;
     history.replaceState(null, '', url.toString());
   }
 
@@ -159,7 +151,7 @@
   }
 
   function effectiveStatus(task) {
-    return ((task.Meta || {}).status) || state.cfg.default_status;
+    return window.PMCore.status(task, state.cfg);
   }
 
   function columnFetchParams(status, page) {
@@ -282,7 +274,7 @@
     }
     if (container) {
       state.container = container;
-      var viewParam = getParam('view');
+      var viewParam = getParam('view') || window.location.pathname.split('/').pop();
       if (viewParam && ['board', 'backlog', 'dashboard', 'timeline'].indexOf(viewParam) >= 0) {
         state.view = viewParam;
       }
@@ -488,24 +480,7 @@
   // Task card markup shared by several views
   // ---------------------------------------------------------------------
 
-  // Darken a hex colour for text-on-tint contrast: the pill background is a
-  // 15% tint of the same colour, so the text must be much darker than the
-  // colour itself to pass WCAG AA.
-  function darken(hex) {
-    var m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return '#1c1917';
-    var n = parseInt(m[1], 16);
-    var r = Math.round(((n >> 16) & 255) * 0.45);
-    var g = Math.round(((n >> 8) & 255) * 0.45);
-    var b = Math.round((n & 255) * 0.45);
-    var pad = function (x) { return (x < 16 ? '0' : '') + x.toString(16); };
-    return '#' + pad(r) + pad(g) + pad(b);
-  }
-
-  function pill(entry) {
-    var textColor = darken(entry.color);
-    return el('span', { class: 'pm-pill', style: '--pm-color:' + entry.color + '; color:' + textColor + ';', text: entry.label });
-  }
+  function pill(entry) { return window.PMCore.pill(entry); }
 
   function tagChips(tags) {
     var chips = [];
@@ -540,17 +515,50 @@
     var payload = { id: task.ID, status: status };
     if (beforeId) payload.before_id = beforeId;
     if (afterId) payload.after_id = afterId;
-    await mutate('/api/task/move', payload);
-    state.pendingFocus = { id: task.ID, control: focusControl || 'move-status' };
-    state.pendingAnnounce = message;
-    await refreshBoard();
+    var source = effectiveStatus(task);
+    var updated = await mutate('/api/task/move', payload);
+    var movedTask = Object.assign({}, task, { Meta: updated.meta, OwnerId: updated.owner_id,
+      StartDate: updated.start_date, EndDate: updated.end_date });
+    await refreshColumns([status, source], {id:task.ID,status:status,task:movedTask});
+    if (message) announce(message);
+  }
+
+  async function refreshColumns(names, moved) {
+    var board = document.querySelector('.pm-view .pm-board');
+    if (!board) return renderApp();
+    var columns = Array.from(board.querySelectorAll('.pm-column'));
+    var retainedColumns = columns.filter(function (column) { return column.retainedTaskIds().length; });
+    var retainedIds = retainedColumns.flatMap(function (column) { return column.retainedTaskIds(); })
+      .filter(function (id) { return !moved || id !== moved.id; });
+    // Revalidate only the extra visible cards, through the same scoped note query.
+    // Native edits, owner changes and deletion must not leave stale retained rows.
+    var retainedReads = [];
+    for (var offset = 0; offset < retainedIds.length; offset += PAGE_SIZE) {
+      retainedReads.push(fetchTasks({MRQL:'(' + retainedIds.slice(offset, offset + PAGE_SIZE)
+        .map(function (id) { return 'id = ' + id; }).join(' OR ') + ')'}));
+    }
+    var retainedTasks = (await Promise.all(retainedReads)).flat();
+    if (moved) retainedTasks.push(moved.task);
+    var statuses = [...new Set(names.concat(retainedColumns.map(function (column) { return column.dataset.status; }),
+      retainedTasks.map(effectiveStatus)))].map(statusEntry);
+    var pages = await Promise.all(statuses.map(async function (status) {
+      var column = board.querySelector('.pm-column[data-status="' + status.name + '"]');
+      var depth = column ? column.loadedPageCount() : 1;
+      var tasks = (await Promise.all(Array.from({length:depth}, function (_, i) { return fetchTasks(columnFetchParams(status, i + 1)); }))).flat();
+      return tasks;
+    }));
+    var reuse = new Map(Array.from(board.querySelectorAll('.pm-card')).map(function (card) { return [Number(card.dataset.id),card]; }));
+    // Destination first: a moved card remains connected while changing columns.
+    statuses.forEach(function (status, index) {
+      rememberTasks(pages[index]);
+      board.querySelector('.pm-column[data-status="' + status.name + '"]')?.applyTasks(pages[index], reuse, retainedTasks);
+    });
   }
 
   function refreshBoard() {
     var content = document.querySelector('.pm-view[data-testid="pm-board"]');
     if (content) {
-      var renderer = renderBoard(content);
-      return renderer;
+      return refreshColumns(state.cfg.statuses.map(function (status) { return status.name; }));
     }
     return renderApp();
   }
@@ -597,6 +605,9 @@
   // the same page.
   function buildColumn(status, tasks) {
     var all = tasks.slice();
+    // A task moved past the loaded prefix stays accessible in a separate region.
+    // It must not affect page offsets or appear adjacent to unloaded neighbours.
+    var retained = new Map();
     var col = el('section', {
       class: 'pm-column',
       'data-status': status.name,
@@ -614,19 +625,56 @@
     col.appendChild(header);
 
     var exhausted = false;
-    function refreshBody() {
-      var old = col.querySelector('.pm-column-body');
-      var fresh = buildColumnBody(status, all);
-      if (old) old.replaceWith(fresh);
-      else col.insertBefore(fresh, col.querySelector('.pm-column-footer'));
+    function refreshBody(reuse) {
+      reuse = reuse || new Map(Array.from(col.querySelectorAll('.pm-card')).map(function (card) {
+        return [Number(card.dataset.id), card];
+      }));
+      var body = col.querySelector('.pm-column-body');
+      if (!body) { body = buildColumnBody(status, []); col.appendChild(body); }
+      body.querySelectorAll('.pm-empty').forEach(function (node) { node.remove(); });
+      var wanted = new Set(all.map(function (task) { return task.ID; }));
+      wanted.forEach(function (id) { retained.delete(id); });
+      var focused = document.activeElement;
+      all.forEach(function (task, index) {
+        var card = reuse?.get(task.ID) || body.querySelector('[data-id="' + task.ID + '"]') || buildCard(task,status);
+        card.applyTask(task,status);
+        if (body.children[index] !== card) {
+          if (body.moveBefore && card.isConnected) body.moveBefore(card,body.children[index] || null);
+          else body.insertBefore(card,body.children[index] || null);
+        }
+      });
+      body.querySelectorAll('.pm-card').forEach(function (card) {
+        var id = Number(card.dataset.id);
+        if (!wanted.has(id) && !retained.has(id)) card.remove();
+      });
+      if (!all.length) body.appendChild(el('p',{class:'pm-empty',text:'No tasks'}));
+      var shelf = col.querySelector('.pm-moved-tasks');
+      if (retained.size) {
+        if (!shelf) {
+          shelf = el('div', {class:'pm-moved-tasks', 'aria-label':'Moved tasks beyond loaded pages'});
+          shelf.appendChild(el('p', {text:'Moved tasks beyond loaded pages. Load more to see their neighbours.'}));
+          col.appendChild(shelf);
+        }
+        retained.forEach(function (task) {
+          var card = reuse.get(task.ID) || buildCard(task, status);
+          card.applyTask(task, status);
+          card.querySelectorAll('.pm-move-up, .pm-move-down').forEach(function (button) { button.disabled = true; });
+          if (card.parentElement !== shelf) {
+            if (shelf.moveBefore && card.isConnected) shelf.moveBefore(card, null);
+            else shelf.appendChild(card);
+          }
+        });
+        shelf.querySelectorAll('.pm-card').forEach(function (card) { if (!retained.has(Number(card.dataset.id))) card.remove(); });
+      } else if (shelf) { shelf.remove(); shelf = null; }
+      if (focused?.isConnected && document.activeElement !== focused) focused.focus();
       var count = col.querySelector('.pm-column-count');
-      if (count) count.textContent = all.length + (all.length === 1 ? ' task' : ' tasks');
+      if (count) count.textContent = all.length + (all.length === 1 ? ' task' : ' tasks') + (retained.size ? ' loaded + ' + retained.size + ' moved' : '');
       var footer = col.querySelector('.pm-column-footer');
       var pageFull = !exhausted && all.length > 0 && all.length % PAGE_SIZE === 0;
       if (pageFull) {
         if (!footer) {
           footer = el('div', { class: 'pm-column-footer' });
-          col.appendChild(footer);
+          col.insertBefore(footer, shelf);
         } else {
           footer.textContent = '';   // drop the previous (possibly disabled) button
         }
@@ -652,6 +700,20 @@
       }
     }
 
+    col.loadedPageCount = function () { return Math.max(1, Math.ceil(all.length / PAGE_SIZE)); };
+    col.retainedTaskIds = function () { return Array.from(retained.keys()); };
+    col.applyTasks = function (tasks, reuse, retainedTasks) {
+      all = tasks.slice();
+      retained.clear();
+      retainedTasks.forEach(function (task) {
+        if (effectiveStatus(task) === status.name && !all.some(function (loaded) { return loaded.ID === task.ID; })) {
+          retained.set(task.ID, task);
+          rememberTasks([task]);
+        }
+      });
+      exhausted = false;
+      refreshBody(reuse);
+    };
     col.appendChild(buildColumnBody(status, all));
     refreshBody(); // installs the footer when the first page filled
     return col;
@@ -673,11 +735,13 @@
     return body;
   }
 
-  function buildCard(task, columnStatus) {
-    var card = el('article', {
-      class: 'pm-card',
+  function buildCard(task, columnStatus, view) {
+    view = view || 'board';
+    var card = el(view === 'backlog' ? 'li' : 'article', {
+      class: view === 'board' ? 'pm-card' : view === 'timeline' ? 'pm-timeline-task' : 'pm-backlog-row',
+      'data-testid': view === 'backlog' ? 'pm-backlog-row-' + task.ID : null,
       'data-id': String(task.ID),
-      draggable: 'true',
+      draggable: view === 'board' ? 'true' : 'false',
       'aria-label': task.Name + (columnStatus ? ', ' + statusEntry(columnStatus.name).label : ''),
     });
 
@@ -689,11 +753,12 @@
     var meta = el('div', { class: 'pm-card-meta' });
     var m = task.Meta || {};
     var effectiveStatus = m.status || state.cfg.default_status;
+    if (view !== 'board' && view !== 'board-content') meta.appendChild(pill(statusEntry(effectiveStatus)));
     if (m.priority) meta.appendChild(pill(priorityEntry(m.priority)));
     if (task.EndDate) {
       var dueDays = dueInDays(task.EndDate);
       var dueLabel = 'Due ' + formatDate(task.EndDate);
-      if (dueDays !== null && dueDays < 0 && effectiveStatus !== state.cfg.done_status) {
+      if (window.PMCore.overdue(task, state.cfg)) {
         dueLabel += ' (overdue)';
       }
       meta.appendChild(el('span', { class: 'pm-due', text: dueLabel }));
@@ -703,6 +768,7 @@
     tagChips(task.Tags).forEach(function (c) { meta.appendChild(c); });
     if (meta.childNodes.length) card.appendChild(meta);
 
+    if (view !== 'board') return card;
     var actions = el('div', { class: 'pm-card-actions' });
     var up = el('button', {
       class: 'pm-iconbtn pm-move-up', type: 'button', text: '↑',
@@ -750,26 +816,47 @@
       if (s.name === ((columnStatus || {}).name)) opt.selected = true;
       select.appendChild(opt);
     });
+    var pendingStatus = null;
     select.addEventListener('change', async function () {
+      if (pendingStatus !== null) { select.value = pendingStatus; return; }
       var target = select.value;
       if (!target) return;
-      select.disabled = true;
+      pendingStatus = target;
+      select.setAttribute('aria-disabled','true');
       try {
         // Append at the destination column's true tail. The server owns the
         // tail computation (inside its column lock), so this works however
         // deep the column is — the client never has to page to find the end.
         await moveTask(task, target, null, null, 'move-status',
           'Moved "' + task.Name + '" to ' + statusEntry(target).label);
-        select.selectedIndex = 0;
+        select.value = target;
       } catch (e) {
-        select.disabled = false;
+        select.value = columnStatus.name;
         announce(e.message);
+      } finally {
+        pendingStatus = null;
+        select.removeAttribute('aria-disabled');
       }
     });
     actions.appendChild(up);
     actions.appendChild(down);
     actions.appendChild(select);
     card.appendChild(actions);
+    card.applyTask = function (updated, status) {
+      task = updated; columnStatus = status;
+      link.textContent = task.Name;
+      var freshMeta = buildCard(task,status,'board-content').querySelector('.pm-card-meta');
+      var oldMeta = card.querySelector('.pm-card-meta');
+      if (freshMeta && oldMeta) oldMeta.replaceWith(freshMeta);
+      else if (freshMeta) card.insertBefore(freshMeta,actions);
+      else if (oldMeta) oldMeta.remove();
+      select.value = status.name;
+      up.setAttribute('aria-label','Move "' + task.Name + '" up in ' + status.label);
+      down.setAttribute('aria-label','Move "' + task.Name + '" down in ' + status.label);
+      up.disabled = false;
+      down.disabled = false;
+      card.setAttribute('aria-label', task.Name + ', ' + status.label);
+    };
     return card;
   }
 
@@ -1019,23 +1106,7 @@
     }
   }
 
-  function backlogRow(t) {
-    var m = t.Meta || {};
-    var cell = el('li', { 'data-testid': 'pm-backlog-row-' + t.ID });
-    var left = el('div', { class: 'pm-backlog-title' });
-    var link = el('a', { href: '/note?id=' + t.ID, text: t.Name, class: 'pm-task-link' });
-    left.appendChild(link);
-    cell.appendChild(left);
-    cell.appendChild(pill(statusEntry(effectiveStatus(t))));
-    if (m.priority) cell.appendChild(pill(priorityEntry(m.priority)));
-    var epic = epicName(t.OwnerId);
-    if (state.container.type === 'project') {
-      cell.appendChild(el('span', { class: 'pm-tag', text: epic || '(no epic)' }));
-    }
-    tagChips(t.Tags).forEach(function (c) { cell.appendChild(c); });
-    if (t.EndDate) cell.appendChild(el('span', { class: 'pm-due', text: formatDate(t.EndDate) }));
-    return cell;
-  }
+  function backlogRow(t) { return buildCard(t, null, 'backlog'); }
 
   // ---------------------------------------------------------------------
   // Dashboard view
@@ -1187,12 +1258,7 @@
       col.querySelector('h4').appendChild(el('span', { text: b.label + ' (' + items.length + ')' }));
       var body = el('div', { class: 'pm-day-body' });
       items.forEach(function (t) {
-        var m = t.Meta || {};
-        var row = el('div', { class: 'pm-timeline-task' });
-        row.appendChild(el('a', { href: '/note?id=' + t.ID, text: t.Name, class: 'pm-task-link' }));
-        row.appendChild(pill(statusEntry(m.status || state.cfg.default_status)));
-        if (t.EndDate && b.key !== 'none') row.appendChild(el('span', { class: 'pm-due', text: formatDate(t.EndDate) }));
-        body.appendChild(row);
+        body.appendChild(buildCard(t, null, 'timeline'));
       });
       if (!items.length) body.appendChild(el('p', { class: 'pm-empty', text: '—' }));
       col.appendChild(body);
@@ -1410,29 +1476,6 @@
   }
 
   // ---------------------------------------------------------------------
-  // Focus restoration after a board refresh
-  // ---------------------------------------------------------------------
-
-  function restoreFocus() {
-    if (state.pendingAnnounce) {
-      announce(state.pendingAnnounce);
-      state.pendingAnnounce = null;
-    }
-    if (!state.pendingFocus) return;
-    var pf = state.pendingFocus;
-    state.pendingFocus = null;
-    var control = null;
-    if (pf.control === 'move-status') {
-      control = document.querySelector('[data-testid="pm-move-' + pf.id + '"]');
-    } else if (pf.control === 'up') {
-      control = document.querySelector('.pm-card[data-id="' + pf.id + '"] .pm-move-up');
-    } else if (pf.control === 'down') {
-      control = document.querySelector('.pm-card[data-id="' + pf.id + '"] .pm-move-down');
-    }
-    if (control) control.focus();
-  }
-
-  // ---------------------------------------------------------------------
   // Startup
   // ---------------------------------------------------------------------
 
@@ -1447,11 +1490,4 @@
     if (root) renderError(root, e && e.message ? e.message : String(e));
   }
 
-  // refreshBoard must restore focus after rebuild.
-  var _origRenderBoard = renderBoard;
-  renderBoard = async function (content) {
-    var out = await _origRenderBoard(content);
-    restoreFocus();
-    return out;
-  };
 })();

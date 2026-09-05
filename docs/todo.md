@@ -9229,3 +9229,101 @@ holds is exactly what it exists to catch. A legacy plugin now also holds
 opened.
 
 With this, every one of the eight gated decisions is implemented.
+
+
+## Project management host integration (2026-09-05)
+
+Approved plan: `/Users/egecan/.claude/plans/how-better-could-the-vectorized-waffle.md`.
+Test seams: native note creation and detail/list pages, plugin action registration,
+plugin DB adapter and hook payloads, shortcode render context, custom-element morph.
+
+- [x] Generic host enablers H1–H10
+- [x] Native PM controls and host actions
+- [x] Project mini boards and presentation migration
+- [x] Subtasks, dependencies and time-log blocks with edit controls
+- [x] Status stamping and scheduled rollups
+- [x] Board rendering and navigation cleanup
+- [x] Documentation, mirrored fixtures, build and verification
+
+Implementation review:
+
+- All host changes remain generic. Native controls share PM mutation handlers;
+  ordinary metadata uses the host editor. Setup preserves operator-authored
+  templates and upgrades known bundled defaults. Bundled and E2E plugins match.
+- Rollups deliberately reconcile every project and epic, using keyset pagination
+  and batched block reads. A timestamp-only sweep would miss deleted tasks and
+  block-state changes, because block edits do not update note timestamps.
+- Real integration checks caught and fixed PostgreSQL date-null handling, stale
+  block references after host saves, empty Lua arrays in block defaults, and
+  keyboard focus when moving into a paginated destination column.
+- The committed OpenAPI document now includes the existing block batch-render
+  endpoint, which the drift check found was undocumented.
+- Verification passed: full Go suite; PostgreSQL MRQL/API tests; 1,220 unit tests;
+  2,170 SQLite browser/CLI tests (5 skipped), plus focused coverage of subsequent
+  fixes; staticcheck with all database tags; CSS scan; isolated demo reseed.
+  The mass-edit browser test now waits for its completed save before reading data.
+- Final verification: 2,172 PostgreSQL browser/CLI tests passed (4 skipped,
+  no retries); all 37 PM/accessibility SQLite regressions passed after the last
+  fixes. Upgrade requires re-enabling the widened grants and running Set up once.
+
+### Review loop
+
+Round 1 independent reviewers identified four P2 majors: overlapping block
+read-modify-save operations, the owner picker loading all groups outside the
+shared selector, customized Task headers dropping the PM block runtime, and
+status moves loading every page of a destination column. All four were fixed
+with focused regressions. Retained board cards also revalidate scoped data on
+refresh so renamed, moved or deleted tasks do not linger.
+
+Round 2 independent reviewers confirmed one remaining P2: a completed block PUT
+could unlock controls whose replacement HTML was still loading. The generic
+plugin block renderer now keeps stale content inert through loading/errors and
+only accepts the latest render generation. Delayed-render E2E and both response
+orders failed before the fix and pass afterward.
+
+Final rereview: **Standards — zero majors. Spec — zero majors.** Both reviewers
+inspected the final render fix and reported no other major findings.
+
+Validation: full Go and PostgreSQL MRQL/API suites, 1,232 unit tests, 2,174 SQLite
+browser/CLI tests (5 skipped), 2,175 PostgreSQL browser/CLI tests (4 skipped),
+staticcheck, CSS scan, and PM source/fixture equality passed. The final render
+change additionally passed all 41 PM/accessibility regressions on each database
+against the rebuilt artifact.
+
+
+### Demo bug: priority editor displays [object Object]
+
+The stored priority was a valid string. SchemaEditor decoded serialized JSON
+before handing it to SchemaFormMode, which decoded strings again: `"high"`
+became `high`, failed JSON parsing, and fell back to `{}`. The wrapper now hands
+off the original value so form mode decodes exactly once.
+
+The screenshot's native priority workflow and a generic scalar/array/object
+submission regression failed before the fix and passed afterward. Coverage
+includes JSON-looking strings, save/reload/cancel, and unchanged sibling metadata.
+Build, 1,232 unit tests, 224 related schema/shortcode/PM/accessibility browser
+tests and the two focused PostgreSQL regressions passed. The running demo was
+refreshed and now selects High correctly; its seeded data was preserved.
+
+### Demo follow-up: accent corners and browser walkthrough
+
+Square the corners touching thick colored accent borders in PM project, epic,
+and task headers and the two HTML report callouts. Setup appends the correction
+once to existing taxonomy CSS, preserving operator styles and legacy defaults.
+The preference is recorded in CLAUDE.md.
+
+The in-app browser walkthrough covered task creation and board movement,
+priority/status/due/owner edits, subtask editing and completion, dependency
+creation, time-log editing, reload persistence, native project/epic headers,
+backlog filters, dashboard metrics and timeline navigation. The retained
+`[Browser QA] Plugin walkthrough` demo task contains the exercised blocks.
+
+The walkthrough also found a real same-day date comparison bug: dashboard
+stats compared SQLite's space-separated stored dates against T-separated
+bounds, marking later-today tasks overdue. Validated query bounds now use the
+stored representation, including seconds; PostgreSQL accepts the same format.
+A failing regression now passes for same-day ordering, inclusive start and
+exclusive end bounds. All 37 PM E2E tests, focused PostgreSQL coverage, bundled
+Lua compile/fixture checks and CSS scan passed. Live demo data was preserved.
+
+Follow-up rereview: Standards — zero majors; Spec — zero majors.

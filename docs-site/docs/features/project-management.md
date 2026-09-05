@@ -195,7 +195,9 @@ a deleted project group).
 | `view-links` | PM Project / PM Epic `CustomHeader` | Links to the four views for the group's project |
 | `progress` | PM Project / PM Epic `CustomHeader` | Done/total bar for the group's subtree |
 | `task-list` | Optional custom templates | The group's most recently updated tasks; not installed in the default epic header because Own Entities already lists them |
-| `task-badges` | PM Task detail, summary and MRQL slots | Status and priority pills |
+| `task-badges` | PM Task summary and MRQL slots | Status and priority pills |
+| `task-controls` | PM Task header, including wide display | Status, due date and owning epic controls; badges for read-only viewers |
+| `mini-board` | PM Project / PM Epic Own Entities | Counts and up to five tasks per status |
 | `task-avatar` | PM Task list cards | A glyph and colour derived from effective status |
 | `task-date` | PM Task summary, hover and MRQL slots | Due date plus overdue state for unfinished tasks |
 | `group-summary` | PM Project / PM Epic detail, summary and MRQL slots | Status, project key and target date |
@@ -212,7 +214,7 @@ Setup gives all three PM taxonomies a consistent host-native presentation:
 |---|---|---|---|
 | PM Project | Workspace header with project facts, view links and progress | `P` avatar, status/key/target summary and filtered-list introduction | Named project card with facts and a direct Board link |
 | PM Epic | Epic header with facts and progress; project/board context appears once in the footer | `E` avatar, status/target/project summary and filtered-list introduction | Named epic card with project and board context |
-| PM Task | Task header with badges; owner/project/board context appears once in the footer | Status-aware avatar, status/priority/due/owner summary and filtered-list introduction | Named task card with badges, overdue-aware due date and owner/project/board context |
+| PM Task | Task header with editable status, priority, due date and owner; owner/project/board context appears once in the footer | Status-aware avatar, status/priority/due/owner summary and filtered-list introduction | Named task card with badges, overdue-aware due date and owner/project/board context |
 
 These are ordinary Category and Note Type templates, not special cases in the
 core UI. Editing a `Custom*` field replaces the bundled value for that one
@@ -228,19 +230,24 @@ card.
 PM Task templates are enabled on public note shares during the plugin's one-time
 presentation migration. The share server deliberately suppresses plugin
 shortcodes and queries, so an anonymous share receives the safe Task identity
-and CSS but never executes plugin Lua or exposes project context.
+and CSS, a host-rendered status fallback and read-only priority metadata. It
+never executes plugin Lua or exposes project context. Scoped guests see plain
+PM badges when an operator allows the plugin, and no PM edit controls.
 
 ## PM Task content blocks
 
-The plugin registers two note blocks, filtered to the dynamically provisioned
+The plugin registers five note blocks, filtered to the dynamically provisioned
 **PM Task** note type:
 
 | Block | Content |
 |---|---|
 | **Acceptance criteria** (`plugin:project-management:acceptance-criteria`) | One observable outcome per line plus an optional verification method |
 | **Status update** (`plugin:project-management:status-update`) | A progress summary with optional next step and blocker |
+| **Subtasks** (`plugin:project-management:subtasks`) | Up to 100 `{id,label,task_id?}` items; checked IDs live in block state. Promote a row to a real PM Task under the same owner. Retrying promotion returns the same task. |
+| **Dependencies** (`plugin:project-management:dependencies`) | `blocked_by` and `blocks` note-ID lists (50 each), resolved names and status pills. References unavailable to the viewer show no name. |
+| **Time log** (`plugin:project-management:time-log`) | Estimate hours and up to 200 dated entries with hours and notes; total-versus-estimate progress. |
 
-Both blocks validate their JSON content, escape every authored value and offer
+All blocks validate their JSON content, escape every authored value and offer
 view and edit renderers through the standard note block editor. On a first
 install setup registers them as soon as it creates the PM Task type; on later
 boots the cached type id restores the same filtered registrations during
@@ -251,9 +258,63 @@ as its visual container, avoiding nested borders and padding.
 
 ## Capabilities
 
-`db:read`, `db:write`, `render`, `pages`, `api`, `kv`. No `network` (the
-plugin makes no outbound request) and no `hooks` — all validation lives in the
-`mah.api` handlers, which is where every write this plugin makes goes anyway.
+`db:read`, `db:write`, `render`, `pages`, `api`, `kv`, `actions`, `hooks`, `schedule`.
+The plugin makes no outbound requests and registers no global injections.
+
+### Upgrading to 1.1.0
+
+The added actions, hooks and schedule widen the plugin's grants. An existing
+installation refuses to load the new version until an administrator re-enables it
+on **/plugins/manage**. Then run **Set up** once to upgrade the presentation.
+Setup records `cfg_presentation_v2`, recognizes exact prior bundled templates,
+and preserves operator-authored templates and section configuration. Repeating
+setup is safe. CSS has one source in `plugin.lua`; setup installs it into the
+three taxonomies, and the plugin pages use that same definition.
+
+## Working from native pages
+
+Task detail and wide-display pages support status, due-date and owning-epic
+changes. Priority, project key and project target date use the host's schema-aware
+`[meta editable=true]` editor. PM custom elements use the same validated handlers
+as the board; successful writes refresh other PM controls and badges for the task.
+The native metadata panel, timestamps and owner sections can remain stale until
+reload. The page announces that limitation after saving.
+
+Task actions also appear in detail, card and bulk surfaces: set status, set
+priority, set/clear due date, or move to an epic/project using the host entity
+picker. Project and epic actions create a task or open the board. Select tasks
+on `/notes?noteTypeId=N` (or `noteTypeIds=N`) to run a bulk action, up to **50**
+tasks at once. Each task commits separately: earlier successes survive a later
+failure, and mixed selections return individual refusals.
+
+List actions narrow only on a taxonomy the list actually constrains. An
+unfiltered Notes list still offers PM actions; checking each selected task remains
+necessary when the action runs. An unknown content type on a resource list does
+not hide content-type-filtered actions.
+
+The four views have distinct URLs: `/plugins/project-management/board`,
+`/backlog`, `/dashboard` and `/timeline` under the same prefix. Their menu entries
+appear in the host's **Plugins** dropdown. Existing `?view=` links still work.
+
+## Status defaults and rollups
+
+Before native task creates and updates, a pure hook stamps a missing or empty
+status with `default_status`. It never allocates an order key; the first explicit
+PM move does that under the existing ordering locks.
+
+The `rollup` schedule runs every **10 minutes**, skipping overlap. It writes
+`pm_open`, `pm_done`, `pm_overdue`, `pm_next_due`, `pm_counts`, `pm_subtasks`,
+`pm_subtasks_done` and `pm_rollup_at` into project/epic metadata, preserving other
+keys. Card summaries read these values without per-card MRQL queries. Mini-board
+counts and progress use the stored counts, falling back to a query before the
+first rollup. Run the schedule manually from plugin management for an immediate
+reconciliation.
+
+The schedule performs a complete reconciliation, including batched subtask
+reads. This deliberately covers missed after-hooks, native mass edits, block
+state edits and deleted tasks even when no dirty marker survives. It costs more
+than a timestamp-only sweep on large installations; counts may lag by ten
+minutes. Group and task scans use keyset pagination rather than capped offsets.
 
 ## Known limits
 
@@ -273,10 +334,9 @@ plugin makes no outbound request) and no `hooks` — all validation lives in the
 - **Deleting a project orphans its epics** (`owner_id` SET NULL), and deleting
   an epic orphans its tasks. The project picker surfaces an *Unassigned*
   section listing orphaned epics so their tasks stay reachable.
-- A task created through the **core note form** (not the plugin) can have no
-  `status` or `order` meta. It consistently uses `default_status` and is visible
-  on the board, backlog, summaries and dashboard; the first plugin move assigns
-  an explicit order key.
+- A task created through the **core note form** receives `default_status` while
+  the plugin is enabled, with no order key until its first PM move. With the
+  plugin disabled, missing status still displays as `default_status` on re-enable.
 - **Ordering writes serialize among the plugin's own endpoints** through
   per-task and per-column lock rows (they are the plugin's only writers that
   touch the order key). The host's core note form edits a task the same way it

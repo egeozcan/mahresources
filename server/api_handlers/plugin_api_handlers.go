@@ -568,8 +568,9 @@ type pluginBlockBatchRequest struct {
 }
 
 type pluginBlockBatchResponse struct {
-	Renders map[uint]string `json:"renders"`
-	Errors  map[uint]string `json:"errors,omitempty"`
+	Renders map[uint]string   `json:"renders"`
+	Errors  map[uint]string   `json:"errors,omitempty"`
+	Scripts map[uint][]string `json:"scripts,omitempty"`
 }
 
 // GetPluginBlockBatchRenderHandler collapses the initial plugin-block render
@@ -604,7 +605,7 @@ func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.Res
 		for i := range blocks {
 			byID[blocks[i].ID] = &blocks[i]
 		}
-		response := pluginBlockBatchResponse{Renders: map[uint]string{}, Errors: map[uint]string{}}
+		response := pluginBlockBatchResponse{Renders: map[uint]string{}, Errors: map[uint]string{}, Scripts: map[uint][]string{}}
 		renderCtx := plugin_system.WithMRQLCache(r.Context())
 		seen := map[uint]bool{}
 		for _, id := range req.BlockIDs {
@@ -628,6 +629,9 @@ func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.Res
 				continue
 			}
 			response.Renders[id] = html
+			if blockType := pm.GetPluginBlockType(block.Type); blockType != nil && len(blockType.Scripts) > 0 {
+				response.Scripts[id] = blockType.Scripts
+			}
 		}
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(response)

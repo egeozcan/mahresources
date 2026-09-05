@@ -5767,6 +5767,19 @@ paths:
             summary: Render a plugin display fragment
             tags:
                 - plugins
+    /v1/plugins/block/render-batch:
+        post:
+            description: Accepts noteId, blockIds and mode (view or edit). Returns HTML keyed by block ID in renders, per-block errors in errors, and optional ordered plugin runtime asset URLs per block in scripts.
+            operationId: renderPluginBlocks
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Render plugin blocks for one note
+            tags:
+                - plugins
+                - blocks
     /v1/plugins/manage:
         get:
             operationId: getPluginsManage

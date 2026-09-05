@@ -12,18 +12,15 @@
 -- browser (public/pm.js) on top of the host's own /v1/notes endpoint, which is
 -- the one read surface that carries a note's Tags and its dates.
 --
--- All validation, defaulting and ordering happen here, in the mah.api
--- handlers — every write this plugin makes goes through them. There are no
--- entity hooks: the hook payload carries only {id,name,description,meta} and
--- cannot key on note type or owner, and a hook cannot read dates or owners
--- back anyway (see docs/features/project-management.md).
+-- PM writes share validated handlers. Native note writes receive a pure status
+-- default through entity hooks; order is allocated only by an explicit PM move.
 
 plugin = {
     name = "project-management",
-    version = "1.0.0",
+    version = "1.1.0",
     description = "Project management: kanban boards, epics and tasks built on groups and notes",
     api_version = 1,
-    capabilities = { "db:read", "db:write", "render", "pages", "api", "kv" },
+    capabilities = { "db:read", "db:write", "render", "pages", "api", "kv", "actions", "hooks", "schedule" },
     settings = {
         { name = "statuses", type = "string", label = "Status names (JSON array)", default = '["backlog","todo","in_progress","blocked","done"]' },
         { name = "status_labels", type = "string", label = "Status labels (JSON object)", default = '{"backlog":"Backlog","todo":"To Do","in_progress":"In Progress","blocked":"Blocked","done":"Done"}' },
@@ -186,6 +183,7 @@ local function resolved_config()
             name = name,
             label = status_labels[name] or name,
             color = STATUS_COLORS[name] or PRIORITY_FALLBACKS[((i - 1) % #PRIORITY_FALLBACKS) + 1],
+            text_color = darken_hex(STATUS_COLORS[name] or PRIORITY_FALLBACKS[((i - 1) % #PRIORITY_FALLBACKS) + 1]),
         }
     end
     local resolved_priorities = {}
@@ -194,6 +192,7 @@ local function resolved_config()
             name = name,
             label = priority_labels[name] or name,
             color = PRIORITY_COLORS[name] or PRIORITY_FALLBACKS[((i - 1) % #PRIORITY_FALLBACKS) + 1],
+            text_color = darken_hex(PRIORITY_COLORS[name] or PRIORITY_FALLBACKS[((i - 1) % #PRIORITY_FALLBACKS) + 1]),
         }
     end
     local default_status = mah.get_setting("default_status")
@@ -257,15 +256,14 @@ end
 
 local function list_groups(category_id, owner_id)
     local out = {}
-    local offset = 0
+    local cursor = 0
     while true do
-        local opts = { category_id = category_id, limit = 100, offset = offset }
+        local opts = { category_id = category_id, limit = 100, mrql = "id > " .. cursor, sort_by = {"id asc"} }
         if owner_id then opts.owner_id = owner_id end
         local page, err = mah.db.query_groups(opts)
         if err then return nil, err end
-        for _, group in ipairs(page or {}) do out[#out + 1] = group end
+        for _, group in ipairs(page or {}) do out[#out + 1] = group; cursor = math.max(cursor, group.id) end
         if not page or #page < 100 then break end
-        offset = offset + 100
     end
     return out, nil
 end
@@ -499,6 +497,84 @@ local EMBED_CSS = [[
 .pm-content-block{display:grid;gap:.625rem;padding:.875rem}.pm-content-block h3{margin:0;color:#292524;font-size:.9375rem}.pm-content-block ul{list-style:disc;margin:0;padding-left:1.25rem}.pm-content-block dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem .75rem;margin:0}.pm-content-block dt{color:#78716c;font-size:.75rem;font-weight:700;text-transform:uppercase}.pm-content-block dd{margin:0;color:#292524}.pm-block-editor{display:grid;gap:.625rem}.pm-block-editor label{display:grid;gap:.25rem;color:#44403c;font-size:.8125rem;font-weight:600}.pm-block-editor input,.pm-block-editor textarea{width:100%;border:1px solid #d6d3d1;border-radius:.375rem;padding:.5rem;font:inherit}.pm-block-editor textarea{min-height:5rem;resize:vertical}
 @media(max-width:40rem){.pm-list-intro{align-items:flex-start}.pm-list-intro a{margin-left:0;width:100%}.pm-context-links{align-items:flex-start}.pm-content-block dl{grid-template-columns:1fr}.pm-content-block dd{margin-bottom:.35rem}}
 ]]
+
+-- Integration defaults; the exact previous values above remain upgrade sentinels.
+local EMBED_SCRIPT = '<script defer src="/plugins/project-management/public/pm-core.js"></script><script defer src="/plugins/project-management/public/pm-embed.js"></script>'
+-- Block runtimes load through the host even when an operator replaces a header.
+local BLOCK_SCRIPTS = {"pm-core.js", "pm-embed.js"}
+local V2_PROJECT_HEADER = PROJECT_HEADER
+local V2_PROJECT_SUMMARY = PROJECT_SUMMARY
+local V2_PROJECT_LIST_HEADER = PROJECT_LIST_HEADER
+local V2_PROJECT_MRQL_RESULT = PROJECT_MRQL_RESULT
+local V2_EPIC_HEADER = EPIC_HEADER
+local V2_EPIC_SUMMARY = EPIC_SUMMARY
+local V2_EPIC_HOVER_CARD = EPIC_HOVER_CARD
+local V2_EPIC_LIST_HEADER = EPIC_LIST_HEADER
+local V2_EPIC_MRQL_RESULT = EPIC_MRQL_RESULT
+local V2_TASK_HEADER = TASK_HEADER
+local V2_TASK_LIST_HEADER = TASK_LIST_HEADER
+local V2_EMBED_CSS = EMBED_CSS
+
+local ROLLUP_SUMMARY = '<span class="pm-rollup">[meta path="pm_done"] done · [meta path="pm_open"] open · [meta path="pm_overdue"] overdue</span>'
+PROJECT_HEADER = EMBED_SCRIPT .. PROJECT_HEADER .. '<div class="pm-entity-summary">Key [meta path="key" editable=true] Target [meta path="target_date" editable=true]</div>'
+EPIC_HEADER = EMBED_SCRIPT .. EPIC_HEADER
+TASK_HEADER = EMBED_SCRIPT .. '<section class="pm-entity-detail pm-task-detail" data-testid="pm-task-detail" aria-label="Task overview"><span class="pm-entity-kicker">Task</span><div class="pm-native-controls">[plugin:project-management:task-controls]<span class="pm-share-fallback">[meta path="status"]</span><span>Priority [meta path="priority" editable=true]</span></div></section>'
+PROJECT_SUMMARY = PROJECT_SUMMARY .. ROLLUP_SUMMARY
+EPIC_SUMMARY = EPIC_SUMMARY .. ROLLUP_SUMMARY
+EPIC_HOVER_CARD = EPIC_HOVER_CARD .. ROLLUP_SUMMARY
+PROJECT_MRQL_RESULT = PROJECT_MRQL_RESULT .. ROLLUP_SUMMARY
+EPIC_MRQL_RESULT = EPIC_MRQL_RESULT .. ROLLUP_SUMMARY
+PROJECT_LIST_HEADER = EMBED_SCRIPT .. PROJECT_LIST_HEADER
+EPIC_LIST_HEADER = EMBED_SCRIPT .. EPIC_LIST_HEADER
+TASK_LIST_HEADER = EMBED_SCRIPT .. TASK_LIST_HEADER
+local GROUP_SECTIONS = '{"ownEntities":{"state":"open"},"relatedEntities":{"state":"collapsed"},"relations":{"state":"collapsed"},"merge":false,"clone":false,"metaJson":false}'
+local TASK_SECTIONS = '{"metaJson":false,"noteTypeLink":false,"content":true,"tags":true,"groups":true,"resources":true,"share":true}'
+EMBED_CSS = EMBED_CSS .. [[
+/* project-management:integration:v2 */
+.pm-native-controls{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem}.pm-native-controls:has([data-pm-kind]) .pm-share-fallback{display:none}
+[data-pm-kind] label{display:inline-flex;align-items:center;gap:.3rem;font-size:.8125rem}[data-pm-kind] input,[data-pm-kind] select{max-width:18rem;border:1px solid #a8a29e;border-radius:.35rem;padding:.3rem;background:white;color:#292524}
+.pm-mini-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.75rem}.pm-mini-column{padding:.6rem;border:1px solid #d6d3d1;border-radius:.5rem}.pm-mini-column h3{font-weight:700}.pm-mini-column article{display:grid;gap:.35rem;padding:.5rem 0;border-top:1px solid #e7e5e4}.pm-rollup{font-size:.8125rem;color:#57534e}.pm-block-row{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}.pm-block-row input{width:auto;flex:1;min-width:4rem}.pm-block-row button,.pm-block-editor button{border:1px solid #a8a29e;border-radius:.3rem;padding:.25rem .5rem}.pm-block-error{color:#b91c1c}
+]]
+
+-- Keep the earlier CSS intact as an upgrade sentinel; append visual fixes to
+-- existing taxonomies without replacing operator-authored styles.
+local ACCENT_CORNERS_MARKER = "project-management:accent-corners:v1"
+local ACCENT_CORNERS_CSS = [[
+/* project-management:accent-corners:v1 */
+.pm-entity-detail{border-top-left-radius:0;border-bottom-left-radius:0}
+]]
+
+local BLOCK_ROW_MARKER = "project-management:block-row:v2"
+local BLOCK_ROW_CSS = [[
+/* project-management:block-row:v2 */
+.pm-block-row{align-items:flex-end}
+.pm-block-row>label{flex:1 1 10rem;min-width:0}
+.pm-block-row input{width:100%;min-width:0;height:2.375rem}
+.pm-block-row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;max-width:100%}
+.pm-block-row-actions>button{height:2.375rem;white-space:nowrap}
+.pm-block-row-actions>a{display:inline-flex;align-items:center;min-height:2.375rem}
+.pm-time-entry>label:has([data-pm-field$=".date"]){flex:0 1 10rem}
+.pm-time-entry>label:has([data-pm-field$=".hours"]){flex:0 1 4rem}
+]]
+
+local SELECT_ARROW_MARKER = "project-management:select-arrow:v1"
+local SELECT_ARROW_CSS = [[
+/* project-management:select-arrow:v1 */
+/* Restore the host base layer's arrow erased by the old background shorthand. */
+[data-pm-kind] select:not([multiple]){background:revert-layer;background-color:white;padding-right:2.5rem}
+]]
+
+local function presentation_css()
+    local css = EMBED_CSS .. ACCENT_CORNERS_CSS .. BLOCK_ROW_CSS .. SELECT_ARROW_CSS
+    local cfg = resolved_config()
+    for _, entry in ipairs(cfg.statuses) do
+        css = css .. '.pm-pill[data-pm-value="' .. entry.name .. '"]{--pm-color:' .. entry.color .. ';color:' .. entry.text_color .. '}'
+    end
+    for _, entry in ipairs(cfg.priorities) do
+        css = css .. '.pm-pill.pm-pill-priority[data-pm-value="' .. entry.name .. '"]{--pm-color:' .. entry.color .. ';color:' .. entry.text_color .. '}'
+    end
+    return css
+end
 
 -- ---------------------------------------------------------------------------
 -- Ordering: a port of ordering/position.go (a-z lexicographic position keys),
@@ -912,23 +988,8 @@ end
 -- Validated date handling
 -- ---------------------------------------------------------------------------
 
--- Normalizes a user-supplied date/time to the host's canonical
--- "YYYY-MM-DDTHH:MM" format. The host's write path parses exactly
--- constants.TimeFormat and silently stores NULL on any other shape, so this
--- plugin refuses what the host would null. RFC3339 (with a zone or fractional
--- seconds) is rejected rather than guessed at.
--- Normalizes a user-supplied date/time to the host's canonical
--- "YYYY-MM-DDTHH:MM" format. The host's write path parses exactly
--- constants.TimeFormat and silently stores NULL on any other shape, so this
--- plugin validates and refuses what the host would null. RFC3339 (zone or
--- fractional seconds) and impossible calendar dates are rejected rather than
--- guessed at; an optional whole-second suffix is accepted and truncated.
--- Normalizes a user-supplied date/time to the host's canonical
--- "YYYY-MM-DDTHH:MM" format. The host's write path parses exactly
--- constants.TimeFormat and silently stores NULL on any other shape, so this
--- plugin validates and refuses what the host would null. RFC3339 (zone or
--- fractional seconds) and impossible calendar dates are rejected rather than
--- guessed at; an optional whole-second suffix is accepted and truncated.
+-- Dates must use the host's naive YYYY-MM-DDTHH:MM format. Reject zone
+-- suffixes and impossible dates instead of letting the host silently store NULL.
 local function normalize_datetime(value)
     if value == nil or value == "" then return nil, nil end
     local s = tostring(value)
@@ -961,6 +1022,17 @@ local function normalize_datetime(value)
     return string.format("%04d-%02d-%02dT%02d:%02d", ny, nmo, nd, nh, nmi), nil
 end
 
+-- SQLite stores native dates with a space separator. MRQL string literals
+-- must use that representation for chronological comparisons on the same day;
+-- PostgreSQL accepts the same format. Keep seconds for precise boundaries.
+local function query_datetime(value)
+    local normalized, err = normalize_datetime(value)
+    if not normalized then return nil, err end
+    local seconds = tostring(value):match(":(%d%d)$")
+    if #tostring(value) == 16 then seconds = "00" end
+    return normalized:gsub("T", " ") .. ":" .. seconds, nil
+end
+
 -- ---------------------------------------------------------------------------
 -- Native entity presentation and PM Task blocks
 -- ---------------------------------------------------------------------------
@@ -977,11 +1049,8 @@ local function render_pill(value, entry, extra_class)
     if not value then return "" end
     local label = entry and entry.label or value
     local color = entry and entry.color or "#6366f1"
-    return '<span class="pm-pill' .. (extra_class or "") .. '" style="--pm-color:' .. color
-        .. ';color:' .. darken_hex(color)
-        .. ';display:inline-block;background:color-mix(in srgb,' .. color
-        .. ' 15%,white);border-radius:9999px;padding:.0625rem .5rem;font-size:.75rem;'
-        .. 'font-weight:600;line-height:1.25rem;white-space:nowrap">'
+    return '<span class="pm-pill' .. (extra_class or "") .. '" data-pm-value="' .. mah.html_escape(value)
+        .. '">'
         .. mah.html_escape(label) .. "</span>"
 end
 
@@ -1002,7 +1071,7 @@ local function render_task_badges(value)
         pills[#pills + 1] = render_pill(value.priority, config_entry(cfg.priorities, value.priority), " pm-pill-priority")
     end
     if #pills == 0 then return "" end
-    return '<span class="pm-badges" style="display:inline-flex;flex-wrap:wrap;gap:.25rem">'
+    return '<span class="pm-badges">'
         .. table.concat(pills) .. "</span>"
 end
 
@@ -1147,22 +1216,111 @@ local function nonempty_lines(value)
     return out
 end
 
-local function save_field_handler(block_id, field)
-    return "var b=mahBlock.getBlock(" .. tostring(block_id) .. ");"
-        .. "mahBlock.saveContent(" .. tostring(block_id)
-        .. ",Object.assign({},(b&&b.content)||{}, {" .. field .. ":this.value}))"
+local function editor_field(block_id, label, field, value, multiline)
+    local attrs = ' data-pm-block="' .. tostring(block_id) .. '" data-pm-field="' .. field .. '" data-pm-block-field="' .. field .. '"'
+    local control = multiline and ('<textarea' .. attrs .. '>' .. mah.html_escape(value or "") .. '</textarea>')
+        or ('<input' .. attrs .. ' value="' .. mah.html_escape(value or "") .. '">')
+    return '<label><span>' .. mah.html_escape(label) .. '</span>' .. control .. '</label>'
 end
 
-local function editor_field(block_id, label, field, value, multiline)
-    local control
-    if multiline then
-        control = '<textarea data-pm-block-field="' .. field .. '" onchange="'
-            .. save_field_handler(block_id, field) .. '">' .. mah.html_escape(value or "") .. "</textarea>"
-    else
-        control = '<input data-pm-block-field="' .. field .. '" value="'
-            .. mah.html_escape(value or "") .. '" onchange="' .. save_field_handler(block_id, field) .. '">'
-    end
-    return "<label><span>" .. mah.html_escape(label) .. "</span>" .. control .. "</label>"
+local function block_button(ctx, action, label, index, collection)
+    return '<button type="button" data-pm-block="' .. ctx.block.id .. '" data-pm-note="' .. ctx.note.id
+        .. '" data-pm-block-action="' .. action .. '" data-pm-index="' .. tostring(index or 0)
+        .. '" data-pm-collection="' .. (collection or 'items') .. '">' .. mah.html_escape(label) .. '</button>'
+end
+
+local function block_field(ctx, label, path, value, numeric)
+    local out = editor_field(ctx.block.id,label,path,tostring(value or ''),false)
+    if numeric then out = out:gsub('<input ', '<input type="number" min="0" step="any" ') end
+    return out
+end
+
+local function row_buttons(ctx,index,collection,extra)
+    return '<div class="pm-block-row-actions">' .. block_button(ctx,'up','Move up',index,collection)
+        .. block_button(ctx,'down','Move down',index,collection)
+        .. block_button(ctx,'remove','Remove row',index,collection) .. (extra or '') .. '</div>'
+end
+
+local function register_work_blocks(filters)
+    local item_schema = {type='object',required={'id','label'},additionalProperties=false,properties={
+        id={type='string',minLength=1,maxLength=100},label={type='string',maxLength=2000},task_id={type='integer',minimum=1}}}
+    mah.block_type({type='subtasks',label='Subtasks',icon='ST',filters=filters,scripts=BLOCK_SCRIPTS,
+        content_schema={type='object',required={'items'},additionalProperties=false,properties={items={type='array',maxItems=100,items=item_schema}}},
+        state_schema={type='object',properties={checked={type='array',maxItems=100,uniqueItems=true,items={type='string'}}},additionalProperties=false},
+        default_content={items=mah.json.array({})},default_state={checked=mah.json.array({})},
+        render_view=function(ctx)
+            local checked, rows = {}, {}
+            for _, id in ipairs(ctx.block.state.checked or {}) do checked[id]=true end
+            for i,item in ipairs(ctx.block.content.items or {}) do
+                local mark = checked[item.id] and '☑ ' or '☐ '
+                local label = mah.html_escape(item.label)
+                if item.task_id then label = '<a href="/note?id=' .. item.task_id .. '">' .. label .. '</a>' end
+                local toggle = ctx.can_write and block_button(ctx,'toggle',mark .. item.label,i-1) or mark .. label
+                rows[#rows+1] = '<li>' .. toggle .. (item.task_id and (' <a href="/note?id=' .. item.task_id .. '">Promoted task</a>') or '') .. '</li>'
+            end
+            return '<section class="pm-content-block" data-testid="pm-subtasks"><h3>Subtasks</h3><ul>' .. table.concat(rows) .. '</ul></section>'
+        end,
+        render_edit=function(ctx)
+            local rows = {}
+            for i,item in ipairs(ctx.block.content.items or {}) do
+                rows[#rows+1] = '<div class="pm-block-row">' .. block_field(ctx,'Subtask','items.' .. (i-1) .. '.label',item.label)
+                    .. row_buttons(ctx,i-1,nil,not item.task_id and block_button(ctx,'promote','Promote to task',i-1) or '<a href="/note?id=' .. item.task_id .. '">Open task</a>') .. '</div>'
+            end
+            return '<section class="pm-content-block pm-block-editor" data-testid="pm-subtasks-editor"><h3>Subtasks</h3>' .. table.concat(rows) .. block_button(ctx,'add','Add subtask') .. '</section>'
+        end})
+    local ids = {type='array',maxItems=50,uniqueItems=true,items={type='integer',minimum=1}}
+    mah.block_type({type='dependencies',label='Dependencies',icon='DP',filters=filters,scripts=BLOCK_SCRIPTS,
+        content_schema={type='object',additionalProperties=false,properties={blocked_by=ids,blocks=ids},required={'blocked_by','blocks'}},
+        default_content={blocked_by=mah.json.array({}),blocks=mah.json.array({})},default_state={},
+        render_view=function(ctx)
+            local rows, open, cfg = {}, 0, resolved_config()
+            for _, key in ipairs({'blocked_by','blocks'}) do
+                local links = {}
+                for _, id in ipairs(ctx.block.content[key] or {}) do
+                    local note = mah.db.get_note(id)
+                    if note then
+                        local status = effective_status(meta_object(note.meta),cfg)
+                        if key == 'blocked_by' and status ~= cfg.done_status then open=open+1 end
+                        links[#links+1] = '<li><a href="/note?id=' .. id .. '">' .. mah.html_escape(note.name) .. '</a> ' .. render_pill(status,config_entry(cfg.statuses,status),'') .. '</li>'
+                    else links[#links+1] = '<li>Unavailable task</li>' end
+                end
+                rows[#rows+1] = '<h4>' .. (key == 'blocked_by' and 'Blocked by' or 'Blocks') .. '</h4><ul>' .. table.concat(links) .. '</ul>'
+            end
+            return '<section class="pm-content-block" data-testid="pm-dependencies"><h3>Dependencies</h3><p>Blocked by ' .. open .. ' open</p>' .. table.concat(rows) .. '</section>'
+        end,
+        render_edit=function(ctx)
+            local rows = {}
+            for _, key in ipairs({'blocked_by','blocks'}) do
+                for i,id in ipairs(ctx.block.content[key] or {}) do
+                    rows[#rows+1] = '<div class="pm-block-row">' .. block_field(ctx,key == 'blocked_by' and 'Blocked by note ID' or 'Blocks note ID',key .. '.' .. (i-1),id,true) .. row_buttons(ctx,i-1,key) .. '</div>'
+                end
+                rows[#rows+1] = '<label>Note ID<input type="number" min="1" data-pm-new-reference="' .. key .. '"></label>' .. block_button(ctx,'add',key == 'blocked_by' and 'Add blocker' or 'Add blocked task',0,key)
+            end
+            return '<section class="pm-content-block pm-block-editor" data-testid="pm-dependencies-editor"><h3>Dependencies</h3>' .. table.concat(rows) .. '</section>'
+        end})
+    mah.block_type({type='time-log',label='Time log',icon='TM',filters=filters,scripts=BLOCK_SCRIPTS,
+        content_schema={type='object',required={'estimate_hours','entries'},additionalProperties=false,properties={
+            estimate_hours={type='number',minimum=0,maximum=100000},entries={type='array',maxItems=200,items={type='object',required={'date','hours','note'},additionalProperties=false,properties={
+                date={type='string',pattern='^\\d{4}-\\d{2}-\\d{2}$'},hours={type='number',minimum=0,maximum=10000},note={type='string',maxLength=2000}}}}}},
+        default_content={estimate_hours=0,entries=mah.json.array({})},default_state={},
+        render_view=function(ctx)
+            local total, rows = 0, {}
+            for _, entry in ipairs(ctx.block.content.entries or {}) do
+                total=total+entry.hours
+                rows[#rows+1] = '<li>' .. mah.html_escape(entry.date) .. ' · ' .. entry.hours .. ' h · ' .. mah.html_escape(entry.note) .. '</li>'
+            end
+            local estimate = ctx.block.content.estimate_hours or 0
+            return '<section class="pm-content-block" data-testid="pm-time-log"><h3>Time log</h3><p>' .. total .. ' / ' .. estimate .. ' hours</p><progress aria-label="Logged hours versus estimate" max="' .. math.max(estimate,total,1) .. '" value="' .. total .. '"></progress><ul>' .. table.concat(rows) .. '</ul></section>'
+        end,
+        render_edit=function(ctx)
+            local rows = {block_field(ctx,'Estimate hours','estimate_hours',ctx.block.content.estimate_hours,true)}
+            for i,entry in ipairs(ctx.block.content.entries or {}) do
+                local prefix='entries.' .. (i-1) .. '.'
+                rows[#rows+1] = '<div class="pm-block-row pm-time-entry">' .. block_field(ctx,'Date (YYYY-MM-DD)',prefix .. 'date',entry.date)
+                    .. block_field(ctx,'Hours',prefix .. 'hours',entry.hours,true) .. block_field(ctx,'Note',prefix .. 'note',entry.note) .. row_buttons(ctx,i-1,'entries') .. '</div>'
+            end
+            return '<section class="pm-content-block pm-block-editor" data-testid="pm-time-log-editor"><h3>Time log</h3>' .. table.concat(rows) .. block_button(ctx,'add','Add time entry',0,'entries') .. '</section>'
+        end})
 end
 
 local pm_block_types_registered = false
@@ -1173,6 +1331,7 @@ local function register_pm_block_types(tax)
 
     mah.block_type({
         type = "acceptance-criteria",
+        scripts = BLOCK_SCRIPTS,
         label = "Acceptance criteria",
         icon = "AC",
         description = "Outcome-focused acceptance criteria and their verification method.",
@@ -1212,6 +1371,7 @@ local function register_pm_block_types(tax)
 
     mah.block_type({
         type = "status-update",
+        scripts = BLOCK_SCRIPTS,
         label = "Status update",
         icon = "UP",
         description = "A concise progress update with next step and blocker.",
@@ -1251,7 +1411,215 @@ local function register_pm_block_types(tax)
         end,
     })
 
+    register_work_blocks(filters)
     pm_block_types_registered = true
+end
+
+-- All write entry points share these handlers, including host actions.
+local task_handlers = {}
+local function register_task_api(name, handler)
+    task_handlers[name] = handler
+    mah.api("POST", "api/task/" .. name, handler)
+end
+
+local function full_task(id)
+    local task, err = mah.db.get_note(id)
+    if not task then error(err or "task not found") end
+    task.meta = meta_object(task.meta) or {}
+    task.status = effective_status(task.meta, resolved_config())
+    return task
+end
+
+local function call_task(name, body)
+    local result, status = nil, 200
+    task_handlers[name]({body = meta_string(body), status = function(n) status = n end,
+        json = function(value) result = value end})
+    if status >= 400 or not result then error(result and result.error or "Task operation failed") end
+    return result
+end
+
+local pm_actions_registered = false
+local function register_pm_actions(tax)
+    if pm_actions_registered or not tax or not tax.task_type_id then return end
+    local cfg = resolved_config()
+    local statuses, priorities = {}, {}
+    for _, entry in ipairs(cfg.statuses) do statuses[#statuses + 1] = entry.name end
+    for _, entry in ipairs(cfg.priorities) do priorities[#priorities + 1] = entry.name end
+    local actions = {
+        {id="pm-set-status", label="Set task status", param={name="status",type="select",label="Status",options=statuses,required=true}},
+        {id="pm-set-priority", label="Set task priority", param={name="priority",type="select",label="Priority",options=priorities,required=true}},
+        {id="pm-set-due", label="Set task due date", param={name="due",type="text",label="Due (YYYY-MM-DDTHH:MM)",required=true}},
+        {id="pm-clear-due", label="Clear task due date"},
+        {id="pm-move-to-epic", label="Move task to epic or project", param={name="owner_id",type="entity_ref",entity="group",label="Epic or project",required=true,filters={category_ids={tax.epic_category_id,tax.project_category_id}}}},
+    }
+    for _, spec in ipairs(actions) do
+        mah.action({id=spec.id,label=spec.label,entity="note",placement={"detail","card","bulk"},
+            filters={note_type_ids={tax.task_type_id}},bulk_max=50,async=false,
+            description="Applies to PM Tasks only. Each selected task saves separately; a later failure does not undo earlier changes.",
+            params=spec.param and {spec.param} or {}, handler=function(ctx)
+                local body = merge(ctx.params or {}, {id=ctx.entity_id})
+                if spec.id == "pm-clear-due" then body.due = "" end
+                call_task("update",body)
+                return {success=true,message="Task updated"}
+            end})
+    end
+    local filters = {category_ids={tax.project_category_id,tax.epic_category_id}}
+    mah.action({id="pm-new-task",label="New task",entity="group",placement={"detail","card"},filters=filters,
+        params={{name="name",type="text",label="Task name",required=true}}, handler=function(ctx)
+            local task = call_task("create",{owner_id=ctx.entity_id,name=ctx.params.name})
+            return {success=true,redirect="/note?id=" .. task.id}
+        end})
+    mah.action({id="pm-open-board",label="Open board",entity="group",placement={"detail"},filters=filters,
+        handler=function(ctx)
+            local group = mah.db.get_group(ctx.entity_id)
+            if not group or (group.category_id ~= tax.project_category_id and group.category_id ~= tax.epic_category_id) then error("Not a PM project or epic") end
+            return {success=true,redirect="/plugins/project-management/board?" .. (group.category_id == tax.epic_category_id and "epic=" or "project=") .. ctx.entity_id}
+        end})
+    pm_actions_registered = true
+end
+
+local function control_html(kind, id, value, placeholder, read_only, options)
+    local attrs = ' data-pm-kind="' .. kind .. '" data-pm-id="' .. tostring(id) .. '"'
+    if read_only then return '<span' .. attrs .. '>' .. placeholder .. '</span>' end
+    return '<pm-' .. kind .. '-control' .. attrs .. ' data-morph-client-owned data-value="'
+        .. mah.html_escape(tostring(value or "")) .. '" data-options="' .. mah.html_escape(meta_string(options or {})) .. '">'
+        .. placeholder .. '</pm-' .. kind .. '-control>'
+end
+
+local function render_task_controls(ctx)
+    if ctx.entity_type ~= "note" then return "" end
+    local cfg = resolved_config()
+    local entity = ctx.entity or {}
+    local status = effective_status(ctx.value, cfg)
+    local owner = ctx.presentation and ctx.presentation.scope or {}
+    local due = entity.EndDate or ""
+    local rendered = control_html("status",ctx.entity_id,status,render_pill(status,config_entry(cfg.statuses,status),""),ctx.read_only,cfg.statuses)
+    rendered = rendered .. control_html("due",ctx.entity_id,due,render_task_date(ctx),ctx.read_only)
+    rendered = rendered .. control_html("owner",ctx.entity_id,entity.OwnerId or owner.id,mah.html_escape(owner.name or "No owner"),ctx.read_only)
+    return rendered
+end
+
+local function group_container(group, tax)
+    if group.category_id == tax.epic_category_id or group.category == TAXONOMY.epic_category then
+        return {owner_epic=true,epic_id=group.id,project_id=group.owner_id or 0}
+    end
+    return {owner_epic=false,project_id=group.id}
+end
+
+local function render_mini_board(ctx)
+    local tax = cached_taxonomy()
+    if not tax or ctx.entity_type ~= "group" then return "" end
+    local entity = ctx.entity or {}
+    local group = {id=ctx.entity_id,category_id=entity.CategoryId,owner_id=entity.OwnerId}
+    local container = group_container(group,tax)
+    local counts = ctx.value and ctx.value.pm_counts
+    if type(counts) ~= "table" then counts = status_counts(container,nil,tax) end
+    if not counts then return '<p>Task counts are temporarily unavailable.</p>' end
+    local cfg, columns = resolved_config(), {}
+    for _, status in ipairs(cfg.statuses) do
+        local tasks, err = column_tasks(container,status.name,5)
+        if err then return '<p>Tasks are temporarily unavailable.</p>' end
+        local cards = {}
+        for _, task in ipairs(tasks or {}) do
+            cards[#cards+1] = '<article data-pm-id="' .. task.id .. '"><a href="/note?id=' .. task.id .. '">' .. mah.html_escape(task.name) .. '</a>'
+                .. control_html("status",task.id,status.name,render_pill(status.name,status,""),ctx.read_only,cfg.statuses) .. '</article>'
+        end
+        columns[#columns+1] = '<section class="pm-mini-column" data-status="' .. status.name .. '"><h3>' .. mah.html_escape(status.label)
+            .. ' <span class="pm-mini-count">' .. tostring(counts[status.name] or 0) .. '</span></h3>' .. table.concat(cards) .. '</section>'
+    end
+    return '<div class="pm-mini-board" data-testid="pm-mini-board">' .. table.concat(columns) .. '</div>'
+end
+
+-- Cached counters are presentation data. A complete periodic reconciliation
+-- also covers deletions, bulk edits and skipped after-hooks. Dirty hints never
+-- decide whether a group is eligible for repair.
+local function reconcile_rollups()
+    local tax = cached_taxonomy()
+    if not tax then return end
+    local cfg = resolved_config()
+    for _, category in ipairs({tax.project_category_id,tax.epic_category_id}) do
+        local groups, err = list_groups(category)
+        if err then error(err) end
+        for _, group in ipairs(groups or {}) do
+            local container = group_container(group,tax)
+            local counts, cerr = status_counts(container,nil,tax)
+            if not counts then error(cerr) end
+            local not_done = string.format("meta.status != %q",cfg.done_status)
+            if cfg.default_status ~= cfg.done_status then not_done = '(' .. not_done .. ' OR meta.status IS EMPTY)' end
+            local overdue, oerr = status_counts(container,{not_done,'endDate < NOW()'},tax)
+            if not overdue then error(oerr) end
+            local next_tasks, nerr = mrql_flat_tasks(container,{not_done,'endDate IS NOT NULL'},{limit=1,order_by='endDate ASC'})
+            if nerr then error(nerr) end
+            local next_due = ""
+            if next_tasks and next_tasks[1] then
+                local note, err = mah.db.get_note(next_tasks[1].id)
+                if not note then error(err or "Task disappeared during rollup") end
+                next_due = note.end_date or ""
+            end
+            local subtasks, checked, cursor = 0, 0, 0
+            while true do
+                local notes, err = mah.db.query_notes({note_type_id=tax.task_type_id,include_blocks=true,limit=100,
+                    mrql=task_scope_clause(container) .. ' AND id > ' .. cursor,sort_by={'id asc'}})
+                if not notes then error(err) end
+                for _, note in ipairs(notes) do
+                    cursor = math.max(cursor,note.id)
+                    for _, block in ipairs(note.blocks or {}) do
+                        if block.type == 'plugin:project-management:subtasks' then
+                            local done = {}
+                            for _, id in ipairs(block.state.checked or {}) do done[id]=true end
+                            for _, row in ipairs(block.content.items or {}) do
+                                subtasks=subtasks+1
+                                if done[row.id] then checked=checked+1 end
+                            end
+                        end
+                    end
+                end
+                if #notes < 100 then break end
+            end
+            -- Serialize the read-modify-write with other plugin rollup writers.
+            local ok, txerr = mah.db.transaction(function()
+                mah.kv.set('rollup:' .. group.id,'1')
+                local current, err = mah.db.get_group(group.id)
+                if not current then error(err or "Group disappeared during rollup") end
+                local meta = meta_object(current.meta)
+                if not meta then error("Group metadata is not an object") end
+                meta.pm_counts = counts
+                meta.pm_subtasks = subtasks
+                meta.pm_subtasks_done = checked
+                meta.pm_done = counts[cfg.done_status] or 0
+                meta.pm_open = counts.total - meta.pm_done
+                meta.pm_overdue = overdue.total
+                meta.pm_next_due = next_due
+                meta.pm_rollup_at = mah.util.now_iso()
+                local saved, err = mah.db.patch_group(group.id,{meta=meta_string(meta)})
+                if not saved then error(err) end
+            end)
+            if not ok then error(txerr) end
+        end
+    end
+    mah.kv.set('pm_rollup_last',mah.util.now_iso())
+end
+
+local function register_pm_hooks()
+    local function stamp(data)
+        local tax = cached_taxonomy()
+        if not tax or data.note_type_id ~= tax.task_type_id then return data end
+        local meta = meta_object(data.meta)
+        if meta and (meta.status == nil or meta.status == "") then
+            meta.status = resolved_config().default_status
+            data.meta = meta_string(meta)
+        end
+        return data
+    end
+    mah.on('before_note_create',stamp)
+    mah.on('before_note_update',stamp)
+    for _, event in ipairs({'after_note_create','after_note_update','after_note_delete'}) do
+        mah.on(event,function(data)
+            local tax = cached_taxonomy()
+            if tax and data.note_type_id == tax.task_type_id then mah.kv.set('pm_rollup_dirty',true) end
+        end)
+    end
+    mah.schedule({id='rollup',every='10m',overlap='skip',handler=reconcile_rollups})
 end
 
 -- ---------------------------------------------------------------------------
@@ -1269,26 +1637,31 @@ local function build_page_html()
         .. '<noscript><p>Project Management needs JavaScript for its views. '
         .. 'The task notes stay fully usable through the regular Notes pages.</p></noscript>'
         .. '</div>'
-        .. '<link rel="stylesheet" href="' .. base .. '/pm.css">'
-        .. '<script src="' .. base .. '/pm.js"></script>'
+        .. '<link rel="stylesheet" href="' .. base .. '/pm.css?v=1.1.0-select-arrows">'
+        .. EMBED_SCRIPT .. '<style>' .. presentation_css() .. '</style>'
+        .. '<script defer src="' .. base .. '/pm.js"></script>'
 end
 
 function init()
-    page_html = build_page_html()
+    local page_html = build_page_html()
 
     -- A first install provisions the dynamic note-type id from api/setup, so
     -- setup registers these too. On later boots the cached id lets init restore
     -- the registrations immediately.
     register_pm_block_types(cached_taxonomy())
+    register_pm_actions(cached_taxonomy())
+    register_pm_hooks()
+    mah.shortcode({name="task-controls",label="Task controls",render=render_task_controls})
+    mah.shortcode({name="mini-board",label="Project mini board",render=render_mini_board})
 
     -- ------------------------------------------------------------------
     -- Page shell. One handler serves all four views; the client switches on
     -- the ?view= parameter and re-renders in place.
     -- ------------------------------------------------------------------
-    mah.page("board", function(ctx)
-        return page_html
-    end, { hide_sidebar = true })
-    mah.menu("Project Management", "board")
+    for _, view in ipairs({"board", "backlog", "dashboard", "timeline"}) do
+        mah.page(view, function(ctx) return page_html end, { hide_sidebar = true })
+        mah.menu("PM " .. view:sub(1,1):upper() .. view:sub(2), view)
+    end
 
     -- ------------------------------------------------------------------
     -- Shortcodes used by the taxonomy's Custom* slots
@@ -1341,7 +1714,10 @@ function init()
         name = "entity-context",
         label = "Project Management entity context",
         description = "Links a PM task or epic to its owning entities and board.",
-        render = render_entity_context,
+        render = function(ctx)
+            if ctx.entity_type ~= "note" then return render_entity_context(ctx) end
+            return '<span data-pm-region="context" data-pm-id="' .. ctx.entity_id .. '">' .. render_entity_context(ctx) .. '</span>'
+        end,
     })
 
     mah.shortcode({
@@ -1375,7 +1751,9 @@ function init()
             end
             if project_id == 0 and not epic_id then return "" end
             local container = { owner_epic = epic_id ~= nil, project_id = project_id, epic_id = epic_id }
-            local counts, cerr = status_counts(container, nil, tax)
+            local value = meta_object(group.meta) or {}
+            local counts, cerr = value.pm_counts, nil
+            if type(counts) ~= "table" then counts, cerr = status_counts(container, nil, tax) end
             if cerr then return "" end
             local cfg = resolved_config()
             local done = counts[cfg.done_status] or 0
@@ -1442,7 +1820,7 @@ function init()
         description = "Renders the status and priority pills for a PM Task note.",
         render = function(ctx)
             if ctx.entity_type ~= "note" then return "" end
-            return render_task_badges(ctx.value)
+            return '<span data-pm-region="badges" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_badges(ctx.value) .. '</span>'
         end,
     })
 
@@ -1452,7 +1830,7 @@ function init()
         description = "Renders a task avatar whose glyph and colour reflect the effective status.",
         render = function(ctx)
             if ctx.entity_type ~= "note" then return "" end
-            return render_task_avatar(ctx.value)
+            return '<span data-pm-region="avatar" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_avatar(ctx.value) .. '</span>'
         end,
     })
 
@@ -1460,12 +1838,45 @@ function init()
         name = "task-date",
         label = "Task due date",
         description = "Renders a due date and marks unfinished past-due tasks as overdue.",
-        render = render_task_date,
+        render = function(ctx) return '<span data-pm-region="date" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_date(ctx) .. '</span>' end,
     })
 
     -- ------------------------------------------------------------------
     -- API endpoints
     -- ------------------------------------------------------------------
+
+    mah.api('POST','api/task/promote',function(ctx)
+        local body, err = parse_body(ctx)
+        if not body then api_error(ctx,400,err) return end
+        local tax = cached_taxonomy()
+        local parent, perr = mah.db.get_note(tonumber(body.id) or 0)
+        if not tax or not parent or parent.note_type_id ~= tax.task_type_id then api_error(ctx,400,perr or 'Not a PM Task') return end
+        local item
+        for _, block in ipairs(parent.blocks or {}) do
+            if block.id == tonumber(body.block_id) and block.type == 'plugin:project-management:subtasks' then
+                for _, row in ipairs(block.content.items or {}) do if row.id == body.item_id then item=row break end end
+            end
+        end
+        if not item then api_error(ctx,400,'Subtask row not found') return end
+        local key = 'promoted:' .. tostring(body.block_id) .. ':' .. item.id
+        local promoted
+        local ok, txerr = mah.db.transaction(function()
+            -- Claim before reading so repeated clicks/retries create exactly one note.
+            local existing = mah.kv.get(key)
+            if existing then
+                local previous = mah.db.get_note(existing)
+                if not previous then error('Previously promoted task is unavailable') end
+                promoted = full_task(existing)
+                return
+            end
+            -- The VM serializes promotion requests; the transaction makes the
+            -- note and durable idempotency record commit together.
+            promoted = call_task('create',{owner_id=parent.owner_id,name=item.label})
+            mah.kv.set(key,promoted.id)
+        end)
+        if not ok then api_error(ctx,400,tostring(txerr)) return end
+        ctx.json(promoted)
+    end)
 
     -- GET api/config — resolved ids, status and priority lists.
     mah.api("GET", "api/config", function(ctx)
@@ -1576,9 +1987,24 @@ function init()
                 if (is_empty(current) and not spec.allow_empty) or matches_legacy or spec.force then
                     need = need or {}
                     need[k] = spec.value
-                elseif spec.add_css and not tostring(current):find("project-management:presentation:v1", 1, true) then
+                elseif spec.add_css and not tostring(current):find("project-management:integration:v2", 1, true) then
                     need = need or {}
-                    need[k] = tostring(current) .. "\n" .. EMBED_CSS
+                    need[k] = tostring(current) .. "\n" .. presentation_css()
+                elseif spec.add_css and not tostring(current):find(ACCENT_CORNERS_MARKER, 1, true) then
+                    need = need or {}
+                    need[k] = tostring(current) .. "\n" .. ACCENT_CORNERS_CSS
+                end
+                if spec.add_css then
+                    local css = (need and need[k]) or tostring(current)
+                    if not css:find(BLOCK_ROW_MARKER, 1, true) then
+                        need = need or {}
+                        need[k] = css .. "\n" .. BLOCK_ROW_CSS
+                    end
+                    css = (need and need[k]) or css
+                    if not css:find(SELECT_ARROW_MARKER, 1, true) then
+                        need = need or {}
+                        need[k] = css .. "\n" .. SELECT_ARROW_CSS
+                    end
                 end
             end
             return need
@@ -1594,35 +2020,40 @@ function init()
         end
 
         local project_fields = {
+            section_config = { value = GROUP_SECTIONS, legacy = "{}" },
+            custom_own_entities = { value = "[plugin:project-management:mini-board]" },
             meta_schema = { value = project_schema_json(cfg) },
-            custom_header = { value = PROJECT_HEADER, legacy = { LEGACY_PROJECT_HEADER, V1_PROJECT_HEADER } },
-            custom_summary = { value = PROJECT_SUMMARY },
+            custom_header = { value = PROJECT_HEADER, legacy = { V2_PROJECT_HEADER, LEGACY_PROJECT_HEADER, V1_PROJECT_HEADER } },
+            custom_summary = { value = PROJECT_SUMMARY, legacy = V2_PROJECT_SUMMARY },
             custom_avatar = { value = PROJECT_AVATAR },
-            custom_hover_card = { value = PROJECT_SUMMARY },
-            custom_list_header = { value = PROJECT_LIST_HEADER },
+            custom_hover_card = { value = PROJECT_SUMMARY, legacy = V2_PROJECT_SUMMARY },
+            custom_list_header = { value = PROJECT_LIST_HEADER, legacy = V2_PROJECT_LIST_HEADER },
             custom_detail_footer = { value = PROJECT_DETAIL_FOOTER, legacy = V1_PROJECT_DETAIL_FOOTER, allow_empty = true },
-            custom_mrql_result = { value = PROJECT_MRQL_RESULT },
-            custom_css = { value = EMBED_CSS, add_css = true },
+            custom_mrql_result = { value = PROJECT_MRQL_RESULT, legacy = V2_PROJECT_MRQL_RESULT },
+            custom_css = { value = presentation_css(), legacy = V2_EMBED_CSS, add_css = true },
         }
         if not repair_category_fields(project_category, project_fields) then return end
         if not repair_category_fields(epic_category, {
+            section_config = { value = GROUP_SECTIONS, legacy = "{}" },
+            custom_own_entities = { value = "[plugin:project-management:mini-board]" },
             meta_schema = { value = epic_schema_json(cfg) },
-            custom_header = { value = EPIC_HEADER, legacy = { LEGACY_EPIC_HEADER, V1_EPIC_HEADER } },
-            custom_summary = { value = EPIC_SUMMARY, legacy = V1_EPIC_SUMMARY },
+            custom_header = { value = EPIC_HEADER, legacy = { V2_EPIC_HEADER, LEGACY_EPIC_HEADER, V1_EPIC_HEADER } },
+            custom_summary = { value = EPIC_SUMMARY, legacy = { V1_EPIC_SUMMARY, V2_EPIC_SUMMARY } },
             custom_avatar = { value = EPIC_AVATAR },
-            custom_hover_card = { value = EPIC_HOVER_CARD },
-            custom_list_header = { value = EPIC_LIST_HEADER },
+            custom_hover_card = { value = EPIC_HOVER_CARD, legacy = V2_EPIC_HOVER_CARD },
+            custom_list_header = { value = EPIC_LIST_HEADER, legacy = V2_EPIC_LIST_HEADER },
             custom_detail_footer = { value = EPIC_DETAIL_FOOTER, legacy = V1_EPIC_DETAIL_FOOTER },
-            custom_mrql_result = { value = EPIC_MRQL_RESULT },
-            custom_css = { value = EMBED_CSS, add_css = true },
+            custom_mrql_result = { value = EPIC_MRQL_RESULT, legacy = V2_EPIC_MRQL_RESULT },
+            custom_css = { value = presentation_css(), legacy = V2_EMBED_CSS, add_css = true },
         }) then return end
 
         do
             local share_template_migration_key = KV_PREFIX .. "_share_templates_v1"
             local enable_share_templates = mah.kv.get(share_template_migration_key) ~= true
             local need = fields_to_patch(task_type, {
+                section_config = { value = TASK_SECTIONS, legacy = "{}" },
                 meta_schema = { value = task_schema_json(cfg) },
-                custom_header = { value = TASK_HEADER, legacy = V1_TASK_HEADER },
+                custom_header = { value = TASK_HEADER, legacy = { V1_TASK_HEADER, V2_TASK_HEADER } },
                 custom_summary = { value = TASK_SUMMARY, legacy = { LEGACY_TASK_SUMMARY, V1_TASK_SUMMARY } },
                 custom_avatar = { value = TASK_AVATAR, legacy = V1_TASK_AVATAR },
                 custom_hover_card = { value = TASK_HOVER_CARD },
@@ -1630,10 +2061,10 @@ function init()
                 -- path. Subsequent setup runs respect an operator who turns it
                 -- back off; plugin shortcodes remain suppressed on public shares.
                 apply_templates_to_shares = { value = true, force = enable_share_templates },
-                custom_list_header = { value = TASK_LIST_HEADER },
+                custom_list_header = { value = TASK_LIST_HEADER, legacy = V2_TASK_LIST_HEADER },
                 custom_detail_footer = { value = TASK_DETAIL_FOOTER, legacy = V1_TASK_DETAIL_FOOTER },
                 custom_mrql_result = { value = TASK_MRQL_RESULT },
-                custom_css = { value = EMBED_CSS, add_css = true },
+                custom_css = { value = presentation_css(), legacy = V2_EMBED_CSS, add_css = true },
             })
             if need then
             local ok, uerr = mah.db.patch_note_type(task_type.id, need)
@@ -1650,6 +2081,8 @@ function init()
         store_taxonomy(tax_new)
         tax = tax_new
         register_pm_block_types(tax_new)
+        register_pm_actions(tax_new)
+        mah.kv.set("cfg_presentation_v2", true)
 
         ctx.json({
             ok = true,
@@ -1789,7 +2222,9 @@ function init()
         local now = ctx.query and (ctx.query.now or (type(ctx.query.now) == "table" and ctx.query.now[1])) or nil
         local date_filter = "endDate < "
         if now and now ~= "" then
-            date_filter = date_filter .. string.format("%q", tostring(now))
+            local bound, err = query_datetime(now)
+            if not bound then api_error(ctx, 400, err) return end
+            date_filter = date_filter .. string.format("%q", bound)
         else
             date_filter = date_filter .. "NOW()"
         end
@@ -1808,10 +2243,13 @@ function init()
         local week_start = ctx.query and ctx.query.week_start or nil
         local week_end = ctx.query and ctx.query.week_end or nil
         if week_start and week_end and week_start ~= "" and week_end ~= "" then
+            local start_bound, start_err = query_datetime(week_start)
+            local end_bound, end_err = query_datetime(week_end)
+            if not start_bound or not end_bound then api_error(ctx, 400, start_err or end_err) return end
             local c = status_counts(container, {
                 not_done,
-                string.format("endDate >= %q", tostring(week_start)),
-                string.format("endDate < %q", tostring(week_end)),
+                string.format("endDate >= %q", start_bound),
+                string.format("endDate < %q", end_bound),
             }, tax)
             if c then due_this_week = c.total end
         end
@@ -1855,7 +2293,7 @@ function init()
     end)
 
     -- POST api/task/create { owner_id, name, status?, priority?, due?, start?, description? }
-    mah.api("POST", "api/task/create", function(ctx)
+    register_task_api("create", function(ctx)
         local body, err = parse_body(ctx)
         if not body then api_error(ctx, 400, err) return end
         local owner_id = tonumber(body.owner_id) or 0
@@ -1922,13 +2360,13 @@ function init()
             return true, nil, attempt_result
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
-        ctx.json({ id = created.id, name = created.name, owner_id = owner_id, status = status })
+        ctx.json(full_task(created.id))
     end)
 
     -- POST api/task/update { id, name?, status?, priority?, owner_id?/epic_id?, due?, start?, description? }
     -- Partial update. Every date write is validated here — the host silently
     -- NULLs a date it cannot parse, and this plugin refuses instead.
-    mah.api("POST", "api/task/update", function(ctx)
+    register_task_api("update", function(ctx)
         local body, err = parse_body(ctx)
         if not body then api_error(ctx, 400, err) return end
         local id = tonumber(body.id) or 0
@@ -2130,11 +2568,11 @@ function init()
             return true, nil, attempt_result
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
-        ctx.json({ id = updated.id, name = updated.name })
+        ctx.json(full_task(updated.id))
     end)
 
 
-    mah.api("POST", "api/task/move", function(ctx)
+    register_task_api("move", function(ctx)
         local body, err = parse_body(ctx)
         if not body then api_error(ctx, 400, err) return end
         local id = tonumber(body.id) or 0
@@ -2333,7 +2771,7 @@ function init()
             return true, nil, attempt_updated
         end)
         if not ok_tx then api_error(ctx, 400, tostring(txerr)) return end
-        ctx.json({ id = updated.id, status = status })
+        ctx.json(full_task(updated.id))
     end)
 
 end

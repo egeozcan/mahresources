@@ -21,11 +21,11 @@ const CLIENT_OWNED_CHILDREN_TAGS = new Set([
 const MORPH_AWARE_TAGS = new Set([...CLIENT_OWNED_CHILDREN_TAGS, 'RELOAD-SHORTCODE']);
 
 function hasClientOwnedChildren(el) {
-  return el?.nodeType === 1 && CLIENT_OWNED_CHILDREN_TAGS.has(el.tagName);
+  return el?.nodeType === 1 && (CLIENT_OWNED_CHILDREN_TAGS.has(el.tagName) || el.hasAttribute?.('data-morph-client-owned'));
 }
 
 function isMorphAware(el) {
-  return el?.nodeType === 1 && MORPH_AWARE_TAGS.has(el.tagName);
+  return el?.nodeType === 1 && (MORPH_AWARE_TAGS.has(el.tagName) || el.hasAttribute?.('data-morph-client-owned'));
 }
 
 export function morphOptionsWithShortcodeElements(options = {}) {

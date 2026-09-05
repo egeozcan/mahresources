@@ -36,6 +36,8 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		"name":        groupQuery.Name,
 		"description": groupQuery.Description,
 		"meta":        groupQuery.Meta,
+		"category_id": float64(groupQuery.CategoryId),
+		"owner_id":    float64(groupQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_create", hookData)
 	if hookErr != nil {
@@ -142,6 +144,8 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		"name":        group.Name,
 		"description": group.Description,
 		"meta":        string(group.Meta),
+		"category_id": hookID(group.CategoryId),
+		"owner_id":    hookID(group.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
@@ -177,6 +181,8 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		"name":        groupQuery.Name,
 		"description": groupQuery.Description,
 		"meta":        groupQuery.Meta,
+		"category_id": float64(groupQuery.CategoryId),
+		"owner_id":    float64(groupQuery.OwnerId),
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_update", hookData)
 	if hookErr != nil {
@@ -372,6 +378,8 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		"name":        group.Name,
 		"description": group.Description,
 		"meta":        string(group.Meta),
+		"category_id": hookID(group.CategoryId),
+		"owner_id":    hookID(group.OwnerId),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
@@ -503,8 +511,9 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 }
 
 type groupDeleteEffect struct {
-	ID   uint
-	Name string
+	TaxonomyID, OwnerID float64
+	ID                  uint
+	Name                string
 }
 
 type groupDeleteEffectSink interface {
@@ -519,7 +528,7 @@ func (defaultGroupDeleteEffectSink) LogDeleted(ctx *MahresourcesContext, event g
 	ctx.Logger().Info(models.LogActionDelete, "group", &event.ID, event.Name, "Deleted group", nil)
 }
 func (defaultGroupDeleteEffectSink) RunAfterHook(ctx *MahresourcesContext, event groupDeleteEffect) {
-	ctx.RunAfterPluginHooks("after_group_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
+	ctx.RunAfterPluginHooks("after_group_delete", map[string]any{"id": float64(event.ID), "name": event.Name, "category_id": event.TaxonomyID, "owner_id": event.OwnerID})
 }
 func (defaultGroupDeleteEffectSink) InvalidateCache(ctx *MahresourcesContext, _ groupDeleteEffect) {
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
@@ -574,7 +583,7 @@ func (ctx *MahresourcesContext) deleteGroupInTransaction(groupID uint) (groupDel
 	if err := ScrubGroupFromBlocks(ctx.db, groupID); err != nil {
 		return groupDeleteEffect{}, err
 	}
-	return groupDeleteEffect{ID: groupID, Name: group.Name}, nil
+	return groupDeleteEffect{ID: groupID, Name: group.Name, TaxonomyID: hookID(group.CategoryId), OwnerID: hookID(group.OwnerId)}, nil
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupID uint) error {

@@ -1,5 +1,7 @@
 // Plugin blocks mounted in one Alpine pass enqueue into the same microtask, so
 // the editor pays one HTTP round trip per note/mode instead of one per block.
+import { loadPluginBlockScripts } from '../../utils/pluginBlockScripts.js';
+
 const pendingRenderBatches = new Map();
 
 function enqueueBatchRender(block, mode) {
@@ -13,7 +15,7 @@ function enqueueBatchRender(block, mode) {
     }
     return new Promise((resolve, reject) => {
         const waiters = batch.requests.get(block.id) || [];
-        waiters.push({ resolve, reject });
+        waiters.push({ resolve, reject, type: block.type });
         batch.requests.set(block.id, waiters);
     });
 }
@@ -32,15 +34,20 @@ async function flushBatch(key, batch) {
         });
         if (!res.ok) throw new Error(await res.text());
         const payload = await res.json();
-        for (const [id, waiters] of batch.requests) {
+        await Promise.all([...batch.requests].map(async ([id, waiters]) => {
             const rendered = payload.renders?.[id];
             const message = payload.errors?.[id];
-            for (const waiter of waiters) {
-                if (message) waiter.reject(new Error(message));
-                else if (typeof rendered === 'string') waiter.resolve(rendered);
-                else waiter.reject(new Error('Plugin block render was not returned'));
+            try {
+                if (message) throw new Error(message);
+                if (typeof rendered !== 'string') throw new Error('Plugin block render was not returned');
+                // Install the handlers before publishing markup with clickable
+                // controls. An operator may have replaced the taxonomy header.
+                await loadPluginBlockScripts(waiters[0].type, payload.scripts?.[id]);
+                for (const waiter of waiters) waiter.resolve(rendered);
+            } catch (error) {
+                for (const waiter of waiters) waiter.reject(error);
             }
-        }
+        }));
     } catch (err) {
         for (const waiters of batch.requests.values()) {
             for (const waiter of waiters) waiter.reject(err);
@@ -48,15 +55,16 @@ async function flushBatch(key, batch) {
     }
 }
 
-export function blockPlugin(block, getEditMode, getLabel = null) {
+export function blockPlugin(blockSource, getEditMode, getLabel = null) {
     return {
-        block,
+        get block() { return typeof blockSource === 'function' ? blockSource() : blockSource; },
         renderedHtml: '',
         renderError: null,
         renderLoading: false,
         _lastMode: null,
         _lastContentKey: null,
         _lastStateKey: null,
+        _renderGeneration: 0,
 
         get editMode() {
             return getEditMode();
@@ -79,15 +87,17 @@ export function blockPlugin(block, getEditMode, getLabel = null) {
             this._lastContentKey = contentKey;
             this._lastStateKey = stateKey;
 
+            const generation = ++this._renderGeneration;
             this.renderLoading = true;
             this.renderError = null;
 
             try {
-                this.renderedHtml = await enqueueBatchRender(this.block, mode);
+                const html = await enqueueBatchRender(this.block, mode);
+                if (generation === this._renderGeneration) this.renderedHtml = html;
             } catch (err) {
-                this.renderError = err.message;
+                if (generation === this._renderGeneration) this.renderError = err.message;
             } finally {
-                this.renderLoading = false;
+                if (generation === this._renderGeneration) this.renderLoading = false;
             }
         }
     };

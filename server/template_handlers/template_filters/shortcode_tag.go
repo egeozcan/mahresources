@@ -9,6 +9,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/deferredtoken"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -93,6 +94,9 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		}
 	}
 
+	if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
+		metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
+	}
 	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
 	result = wrapReloadableRegion(result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {

@@ -252,18 +252,40 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 			}
 		}
 
-		// Compute plugin card/bulk actions for list pages (no entity data, so an
-		// action's own filters cannot narrow them)
+		// A list constrains taxonomy only; other action dimensions remain unknown.
+		listConstraints := map[string]any{}
+		switch carrier := ctx["listHeaderCarrier"].(type) {
+		case *models.NoteType:
+			if carrier != nil {
+				listConstraints["note_type_id"] = carrier.ID
+			}
+		case *models.Category:
+			if carrier != nil {
+				listConstraints["category_id"] = carrier.ID
+			}
+		case *models.ResourceCategory:
+			if carrier != nil {
+				listConstraints["category_id"] = carrier.ID
+			}
+		}
 		path := request.URL.Path
+		if id, ok := ctx["listTaxonomyID"].(uint); ok && id != 0 {
+			if strings.HasPrefix(path, "/notes") {
+				listConstraints["note_type_id"] = id
+			} else {
+				listConstraints["category_id"] = id
+			}
+		}
 		switch {
 		case strings.HasPrefix(path, "/resources"):
-			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "card", nil))
-			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "bulk", nil))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("resource", "card", listConstraints))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("resource", "bulk", listConstraints))
 		case strings.HasPrefix(path, "/notes"):
-			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("note", "card", nil))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("note", "bulk", listConstraints))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("note", "card", listConstraints))
 		case strings.HasPrefix(path, "/groups"):
-			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "card", nil))
-			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "bulk", nil))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("group", "card", listConstraints))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetListActionsForPlacement("group", "bulk", listConstraints))
 		}
 
 		// For JSON responses, process shortcodes in Custom* fields since the

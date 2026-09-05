@@ -252,6 +252,8 @@ func (pm *PluginManager) RenderShortcodeContext(reqCtx context.Context, pluginNa
 	}
 
 	ctxData := map[string]any{
+		"read_only":     mctx.ForceReadOnly || !shortcodeCanWrite(reqCtx),
+		"can_write":     !mctx.ForceReadOnly && shortcodeCanWrite(reqCtx),
 		"entity_type":   mctx.EntityType,
 		"entity_id":     float64(mctx.EntityID),
 		"value":         metaMap,

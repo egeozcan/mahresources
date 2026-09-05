@@ -165,11 +165,12 @@ export class SchemaEditor extends LitElement {
           this.dispatchEvent(new CustomEvent('schema-change', { detail: e.detail, bubbles: true, composed: true }));
         }}></schema-edit-mode>`;
       case 'form': {
-        let parsedValue = {};
-        try { parsedValue = this.value ? JSON.parse(this.value) : {}; } catch { /* invalid JSON */ }
+        // Form mode accepts serialized JSON (or an already-parsed object).
+        // Let it decode once: pre-parsing here makes scalar strings such as
+        // "high" look like malformed JSON and coerces them to an empty object.
         return html`<schema-form-mode
           .schema=${this._parsedSchema}
-          .value=${parsedValue}
+          .value=${this.value}
           .name=${this.name}
           @value-change=${(e: CustomEvent) => {
             this.value = JSON.stringify(e.detail.value);

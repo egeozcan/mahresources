@@ -223,3 +223,33 @@ func TestPluginAccess_MissingPredicateFallsBackToTheWholeRequestRule(t *testing.
 		})
 	}
 }
+
+func TestPluginSlotCarriesTaxonomyWithoutDatabaseRead(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "slotprobe")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := `plugin={name="slotprobe",version="1"}
+ function init() mah.inject("note_detail_before",function(ctx) return ctx.entity_key..":"..ctx.entity_id..":"..ctx.entity_type_id..":"..ctx.entity_type_name end) end`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.lua"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pm, err := plugin_system.NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("slotprobe"); err != nil {
+		t.Fatal(err)
+	}
+	tpl, err := pongo2.FromString(`{% plugin_slot "note_detail_before" %}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uint(7)
+	out, err := tpl.Execute(pongo2.Context{"note": &models.Note{ID: 12, NoteTypeId: &id, NoteType: &models.NoteType{ID: id, Name: "Task"}}, "_pluginManager": pm, "_requestContext": auth.WithPrincipal(context.Background(), &auth.Principal{SuperUser: true}), "_pluginAccess": auth.PluginAccess(func(string) bool { return true })})
+	if err != nil || out != "note:12:7:Task" {
+		t.Fatalf("slot context: %q %v", out, err)
+	}
+}

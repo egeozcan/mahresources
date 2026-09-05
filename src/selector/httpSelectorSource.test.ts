@@ -23,6 +23,18 @@ function mapOption(raw: RawValue): SelectorOption<RawValue> {
 }
 
 describe('createHttpSelectorSource', () => {
+    test('preserves repeated category filters instead of joining them into one value', async () => {
+        const fetch = vi.fn().mockResolvedValue(response([]));
+        const source = createHttpSelectorSource({ searchUrl: '/v1/groups', mapOption, fetch,
+            parameters: () => ({ Categories: [7, 9], ignored: null }),
+        });
+        await source.search('epic', new AbortController().signal);
+        const url = new URL(fetch.mock.calls[0][0], 'https://example.test');
+        expect(url.searchParams.getAll('Categories')).toEqual(['7', '9']);
+        expect(url.searchParams.get('name')).toBe('epic');
+        expect(url.searchParams.has('ignored')).toBe(false);
+        expect(fetch).toHaveBeenCalledOnce();
+    });
     test('encodes the query and dynamic parameters for every search', async () => {
         let side = 'left/right';
         const fetch = vi.fn().mockResolvedValue(response([]));

@@ -102,7 +102,8 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 			return addErrContext(err, baseContext)
 		}
 
-		noteTypes, err := context.GetNoteTypesWithIds([]uint{query.NoteTypeId})
+		singleTypeID := query_models.SingleTaxonomy(query.NoteTypeId, query.NoteTypeIds)
+		noteTypes, err := context.GetNoteTypesWithIds([]uint{singleTypeID})
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -112,7 +113,7 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 		// It drives the shared customListHeader.tpl partial, which renders the note
 		// type's CustomListHeader slot against the note type itself.
 		var listHeaderCarrier *models.NoteType
-		if query.NoteTypeId != 0 && len(noteTypes) == 1 {
+		if singleTypeID != 0 && len(noteTypes) == 1 {
 			listHeaderCarrier = &noteTypes[0]
 		}
 
@@ -130,6 +131,7 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 			"tags":                tags,
 			"popularTags":         popularTags,
 			"noteTypes":           noteTypes,
+			"listTaxonomyID":      singleTypeID,
 			"listHeaderCarrier":   listHeaderCarrier,
 			"parsedQuery":         query,
 			"action": template_entities.Entry{
@@ -179,7 +181,8 @@ func NoteTimelineContextProvider(context NotePageContext) func(request *http.Req
 			return addErrContext(err, baseContext)
 		}
 
-		noteTypes, err := context.GetNoteTypesWithIds([]uint{query.NoteTypeId})
+		singleTypeID := query_models.SingleTaxonomy(query.NoteTypeId, query.NoteTypeIds)
+		noteTypes, err := context.GetNoteTypesWithIds([]uint{singleTypeID})
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -201,7 +204,7 @@ func NoteTimelineContextProvider(context NotePageContext) func(request *http.Req
 		}
 
 		var listHeaderCarrier *models.NoteType
-		if query.NoteTypeId != 0 && len(noteTypes) == 1 {
+		if singleTypeID != 0 && len(noteTypes) == 1 {
 			listHeaderCarrier = &noteTypes[0]
 		}
 

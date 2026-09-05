@@ -53,7 +53,29 @@ Guidance:
 - **`parameters`.** Request parameters that depend on other controls are supplied as a callback,
   re-evaluated per request. Neither the core nor the HTTP source reads the document;
   `selectorFormParameters` is the helper that lets a template declare a callback over sibling
-  controls.
+  controls. Array values produce repeated query parameters (for example, two `Categories`
+  values); null and undefined values are omitted.
+
+## Mounting a selector from a plugin or custom element
+
+`window.mahSelectors.mountSingle(container, options)` mounts a standalone single-entity
+field for consumers that do not own an Alpine scope. It fetches the existing autocompleter
+partial and uses the same single-entity profile and rendering adapter as host forms. It
+does not submit hidden controls or register with a surrounding form. No entity search runs
+until the user interacts, and each query fetches one bounded result page through the profile.
+
+Options are `entity`, `selected` (raw `{ ID, Name }` values), `parameters` (a callback),
+`title` (the accessible label), `onChange` (the core's atomic change record), and an optional
+`signal` for cancelling the markup fetch. Other single-entity profile options also apply.
+Inputs remain JavaScript values rather than interpolated executable Alpine expressions.
+
+The returned promise resolves to a handle with `getRawValues()`, `replaceRawValues(values)`,
+`replaceByKeys(keys)`, `setDisabled(boolean)`, and `destroy()`. Both replacement methods are
+silent: use them for server-driven refreshes and failed-save rollback. Key replacement keeps
+an existing label when available and otherwise shows `#<key>`. Disabling the selector also
+closes the popover and makes the whole field inert while a save is pending. Consumers own
+persistence and must destroy the handle on removal. The PM owner control passes project and
+epic category IDs as filters; authorization and group visibility remain the host API's job.
 
 ## The selector-source contract
 

@@ -3,6 +3,8 @@
 {% block head %}{% custom_css note %}{% endblock %}
 
 {% block body %}
+    {% plugin_slot "note_detail_before" %}
+    {% process_shortcodes note.NoteType.CustomHeader note %}
     <a class="text-amber-700" href="/note?id={{ note.ID }}">Go back to the note</a>
     {% if sc.Content %}
     {# Show the description unless a text block already mirrors it (keeps it visible for notes that have only non-text blocks). #}
@@ -17,9 +19,15 @@
         {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
     {% endif %}
     {% endif %}
+    {% process_shortcodes note.NoteType.CustomDetailFooter note %}
+    {% plugin_slot "note_detail_after" %}
 {% endblock %}
 
 {% block sidebar %}
+    <div class="sidebar-group">
+    {% include "partials/pluginActionsSidebar.tpl" with entityId=note.ID entityType="note" %}
+    {% plugin_slot "note_detail_sidebar" %}
+    </div>
     {% comment %}KAN-6: Unescaped CustomSidebar HTML is by design. Mahresources is a personal information
     management application designed to run on private/internal networks with no authentication
     layer. All users are trusted, and CustomSidebar is an intentional extension point for

@@ -592,3 +592,35 @@ func actionMatchesFilters(a ActionRegistration, entityData map[string]any) bool 
 
 	return true
 }
+
+// GetListActionsForPlacement narrows only dimensions known from the list filter.
+// Missing dimensions are unknown, not a mismatch (e.g. a category-filtered
+// resource list says nothing about the content type of each resource).
+func (pm *PluginManager) GetListActionsForPlacement(entity, placement string, constraints map[string]any) []ActionRegistration {
+	actions := pm.GetActionsForPlacement(entity, placement, nil)
+	result := make([]ActionRegistration, 0, len(actions))
+	for _, a := range actions {
+		mismatch := false
+		for key, allowed := range map[string][]uint{"category_id": a.Filters.CategoryIDs, "note_type_id": a.Filters.NoteTypeIDs} {
+			id, known := constraints[key].(uint)
+			if !known || len(allowed) == 0 {
+				continue
+			}
+			match := false
+			for _, candidate := range allowed {
+				if id == candidate {
+					match = true
+					break
+				}
+			}
+			if !match {
+				mismatch = true
+				break
+			}
+		}
+		if !mismatch {
+			result = append(result, a)
+		}
+	}
+	return result
+}

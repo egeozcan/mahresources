@@ -111,3 +111,14 @@ describe('schema-editor is treated as client-owned', () => {
     expect(skip).toHaveBeenCalledOnce();
   });
 });
+
+it('preserves the children of a plugin element opting into client ownership', () => {
+  const skipChildren = vi.fn();
+  const refreshFromMorph = vi.fn();
+  const plugin = el('PM-STATUS-CONTROL', { hasAttribute: (name: string) => name === 'data-morph-client-owned', refreshFromMorph });
+  const options = morphOptionsWithShortcodeElements();
+  options.updating(plugin, plugin, false, vi.fn(), skipChildren);
+  options.updated(plugin, plugin);
+  expect(skipChildren).toHaveBeenCalledOnce();
+  expect(refreshFromMorph).toHaveBeenCalledOnce();
+});

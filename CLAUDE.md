@@ -674,6 +674,7 @@ Bulk operations available: `addTags`, `removeTags`, `addMeta`, `delete`, `merge`
 - **Vite** - Bundler for JavaScript modules
 - **Alpine.js** - Lightweight reactive framework for UI components
 - **Tailwind CSS** - Utility-first CSS framework
+- Keep the two corners touching a thick colored accent border square. Other corners may remain rounded.
 - **baguetteBox.js** - Image gallery lightbox
 - **Web Components** - Custom elements for expandable text and inline editing
 
@@ -862,3 +863,12 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See
 ## Methodology
 
 Use TDD (red/green/refactor) as much as it makes sense. Adding integration tests and running them before starting and after the work is complete is very important.
+
+
+### Project Management integration rules
+
+- Keep host enablers generic: no PM taxonomy names in server or application context.
+- Prefer `[meta editable=true]` for schema-backed fields. PM controls own only status/order, dates and ownership semantics.
+- Use rollup metadata for PM card summaries, never per-card MRQL. The reconciliation must cover missed hooks, mass edits, deletion and block state writes.
+- List action filtering treats unknown dimensions as unknown; a category-filtered resource list must retain content-type-filtered actions. Unfiltered lists still offer all actions for their entity kind.
+- Mirror bundled PM source and assets into `e2e/test-plugins/project-management`; the test guards byte equality.

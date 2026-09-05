@@ -86,6 +86,7 @@ test.describe('Mass Edit', () => {
     await page.locator('[role="option"]').filter({ hasText: `Mass Edit Owner ${testRunId}` }).first().click();
 
     await dialog.getByRole('button', { name: 'Apply' }).click();
+    await expect(dialog).not.toBeVisible();
 
     // The list morphs in place: no navigation, and the tag lands on every
     // selected resource.

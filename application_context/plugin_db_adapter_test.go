@@ -778,3 +778,73 @@ func TestPluginDBAdapter_QueryResourcesRichFields(t *testing.T) {
 		t.Error("expected updated_at string")
 	}
 }
+
+func TestPluginDBAdapter_CategorySectionsAndNoteContext(t *testing.T) {
+	a := &pluginDBAdapter{ctx: createTestContext(t)}
+	for _, resource := range []bool{false, true} {
+		create, update, patch, get := a.CreateCategory, a.UpdateCategory, a.PatchCategory, a.GetCategoryData
+		if resource {
+			create, update, patch, get = a.CreateResourceCategory, a.UpdateResourceCategory, a.PatchResourceCategory, a.GetResourceCategoryData
+		}
+		row, err := create(map[string]any{"name": "Sections", "section_config": `{"metaJson":false}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := uint(row["id"].(float64))
+		row, err = get(id)
+		if err != nil || row["section_config"] != `{"metaJson":false}` {
+			t.Fatalf("create sections: %v %v", row, err)
+		}
+		_, err = update(id, map[string]any{"name": "Sections updated", "section_config": `{"tags":false}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = patch(id, map[string]any{"description": "Keep sections"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err = get(id)
+		if err != nil || row["section_config"] != `{"tags":false}` {
+			t.Fatalf("patch preserved sections: %v %v", row, err)
+		}
+		_, err = patch(id, map[string]any{"section_config": `{"owner":false}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ = get(id)
+		if row["section_config"] != `{"owner":false}` {
+			t.Fatalf("patch sections: %v", row)
+		}
+	}
+	nt, err := a.CreateNoteType(map[string]any{"name": "Dated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := a.CreateTag(map[string]any{"name": "Label"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := a.CreateNote(map[string]any{"name": "Dated task", "note_type_id": nt["id"], "start_date": "2026-09-05T09:30", "end_date": "2026-09-06T10:00", "tags": []any{tag["id"]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.GetNoteData(uint(note["id"].(float64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := a.QueryNotes(map[string]any{"note_type_id": nt["id"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("notes: %v", list)
+	}
+	for _, item := range []map[string]any{got, list[0]} {
+		if item["note_type_id"] != nt["id"] || item["start_date"] != "2026-09-05T09:30:00Z" || item["end_date"] != "2026-09-06T10:00:00Z" {
+			t.Fatalf("note context: %v", item)
+		}
+		if len(item["tags"].([]any)) != 1 {
+			t.Fatalf("tags missing: %v", item)
+		}
+	}
+}
