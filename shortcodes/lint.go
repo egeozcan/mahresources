@@ -87,7 +87,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload"}
+var builtinBaseNames = []string{"meta", "datetime", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real

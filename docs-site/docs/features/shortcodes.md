@@ -27,6 +27,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | Shortcode | Form | Use |
 |-----------|------|-----|
 | `[meta]` | Inline | Render a value from the current entity's Meta JSON |
+| `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
@@ -188,6 +189,31 @@ So pick the form by what consumes the output. Use `[meta path="status"]` where a
   Status: [meta path="status"]
 </div>
 ```
+
+## `[datetime]` -- Date/Time Display and Editor
+
+Use `[datetime path="event.start" editable="true"]` to display a Meta date/time field with an optional native picker and Save/Cancel controls. Without `editable`, it is display-only.
+
+The existing value determines the format: ISO dates, times, and timestamps retain their separator, seconds, fractional precision, and timezone offset. The picker edits the stored wall-clock time without converting it to the browser's timezone. If the current value is invalid, it displays verbatim and the editor uses the field's JSON Schema `default`. Without a valid default, the editor is empty and its input type follows the schema's `format` (`date`, `time`, or `date-time`). Opening or cancelling never writes the fallback.
+
+| Attribute | Meaning |
+|-----------|---------|
+| `path` | Required dot path into Meta |
+| `editable` | Enable editing; defaults to `false` |
+| `layout` | Custom display layout; defaults to the stored format |
+| `input-layout` | Custom format for parsing and saving the stored string |
+| `default` | Display text for an empty value; editor defaults come from the schema |
+| `hide-empty` | Hide empty values; defaults to `false` |
+
+```text
+[datetime path="event.start" layout="January 2, 2006 at 15:04"]
+[datetime path="deadline" editable="true" input-layout="02/01/2006" layout="Jan 2, 2006"]
+[datetime path="openingTime" editable="true"]
+```
+
+Layouts use these Go reference-time tokens: `2006` (year), `January`/`Jan`/`01`/`1` (month), `02`/`2` (day), `15` (24-hour hour), `03`/`3` (12-hour hour), `04`/`4` (minute), `05`/`5` (second), `PM`/`pm`, `.000` (fraction, one to nine zeros), and `Z07:00`/`-07:00`/`Z0700`/`-0700` (offset). Other characters are literal. Use `input-layout` for non-ISO values, including ambiguous day/month formats. `layout` only changes the display, never the saved representation. The native picker edits fractions up to milliseconds; opening and saving without changing the input preserves all stored fractional digits.
+
+Public share pages render this shortcode read-only, as with `[meta]`.
 
 ## `[property]` -- Entity Field Access
 

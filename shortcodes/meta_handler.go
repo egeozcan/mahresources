@@ -51,12 +51,23 @@ type MetaShortcodeContext struct {
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom
 // element, or — with inline="true" — into the bare value.
 func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
+	return renderMetaWidget(sc, ctx, "")
+}
+
+// RenderDateTimeShortcode uses the shared field editor with date/time presentation.
+func RenderDateTimeShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
+	attrs := fmt.Sprintf(` data-date-time="true" data-layout="%s" data-input-layout="%s"`,
+		html.EscapeString(sc.Attrs["layout"]), html.EscapeString(sc.Attrs["input-layout"]))
+	return renderMetaWidget(sc, ctx, attrs)
+}
+
+func renderMetaWidget(sc Shortcode, ctx MetaShortcodeContext, extraAttrs string) string {
 	path := sc.Attrs["path"]
 	if path == "" {
 		return ""
 	}
 
-	if sc.Attrs["inline"] == "true" {
+	if extraAttrs == "" && sc.Attrs["inline"] == "true" {
 		return renderInlineMetaValue(sc, ctx)
 	}
 
@@ -71,7 +82,7 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.decodeMetaObject())
 
 	return fmt.Sprintf(
-		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-default="%s" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
+		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-default="%s" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"%s></meta-shortcode>`,
 		html.EscapeString(path),
 		editable,
 		hideEmpty,
@@ -80,6 +91,7 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 		ctx.EntityID,
 		html.EscapeString(schemaSlice),
 		html.EscapeString(valueJSON),
+		extraAttrs,
 	)
 }
 

@@ -153,6 +153,15 @@
 &lt;/div&gt;</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[datetime path="event.start" editable="true"]</code>
+                        &mdash; display/edit a date or time Meta field, preserving its format and offset.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">layout</b>="January 2, 2006 at 15:04" custom display
+                            &middot; <b class="text-stone-500">input-layout</b>="02/01/2006" custom storage format
+                            &middot; invalid values display unchanged; editing starts at the schema default.
+                        </span>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>
                         &mdash; render a struct field of the group. Output is HTML-escaped by default.
                         <br><span class="text-stone-400 ml-4">

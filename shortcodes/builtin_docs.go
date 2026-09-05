@@ -77,6 +77,26 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
+			Name:        "datetime",
+			Syntax:      `[datetime path="..."]`,
+			Description: "Displays and optionally edits a date/time Meta field. Preserves its stored date/time format and timezone offset; invalid values display unchanged and the editor starts from the field's schema default (or empty).",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path into the entity Meta."},
+				{Name: "editable", Type: "boolean", Default: "false", Description: "Enable the date/time picker with Save and Cancel.", Enum: []string{"true", "false"}},
+				{Name: "layout", Type: "string", Description: "Custom display layout using Go tokens, e.g. January 2, 2006 at 15:04. Defaults to the stored format."},
+				{Name: "input-layout", Type: "string", Description: "Custom storage layout for parsing and saving, e.g. 02/01/2006 15:04. Otherwise detects ISO dates, times and timestamps, then uses the schema format."},
+				{Name: "hide-empty", Type: "boolean", Default: "false", Description: "Hide empty values outside edit mode.", Enum: []string{"true", "false"}},
+				{Name: "default", Type: "string", Description: "Display text for empty values. Editor defaults come from the field schema."},
+			},
+			Examples: []DocExample{
+				{Title: "Display a date/time", Code: `[datetime path="event.start"]`},
+				{Title: "Edit a date/time", Code: `[datetime path="event.start" editable="true"]`},
+				{Title: "Custom display", Code: `[datetime path="event.start" layout="January 2, 2006 at 15:04"]`},
+				{Title: "Custom storage", Code: `[datetime path="deadline" editable="true" input-layout="02/01/2006"]`},
+			},
+		},
+		{
 			Name:        "property",
 			Syntax:      `[property path="..."]`,
 			Description: "Renders a scalar property of the entity itself (a struct field such as Name or Description), HTML-escaped by default. The path may traverse preloaded related structs and slices with dot notation (e.g. Owner.Name, Tags.0.Name); it never triggers DB loads, so related structs render only where the page already loaded them.",

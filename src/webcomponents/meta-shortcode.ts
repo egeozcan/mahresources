@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
 import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
+import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 
 @customElement('meta-shortcode')
@@ -16,6 +17,13 @@ export class MetaShortcode extends LitElement {
   @property({ attribute: 'data-entity-id' }) entityId = '';
   @property({ attribute: 'data-schema' }) schemaStr = '';
   @property({ attribute: 'data-value' }) valueStr = '';
+  @property({ attribute: 'data-date-time' }) dateTime = 'false';
+  @property({ attribute: 'data-layout' }) layout = '';
+  @property({ attribute: 'data-input-layout' }) inputLayout = '';
+
+  private _dateEditor: ReturnType<typeof dateTimeField> | null = null;
+  @state() private _dateInput = '';
+  @state() private _dateInvalid = false;
 
   @state() private _editing = false;
   @state() private _saving = false;
@@ -71,7 +79,10 @@ export class MetaShortcode extends LitElement {
     const identityChanged =
       changedProperties.has('path') ||
       changedProperties.has('entityType') ||
-      changedProperties.has('entityId');
+      changedProperties.has('entityId') ||
+      changedProperties.has('dateTime') ||
+      changedProperties.has('layout') ||
+      changedProperties.has('inputLayout');
 
     if (identityChanged) {
       this._editing = false;
@@ -195,6 +206,9 @@ export class MetaShortcode extends LitElement {
   }
 
   private _renderValue(value: any, schema: JSONSchema | null): TemplateResult | string {
+    if (this.dateTime === 'true') {
+      return dateTimeField(value, schema, this.inputLayout, this.layout).display;
+    }
     // Check built-in x-display on raw schema (these only use the value, not schema metadata).
     const rawXDisplay = schema?.['x-display'] as string | undefined;
     if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
@@ -313,7 +327,16 @@ export class MetaShortcode extends LitElement {
 
     return html`
       <div class="meta-shortcode-edit border border-stone-300 rounded p-2 my-1">
-        ${schema
+        ${this.dateTime === 'true' && this._dateEditor
+          ? html`<input
+              type=${this._dateEditor.type}
+              step="any"
+              aria-label=${this._label}
+              class="border border-stone-300 rounded px-2 py-1 text-sm w-full"
+              .value=${this._dateInput}
+              @input=${this._onDateInput}
+            />`
+          : schema
           ? html`<schema-editor
               mode="form"
               .schema=${JSON.stringify(schema)}
@@ -332,7 +355,7 @@ export class MetaShortcode extends LitElement {
           <button
             type="button"
             class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-            ?disabled=${this._saving}
+            ?disabled=${this._saving || this._dateInvalid}
             @click=${this._save}
           >${this._saving ? 'Saving...' : 'Save'}</button>
           <button
@@ -361,11 +384,25 @@ export class MetaShortcode extends LitElement {
     }
   }
 
+  private _onDateInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    this._dateInput = input.value;
+    const value = this._dateEditor?.serialize(input.value);
+    this._dateInvalid = !input.validity.valid || value == null;
+    if (!this._dateInvalid) this._editValue = value;
+  }
+
   private _enterEditMode() {
     const current = this._value;
+    this._dateInvalid = false;
     // For missing fields, initialize with the schema default so saving
     // without touching the control submits valid JSON instead of undefined.
     this._editValue = current !== undefined ? current : getDefaultValue(this._schema || {});
+    if (this.dateTime === 'true') {
+      this._dateEditor = dateTimeField(current, this._schema, this.inputLayout, this.layout);
+      this._dateInput = this._dateEditor.input;
+      this._editValue = this._dateEditor.initialValue;
+    }
     this._editing = true;
   }
 
@@ -375,6 +412,7 @@ export class MetaShortcode extends LitElement {
   }
 
   private async _save() {
+    if (this.dateTime === 'true' && this._dateInvalid) return;
     this._saving = true;
 
     let value = this._editValue !== undefined ? this._editValue : this._value;
