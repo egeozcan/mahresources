@@ -264,3 +264,173 @@ describe('lightbox media freshness', () => {
     expect(store.resetZoom).not.toHaveBeenCalled();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+function taggingStore() {
+  const store = makeStore([item(1), item(2)]);
+  store.quickTagPanelOpen = true;
+  store.resourceDetails = { ID: 1, Name: 'image 1', Tags: [] };
+  store.detailsCache.set(1, store.resourceDetails);
+  store.recordRecentTag = vi.fn();
+  store.suggestedTags = [{ ID: 5, Name: 'seed' }, { ID: 6, Name: 'remaining' }];
+  store._suggestedCache.set(1, store.suggestedTags);
+  return store;
+}
+
+const seedTag = { ID: 5, Name: 'seed' };
+const relatedTag = { ID: 7, Name: 'related' };
+
+describe('suggestions follow tag writes', () => {
+  it.each(['suggestion', 'search add', 'search remove', 'batch add', 'batch remove', 'undo', 'carry-forward', 'quick slot'])(
+    'refreshes after %s without navigating', async path => {
+      const store = taggingStore();
+      const urls = routeFetches({}, { 1: [relatedTag] });
+      const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+      try {
+        if (path === 'suggestion') await store.applySuggestedTag(seedTag);
+        if (path === 'search add') await store.saveTagAddition(seedTag);
+        if (path === 'search remove') await store.saveTagRemoval(seedTag);
+        if (path === 'batch add') await store._batchToggleTags([seedTag], 'add');
+        if (path === 'batch remove') await store._batchToggleTags([seedTag], 'remove');
+        if (path === 'undo') {
+          store._undoRing.push({ resourceId: 1, tags: [seedTag], action: 'add', name: 'image 1' });
+          await store.undoLastTagAction();
+        }
+        if (path === 'carry-forward') {
+          store._carryForwardTags = [seedTag];
+          await store.repeatPreviousTags();
+        }
+        if (path === 'quick slot') {
+          store.quickSlots[0][0] = [{ id: seedTag.ID, name: seedTag.Name }];
+          await store.toggleTabTag(0);
+        }
+        await vi.waitFor(() => expect(store.suggestedTags).toEqual([relatedTag]));
+        expect(urls.filter(url => url.includes('suggestedTags'))).toEqual(['/v1/resource/suggestedTags?id=1']);
+      } finally { post.mockRestore(); }
+    },
+  );
+
+  it('coalesces concurrent writes and preserves remaining chips while refreshing', async () => {
+    const store = taggingStore();
+    const first = deferred<any>();
+    const second = deferred<any>();
+    const suggestions = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+    fetchMock.abortableFetch.mockReturnValue({ ready: suggestions.promise });
+    store.fetchResourceDetails = vi.fn();
+    try {
+      const write1 = store.saveTagAddition(seedTag);
+      const write2 = store.saveTagAddition({ ID: 8, Name: 'other seed' });
+      expect(store.suggestedTags).toEqual([{ ID: 6, Name: 'remaining' }]);
+      expect(store._suggestedCache.has(1)).toBe(false);
+      first.resolve({ ok: true });
+      await write1;
+      expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
+      second.resolve({ ok: true });
+      await write2;
+      expect(fetchMock.abortableFetch).toHaveBeenCalledTimes(1);
+      expect(store.suggestedTags).toEqual([{ ID: 6, Name: 'remaining' }]);
+      suggestions.resolve(jsonResponse({ suggestions: [relatedTag] }));
+      await vi.waitFor(() => expect(store.suggestedTags).toEqual([relatedTag]));
+    } finally { post.mockRestore(); }
+  });
+
+  it('rejects a pre-edit response even if it arrives after the refreshed response', async () => {
+    const store = taggingStore();
+    const stale = deferred<any>();
+    const fresh = deferred<any>();
+    fetchMock.abortableFetch.mockReturnValueOnce({ ready: stale.promise }).mockReturnValueOnce({ ready: fresh.promise });
+    const oldRequest = store.fetchSuggestedTags(1, true);
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+    try {
+      await store.saveTagAddition(seedTag);
+      fresh.resolve(jsonResponse({ suggestions: [relatedTag] }));
+      await vi.waitFor(() => expect(store.suggestedTags).toEqual([relatedTag]));
+      stale.resolve(jsonResponse({ suggestions: [seedTag] }));
+      await oldRequest;
+      expect(store.suggestedTags).toEqual([relatedTag]);
+      expect(store._suggestedCache.get(1)).toEqual([relatedTag]);
+    } finally { post.mockRestore(); }
+  });
+
+  it('does not fetch during writes and reconciles a failed write after rollback', async () => {
+    const store = taggingStore();
+    const write = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(write.promise);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    routeFetches({ 1: { ID: 1, Tags: [] } }, { 1: [seedTag] });
+    try {
+      const pending = store.saveTagAddition(seedTag);
+      const rejected = expect(pending).rejects.toThrow('Failed to add tag');
+      await store.fetchSuggestedTags(1, true);
+      expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
+      write.resolve({ ok: false, status: 400 });
+      await rejected;
+      await vi.waitFor(() => expect(store.suggestedTags).toEqual([seedTag]));
+      expect(store.resourceDetails.Tags).toEqual([]);
+    } finally { post.mockRestore(); log.mockRestore(); }
+  });
+
+  it.each(['suggestion', 'search'])('does not prune the new image when a %s write finishes after navigation', async path => {
+    const store = taggingStore();
+    const write = deferred<any>();
+    const post = vi.spyOn(globalThis, 'fetch').mockReturnValue(write.promise);
+    try {
+      const pending = path === 'suggestion' ? store.applySuggestedTag(seedTag) : store.saveTagAddition(seedTag);
+      store.currentIndex = 1;
+      store.suggestedTags = [seedTag, relatedTag];
+      store._suggestedCache.set(2, store.suggestedTags);
+      write.resolve({ ok: true });
+      await pending;
+      expect(store.suggestedTags).toEqual([seedTag, relatedTag]);
+      expect(store._suggestedCache.get(2)).toEqual([seedTag, relatedTag]);
+      expect(store._suggestedCache.has(1)).toBe(false);
+      expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
+    } finally { post.mockRestore(); }
+  });
+
+  it('reschedules a post-tag refresh interrupted by a metadata write', async () => {
+    const store = taggingStore();
+    const interrupted = deferred<any>();
+    const replacement = deferred<any>();
+    fetchMock.abortableFetch.mockReturnValueOnce({ ready: interrupted.promise }).mockReturnValueOnce({ ready: replacement.promise });
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+    try {
+      await store.saveTagAddition(seedTag);
+      store._beginDetailsWrite(1); // name/description writes use this shared guard
+      interrupted.resolve(jsonResponse({ suggestions: [seedTag] }));
+      await vi.waitFor(() => expect(store.suggestedTagsLoading).toBe(false));
+      store._endDetailsWrite(1);
+      expect(fetchMock.abortableFetch).toHaveBeenCalledTimes(2);
+      replacement.resolve(jsonResponse({ suggestions: [relatedTag] }));
+      await vi.waitFor(() => expect(store.suggestedTags).toEqual([relatedTag]));
+    } finally { post.mockRestore(); }
+  });
+
+  it('runs a deferred initial suggestion fetch when metadata writes finish', async () => {
+    const store = taggingStore();
+    const urls = routeFetches({}, { 1: [relatedTag] });
+    store._beginDetailsWrite(1);
+    await store.fetchSuggestedTags(1, true); // opening the tag panel during the write
+    expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
+    store._endDetailsWrite(1);
+    await vi.waitFor(() => expect(store.suggestedTags).toEqual([relatedTag]));
+    expect(urls).toEqual(['/v1/resource/suggestedTags?id=1']);
+  });
+
+  it('invalidates without refreshing when the tag panel is closed', async () => {
+    const store = taggingStore();
+    store.quickTagPanelOpen = false;
+    const post = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response);
+    try {
+      await store.saveTagAddition(seedTag);
+      expect(store._suggestedCache.has(1)).toBe(false);
+      expect(fetchMock.abortableFetch).not.toHaveBeenCalled();
+    } finally { post.mockRestore(); }
+  });
+});

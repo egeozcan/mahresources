@@ -66,11 +66,24 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 	}
 	filter := fmt.Sprintf("COALESCE(p_distance, hamming_distance) <= %d%s", pThreshold, aClause)
 	query := fmt.Sprintf(`
+		SELECT similar_id, dist FROM (
 		SELECT resource_id2 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id1 = ? AND %s
 		UNION ALL
 		SELECT resource_id1 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id2 = ? AND %s
-		ORDER BY dist ASC`, filter, filter)
-	queryArgs := []interface{}{id, id}
+		) matches JOIN resources ON resources.id = matches.similar_id
+		WHERE resources.id <> ?`, filter, filter)
+	queryArgs := []interface{}{id, id, id}
+	// Raw SQL bypasses scope callbacks. Filter before LIMIT so inaccessible
+	// neighbors cannot consume the bounded caller's evidence window.
+	if sf := scopeFromContext(ctx.db.Statement.Context); sf != nil {
+		if len(sf.allowed) == 0 {
+			query += " AND 1 = 0"
+		} else {
+			query += " AND resources.owner_id IN ?"
+			queryArgs = append(queryArgs, sf.allowed)
+		}
+	}
+	query += " ORDER BY dist ASC, similar_id ASC"
 	if limit > 0 {
 		query += "\n\t\tLIMIT ?"
 		queryArgs = append(queryArgs, limit)
@@ -119,7 +132,8 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 			Preload("Tags").
 			Joins("Owner").
 			Where("resources.id IN (?)", sameHashIdsQuery).
-			Where("resources.id <> ?", id)
+			Where("resources.id <> ?", id).
+			Order("resources.id ASC")
 		if limit > 0 {
 			fallback = fallback.Limit(limit)
 		}

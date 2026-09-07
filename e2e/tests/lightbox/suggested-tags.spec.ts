@@ -229,4 +229,44 @@ test.describe('Lightbox suggested tags', () => {
     const newId = Number(new URL(req.url()).searchParams.get('id'));
     expect(newId).not.toBe(startId);
   });
+  test('adding a seed tag reveals a related suggestion without navigation', async ({ page, apiClient }) => {
+    const seed = await apiClient.createTag(`SugContextSeed${runId}`);
+    const related = await apiClient.createTag(`SugRelated${runId}`);
+    const filler = [];
+    for (let i = 0; i < 8; i++) filler.push(await apiClient.createTag(`SugFiller${i}-${runId}`));
+    tagIds.push(seed.ID, related.ID, ...filler.map(tag => tag.ID));
+    const created: number[] = [];
+    try {
+      // Text peers avoid nondeterministic background image similarity. Eight more
+      // popular tags keep the related tag out of the initial suggestion row.
+      for (let i = 0; i < 11; i++) {
+        const response = await page.request.post('/v1/resource', {
+          multipart: {
+            Name: `Suggested context peer ${i}`,
+            OwnerId: String(ownerGroupId),
+            resource: { name: `context-${i}.txt`, mimeType: 'text/plain', buffer: Buffer.from(`suggested context ${runId} ${i}`) },
+          },
+        });
+        expect(response.ok()).toBe(true);
+        const [resource] = await response.json();
+        created.push(resource.ID);
+        await apiClient.addTagsToResources([resource.ID], i < 6 ? filler.map(tag => tag.ID) : [seed.ID, related.ID]);
+      }
+      const lightbox = await openPanel(page, targetIds[5]);
+      const chips = lightbox.locator(CHIP);
+      await expect(chips).toHaveCount(8);
+      await expect(chips.filter({ hasText: related.Name })).toHaveCount(0);
+      const input = lightbox.locator('[data-tag-editor-input]');
+      await input.fill(seed.Name);
+      await lightbox.getByRole('option', { name: seed.Name, exact: true }).click();
+      await expect(chips.filter({ hasText: related.Name })).toBeVisible();
+      expect(await page.evaluate(() => (window as any).Alpine.store('lightbox').getCurrentItem()?.id)).toBe(targetIds[5]);
+      const response = await page.request.get(`/v1/resource/suggestedTags?id=${targetIds[5]}`);
+      const body = await response.json();
+      expect(body.suggestions.find((tag: any) => tag.ID === related.ID).sources).toContain('cooccurrence');
+    } finally {
+      for (const id of created) await apiClient.deleteResource(id);
+    }
+  });
+
 });

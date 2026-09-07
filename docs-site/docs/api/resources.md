@@ -740,7 +740,31 @@ On success the response is `204 No Content`.
 
 ### Suggested Tags
 
-Get tag suggestions for a resource based on its similar resources.
+Get up to eight suggested tags, excluding tags already applied. Suggestions blend:
+
+- **50% visual similarity:** up to 50 accessible neighbors within the configured hash
+  thresholds. Each tagged neighbor has weight `2^(-distance/3)`; legacy exact-dHash
+  matches without a comparable distance have weight `0.25`. A candidate's score is
+  its supporting weight divided by total tagged-neighbor weight plus 2.
+- **30% co-occurrence:** resources sharing any currently applied tag, counted once
+  each. Use the exact owner group when at least five other resources match;
+  otherwise use all resources the caller can access. Ownerless resources use this
+  wider population directly. The score is candidate usage divided by matching
+  resource count plus 5. Resources with no tags skip this signal.
+- **20% group popularity:** candidate usage divided by tagged resource count plus 5
+  in the exact owner group, excluding subgroups. Ownerless resources skip this signal.
+
+The target resource is excluded from all evidence counts. Candidate selection takes
+up to 20 eligible tags from each of the group and co-occurrence sources, excluding
+applied tags before those limits, plus tags from similar resources. Each candidate
+receives contributions from all available sources. Ties sort by name, then ID.
+Missing or failed sources contribute zero without redistributing their weights;
+a failed local co-occurrence lookup does not trigger wider fallback.
+
+The response is `{ "suggestions": [{ "ID": 12, "Name": "beach", "score": 0.25,
+"sources": ["similar", "cooccurrence", "group"] }] }`. Source entries are included
+only when they contribute, in the order shown. Scores are advisory ranking values,
+not probabilities. The lightbox refreshes recommendations after tag edits settle.
 
 ```
 GET /v1/resource/suggestedTags?id={id}

@@ -52,6 +52,27 @@ export const editPanelState = {
 };
 
 export const editPanelMethods = {
+  _queueSuggestedRefresh(resourceId) {
+    this._suggestedDirty ??= new Set();
+    this._suggestedDirty.add(resourceId);
+  },
+
+  // Tag edits also invalidate recommendations. Lazily allocate per store so
+  // independent stores/tests do not share a module-level mutable collection.
+  _beginTagWrite(resourceId, tags, action) {
+    this._suggestedCache?.delete(resourceId);
+    this._queueSuggestedRefresh(resourceId);
+    if (this.getCurrentItem()?.id === resourceId) {
+      ++this._suggestedReq;
+      this.suggestedTagsLoading = false;
+      if (action === 'add') {
+        const added = new Set(tags.map(tag => tag.ID));
+        this.suggestedTags = (this.suggestedTags || []).filter(tag => !added.has(tag.ID));
+      }
+    }
+    return this._beginDetailsWrite(resourceId);
+  },
+
   _detailsGeneration(resourceId) {
     return this._detailsGen.get(resourceId) ?? 0;
   },
@@ -62,6 +83,11 @@ export const editPanelMethods = {
   // Returns the generation issued to this write, for _settleDetailsCache.
   _beginDetailsWrite(resourceId) {
     if (resourceId == null) return 0;
+    // Name/description edits share this generation too. If they invalidate a
+    // suggestion GET, queue its replacement before the old response is dropped.
+    if (this.suggestedTagsLoading && this.getCurrentItem()?.id === resourceId) {
+      this._queueSuggestedRefresh(resourceId);
+    }
     const generation = ++this._detailsSeq;
     this._detailsGen.set(resourceId, generation);
     this._detailsWrites.set(resourceId, (this._detailsWrites.get(resourceId) ?? 0) + 1);
@@ -90,6 +116,12 @@ export const editPanelMethods = {
         !this.detailsCache.has(resourceId) &&
         !this._detailsWrites.has(resourceId)) {
       this.fetchResourceDetails(resourceId, true);
+    }
+    // Refresh once after overlapping edits (including rollback/undo) settle.
+    // Navigation leaves the edited resource invalidated without touching the new row.
+    if (!this._detailsWrites.has(resourceId) && this._suggestedDirty?.delete(resourceId) &&
+        this.quickTagPanelOpen && this.getCurrentItem()?.id === resourceId) {
+      this.fetchSuggestedTags(resourceId, true);
     }
   },
 
@@ -583,7 +615,7 @@ export const editPanelMethods = {
     if (!resourceId || this._savingTagIds.has(tag.ID)) return;
 
     this._savingTagIds.add(tag.ID);
-    const writeGeneration = this._beginDetailsWrite(resourceId);
+    const writeGeneration = this._beginTagWrite(resourceId, [tag], 'add');
 
     // Only mutate/cache the live details when they belong to the current resource. During a
     // cache-miss load window resourceDetails still describes the previous image, so caching
@@ -621,11 +653,6 @@ export const editPanelMethods = {
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
 
-      // Mirror applySuggestedTag(): drop the now-applied tag from the Suggested row (if
-      // showing) and invalidate its cache entry so a later view refetches without it.
-      this.suggestedTags = this.suggestedTags.filter(s => s.ID !== tag.ID);
-      this._suggestedCache.delete(resourceId);
-
       // Record as recent tag (skips if in a quick-add slot)
       this.recordRecentTag(tag);
     } catch (err) {
@@ -649,7 +676,7 @@ export const editPanelMethods = {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId) return;
 
-    const writeGeneration = this._beginDetailsWrite(resourceId);
+    const writeGeneration = this._beginTagWrite(resourceId, [tag], 'remove');
 
     // Only mutate/cache the live details when they belong to the current resource — a
     // cache-miss load window otherwise misdirects this onto the previous image (BH: H5).

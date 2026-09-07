@@ -119,13 +119,14 @@ export const quickTagPanelState = {
 
   // ---- Context-aware suggested tags (Tier 3) ----
   // One-tap suggestions for the current image, unioned + ranked server-side from
-  // perceptual-hash-similar resources and the owner group's popular tags.
+  // similar images, co-occurring tags, and the owner group's popular tags.
   suggestedTags: [],
   suggestedTagsLoading: false,
   // Per-resource cache so paging back to a resource paints instantly.
   _suggestedCache: new Map(),
   // Monotonic token so a late response for a previous resource can't paint.
   _suggestedReq: 0,
+  _suggestedDirty: null,
 };
 
 export const quickTagPanelMethods = {
@@ -560,7 +561,7 @@ export const quickTagPanelMethods = {
 
     // Any details GET in flight across this write describes the pre-write tags, so neither
     // the panel nor the background prefetch may commit it on top of the change.
-    const writeGeneration = this._beginDetailsWrite(resourceId);
+    const writeGeneration = this._beginTagWrite(resourceId, tags, action);
 
     // Only mutate the live resourceDetails optimistically when it actually describes the
     // target resource. A non-current target (cross-image undo), a write that lands after the
@@ -804,6 +805,11 @@ export const quickTagPanelMethods = {
   async fetchSuggestedTags(id, forceRefresh = false) {
     const resourceId = id ?? this.getCurrentItem()?.id;
     if (!resourceId) return;
+    if (this._detailsWrites.has(resourceId)) {
+      this._queueSuggestedRefresh(resourceId);
+      return;
+    }
+    const generation = this._detailsGeneration(resourceId);
 
     const cached = this._suggestedCache.get(resourceId);
     if (cached) {
@@ -823,14 +829,15 @@ export const quickTagPanelMethods = {
       const list = Array.isArray(data?.suggestions) ? data.suggestions : [];
 
       // A newer request has superseded this one — drop the stale result.
-      if (reqId !== this._suggestedReq) return;
+      if (reqId !== this._suggestedReq || !this._mayCommitDetails(resourceId, generation)) return;
 
       this._suggestedCache.set(resourceId, list);
       if (this.getCurrentItem()?.id === resourceId) {
         this.suggestedTags = list;
       }
     } catch (err) {
-      if (err.name !== 'AbortError' && reqId === this._suggestedReq && this.getCurrentItem()?.id === resourceId) {
+      if (err.name !== 'AbortError' && reqId === this._suggestedReq &&
+          this._mayCommitDetails(resourceId, generation) && this.getCurrentItem()?.id === resourceId) {
         this.suggestedTags = [];
       }
     } finally {
@@ -838,17 +845,11 @@ export const quickTagPanelMethods = {
     }
   },
 
-  // Apply one suggestion to the current image. Reuses the optimistic batch-add
-  // pipeline (cache write, undo ring, live-region announce), then optimistically
-  // drops the chip and invalidates the resource's suggestion cache so a later
-  // view refetches without the now-applied tag.
+  // The batch pipeline owns pruning, cache invalidation, refresh, and undo.
+  // Do not mutate the current row after awaiting: navigation may have changed it.
   async applySuggestedTag(tag) {
     if (!tag) return;
-    const ok = await this._batchToggleTags([{ ID: tag.ID, Name: tag.Name }], 'add');
-    if (!ok) return;
-    this.suggestedTags = this.suggestedTags.filter(s => s.ID !== tag.ID);
-    const currentId = this.getCurrentItem()?.id;
-    if (currentId != null) this._suggestedCache.delete(currentId);
+    await this._batchToggleTags([{ ID: tag.ID, Name: tag.Name }], 'add');
   },
 
   // Shift+1..Shift+8 apply suggestion N. Keyed on event.code (Digit/Numpad) since
