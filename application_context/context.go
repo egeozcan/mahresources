@@ -496,7 +496,8 @@ type MahresourcesContext struct {
 	// pointer, so every shallow clone of this context shares the one cache.
 	scopedAccess *scopedPluginAccess
 
-	settings *RuntimeSettings
+	settings        *RuntimeSettings
+	metadataIndexer *MetadataIndexer
 	// exportSweepFs is the filesystem rooted at FileSavePath used by the
 	// startup export/import sweep. Captured at NewMahresourcesContext so
 	// main.go can trigger the sweep after the DownloadManager has been

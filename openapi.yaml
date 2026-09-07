@@ -119,6 +119,8 @@ components:
                     type: integer
                 MetaSchema:
                     type: string
+                MetadataIndexes:
+                    type: string
                 Name:
                     type: string
                 UpdatedAt:
@@ -165,6 +167,9 @@ components:
                 ID:
                     type: integer
                 MetaSchema:
+                    type: string
+                MetadataIndexes:
+                    nullable: true
                     type: string
                 Name:
                     type: string
@@ -853,6 +858,20 @@ components:
                 Winner:
                     type: integer
             type: object
+        MetadataIndexStatus:
+            properties:
+                checkedAt:
+                    format: date-time
+                    type: string
+                configuration:
+                    type: string
+                detail:
+                    type: string
+                error:
+                    type: string
+                state:
+                    type: string
+            type: object
         Note:
             properties:
                 CreatedAt:
@@ -1114,6 +1133,8 @@ components:
                     type: integer
                 MetaSchema:
                     type: string
+                MetadataIndexes:
+                    type: string
                 Name:
                     type: string
                 Notes:
@@ -1164,6 +1185,9 @@ components:
                 ID:
                     type: integer
                 MetaSchema:
+                    type: string
+                MetadataIndexes:
+                    nullable: true
                     type: string
                 Name:
                     type: string
@@ -1470,6 +1494,8 @@ components:
                     type: integer
                 MetaSchema:
                     type: string
+                MetadataIndexes:
+                    type: string
                 Name:
                     type: string
                 Resources:
@@ -1526,6 +1552,9 @@ components:
                 ID:
                     type: integer
                 MetaSchema:
+                    type: string
+                MetadataIndexes:
+                    nullable: true
                     type: string
                 Name:
                     type: string
@@ -2703,6 +2732,20 @@ paths:
                                 $ref: '#/components/schemas/SettingView'
                     description: Successful response
             summary: Override a runtime setting
+            tags:
+                - admin
+    /v1/admin/settings/metadata-index-status:
+        get:
+            description: Reports background metadata index reconciliation status, the configuration being applied, and any build error. Admin only.
+            operationId: metadataIndexStatus
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetadataIndexStatus'
+                    description: Successful response
+            summary: Inspect metadata index builds
             tags:
                 - admin
     /v1/admin/shares/bulk-revoke:

@@ -322,6 +322,8 @@
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="metaSchemaTextarea" %}
     </div>
 
+    {% include "/partials/form/metadataIndexes.tpl" with metadataIndexes=noteType.MetadataIndexes %}
+
     {% include "/partials/sectionConfigForm.tpl" with sectionConfigValue=noteType.SectionConfig sectionConfigType="note" %}
 
     {% include "/partials/form/createFormSubmit.tpl" %}

@@ -18,6 +18,7 @@ import (
 	"mahresources/download_queue"
 	"mahresources/models"
 	"mahresources/models/types"
+	"mahresources/mrql"
 )
 
 const applyBatchSize = 500
@@ -555,6 +556,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomMRQLResult = def.CustomMRQLResult
 				cat.CustomCSS = def.CustomCSS
 				cat.MetaSchema = def.MetaSchema
+				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "group"); err != nil {
+					return fmt.Errorf("invalid indexed metadata keys: %w", err)
+				}
+				cat.MetadataIndexes = def.MetadataIndexes
 				if def.GUID != "" {
 					guid := def.GUID
 					cat.GUID = &guid
@@ -638,6 +643,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomCSS = def.CustomCSS
 				nt.MetaSchema = def.MetaSchema
+				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "note"); err != nil {
+					return fmt.Errorf("invalid indexed metadata keys: %w", err)
+				}
+				nt.MetadataIndexes = def.MetadataIndexes
 				if def.GUID != "" {
 					guid := def.GUID
 					nt.GUID = &guid
@@ -716,6 +725,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.CustomCSS = def.CustomCSS
 				rc.MetaSchema = def.MetaSchema
+				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "resource"); err != nil {
+					return fmt.Errorf("invalid indexed metadata keys: %w", err)
+				}
+				rc.MetadataIndexes = def.MetadataIndexes
 				rc.AutoDetectRules = def.AutoDetectRules
 				rc.CustomPreview = def.CustomPreview
 				rc.CustomLightbox = def.CustomLightbox

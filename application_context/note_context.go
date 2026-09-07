@@ -493,6 +493,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 		return nil, err
 	}
 	// Findings 17/93: a note type's Meta JSON Schema had no validation either.
+	if err := validateCategoryMetadataIndexes(query.MetadataIndexes, "note"); err != nil {
+		return nil, err
+	}
 	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
 		return nil, err
 	}
@@ -525,6 +528,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.CustomMRQLResult = query.CustomMRQLResult
 	noteType.CustomCSS = query.CustomCSS
 	noteType.MetaSchema = query.MetaSchema
+	if query.MetadataIndexes != nil {
+		noteType.MetadataIndexes = *query.MetadataIndexes
+	}
 	if query.SectionConfig != "" {
 		noteType.SectionConfig = types.JSON(query.SectionConfig)
 	}

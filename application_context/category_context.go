@@ -61,6 +61,9 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	// Findings 17/93: an unparseable Meta JSON Schema used to persist verbatim.
+	if err := validateCategoryMetadataIndexes(categoryQuery.MetadataIndexes, "group"); err != nil {
+		return nil, err
+	}
 	if err := ValidateMetaSchema(categoryQuery.MetaSchema); err != nil {
 		return nil, err
 	}
@@ -96,6 +99,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomMRQLResult:   categoryQuery.CustomMRQLResult,
 		CustomCSS:          categoryQuery.CustomCSS,
 		MetaSchema:         categoryQuery.MetaSchema,
+		MetadataIndexes:    metadataIndexesValue(categoryQuery.MetadataIndexes),
 	}
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
@@ -126,6 +130,9 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	}
 
 	// Findings 17/93: the edit form was the path the report reproduced on.
+	if err := validateCategoryMetadataIndexes(categoryQuery.MetadataIndexes, "group"); err != nil {
+		return nil, err
+	}
 	if err := ValidateMetaSchema(categoryQuery.MetaSchema); err != nil {
 		return nil, err
 	}
@@ -167,6 +174,9 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
 	category.CustomCSS = categoryQuery.CustomCSS
 	category.MetaSchema = categoryQuery.MetaSchema
+	if categoryQuery.MetadataIndexes != nil {
+		category.MetadataIndexes = *categoryQuery.MetadataIndexes
+	}
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
 	}

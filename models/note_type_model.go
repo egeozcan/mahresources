@@ -66,6 +66,8 @@ type NoteType struct {
 	CustomCSS string `gorm:"type:text"`
 	// MetaSchema defines the JSON Schema for notes of this type
 	MetaSchema string `gorm:"type:text"`
+	// MetadataIndexes declares query indexes shared by categories of this entity type.
+	MetadataIndexes string `gorm:"type:text"`
 	// SectionConfig controls which sections are visible on note detail pages
 	SectionConfig types.JSON `gorm:"type:json"`
 }

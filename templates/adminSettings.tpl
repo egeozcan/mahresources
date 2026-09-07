@@ -97,6 +97,33 @@
   </section>
   {% endfor %}
 
+  <section class="rounded-lg bg-white border border-stone-200 p-5" aria-labelledby="metadata-index-heading" x-data="metadataIndexBuildStatus()">
+    <h2 id="metadata-index-heading" class="text-base font-semibold font-mono text-stone-800">Metadata index builds</h2>
+    <p class="text-sm text-stone-600">Configure indexed keys in the resource-category, group-category, or note-type editor, alongside its metadata schema. Saved changes are picked up in the background.</p>
+    <p class="text-sm mt-2" role="status" aria-live="polite" x-text="message"></p>
+    <p class="text-xs text-stone-500" x-show="checkedAt" x-text="'Last checked: ' + checkedAt"></p>
+  </section>
+  <script>
+  window.metadataIndexBuildStatus = function () {
+    return {
+      message: 'Checking index builds…', checkedAt: '', timer: null, controller: null, disposed: false,
+      init() { this.poll(); },
+      destroy() { this.disposed = true; clearTimeout(this.timer); this.controller?.abort(); },
+      async poll() {
+        this.controller = new AbortController();
+        try {
+          const res = await fetch('/v1/admin/settings/metadata-index-status', {signal: this.controller.signal});
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const status = await res.json();
+          this.message = status.state === 'failed' ? 'Index update failed: ' + status.error + '. Retrying automatically.' : status.state + ': ' + (status.detail || 'Waiting to start');
+          this.checkedAt = status.checkedAt ? new Date(status.checkedAt).toLocaleString() : '';
+        } catch (e) { if (!this.disposed) this.message = 'Could not load index status: ' + e.message; }
+        finally { if (!this.disposed) this.timer = setTimeout(() => this.poll(), 3000); }
+      },
+    };
+  };
+  </script>
+
   {% if bootOnly %}
   <details class="rounded-lg bg-stone-50 border border-stone-200 p-5">
     <summary class="cursor-pointer text-sm font-medium font-mono text-stone-700 select-none">Boot-only settings (require restart to change)</summary>

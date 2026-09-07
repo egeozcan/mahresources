@@ -357,3 +357,64 @@ A summary strip reports the type's own configuration at a glance:
 - **Custom templates** -- which template slots are populated, listed by name: Header, Sidebar, Summary, Avatar, MRQL, and CSS (`CustomCSS`). See [Custom Templates](./custom-templates.md) for what each slot does.
 
 The strip only lists the **Custom templates** entry when at least one slot is set.
+
+
+## Indexed metadata keys
+
+Each resource-category, group-category, and note-type editor has an **Indexed
+metadata keys** section beside its metadata schema. Click **Add indexed key**,
+enter `score` or a nested path such as `camera.iso`, choose **Numeric** or **Text
+equality**, and save the category/type. Use the key without the `meta.` prefix.
+Keys can be indexed even when no JSON Schema is defined.
+
+For `type = resource AND meta.score = 10 ORDER BY RANDOM() LIMIT 50`, add
+**score / Numeric** in the relevant resource-category editor. MRQL syntax stays
+the same, and the database planner can use the index once its build finishes.
+Queries on keys without a completed index keep their original numeric execution
+path.
+
+- **Numeric** supports numeric equality and range filters. It uses MRQL's safe
+  numeric conversion on PostgreSQL and native JSON extraction on SQLite,
+  preserving each engine's existing handling of mixed metadata types. PostgreSQL
+  uses a bounded numeric index plus a small companion index for long values;
+  MRQL checks those long values with its original numeric comparison. This keeps
+  long metadata writable without changing numeric equality or range results.
+- **Text equality** supports case-insensitive equality such as
+  `meta.camera.model = "X100"`. PostgreSQL uses a hash index so long text values
+  remain writable; SQLite uses an expression B-tree. Substring searches,
+  regular expressions, and metadata ordering are not the purpose of these indexes.
+
+Declarations belong to categories/types, while physical indexes cover the whole
+entity type. Categories requesting the same key and kind share the same physical indexes. This
+also accelerates queries without a category filter. Removing a declaration or
+deleting a category keeps the shared index until its last requester disappears.
+Both index kinds can coexist for a mixed-type key.
+
+Builds run in the background after saving. **Admin → Settings → Metadata index
+builds** shows progress and failures. PostgreSQL builds and removes indexes
+concurrently. SQLite builds hold a write lock and may delay writes on large
+databases. Indexes add storage and write cost, so choose frequently queried keys.
+The database maintains them automatically as metadata changes, including inherited
+metadata updates. Ordinary missing keys and nonnumeric values remain valid.
+
+Each category/type supports up to 32 declarations. Paths contain up to eight
+segments of letters, digits, or underscores, and at most 128 characters total.
+Duplicate declarations and invalid paths are rejected.
+
+The category/type create and update APIs accept `MetadataIndexes` as a JSON-encoded
+string, for example:
+
+```json
+{
+  "MetadataIndexes": "[{\"key\":\"score\",\"kind\":\"numeric\"}]"
+}
+```
+
+Omitting the field on an update preserves it. Set it to `"[]"` to remove that
+category's declarations. The entity type comes from the category/type being
+edited. Index declarations are included in category export/import. Existing
+manually created database indexes are not managed or removed by this feature.
+
+MRQL's native Explain shows whether the optimizer chooses an index for a query.
+Broad filters may still favor a table scan, and exact random sampling still
+considers every matching row.

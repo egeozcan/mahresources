@@ -112,3 +112,46 @@ go run --tags 'json1 fts5' ./cmd/mrql-bench run --backend postgres --profile "$P
 ```
 
 Baseline promotion is a reviewed file operation, not an automatic command. Canonical runs require at least 100 samples, a clean known Git revision, and an explicit stable host identity via `--canonical-host`. The artifact records that host ID, hardware, OS, Go/database versions, pool/concurrency settings, fixture checksum, scenario selection, timeout, warmups, and sample count without storing the DSN.
+
+## Numeric metadata with random sampling
+
+An opt-in PostgreSQL diagnostic reproduces the query shape
+`type = resource AND meta.score = 10 ORDER BY RANDOM() LIMIT 50`. It creates a
+disposable fixture with 200,000 resources, 5% matching scores, JSONB metadata,
+and wide descriptions. It compares the original full-row SQL with the production
+translator, interleaves three warmups and five measured samples per query, then
+captures `EXPLAIN (ANALYZE, BUFFERS)` on this synthetic fixture only. It never
+connects to the application database. Docker is required.
+
+```bash
+MRQL_RANDOM_PERF=1 go test -tags 'postgres json1 fts5' ./mrql \
+  -run '^TestPG_RandomMetadataPerformance$' -count=1 -v
+
+MRQL_RANDOM_PERF=1 MRQL_RANDOM_INDEX=1 go test -tags 'postgres json1 fts5' ./mrql \
+  -run '^TestPG_RandomMetadataPerformance$' -count=1 -v
+```
+
+Local PostgreSQL 16 measurements on 2026-09-07 after review fixes (median of five samples):
+
+| Fixture | Original full-row query | Current MRQL query |
+| --- | ---: | ---: |
+| No metadata index | 45.57 ms | 44.61 ms |
+| Indexed numeric filter | 6.82 ms | 12.21 ms |
+
+The indexed comparison gives the original query its unbounded numeric expression
+index and the current query its write-safe managed index pair. The unbounded
+index can reject long metadata values and is included only as a synthetic
+baseline. The managed pair pays extra predicate checks to preserve long-value
+semantics and accepted writes; it still reduces latency versus the unindexed
+current query. The population sample sort uses 28 KB instead of about 200 KB.
+
+Index-specific predicates activate only for entity/key pairs whose complete
+managed index set is ready. Without an index, the scan dominates and the original
+numeric predicate is retained. These local measurements are diagnostic evidence,
+not canonical baselines or predictions for a production dataset. Exact random
+sampling still visits every match.
+
+The regular PostgreSQL suite checks the sample sort's narrow plan width without
+timing thresholds, and compares the ordered results against ordinary SQL with a
+fixed RNG seed, including scope, mixed metadata, limits, and offsets. The
+large fixture is skipped unless explicitly enabled.

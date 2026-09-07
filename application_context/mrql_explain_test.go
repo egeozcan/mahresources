@@ -105,3 +105,25 @@ func TestExplainMRQLDeniedScopeIsExplicitlyEmpty(t *testing.T) {
 		t.Fatal("expected denied-scope warning")
 	}
 }
+
+func TestExplainMRQLRandomCostWarning(t *testing.T) {
+	ctx, _ := setupMRQLRenderDataTest(t)
+	for _, source := range []string{
+		`type = resource AND meta.score = 10 ORDER BY RANDOM() LIMIT 50`,
+		`type = resource ORDER BY name, RANDOM() LIMIT 50`,
+		`type = resource ORDER BY name LIMIT 50`,
+	} {
+		parsed, err := mrql.Parse(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := ctx.ExplainMRQL(context.Background(), parsed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warned := strings.Contains(strings.Join(result.Warnings, " "), "examines every matching row")
+		if warned != strings.Contains(source, "ORDER BY RANDOM()") {
+			t.Fatalf("%s: unexpected warnings %v", source, result.Warnings)
+		}
+	}
+}

@@ -18,6 +18,7 @@ type ResourceCategoryCreator struct {
 	CustomMRQLResult   string
 	CustomCSS          string
 	MetaSchema         string
+	MetadataIndexes    *string
 	AutoDetectRules    string
 	SectionConfig      string
 }

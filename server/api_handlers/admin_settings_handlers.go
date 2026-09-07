@@ -9,6 +9,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/server/http_utils"
 )
 
@@ -79,4 +80,13 @@ func classifySettingError(err error) int {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest
+}
+
+func GetMetadataIndexStatusHandler(ctx interface {
+	MetadataIndexStatus() contracts.MetadataIndexStatus
+}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(ctx.MetadataIndexStatus())
+	}
 }

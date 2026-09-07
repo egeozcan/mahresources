@@ -60,6 +60,9 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	// Findings 17/93.
+	if err := validateCategoryMetadataIndexes(query.MetadataIndexes, "resource"); err != nil {
+		return nil, err
+	}
 	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
 		return nil, err
 	}
@@ -85,6 +88,7 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		CustomMRQLResult:   query.CustomMRQLResult,
 		CustomCSS:          query.CustomCSS,
 		MetaSchema:         query.MetaSchema,
+		MetadataIndexes:    metadataIndexesValue(query.MetadataIndexes),
 		AutoDetectRules:    query.AutoDetectRules,
 	}
 	if query.SectionConfig != "" {
@@ -111,6 +115,9 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	}
 
 	// Findings 17/93.
+	if err := validateCategoryMetadataIndexes(query.MetadataIndexes, "resource"); err != nil {
+		return nil, err
+	}
 	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
 		return nil, err
 	}
@@ -137,6 +144,9 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
 	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema
+	if query.MetadataIndexes != nil {
+		resourceCategory.MetadataIndexes = *query.MetadataIndexes
+	}
 	resourceCategory.AutoDetectRules = query.AutoDetectRules
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)

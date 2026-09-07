@@ -933,6 +933,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/admin/similarity/retry-failed").HandlerFunc(api_handlers.GetRetryFailedHashesHandler(appContext))
 
 	// Admin runtime settings routes
+	router.Methods(http.MethodGet).Path("/v1/admin/settings/metadata-index-status").HandlerFunc(api_handlers.GetMetadataIndexStatusHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/settings").HandlerFunc(api_handlers.GetListSettingsHandler(appContext))
 	router.Methods(http.MethodPut).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetSetSettingHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetResetSettingHandler(appContext))

@@ -3114,6 +3114,13 @@ func registerAdminRoutes(r *openapi.Registry) {
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/admin/settings/metadata-index-status",
+		OperationID: "metadataIndexStatus", Summary: "Inspect metadata index builds",
+		Description: "Reports background metadata index reconciliation status, the configuration being applied, and any build error. Admin only.",
+		Tags:        []string{"admin"}, ResponseType: reflect.TypeOf(contracts.MetadataIndexStatus{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 	settingViewType := reflect.TypeOf(application_context.SettingView{})
 	settingViewListType := reflect.TypeOf([]application_context.SettingView{})
 

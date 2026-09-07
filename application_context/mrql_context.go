@@ -424,10 +424,15 @@ func (ctx *MahresourcesContext) rejectSQLiteRegex(q *mrql.Query) error {
 func (ctx *MahresourcesContext) mrqlTranslateOptions() mrql.TranslateOptions {
 	pThreshold, aThreshold := ctx.similarityThresholds()
 	ftsAvailable := ctx.ftsAvailable()
+	var readyIndexes []mrql.MetadataIndex
+	if ctx.metadataIndexer != nil {
+		readyIndexes = ctx.metadataIndexer.ReadyIndexes()
+	}
 	return mrql.TranslateOptions{
-		SimilarityThreshold: &pThreshold,
-		AHashThreshold:      aThreshold,
-		FTSAvailable:        &ftsAvailable,
+		SimilarityThreshold:  &pThreshold,
+		AHashThreshold:       aThreshold,
+		FTSAvailable:         &ftsAvailable,
+		ReadyMetadataIndexes: readyIndexes,
 	}
 }
 
@@ -1212,6 +1217,9 @@ func (ctx *MahresourcesContext) ExplainMRQLWithOptions(reqCtx context.Context, p
 	}
 	if err := workingCtx.rejectSQLiteRegex(parsed); err != nil {
 		return nil, err
+	}
+	if len(parsed.OrderBy) > 0 && parsed.OrderBy[0].Random {
+		result.Warnings = append(result.Warnings, "ORDER BY RANDOM() examines every matching row even with LIMIT. Selective indexed filters reduce this work on large collections.")
 	}
 	db := workingCtx.db.WithContext(queryCtx)
 

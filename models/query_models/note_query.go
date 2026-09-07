@@ -59,6 +59,7 @@ type NoteTypeEditor struct {
 	CustomMRQLResult       string
 	CustomCSS              string
 	MetaSchema             string
+	MetadataIndexes        *string
 	SectionConfig          string
 }
 

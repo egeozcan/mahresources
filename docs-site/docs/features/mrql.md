@@ -367,6 +367,27 @@ type = note ORDER BY name, RANDOM()        # random tiebreak within equal names
 
 `RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. Because the order is re-rolled on every request, paging past the first page (`LIMIT`/`OFFSET`) draws a fresh random sample that can repeat earlier rows -- this is the expected "give me N random items" behavior, not stable pagination.
 
+Random sampling must examine every matching row before applying `LIMIT`. A small
+limit bounds the result size, but does not bound the scan. MRQL's Explain output
+flags this when `RANDOM()` is the first sort key.
+
+For PostgreSQL queries ordered only by `RANDOM()` with a limit, MRQL selects IDs
+and their random keys first, then fetches the selected entities in the same SQL
+statement. This keeps descriptions and other payload columns out of the sample
+sort and preserves filtering, scope, offset, and random order. Metadata filters
+can still require a full scan unless a suitable index exists.
+
+For a frequently used numeric filter such as `meta.score = 10`, add **score / Numeric** under **Indexed metadata keys** in the relevant
+resource-category editor. See [indexed metadata keys](meta-schemas.md#indexed-metadata-keys)
+for background build status, supported filters, and CLI/API configuration.
+
+Choose indexes for metadata keys queried frequently; each adds storage and
+maintenance on writes. Managed numeric indexes handle long metadata values
+separately so adding an index does not restrict what can be stored. The database
+chooses whether to use an index based on its statistics and the number of
+matches; Explain with a native plan shows that choice. An index on raw JSON or
+text extraction alone does not match MRQL's numeric comparison expressions.
+
 ### Relevance Order -- `RANK`
 
 `ORDER BY RANK` sorts full-text results by relevance, most relevant first (no direction needed; `RANK DESC` reverses to least-relevant first):

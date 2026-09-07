@@ -1227,6 +1227,7 @@ func (ctx *opCtx) writeCategoryDefs(w *archive.Writer, plan *exportPlan) error {
 			CustomMRQLResult:   row.CustomMRQLResult,
 			CustomCSS:          row.CustomCSS,
 			MetaSchema:         row.MetaSchema,
+			MetadataIndexes:    row.MetadataIndexes,
 			SectionConfig:      jsonToMap(row.SectionConfig),
 		})
 	}
@@ -1262,6 +1263,7 @@ func (ctx *opCtx) writeNoteTypeDefs(w *archive.Writer, plan *exportPlan) error {
 				CustomMRQLResult:   row.CustomMRQLResult,
 				CustomCSS:          row.CustomCSS,
 				MetaSchema:         row.MetaSchema,
+				MetadataIndexes:    row.MetadataIndexes,
 				SectionConfig:      jsonToMap(row.SectionConfig),
 			},
 			ApplyTemplatesToShares: row.ApplyTemplatesToShares,
@@ -1299,6 +1301,7 @@ func (ctx *opCtx) writeResourceCategoryDefs(w *archive.Writer, plan *exportPlan)
 				CustomMRQLResult:   row.CustomMRQLResult,
 				CustomCSS:          row.CustomCSS,
 				MetaSchema:         row.MetaSchema,
+				MetadataIndexes:    row.MetadataIndexes,
 				SectionConfig:      jsonToMap(row.SectionConfig),
 			},
 			AutoDetectRules: row.AutoDetectRules,

@@ -39,6 +39,11 @@ type TranslateOptions struct {
 	// Nil preserves standalone translator behavior by probing the schema once per
 	// translation; non-nil avoids catalog I/O on every MRQL request.
 	FTSAvailable *bool
+
+	// ReadyMetadataIndexes contains only declarations whose complete physical
+	// index set has been verified by the caller. Nil keeps the ordinary numeric
+	// expression, avoiding index-specific predicate overhead before indexes exist.
+	ReadyMetadataIndexes []MetadataIndex
 }
 
 // defaultSimilarityThreshold mirrors similarityThresholds()'s fallback in
@@ -144,6 +149,20 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 		result = result.Offset(q.Offset)
 	}
 
+	// PostgreSQL otherwise carries the entire entity (including metadata and
+	// descriptions) through the random sort. Pick a bounded set of IDs first,
+	// then fetch just those entities in the same statement and snapshot. Keep
+	// the original random key so the join cannot change the requested order.
+	// Mixed ordering and unbounded queries retain the ordinary translation.
+	if tc.isPostgres() && q.Limit >= 0 && len(q.OrderBy) == 1 && q.OrderBy[0].Random {
+		picked := result.Select(tc.tableName + ".id AS picked_id, RANDOM() AS random_key")
+		result = tc.db.Session(&gorm.Session{NewDB: true}).
+			Table(tc.tableName).
+			Select(tc.tableName+".*").
+			Joins("JOIN (?) AS mrql_random_sample ON mrql_random_sample.picked_id = "+tc.tableName+".id", picked).
+			Order("mrql_random_sample.random_key")
+	}
+
 	return result, nil
 }
 
@@ -165,8 +184,9 @@ type translateContext struct {
 	// accepted. It defines the relevance the rank key orders by.
 	textSearchTarget *TextSearchExpr
 
-	ftsKnown     bool
-	ftsAvailable bool
+	ftsKnown            bool
+	ftsAvailable        bool
+	readyNumericIndexes map[MetadataIndex]bool
 }
 
 // newTranslateContext builds a translateContext for a resolved entity type,
@@ -185,7 +205,22 @@ func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts Tran
 	if opts.FTSAvailable != nil {
 		tc.ftsKnown, tc.ftsAvailable = true, *opts.FTSAvailable
 	}
+	if tc.isPostgres() && len(opts.ReadyMetadataIndexes) != 0 {
+		tc.readyNumericIndexes = make(map[MetadataIndex]bool, len(opts.ReadyMetadataIndexes))
+		for _, index := range opts.ReadyMetadataIndexes {
+			if index.Kind == "numeric" && index.Validate() == nil {
+				tc.readyNumericIndexes[index] = true
+			}
+		}
+	}
 	return tc
+}
+
+func (tc *translateContext) hasReadyNumericIndex(entity EntityType, segments []string) bool {
+	if len(tc.readyNumericIndexes) == 0 {
+		return false
+	}
+	return tc.readyNumericIndexes[MetadataIndex{Entity: entity.String(), Key: strings.Join(segments, "."), Kind: "numeric"}]
 }
 
 func (tc *translateContext) hasFTS() bool {
@@ -588,7 +623,9 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	}
 
 	textExpr := tc.metaJsonTextExprOn(innerAlias, segments)
-	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, textExpr, expr.Operator, val, isNumericVal)
+	// Every supported FK step selects groups, regardless of the root entity.
+	indexedNumeric := tc.hasReadyNumericIndex(EntityGroup, segments)
+	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, textExpr, expr.Operator, val, isNumericVal, indexedNumeric)
 	if numericFilter != "" {
 		innerWhere = numericFilter + " AND " + innerWhere
 	}
@@ -598,18 +635,18 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 
 	if isNegated && isChildrenRoot {
 		positiveOp := tc.flipOperator(expr.Operator)
-		posWhere, posVal := tc.buildMetaClause(jsonExpr, textExpr, positiveOp, val, isNumericVal)
+		posWhere, posVal := tc.buildMetaClause(jsonExpr, textExpr, positiveOp, val, isNumericVal, indexedNumeric)
 		if numericFilter != "" {
 			posWhere = numericFilter + " AND " + posWhere
 		}
-		sql, vals := tc.wrapChainSubqueries(steps, posWhere, []interface{}{posVal})
+		sql, vals := tc.wrapChainSubqueries(steps, posWhere, posVal)
 		sql = strings.Replace(sql, steps[0].fkExpr+" IN ", steps[0].fkExpr+" NOT IN ", 1)
 		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
 		db = db.Where(sql, vals...)
 		return db, nil
 	}
 
-	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, innerVal)
 	if isNegated {
 		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
 	}
@@ -686,17 +723,16 @@ func (tc *translateContext) translateRecursiveComparison(db *gorm.DB, expr *Comp
 		// and trivially satisfy a negated existential.
 		sql = "(" + sql + " OR " + tc.tableName + ".owner_id IS NULL)"
 	}
-	db = db.Where(sql, mVal)
+	db = db.Where(sql, mVal...)
 	return db, nil
 }
 
 // buildRecursiveMatchSubquery builds the "matching groups" subquery M for a
 // recursive comparison, always as the positive form of the operator (negation is
 // applied by the caller at the outer IN/NOT IN). It returns a
-// "SELECT <group id> FROM ..." fragment with a single ? placeholder and the
-// single bind value. All matching groups are drawn from the groups table via the
-// alias "gm".
-func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (string, interface{}, error) {
+// "SELECT <group id> FROM ..." fragment with its bind values. All matching
+// groups are drawn from the groups table via the alias "gm".
+func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (string, []interface{}, error) {
 	parts := expr.Field.Parts
 	posOp := tc.flipOperator(expr.Operator) // flips !=/!~ to =/~; positive operators unchanged
 
@@ -723,7 +759,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 			jsonExpr = tc.metaJsonExprOn("gm", segments)
 		}
 		textExpr := tc.metaJsonTextExprOn("gm", segments)
-		clause, clauseVal := tc.buildMetaClause(jsonExpr, textExpr, posOp, val, isNumericVal)
+		clause, clauseVal := tc.buildMetaClause(jsonExpr, textExpr, posOp, val, isNumericVal, tc.hasReadyNumericIndex(EntityGroup, segments))
 		if numericFilter != "" {
 			clause = numericFilter + " AND " + clause
 		}
@@ -754,39 +790,43 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 			tagClause = "LOWER(t.name) = LOWER(?)"
 			tagVal = val
 		}
-		return "SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE " + tagClause, tagVal, nil
+		return "SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE " + tagClause, []interface{}{tagVal}, nil
 	}
 
 	// Scalar leaf.
 	clause, clauseVal := tc.buildScalarClause("gm."+subFd.Column, posOp, val, subFd)
-	return "SELECT gm.id FROM groups gm WHERE " + clause, clauseVal, nil
+	return "SELECT gm.id FROM groups gm WHERE " + clause, []interface{}{clauseVal}, nil
 }
 
 // buildMetaClause builds a WHERE clause for a meta JSON comparison.
 // It receives pre-built JSON and text expressions so it works with both
 // single keys and subpaths.
-func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal bool) (string, interface{}) {
+func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal, indexedNumeric bool) (string, []interface{}) {
 	if op.Type == TokenLike || op.Type == TokenNotLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
 		if op.Type == TokenNotLike {
 			likeOp = "NOT " + likeOp
 		}
-		return textExpr + " " + likeOp + " ? ESCAPE '\\'", likePattern
+		return textExpr + " " + likeOp + " ? ESCAPE '\\'", []interface{}{likePattern}
 	}
 
 	sqlOp := tc.sqlOperator(op)
 
 	// Regex match applies to the text-extracted value, not the raw JSON value.
 	if isRegexOperator(op) {
-		return textExpr + " " + sqlOp + " ?", val
+		return textExpr + " " + sqlOp + " ?", []interface{}{val}
 	}
 
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
-		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
+		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", []interface{}{val}
 	}
 
-	return jsonExpr + " " + sqlOp + " ?", val
+	if indexedNumeric && isNumericVal && op.Type != TokenNeq {
+		return pgIndexedMetaNumericComparison(textExpr, sqlOp), []interface{}{val, val}
+	}
+
+	return jsonExpr + " " + sqlOp + " ?", []interface{}{val}
 }
 
 // entityTableName returns the database table name for an entity type.
@@ -1306,11 +1346,7 @@ func (tc *translateContext) metaNumericExpr(segments []string) string {
 // metaNumericExprOn builds a safe numeric cast expression using a specific table alias.
 func (tc *translateContext) metaNumericExprOn(alias string, segments []string) string {
 	if tc.isPostgres() {
-		textExpr := pgJsonTextPath(alias, segments)
-		return fmt.Sprintf(
-			"CASE WHEN %s ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s)::numeric ELSE NULL END",
-			textExpr, textExpr,
-		)
+		return pgMetaNumericExpr(alias, segments)
 	}
 	return sqliteJsonPath(alias, segments)
 }
@@ -1328,8 +1364,7 @@ func (tc *translateContext) metaTypeFilterOn(alias string, segments []string) st
 // table.meta->'a'->'b'->'c'.
 func pgJsonPath(alias string, segments []string) string {
 	var b strings.Builder
-	b.WriteString(alias)
-	b.WriteString(".meta")
+	b.WriteString(metaColumn(alias))
 	for _, seg := range segments {
 		b.WriteString("->'" + seg + "'")
 	}
@@ -1339,11 +1374,10 @@ func pgJsonPath(alias string, segments []string) string {
 // pgJsonTextPath builds Postgres chained arrow JSON path: table.meta->'a'->'b'->>'c'
 func pgJsonTextPath(alias string, segments []string) string {
 	if len(segments) == 1 {
-		return fmt.Sprintf("%s.meta->>'%s'", alias, segments[0])
+		return fmt.Sprintf("%s->>'%s'", metaColumn(alias), segments[0])
 	}
 	var b strings.Builder
-	b.WriteString(alias)
-	b.WriteString(".meta")
+	b.WriteString(metaColumn(alias))
 	for i, seg := range segments {
 		if i == len(segments)-1 {
 			b.WriteString("->>'" + seg + "'")
@@ -1357,7 +1391,7 @@ func pgJsonTextPath(alias string, segments []string) string {
 // sqliteJsonPath builds SQLite json_extract path: json_extract(table.meta, '$.a.b.c')
 func sqliteJsonPath(alias string, segments []string) string {
 	path := "$." + strings.Join(segments, ".")
-	return fmt.Sprintf("json_extract(%s.meta, '%s')", alias, path)
+	return fmt.Sprintf("json_extract(%s, '%s')", metaColumn(alias), path)
 }
 
 // isNumericValue returns true if the value is a numeric Go type.
@@ -1390,34 +1424,8 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		jsonExpr = tc.metaJsonExpr(segments)
 	}
 
-	sqlOp := tc.sqlOperator(op)
-
-	if op.Type == TokenLike || op.Type == TokenNotLike {
-		textExpr := tc.metaJsonTextExpr(segments)
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		if op.Type == TokenNotLike {
-			likeOp = "NOT " + likeOp
-		}
-		db = db.Where(textExpr+" "+likeOp+" ? ESCAPE '\\'", likePattern)
-		return db, nil
-	}
-
-	// Regex match on a meta value: apply ~*/!~* to the text-extracted value
-	// (->> on Postgres). Pattern is a bind parameter.
-	if isRegexOperator(op) {
-		textExpr := tc.metaJsonTextExpr(segments)
-		db = db.Where(textExpr+" "+sqlOp+" ?", val)
-		return db, nil
-	}
-
-	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
-		db = db.Where("LOWER("+jsonExpr+") "+sqlOp+" LOWER(?)", val)
-		return db, nil
-	}
-
-	db = db.Where(jsonExpr+" "+sqlOp+" ?", val)
-	return db, nil
+	clause, values := tc.buildMetaClause(jsonExpr, tc.metaJsonTextExpr(segments), op, val, isNumericVal, tc.hasReadyNumericIndex(tc.entityType, segments))
+	return db.Where(clause, values...), nil
 }
 
 // translateInExpr handles field IN (...) and field NOT IN (...).

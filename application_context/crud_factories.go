@@ -74,6 +74,9 @@ func (ctx *MahresourcesContext) CategoryCRUD() (
 }
 
 func buildCategory(creator *query_models.CategoryCreator) (models.Category, error) {
+	if err := validateCategoryMetadataIndexes(creator.MetadataIndexes, "group"); err != nil {
+		return models.Category{}, err
+	}
 	if strings.TrimSpace(creator.Name) == "" {
 		return models.Category{}, errors.New("category name must be non-empty")
 	}
@@ -83,6 +86,7 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 		return models.Category{}, err
 	}
 	return models.Category{
+		MetadataIndexes:    metadataIndexesValue(creator.MetadataIndexes),
 		Name:               creator.Name,
 		Description:        creator.Description,
 		CustomHeader:       creator.CustomHeader,
@@ -121,6 +125,9 @@ func (ctx *MahresourcesContext) ResourceCategoryCRUD() (
 }
 
 func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (models.ResourceCategory, error) {
+	if err := validateCategoryMetadataIndexes(creator.MetadataIndexes, "resource"); err != nil {
+		return models.ResourceCategory{}, err
+	}
 	if strings.TrimSpace(creator.Name) == "" {
 		return models.ResourceCategory{}, errors.New("resource category name must be non-empty")
 	}
@@ -129,6 +136,7 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		return models.ResourceCategory{}, err
 	}
 	return models.ResourceCategory{
+		MetadataIndexes:    metadataIndexesValue(creator.MetadataIndexes),
 		Name:               creator.Name,
 		Description:        creator.Description,
 		CustomHeader:       creator.CustomHeader,
@@ -201,10 +209,14 @@ func (ctx *MahresourcesContext) NoteTypeCRUD() (
 }
 
 func buildNoteType(editor *query_models.NoteTypeEditor) (models.NoteType, error) {
+	if err := validateCategoryMetadataIndexes(editor.MetadataIndexes, "note"); err != nil {
+		return models.NoteType{}, err
+	}
 	if strings.TrimSpace(editor.Name) == "" {
 		return models.NoteType{}, errors.New("note type name must be non-empty")
 	}
 	return models.NoteType{
+		MetadataIndexes:        metadataIndexesValue(editor.MetadataIndexes),
 		ID:                     editor.ID,
 		Name:                   editor.Name,
 		Description:            editor.Description,

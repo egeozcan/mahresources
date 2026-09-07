@@ -198,7 +198,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 }
 
 // parseAndTranslate is a helper that parses, validates, sets entity type, and translates.
-func parseAndTranslate(t *testing.T, input string, entityType EntityType, db *gorm.DB) *gorm.DB {
+func parseAndTranslate(t *testing.T, input string, entityType EntityType, db *gorm.DB, options ...TranslateOptions) *gorm.DB {
 	t.Helper()
 
 	q, err := Parse(input)
@@ -211,7 +211,11 @@ func parseAndTranslate(t *testing.T, input string, entityType EntityType, db *go
 		t.Fatalf("validation error: %v", err)
 	}
 
-	result, err := Translate(q, db)
+	var opts TranslateOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	result, err := TranslateWithOptions(q, db, opts)
 	if err != nil {
 		t.Fatalf("translate error: %v", err)
 	}

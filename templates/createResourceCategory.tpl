@@ -320,6 +320,8 @@
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="rcMetaSchemaTextarea" %}
     </div>
 
+    {% include "/partials/form/metadataIndexes.tpl" with metadataIndexes=resourceCategory.MetadataIndexes %}
+
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Auto-Detect Rules" name="AutoDetectRules" value=resourceCategory.AutoDetectRules big=true %}
 
     {% include "/partials/sectionConfigForm.tpl" with sectionConfigValue=resourceCategory.SectionConfig sectionConfigType="resource" %}

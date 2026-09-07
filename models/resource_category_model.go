@@ -80,6 +80,8 @@ type ResourceCategory struct {
 	CustomCSS string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of resources in this category
 	MetaSchema string `gorm:"type:text"`
+	// MetadataIndexes declares query indexes shared by categories of this entity type.
+	MetadataIndexes string `gorm:"type:text"`
 	// AutoDetectRules is a JSON rule set for auto-detecting this category on upload
 	AutoDetectRules string `gorm:"type:text"`
 	// SectionConfig is a JSON config controlling which sections are visible on resource detail pages

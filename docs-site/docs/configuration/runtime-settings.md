@@ -47,6 +47,19 @@ boot value.
 | `hash_ahash_threshold` | uint64 | 0–64; 0 disables | `-hash-ahash-threshold` | next hash comparison |
 | `hash_backfill_paused` | int | 0–1; 1 pauses the v2 backfill | (runtime only) | next backfill cycle |
 
+## Metadata index build status
+
+Indexed keys are configured in each **resource category**, **group category**, or
+**note type** editor, alongside its metadata schema. See
+[indexed metadata keys](../features/meta-schemas.md#indexed-metadata-keys).
+
+The **Metadata index builds** section on this page shows background build status
+and errors. `GET /v1/admin/settings/metadata-index-status` exposes the same status
+for administrators. Saved category changes are normally picked up within five
+seconds. Failed builds retry after a minute; each reconciliation has a 30-minute
+budget. PostgreSQL concurrent builds interrupted by shutdown are repaired on
+retry or restart.
+
 ## Bulk resource uploads
 
 `max_upload_size` bounds one **request** body. That distinction matters on the

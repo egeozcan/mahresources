@@ -182,7 +182,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
     await expect(imageLink).toBeVisible();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
+    const lightbox = page.getByRole('dialog', { name: `RC Template Test Image ${testRunId}`, exact: true });
     await expect(lightbox).toBeVisible();
 
     // Open edit panel (use exact text to avoid matching "Edit Tags" button)
@@ -231,7 +231,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
       await expect(imageLink).toBeVisible({ timeout: 10000 });
       await imageLink.click();
 
-      const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
+      const lightbox = page.getByRole('dialog', { name: `Default Category Resource ${testRunId}`, exact: true });
       await expect(lightbox).toBeVisible();
 
       // Open edit panel

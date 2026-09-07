@@ -16,6 +16,15 @@ _Avoid_: Parsed query, raw query
 A non-executing diagnostic description of an Effective MRQL Query.
 _Avoid_: Query plan
 
+## Metadata Indexing
+
+**Indexed Metadata Key**:
+A category/type-selected metadata path and comparison kind whose MRQL expression
+is maintained as a database index. Declarations live on resource categories, group
+categories, and note types. A background reconciler shares physical indexes across
+carriers of the same entity type and removes one only after its last declaration
+is removed. This is a performance choice, not a metadata validation requirement.
+
 ## Resource Reduction
 
 **Resource Reduction**:

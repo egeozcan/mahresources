@@ -746,6 +746,7 @@ func main() {
 	// Set BaseContext so all request contexts derive from a cancellable parent.
 	// This allows long-lived handlers (e.g. SSE) to detect shutdown and return.
 	serverCtx, serverCancel := gocontext.WithCancel(gocontext.Background())
+	context.StartMetadataIndexer(serverCtx)
 	srv.BaseContext = func(_ net.Listener) gocontext.Context {
 		return serverCtx
 	}

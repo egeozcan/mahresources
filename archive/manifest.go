@@ -305,6 +305,7 @@ type CategoryDef struct {
 	CustomMRQLResult   string         `json:"custom_mrql_result"`
 	CustomCSS          string         `json:"custom_css"`
 	MetaSchema         string         `json:"meta_schema"`
+	MetadataIndexes    string         `json:"metadata_indexes,omitempty"`
 	SectionConfig      map[string]any `json:"section_config"`
 }
 
