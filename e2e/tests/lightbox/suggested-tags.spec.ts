@@ -65,7 +65,7 @@ test.describe('Lightbox suggested tags', () => {
     await apiClient.addTagsToResources([extra.ID], [alpha.ID]);
 
     // Tag-less targets, one per test that mutates state.
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 7; i++) {
       const r = await apiClient.createResource({
         filePath: asset(fileIdx++),
         name: `SugTarget ${i + 1} - ${runId}`,
@@ -229,6 +229,38 @@ test.describe('Lightbox suggested tags', () => {
     const newId = Number(new URL(req.url()).searchParams.get('id'));
     expect(newId).not.toBe(startId);
   });
+  test('quick-slot additions immediately remove suggested chips and refresh after every edit', async ({ page, apiClient }) => {
+    // Persist real quick-slot settings before loading the page, matching the
+    // keyboard path used during sustained tagging rather than calling store methods.
+    const response = await page.request.put('/v1/account/settings/quickTags', {
+      data: { value: {
+        version: 3,
+        quickSlots: [
+          [
+            [{ id: tagIds[0], name: tagNames.alpha }],
+            [{ id: tagIds[1], name: tagNames.beta }],
+            ...Array(7).fill(null),
+          ],
+          ...Array.from({ length: 3 }, () => Array(9).fill(null)),
+        ],
+        recentTags: [],
+      } },
+    });
+    expect(response.ok()).toBe(true);
+    const lightbox = await openPanel(page, targetIds[6]);
+    const chips = lightbox.locator(CHIP);
+    await expect(chips.filter({ hasText: tagNames.alpha })).toBeVisible();
+    await expect(chips.filter({ hasText: tagNames.beta })).toBeVisible();
+    await lightbox.focus();
+    for (const [key, name, id] of [['1', tagNames.alpha, tagIds[0]], ['2', tagNames.beta, tagIds[1]]] as const) {
+      const refreshed = page.waitForResponse(r => r.url().includes(`/v1/resource/suggestedTags?id=${targetIds[6]}`));
+      await page.keyboard.press(key);
+      await expect.poll(async () => ((await apiClient.getResource(targetIds[6])) as any).Tags.some((tag: any) => tag.ID === id)).toBe(true);
+      await expect(chips.filter({ hasText: name })).toHaveCount(0);
+      expect((await refreshed).ok()).toBe(true);
+    }
+  });
+
   test('adding a seed tag reveals a related suggestion without navigation', async ({ page, apiClient }) => {
     const seed = await apiClient.createTag(`SugContextSeed${runId}`);
     const related = await apiClient.createTag(`SugRelated${runId}`);
