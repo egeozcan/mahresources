@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"mahresources/listviews"
 	"os"
 
 	"github.com/flosch/pongo2/v4"
@@ -311,12 +312,13 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 	currentId := 0
 
 	context := pongo2.Context{
-		"queryValues": normalizeQueryValues(request.URL.Query()),
-		"path":        request.URL.Path,
-		"url":         request.URL.String(),
-		"withQuery":   getWithQuery(request),
-		"hasQuery":    getHasQuery(request),
-		"stringId":    stringId,
+		"queryValues":     normalizeQueryValues(request.URL.Query()),
+		"path":            request.URL.Path,
+		"savedSearchView": listviews.Lookup(request.URL.Path),
+		"url":             request.URL.String(),
+		"withQuery":       getWithQuery(request),
+		"hasQuery":        getHasQuery(request),
+		"stringId":        stringId,
 		// WS6: which branch of partials/listEmpty.tpl a zero-result list shows.
 		// Computed here rather than per entity because it is a property of the
 		// URL, and every list template extends this context.

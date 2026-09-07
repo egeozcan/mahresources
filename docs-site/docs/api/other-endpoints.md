@@ -8,6 +8,25 @@ This page covers Tags, Categories, Resource Categories, Template Partials, Queri
 
 ---
 
+## Personal saved searches
+
+Saved list searches are available to every authenticated role, including guests. When authentication is disabled, the root account owns them. Session requests that create, update, or delete searches require the usual CSRF token; bearer authentication follows the existing account API rules.
+
+| Method | Endpoint | Behavior |
+|--------|----------|----------|
+| GET | `/v1/account/saved-searches?family=resources` | List your searches alphabetically; omit `family` to list all |
+| POST | `/v1/account/saved-searches` | Create from `{"name":"Recent files","url":"/resources/details?SortBy=CreatedAt%20desc"}`; returns 201 |
+| PATCH | `/v1/account/saved-searches/{id}` | Update `name`, `url`, or both; returns the updated record |
+| DELETE | `/v1/account/saved-searches/{id}` | Delete your search; returns 204 |
+
+Records contain `id`, `name`, `family`, `url`, `layout`, `createdAt`, and `updatedAt`. Ownership is derived from the request and cannot be supplied. Another user's record, or a missing record, returns 404.
+
+Names are trimmed, required, and limited to 200 UTF-8 bytes; duplicate names are allowed. URLs are limited to 64 KiB and must point to a supported relative list path. External URLs, fragments, detail pages, API routes, and `.json`/`.body` destinations are rejected. Replacements must stay within the same list family. Invalid input returns 400.
+
+Supported families are `resources`, `notes`, `groups`, `tags`, `categories`, `resourceCategories`, `noteTypes`, `relations`, `relationTypes`, `queries`, `templatePartials`, `downloads`, `logs`, and `reductions`. Alternate list layouts share their base family.
+
+Saving preserves repeated filter values, sort precedence, metadata filters, and MRQL text. Pagination and transient navigation/error state are removed; Downloads' `Error` filter is preserved. Timeline URLs additionally use `timelineMode` (`created` or `updated`), `timelineGranularity` (`week`, `month`, or `year`), and `timelineAnchor` (`YYYY-MM-DD`). Opening the stored URL uses normal list authorization and reruns the search against current data.
+
 ## Tags API
 
 Tags are labels that can be applied to resources, notes, and groups for organization.

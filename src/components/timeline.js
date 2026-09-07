@@ -1,4 +1,5 @@
 import { abortableFetch } from '../index.js';
+import { readTimelineState, writeTimelineState, TIMELINE_PARAMS } from '../utils/timelineState.js';
 
 export default function timeline({ apiUrl, entityType, defaultView }) {
     return {
@@ -29,6 +30,8 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         _previewAborter: null,
 
         init() {
+            Object.assign(this, readTimelineState(window.location.search));
+            writeTimelineState(this);
             this.columns = this.calculateColumns();
             this.fetchBuckets();
 
@@ -86,6 +89,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.error = null;
 
             const params = new URLSearchParams(window.location.search);
+            TIMELINE_PARAMS.forEach(name => params.delete(name));
             const granularityMap = { year: 'yearly', month: 'monthly', week: 'weekly' };
             params.set('granularity', granularityMap[this.granularity] || 'monthly');
             params.set('anchor', this.anchor);
@@ -121,6 +125,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
 
         setTimelineMode(mode) {
             this.timelineMode = mode;
+            writeTimelineState(this);
             this.closePreview();
             // Recompute maxCount for the new mode
             this.maxCount = 0;
@@ -134,6 +139,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         setGranularity(g) {
             this.granularity = g;
             this.anchor = new Date().toISOString().slice(0, 10);
+            writeTimelineState(this);
             this.closePreview();
             this.fetchBuckets();
         },
@@ -142,6 +148,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             if (this.buckets.length > 0) {
                 this.anchor = this.buckets[0].start.slice(0, 10);
             }
+            writeTimelineState(this);
             this.closePreview();
             this.fetchBuckets();
         },
@@ -160,6 +167,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 const candidate = newAnchor.toISOString().slice(0, 10);
                 this.anchor = candidate > today ? today : candidate;
             }
+            writeTimelineState(this);
             this.closePreview();
             this.fetchBuckets();
         },
@@ -254,6 +262,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         // Also drops 'page' param so drill-down always starts at page 1.
         _buildDateParams(bucket, barType) {
             const params = new URLSearchParams(window.location.search);
+            TIMELINE_PARAMS.forEach(name => params.delete(name));
             params.delete('page');
 
             const startDate = bucket.start.slice(0, 10);

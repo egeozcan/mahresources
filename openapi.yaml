@@ -1915,6 +1915,47 @@ components:
                 name:
                     type: string
             type: object
+        SavedSearch:
+            properties:
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                family:
+                    type: string
+                id:
+                    readOnly: true
+                    type: integer
+                layout:
+                    type: string
+                name:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                url:
+                    type: string
+            type: object
+        SavedSearchPartial:
+            properties:
+                createdAt:
+                    format: date-time
+                    type: string
+                family:
+                    type: string
+                id:
+                    type: integer
+                layout:
+                    type: string
+                name:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    type: string
+                url:
+                    type: string
+            type: object
         SearchResultItemPartial:
             properties:
                 id:
@@ -2308,6 +2349,133 @@ paths:
                 "403":
                     description: Insufficient permissions
             summary: Change the authenticated user's password
+            tags:
+                - account
+    /v1/account/saved-searches:
+        get:
+            operationId: listSavedSearches
+            parameters:
+                - description: Optional list family, e.g. resources or notes; includes all its layouts.
+                  in: query
+                  name: family
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/SavedSearchPartial'
+                                type: array
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+            summary: List personal saved searches
+            tags:
+                - account
+        post:
+            description: Returns 201. Saves an applied relative list URL; removes pagination and transient parameters. Name is trimmed and must be 1–200 UTF-8 bytes. URL is limited to 64 KiB. Duplicate names are allowed. Ownership comes from the current account, or root when authentication is disabled.
+            operationId: createSavedSearch
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                name:
+                                    type: string
+                                url:
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "201":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SavedSearch'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+            summary: Save a personal list search
+            tags:
+                - account
+    /v1/account/saved-searches/{id}:
+        delete:
+            description: Returns 204 with no body. Missing records and another user's records return 404.
+            operationId: deleteSavedSearch
+            parameters:
+                - description: Saved search ID
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "204":
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+            summary: Delete a personal saved search
+            tags:
+                - account
+        patch:
+            description: Supply name, url, or both. A replacement URL must belong to the same list family. Another user's record returns 404.
+            operationId: updateSavedSearch
+            parameters:
+                - description: Saved search ID
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                name:
+                                    nullable: true
+                                    type: string
+                                url:
+                                    nullable: true
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SavedSearch'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+            summary: Rename or replace a personal saved search
             tags:
                 - account
     /v1/account/settings:

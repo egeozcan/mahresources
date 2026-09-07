@@ -484,6 +484,7 @@ func main() {
 		&models.GroupRelationType{}, // FK to Category
 		&models.Resource{},          // FK to ResourceCategory, Series, Group
 		&models.User{},              // FK to Group (ScopeGroupId)
+		&models.SavedSearch{},       // personal saved list searches
 		&models.UserSetting{},       // per-user KV prefs; no FK association (like PluginKV)
 		// Tables with FK to Resource/Group/Note
 		&models.Note{},               // FK to Group, NoteType; many2many with Resource

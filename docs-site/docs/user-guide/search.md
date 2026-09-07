@@ -7,6 +7,18 @@ title: Search
 
 Five ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, MRQL for structured queries, and saved Queries for raw SQL.
 
+## Saved list searches
+
+On any filterable list, apply your filters and choose **Saved searches → Save current search** above the results. Enter a name and save. Unsubmitted filter edits are not included.
+
+Each saved search remembers filters, sort order, and layout. Searches are available across layouts of the same list: a search saved in Resources' details view also appears in its cards, contact-sheet, and timeline views. Opening it restores the saved layout and starts on page one. Results reflect current data; relative MRQL dates such as `-7d` remain relative.
+
+Timeline searches also remember Created/Updated mode, week/month/year grouping, and the date anchor. The number of columns adapts to your screen; chart selections and preview panels are not saved.
+
+The menu offers **Rename**, **Replace with current search**, and **Delete** for each entry. Replacement and deletion ask for confirmation. Duplicate names are allowed and do not overwrite existing searches.
+
+Saved searches are personal and follow your account across browsers. With accounts disabled, they belong to the shared root account. They are separate from saved SQL Queries and saved MRQL queries, and do not change your access to list results.
+
 ## Global Search
 
 Open with **Cmd+K** (macOS) or **Ctrl+K** (Windows/Linux), or click the **Search** button in the header.

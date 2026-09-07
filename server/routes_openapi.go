@@ -25,6 +25,7 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Users & account management
 	registerUserAccountRoutes(registry)
+	registerSavedSearchRoutes(registry)
 
 	// Notes
 	registerNoteRoutes(registry)

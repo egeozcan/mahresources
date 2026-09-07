@@ -154,6 +154,7 @@
                 </div>
             </div>
             {% endif %}
+            {% if savedSearchView %}{% include "/partials/savedSearches.tpl" %}{% endif %}
             {% block body %}{% endblock %}
         </main>
     </div>

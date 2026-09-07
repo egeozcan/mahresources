@@ -115,7 +115,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.TemplatePartial{},
 		&models.RuntimeSetting{},
 		&models.User{},
-		&models.UserSetting{},
+		&models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{},
 		&models.ApiToken{},
 		&models.DownloadHistoryEntry{},

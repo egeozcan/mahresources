@@ -44,6 +44,9 @@ type RouteInfo struct {
 	// Response type - struct or slice for success response body
 	ResponseType reflect.Type
 
+	// SuccessStatus defaults to 200; use it for endpoints returning 201 or 204.
+	SuccessStatus int
+
 	// Supported content types for request body
 	RequestContentTypes []ContentType
 

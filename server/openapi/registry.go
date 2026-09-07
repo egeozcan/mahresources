@@ -247,7 +247,11 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 	}
 
 	// Add responses
-	op.Responses.Set("200", r.generateSuccessResponse(route))
+	successStatus := route.SuccessStatus
+	if successStatus == 0 {
+		successStatus = http.StatusOK
+	}
+	op.Responses.Set(statusCodeToString(successStatus), r.generateSuccessResponse(route))
 
 	// Add error responses
 	for code, desc := range route.ErrorResponses {

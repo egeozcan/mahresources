@@ -27,13 +27,16 @@ import (
 // a new filter field that nobody adds here still produces the honest
 // "match these filters" wording rather than the wrong "nothing here yet".
 var nonFilterParams = map[string]bool{
-	"page":     true,
-	"Page":     true,
-	"sortBy":   true,
-	"SortBy":   true,
-	"Error":    true,
-	"error":    true,
-	"redirect": true,
+	"page":                true,
+	"Page":                true,
+	"sortBy":              true,
+	"SortBy":              true,
+	"Error":               true,
+	"error":               true,
+	"redirect":            true,
+	"timelineMode":        true,
+	"timelineGranularity": true,
+	"timelineAnchor":      true,
 }
 
 // hasActiveFilter reports whether the request narrows its list at all. An empty
@@ -41,7 +44,7 @@ var nonFilterParams = map[string]bool{
 // form carries "?Name=&Description=" and is not filtered by any useful reading.
 func hasActiveFilter(request *http.Request) bool {
 	for key, values := range request.URL.Query() {
-		if nonFilterParams[key] {
+		if nonFilterParams[key] && !(request.URL.Path == "/downloads" && (key == "Error" || key == "error")) {
 			continue
 		}
 		for _, v := range values {
@@ -60,7 +63,8 @@ func hasActiveFilter(request *http.Request) bool {
 func clearFiltersURL(request *http.Request) string {
 	cleared := url.Values{}
 	for key, values := range request.URL.Query() {
-		if key == "SortBy" || key == "sortBy" {
+		if key == "SortBy" || key == "sortBy" || (strings.HasSuffix(request.URL.Path, "/timeline") &&
+			(key == "timelineMode" || key == "timelineGranularity" || key == "timelineAnchor")) {
 			cleared[key] = values
 		}
 	}

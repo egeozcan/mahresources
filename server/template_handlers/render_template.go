@@ -74,6 +74,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"title":               true,
 				"assetVersion":        true,
 				"queryValues":         true,
+				"savedSearchView":     true,
 				"url":                 true,
 				"hasPluginManager":    true,
 				"pluginDetailActions": true,

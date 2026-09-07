@@ -560,6 +560,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/account/settings").HandlerFunc(api_handlers.GetUserSettingsHandler(appContext))
 	router.Methods(http.MethodPut).Path("/v1/account/settings/{key}").HandlerFunc(api_handlers.SetUserSettingHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/account/settings/{key}").HandlerFunc(api_handlers.DeleteUserSettingHandler(appContext))
+	router.Methods(http.MethodGet, http.MethodPost).Path("/v1/account/saved-searches").HandlerFunc(api_handlers.SavedSearchHandler(appContext))
+	router.Methods(http.MethodPatch, http.MethodDelete).Path("/v1/account/saved-searches/{id}").HandlerFunc(api_handlers.SavedSearchHandler(appContext))
 
 	basicTagWriter := application_context.NewEntityWriter[models.Tag](appContext)
 	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)

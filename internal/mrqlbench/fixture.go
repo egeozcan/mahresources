@@ -225,7 +225,7 @@ func migrateFixtureSchema(db *gorm.DB, dialect string) error {
 		&models.Query{}, &models.Series{}, &models.Tag{}, &models.Category{}, &models.ResourceCategory{},
 		&models.NoteType{}, &models.LogEntry{}, &models.PluginState{}, &models.PluginKV{},
 		&models.RuntimeSetting{}, &models.SavedMRQLQuery{}, &models.TemplatePartial{}, &models.Group{},
-		&models.GroupRelationType{}, &models.Resource{}, &models.User{}, &models.UserSetting{}, &models.Note{},
+		&models.GroupRelationType{}, &models.Resource{}, &models.User{}, &models.SavedSearch{}, &models.UserSetting{}, &models.Note{},
 		&models.ResourceVersion{}, &models.NoteBlock{}, &models.Preview{}, &models.GroupRelation{},
 		&models.ImageHash{}, &models.ResourceSimilarity{}, &models.Session{}, &models.ApiToken{}, &benchmarkMarker{},
 	); err != nil {

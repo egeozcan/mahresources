@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import timeline from './timeline.js';
 
@@ -18,6 +19,7 @@ describe('timeline component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        window.history.replaceState(null, '', '/resources/timeline');
         component = timeline({
             apiUrl: mockApiUrl,
             entityType: mockEntityType,

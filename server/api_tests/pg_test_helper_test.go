@@ -63,7 +63,7 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
 		&models.User{},
-		&models.UserSetting{},
+		&models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{},
 		&models.ApiToken{},
 		&models.DownloadHistoryEntry{},

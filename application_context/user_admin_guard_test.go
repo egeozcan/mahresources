@@ -34,7 +34,7 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{},
 		&models.Series{}, &models.Query{}, &models.SavedMRQLQuery{}, &models.TemplatePartial{},
 		&models.NoteBlock{}, &models.GroupRelation{}, &models.GroupRelationType{},
-		&models.ResourceVersion{}, &models.User{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{},
+		&models.ResourceVersion{}, &models.User{}, &models.SavedSearch{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{},
 		&models.DownloadHistoryEntry{},
 		&models.ScheduledDownload{},
 		&models.PluginSchedule{},
