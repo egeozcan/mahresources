@@ -1,5 +1,5 @@
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { registerBulkSelectionStore } from './bulkSelection.js';
+import { registerBulkSelectionStore, selectableItem } from './bulkSelection.js';
 
 /**
  * The shared list-page selection store.
@@ -36,6 +36,30 @@ afterEach(() => {
 });
 
 describe('shift-range selection', () => {
+    test('repeated appearances select together and execute only once', () => {
+        const store = makeStore();
+        const first = card(10), second = card(10);
+        store.registerOption(first);
+        store.registerOption(second);
+        store.select(10);
+        expect([...store.selectedIds]).toEqual([10]);
+        expect(first.el.checked).toBe(true);
+        expect(second.el.checked).toBe(true);
+        store.unregisterOption(first.el);
+        expect(store.isSelected(10)).toBe(true);
+        store.unregisterOption(second.el);
+        expect(store.isSelected(10)).toBe(false);
+    });
+
+    test('equal IDs in different selections remain independent', () => {
+        const resources = makeStore(), notes = makeStore();
+        resources.registerOption(card(1)); notes.registerOption(card(1));
+        resources.select(1);
+        expect(notes.selectedIds.size).toBe(0);
+        resources.reset();
+        expect(resources.selectedIds.size).toBe(0);
+        expect(resources.elements).toEqual([]);
+    });
     test('registering the page does not become the reader\'s last click', () => {
         const store = makeStore();
         [10, 20, 30].forEach(c => store.registerOption(card(c)));
@@ -121,5 +145,44 @@ describe('hasSelectableItems', () => {
         };
 
         expect(store.hasSelectableItems()).toBe(true);
+    });
+});
+
+
+describe('selection across retained and repeated rows', () => {
+    test('range endpoints are the clicked appearances rather than the last matching IDs', () => {
+        const store = makeStore();
+        const appearances = [card(10), card(20), card(30), card(10)];
+        appearances.forEach(row => store.registerOption(row));
+        store.toggle(10, appearances[0].el);
+        store.selectUntil(20, appearances[1].el);
+        expect([...store.selectedIds]).toEqual([10, 20]);
+        store.selectedIds.clear();
+        store.toggle(20, appearances[1].el);
+        store.selectUntil(10, appearances[3].el);
+        expect([...store.selectedIds]).toEqual([20, 30, 10]);
+    });
+
+    test('retained selectable rows refresh eligibility metadata after a morph', () => {
+        const store = makeStore();
+        const checkbox = card(10).el;
+        const payload = {dataset: {entity: JSON.stringify({ID:10, resourceCategoryId:1})}};
+        const root = {querySelector: (selector: string) => selector.includes('checkbox') ? checkbox : payload};
+        let onMutation: () => void = () => {};
+        const disconnect = vi.fn();
+        vi.stubGlobal('MutationObserver', class {
+            constructor(callback: () => void) { onMutation = callback; }
+            observe() {}
+            disconnect = disconnect;
+        });
+        const component = Object.assign(selectableItem({itemId:10}), {$root:root, $selection:store});
+        component.init();
+        store.select(10);
+        expect(store.selectedEntities()[0].resourceCategoryId).toBe(1);
+        payload.dataset.entity = JSON.stringify({ID:10, resourceCategoryId:2});
+        onMutation();
+        expect(store.selectedEntities()[0].resourceCategoryId).toBe(2);
+        component.destroy();
+        expect(disconnect).toHaveBeenCalledOnce();
     });
 });

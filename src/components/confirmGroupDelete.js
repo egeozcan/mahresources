@@ -22,6 +22,7 @@
  * Fallback: on fetch failure, we still prompt with a generic confirm so
  * delete keeps working — the user just doesn't get the count breakdown.
  */
+import { selectionForElement } from './bulkSelection.js';
 import { askToConfirm } from './confirmDialog.js';
 
 const PAGE_LIMIT = 50;
@@ -62,7 +63,7 @@ export function confirmGroupDelete() {
                 e.preventDefault();
 
                 const form = e.target;
-                const ids = [...(window.Alpine?.store('bulkSelection')?.selectedIds || [])];
+                const ids = [...(selectionForElement(form)?.selectedIds || [])];
                 if (ids.length === 0) return;
 
                 this._askAndSubmit(form, ids);

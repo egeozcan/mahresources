@@ -26,12 +26,16 @@ import (
 // -- Request/response types for MRQL endpoints --
 
 type mrqlExecuteRequest struct {
-	Query   string         `json:"query" schema:"query"`
-	Limit   int            `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
-	Buckets int            `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
-	Page    int            `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
-	Offset  int            `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
-	Params  map[string]any `json:"params" schema:"-"`        // $name placeholder bindings (JSON body only)
+	Snapshot      string         `json:"snapshot" schema:"snapshot"`
+	DisplayOffset *int           `json:"displayOffset" schema:"displayOffset"`
+	DisplayPage   int            `json:"displayPage" schema:"displayPage"`
+	DisplaySize   int            `json:"displaySize" schema:"displaySize"`
+	Query         string         `json:"query" schema:"query"`
+	Limit         int            `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
+	Buckets       int            `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
+	Page          int            `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
+	Offset        int            `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
+	Params        map[string]any `json:"params" schema:"-"`        // $name placeholder bindings (JSON body only)
 }
 
 type mrqlValidateRequest struct {
@@ -512,7 +516,8 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
-		if err := mrql.BindParams(parsed, collectMRQLParams(request, req.Params)); err != nil {
+		params := collectMRQLParams(request, req.Params)
+		if err := mrql.BindParams(parsed, params); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
@@ -521,6 +526,12 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 			return
 		}
 
+		listRender := request.URL.Query().Get("render") == "list"
+		if listRender {
+			renderCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, true)
+			defer cancel()
+			request = request.WithContext(renderCtx)
+		}
 		// GROUP BY queries use a separate execution path
 		if parsed.GroupBy != nil {
 			entityType := mrql.ExtractEntityType(parsed)
@@ -530,8 +541,23 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 			}
 			parsed.EntityType = entityType
 
-			// Override pagination with request parameters (aggregated vs bucketed).
-			applyGroupedPagination(parsed, req.Limit, req.Buckets, req.Page, req.Offset)
+			// Shared lists page the authored query without changing its bounds.
+			if !listRender {
+				applyGroupedPagination(parsed, req.Limit, req.Buckets, req.Page, req.Offset)
+			}
+			listPage, listSize := listPageRequest(req.DisplayPage, req.DisplaySize, 5)
+			baseOffset := max(0, parsed.Offset)
+			if listRender && len(parsed.GroupBy.Aggregates) == 0 {
+				parsed.BucketLimit = listSize
+				relativeOffset := groupedPageOffset(listPage, listSize)
+				if req.DisplayOffset != nil && *req.DisplayOffset >= 0 {
+					relativeOffset = *req.DisplayOffset
+				}
+				parsed.Offset = math.MaxInt
+				if relativeOffset <= math.MaxInt-baseOffset {
+					parsed.Offset = baseOffset + relativeOffset
+				}
+			}
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
 			if err != nil {
@@ -547,18 +573,65 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 				}
 			}
 
+			if listRender && grouped.Mode == "bucketed" {
+				if err := renderMRQLListBuckets(ctx, request, grouped); err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+					return
+				}
+				writer.Header().Set("Content-Type", constants.JSON)
+				_ = json.NewEncoder(writer).Encode(struct {
+					*application_context.MRQLGroupedResult
+					ListPage mrqlListPage `json:"listPage"`
+				}{grouped, mrqlListPage{Page: listPage, Size: listSize, Total: max(0, grouped.TotalGroups-baseOffset), HasNext: grouped.NextOffset != nil, NextOffset: relativeBucketOffset(grouped.NextOffset, baseOffset)}})
+				return
+			}
 			writer.Header().Set("Content-Type", constants.JSON)
 			_ = json.NewEncoder(writer).Encode(grouped)
 			return
 		}
 
 		// Non-grouped query: parsed is already bound + validated above.
-		result, err := ctx.ExecuteMRQLParsed(request.Context(), parsed, req.Limit, req.Page)
+		limit, queryPage := req.Limit, req.Page
+		if listRender {
+			limit, queryPage = 0, 0
+		}
+		var result *application_context.MRQLResult
+		snapshot := req.Snapshot
+		if listRender && snapshot != "" {
+			result, err = ctx.ResolveMRQLSnapshot(request.Context(), req.Query, params, snapshot)
+		} else {
+			result, err = ctx.ExecuteMRQLParsed(request.Context(), parsed, limit, queryPage)
+			if err == nil && listRender {
+				for _, order := range parsed.OrderBy {
+					if order.Random {
+						snapshot, err = ctx.IssueMRQLSnapshot(request.Context(), req.Query, params, result)
+						break
+					}
+				}
+			}
+		}
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
+		if listRender {
+			page, size := listPageRequest(req.DisplayPage, req.DisplaySize, 25)
+			paging := pageMRQLResult(result, page, size)
+			for _, items := range []any{result.Resources, result.Notes, result.Groups} {
+				if err := renderMRQLListCards(ctx, request, items); err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+					return
+				}
+			}
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(struct {
+				*application_context.MRQLResult
+				ListPage mrqlListPage `json:"listPage"`
+				Snapshot string       `json:"snapshot,omitempty"`
+			}{result, paging, snapshot})
+			return
+		}
 		render := request.URL.Query().Get("render") == "1"
 		if render {
 			if err := renderMRQLCustomTemplates(ctx, result, request.Context()); err != nil {

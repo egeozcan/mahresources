@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
 )
@@ -50,10 +49,7 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 		ctx.Public["_customCSSSeen"] = seen
 	}
 
-	var appCtx *application_context.MahresourcesContext
-	if v, ok := ctx.Public["_appContext"]; ok && v != nil {
-		appCtx, _ = v.(*application_context.MahresourcesContext)
-	}
+	appCtx := pageRenderContext(ctx.Public["_appContext"])
 	reqCtx := customCSSReqCtx(ctx)
 	pluginRenderer := customCSSPluginRenderer(ctx, reqCtx)
 	var executor shortcodes.QueryExecutor
@@ -170,10 +166,7 @@ func customCSSReqCtx(ctx *pongo2.ExecutionContext) context.Context {
 			reqCtx = rc
 		}
 	}
-	var appCtx *application_context.MahresourcesContext
-	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
-		appCtx, _ = appCtxVal.(*application_context.MahresourcesContext)
-	}
+	appCtx := pageRenderContext(ctx.Public["_appContext"])
 	reqCtx = buildPageRenderContext(reqCtx, appCtx)
 	ctx.Public["_reqCtxWithCache"] = reqCtx
 	return reqCtx

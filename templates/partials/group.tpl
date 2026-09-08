@@ -4,7 +4,7 @@
         <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.GetName() }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div x-data='{ "entity": {{ entity|json }} }'>
+    <div data-entity='{{ entity|json }}' x-data='{ "entity": {{ entity|json }} }'>
         <header class="card-header">
             {% if !fullText %}
             <div class="card-avatar">

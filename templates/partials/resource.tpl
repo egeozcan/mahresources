@@ -3,7 +3,7 @@
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div x-data="{ entity: {{ entity|json }} }">
+    <div data-entity='{{ entity|json }}' x-data="{ entity: {{ entity|json }} }">
         <div class="card-image">
             <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
                @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"

@@ -12,16 +12,22 @@ package query_models
 // silently reading a typo'd "replace" as "add" is the class of mistake that only
 // surfaces once the data is wrong.
 type MassEditQuery struct {
+	// MRQL targeting uses the executed full query and its bound parameters.
+	MRQLQuery  string
+	MRQLParams string
+	// MRQLSnapshot preserves the bounded sample for RANDOM() query targets.
+	MRQLSnapshot string
 	// --- targeting ---
 	// ID is the explicit selection; a form sends repeated id=1&id=2 entries.
 	ID []uint
 	// Target selects how the target set is resolved: "" or "ids" uses ID;
 	// "filter" re-runs Filter (the list page's raw query string) server-side.
+	// "mrql" resolves MRQLQuery with MRQLParams within its authored bounds.
 	Target string
 	// Filter is the list page's raw query string, e.g. "tags=3&ownerId=9&mrql=...".
 	// Used only when Target is "filter".
 	Filter string
-	// ExpectedCount is required when Target is "filter": the server re-counts the
+	// ExpectedCount is required when Target is "filter" or "mrql": the server re-counts the
 	// filtered set and refuses with a conflict unless the count matches exactly.
 	// A POINTER because zero is a legitimate confirmed count (an empty set over
 	// an empty filter) that must be distinguishable from "omitted".
@@ -29,14 +35,14 @@ type MassEditQuery struct {
 
 	// --- ops: an empty verb means the op is absent ---
 	// TagsOp applies to all three entities.
-	TagsOp   string
-	TagIds   []uint
+	TagsOp string
+	TagIds []uint
 	// GroupsOp applies to resources and notes (related groups).
 	GroupsOp string
 	GroupIds []uint
 	// NotesOp applies to resources and groups (related notes).
-	NotesOp  string
-	NoteIds  []uint
+	NotesOp string
+	NoteIds []uint
 	// ResourcesOp applies to notes and groups (related resources).
 	ResourcesOp string
 	ResourceIds []uint

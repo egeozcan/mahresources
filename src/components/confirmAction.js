@@ -1,3 +1,4 @@
+import { selectionForElement } from './bulkSelection.js';
 import { selectionRequiredState } from './selectionRequired.js';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { askToConfirm } from './confirmDialog.js';
@@ -23,7 +24,7 @@ const DEFAULT_MESSAGE = 'Are you sure you want to delete?';
 function resolvePlaceholders(message, form) {
     if (!/\{(count|s|winner)\}/.test(message)) return message;
 
-    const count = window.Alpine?.store('bulkSelection')?.selectedIds?.size ?? 0;
+    const count = selectionForElement(form)?.selectedIds?.size ?? 0;
     return message
         .replace(/\{count\}/g, String(count))
         .replace(/\{s\}/g, count === 1 ? '' : 's')

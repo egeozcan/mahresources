@@ -148,7 +148,7 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 		// Merging is offered only between two resources, each at its current version;
 		// merging an older one would silently promote it. The section renders either way
 		// and carries the reason — a control that vanishes teaches nothing, which is the
-		// argument bulkCompareAction.tpl already makes for its own two-selection rule.
+		// argument the shared bulk-action eligibility check already makes for its own two-selection rule.
 		crossResource := query.Resource1ID != query.Resource2ID
 		canMerge := false
 		mergeBlockedReason := ""

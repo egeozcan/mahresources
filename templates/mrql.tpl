@@ -502,7 +502,7 @@
     {# ── Results Section ─────────────────────────────────────────── #}
     <section aria-label="Query results">
         <template x-if="error">
-            <div class="rounded-md bg-red-50 p-4" role="alert">
+            <div class="rounded-md bg-red-50 p-4" role="alert" data-testid="mrql-execution-error">
                 <div class="flex">
                     <div class="flex-shrink-0">
                         <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -542,7 +542,7 @@
                             Export JSON
                         </button>
                         <span class="text-xs text-stone-500 font-mono"
-                              x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
+                              x-text="'Entity: ' + (['resource','note','group'].includes(result?.entityType) ? result?.entityType : 'all types')"></span>
                     </div>
                 </div>
 
@@ -561,9 +561,9 @@
                 </template>
 
                 {# Warnings (e.g. partial results, truncated buckets, timeouts) #}
-                <template x-if="result.warnings && result.warnings.length > 0">
+                <template x-if="result?.warnings && result?.warnings.length > 0">
                     <div class="rounded-md bg-amber-50 border border-amber-200 p-3 space-y-1" role="status">
-                        <template x-for="(warning, wIdx) in result.warnings" :key="wIdx">
+                        <template x-for="(warning, wIdx) in result?.warnings" :key="wIdx">
                             <div class="flex">
                                 <div class="flex-shrink-0">
                                     <svg class="h-5 w-5 text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -579,15 +579,15 @@
                 </template>
 
                 {# Aggregated GROUP BY results — render as table                          #}
-                {# The header used to be Object.keys(result.rows[0]), which discards the  #}
+                {# The header used to be Object.keys(result?.rows[0]), which discards the  #}
                 {# order the query was written in: Go marshals a map's keys sorted, so    #}
                 {# `GROUP BY width, height, contentType COUNT()` rendered                 #}
                 {# contentType | count | height | width, byte-identical to the same       #}
-                {# GROUP BY written in reverse. `result.columns` is the authored order,   #}
+                {# GROUP BY written in reverse. `result?.columns` is the authored order,   #}
                 {# the same list the CSV export has always used. The Object.keys fallback #}
                 {# keeps an older cached response rendering rather than blank.            #}
-                <template x-if="result.mode === 'aggregated' && result.rows && result.rows.length > 0">
-                    <div class="overflow-x-auto" x-data="{ get cols() { return (result.columns && result.columns.length) ? result.columns : Object.keys(result.rows[0]); } }">
+                <template x-if="result?.mode === 'aggregated' && result?.rows && result?.rows.length > 0">
+                    <div class="overflow-x-auto" x-data="{ get cols() { return (result?.columns && result?.columns.length) ? result?.columns : Object.keys(result?.rows[0]); } }">
                         <table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">
                             <thead class="bg-stone-100">
                                 <tr>
@@ -597,7 +597,7 @@
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-stone-100">
-                                <template x-for="(row, idx) in result.rows" :key="idx">
+                                <template x-for="(row, idx) in result?.rows" :key="idx">
                                     <tr class="hover:bg-stone-50">
                                         <template x-for="key in cols" :key="key">
                                             <td class="px-3 py-2 text-stone-800 whitespace-nowrap" x-text="row[key] ?? '(null)'"></td>
@@ -609,156 +609,66 @@
                     </div>
                 </template>
 
-                {# Bucketed GROUP BY results — render as grouped cards #}
-                <template x-if="result.mode === 'bucketed' && result.groups && result.groups.length > 0">
-                    <div class="space-y-4">
-                        <template x-for="(bucket, bIdx) in result.groups" :key="bIdx">
-                            <div class="border border-stone-200 rounded-md overflow-hidden">
-                                <div class="bg-stone-100 px-3 py-2 flex items-center gap-2">
-                                    {# The badges used to iterate bucket.key directly, which is Object.keys over a map Go marshals sorted — so GROUP BY width, height and GROUP BY height, width labelled identically. bucketKeyOrder() puts result.keyColumns first and keeps every other entry (the relation `<field>_id` disambiguator) after them. #}
-                                    <template x-for="key in bucketKeyOrder(bucket)" :key="key">
-                                        <span class="inline-flex items-center text-xs font-mono">
-                                            <span class="text-stone-500" x-text="key + ': '"></span>
-                                            <span class="font-semibold text-stone-700" x-text="bucket.key[key] ?? '(null)'"></span>
-                                        </span>
-                                    </template>
-                                    <span class="ml-auto text-xs text-stone-400 font-mono" x-text="(bucket.items?.length || 0) + ' items'"></span>
-                                </div>
-                                <div class="gallery p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                    <template x-for="entity in (bucket.items || [])" :key="entity.ID">
-                                        <div>
-                                            <template x-if="entity.renderedHTML">
-                                                <div x-html="entity.renderedHTML"></div>
-                                            </template>
-                                            <template x-if="!entity.renderedHTML">
-                                                <div class="p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
-                                                    <div class="flex items-start gap-2">
-                                                        <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                                            <a :href="'/v1/resource/view?id=' + entity.ID + (entity.Hash ? '&v=' + entity.Hash : '')"
-                                                               @click.prevent="$store.lightbox.openFromClick($event, entity.ID, entity.ContentType)"
-                                                               data-lightbox-item
-                                                               :data-resource-id="entity.ID"
-                                                               :data-content-type="entity.ContentType"
-                                                               :data-resource-name="entity.Name"
-                                                               :data-resource-hash="entity.Hash"
-                                                               :data-resource-width="entity.Width"
-                                                               :data-resource-height="entity.Height"
-                                                               class="flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">
-                                                                <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="'Preview of ' + (entity.Name || 'resource')" class="w-8 h-8 rounded object-cover" loading="lazy" />
-                                                            </a>
-                                                        </template>
-                                                        <a :href="'/' + result.entityType + '?id=' + entity.ID" class="block min-w-0 flex-1">
-                                                            <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                                            <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || entity.Description || ''"></p>
-                                                        </a>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                </template>
-
-                {# Aggregated/bucketed empty state #}
-                <template x-if="(result.mode === 'aggregated' && (!result.rows || result.rows.length === 0)) || (result.mode === 'bucketed' && (!result.groups || result.groups.length === 0))">
-                    <p class="text-sm text-stone-500 font-mono py-4 text-center">No results found.</p>
-                </template>
-
-                {# Resource results #}
-                <template x-if="!result.mode && result.resources && result.resources.length > 0">
-                    <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Resources</h3>
-                        <div class="gallery grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.resources" :key="entity.ID">
-                                <div>
-                                    <template x-if="entity.renderedHTML">
+                <template x-if="result?.mode !== 'aggregated'">
+                    <div data-list-container>
+                        <div class="flex items-center gap-3 mb-4 flex-wrap">
+                            <label class="text-sm">Display
+                                <select x-model="listLayout" class="rounded border-stone-300">
+                                    <option value="cards">Cards</option><option value="list">List</option>
+                                </select>
+                            </label>
+                            <label class="text-sm">Per page
+                                <select data-mrql-result-control="page-size" :value="displaySize" @change="changePageSize(Number($event.target.value))" class="rounded border-stone-300">
+                                    <option value="5">5</option><option value="25">25</option><option value="50">50</option><option value="100">100</option>
+                                </select>
+                            </label>
+                            <label class="text-sm">Sort
+                                <select data-mrql-result-control="sort" @change="sortResults($event.target.value)" class="rounded border-stone-300">
+                                    <option value="">Query order</option><option value="name ASC">Name ascending</option><option value="name DESC">Name descending</option>
+                                    <option value="created DESC">Newest first</option><option value="created ASC">Oldest first</option><option value="updated DESC">Recently updated</option>
+                                </select>
+                            </label>
+                        </div>
+                        {% for bulkEntity in mrqlEntities %}
+                        <section data-selection-scope="mrql-{{ bulkEntity }}" x-show="hasEntityResults('{{ bulkEntity }}')" class="mb-6" aria-label="{{ bulkEntity }} results">
+                            <h3 class="text-base font-semibold capitalize mb-2">{{ bulkEntity }}s</h3>
+                            {% include "/partials/bulkActions.tpl" with pluginBulkActions=mrqlBulkActions|lookup:bulkEntity %}
+                            <template x-if="!result?.mode">
+                                <div class="gallery list-container" :style="{gridTemplateColumns: listLayout === 'list' ? 'minmax(0, 1fr)' : null}">
+                                    <template x-for="entity in entitiesFor('{{ bulkEntity }}')" :key="entity.ID">
                                         <div x-html="entity.renderedHTML"></div>
                                     </template>
-                                    <template x-if="!entity.renderedHTML">
-                                        <div class="p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                            <div class="flex items-start gap-2">
-                                                <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                                    <a :href="'/v1/resource/view?id=' + entity.ID + (entity.Hash ? '&v=' + entity.Hash : '')"
-                                                       @click.prevent="$store.lightbox.openFromClick($event, entity.ID, entity.ContentType)"
-                                                       data-lightbox-item
-                                                       :data-resource-id="entity.ID"
-                                                       :data-content-type="entity.ContentType"
-                                                       :data-resource-name="entity.Name"
-                                                       :data-resource-hash="entity.Hash"
-                                                       :data-resource-width="entity.Width"
-                                                       :data-resource-height="entity.Height"
-                                                       class="flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">
-                                                        <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="'Preview of ' + (entity.Name || 'resource')" class="w-12 h-12 rounded object-cover" loading="lazy" />
-                                                    </a>
+                                </div>
+                            </template>
+                            <template x-if="result?.mode === 'bucketed' && result?.entityType === '{{ bulkEntity }}'">
+                                <div class="space-y-4">
+                                    <template x-for="(bucket, bIdx) in result?.groups" :key="JSON.stringify(bucket.key)">
+                                        <section class="border border-stone-200 rounded-md overflow-hidden">
+                                            <header class="bg-stone-100 px-3 py-2 flex gap-2 flex-wrap">
+                                                <template x-for="key in bucketKeyOrder(bucket)" :key="key">
+                                                    <span class="text-sm"><span x-text="key + ': '"></span><strong x-text="bucket.key[key] ?? '(null)'"></strong></span>
                                                 </template>
-                                                <a :href="'/resource?id=' + entity.ID" class="block min-w-0 flex-1">
-                                                    <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                                    <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || ''"></p>
-                                                </a>
+                                                <span class="ml-auto text-xs" x-text="bucket.items.length + ' items'"></span>
+                                            </header>
+                                            <div class="gallery list-container p-3" :style="{gridTemplateColumns: listLayout === 'list' ? 'minmax(0, 1fr)' : null}">
+                                                <template x-for="entity in bucket.items" :key="entity.ID"><div x-html="entity.renderedHTML"></div></template>
                                             </div>
-                                        </div>
+                                        </section>
                                     </template>
                                 </div>
                             </template>
-                        </div>
+                        </section>
+                        {% endfor %}
+                        <nav aria-label="MRQL result pages" class="flex items-center justify-center gap-4 py-4" x-show="result?.listPage">
+                            <button type="button" data-mrql-result-control="previous" :disabled="executing || displayPage <= 1" @click="changePage(displayPage - 1)" class="px-3 py-2 border rounded disabled:opacity-50">Previous</button>
+                            <span data-mrql-page-status tabindex="-1" x-text="'Page ' + displayPage + ' · ' + (result?.listPage?.total || 0) + (result?.mode === 'bucketed' ? ' buckets' : ' items')"></span>
+                            <button type="button" data-mrql-result-control="next" :disabled="executing || !result?.listPage?.hasNext" @click="changePage(displayPage + 1)" class="px-3 py-2 border rounded disabled:opacity-50">Next</button>
+                        </nav>
                     </div>
                 </template>
+                <template x-if="result?.mode && totalCount === 0"><p class="text-sm text-stone-500 py-4 text-center">No results found.</p></template>
 
-                {# Note results #}
-                <template x-if="!result.mode && result.notes && result.notes.length > 0">
-                    <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Notes</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.notes" :key="entity.ID">
-                                <div>
-                                    <template x-if="entity.renderedHTML">
-                                        <div x-html="entity.renderedHTML"></div>
-                                    </template>
-                                    <template x-if="!entity.renderedHTML">
-                                        <a :href="'/note?id=' + entity.ID"
-                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                            <div class="min-w-0">
-                                                <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                                <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
-                                            </div>
-                                        </a>
-                                    </template>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </template>
-
-                {# Group results #}
-                <template x-if="!result.mode && result.groups && result.groups.length > 0">
-                    <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Groups</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.groups" :key="entity.ID">
-                                <div>
-                                    <template x-if="entity.renderedHTML">
-                                        <div x-html="entity.renderedHTML"></div>
-                                    </template>
-                                    <template x-if="!entity.renderedHTML">
-                                        <a :href="'/group?id=' + entity.ID"
-                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                            <div class="min-w-0">
-                                                <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                                <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
-                                            </div>
-                                        </a>
-                                    </template>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </template>
-
-                {# Empty state (non-grouped) #}
-                <template x-if="!result.mode && totalCount === 0">
+                <template x-if="!result?.mode && totalCount === 0">
                     <p class="text-sm text-stone-500 font-mono py-4 text-center">No results found.</p>
                 </template>
             </div>

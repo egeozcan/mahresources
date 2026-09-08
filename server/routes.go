@@ -268,6 +268,13 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 				listConstraints["category_id"] = carrier.ID
 			}
 		}
+		if ctx["mrqlLists"] == true {
+			byEntity := map[string]interface{}{}
+			for _, entity := range []string{"resource", "note", "group"} {
+				byEntity[entity] = offeredActions(actionAccess, pm.GetListActionsForPlacement(entity, "bulk", nil))
+			}
+			ctx["mrqlBulkActions"] = byEntity
+		}
 		path := request.URL.Path
 		if id, ok := ctx["listTaxonomyID"].(uint); ok && id != 0 {
 			if strings.HasPrefix(path, "/notes") {

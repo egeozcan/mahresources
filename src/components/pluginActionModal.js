@@ -55,6 +55,7 @@ export function pluginActionModal() {
                 bulk_max: detail.bulk_max,
             };
             this.action = action;
+            this.selection = detail.selection || null;
             this.errors = {};
             this.result = null;
             this.resultState = null;
@@ -92,7 +93,7 @@ export function pluginActionModal() {
                 ids.push(...action.entityIds.map(Number));
             }
             if ((def === 'selection' || def === 'both') && compatible) {
-                const sel = window.Alpine?.store('bulkSelection');
+                const sel = this.selection || window.Alpine?.store('bulkSelection');
                 if (sel && sel.selectedIds) {
                     for (const id of sel.selectedIds) {
                         const numId = Number(id);
@@ -164,7 +165,7 @@ export function pluginActionModal() {
             // modal is stale. Reloading on dismissal rather than on a timer is
             // what lets the reader finish reading which entities failed.
             if (reload) {
-                window.location.reload();
+                if (this.selection?.refresh) { this.selection.deselectAll(); void this.selection.refresh(); } else window.location.reload();
                 return;
             }
             this.$nextTick(() => restoreFocus(opener));
@@ -368,7 +369,7 @@ export function pluginActionModal() {
                         // middle of filling in.
                         if (superseded()) return;
                         this.close();
-                        window.location.reload();
+                        if (this.selection?.refresh) { this.selection.deselectAll(); void this.selection.refresh(); } else window.location.reload();
                     }, 1500);
                 }
             } catch (err) {

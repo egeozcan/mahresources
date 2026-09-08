@@ -31,7 +31,8 @@ func BuildQueryExecutor(appCtx QueryExecutorContext) shortcodes.QueryExecutor {
 
 // pageQueryBudget returns the configured per-page inline-MRQL query budget,
 // or 0 (disabled) when no application context is available.
-func pageQueryBudget(appCtx *application_context.MahresourcesContext) int {
+func pageQueryBudget(appCtx PageRenderContext) int {
+	appCtx = pageRenderContext(appCtx)
 	if appCtx == nil {
 		return 0
 	}

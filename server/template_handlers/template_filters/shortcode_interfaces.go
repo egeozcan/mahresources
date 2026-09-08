@@ -2,21 +2,15 @@ package template_filters
 
 import (
 	"context"
+	"reflect"
 
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/mrql"
 )
 
-// The capability each shortcode helper needs from the business layer.
-//
-// These three entry points are called from api_handlers, whose handlers now
-// take narrow interfaces. A handler cannot pass its interface value to a
-// function demanding *MahresourcesContext, so these had to narrow too for the
-// api_handlers migration to reach the MRQL and deferred-render handlers.
-//
-// Only the three exported Build* entry points are migrated; the rest of this
-// package still takes the concrete type.
+// Capabilities shared by template tags and API renderers. These interfaces
+// preserve shortcode behavior when handlers receive decorated contexts.
 
 var (
 	_ PartialResolverContext = (*application_context.MahresourcesContext)(nil)
@@ -64,4 +58,24 @@ type mrqlShortcodeRunner interface {
 	CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error)
 	GetSavedMRQLQueryByName(name string) (*models.SavedMRQLQuery, error)
 	LoadMRQLRenderData(reqCtx context.Context, resourceCategoryIDs, noteTypeIDs, categoryIDs, scopeGroupIDs []uint) (*application_context.MRQLRenderData, error)
+}
+
+// PageRenderContext supplies the application capabilities used by shared
+// template tags, regardless of the handler that provides their context.
+type PageRenderContext interface {
+	QueryExecutorContext
+	PartialResolverContext
+	MetaScopeResolver
+}
+
+func pageRenderContext(value any) PageRenderContext {
+	ctx, ok := value.(PageRenderContext)
+	if !ok || ctx == nil {
+		return nil
+	}
+	v := reflect.ValueOf(ctx)
+	if v.Kind() == reflect.Ptr && v.IsNil() {
+		return nil
+	}
+	return ctx
 }

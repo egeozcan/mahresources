@@ -8,6 +8,9 @@ Mahresources organizes personal information and provides MRQL for querying resou
 A request that selects, orders, groups, or summarizes Mahresources entities.
 _Avoid_: SQL query
 
+**MRQL Entity Result**:
+A resource, note, or group returned by an MRQL Query, either directly or within a result bucket. Aggregate rows summarize entities and are not themselves MRQL Entity Results.
+
 **Effective MRQL Query**:
 An MRQL Query after parameter binding, defaults, safety bounds, and the requesting principal's authorization scope have been applied.
 _Avoid_: Parsed query, raw query
@@ -15,6 +18,17 @@ _Avoid_: Parsed query, raw query
 **MRQL Explanation**:
 A non-executing diagnostic description of an Effective MRQL Query.
 _Avoid_: Query plan
+
+## Entity Interaction
+
+**Entity Selection**:
+A set of Mahresources entities of one entity type chosen for an action. Resource, note, and group selections remain independent even when presented in the same query results.
+
+**Bulk Action**:
+An operation offered for an Entity Selection according to its entity type and the action's requirements. The same action is available in ordinary entity lists and MRQL entity results.
+
+**Mass Edit**:
+An operation that applies several edits together to selected entities or a query-defined set of entities of one type. Its available edits depend on that entity type.
 
 ## Metadata Indexing
 

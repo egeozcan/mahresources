@@ -60,6 +60,8 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"stringId":    true,
 				"getNextId":   true,
 				"dereference": true,
+				"bulkActions": true,
+				"bulkMetaURL": true,
 				"docsURL":     true,
 				// Internal/rendering fields (should not leak to JSON consumers)
 				"_pluginManager":      true,
@@ -80,6 +82,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"pluginDetailActions": true,
 				"pluginCardActions":   true,
 				"pluginBulkActions":   true,
+                "mrqlBulkActions": true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}

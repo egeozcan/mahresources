@@ -224,6 +224,11 @@ export const editPanelMethods = {
   },
 
   async refreshPageContent() {
+    if (this._listSelection?.refresh) {
+      await this._listSelection.refresh();
+      this.updateItemsFromDOM();
+      return;
+    }
     const listContainer = findListContainer(document);
     if (!listContainer) return;
 

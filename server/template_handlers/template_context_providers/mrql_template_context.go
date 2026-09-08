@@ -19,6 +19,8 @@ func MRQLContextProvider(ctx MRQLPageContext) func(request *http.Request) pongo2
 		return pongo2.Context{
 			"pageTitle":    "MRQL Query",
 			"hideSidebar":  true,
+			"mrqlLists":    true,
+			"mrqlEntities": []string{"resource", "note", "group"},
 			"savedQueries": savedQueries,
 		}.Update(baseContext)
 	}

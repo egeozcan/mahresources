@@ -41,10 +41,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return nil
 	}
 
-	var appCtx *application_context.MahresourcesContext
-	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
-		appCtx, _ = appCtxVal.(*application_context.MahresourcesContext)
-	}
+	appCtx := pageRenderContext(ctx.Public["_appContext"])
 
 	metaCtx := buildMetaContext(entity, appCtx)
 	if metaCtx == nil {
@@ -88,10 +85,8 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	}
 
 	var executor shortcodes.QueryExecutor
-	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
-		if appCtx, ok := appCtxVal.(*application_context.MahresourcesContext); ok && appCtx != nil {
-			executor = BuildQueryExecutor(appCtx)
-		}
+	if appCtx != nil {
+		executor = BuildQueryExecutor(appCtx)
 	}
 
 	if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
@@ -121,7 +116,8 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 // walks the DOM at click time, so those resolve to that host rather than here.
 // Carrier slots (CustomListHeader) are skipped because the endpoint cannot load a
 // Category by (type, id); a [reload] there falls back to reloading the page.
-func wrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx *application_context.MahresourcesContext) string {
+func wrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx PageRenderContext) string {
+	appCtx = pageRenderContext(appCtx)
 	if appCtx == nil || !shortcodes.ContainsReloadButton(rendered) || !shortcodes.IsDeferrableEntity(metaCtx) {
 		return rendered
 	}
@@ -146,7 +142,8 @@ func wrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcode
 // whichever runs first on a page (the custom_css tag renders in <head>, before the
 // body's process_shortcodes tags) must install the full set — otherwise later tags
 // reuse a context missing the signer and deferral silently degrades to inline.
-func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.MahresourcesContext) context.Context {
+func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) context.Context {
+	appCtx = pageRenderContext(appCtx)
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 	// partials stays a nil INTERFACE when appCtx is nil. Assigning a nil

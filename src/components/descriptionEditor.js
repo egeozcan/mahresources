@@ -1,3 +1,4 @@
+import { selectionForElement } from './bulkSelection.js';
 /**
  * The inline description editor used by `templates/partials/description.tpl`,
  * which twelve templates include on both detail pages and list cards.
@@ -104,7 +105,9 @@ export function descriptionEditor({ url = '' } = {}) {
                 this.error = '';
 
                 if (reload && !clickedLink) {
-                    location.reload();
+                    const selection = selectionForElement(container);
+                    if (selection?.refresh) await selection.refresh();
+                    else location.reload();
                     return;
                 }
 

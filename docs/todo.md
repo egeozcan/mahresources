@@ -9327,3 +9327,23 @@ exclusive end bounds. All 37 PM E2E tests, focused PostgreSQL coverage, bundled
 Lua compile/fixture checks and CSS scan passed. Live demo data was preserved.
 
 Follow-up rereview: Standards — zero majors; Spec — zero majors.
+
+## MRQL shared-list review loop — 2026-09-08
+
+- [x] Pin review baseline to `0ca839be7d1b90904054e64d15aeabf1e0de64f7`; include all uncommitted and new source files.
+- [x] Start independent Standards and Spec reviews against the confirmed MRQL design.
+- [x] Reproduce and fix major findings, with focused regressions.
+- [x] Repeat both review axes until neither reports P0–P2 findings.
+- [x] Record final validation and review results.
+
+Round 1 findings: Standards — three P2s (duplicate range anchors, stale selection metadata, lightbox refresh) and one P3 (renderer DI). Spec — two P2s (recoverable bucket item-cap continuation and unstable random-query paging/edit targets). Implementation follow-up also found the resource category JSON field mismatch in action eligibility. All were fixed with focused regressions.
+
+Round 1 fixes are complete. The 10 MRQL/lightbox browser regressions and 1,313 frontend unit tests pass; targeted backend snapshot, scope, continuation, and interface regressions pass. Two fresh agents are reviewing the complete changes in round 2.
+
+Round 2: Standards found two P2s (an older mutation refresh replacing a newer query, and pagination destroying keyboard focus). Spec found no majors and one P3 (frontend MIME wildcard matching differed from backend exact matching). All three were fixed. Five lifecycle regressions and a browser keyboard paging regression cover the major fixes. The broader Go application-context, server, API, architecture, and list-view suites pass. Round 3 independent Standards and Spec reviews are underway.
+
+Round 3: Standards found no majors. Spec found one P2: opening Mass Edit in all-results mode retained selected IDs from a previously opened entity type. Every opening now snapshots the active selection. Two payload regressions reproduce populated and empty selections after changing types; both failed before the fix and pass afterward. Browser coverage also checks the selected count after changing entity type.
+
+Round 4: Standards — no P0–P2 findings. Spec — no P0–P2 findings. Both reviewers independently verified the final Mass Edit correction and reported no remaining majors in the complete changes.
+
+Final validation: production build; all 1,320 frontend unit tests across 81 files; all 11 shared-list/lightbox browser regressions; Go application-context, server/API/template, architecture, and list-view suites; CSS scan; source whitespace checks. Eight major findings were resolved across four review rounds, along with the reported minor issues. Changes remain uncommitted.

@@ -340,6 +340,8 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 			return fmt.Sprintf("input_%v_%v", elName, currentId)
 		},
 		"dereference": dereference,
+		"bulkActions": bulkActionDeclarations,
+		"bulkMetaURL": func(entity string) string { return "/v1/" + entity + "s/meta/keys" },
 	}
 
 	if errMessage := request.URL.Query().Get("Error"); errMessage != "" {

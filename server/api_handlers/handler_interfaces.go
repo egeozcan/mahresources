@@ -60,6 +60,7 @@ type ShortcodeLintContext interface {
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
 // completion, explain, generation, and the saved-query CRUD.
 type MRQLAPIContext interface {
+	mrqlListRenderContext
 	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
 	// reach this plugin's own surfaces. An operator decision, per plugin, so a
 	// seam that renders plugin code needs the name to ask about.
@@ -68,6 +69,8 @@ type MRQLAPIContext interface {
 	template_filters.QueryExecutorContext
 	template_filters.PartialResolverContext
 	Principal() *auth.Principal
+	IssueMRQLSnapshot(reqCtx context.Context, query string, params map[string]any, result *application_context.MRQLResult) (string, error)
+	ResolveMRQLSnapshot(reqCtx context.Context, query string, params map[string]any, snapshot string) (*application_context.MRQLResult, error)
 	ExecuteMRQLParsed(reqCtx context.Context, parsed *mrql.Query, limit, page int) (*application_context.MRQLResult, error)
 	ExecuteMRQLGrouped(reqCtx context.Context, parsed *mrql.Query) (*application_context.MRQLGroupedResult, error)
 	ExplainMRQLWithOptions(reqCtx context.Context, parsed *mrql.Query, explainOptions application_context.MRQLExplainOptions) (*application_context.MRQLExplainResult, error)
@@ -87,6 +90,18 @@ type MRQLAPIContext interface {
 	UpdateSavedMRQLQuery(id uint, name, query, description string) (*models.SavedMRQLQuery, error)
 	CreateSavedMRQLQuery(name, query, description string) (*models.SavedMRQLQuery, error)
 	DeleteSavedMRQLQuery(id uint) error
+}
+
+// mrqlListRenderContext supplies shared-card hydration and the capabilities
+// used by their template tags. Request binding uses RequestContextSetter when
+// available, just as other handlers do.
+type mrqlListRenderContext interface {
+	template_filters.PageRenderContext
+	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
+	GetResources(offset, limit int, query *query_models.ResourceSearchQuery) ([]models.Resource, error)
+	GetNotes(offset, limit int, query *query_models.NoteQuery) ([]models.Note, error)
+	GetGroups(offset, limit int, query *query_models.GroupQuery) ([]models.Group, error)
 }
 
 // savedMRQLLookup resolves a saved query by id or name. Shared by the MRQL API

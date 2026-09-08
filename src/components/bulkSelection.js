@@ -12,7 +12,7 @@ const btnClasses = `bulk-action-btn inline-flex justify-center
       text-sm font-medium rounded-md
       focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500`;
 
-let currentIndex = 0;
+
 let _bulkLiveRegion = null;
 
 // A rendered selectable row. Rows opt in with `x-data="selectableItem({...})"`
@@ -21,17 +21,34 @@ let _bulkLiveRegion = null;
 // detail table's rows (<tr> on /resources/details).
 export const SELECTABLE_ITEM_SELECTOR = '[x-data^="selectableItem"]';
 
+export function selectionForElement(el, Alpine = window.Alpine) {
+  const scope = el?.closest?.('[data-selection-scope]')?.dataset.selectionScope;
+  if (!scope) return Alpine?.store('bulkSelection');
+  const name = 'selection:' + scope;
+  if (!Alpine.store(name)) Alpine.store(name, createBulkSelection(scope));
+  return Alpine.store(name);
+}
+
 export function registerBulkSelectionStore(Alpine) {
-  Alpine.store("bulkSelection", {
+  Alpine.store('bulkSelection', createBulkSelection());
+  Alpine.magic?.('selection', (el) => selectionForElement(el, Alpine));
+}
+
+export function createBulkSelection(scope = null) {
+  return {
     selectedIds: new Set(),
+    refresh: null,
+    queryTarget: null,
+    nextIndex: 0,
     elements: [],
     editors: [],
     options: {},
     activeEditor: null,
     lastSelected: null,
+    lastSelectedElement: null,
 
     init() {
-      currentIndex = 0;
+
       if (!_bulkLiveRegion) {
         _bulkLiveRegion = createLiveRegion();
       }
@@ -66,7 +83,53 @@ export function registerBulkSelectionStore(Alpine) {
      * hidden.
      */
     hasSelectableItems() {
-      return this.elements.length > 0 || document.querySelector(SELECTABLE_ITEM_SELECTOR) !== null;
+      if (this.elements.some(Boolean)) return true;
+      if (!scope) return document.querySelector(SELECTABLE_ITEM_SELECTOR) !== null;
+      return [...document.querySelectorAll('[data-selection-scope]')].some(root => root.dataset.selectionScope === scope && root.querySelector(SELECTABLE_ITEM_SELECTOR));
+    },
+
+    reset() {
+      this.selectedIds.clear();
+      this.elements = [];
+      this.options = {};
+      this.nextIndex = 0;
+      this.lastSelected = null;
+      this.lastSelectedElement = null;
+      this.editors = [];
+      this.activeEditor = null;
+    },
+
+    selectedEntities() {
+      return [...this.selectedIds].map(id => this.options[id]?.entity).filter(Boolean);
+    },
+
+    updateEntity(id, entity) {
+      for (const option of this.elements) {
+        if (option.itemId === id) option.entity = entity;
+      }
+    },
+
+    syncCheckboxes(id, checked) {
+      this.elements.filter(option => option?.itemId === id).forEach(option => setCheckBox(option.el, checked));
+    },
+
+    unregisterOption(el) {
+      const option = this.elements.find(option => option?.el === el);
+      if (!option) return;
+      if (this.lastSelectedElement === el) this.lastSelectedElement = null;
+      this.elements = this.elements.filter(other => other !== option);
+      const remaining = this.elements.find(other => other?.itemId === option.itemId);
+      if (remaining) this.options[option.itemId] = remaining;
+      else {
+        delete this.options[option.itemId];
+        this.selectedIds.delete(option.itemId);
+        if (this.lastSelected === option.itemId) this.lastSelected = null;
+      }
+    },
+
+    unregisterForm(form) {
+      this.editors = this.editors.filter(editor => editor !== form);
+      if (this.activeEditor === form) this.activeEditor = null;
     },
 
     isSelected(id) {
@@ -77,8 +140,9 @@ export function registerBulkSelectionStore(Alpine) {
       return this.selectedIds.size > 0;
     },
 
-    select(id) {
+    select(id, el = null) {
       this.lastSelected = id;
+      this.lastSelectedElement = el;
       this.setActiveEditor(null);
 
       if (this.isSelected(id)) {
@@ -86,12 +150,13 @@ export function registerBulkSelectionStore(Alpine) {
       }
 
       this.selectedIds.add(id);
-      setCheckBox(this.options[id].el, true);
+      this.syncCheckboxes(id, true);
       this.announce(`${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected`);
     },
 
-    deselect(id) {
+    deselect(id, el = null) {
       this.lastSelected = id;
+      this.lastSelectedElement = el;
       this.setActiveEditor(null);
 
       if (!this.isSelected(id)) {
@@ -99,26 +164,29 @@ export function registerBulkSelectionStore(Alpine) {
       }
 
       this.selectedIds.delete(id);
-      setCheckBox(this.options[id].el, false);
+      this.syncCheckboxes(id, false);
       this.announce(this.selectedIds.size > 0 ? `${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected` : 'Selection cleared');
     },
 
-    toggle(id) {
+    toggle(id, el = null) {
       if (this.isSelected(id)) {
-        this.deselect(id);
+        this.deselect(id, el);
       } else {
-        this.select(id);
+        this.select(id, el);
       }
     },
 
-    selectUntil(id) {
+    selectUntil(id, el = null) {
       if (!this.lastSelected) {
-        this.toggle(id);
+        this.toggle(id, el);
         return;
       }
 
-      const from = this.options[this.lastSelected].itemNo;
-      const to = this.options[id].itemNo;
+      const anchor = this.elements.find(option => option.el === this.lastSelectedElement) || this.options[this.lastSelected];
+      const target = this.elements.find(option => option.el === el) || this.options[id];
+      const from = this.elements.indexOf(anchor);
+      const to = this.elements.indexOf(target);
+      if (from < 0 || to < 0) return;
       const elementsToProcess = [...this.elements].slice(
         Math.min(from, to),
         Math.max(from, to) + 1
@@ -129,6 +197,8 @@ export function registerBulkSelectionStore(Alpine) {
       } else {
         elementsToProcess.forEach((option) => { if (option) this.select(option.itemId); });
       }
+      this.lastSelected = id;
+      this.lastSelectedElement = el;
     },
 
     deselectAll() {
@@ -137,7 +207,7 @@ export function registerBulkSelectionStore(Alpine) {
     },
 
     selectAll() {
-      this.elements.forEach((option) => this.select(option.itemId));
+      this.elements.forEach((option) => { if (option) this.select(option.itemId); });
       this._followFocus('[data-bulk-deselect-all]');
     },
 
@@ -155,7 +225,7 @@ export function registerBulkSelectionStore(Alpine) {
       queueMicrotask(() => {
         requestAnimationFrame(() => {
           const replacement = Array.from(document.querySelectorAll(selector))
-            .find((el) => el.offsetParent !== null);
+            .find((el) => el.offsetParent !== null && (!scope || el.closest('[data-selection-scope]')?.dataset.selectionScope === scope));
           if (replacement) focusOn(replacement);
         });
       });
@@ -190,9 +260,14 @@ export function registerBulkSelectionStore(Alpine) {
     },
 
     registerOption(option) {
-      option.itemNo = option.itemNo || ++currentIndex;
-      this.elements[option.itemNo] = option;
+      option.itemNo = option.itemNo || ++this.nextIndex;
+      this.elements.push(option);
+      const alreadyRegistered = !!this.options[option.itemId];
       this.options[option.itemId] = option;
+      if (alreadyRegistered) {
+        setCheckBox(option.el, this.isSelected(option.itemId));
+        return;
+      }
 
       // Registration is not a user action, so it must not move the shift-range
       // anchor. `select` and `deselect` both stamp `lastSelected` *before* they
@@ -203,6 +278,7 @@ export function registerBulkSelectionStore(Alpine) {
       // entire page instead of that one card, which on /downloads is one keystroke
       // away from a bulk delete.
       const anchor = this.lastSelected;
+      const anchorElement = this.lastSelectedElement;
 
       if (option.el.checked) {
         this.select(option.itemId);
@@ -211,11 +287,12 @@ export function registerBulkSelectionStore(Alpine) {
       }
 
       this.lastSelected = anchor;
+      this.lastSelectedElement = anchorElement;
     },
 
     registerForm(form) {
       const btn = document.createElement("button");
-      const buttonText = form.querySelector("label, button").innerText;
+      const buttonText = form.dataset?.editorLabel || form.querySelector("label, button").innerText;
 
       btn.innerText = buttonText;
       btn.className = btnClasses;
@@ -224,14 +301,14 @@ export function registerBulkSelectionStore(Alpine) {
       btn.setAttribute("aria-label", `Toggle ${buttonText} editor`);
       btn.addEventListener("click", () => this.toggleEditor(form));
       btn.setAttribute("x-effect", `() => {
-        const isActive = $store.bulkSelection.isActiveEditor($el.nextElementSibling);
+        const isActive = $selection.isActiveEditor($el.nextElementSibling);
         $el.dataset.active = isActive;
         $el.setAttribute("aria-expanded", isActive);
       }`);
 
-      form.setAttribute("x-show", "$store.bulkSelection.isActiveEditor($el)");
+      form.setAttribute("x-show", "$selection.isActiveEditor($el)");
       form.setAttribute("x-collapse", "");
-      form.setAttribute(":class", "$store.bulkSelection.isActiveEditor($el) && 'active'");
+      form.setAttribute(":class", "$selection.isActiveEditor($el) && 'active'");
       form.insertAdjacentElement("beforebegin", btn);
 
       this.editors.push(form);
@@ -257,6 +334,13 @@ export function registerBulkSelectionStore(Alpine) {
         const response = await fetch(form.action, { method: "POST", body: new FormData(form) });
         if (!response.ok) {
           throw new Error(`Server error: ${response.status}`);
+        }
+        if (this.refresh) {
+          form.reset();
+          this.deselectAll();
+          await this.refresh();
+          this.announce('Bulk operation completed successfully');
+          return;
         }
         const url = new URL(window.location);
         url.pathname = url.pathname + ".body";
@@ -289,7 +373,7 @@ export function registerBulkSelectionStore(Alpine) {
         form.parentElement.classList.remove("pointer-events-none");
       }
     },
-  });
+  };
 }
 
 export function bulkSelectionForms() {
@@ -297,7 +381,9 @@ export function bulkSelectionForms() {
     init() {
       // $root dies with the subtree, so capture it while it is attached.
       const root = this.$root;
-      const store = this.$store.bulkSelection;
+      const store = this.$selection || this.$store.bulkSelection;
+      this._selection = store;
+      this._forms = [...root.querySelectorAll('form')];
       root.querySelectorAll("form").forEach(form => store.registerForm(form));
 
       // Delegated on the container, not bound per form. `submit` bubbles, so a
@@ -311,13 +397,14 @@ export function bulkSelectionForms() {
       root.addEventListener("submit", (event) => {
         const form = event.target;
         if (!(form instanceof HTMLFormElement)) return;
-        if (form.classList.contains("no-ajax")) return;
+        if (form.classList.contains("no-ajax") && !store.refresh) return;
         if (!store.editors.includes(form)) return;
         if (event.defaultPrevented) return;
         event.preventDefault();
         void store.submitEditorForm(form);
       });
-    }
+    },
+    destroy() { this._forms?.forEach(form => this._selection.unregisterForm(form)); },
   }
 }
 
@@ -326,15 +413,24 @@ export function selectableItem({ itemNo, itemId } = {}) {
     init() {
       const el = this.$root.querySelector("input[type='checkbox']");
 
-      this.$store.bulkSelection.registerOption({
-        itemNo,
-        itemId,
-        el,
-      });
+      this._selection = this.$selection || this.$store.bulkSelection;
+      this._checkbox = el;
+      const root = this.$root;
+      const readEntity = () => JSON.parse(root.querySelector('[data-entity]')?.dataset.entity || root.dataset.entity || 'null');
+      this._selection.registerOption({itemNo, itemId, el, entity: readEntity()});
+      // A list morph can retain this selectable row while replacing its nested
+      // entity data. Keep eligibility reactive to that server-authored payload.
+      this._entityObserver = new MutationObserver(() => this._selection.updateEntity(itemId, readEntity()));
+      this._entityObserver.observe(root, {subtree: true, childList: true, attributes: true, attributeFilter: ['data-entity']});
+    },
+
+    destroy() {
+      this._entityObserver?.disconnect();
+      this._selection?.unregisterOption(this._checkbox);
     },
 
     selected() {
-      return this.$store.bulkSelection.isSelected(itemId);
+      return (this.$selection || this.$store.bulkSelection).isSelected(itemId);
     },
 
     events: {
@@ -343,21 +439,21 @@ export function selectableItem({ itemNo, itemId } = {}) {
        */
       ["@click"](e) {
         if (e.shiftKey) {
-          this.$store.bulkSelection.selectUntil(itemId);
+          (this.$selection || this.$store.bulkSelection).selectUntil(itemId, this._checkbox);
           return;
         }
 
-        this.$store.bulkSelection.toggle(itemId);
+        (this.$selection || this.$store.bulkSelection).toggle(itemId, this._checkbox);
       },
       ["@contextmenu"](e) {
         e.preventDefault();
-        this.$store.bulkSelection.selectUntil(itemId);
+        (this.$selection || this.$store.bulkSelection).selectUntil(itemId, this._checkbox);
       },
       ["@keydown.space.prevent"]() {
-        this.$store.bulkSelection.toggle(itemId);
+        (this.$selection || this.$store.bulkSelection).toggle(itemId, this._checkbox);
       },
       ["@keydown.enter.prevent"]() {
-        this.$store.bulkSelection.toggle(itemId);
+        (this.$selection || this.$store.bulkSelection).toggle(itemId, this._checkbox);
       },
     },
   };
@@ -406,8 +502,9 @@ export function setupBulkSelectionListeners() {
     selection.empty();
   });
 
-  [...document.querySelectorAll(".tags")].forEach(async (container) => {
-    container.addEventListener("click", async function (e) {
+  document.addEventListener("click", async function (e) {
+      const container = e.target.closest?.(".tags");
+      if (!container) return;
       if (!e.target.classList.contains("edit-in-list")) {
         return;
       }
@@ -453,7 +550,11 @@ export function setupBulkSelectionListeners() {
       // Serializing now would post an empty selection and silently clear the entity's tags.
       observeSelectorField(form, "editedId", () => {
         window.Alpine.nextTick(() => {
-          fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
+          void (async () => {
+            const response = await fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
+            if (!response.ok) { alert('Could not update tags.'); return; }
+            await selectionForElement(container)?.refresh?.();
+          })();
         });
       });
       form.className = "mb-6 p-4 active";
@@ -474,6 +575,5 @@ export function setupBulkSelectionListeners() {
       window.Alpine.initTree(form);
 
       setTimeout(() => form.querySelector("[x-ref='autocompleter']")?.focus(), 10);
-    })
   });
 }

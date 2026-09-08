@@ -117,7 +117,8 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrMassEditOwnerClearScoped) {
 		return http.StatusForbidden
 	}
-	if errors.Is(err, application_context.ErrMassEditTooLarge) {
+	if errors.Is(err, application_context.ErrMassEditTooLarge) ||
+		errors.Is(err, application_context.ErrInvalidMRQLSnapshot) {
 		return http.StatusBadRequest
 	}
 

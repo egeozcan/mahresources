@@ -1,6 +1,6 @@
 <button type="button"
     data-bulk-deselect-all
-    @click.prevent="$store.bulkSelection.deselectAll()"
+    @click.prevent="$selection.deselectAll()"
     class="
         inline-flex justify-center
         py-2 px-4 mt-3

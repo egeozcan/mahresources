@@ -208,7 +208,7 @@ export class MRQLPage {
    * Get the error message displayed in the results section.
    */
   async getErrors(): Promise<string | null> {
-    const alertLocator = this.resultsSection.locator('[role="alert"]');
+    const alertLocator = this.resultsSection.getByTestId('mrql-execution-error');
     if (await alertLocator.count() === 0) return null;
     return alertLocator.textContent();
   }

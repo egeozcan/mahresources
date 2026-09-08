@@ -201,13 +201,20 @@ func (ctx *MahresourcesContext) applyPreparedMRQLFilter(db *gorm.DB, parsed *mrq
 	return filtered, nil
 }
 
+// MRQLEntityIdentity preserves display ordering across entity types.
+type MRQLEntityIdentity struct {
+	EntityType string
+	ID         uint
+}
+
 // MRQLResult holds the results of executing an MRQL query, organized by entity type.
 type MRQLResult struct {
-	EntityType string            `json:"entityType"`
-	Resources  []models.Resource `json:"resources,omitempty"`
-	Notes      []models.Note     `json:"notes,omitempty"`
-	Groups     []models.Group    `json:"groups,omitempty"`
-	Warnings   []string          `json:"warnings,omitempty"`
+	Order      []MRQLEntityIdentity `json:"-"`
+	EntityType string               `json:"entityType"`
+	Resources  []models.Resource    `json:"resources,omitempty"`
+	Notes      []models.Note        `json:"notes,omitempty"`
+	Groups     []models.Group       `json:"groups,omitempty"`
+	Warnings   []string             `json:"warnings,omitempty"`
 	// DefaultLimitApplied is true when the query had no explicit LIMIT clause
 	// and the server applied the configured default.
 	DefaultLimitApplied bool `json:"default_limit_applied"`
@@ -989,10 +996,13 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 		switch item.entityType {
 		case "resource":
 			result.Resources = append(result.Resources, allResources[item.index])
+			result.Order = append(result.Order, MRQLEntityIdentity{EntityType: "resource", ID: allResources[item.index].ID})
 		case "note":
 			result.Notes = append(result.Notes, allNotes[item.index])
+			result.Order = append(result.Order, MRQLEntityIdentity{EntityType: "note", ID: allNotes[item.index].ID})
 		case "group":
 			result.Groups = append(result.Groups, allGroups[item.index])
+			result.Order = append(result.Order, MRQLEntityIdentity{EntityType: "group", ID: allGroups[item.index].ID})
 		}
 	}
 

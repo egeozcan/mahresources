@@ -1977,8 +1977,14 @@ Request body fields:
   - offset  (integer)          — explicit cursor offset (takes precedence over page)
 
 Query parameter:
-  - render (0 or 1) — when 1, populates each result row's RenderedHTML using
-    the entity's CustomMRQLResult template.
+  - render (0, 1, or list) — when 1, populates each result row's RenderedHTML using
+    the entity's CustomMRQLResult template. With list, uses the standard selectable
+    entity cards and returns listPage metadata. displayPage and displaySize in the
+    body paginate within the query's LIMIT/OFFSET; bucketed queries retain their
+    per-bucket item limit. For bucket navigation, pass listPage.nextOffset back as
+    displayOffset (relative to the authored bucket OFFSET). Randomly ordered flat
+    results also return a signed snapshot; send it as snapshot on later display
+    requests to keep the same bounded sample and order.
 
 An aggregated GROUP BY response carries "columns": the result's column names in
 the order the query wrote them (group-by fields first, then aggregates), matching

@@ -66,6 +66,7 @@ export function cardActionMenu() {
                     confirm: action.confirm,
                     filters: action.filters,
                     bulk_max: action.bulk_max,
+                    selection: this.$selection,
                 }
             }));
         }

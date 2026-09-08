@@ -124,7 +124,7 @@ func TestListPages_SelectAllHiddenWhenNothingToSelect(t *testing.T) {
 	// the predicate is *false* on an empty list — and true on a populated one —
 	// is asserted in the browser by
 	// e2e/tests/regressions/select-all-row-shifts-the-page-on-load.spec.ts.
-	if !strings.Contains(body, "$store.bulkSelection.hasSelectableItems()") {
+	if !strings.Contains(body, "$selection.hasSelectableItems()") {
 		t.Errorf("Select All should be gated on there being something to select; got:\n%s", truncate(body))
 	}
 }

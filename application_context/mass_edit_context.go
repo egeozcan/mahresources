@@ -477,6 +477,8 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 // explicit ids; filter mode re-runs the list page's own query server-side.
 func (ctx *MahresourcesContext) resolveMassEditTargets(spec massEditSpec, q *query_models.MassEditQuery) ([]uint, int64, error) {
 	switch q.Target {
+	case "mrql":
+		return ctx.resolveMassEditMRQL(spec, q)
 	case "", "ids":
 		ids := deduplicateUints(q.ID)
 		if len(ids) == 0 {
@@ -557,7 +559,7 @@ func (ctx *MahresourcesContext) resolveMassEditTargets(spec massEditSpec, q *que
 		return ids, matched, nil
 
 	default:
-		return nil, 0, fmt.Errorf("target must be \"ids\" or \"filter\"")
+		return nil, 0, fmt.Errorf("target must be \"ids\", \"filter\" or \"mrql\"")
 	}
 }
 

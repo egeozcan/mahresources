@@ -7,7 +7,7 @@
 {# pattern pluginActionModal.tpl settled on: x-trap's own restore points at   #}
 {# whatever had focus when it armed, which for a control the opener has since #}
 {# hidden is nothing.                                                         #}
-{% if massEditEntity %}
+{% if massEditEntity or mrqlLists %}
 <div x-data="massEditModal()" x-cloak>
     <template x-if="isOpen">
         <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
@@ -31,12 +31,12 @@
                         </label>
                         <label class="flex items-center gap-2 text-sm mt-1">
                             <input type="radio" name="massEditTarget" value="filter" x-model="target">
-                            <span>Every <span x-text="noun()"></span> matching the current filter (<span x-text="totalCount"></span> on this list)</span>
+                            <span>Every <span x-text="noun()"></span> matching the current filter <span x-show="!queryTarget">(<span x-text="totalCount"></span> on this list)</span><span x-show="queryTarget">within the executed query’s limits; count checked before applying</span></span>
                         </label>
                     </fieldset>
 
-                    {% if massEditEntity == 'resource' or massEditEntity == 'note' or massEditEntity == 'group' %}
-                    <fieldset class="mass-edit-section">
+                    {% if massEditEntity == 'resource' or massEditEntity == 'note' or massEditEntity == 'group' or mrqlLists %}
+                    <fieldset class="mass-edit-section" x-show="sections.includes('tags')" :disabled="!sections.includes('tags')">
                         <div class="mass-edit-row">
                             <span class="mass-edit-legend">Tags</span>
                             <select aria-label="Tags operation" name="TagsOp" class="mass-edit-select">
@@ -46,12 +46,18 @@
                                 <option value="replace">Replace with</option>
                             </select>
                         </div>
-                        {% include "/partials/form/autocompleter.tpl" with profile='tag' usage=massEditEntity elName='TagIds' title='Tags to apply' onChange='onTagsChange' id=getNextId("massedit_tags") %}
+                        {% if mrqlLists %}
+                        {% for massEditType in mrqlEntities %}
+                        <template x-if="entityType === '{{ massEditType }}'">
+                            {% include "/partials/form/autocompleter.tpl" with profile='tag' usage=massEditType elName='TagIds' title='Tags to apply' onChange='onTagsChange' id=getNextId("massedit_tags") %}
+                        </template>
+                        {% endfor %}
+                        {% else %}{% include "/partials/form/autocompleter.tpl" with profile='tag' usage=massEditEntity elName='TagIds' title='Tags to apply' onChange='onTagsChange' id=getNextId("massedit_tags") %}{% endif %}
                     </fieldset>
                     {% endif %}
 
-                    {% if massEditEntity == 'resource' or massEditEntity == 'note' %}
-                    <fieldset class="mass-edit-section">
+                    {% if massEditEntity == 'resource' or massEditEntity == 'note' or mrqlLists %}
+                    <fieldset class="mass-edit-section" x-show="sections.includes('groups')" :disabled="!sections.includes('groups')">
                         <div class="mass-edit-row">
                             <span class="mass-edit-legend">Related groups</span>
                             <select aria-label="Related groups operation" name="GroupsOp" class="mass-edit-select">
@@ -65,8 +71,8 @@
                     </fieldset>
                     {% endif %}
 
-                    {% if massEditEntity == 'resource' or massEditEntity == 'group' %}
-                    <fieldset class="mass-edit-section">
+                    {% if massEditEntity == 'resource' or massEditEntity == 'group' or mrqlLists %}
+                    <fieldset class="mass-edit-section" x-show="sections.includes('notes')" :disabled="!sections.includes('notes')">
                         <div class="mass-edit-row">
                             <span class="mass-edit-legend">Related notes</span>
                             <select aria-label="Related notes operation" name="NotesOp" class="mass-edit-select">
@@ -80,8 +86,8 @@
                     </fieldset>
                     {% endif %}
 
-                    {% if massEditEntity == 'note' or massEditEntity == 'group' %}
-                    <fieldset class="mass-edit-section">
+                    {% if massEditEntity == 'note' or massEditEntity == 'group' or mrqlLists %}
+                    <fieldset class="mass-edit-section" x-show="sections.includes('resources')" :disabled="!sections.includes('resources')">
                         <div class="mass-edit-row">
                             <span class="mass-edit-legend">Related resources</span>
                             <select aria-label="Related resources operation" name="ResourcesOp" class="mass-edit-select">
@@ -95,8 +101,8 @@
                     </fieldset>
                     {% endif %}
 
-                    {% if massEditEntity == 'group' %}
-                    <fieldset class="mass-edit-section">
+                    {% if massEditEntity == 'group' or mrqlLists %}
+                    <fieldset class="mass-edit-section" x-show="sections.includes('relatedGroups')" :disabled="!sections.includes('relatedGroups')">
                         <div class="mass-edit-row">
                             <span class="mass-edit-legend">Related groups</span>
                             <select aria-label="Related groups operation" name="RelatedGroupsOp" class="mass-edit-select">
@@ -136,7 +142,13 @@
                             </select>
                         </div>
                         <div x-show="fdMetaVisible()" class="mt-1">
-                            {% include "/partials/form/freeFields.tpl" with name="Meta" url=massEditMetaKeysUrl jsonOutput="true" id=getNextId("massedit_meta") %}
+                            {% if mrqlLists %}
+                            {% for massEditType in mrqlEntities %}
+                            <template x-if="entityType === '{{ massEditType }}'">
+                                {% include "/partials/form/freeFields.tpl" with name="Meta" url=bulkMetaURL(massEditType) jsonOutput="true" id=getNextId("massedit_meta") %}
+                            </template>
+                            {% endfor %}
+                            {% else %}{% include "/partials/form/freeFields.tpl" with name="Meta" url=massEditMetaKeysUrl jsonOutput="true" id=getNextId("massedit_meta") %}{% endif %}
                         </div>
                         <div x-show="metaKeysVisible()" class="mt-1">
                             <datalist id="mass-edit-meta-keys-list"></datalist>

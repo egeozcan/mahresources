@@ -36,7 +36,7 @@
             </thead>
             <tbody>
                 {% for entity in resources %}
-                    <tr x-data="selectableItem({ itemId: {{ entity.ID }} })">
+                    <tr data-entity='{{ entity|json }}' x-data="selectableItem({ itemId: {{ entity.ID }} })">
                         <td>
                             <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="detail-table-checkbox focus:ring-amber-600 text-amber-700 border-stone-300 rounded">
                         </td>

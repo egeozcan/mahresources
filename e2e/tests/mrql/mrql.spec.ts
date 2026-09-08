@@ -331,7 +331,7 @@ test.describe('MRQL GROUP BY', () => {
     await mrql.executeQuery();
 
     // Results heading should mention "rows" (aggregated mode)
-    const heading = mrql.resultsSection.locator('h2');
+    const heading = mrql.resultsSection.locator('h2').first();
     await expect(heading).toContainText('rows');
 
     // A <table> element should be present
@@ -365,7 +365,7 @@ test.describe('MRQL GROUP BY', () => {
     await mrql.executeQuery();
 
     // Results heading should mention "groups" (bucketed mode)
-    const heading = mrql.resultsSection.locator('h2');
+    const heading = mrql.resultsSection.locator('h2').first();
     await expect(heading).toContainText('groups');
 
     // Bucket headers (bg-stone-100 divs inside bordered containers) should have key labels
@@ -418,7 +418,7 @@ test.describe('MRQL GROUP BY', () => {
     expect(errorText).toBeFalsy();
 
     // Results heading should be visible
-    const heading = mrql.resultsSection.locator('h2');
+    const heading = mrql.resultsSection.locator('h2').first();
     await expect(heading).toBeVisible();
   });
 
@@ -447,7 +447,7 @@ test.describe('MRQL GROUP BY', () => {
     expect(errorText).toBeFalsy();
 
     // Results section should be visible
-    const heading = mrql.resultsSection.locator('h2');
+    const heading = mrql.resultsSection.locator('h2').first();
     await expect(heading).toBeVisible();
   });
 });

@@ -57,18 +57,18 @@ export function massEditModal() {
             this.$nextTick(() => restoreFocus(opener));
         },
 
-        open({ entityType, target }) {
+        open({ entityType, target, selection }) {
             if (!entityType) return;
             this._opener = focusedElement();
             this.entityType = entityType;
+            this.selection = selection || window.Alpine?.store('bulkSelection');
+            this.queryTarget = this.selection?.queryTarget ? JSON.parse(JSON.stringify(this.selection.queryTarget)) : null;
             this.target = target === 'filter' ? 'filter' : 'ids';
-            if (this.target === 'ids') {
-                this.selectedIds = [...(window.Alpine?.store('bulkSelection')?.selectedIds || [])];
-                if (this.selectedIds.length === 0) {
-                    // Opened with nothing selected: fall back to the filter so
-                    // the reader is never shown an empty mode.
-                    this.target = 'filter';
-                }
+            this.selectedIds = [...(this.selection?.selectedIds || [])];
+            if (this.target === 'ids' && this.selectedIds.length === 0) {
+                // Opened with nothing selected: fall back to the filter so
+                // the reader is never shown an empty mode.
+                this.target = 'filter';
             }
             this.ownerMode = 'set';
             this.metaKeyRows = [''];
@@ -179,7 +179,12 @@ export function massEditModal() {
             if (this.target === 'ids') {
                 this.selectedIds.forEach((id) => payload.append('ID', String(id)));
             } else {
-                payload.set('Filter', this.currentFilter);
+                if (this.queryTarget) {
+                    payload.set('Target', 'mrql');
+                    payload.set('MRQLQuery', this.queryTarget.query);
+                    payload.set('MRQLParams', JSON.stringify(this.queryTarget.params));
+                    if (this.queryTarget.snapshot) payload.set('MRQLSnapshot', this.queryTarget.snapshot);
+                } else payload.set('Filter', this.currentFilter);
                 if (expectedCount != null) {
                     payload.set('ExpectedCount', String(expectedCount));
                 }
@@ -276,7 +281,7 @@ export function massEditModal() {
                 // The count in the dialog is a fresh count, fetched immediately
                 // before the confirm, and is what the server re-checks.
                 const probe = this.buildPayload(form, { dryRun: true, expectedCount: null }).payload;
-                probe.set('Target', this.target);
+                probe.set('Target', this.queryTarget ? 'mrql' : this.target);
                 try {
                     const response = await fetch(`/v1/${this.noun()}/massEdit`, { method: 'POST', body: probe });
                     if (!response.ok) throw new Error(await this.errorMessage(response));
@@ -336,6 +341,11 @@ export function massEditModal() {
         // The same .body refetch + morph routine the bulk toolbar's
         // submitEditorForm uses, so the list updates in place.
         async refreshList() {
+            if (this.selection?.refresh) {
+                this.selection.deselectAll();
+                await this.selection.refresh();
+                return;
+            }
             const url = new URL(window.location);
             url.pathname = url.pathname + '.body';
             const refreshResponse = await fetch(url.toString());

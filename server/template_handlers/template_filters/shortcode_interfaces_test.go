@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"mahresources/application_context"
 	"mahresources/shortcodes"
 )
 
@@ -16,6 +17,15 @@ import (
 //
 // Both entry points accept a missing context by design, so both are pinned here.
 func TestNilContextIsToleratedByShortcodeHelpers(t *testing.T) {
+	t.Run("page context normalizes typed nil dependencies", func(t *testing.T) {
+		var app *application_context.MahresourcesContext
+		if pageRenderContext(app) != nil || pageQueryBudget(app) != 0 {
+			t.Fatal("expected a missing context and disabled budget")
+		}
+		if buildPageRenderContext(context.Background(), app) == nil {
+			t.Fatal("expected a usable request context")
+		}
+	})
 	t.Run("BuildPartialResolver returns nil rather than a panicking closure", func(t *testing.T) {
 		if got := BuildPartialResolver(nil); got != nil {
 			t.Fatal("expected a nil resolver for a nil context")

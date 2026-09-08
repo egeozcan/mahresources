@@ -1,3 +1,4 @@
+import { bulkAction } from './components/bulkAction.js';
 // CSRF token wiring — imported first so window.fetch is wrapped before any
 // other module can capture a reference to it.
 import './csrf.js';
@@ -254,6 +255,7 @@ Alpine.data('templateBundle', templateBundle);
 Alpine.data('accountSecurity', accountSecurity);
 Alpine.data('resourceUpload', resourceUpload);
 Alpine.data('reductionBulkAction', reductionBulkAction);
+Alpine.data('bulkAction', bulkAction);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

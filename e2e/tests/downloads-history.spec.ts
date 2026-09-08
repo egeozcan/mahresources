@@ -261,7 +261,7 @@ test.describe('/downloads', () => {
     await expect(rowFor(page, second)).toBeVisible();
 
     await selectAllButton(page).click();
-    await expect(page.getByTestId('downloads-selected-count')).toHaveText('2 selected');
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('2 downloads selected');
 
     await page.getByTestId('downloads-bulk-delete').click();
     // Deleting confirms, like every other bulk delete in the app, and the confirm

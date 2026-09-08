@@ -1,3 +1,4 @@
+import { replaceMRQLSort } from '../utils/mrqlListQuery.js';
 import * as userSettings from '../userSettings.js';
 import { focusOn, parkFocus } from '../utils/focus.js';
 import { askToConfirm } from './confirmDialog.js';
@@ -24,6 +25,77 @@ export function mrqlEditor() {
 
     // Results
     result: null,
+    executedQuery: null,
+    displayPage: 1,
+    bucketOffsets: {1:0},
+    displaySize: 25,
+    listLayout: 'cards',
+
+    entitiesFor(type) {
+      if (!this.result || this.result.mode) return [];
+      return this.result[type === 'resource' ? 'resources' : type === 'note' ? 'notes' : 'groups'] || [];
+    },
+    hasEntityResults(type) {
+      return this.result?.mode === 'bucketed' ? this.result.entityType === type : this.entitiesFor(type).length > 0;
+    },
+    resetSelections() {
+      if (typeof window === 'undefined') return;
+      for (const type of ['resource','note','group']) window.Alpine?.store('selection:mrql-' + type)?.reset?.();
+    },
+    refreshForCompletedAction(job) {
+      if (!this.executedQuery || !this.executedEntityTypes?.includes(job?.entityType)) return;
+      const snapshot = this.executedQuery;
+      const stamp = JSON.stringify([snapshot.query, snapshot.params]);
+      clearTimeout(this._actionRefreshTimer);
+      const refresh = () => {
+        if (JSON.stringify([this.executedQuery?.query, this.executedQuery?.params]) !== stamp) return;
+        // A later query takes precedence. If the same query is already being
+        // refreshed, let it finish before collecting the last job's changes.
+        if (this.executing) {
+          if (this._inflightExecuteStamp === stamp) this._actionRefreshTimer = setTimeout(refresh, 100);
+          return;
+        }
+        void this.execute({pushState:false, snapshot:this.executedQuery, displayPage:this.displayPage});
+      };
+      this._actionRefreshTimer = setTimeout(refresh, 100);
+    },
+    connectSelections() {
+      const snapshot = this.executedQuery;
+      for (const type of ['resource','note','group']) {
+        const selection = window.Alpine?.store('selection:mrql-' + type);
+        if (!selection) continue;
+        selection.queryTarget = snapshot;
+        selection.refresh = () => {
+          // A mutation can finish after the reader has started another Run or
+          // page request. Its old callback must never abort that newer request.
+          if (this.executedQuery !== snapshot || this.executing) return;
+          return this.execute({pushState:false, snapshot, displayPage:this.displayPage});
+        };
+      }
+    },
+    async executeFromResultControl(options) {
+      const control = typeof document === 'undefined' ? null : document.activeElement?.dataset.mrqlResultControl;
+      const pending = this.execute(options);
+      const requestId = this._executeRequestId;
+      await pending;
+      if (!control) return;
+      this.$nextTick(() => {
+        // Do not steal focus if the reader moved elsewhere during the request,
+        // or if another request has taken over the results.
+        if (requestId !== this._executeRequestId || document.activeElement !== document.body) return;
+        const target = document.querySelector(`[data-mrql-result-control="${control}"]`);
+        if (!focusOn(target)) parkFocus(document.querySelector('[data-mrql-page-status], [data-testid="mrql-execution-error"]'));
+      });
+    },
+    changePage(page) { return this.executeFromResultControl({pushState:false, snapshot:this.executedQuery, displayPage:page, reuseResult:true}); },
+    changePageSize(size) { this.displaySize = size; this.bucketOffsets = {1:0}; return this.changePage(1); },
+    sortResults(order) {
+      if (!order || !this.executedQuery) return;
+      const snapshot = {query: replaceMRQLSort(this.executedQuery.query, order), params: this.executedQuery.params};
+      this.setQuery(snapshot.query);
+      this.bucketOffsets = {1:0};
+      return this.executeFromResultControl({snapshot});
+    },
 
     // Package 4: parameter placeholders ($name) derived from the validate
     // response, plus their current values. paramValues is preserved while the
@@ -140,7 +212,7 @@ export function mrqlEditor() {
     // cut something off when the row count actually reached it.
     get resultsTruncated() {
       if (!this.defaultLimitApplied || !this.appliedLimit) return false;
-      return this.totalCount >= this.appliedLimit;
+      return (this.result?.listPage && !this.result.mode ? this.result.listPage.total : this.totalCount) >= this.appliedLimit;
     },
 
     // BH-012: surface the Update affordance only when a saved query is loaded
@@ -152,6 +224,8 @@ export function mrqlEditor() {
     },
 
     async init() {
+      this._actionCompletedHandler = (event) => this.refreshForCompletedAction(event.detail);
+      window.addEventListener('plugin-action-completed', this._actionCompletedHandler);
       // Load MRQL history from the server-backed user-settings store (non-blocking so the
       // editor renders immediately; history fills in reactively when it resolves).
       userSettings.whenLoaded().then(() => {
@@ -602,11 +676,17 @@ export function mrqlEditor() {
     // same state. The panels are addressed by their own stamp, not by a
     // generation counter, because "Explain then Run the same query" must keep
     // both — that is the workflow the Explain button exists for.
-    clearResult() {
+    clearResult({ preserveExecution = false } = {}) {
+      this.resetSelections();
       this.result = null;
       this.resultQuery = '';
       this.defaultLimitApplied = false;
       this.appliedLimit = 0;
+      if (!preserveExecution) {
+        this.executedQuery = null;
+        this.executedEntityTypes = [];
+        clearTimeout(this._actionRefreshTimer);
+      }
     },
 
     clearExplain() {
@@ -651,8 +731,10 @@ export function mrqlEditor() {
       this.scheduleValidation();
     },
 
-    async execute({ pushState = true } = {}) {
-      const query = this.getQuery().trim();
+    async execute({ pushState = true, snapshot = null, displayPage = 1, reuseResult = false } = {}) {
+      const query = snapshot?.query || this.getQuery().trim();
+      const params = snapshot?.params || this.paramsPayload();
+      if (!snapshot) this.bucketOffsets = {1:0};
       if (!query) return;
 
       this._executeController?.abort();
@@ -662,20 +744,20 @@ export function mrqlEditor() {
       this.executing = true;
       this.error = '';
       // BH-013: clears the banner state at the start of each request too.
-      this.clearResult();
+      this.clearResult({ preserveExecution: snapshot !== null && snapshot === this.executedQuery });
       // Findings 23/46: an Explain of a different query must not survive this
       // run. Explaining and then running the *same* query with the *same*
       // parameter values is a normal workflow, so that plan is kept.
-      const stamp = this.panelStamp(query);
+      const stamp = JSON.stringify([query, params]);
       this._inflightExecuteStamp = stamp;
       this.abandonStaleCompanionRequest(stamp);
       if (this.explainQuery !== stamp) this.clearExplain();
 
       try {
-        const resp = await fetch('/v1/mrql?render=1', {
+        const resp = await fetch('/v1/mrql?render=list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, params: this.paramsPayload() }),
+          body: JSON.stringify({ query, params, snapshot:reuseResult ? snapshot?.snapshot : undefined, displayPage, displaySize:this.displaySize, displayOffset:this.bucketOffsets[displayPage] }),
           signal: controller.signal,
         });
         if (requestId !== this._executeRequestId || controller.signal.aborted) return;
@@ -690,6 +772,10 @@ export function mrqlEditor() {
         const result = await resp.json();
         if (requestId !== this._executeRequestId || controller.signal.aborted) return;
         this.result = result;
+        this.executedQuery = {query, params, ...(result.snapshot ? {snapshot:result.snapshot} : {})};
+        this.executedEntityTypes = ['resource','note','group'].filter(type => this.hasEntityResults(type));
+        this.displayPage = result.listPage?.page || displayPage;
+        if (result.mode === 'bucketed' && result.listPage?.nextOffset != null) this.bucketOffsets[this.displayPage+1] = result.listPage.nextOffset;
         this.resultQuery = stamp;
         // BH-013: capture the default-limit signal from the response payload.
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
@@ -700,6 +786,7 @@ export function mrqlEditor() {
         // clicking a default-card thumbnail opens the lightbox.
         this.$nextTick(() => {
           window.Alpine?.store('lightbox')?.initFromDOM();
+          this.connectSelections();
         });
 
         // Update URL so back/forward works (skip if already the same query)
@@ -1032,6 +1119,8 @@ export function mrqlEditor() {
     },
 
     destroy() {
+      clearTimeout(this._actionRefreshTimer);
+      if (this._actionCompletedHandler) window.removeEventListener('plugin-action-completed', this._actionCompletedHandler);
       if (this._validateTimer) clearTimeout(this._validateTimer);
       this._validateController?.abort();
       this._executeController?.abort();

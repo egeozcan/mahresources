@@ -27,7 +27,7 @@ export function reductionBulkAction({ entity = 'resource' } = {}) {
     error: '',
 
     selectedIds() {
-      return [...this.$store.bulkSelection.selectedIds];
+      return [...(this.$selection || this.$store.bulkSelection).selectedIds];
     },
 
     async toggle() {

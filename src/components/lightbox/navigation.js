@@ -1,5 +1,6 @@
 import { abortableFetch } from '../../index.js';
 import { captureTrigger, restoreFocus } from '../../utils/focus.js';
+import { selectionForElement } from '../bulkSelection.js';
 import { findListContainer } from '../../utils/listContainer.js';
 
 /**
@@ -238,6 +239,7 @@ export const navigationMethods = {
 
     event.preventDefault();
     this.triggerElement = captureTrigger(event);
+    this._listSelection = selectionForElement(event.currentTarget);
 
     // A self-contained gallery: every link inside the marked container, and
     // nothing else. Used by a Resource Reduction's Clusters, where flicking

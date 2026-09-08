@@ -1,0 +1,3 @@
+# Share bulk-action declarations across ordinary lists and MRQL
+
+Ordinary entity lists and MRQL entity results need the same actions, so built-in bulk actions and adapted plugin registrations will use one declaration contract for entity applicability, eligibility, standard inputs, confirmation, and execution. Specialized actions may provide a custom component through that contract, preserving interactions such as Resource Reduction without forcing every workflow into a form schema or duplicating controls by page. Mass Edit remains the existing interaction for edits across query results, with entity-specific fields and query bounds; general bulk-action declarations do not acquire a separate all-query-results targeting mechanism.
