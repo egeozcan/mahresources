@@ -101,10 +101,10 @@ export function downloadCockpit() {
                     this.$nextTick(() => focusFirstIn(this.$refs.panel));
                 } else {
                     // Unconditionally, which is review remediation finding 4: this was
-                    // gated on _lastTrigger, and the panel opens three ways that leave
+                    // gated on _lastTrigger, and the panel opens two ways that leave
                     // it null — the Cmd/Ctrl+Shift+D shortcut (toggle() with no
-                    // event), the `jobs-panel-open` window event, and an incoming
-                    // plugin action job. The panel is x-trap.noreturn and its contents
+                    // event) and the `jobs-panel-open` window event. The panel is
+                    // x-trap.noreturn and its contents
                     // are torn down by the x-if, so nothing else was standing between
                     // the reader and <body>.
                     restoreFocus(this._lastTrigger, this._trigger);
@@ -170,7 +170,7 @@ export function downloadCockpit() {
 
         /**
          * Open the panel from something that is not the trigger: the
-         * `jobs-panel-open` window event, or a plugin action job arriving over SSE.
+         * `jobs-panel-open` window event after the user starts a plugin action.
          *
          * These set isOpen directly, so they used to leave nothing to return focus to
          * and the reader came back to the panel's trigger instead of the control they
@@ -294,7 +294,9 @@ export function downloadCockpit() {
                 const { job } = JSON.parse(e.data);
                 job._isAction = true;
                 const isNew = this.upsertJob(job);
-                this.openFromEvent();
+                // Background actions (including scheduled runs and events arriving
+                // after reconnect) update the queue without taking over the UI.
+                // User-started actions request opening via jobs-panel-open.
                 if (isNew) this.announce(`Action started: ${job.label}`);
             });
 

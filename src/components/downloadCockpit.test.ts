@@ -42,6 +42,71 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
+describe('background job events preserve the panel visibility', () => {
+    class FakeEventSource {
+        listeners = new Map<string, (event: { data: string }) => void>();
+        onerror: (() => void) | null = null;
+        constructor(public url: string) {}
+        addEventListener(type: string, handler: (event: { data: string }) => void) {
+            this.listeners.set(type, handler);
+        }
+        emit(type: string, data: unknown) {
+            this.listeners.get(type)?.({ data: JSON.stringify(data) });
+        }
+        close() {}
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal('EventSource', FakeEventSource);
+        vi.stubGlobal('document', {
+            querySelectorAll: () => [], activeElement: null, body: {}, documentElement: {},
+        });
+        component.announce = vi.fn();
+        component.connect();
+        component.eventSource.emit('init', { jobs: [], actionJobs: [] });
+    });
+
+    afterEach(() => {
+        component.disconnect();
+        vi.useRealTimers();
+    });
+
+    test('a background action is tracked without opening the closed panel', () => {
+        const action = { id: 'scheduled', label: 'Scheduled action', status: 'running' };
+
+        component.eventSource.emit('action_added', { job: action });
+
+        expect(component.jobs).toEqual([{ ...action, _isAction: true }]);
+        expect(component.announce).toHaveBeenCalledWith('Action started: Scheduled action');
+        expect(component.isOpen).toBe(false);
+    });
+
+    test('an action arriving after an idle connection reconnects does not reopen the panel', () => {
+        const action = { id: 'scheduled', label: 'Scheduled action', status: 'running' };
+        component.openFromEvent();
+        component.close();
+        component.eventSource.onerror();
+        vi.advanceTimersByTime(1000);
+        component.eventSource.emit('init', { jobs: [], actionJobs: [action] });
+
+        component.eventSource.emit('action_added', { job: action });
+
+        expect(component.jobs).toEqual([{ ...action, _isAction: true }]);
+        expect(component.isOpen).toBe(false);
+    });
+
+    test('an explicit request still opens the panel and incoming jobs leave it open', () => {
+        component.openFromEvent();
+        component.eventSource.emit('action_added', {
+            job: { id: 'requested', label: 'Requested action', status: 'running' },
+        });
+
+        expect(component.isOpen).toBe(true);
+        expect(component.jobs).toHaveLength(1);
+    });
+});
+
 describe('finding 2 — a paused job can be cancelled', () => {
     test('canCancel covers paused as well as the active states', () => {
         for (const status of ['pending', 'downloading', 'processing', 'paused']) {
@@ -388,7 +453,7 @@ describe('round 3 — the panel declines to open underneath a modal', () => {
         expect(announced[0]).toContain('A dialog is open');
     });
 
-    test('an incoming plugin action job does not open it either', () => {
+    test('an explicit open request does not open it either', () => {
         stubOverlays([shown]);
         component.announce = () => {};
 
@@ -666,8 +731,8 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
     });
 
     test('an event-less open from elsewhere still captures where the reader was', () => {
-        // `jobs-panel-open` and an incoming plugin action job both set isOpen directly.
-        // openFromEvent is what those paths call so the reader is returned to the
+        // `jobs-panel-open` sets isOpen directly. openFromEvent captures focus so
+        // the reader is returned to the
         // control they were on, rather than to the panel's own trigger.
         const input = { tagName: 'INPUT' };
         vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: input, body: {}, documentElement: {} });
