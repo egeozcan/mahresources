@@ -9,7 +9,12 @@
 
     <fieldset class="space-y-6" :disabled="busy">
         <legend class="sr-only">New Resource Reduction</legend>
-        {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" description="Optional. Leave blank to use Resource Reduction." %}
+        <div class="max-w-lg">
+            <label for="name" class="block text-xs font-mono font-medium text-stone-600">Name</label>
+            <input type="text" name="name" id="name" autocomplete="off" aria-describedby="name-description"
+                   class="mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+            <p id="name-description" class="mt-1 text-sm text-stone-500">Optional. Leave blank to use Resource Reduction.</p>
+        </div>
 
         <div class="space-y-3">
             <p id="reduction-selection-hint" class="text-sm text-stone-600">Choose at least one group or resource. Groups include resources from their descendants when you compute.</p>
