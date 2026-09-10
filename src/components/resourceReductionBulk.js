@@ -14,8 +14,10 @@
  * `entity` selects which half of the Extent the selection fills: the resources
  * list sends Resource ids, the groups list sends Group ids, and the server
  * expands a Group through its descendants at compute time rather than here.
+ * On group details, `ownerId` instead selects all currently owned Resources on
+ * the server, optionally including descendants, without needing a bulk store.
  */
-export function reductionBulkAction({ entity = 'resource' } = {}) {
+export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
   return {
     open: false,
     mode: 'new',
@@ -25,6 +27,11 @@ export function reductionBulkAction({ entity = 'resource' } = {}) {
     loadedExisting: false,
     busy: false,
     error: '',
+    includeDescendants: false,
+
+    hasSelection() {
+      return ownerId !== 0 || this.selectedIds().length > 0;
+    },
 
     selectedIds() {
       return [...(this.$selection || this.$store.bulkSelection).selectedIds];
@@ -72,12 +79,14 @@ export function reductionBulkAction({ entity = 'resource' } = {}) {
     },
 
     submit() {
-      const ids = this.selectedIds();
-      if (!ids.length) {
+      if (this.busy) return;
+      if (!this.hasSelection()) {
         this.error = 'Select something first.';
         return;
       }
-      const body = entity === 'group' ? { groupIds: ids } : { resourceIds: ids };
+      const body = ownerId
+        ? { ownerId, includeDescendants: this.includeDescendants }
+        : entity === 'group' ? { groupIds: this.selectedIds() } : { resourceIds: this.selectedIds() };
       if (this.mode === 'existing') {
         if (!this.existingId) {
           this.error = 'Choose a Resource Reduction to add to.';

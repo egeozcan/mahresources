@@ -57,12 +57,40 @@ func (ctx *MahresourcesContext) CreateOrExtendResourceReduction(creator *query_m
 	}
 	resourceIDs := dedupeUints(creator.ResourceIds)
 	groupIDs := dedupeUints(creator.GroupIds)
-	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
-		return nil, errors.New("a Resource Reduction needs at least one Resource or Group")
-	}
-
 	var reduction *models.ResourceReduction
 	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		if creator.OwnerId != 0 {
+			// Check the root before traversing: subtree collection uses raw SQL,
+			// while the Resource query below retains the caller's scope filter.
+			if !txCtx.GroupVisible(creator.OwnerId) {
+				return errors.New("no such Group")
+			}
+			owners := []uint{creator.OwnerId}
+			if creator.IncludeDescendants {
+				var err error
+				owners, err = txCtx.collectSubtreeGroupIDs(creator.OwnerId)
+				if err != nil {
+					return err
+				}
+			}
+			var owned []uint
+			for _, chunk := range chunkUints(owners, idChunk) {
+				var ids []uint
+				if err := txCtx.db.Model(&models.Resource{}).
+					Where("resources.owner_id IN ?", chunk).
+					Pluck("resources.id", &ids).Error; err != nil {
+					return fmt.Errorf("selecting owned Resources: %w", err)
+				}
+				owned = append(owned, ids...)
+			}
+			if len(owned) == 0 {
+				return errors.New("no owned Resources found in the selected group scope")
+			}
+			resourceIDs = dedupeUints(append(resourceIDs, owned...))
+		}
+		if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
+			return errors.New("a Resource Reduction needs at least one Resource or Group")
+		}
 		if creator.ID != 0 {
 			existing, err := txCtx.loadReductionForUpdate(creator.ID, ownerUserID, ownerRestricted)
 			if err != nil {

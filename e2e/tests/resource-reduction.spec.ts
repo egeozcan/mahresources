@@ -104,6 +104,57 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
 }
 
 test.describe('Resource Reduction', () => {
+  test('reduces owned resources from group details and can include the whole subtree', async ({ page, apiClient }) => {
+    const label = `RR owned ${Date.now()}`;
+    const category = await apiClient.createCategory(label);
+    const root = await apiClient.createGroup({ name: label, categoryId: category.ID });
+    const child = await apiClient.createGroup({ name: `${label} child`, categoryId: category.ID, ownerId: root.ID });
+    const grandchild = await apiClient.createGroup({ name: `${label} grandchild`, categoryId: category.ID, ownerId: child.ID });
+    const filePath = path.join(__dirname, '../test-assets/sample-image-10.png');
+    for (const group of [root, child, grandchild]) {
+      await apiClient.createResource({ filePath, name: `${group.Name} resource`, ownerId: group.ID });
+    }
+
+    await page.goto(`/group?id=${root.ID}`);
+    const panel = page.locator('.detail-panel').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
+    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await expect(panel.getByRole('checkbox', { name: 'Include resources from all subgroups' })).not.toBeChecked();
+    await panel.getByTestId('bulk-reduction-name').fill(label);
+    await panel.getByTestId('bulk-reduction-submit').click();
+    await page.waitForURL(/\/reduction\?id=\d+/);
+    const reductionURL = page.url();
+    const reductionId = new URL(reductionURL).searchParams.get('id')!;
+    await expect(page.getByTestId('reduction-extent')).toContainText('1 Resource and 0 Groups selected.');
+
+    await page.goto(`/group?id=${root.ID}`);
+    await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
+    await panel.getByRole('radio', { name: 'Add to one I already have' }).check();
+    await panel.getByTestId('bulk-reduction-existing').selectOption(reductionId);
+    await panel.getByTestId('bulk-reduction-submit').click();
+    await page.waitForURL(reductionURL);
+    await expect(page.getByTestId('reduction-extent')).toContainText('3 Resources and 0 Groups selected.');
+  });
+
+  test('offers subtree reduction when the parent owns no resources directly', async ({ page, apiClient }) => {
+    const label = `RR empty parent ${Date.now()}`;
+    const category = await apiClient.createCategory(label);
+    const root = await apiClient.createGroup({ name: label, categoryId: category.ID });
+    const child = await apiClient.createGroup({ name: `${label} child`, categoryId: category.ID, ownerId: root.ID });
+    await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image-10.png'), name: label, ownerId: child.ID,
+    });
+
+    await page.goto(`/group?id=${root.ID}`);
+    await page.getByRole('button', { name: 'Reduce', exact: true }).click();
+    await page.getByTestId('bulk-reduction-submit').click();
+    await expect(page.getByTestId('bulk-reduction-error')).toContainText('no owned Resources');
+    await page.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
+    await page.getByTestId('bulk-reduction-submit').click();
+    await page.waitForURL(/\/reduction\?id=\d+/);
+    await expect(page.getByTestId('reduction-extent')).toContainText('1 Resource and 0 Groups selected.');
+  });
+
   test('creates a Reduction from the resources bulk bar and navigates to it', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR handoff ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);

@@ -9,18 +9,29 @@
 {#   entity   — 'resource' or 'group'; which half of the Extent this fills      #}
 {#   noun     — the plural noun for the hint, e.g. "Resources"                  #}
 {#   panelId  — unique id for the disclosure panel                              #}
-<div class="px-4" x-data="reductionBulkAction({ entity: '{{ entity }}' })">
+{#   reductionOwnerId — optional group detail action with a subtree checkbox    #}
+<div class="{% if reductionOwnerId %}relative{% else %}px-4{% endif %}" x-data="reductionBulkAction({ entity: '{{ entity }}', ownerId: {{ reductionOwnerId|default:0 }} })"
+     @keydown.escape.stop="open = false; $refs.trigger.focus()" @click.outside="open = false">
+    {% if !reductionOwnerId %}
     <span class="block text-sm font-mono font-medium text-stone-700 mt-3">Reduce</span>
-    <button type="button"
+    {% endif %}
+    <button type="button" x-ref="trigger"
             data-testid="bulk-reduction-action"
             :aria-expanded="open ? 'true' : 'false'"
             aria-controls="{{ panelId }}"
             @click="toggle()"
-            class="inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
-        Resource Reduction
+            class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600{% endif %}">
+        {% if reductionOwnerId %}Reduce{% else %}Resource Reduction{% endif %}
     </button>
 
-    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-72">
+    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="{% if reductionOwnerId %}absolute right-0 z-20 {% endif %}mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-72">
+        {% if reductionOwnerId %}
+        <label class="flex items-center gap-2 mb-2 text-sm text-stone-700">
+            <input type="checkbox" x-model="includeDescendants" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+            Include resources from all subgroups
+        </label>
+        <p class="mb-2 text-xs text-stone-600" x-text="includeDescendants ? 'Selects all resources currently owned by this group and its subgroups.' : 'Selects all resources currently owned directly by this group.'"></p>
+        {% endif %}
         <fieldset>
             <legend class="sr-only">Add these {{ noun }} to a Resource Reduction</legend>
             <label class="flex items-center gap-2 text-sm text-stone-700">
@@ -54,14 +65,16 @@
             </p>
         </div>
 
+        {% if !reductionOwnerId %}
         <p class="mt-2 text-xs text-stone-600">
             <span x-text="selectedIds().length"></span> {{ noun }} selected.
         </p>
+        {% endif %}
         <p x-show="error" x-cloak x-text="error" data-testid="bulk-reduction-error" class="mt-1 text-xs text-red-700" role="alert"></p>
 
         <button type="button"
                 data-testid="bulk-reduction-submit"
-                :disabled="busy || selectedIds().length === 0"
+                :disabled="busy || !hasSelection()"
                 @click="submit()"
                 class="mt-2 inline-flex justify-center py-1.5 px-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
             <span x-text="mode === 'existing' ? 'Add' : 'Create'"></span>

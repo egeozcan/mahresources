@@ -1741,6 +1741,8 @@ components:
                     type: array
                 id:
                     type: integer
+                includeDescendants:
+                    type: boolean
                 keepAsVersionIdentical:
                     nullable: true
                     type: boolean
@@ -1751,6 +1753,8 @@ components:
                     type: string
                 name:
                     type: string
+                ownerId:
+                    type: integer
                 resourceIds:
                     items:
                         type: integer

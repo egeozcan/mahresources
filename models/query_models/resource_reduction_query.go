@@ -17,6 +17,12 @@ type ResourceReductionCreator struct {
 	ResourceIds []uint `json:"resourceIds" schema:"resourceIds"`
 	GroupIds    []uint `json:"groupIds" schema:"groupIds"`
 
+	// OwnerId selects all currently owned Resources from the group detail page,
+	// beyond its preview limit. IncludeDescendants also selects Resources owned
+	// by its subgroups. This selection is stored as explicit Resource ids.
+	OwnerId            uint `json:"ownerId" schema:"ownerId"`
+	IncludeDescendants bool `json:"includeDescendants" schema:"includeDescendants"`
+
 	// MatchingMode is "identical" or "both". Empty means both, which is the
 	// default a new Reduction is created with.
 	MatchingMode string `json:"matchingMode" schema:"matchingMode"`

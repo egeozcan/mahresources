@@ -44,7 +44,7 @@
             {% include "/partials/seeAll.tpl" with entities=group.OwnGroups subtitle="Sub-Groups" formAction="/groups" addAction="/group/new" formID=group.ID formParamName="ownerId" templateName="group" %}
             {% endif %}
             {% if sc.OwnEntities.OwnResources %}
-            {% include "/partials/seeAll.tpl" with entities=group.OwnResources subtitle="Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="ownerId" templateName="resource" showUntaggedLink=true %}
+            {% include "/partials/seeAll.tpl" with entities=group.OwnResources subtitle="Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="ownerId" templateName="resource" showUntaggedLink=true showReductionLink=true %}
             {% endif %}
             {% endif %}
         </div>
