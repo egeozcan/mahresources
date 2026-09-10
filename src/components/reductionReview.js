@@ -104,7 +104,7 @@ export function registerReductionReviewStore(Alpine) {
 
     expand(clusterId) {
       this.expanded[clusterId] = true;
-      window.mahAnnounce?.('Cluster expanded. Its controls are now available.');
+      window.mahAnnounce?.('Cluster expanded.');
     },
 
     /**
@@ -121,7 +121,7 @@ export function registerReductionReviewStore(Alpine) {
     check(clusterId, checked, oversized, event) {
       if (this.busy) {
         if (event?.target) event.target.checked = !checked;
-        window.mahAnnounce?.('One moment — the previous action is still running.');
+        window.mahAnnounce?.('An action is already in progress.');
         return;
       }
       return this.act(clusterId, checked ? 'check' : 'uncheck', 0, { acknowledgeOversized: oversized && this.expanded[clusterId] === true });
@@ -136,14 +136,14 @@ export function registerReductionReviewStore(Alpine) {
       if (this.busy) return;
       const count = this.checkedCount;
       if (count === 0) {
-        this.error = 'Nothing is checked.';
+        this.error = 'Select at least one Cluster to apply.';
         return;
       }
       const clusters = `${count} Cluster${count === 1 ? '' : 's'}`;
       const losers = `${this.checkedLoserCount} Resource${this.checkedLoserCount === 1 ? '' : 's'}`;
       const confirmed = await Alpine.store('confirmDialog').ask(
-        `${clusters} will be merged and their Losers deleted — ${losers} across every page of this Reduction, not just this one. This cannot be undone.`,
-        { title: 'Apply this Resource Reduction?', confirmLabel: 'Apply' },
+        `Apply ${clusters} and delete ${losers}? This includes checked Clusters on all pages. Resources will be merged into their Winners. This cannot be undone.`,
+        { title: 'Apply Resource Reduction?', confirmLabel: 'Apply' },
       );
       if (!confirmed) return;
 
@@ -164,7 +164,7 @@ export function registerReductionReviewStore(Alpine) {
         const stale = this.applyResult.stale?.length || 0;
         window.mahAnnounce?.(
           `${applied} Cluster${applied === 1 ? '' : 's'} applied, ${this.applyResult.destroyed} Resources deleted.` +
-          (stale ? ` ${stale} refused and kept for you to look at.` : ''),
+          (stale ? ` ${stale} could not be applied. Review the reported errors.` : ''),
           { assertive: true },
         );
         // Announced before the re-render, and its failure caught separately. The
@@ -211,7 +211,7 @@ export function registerReductionReviewStore(Alpine) {
         window.mahAnnounce?.(ANNOUNCEMENTS[action] || 'Cluster updated.');
       } catch (err) {
         this.error = err.message;
-        window.mahAnnounce?.(`That did not happen: ${err.message}`, { assertive: true });
+        window.mahAnnounce?.(`Could not update Cluster: ${err.message}`, { assertive: true });
         // The clicked checkbox still paints the state the server just refused.
         // Re-render from server truth (best effort) so the page never shows a
         // decision that will not be applied.
@@ -303,11 +303,11 @@ export function registerReductionReviewStore(Alpine) {
 }
 
 const ANNOUNCEMENTS = {
-  promote: 'Winner changed. Any member with no stored pair to the new Winner has been ejected.',
-  eject: 'Member ejected. That Resource is left untouched.',
-  restore: 'Member restored to the Cluster.',
-  skip: 'Cluster skipped. It will not be applied and will not be re-clustered.',
+  promote: 'Winner changed. Resources that do not match the new Winner were ejected.',
+  eject: 'Resource ejected from Cluster. It will be kept.',
+  restore: 'Resource restored to Cluster.',
+  skip: 'Cluster skipped. Excluded from applying and recomputing.',
   reopen: 'Cluster reopened.',
-  check: 'Cluster checked. It will be applied.',
-  uncheck: 'Cluster unchecked. It will not be applied.',
+  check: 'Cluster checked for the next apply.',
+  uncheck: 'Cluster unchecked.',
 };

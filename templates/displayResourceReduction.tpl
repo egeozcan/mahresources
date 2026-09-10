@@ -12,16 +12,15 @@
     {# Stated plainly and on the page rather than only in a confirm dialog: there #}
     {# is no restore path in this system, so the review is the safety mechanism.  #}
     <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-4" role="note">
-        <p class="font-bold">A Resource Reduction cannot be undone</p>
+        <p class="font-bold">Applying a reduction cannot be undone</p>
         <p class="text-sm mt-1">
-            Applying a Cluster merges its Losers into its Winner and deletes them. There is no restore &mdash;
-            review each Cluster before you check it.
+            Applying merges each checked Cluster's Losers into its Winner and deletes them. Review each Cluster before checking it.
         </p>
     </div>
 
     <div class="detail-panel">
         <div class="detail-panel-header">
-            <h2 class="detail-panel-title">State</h2>
+            <h2 class="detail-panel-title">Details</h2>
         </div>
         <div class="detail-panel-body">
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
@@ -56,24 +55,24 @@
             <p class="text-sm text-stone-700" data-testid="reduction-extent">
                 {{ extent.resourceCount }} Resource{% if extent.resourceCount != 1 %}s{% endif %}
                 and {{ extent.groupCount }} Group{% if extent.groupCount != 1 %}s{% endif %} selected.
-                {% if raw.ComputedAt and coverage.trusted %}Reached {{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} at last compute.{% endif %}
-                {% if extent.groupCount %}Group descendants are resolved at each compute.{% endif %}
+                {% if raw.ComputedAt and coverage.trusted %}{{ extent.resolvedSize }} Resource{% if extent.resolvedSize != 1 %}s{% endif %} included at last compute.{% endif %}
+                {% if extent.groupCount %}Resources from all subgroups are included at each compute.{% endif %}
             </p>
             {% if extent.enteredSince %}
             <p class="text-sm text-amber-800 mt-1" data-testid="reduction-drift">
                 {{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s have{% else %} has{% endif %}
-                entered the Extent since the last compute. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.
+                been added to the Extent since the last compute. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.
             </p>
             {% endif %}
             <p class="text-sm text-stone-700 mt-1" data-testid="reduction-external-resources">
                 {% if raw.ExcludeExternalResources %}
                 External resources are excluded from matching.
                 {% else %}
-                External resources may be considered as Winners.
+                Resources outside the Extent can be Winners.
                 {% endif %}
             </p>
             <p class="text-sm text-stone-500 mt-1">
-                Add more from the bulk bar on
+                Add resources or groups using the bulk actions on
                 <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/resources">the resources list</a>
                 or
                 <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/groups">the groups list</a>.
@@ -92,17 +91,17 @@
             {# of the selection states how much is out there, which is what every other #}
             {# surface here refuses to state.                                           #}
             <p class="text-sm text-stone-600" data-testid="reduction-coverage">
-                This Reduction was computed over more than you can currently see, so its coverage figures are not shown.
+                Coverage is unavailable because you do not have access to some resources.
             </p>
             {% else %}
             <p class="text-sm text-stone-700" data-testid="reduction-coverage">
-                {{ coverage.contentHashed }} of {{ coverage.extentSize }} Resources in the Extent carry a content hash{% if coverage.hashless %}; {{ coverage.hashless }} do not and cannot be matched byte-identically{% endif %}.
-                {{ coverage.perceptualHashed }} of {{ coverage.perceptualEligible }} hashable Resources have a perceptual hash.
+                {{ coverage.contentHashed }} of {{ coverage.extentSize }} resources have a content hash{% if coverage.hashless %}; {{ coverage.hashless }} cannot be checked for identical content{% endif %}.
+                {{ coverage.perceptualHashed }} of {{ coverage.perceptualEligible }} eligible resources have a perceptual hash for Near-Identical matching.
             </p>
             {% if coverage.poor %}
             <p class="text-sm text-amber-800 mt-1" data-testid="reduction-coverage-warning">
-                {{ coverage.perceptualMissing }} eligible Resource{% if coverage.perceptualMissing != 1 %}s are{% else %} is{% endif %} unhashed or failed, so Near-Identical matching is incomplete.
-                <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/admin/overview">Recompute similarity</a> to fix the cause.
+                {{ coverage.perceptualMissing }} resource{% if coverage.perceptualMissing != 1 %}s are{% else %} is{% endif %} missing a perceptual hash. Near-Identical results may be incomplete.
+                <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/admin/overview">Recompute similarity</a>.
             </p>
             {% endif %}
             {% endif %}
@@ -125,9 +124,9 @@
                         {% if reviewFilterActive %}
                             No Clusters match these filters.
                         {% elif raw.ComputedAt %}
-                            No Clusters. Nothing in this Extent repeats, as far as what could be examined &mdash; see Coverage above.
+                            No matching resources found. See Coverage for resources that could not be checked.
                         {% else %}
-                            Not computed yet. Compute the Clusters to see what repeats.
+                            Not computed yet. Click Compute Clusters to find matching resources.
                         {% endif %}
                     </div>
                 {% endfor %}
@@ -143,8 +142,7 @@
         </div>
         <div class="detail-panel-body">
             <p class="text-sm text-stone-600 mb-2">
-                Each criterion breaks the ties the one before it left; one that cannot tell the members apart
-                falls through to the next.
+                Criteria are applied in order. If resources tie, the next criterion is used.
             </p>
             <ol class="list-decimal list-inside text-sm text-stone-800" data-testid="reduction-winner-rule">
                 {% for criterion in winnerRule %}
@@ -194,7 +192,7 @@
                 Needs attention
             </label>
             <p class="text-xs text-stone-500 mt-1">
-                Lossy or oversized Clusters only.
+                Clusters with potential data loss or unusually many resources.
             </p>
 
             {% include "/partials/form/searchButton.tpl" %}
@@ -208,12 +206,12 @@
                 :disabled="$store.reductionReview.busy"
                 @click="$store.reductionReview.apply()"
                 class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
-            Apply the checked Clusters
+            Apply checked Clusters
         </button>
         <p class="text-xs text-stone-600 mt-2" data-testid="reduction-checked-summary"
-           x-text="$store.reductionReview.checkedCount + ' Cluster' + ($store.reductionReview.checkedCount === 1 ? '' : 's') + ' checked across this Reduction, ' + $store.reductionReview.checkedLoserCount + ' Resource' + ($store.reductionReview.checkedLoserCount === 1 ? '' : 's') + ' to delete. The rest stay open.'">
-            {{ review.CheckedCount }} Cluster{% if review.CheckedCount != 1 %}s{% endif %} checked across this Reduction,
-            {{ review.CheckedLoserCount }} Resource{% if review.CheckedLoserCount != 1 %}s{% endif %} to delete. The rest stay open.
+           x-text="$store.reductionReview.checkedCount + ' Cluster' + ($store.reductionReview.checkedCount === 1 ? '' : 's') + ' checked across all pages, ' + $store.reductionReview.checkedLoserCount + ' Resource' + ($store.reductionReview.checkedLoserCount === 1 ? '' : 's') + ' to delete.'">
+            {{ review.CheckedCount }} Cluster{% if review.CheckedCount != 1 %}s{% endif %} checked across all pages,
+            {{ review.CheckedLoserCount }} Resource{% if review.CheckedLoserCount != 1 %}s{% endif %} to delete.
         </p>
 
         {# The report of the last apply. A refused Cluster is named here as well as #}
@@ -227,7 +225,7 @@
             <template x-if="$store.reductionReview.applyResult?.stale?.length">
                 <div class="mt-2">
                     <p class="text-sm text-amber-800">
-                        <span x-text="$store.reductionReview.applyResult.stale.length"></span> Cluster(s) were refused and kept in this Reduction:
+                        <span x-text="$store.reductionReview.applyResult.stale.length"></span> Cluster(s) could not be applied:
                     </p>
                     <ul class="list-disc list-inside text-sm text-stone-700">
                         <template x-for="(outcome, i) in $store.reductionReview.applyResult.stale" :key="outcome.clusterId || ('withheld-' + i)">
@@ -271,7 +269,7 @@
         </form>
         {% if reduction.StatusEffective == "computing" %}
         <p class="text-sm text-stone-600 mt-1" data-testid="reduction-computing">
-            Clustering is running. Its progress is in the jobs panel; this page shows the result when it lands.
+            Computing Clusters. View progress in the jobs panel.
         </p>
         {% endif %}
     </div>
@@ -297,15 +295,14 @@
                     Identical Resources only
                 </label>
                 <p class="text-xs text-stone-500 mt-1">
-                    Perceptual hashes exist for JPEG, PNG, GIF and WebP only. A library of video, PDFs or
-                    audio can only ever be matched byte-identically, and the Identical-only sweep is far cheaper.
+                    Near-Identical matching supports JPEG, PNG, GIF and WebP. Other formats are checked for identical content only.
                 </p>
             </fieldset>
 
             <fieldset>
                 <legend class="block text-sm font-medium font-mono text-stone-700">Winner Rule</legend>
                 <p class="text-xs text-stone-500 mt-1">
-                    In order. Each criterion breaks the ties the one before it left; leave the rest empty.
+                    Choose criteria in priority order. Leave unused fields empty.
                 </p>
                 {# Ordered selects rather than a drag-and-drop list: this has to be   #}
                 {# operable from the keyboard and announced by a screen reader, and a #}
@@ -318,7 +315,7 @@
                     <select id="winner-rule-{{ slot.position }}" name="winnerRule"
                             data-testid="winner-rule-slot"
                             class="reduction-control mt-1 block w-full rounded-md border-stone-300 shadow-sm text-sm focus:border-amber-600 focus:ring-amber-600">
-                        <option value="">&mdash; none &mdash;</option>
+                        <option value="">None</option>
                         {% for criterion in winnerCriteria %}
                         <option value="{{ criterion.token }}" {% if criterion.token == slot.selected %}selected{% endif %}>{{ criterion.label }}</option>
                         {% endfor %}
@@ -328,7 +325,7 @@
             </fieldset>
 
             <fieldset>
-                <legend class="block text-sm font-medium font-mono text-stone-700">Keep a Loser's file as a version of the Winner</legend>
+                <legend class="block text-sm font-medium font-mono text-stone-700">Keep Loser files as versions</legend>
                 {# Not partials/form/checkboxInput.tpl: that renders a 14px box, which is #}
                 {# under the WCAG 2.2 SC 2.5.8 24px floor. These two govern whether a     #}
                 {# Loser's pixels are recoverable, so they are not controls to make       #}
@@ -354,8 +351,7 @@
                     For Identical Clusters
                 </label>
                 <p class="text-xs text-stone-500 mt-1">
-                    Turning these off does not by itself reclaim disk space. A merge moves every Loser version onto
-                    the Winner, and an upload always creates one, so the Loser's file stays referenced either way.
+                    Existing versions always transfer to the Winner. Files retained by those versions still use disk space when these options are off.
                 </p>
             </fieldset>
 
@@ -366,9 +362,9 @@
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Delete" %}
         <p class="text-sm text-stone-600 mb-2">
-            Deleting a Resource Reduction removes the workspace and its review. The Resources it named are untouched.
+            Deleting a reduction removes its saved review. Resources are kept.
         </p>
-        {% include "/partials/form/deleteButton.tpl" with action="/v1/reduction/delete" id=raw.ID text="Delete this Resource Reduction" confirmMessage="Delete this Resource Reduction? Its review is lost. The Resources it named are untouched." %}
+        {% include "/partials/form/deleteButton.tpl" with action="/v1/reduction/delete" id=raw.ID text="Delete Resource Reduction" confirmMessage="Delete this Resource Reduction and its saved review? Resources will be kept." %}
     </div>
 </div>
 {% endblock %}

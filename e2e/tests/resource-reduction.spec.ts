@@ -187,7 +187,7 @@ test.describe('Resource Reduction', () => {
     await page.goto(`/group?id=${root.ID}`);
     await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
     await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
-    await panel.getByRole('radio', { name: 'Add to one I already have' }).check();
+    await panel.getByRole('radio', { name: 'Add to existing reduction' }).check();
     await expect(panel.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeVisible();
     await panel.getByTestId('bulk-reduction-existing').selectOption(reductionId);
     await panel.getByTestId('bulk-reduction-submit').click();
@@ -267,7 +267,7 @@ test.describe('Resource Reduction', () => {
     await expect(cluster).toHaveAttribute('data-cluster-tier', 'identical');
     // Byte-identity is a fact, so the friction is not here.
     await expect(cluster.getByTestId('cluster-checkbox')).toBeChecked();
-    await expect(cluster.getByTestId('cluster-decided-by')).toContainText(/Chosen by|No criterion/);
+    await expect(cluster.getByTestId('cluster-decided-by')).toContainText(/Chosen by|Tied on all criteria/);
     await expect(page.getByText('cannot be undone')).toBeVisible();
   });
 
@@ -347,7 +347,9 @@ test.describe('Resource Reduction', () => {
     // The confirm has to name the blast radius, not just ask "are you sure".
     const dialog = page.locator('[role="alertdialog"]');
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('will be merged and their Losers deleted');
+    await expect(dialog).toContainText('Apply 1 Cluster and delete 1 Resource?');
+    await expect(dialog).toContainText('checked Clusters on all pages');
+    await expect(dialog).toContainText('Resources will be merged into their Winners');
     await expect(dialog).toContainText('cannot be undone');
     await dialog.getByRole('button', { name: 'Apply' }).click();
 

@@ -4,7 +4,7 @@
 <form class="space-y-6" method="post" action="/v1/reduction"
       x-data="reductionCreateForm" @submit.prevent="submit($el)" :aria-busy="busy">
     <p class="text-sm text-stone-600">
-        Select groups, resources, or both to start a Resource Reduction. You can adjust matching settings on the review page before computing.
+        Select groups or resources to compare. Matching settings are available after creation.
     </p>
 
     <fieldset class="space-y-6" :disabled="busy">
@@ -13,11 +13,11 @@
             <label for="name" class="block text-xs font-mono font-medium text-stone-600">Name</label>
             <input type="text" name="name" id="name" autocomplete="off" aria-describedby="name-description"
                    class="mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
-            <p id="name-description" class="mt-1 text-sm text-stone-500">Optional. Leave blank to use Resource Reduction.</p>
+            <p id="name-description" class="mt-1 text-sm text-stone-500">Default: Resource Reduction.</p>
         </div>
 
         <div class="space-y-3">
-            <p id="reduction-selection-hint" class="text-sm text-stone-600">Choose at least one group or resource. Groups include resources from their descendants when you compute.</p>
+            <p id="reduction-selection-hint" class="text-sm text-stone-600">Choose at least one group or resource. Groups include resources from all subgroups.</p>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" role="group" aria-label="Selection" aria-describedby="reduction-selection-hint">
                 <div>
                     {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groupIds' title='Groups' id='reduction-groups' %}
@@ -35,7 +35,7 @@
                 Exclude external resources
             </label>
             <p id="reduction-external-hint" class="mt-1 text-xs text-stone-600">
-                Only compare resources within this Reduction's Extent. Matches outside it will not be considered.
+                Only compare resources within the Extent.
             </p>
         </div>
     </fieldset>

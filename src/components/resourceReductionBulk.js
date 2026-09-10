@@ -66,7 +66,7 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
           this.existingId = String(this.existing[0].id);
         }
       } catch (err) {
-        this.error = `Could not load your Resource Reductions: ${err.message}`;
+        this.error = `Could not load Resource Reductions: ${err.message}`;
       }
     },
 
@@ -82,7 +82,7 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
     submit() {
       if (this.busy) return;
       if (!this.hasSelection()) {
-        this.error = 'Select something first.';
+        this.error = 'Select at least one resource or group.';
         return;
       }
       const body = ownerId

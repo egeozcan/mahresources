@@ -30,17 +30,17 @@
             <input type="checkbox" x-model="includeDescendants" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
             Include resources from all subgroups
         </label>
-        <p class="mb-2 text-xs text-stone-600" x-text="includeDescendants ? 'Selects all resources currently owned by this group and its subgroups.' : 'Selects all resources currently owned directly by this group.'"></p>
+        <p class="mb-2 text-xs text-stone-600" x-text="includeDescendants ? 'Includes resources owned by this group and all subgroups.' : 'Includes resources owned directly by this group.'"></p>
         {% endif %}
         <fieldset>
-            <legend class="sr-only">Add these {{ noun }} to a Resource Reduction</legend>
+            <legend class="sr-only">Add {{ noun }} to a Resource Reduction</legend>
             <label class="flex items-center gap-2 text-sm text-stone-700">
                 <input type="radio" x-model="mode" value="new" class="border-stone-300 text-amber-700 focus:ring-amber-600">
-                Start a new Resource Reduction
+                New Resource Reduction
             </label>
             <label class="flex items-center gap-2 mt-1 text-sm text-stone-700">
                 <input type="radio" x-model="mode" value="existing" class="border-stone-300 text-amber-700 focus:ring-amber-600">
-                Add to one I already have
+                Add to existing reduction
             </label>
         </fieldset>
 
@@ -57,7 +57,7 @@
                 Exclude external resources
             </label>
             <p id="{{ panelId }}-external-hint" class="mt-1 text-xs text-stone-600">
-                Only compare resources within this Reduction's selection. Matches outside it will not be considered.
+                Only compare resources within the Extent.
             </p>
         </div>
 
@@ -71,7 +71,7 @@
                 </template>
             </select>
             <p x-show="loadedExisting && existing.length === 0" x-cloak class="mt-1 text-xs text-stone-600">
-                You have no Resource Reductions yet.
+                No Resource Reductions yet.
             </p>
         </div>
 

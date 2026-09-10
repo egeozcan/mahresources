@@ -4,8 +4,7 @@
     {# partials/title.tpl already renders the page's <h1> from pageTitle. #}
     <div class="mb-3 space-y-1">
         <p class="text-sm text-stone-500">
-            <span data-testid="reductions-count">{{ reductionsCount }} Resource Reduction{% if reductionsCount != 1 %}s{% endif %}</span>.
-            A Resource Reduction never expires — it stays until you delete it.
+            <span data-testid="reductions-count">{{ reductionsCount }} Resource Reduction{% if reductionsCount != 1 %}s{% endif %}</span>
         </p>
     </div>
 

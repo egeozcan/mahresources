@@ -49,8 +49,8 @@ func TestReductionPageDistinguishesNotComputedFromNothingFound(t *testing.T) {
 	computeReduction(t, tc, red.ID)
 
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
-	assert.Contains(t, body, "Nothing in this Extent repeats")
-	assert.Contains(t, body, "carry a content hash", "and the coverage line says what could be examined")
+	assert.Contains(t, body, "No matching resources found")
+	assert.Contains(t, body, "have a content hash", "and the coverage line says what could be examined")
 }
 
 // The list page shows every Reduction the caller may see, with the creation date
