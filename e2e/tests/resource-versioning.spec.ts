@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/base.fixture';
 import { Page } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { uniqueAssetFile } from '../helpers/unique-upload';
 import { acceptConfirm } from '../helpers/confirm-dialog';
 
@@ -327,8 +328,8 @@ test.describe.serial('Resource Versioning', () => {
     await expect(checkboxes.first()).toBeVisible({ timeout: 5000 });
 
     // Select first two versions
-    await checkboxes.first().check({ force: true });
-    await checkboxes.nth(1).check({ force: true });
+    await checkboxes.first().check();
+    await checkboxes.nth(1).check();
 
     // Compare Selected button should appear
     const compareSelectedLink = page.locator('a:has-text("Compare Selected")');
@@ -546,4 +547,40 @@ test.describe.serial('Version API Operations', () => {
       await apiClient.deleteCategory(categoryId);
     }
   });
+});
+
+test('version rows show image previews, clickable video icons, and plain document rows', async ({ apiClient, page }) => {
+  const resource = await apiClient.createResource({ filePath: path.join(__dirname, '../test-assets/sample-image-39.png'), name: `Version thumbnails ${Date.now()}` });
+  for (const [name, mimeType, buffer] of [
+    ['movie.mp4', 'video/mp4', fs.readFileSync(path.join(__dirname, '../test-assets/sample-video.mp4'))],
+    ['document.pdf', 'application/pdf', Buffer.from('%PDF-1.4\nversion document')],
+  ] as const) {
+    const result = await apiClient.request.post(`/v1/resource/versions?resourceId=${resource.ID}`, { multipart: { file: { name, mimeType, buffer } } });
+    expect(result.ok()).toBeTruthy();
+  }
+  const versions = await (await apiClient.request.get(`/v1/resource/versions?resourceId=${resource.ID}`)).json();
+  await page.goto(`/resource?id=${resource.ID}`);
+  const imageVersion = versions.find((v: any) => v.contentType.startsWith('image/'));
+  const imageRow = page.locator(`[data-resource-version="${imageVersion.id}"]`);
+  await expect(imageRow.locator('img')).toHaveAttribute('src', new RegExp(`/v1/resource/version/preview\\?versionId=${imageVersion.id}&height=64&v=`));
+  await expect.poll(() => imageRow.locator('img').evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  const videoVersion = versions.find((v: any) => v.contentType.startsWith('video/'));
+  const videoRow = page.locator(`[data-resource-version="${videoVersion.id}"]`);
+  await expect(videoRow.getByRole('button', { name: `View version ${videoVersion.versionNumber}`, exact: true })).toBeVisible();
+  await expect(videoRow.locator('img')).toHaveCount(0);
+  const pdfVersion = versions.find((v: any) => v.contentType === 'application/pdf');
+  const pdfRow = page.locator(`[data-resource-version="${pdfVersion.id}"]`);
+  await expect(pdfRow.locator('img')).toHaveCount(0);
+  await expect(pdfRow.getByRole('button', { name: /View version/ })).toHaveCount(0);
+  await imageRow.getByRole('button', { name: `View version ${imageVersion.versionNumber}`, exact: true }).click();
+  await expect(page.locator('[data-version-panel]')).toBeVisible();
+  await expect(page.locator('[data-lightbox-media] img')).toHaveAttribute('src', `/v1/resource/version/file?versionId=${imageVersion.id}`);
+  await expect(page.locator('[data-version-panel]').getByRole('button', { name: /application\/pdf/ })).toBeDisabled();
+  await page.getByRole('button', { name: 'Back to current', exact: true }).click();
+  await expect(page.locator('[data-lightbox-media]')).toContainText('The Current Version cannot be displayed in this viewer.');
+  await page.keyboard.press('Escape');
+  await videoRow.getByRole('button', { name: `View version ${videoVersion.versionNumber}`, exact: true }).click();
+  await expect(page.locator('[data-lightbox-media] video')).toHaveAttribute('src', `/v1/resource/version/file?versionId=${videoVersion.id}`);
+  await expect.poll(() => page.locator('[data-lightbox-media] video').evaluate((el: HTMLVideoElement) => el.readyState)).toBeGreaterThan(0);
+
 });

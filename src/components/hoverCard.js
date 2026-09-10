@@ -52,7 +52,8 @@ function isExcluded(el) {
     el.hasAttribute('data-lightbox-item') ||
     el.closest('[data-lightbox-item]') !== null ||
     el.closest('#' + POPOVER_ID) !== null ||
-    el.closest('#shared-lightbox') !== null
+    el.closest('#shared-lightbox') !== null ||
+    el.closest('[data-version-panel]') !== null
   );
 }
 

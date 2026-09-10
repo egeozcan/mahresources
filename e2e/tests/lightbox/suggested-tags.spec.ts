@@ -28,7 +28,7 @@ test.describe('Lightbox suggested tags', () => {
   };
 
   const LIGHTBOX =
-    '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+    '[role="dialog"][x-show="$store.lightbox.isOpen"]';
   const CHIP = '[data-quick-tag-panel] [data-suggested-tag]';
 
   test.beforeAll(async ({ apiClient }) => {

@@ -14,7 +14,7 @@ test.describe('MRQL default resource card lightbox', () => {
 
   const lightboxDialog = (page: import('@playwright/test').Page) =>
     page.locator(
-      '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])'
+      '[role="dialog"][x-show="$store.lightbox.isOpen"]'
     );
 
   test.beforeAll(async ({ apiClient }) => {

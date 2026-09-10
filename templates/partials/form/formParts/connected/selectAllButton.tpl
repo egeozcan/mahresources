@@ -8,7 +8,7 @@
 {# registry made the first frame disagree with the settled one, so x-collapse   #}
 {# animated the row open on load and shoved the list and the footer's           #}
 {# pagination down 37px. See the method for the measurement.                    #}
-<div x-data x-show="$selection.hasSelectableItems() && $selection.selectedIds.size !== Object.keys($selection.options).length" x-collapse>
+<div x-data x-show="$selection.hasSelectableItems() && ($selection.selectedIds.size === 0 || $selection.selectedIds.size !== Object.keys($selection.options).length)" x-collapse>
     <button type="button"
         data-bulk-select-all
         @click.prevent="$selection.selectAll()"

@@ -3,9 +3,23 @@
     <summary>Versions ({{ versions|length }})</summary>
     <div class="detail-panel-body">
         {% for version in versions %}
-        <div class="p-4 {% if version.ID == currentVersionId %}bg-amber-50{% endif %}">
+        <div data-resource-version="{{ version.ID }}" class="p-4 {% if version.ID == currentVersionId %}bg-amber-50{% endif %}">
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
+                    {% if version.ContentType|slice:":6" == "image/" or version.ContentType|slice:":6" == "video/" %}
+                    <button type="button" class="shrink-0 rounded focus:outline-none focus:ring-2 focus:ring-amber-600"
+                            aria-label="View version {{ version.VersionNumber }}"
+                            @click="$store.lightbox.openResourceAtVersion({{ resourceId }}, {{ version.ID }}, '{{ version.ContentType|escapejs }}', {{ version.Width }}, {{ version.Height }})">
+                        {% if version.ContentType|slice:":6" == "image/" %}
+                        <img src="{% if version.ID %}/v1/resource/version/preview?versionId={{ version.ID }}{% else %}/v1/resource/preview?id={{ resourceId }}{% endif %}&height=64&v={{ version.Hash }}"
+                             alt="" loading="lazy" class="h-16 w-16 object-contain rounded">
+                        {% else %}
+                        <svg aria-hidden="true" class="h-16 w-16 p-3 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4" stroke-width="2"/>
+                        </svg>
+                        {% endif %}
+                    </button>
+                    {% endif %}
                     <template x-if="compareMode">
                         {# Bound, not merely written to: opening Compare on a resource with #}
                         {# exactly two versions preselects both, and without this the boxes #}

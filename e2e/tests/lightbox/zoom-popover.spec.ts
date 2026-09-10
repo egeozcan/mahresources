@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import path from 'path';
 
 const LIGHTBOX =
-  '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+  '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
 test.describe('Lightbox zoom popover', () => {
   let categoryId: number;

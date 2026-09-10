@@ -111,7 +111,7 @@ export const editPanelMethods = {
     // panel may still be showing the pre-write copy. Converge now, but only in that case:
     // a write that did update the cache has already left resourceDetails correct, which
     // keeps batch tagging from firing a request per toggle.
-    if ((this.editPanelOpen || this.quickTagPanelOpen) &&
+    if ((this.editPanelOpen || this.quickTagPanelOpen || this.versionPanelOpen) &&
         this.getCurrentItem()?.id === resourceId &&
         !this.detailsCache.has(resourceId) &&
         !this._detailsWrites.has(resourceId)) {
@@ -186,7 +186,7 @@ export const editPanelMethods = {
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
 
-    if (!this.quickTagPanelOpen) {
+    if (!this.quickTagPanelOpen && !this.versionPanelOpen) {
       if (this.detailsAborter) {
         this.detailsAborter();
         this.detailsAborter = null;
@@ -282,6 +282,8 @@ export const editPanelMethods = {
           viewUrl: `/v1/resource/view?id=${id}${versionParam}`,
           contentType,
           name: link.dataset.resourceName || link.querySelector('img')?.alt || '',
+          width: parseInt(link.dataset.resourceWidth, 10) || 0,
+          height: parseInt(link.dataset.resourceHeight, 10) || 0,
           hash,
         });
       }
@@ -290,7 +292,8 @@ export const editPanelMethods = {
     for (let i = 0; i < this.items.length; i++) {
       const updated = domItems.get(this.items[i].id);
       if (updated) {
-        this.items[i] = { ...this.items[i], ...updated };
+        const next = { ...this.items[i], ...updated };
+        this.items[i] = this._preserveDisplayedVersion?.(this.items[i], next) ?? next;
       }
     }
   },
@@ -322,7 +325,9 @@ export const editPanelMethods = {
 
     // Evict oldest entry if cache exceeds max size
     if (this.detailsCache.size > 100) {
-      this.detailsCache.delete(this.detailsCache.keys().next().value);
+      const oldestId = this.detailsCache.keys().next().value;
+      this.detailsCache.delete(oldestId);
+      this.versionsCache?.delete(oldestId);
     }
 
     const reqId = ++this._detailsReq;
@@ -359,6 +364,7 @@ export const editPanelMethods = {
         this.detailsCache.set(resourceId, fetchedDetails);
         // The item entry is metadata too — and the one the <img> src is built from.
         this._syncItemFromDetails(fetchedDetails);
+        this._cacheVersions?.(resourceId, data.versions);
       }
       this.detailsAborter = null;
     } catch (err) {
@@ -440,7 +446,7 @@ export const editPanelMethods = {
 
     const item = this.items[idx];
     const hash = details.Hash || '';
-    const next = {
+    let next = {
       ...item,
       hash,
       viewUrl: `/v1/resource/view?id=${id}${hash ? `&v=${hash}` : ''}`,
@@ -452,10 +458,11 @@ export const editPanelMethods = {
       height: details.Height || 0,
     };
 
+    next = this._preserveDisplayedVersion?.(item, next) ?? next;
     const mediaChanged = next.viewUrl !== item.viewUrl || next.contentType !== item.contentType;
     const changed = mediaChanged || next.name !== item.name ||
       next.width !== item.width || next.height !== item.height;
-    if (!changed && !forceMedia) return false;
+    if (!changed && !forceMedia && !item.displayedVersion) return false;
 
     this.items[idx] = next;
 
@@ -470,7 +477,8 @@ export const editPanelMethods = {
   },
 
   async onResourceChange() {
-    if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
+    this.resetDisplayedVersion?.();
+    if (!this.editPanelOpen && !this.quickTagPanelOpen && !this.versionPanelOpen) return;
 
     const focused = document.activeElement;
     const panel = document.querySelector('[data-edit-panel]');
@@ -508,6 +516,7 @@ export const editPanelMethods = {
     }
 
     this.onQuickTagResourceChange();
+    if (this.versionPanelOpen) this.scrollDisplayedVersion();
   },
 
   async updateName(newName) {

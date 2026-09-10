@@ -22,7 +22,7 @@ test.describe('Lightbox tag-detail prefetch + no-blank', () => {
   const testRunId = Date.now();
 
   const LIGHTBOX =
-    '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+    '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
   test.beforeAll(async ({ apiClient }) => {
     const category = await apiClient.createCategory(

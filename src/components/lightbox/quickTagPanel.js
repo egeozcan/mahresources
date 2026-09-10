@@ -324,7 +324,7 @@ export const quickTagPanelMethods = {
     }
 
     // Clear resource details if edit panel is also closed
-    if (!this.editPanelOpen) {
+    if (!this.editPanelOpen && !this.versionPanelOpen) {
       if (this.detailsAborter) {
         this.detailsAborter();
         this.detailsAborter = null;

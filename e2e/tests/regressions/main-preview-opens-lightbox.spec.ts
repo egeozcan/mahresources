@@ -27,7 +27,7 @@ const IMAGE = path.join(__dirname, '../../test-assets/sample-image.png');
 // The confirm dialog is role="alertdialog", so it never collides with this.
 const lightbox = (page: Page) =>
   page.locator(
-    '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])'
+    '[role="dialog"][x-show="$store.lightbox.isOpen"]'
   );
 
 test.describe('resource main preview', () => {

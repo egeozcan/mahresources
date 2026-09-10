@@ -643,6 +643,21 @@ func registerVersionRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method:       http.MethodGet,
+		Path:         "/v1/resource/version/preview",
+		OperationID:  "getVersionThumbnail",
+		Summary:      "Get a version's JPEG thumbnail (not persisted)",
+		Tags:         []string{"versions"},
+		IDQueryParam: "versionId", IDRequired: true,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "width", Type: "integer", Description: "Width, capped at 600; omitted axis is derived"},
+			{Name: "height", Type: "integer", Description: "Height, capped at 600; omitted axis is derived"},
+			{Name: "v", Type: "string", Description: "Version content hash for immutable caching"},
+		},
+		ResponseContentTypes: []openapi.ContentType{"image/jpeg"},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodGet,
 		Path:         "/v1/resource/version/file",
 		OperationID:  "getVersionFile",
 		Summary:      "Download a version's file",

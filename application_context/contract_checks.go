@@ -47,3 +47,5 @@ var (
 	_ contracts.GroupCRUD           = (*MahresourcesContext)(nil)
 	_ contracts.GroupWriter         = (*MahresourcesContext)(nil) // composite
 )
+
+var _ contracts.VersionThumbnailLoader = (*MahresourcesContext)(nil)

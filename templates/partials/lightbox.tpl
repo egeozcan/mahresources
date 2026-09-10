@@ -53,6 +53,7 @@
     @keydown.page-down.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.space.window="$store.lightbox.isOpen && canShortcut() && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
+    @keydown.h.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && $store.lightbox.toggleVersionPanel()"
     @keydown.e.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$event.repeat && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.t.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
@@ -116,8 +117,11 @@
             $store.lightbox.quickTagPanelOpen ? ($store.lightbox.editPanelOpen ? 'lg:ml-[320px]' : 'lg:ml-[400px]') : ''
         ]"
     >
+    {% include "partials/lightboxVersionPanel.tpl" %}
     <!-- Media area (centered, fills available space) -->
     <div
+        data-lightbox-media
+        style="container-type: size"
         class="flex-1 flex items-center justify-center min-h-0 relative"
         :class="$store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab'"
         {# consumeDragClick first: a pan or swipe that happens to end over the letterbox #}
@@ -144,8 +148,10 @@
 
         <!-- Media content -->
         <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.consumeDragClick() || $store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
+            {# Historical SVG files are attachments: render them as images rather than #}
+            {# embedded documents, which the browser refuses to display as attachments. #}
             <!-- Image display -->
-            <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)">
+            <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType) || ($store.lightbox.isHistoricalVersion() && $store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType))">
                 <img
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
@@ -161,7 +167,7 @@
 
             <!-- SVG display - use object tag for better SVG rendering with proper sizing -->
             <!-- Wrapped in a div with overlay to prevent the embedded SVG from stealing focus -->
-            <template x-if="$store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType)">
+            <template x-if="$store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType) && !$store.lightbox.isHistoricalVersion()">
                 <div class="relative">
                     <object
                         :data="$store.lightbox.getCurrentItem()?.viewUrl"
@@ -202,6 +208,13 @@
                 >
                     Your browser does not support video playback.
                 </video>
+            </template>
+
+            <template x-if="$store.lightbox.getCurrentItem()?.contentType && !$store.lightbox.isVersionDisplayable({ contentType: $store.lightbox.getCurrentItem()?.contentType })">
+                <div role="status" class="text-white/70 text-center px-6 py-12 max-w-md">
+                    <p>The Current Version cannot be displayed in this viewer.</p>
+                    <a :href="'/resource?id=' + $store.lightbox.getCurrentItem()?.id" class="text-amber-300 underline">Open resource page</a>
+                </div>
             </template>
 
             {# The three branches above are mutually exclusive and all of them evaluate     #}
@@ -299,6 +312,14 @@
             x-text="($store.lightbox.getCurrentItem()?.width || '') + ' \u00d7 ' + ($store.lightbox.getCurrentItem()?.height || '')"
         ></div>
 
+        <div x-show="$store.lightbox.isHistoricalVersion()" data-version-badge class="bg-amber-900 text-amber-100 px-3 py-1 rounded flex items-center gap-2">
+            <span x-text="$store.lightbox.displayedVersionLabel()"></span>
+            <button type="button" @click="$store.lightbox.resetDisplayedVersion()" class="underline focus:ring-2 focus:ring-white">Back to current</button>
+        </div>
+        <button type="button" @click.stop="$store.lightbox.toggleVersionPanel()"
+                :aria-expanded="$store.lightbox.versionPanelOpen" aria-controls="lightbox-version-panel"
+                title="Version history (H)" class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 focus:ring-2 focus:ring-white/50">Versions</button>
+
         <!-- Native zoom percentage with preset picker -->
         <div x-show="$store.lightbox.nativeZoomPercent()">
             <button
@@ -327,14 +348,16 @@
             </svg>
         </button>
 
+        <span id="historical-edit-reason" class="sr-only">Historical Versions cannot be edited. Use Back to current to rotate or crop this Resource.</span>
         <!-- Rotate 90° (raster images only) -->
         <button
-            x-show="$store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
+            x-show="$store.lightbox.isHistoricalVersion() || $store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
             @click.stop="$store.lightbox.rotateCurrent(90)"
-            :disabled="$store.lightbox.rotating"
+            :disabled="$store.lightbox.rotating || $store.lightbox.isHistoricalVersion()"
             :aria-busy="$store.lightbox.rotating"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            title="Rotate 90° clockwise"
+            :title="$store.lightbox.isHistoricalVersion() ? 'Back to current to rotate this Resource' : 'Rotate 90° clockwise'"
+            :aria-describedby="$store.lightbox.isHistoricalVersion() ? 'historical-edit-reason' : null"
             aria-label="Rotate 90 degrees clockwise"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -346,10 +369,12 @@
 
         <!-- Crop (raster images only) -->
         <button
-            x-show="$store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
+            x-show="$store.lightbox.isHistoricalVersion() || $store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
             @click.stop="$store.lightbox.openCrop()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            title="Crop image"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :disabled="$store.lightbox.isHistoricalVersion()"
+            :title="$store.lightbox.isHistoricalVersion() ? 'Back to current to crop this Resource' : 'Crop image'"
+            :aria-describedby="$store.lightbox.isHistoricalVersion() ? 'historical-edit-reason' : null"
             aria-label="Crop image"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

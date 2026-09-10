@@ -7077,6 +7077,40 @@ paths:
             summary: Download a version's file
             tags:
                 - versions
+    /v1/resource/version/preview:
+        get:
+            operationId: getVersionThumbnail
+            parameters:
+                - in: query
+                  name: versionId
+                  required: true
+                  schema:
+                    type: integer
+                - description: Width, capped at 600; omitted axis is derived
+                  in: query
+                  name: width
+                  schema:
+                    type: integer
+                - description: Height, capped at 600; omitted axis is derived
+                  in: query
+                  name: height
+                  schema:
+                    type: integer
+                - description: Version content hash for immutable caching
+                  in: query
+                  name: v
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        image/jpeg:
+                            schema:
+                                type: string
+                    description: Successful response
+            summary: Get a version's JPEG thumbnail (not persisted)
+            tags:
+                - versions
     /v1/resource/version/restore:
         post:
             operationId: restoreVersion

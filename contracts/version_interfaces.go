@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"context"
 	"mime/multipart"
 
 	"github.com/spf13/afero"
@@ -40,4 +41,10 @@ type VersionComparer interface {
 type VersionFileServer interface {
 	VersionReader
 	GetFsForStorageLocation(storageLocation *string) (afero.Fs, error)
+}
+
+// VersionThumbnailLoader renders version bytes without persisting previews.
+type VersionThumbnailLoader interface {
+	VersionReader
+	LoadVersionThumbnail(versionID, width, height uint, ctx context.Context) ([]byte, error)
 }

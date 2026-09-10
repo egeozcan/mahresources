@@ -40,7 +40,7 @@ test.describe('Downloads list accessibility', () => {
     // Selected: the sticky bulk toolbar collapses in, which is where the page's
     // second Select All and both bulk actions live.
     await page.locator('button:has-text("Select All"):visible').first().click();
-    await expect(page.getByTestId('downloads-selected-count')).toHaveText('1 selected');
+    await expect(page.getByTestId('bulk-selected-count')).toHaveText('1 download selected');
     await checkA11y();
 
     // And the confirm the bulk delete raises, which is a modal over all of it.

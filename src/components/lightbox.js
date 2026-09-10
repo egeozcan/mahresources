@@ -4,6 +4,7 @@ import { zoomState, zoomMethods } from './lightbox/zoom.js';
 import { gestureState, gestureMethods } from './lightbox/gestures.js';
 import { editPanelState, editPanelMethods } from './lightbox/editPanel.js';
 import { quickTagPanelState, quickTagPanelMethods } from './lightbox/quickTagPanel.js';
+import { versionPanelState, versionPanelMethods } from './lightbox/versionPanel.js';
 import { cropPanelState, cropPanelMethods } from './lightbox/cropPanel.js';
 
 /**
@@ -19,6 +20,7 @@ export function registerLightboxStore(Alpine) {
     ...editPanelState,
     ...quickTagPanelState,
     ...cropPanelState,
+    ...versionPanelState,
 
     // Live region for screen reader announcements
     _liveRegion: null,
@@ -46,6 +48,7 @@ export function registerLightboxStore(Alpine) {
         if (!this.isOpen) return;
         // Let edit panel handle its own scrolling
         if (event.target.closest('[data-edit-panel]')) return;
+        if (event.target.closest('[data-version-panel]')) return;
         if (event.target.closest('[data-quick-tag-panel]')) return;
         // The crop overlay sits above the image; wheeling over it must not zoom
         // the underlying image (it scrolls the crop UI instead).
@@ -75,7 +78,7 @@ export function registerLightboxStore(Alpine) {
       // shows this data is actually open.
       this._handleDetailsRevalidate = () => {
         if (document.hidden || !this.isOpen) return;
-        if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
+        if (!this.editPanelOpen && !this.quickTagPanelOpen && !this.versionPanelOpen) return;
         this.fetchResourceDetails(undefined, true);
         this.fetchSuggestedTags(undefined, true);
       };
@@ -123,5 +126,6 @@ export function registerLightboxStore(Alpine) {
     ...editPanelMethods,
     ...quickTagPanelMethods,
     ...cropPanelMethods,
+    ...versionPanelMethods,
   });
 }

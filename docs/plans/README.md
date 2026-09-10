@@ -22,6 +22,16 @@ the code wins. For how the system is actually put together see
 - [2026-08-15-plugin-invocation-and-hook-integrity.md](2026-08-15-plugin-invocation-and-hook-integrity.md)
 - [2026-08-16-plugin-package-format.md](2026-08-16-plugin-package-format.md)
 - [2026-08-25-compare-page-teardown.md](2026-08-25-compare-page-teardown.md)
+- [2026-08-26-resource-reduction.md](2026-08-26-resource-reduction.md)
+- [2026-08-27-compare-manual-alignment.md](2026-08-27-compare-manual-alignment.md)
+- [2026-08-27-compare-registration-scale.md](2026-08-27-compare-registration-scale.md)
+- [2026-08-28-compare-difference-measurement.md](2026-08-28-compare-difference-measurement.md)
+- [2026-08-28-reduction-outsider-winner-and-overflow.md](2026-08-28-reduction-outsider-winner-and-overflow.md)
+- [2026-08-29-plugin-media-hls.md](2026-08-29-plugin-media-hls.md)
+- [2026-08-30-host-fetch-headers.md](2026-08-30-host-fetch-headers.md)
+- [2026-08-30-plugin-download-domain-policy-and-deferral.md](2026-08-30-plugin-download-domain-policy-and-deferral.md)
+- [2026-09-08-mrql-generic-list-view-design.md](2026-09-08-mrql-generic-list-view-design.md)
+- [2026-09-10-version-thumbnails-and-viewer-version-panel.md](2026-09-10-version-thumbnails-and-viewer-version-panel.md)
 
 ## Archive
 

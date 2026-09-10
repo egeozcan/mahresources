@@ -148,7 +148,7 @@ test.describe('finding 3 — the mobile nav menu', () => {
      * <template x-if>, so Go counts seven where the browser has three.
      */
     const LIGHTBOX =
-      '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+      '[role="dialog"][x-show="$store.lightbox.isOpen"]';
     await expect(
       page.locator(LIGHTBOX),
       'the lightbox locator used across the suite must stay unambiguous',

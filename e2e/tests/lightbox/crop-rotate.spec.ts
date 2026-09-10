@@ -12,7 +12,7 @@ import path from 'path';
 // The lightbox root dialog, distinguished from the paste-upload / entity-picker
 // dialogs AND from our own crop overlay (which is also role="dialog").
 const LIGHTBOX =
-  '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"]):not([aria-labelledby="lightbox-crop-title"])';
+  '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
 test.describe.serial('Lightbox crop & rotate', () => {
   let categoryId: number;

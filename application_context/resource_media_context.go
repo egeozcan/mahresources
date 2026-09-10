@@ -2302,3 +2302,28 @@ func (ctx *MahresourcesContext) ProbeVideoDuration(resourceId uint) (float64, er
 
 	return duration, nil
 }
+
+// LoadVersionThumbnail renders immutable version content without creating Preview rows.
+func (ctx *MahresourcesContext) LoadVersionThumbnail(versionID, width, height uint, httpCtx context.Context) ([]byte, error) {
+	version, err := ctx.GetVersion(versionID)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(version.ContentType, "image/") {
+		return nil, fmt.Errorf("version is not an image")
+	}
+	if err := ctx.locks.ThumbnailGenerationLock.AcquireContext(httpCtx, version.ResourceID); err != nil {
+		return nil, err
+	}
+	defer ctx.locks.ThumbnailGenerationLock.Release(version.ResourceID)
+	width = min(width, uint(constants.MaxThumbWidth))
+	height = min(height, uint(constants.MaxThumbHeight))
+	fs, err := ctx.GetFsForStorageLocation(version.StorageLocation)
+	if err != nil {
+		return nil, err
+	}
+	if version.ContentType == "image/svg+xml" {
+		return ctx.generateSVGThumbnailFromFile(fs, version.Location, width, height, httpCtx)
+	}
+	return ctx.generateImageThumbnailFromFile(fs, version.Location, width, height, httpCtx)
+}

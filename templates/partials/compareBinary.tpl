@@ -1,7 +1,5 @@
-{# No per-version thumbnail exists — /v1/resource/preview is keyed on the #}
-{# resource, so in a same-resource comparison it would render the current #}
-{# thumbnail on both sides whatever versions are selected. The type placeholder #}
-{# is at least true of both. #}
+{# The type placeholder represents content with no renderable preview. #}
+{# Mixed-type comparisons keep the same layout on both sides. #}
 <div class="bg-white shadow rounded-lg p-4">
     <div class="bg-stone-50 border border-stone-200 rounded p-3 mb-6 text-stone-700 text-sm font-sans flex items-center gap-2">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>

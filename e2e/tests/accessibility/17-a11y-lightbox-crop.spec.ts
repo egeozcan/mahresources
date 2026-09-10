@@ -9,7 +9,7 @@ import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
 
 const LIGHTBOX =
-  '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"]):not([aria-labelledby="lightbox-crop-title"])';
+  '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
 test.describe.serial('Lightbox crop overlay accessibility', () => {
   let ownerGroupId: number;

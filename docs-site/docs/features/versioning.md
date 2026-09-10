@@ -48,7 +48,8 @@ For each version, you can see:
 - **Creation date**
 - **File size**
 - **Comment** (optional description of what changed)
-- **Current badge** for the active version
+- **Current badge** for the Current Version
+- **Image thumbnail** that opens that version in the viewer; video versions have a clickable film icon
 
 ### Actions Available
 
@@ -58,6 +59,14 @@ For each version, you can see:
 | **Restore** | Create a new version from an older one, making it current |
 | **Delete** | Remove a version (cannot delete the current version or the last remaining version) |
 | **Upload New** | Add a new version with an optional comment |
+
+## Versions in the Media Viewer
+
+Choose **Versions** in the viewer toolbar, or press **H**, to open the version strip above the media. It shows every Resource Version, with the Current Version marked as current. Select an image or video to view its content. Other file types remain visible in the history but cannot be selected. Dates and sizes appear on wider screens; each entry's tooltip carries its comment.
+
+The **Displayed Version** changes only the media and its dimensions. Info and Edit Tags continue to describe and edit the Resource. While a Historical Version is displayed, a **Version N of M** badge remains visible even if you close the strip. Choose **Back to current** to return to the Current Version. Rotate and Crop are disabled until you return.
+
+Navigating to another Resource or closing the viewer resets the Displayed Version. Press **Escape** to close the viewer. Restore, Download, and Compare remain on the resource page, linked from the strip.
 
 ## Comparing Versions
 

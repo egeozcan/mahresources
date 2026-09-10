@@ -18,7 +18,7 @@ test.describe('Lightbox chip-input', () => {
   const tagIds: number[] = [];
 
   const LIGHTBOX =
-    '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+    '[role="dialog"][x-show="$store.lightbox.isOpen"]';
   const PILL = '[data-quick-tag-panel] span.bg-amber-700.rounded-full';
 
   test.beforeAll(async ({ apiClient }) => {

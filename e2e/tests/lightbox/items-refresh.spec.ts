@@ -15,7 +15,7 @@ import path from 'path';
  */
 
 const LIGHTBOX =
-  '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+  '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
 // One more than the server's constants.MaxResultsPerPage (50), so page 1 fills and a real
 // second page exists to page into.

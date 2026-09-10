@@ -704,6 +704,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetDeleteVersionHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/version/delete").
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetDeleteVersionHandler))
+	router.Methods(http.MethodGet).Path("/v1/resource/version/preview").
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetVersionThumbnailHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/version/file").
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetVersionFileHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/versions/cleanup").

@@ -265,3 +265,10 @@
     opacity: 0.45;
     cursor: not-allowed;
 }
+
+/* The in-flow version strip and toolbar share the viewport with the media stage. */
+[data-lightbox-media] img,
+[data-lightbox-media] object,
+[data-lightbox-media] video {
+  max-height: min(90vh, 100cqh);
+}

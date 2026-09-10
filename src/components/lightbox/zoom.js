@@ -306,7 +306,7 @@ export const zoomMethods = {
   },
 
   getMediaElement() {
-    const el = document.querySelector('[role="dialog"] img, [role="dialog"] object');
+    const el = document.querySelector('[data-lightbox-media] img, [data-lightbox-media] object');
     if (!el) return null;
     return { element: el, rect: el.getBoundingClientRect() };
   },

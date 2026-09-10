@@ -92,12 +92,12 @@ test.describe('MRQL generation', () => {
     await mrql.saveQuery(queryName);
     await mrql.loadSavedQuery(queryName);
     await mrql.executeQuery();
-    await expect(mrql.resultsSection.locator('h2')).toBeVisible();
+    await expect(mrql.resultsSection.getByRole('heading', { name: /^Results \(/ })).toBeVisible();
 
     await mrql.enterGenerationPrompt('show notes');
     await mrql.generateMRQL();
 
     await expect(page.locator('[data-testid="mrql-update-button"]')).toBeHidden();
-    await expect(mrql.resultsSection.locator('h2')).toHaveCount(0);
+    await expect(mrql.resultsSection.getByRole('heading', { name: /^Results \(/ })).toHaveCount(0);
   });
 });

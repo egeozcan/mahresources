@@ -186,7 +186,7 @@ test.describe('WS14 finding 131: Compare explains itself instead of vanishing', 
     await page.goto(`/groups?name=ws14-cmp-${suffix}`);
 
     const compare = page.getByTestId('bulk-compare-action');
-    const hint = page.locator('#bulk-compare-groups-hint');
+    const hint = page.locator('[data-bulk-action="compare"] [role="status"]');
 
     await selectCards(page, 2);
     await expect(compare).toBeVisible();
@@ -196,8 +196,8 @@ test.describe('WS14 finding 131: Compare explains itself instead of vanishing', 
     await selectCards(page, 3);
     await expect(compare, 'the control disappeared instead of explaining itself').toBeVisible();
     await expect(compare).toBeDisabled();
-    await expect(hint).toHaveText('Select exactly two groups to compare.');
-    await expect(compare).toHaveAttribute('aria-describedby', 'bulk-compare-groups-hint');
+    await expect(hint).toHaveText('Select exactly 2 items to compare.');
+    await expect(page.locator('[data-bulk-action="compare"] fieldset')).toHaveAttribute('aria-describedby', (await hint.getAttribute('id'))!);
   });
 
   test('the enabled Compare action still navigates to the comparison', async ({ page, apiClient }) => {

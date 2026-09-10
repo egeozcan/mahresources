@@ -151,7 +151,7 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
       await expect(metaWrap.getByRole('button', { name: 'Edit Status' })).toBeVisible();
 
       await page.locator(`[data-lightbox-item][data-resource-id="${resource.ID}"]`).click();
-      const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
+      const lightbox = page.locator('[role="dialog"][x-show="$store.lightbox.isOpen"]');
       await expect(lightbox).toBeVisible();
 
       await lightbox.locator('button[title="Resource info"]').click();

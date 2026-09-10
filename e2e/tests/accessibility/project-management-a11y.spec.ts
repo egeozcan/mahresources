@@ -129,7 +129,8 @@ test('injected native detail, list, block, and MRQL surfaces have zero violation
   await checkA11y({ include: ['#main-content'] });
 
   await page.goto(`/mrql?q=${encodeURIComponent(`type = note AND id = ${taskId}`)}`);
-  await expect(page.getByTestId('pm-task-mrql-result')).toBeVisible({ timeout: 20000 });
+  // MRQL uses the shared note card, including the plugin's task summary.
+  await expect(page.getByRole('region', { name: 'note results' }).getByRole('link', { name: 'View on board' })).toBeVisible({ timeout: 20000 });
   await checkA11y({ include: ['#main-content'] });
 });
 

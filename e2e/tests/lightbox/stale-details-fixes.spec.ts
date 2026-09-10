@@ -26,7 +26,7 @@ test.describe('Lightbox stale-details & repeat-announce fixes', () => {
   const testRunId = Date.now();
 
   const LIGHTBOX =
-    '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])';
+    '[role="dialog"][x-show="$store.lightbox.isOpen"]';
 
   test.beforeAll(async ({ apiClient }) => {
     const category = await apiClient.createCategory(
@@ -149,7 +149,7 @@ test.describe('Lightbox stale-details & repeat-announce fixes', () => {
   async function blurAndPress(page: Page, key: string) {
     await page.evaluate((rawKey) => {
       const dlg = document.querySelector(
-        '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])'
+        '[role="dialog"][x-show="$store.lightbox.isOpen"]'
       );
       (dlg as HTMLElement)?.focus();
       window.dispatchEvent(

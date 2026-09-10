@@ -46,6 +46,7 @@ export const cropPanelMethods = {
   },
 
   openCrop() {
+    if (this.isHistoricalVersion?.()) return;
     const item = this.getCurrentItem();
     if (!item || !this._isRasterImage(item.contentType)) return;
     // On narrow viewports the side panels and the crop overlay compete for the
@@ -97,6 +98,7 @@ export const cropPanelMethods = {
   },
 
   async rotateCurrent(degrees = 90) {
+    if (this.isHistoricalVersion?.()) return;
     const item = this.getCurrentItem();
     if (!item || !this.isImage(item.contentType) || this.rotating) return;
 
@@ -193,9 +195,10 @@ export const cropPanelMethods = {
     // showing it would visibly revert that edit; _endDetailsWrite's convergence refetch
     // supplies the authoritative version instead.
     if (this.currentIndex === idx && committed &&
-        (this.editPanelOpen || this.quickTagPanelOpen)) {
+        (this.editPanelOpen || this.quickTagPanelOpen || this.versionPanelOpen)) {
       this.resourceDetails = r;
     }
+    if (committed) this._cacheVersions?.(targetId, data.versions);
 
     // The underlying gallery thumbnail is now stale; refresh it when the
     // lightbox (or its last panel) closes, mirroring the tag/name edit path.

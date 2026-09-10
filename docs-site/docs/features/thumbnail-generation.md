@@ -146,6 +146,16 @@ Uploading a custom thumbnail does not create a new resource version -- it only c
 
 The reverse does not hold: a custom thumbnail is cleared whenever the resource's file changes, that is by a new version upload, a version restore, or an in-place rotate, crop, or trim. Re-upload it afterwards.
 
+## Resource Version Thumbnails
+
+`GET /v1/resource/version/preview?versionId=N&height=64&v=HASH` renders a JPEG from a Resource Version's stored image. Width and height are optional and capped at 600; an omitted axis is derived from the image. The version's content type determines eligibility, including images whose recorded dimensions are zero. SVG rendering and the existing ImageMagick fallback are supported.
+
+These previews persist nothing: they create no database Preview rows and ignore a Resource's custom thumbnail. Requests for versions of the same Resource serialize image decoding. The endpoint uses the same authorization scope as the version file endpoint.
+
+Include the version's hash as `v` for a content-addressed URL. Successful responses carry `Cache-Control: max-age=31536000, immutable` and an ETag containing the hash and requested dimensions. Conditional requests can return 304. Non-images and undecodable images redirect to the file placeholder with `Cache-Control: no-cache`.
+
+Per-version video frames are not generated. Version panels use video icons; the viewer plays the version's file directly.
+
 ## Troubleshooting
 
 ### Video thumbnails not generating

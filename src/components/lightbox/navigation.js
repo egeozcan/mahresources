@@ -195,7 +195,8 @@ export const navigationMethods = {
         insertBefore.delete(item.id);
       }
       const patch = patches.get(item.id);
-      merged.push(patch ? { ...item, ...patch } : item);
+      const next = patch ? { ...item, ...patch } : item;
+      merged.push(this._preserveDisplayedVersion?.(item, next) ?? next);
     }
     merged.push(...trailing);
 
@@ -303,6 +304,27 @@ export const navigationMethods = {
     this.open(0);
   },
 
+  openResourceAtVersion(resourceId, versionId, contentType, width, height) {
+    const version = { id: versionId, resourceId, contentType, width, height };
+    if (!this.isVersionDisplayable(version)) return;
+    this.triggerElement = document.activeElement;
+    this._listSelection = null;
+    this._itemsBeforeStandalone = this.items;
+    this._paginationBeforeStandalone = this._capturePaginationContext();
+    this.items = [{ id: resourceId, name: '', viewUrl: `/v1/resource/view?id=${resourceId}`, contentType, width: 0, height: 0 }];
+    this.baseUrl = '';
+    this.currentPage = 1;
+    this.loadedPages = new Set([1]);
+    this.hasNextPage = false;
+    this.hasPrevPage = false;
+    this._previewSeeded = false;
+    this._ownsPageGallery = false;
+    this.open(0, { deferDetails: true });
+    // A virtual v1 (ID zero) represents the Resource itself, not a stored version file.
+    if (versionId) this.selectVersion(version);
+    return this.openVersionPanel();
+  },
+
   _openFromSourceContainer(container, resourceId) {
     const links = container.querySelectorAll('[data-lightbox-item]');
     const containerItems = this._extractItemsFromLinks(links);
@@ -340,7 +362,7 @@ export const navigationMethods = {
     }
   },
 
-  open(index) {
+  open(index, { deferDetails = false } = {}) {
     // Guard against an empty list or an out-of-bounds index (e.g. a gallery whose
     // clicked thumbnail index does not map 1:1 onto the filtered media list — BH: L1).
     if (!this.items || this.items.length === 0) return;
@@ -381,7 +403,7 @@ export const navigationMethods = {
     // Restore quick tag panel from localStorage if it was previously open. Forced: whatever
     // is cached predates this session, and the resource may have been edited since.
     if (this.quickTagPanelOpen) {
-      this.fetchResourceDetails(undefined, true);
+      if (!deferDetails) this.fetchResourceDetails(undefined, true);
       this.fetchSuggestedTags(undefined, true);
     }
   },
@@ -421,7 +443,7 @@ export const navigationMethods = {
   _preloadDetailsUpcoming() {
     // Only warm details that the tagging UI will actually display. When no panel is
     // open these fetches would be pure waste (mirrors open()'s panel-gated fetch).
-    if (!this.quickTagPanelOpen && !this.editPanelOpen) return;
+    if (!this.quickTagPanelOpen && !this.editPanelOpen && !this.versionPanelOpen) return;
 
     const ahead = this._preloadAheadCount || 5;
     const end = Math.min(this.items.length, this.currentIndex + 1 + ahead);
@@ -447,13 +469,16 @@ export const navigationMethods = {
           const details = data.resource || data;
           // Respect the same cache cap fetchResourceDetails enforces.
           if (this.detailsCache.size > 100) {
-            this.detailsCache.delete(this.detailsCache.keys().next().value);
+            const oldestId = this.detailsCache.keys().next().value;
+            this.detailsCache.delete(oldestId);
+            this.versionsCache?.delete(oldestId);
           }
           this.detailsCache.set(item.id, details);
           // An upcoming item may have been re-versioned or renamed since the DOM was rendered;
           // patch it now so arriving there shows the current bitmap and name, not last page
           // load's. Never the on-screen item, so this cannot disturb what is being viewed.
           this._syncItemFromDetails(details);
+          this._cacheVersions?.(item.id, data.versions);
         })
         .catch(() => { /* background prefetch: a real navigation will refetch on demand */ })
         .finally(() => this._detailsInFlight.delete(item.id));
@@ -461,6 +486,13 @@ export const navigationMethods = {
   },
 
   close() {
+    this.resetDisplayedVersion?.(false);
+    this.versionPanelOpen = false;
+    this.versionsCache?.clear();
+    if (this.detailsAborter) {
+      this.detailsAborter();
+      this.detailsAborter = null;
+    }
     this.pauseCurrentVideo();
 
     if (this.isFullscreen) {
@@ -547,6 +579,9 @@ export const navigationMethods = {
     // The write-generation maps are deliberately left alone: a write may still be in flight,
     // and clearing its generation is what would let its stale in-flight GET commit.
     this.detailsCache.clear();
+    // Versions can be the only open panel, so neither side-panel close path necessarily
+    // cleared this snapshot. A later session must not mistake its old Current for today's.
+    this.resourceDetails = null;
     this._suggestedCache.clear();
 
     // A bare .focus() is silently a no-op on a detached node, and the thumbnail
@@ -985,7 +1020,7 @@ export const navigationMethods = {
   scheduleMediaCheck() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const el = document.querySelector('[role="dialog"] img, [role="dialog"] video, [role="dialog"] object');
+        const el = document.querySelector('[data-lightbox-media] img, [data-lightbox-media] video, [data-lightbox-media] object');
         if (el) {
           this.checkIfMediaLoaded(el);
         }

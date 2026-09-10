@@ -360,3 +360,49 @@ func inlineVersionDisposition(r *http.Request, contentType string) bool {
 	return ok && base == "application/pdf"
 
 }
+
+// GetVersionThumbnailHandler serves a JPEG preview of an immutable Resource Version.
+func GetVersionThumbnailHandler(ctx contracts.VersionThumbnailLoader) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var query struct {
+			VersionID uint `schema:"versionId"`
+			Width     uint
+			Height    uint
+		}
+		if err := tryFillStructValuesFromRequest(&query, r); err != nil || query.VersionID == 0 {
+			http_utils.HandleError(fmt.Errorf("invalid version thumbnail query"), w, r, http.StatusBadRequest)
+			return
+		}
+		version, err := ctx.GetVersion(query.VersionID)
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusNotFound)
+			return
+		}
+		query.Width = min(query.Width, uint(constants.MaxThumbWidth))
+		query.Height = min(query.Height, uint(constants.MaxThumbHeight))
+		placeholder := func() {
+			w.Header().Del("ETag")
+			w.Header().Set("Cache-Control", "no-cache")
+			http.Redirect(w, r, "/public/placeholders/file.jpg", http.StatusTemporaryRedirect)
+		}
+		if !strings.HasPrefix(version.ContentType, "image/") {
+			placeholder()
+			return
+		}
+		etag := fmt.Sprintf(`"%s-%d-%d"`, version.Hash, query.Width, query.Height)
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
+		if strings.Contains(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		data, err := ctx.LoadVersionThumbnail(version.ID, query.Width, query.Height, r.Context())
+		if err != nil || len(data) == 0 {
+			placeholder()
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		_, _ = w.Write(data)
+	}
+}

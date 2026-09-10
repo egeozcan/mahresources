@@ -80,3 +80,21 @@ _Avoid_: seen, confirmed, done
 **Stale Cluster**:
 A Cluster whose Winner or a Loser no longer exists, or whose Winner-to-Loser pair no longer holds, as discovered when a Resource Reduction is applied.
 _Avoid_: invalid, broken, expired
+
+## Resource Versions
+
+**Resource Version**:
+One stored content state of a Resource: its bytes, content type and pixel dimensions as they stood at one point in that Resource's history. Restoring an earlier state records a new Resource Version rather than reinstating the old one, so two Resource Versions may hold the same bytes.
+_Avoid_: revision, snapshot, copy
+
+**Current Version**:
+The Resource Version whose content the Resource serves now. Every other attribute of the Resource — its name, tags, owner and related entities — belongs to the Resource, never to a Resource Version.
+_Avoid_: head, tip, live version
+
+**Historical Version**:
+A Resource Version that is not the Current Version.
+_Avoid_: previous version, old version, earlier version. Version numbers are not upload order once a merge has transferred versions between Resources, so "previous" names no particular Resource Version.
+
+**Displayed Version**:
+The Resource Version a viewer is showing for a Resource. It is the Current Version unless a reader has chosen otherwise, and choosing otherwise changes what is on screen and nothing about the Resource.
+_Avoid_: active version, open version

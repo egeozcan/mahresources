@@ -184,7 +184,7 @@ test.describe.serial('Group Compare', () => {
     const compareButton = page.getByTestId('bulk-compare-action');
     await expect(compareButton).toBeVisible();
     await expect(compareButton).toBeDisabled();
-    await expect(page.locator('#bulk-compare-groups-hint')).toHaveText('Select exactly two groups to compare.');
+    await expect(page.locator('[data-bulk-action="compare"] [role="status"]')).toHaveText('Select exactly 2 items to compare.');
   });
 
   test('shows compare bulk action on the text view too', async ({ page }) => {

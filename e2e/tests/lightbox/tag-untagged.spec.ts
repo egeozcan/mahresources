@@ -120,7 +120,7 @@ test.describe('Lightbox tag-untagged launcher', () => {
 
     await page.locator(`[data-lightbox-item][data-resource-id="${domOrderIds[0]}"]`).first().click();
     const lightbox = page.locator(
-      '[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])',
+      '[role="dialog"][x-show="$store.lightbox.isOpen"]',
     );
     await expect(lightbox).toBeVisible();
 
