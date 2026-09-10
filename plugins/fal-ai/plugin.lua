@@ -1008,7 +1008,7 @@ local function make_handler(action_id)
                 return {
                     success = true,
                     message = "Created resource #" .. tostring(result.id),
-                    redirect = "/v1/resource?id=" .. tostring(result.id),
+                    redirect = "/resource?id=" .. tostring(result.id),
                 }
             else
                 mah.log("info", "[fal.ai] handler: " .. action_id .. " completed, added version to resource #" .. tostring(resource_id))
@@ -1018,7 +1018,7 @@ local function make_handler(action_id)
                 return {
                     success = true,
                     message = "Added version to resource #" .. tostring(resource_id),
-                    redirect = "/v1/resource?id=" .. tostring(resource_id),
+                    redirect = "/resource?id=" .. tostring(resource_id),
                 }
             end
         else
@@ -2363,7 +2363,7 @@ function init()
                 mah.log("info", "[fal.ai] generate job: created resource #" .. tostring(new_resource.id))
                 mah.job_complete(jid, {
                     message = "Created resource #" .. tostring(new_resource.id),
-                    redirect = "/v1/resource?id=" .. tostring(new_resource.id),
+                    redirect = "/resource?id=" .. tostring(new_resource.id),
                 })
             end)
 
