@@ -116,6 +116,7 @@ import { templateBundle } from './components/templateBundle.js';
 import { accountSecurity } from './components/accountSecurity.js';
 import { resourceUpload } from './components/resourceUpload.js';
 import { reductionBulkAction } from './components/resourceReductionBulk.js';
+import { reductionCreateForm } from './components/resourceReductionCreate.js';
 import { registerReductionReviewStore } from './components/reductionReview.js';
 
 // Import utility modules
@@ -255,6 +256,7 @@ Alpine.data('templateBundle', templateBundle);
 Alpine.data('accountSecurity', accountSecurity);
 Alpine.data('resourceUpload', resourceUpload);
 Alpine.data('reductionBulkAction', reductionBulkAction);
+Alpine.data('reductionCreateForm', reductionCreateForm);
 Alpine.data('bulkAction', bulkAction);
 
 // Expose Alpine globally for debugging and morph usage

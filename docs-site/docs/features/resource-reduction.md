@@ -14,6 +14,10 @@ Applying a Cluster merges its Losers into its Winner and deletes them. A Resourc
 
 ## Creating a Reduction
 
+From `/reductions`, click **New**, optionally enter a name, and use the **Groups** and **Resources** search fields to add one or more items. You can combine groups and resources in the same Reduction. Optionally check **Exclude external resources**, then click **Create** to open the review page. Creation does not compute or apply any Clusters.
+
+You can also start from an existing list selection:
+
 1. Select Resources on `/resources`, or Groups on `/groups`
 2. In the bulk editor, click **Resource Reduction** under **Reduce**
 3. Choose **Start a new Resource Reduction** and give it a name, or **Add to one I already have** and pick it from the list

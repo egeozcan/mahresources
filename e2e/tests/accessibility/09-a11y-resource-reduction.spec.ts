@@ -13,6 +13,16 @@ import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
 
 test.describe('Resource Reduction accessibility', () => {
+  test('the creation page has no accessibility violations', async ({ page, checkA11y }) => {
+    const response = await page.goto('/reduction/new');
+    expect(response?.status()).toBe(200);
+    await expect(page.getByRole('combobox', { name: 'Groups', exact: true })).toBeVisible();
+    await checkA11y();
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await checkA11y();
+  });
+
   test('the review page has no accessibility violations', async ({ page, checkA11y, apiClient, request, baseURL }) => {
     const label = `RR a11y ${Date.now()}`;
     const filePath = path.join(__dirname, '../../test-assets/sample-image-11.png');

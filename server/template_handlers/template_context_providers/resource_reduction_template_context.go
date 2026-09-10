@@ -16,7 +16,7 @@ import (
 	"mahresources/server/template_handlers/template_entities"
 )
 
-// ResourceReductionPageContext is what the two Reduction pages need.
+// ResourceReductionPageContext is what the Reduction pages need.
 type ResourceReductionPageContext interface {
 	contracts.ResourceReductionReader
 }
@@ -105,13 +105,26 @@ func ResourceReductionListContextProvider(context ResourceReductionPageContext) 
 		}
 
 		return pongo2.Context{
-			"pageTitle":         "Resource Reductions",
+			"pageTitle": "Resource Reductions",
+			"action": template_entities.Entry{
+				Name: "New",
+				Url:  "/reduction/new",
+			},
 			"reductions":        rows,
 			"reductionsCount":   count,
 			"reductionStatuses": makeMultiFilterOptions(reductionStatuses, query.Status),
 			"pagination":        pagination,
 			"queryValues":       request.URL.Query(),
 		}.Update(baseContext)
+	}
+}
+
+// ResourceReductionCreateContextProvider provides the context for /reduction/new.
+func ResourceReductionCreateContextProvider(_ ResourceReductionPageContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		return pongo2.Context{
+			"pageTitle": "New Resource Reduction",
+		}.Update(StaticTemplateCtx(request))
 	}
 }
 
@@ -179,7 +192,7 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			// True when any filter is active, so the empty state can say "nothing
 			// matches" rather than "nothing repeats" — the second is a claim about
 			// the whole Extent, and a filter may simply have excluded everything.
-			"reviewFilterActive":   reviewQuery.NeedsAttention || len(reviewQuery.Status) > 0 || len(reviewQuery.Tier) > 0,
+			"reviewFilterActive": reviewQuery.NeedsAttention || len(reviewQuery.Status) > 0 || len(reviewQuery.Tier) > 0,
 		}.Update(baseContext)
 	}
 }

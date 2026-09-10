@@ -158,8 +158,9 @@ var templates = map[string]templateInformation{
 	// owns Reductions and each principal sees only its own, and an /admin path
 	// would have to be listed in isSystemPath, whose exact-match table is the
 	// footgun documented there.
-	"/reductions": {adaptTemplate(template_context_providers.ResourceReductionListContextProvider), "listResourceReductions.tpl", http.MethodGet},
-	"/reduction":  {adaptTemplate(template_context_providers.ResourceReductionContextProvider), "displayResourceReduction.tpl", http.MethodGet},
+	"/reductions":    {adaptTemplate(template_context_providers.ResourceReductionListContextProvider), "listResourceReductions.tpl", http.MethodGet},
+	"/reduction/new": {adaptTemplate(template_context_providers.ResourceReductionCreateContextProvider), "createResourceReduction.tpl", http.MethodGet},
+	"/reduction":     {adaptTemplate(template_context_providers.ResourceReductionContextProvider), "displayResourceReduction.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {

@@ -16,9 +16,7 @@
         {% for entity in reductions %}
             {% include "/partials/resourceReduction.tpl" %}
         {% empty %}
-            {# There is no create page: a Reduction is made from a selection on the  #}
-            {# resources or groups list, so createUrl is deliberately omitted.       #}
-            {% include "/partials/listEmpty.tpl" with label="Resource Reductions" %}
+            {% include "/partials/listEmpty.tpl" with label="Resource Reductions" createUrl="/reduction/new" %}
         {% endfor %}
     </section>
 

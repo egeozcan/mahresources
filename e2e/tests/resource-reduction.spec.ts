@@ -104,6 +104,62 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
 }
 
 test.describe('Resource Reduction', () => {
+  for (const selection of ['groups', 'resources', 'both']) {
+    test(`creates a Reduction from the list with ${selection}`, async ({ page, apiClient, request, baseURL }) => {
+      const label = `RR new ${selection} ${Date.now()}`;
+      const category = await apiClient.createCategory(label);
+      const group = await apiClient.createGroup({ name: `${label} group`, categoryId: category.ID });
+      const resource = await apiClient.createResource({
+        filePath: path.join(__dirname, '../test-assets/sample-image-10.png'), name: `${label} resource`,
+      });
+
+      await page.goto('/reductions');
+      await page.getByRole('link', { name: 'New', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'New Resource Reduction' })).toBeVisible();
+      await page.getByRole('textbox', { name: 'Name', exact: true }).fill(label);
+      await page.getByRole('button', { name: 'Create', exact: true }).click();
+      await expect(page.getByRole('alert')).toHaveText('Choose at least one group or resource.');
+
+      if (selection !== 'resources') {
+        await page.getByRole('combobox', { name: 'Groups', exact: true }).fill(group.Name);
+        await page.getByRole('option').filter({ hasText: group.Name }).click();
+      }
+      if (selection !== 'groups') {
+        await page.getByRole('combobox', { name: 'Resources', exact: true }).fill(resource.Name);
+        await page.getByRole('option').filter({ hasText: resource.Name }).click();
+      }
+      await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
+      if (selection === 'both') {
+        await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+        // A failed request must retain the name and both selectors for a retry.
+        await page.route('**/v1/reduction', route => route.fulfill({
+          status: 400, contentType: 'text/plain', body: 'Could not create reduction',
+        }), { times: 1 });
+        await page.getByRole('button', { name: 'Create', exact: true }).click();
+        await expect(page.getByRole('alert')).toContainText('Could not create reduction');
+        await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(label);
+      }
+      await page.getByRole('button', { name: 'Create', exact: true }).click();
+      await page.waitForURL(/\/reduction\?id=\d+/);
+      await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+      await expect(page.getByTestId('reduction-extent')).toContainText(
+        `${selection === 'groups' ? '0 Resources' : '1 Resource'} and ${selection === 'resources' ? '0 Groups' : '1 Group'} selected.`,
+      );
+      const id = Number(new URL(page.url()).searchParams.get('id'));
+      const list = await (await request.get(`${baseURL}/v1/reductions`)).json();
+      const reduction = list.reductions.find((row: { id: number }) => row.id === id);
+      expect(reduction.status).toBe('draft');
+      expect(reduction.excludeExternalResources).toBe(selection === 'both');
+    });
+  }
+
+  test('can cancel creating a Reduction from a filtered list with no results', async ({ page }) => {
+    await page.goto('/reductions?Name=no-such-reduction');
+    await page.getByRole('link', { name: 'New', exact: true }).click();
+    await page.getByRole('link', { name: 'Cancel', exact: true }).click();
+    await expect(page).toHaveURL(/\/reductions$/);
+  });
+
   test('reduces owned resources from group details and can include the whole subtree', async ({ page, apiClient }) => {
     const label = `RR owned ${Date.now()}`;
     const category = await apiClient.createCategory(label);
