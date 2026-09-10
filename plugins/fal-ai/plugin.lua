@@ -864,14 +864,14 @@ end
 local function process_image(resource_id, action_id, params, api_key, job_id)
     mah.log("info", "[fal.ai] process_image: resource_id=" .. tostring(resource_id) .. ", action=" .. action_id)
 
+    if job_id then
+        mah.job_progress(job_id, 10, "Loading image...")
+    end
+
     -- Build data URI (validates format; raises on failure so pcall in make_handler catches it)
     mah.log("info", "[fal.ai] process_image: loading resource data for resource #" .. tostring(resource_id))
     local data_uri, mime_type = build_data_uri(resource_id)
     mah.log("info", "[fal.ai] process_image: data URI built, total size=" .. #data_uri .. " bytes, mime=" .. mime_type)
-
-    if job_id then
-        mah.job_progress(job_id, 10, "Preparing image...")
-    end
 
     -- Pre-pad image for photo_restoration to prevent aspect ratio warping.
     -- The model always reshapes output to the selected fixed ratio, so
@@ -882,6 +882,9 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
             ratio = auto_aspect_ratio_for(resource_id)
         end
         if ratio then
+            if job_id then
+                mah.job_progress(job_id, 12, "Padding image to " .. ratio .. "...")
+            end
             -- The Go binding returns (padded_uri, w, h) on success or (nil, err)
             -- on failure -- it does NOT raise, so pcall reports ok=true even when
             -- padding failed. Guard on `padded` being non-nil, otherwise we'd
@@ -904,8 +907,20 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     local extras = params.extra_images
     if extras and #extras > 0 then
         mah.log("info", "[fal.ai] process_image: loading " .. #extras .. " extra image(s)")
-        for _, eid in ipairs(extras) do
-            local du, _ = build_data_uri(eid)
+        -- The picker includes the triggering image by default. Reuse data
+        -- already loaded in this request instead of reading/base64-encoding
+        -- the same file again; keep the user's selected order intact.
+        local loaded_uris = {[resource_id] = data_uri}
+        for i, eid in ipairs(extras) do
+            if job_id then
+                mah.job_progress(job_id, 12 + math.floor(6 * (i - 1) / #extras),
+                    "Loading selected image " .. i .. " of " .. #extras .. "...")
+            end
+            local du = loaded_uris[eid]
+            if not du then
+                du = build_data_uri(eid)
+                loaded_uris[eid] = du
+            end
             all_image_uris[#all_image_uris + 1] = du
         end
     else

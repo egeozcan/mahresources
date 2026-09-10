@@ -95,7 +95,10 @@ func encodeImage(img image.Image, srcFormat string) ([]byte, string, error) {
 		}
 		return buf.Bytes(), "image/jpeg", nil
 	}
-	if err := png.Encode(&buf, img); err != nil {
+	// This is a transient API input: favor preparation latency over maximum
+	// compression while retaining lossless pixels.
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&buf, img); err != nil {
 		return nil, "", fmt.Errorf("PNG encode failed: %w", err)
 	}
 	return buf.Bytes(), "image/png", nil
@@ -103,8 +106,9 @@ func encodeImage(img image.Image, srcFormat string) ([]byte, string, error) {
 
 // padDataURIToAspectRatio decodes a "data:<mime>;base64,..." image, pads it
 // with white borders to the target "W:H" aspect ratio, and returns a new data
-// URI plus the padded dimensions. Photographic (JPEG) inputs are re-encoded as
-// JPEG to avoid ballooning the payload; everything else is encoded as PNG.
+// URI plus the padded dimensions. Matching inputs are returned unchanged.
+// When padding is needed, photographic (JPEG) inputs are re-encoded as JPEG
+// to avoid ballooning the payload; everything else is encoded as PNG.
 func padDataURIToAspectRatio(dataURI, targetRatio string) (string, int, int, error) {
 	ratio, err := parseAspectRatio(targetRatio)
 	if err != nil {
@@ -130,6 +134,11 @@ func padDataURIToAspectRatio(dataURI, targetRatio string) (string, int, int, err
 	}
 
 	paddedImg, w, h := padToAspectRatio(srcImg, ratio)
+	if paddedImg == srcImg {
+		// No pixels changed. Preserve the original bytes (and JPEG quality)
+		// instead of compressing the entire image again.
+		return dataURI, w, h, nil
+	}
 
 	encoded, mime, err := encodeImage(paddedImg, format)
 	if err != nil {
