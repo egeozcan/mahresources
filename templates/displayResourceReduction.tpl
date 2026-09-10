@@ -65,6 +65,13 @@
                 entered the Extent since the last compute. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.
             </p>
             {% endif %}
+            <p class="text-sm text-stone-700 mt-1" data-testid="reduction-external-resources">
+                {% if raw.ExcludeExternalResources %}
+                External resources are excluded from matching.
+                {% else %}
+                External resources may be considered as Winners.
+                {% endif %}
+            </p>
             <p class="text-sm text-stone-500 mt-1">
                 Add more from the bulk bar on
                 <a class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700" href="/resources">the resources list</a>

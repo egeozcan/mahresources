@@ -17,7 +17,12 @@ Applying a Cluster merges its Losers into its Winner and deletes them. A Resourc
 1. Select Resources on `/resources`, or Groups on `/groups`
 2. In the bulk editor, click **Resource Reduction** under **Reduce**
 3. Choose **Start a new Resource Reduction** and give it a name, or **Add to one I already have** and pick it from the list
-4. Click **Create** (or **Add**)
+4. For a new Reduction, optionally check **Exclude external resources** to compare only resources within its selection
+5. Click **Create** (or **Add**)
+
+The same option is available from **Reduce** on a Group's detail page, where you can select its owned resources and optionally those of all subgroups.
+
+By default, matching resources outside the selection may be considered as Winners. **Exclude external resources** prevents this for both Identical and Near-Identical matching. The choice is saved when the Reduction is created and retained when adding selections or recomputing.
 
 ![Bulk bar with the Resource Reduction panel open](/img/reduction-bulk-action.png)
 
@@ -207,7 +212,7 @@ The plan snapshot means an apply never deletes bytes that changed **since** you 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/reductions` | List the Reductions the caller may see (`name`, `status`, `sortBy`, `page`) |
-| `POST` | `/v1/reduction` | Create a Reduction, or add a selection to an existing one (`id`, `name`, `resourceIds`, `groupIds`) |
+| `POST` | `/v1/reduction` | Create a Reduction, or add a selection to an existing one (`id`, `name`, `resourceIds`, `groupIds`, `ownerId`, `includeDescendants`). New Reductions also accept `excludeExternalResources` (default `false`) |
 | `POST` | `/v1/reduction/edit` | Rename, or change the matching mode, Winner Rule or keep-as-version flags |
 | `POST` | `/v1/reduction/delete` | Delete a Reduction. The Resources it named are untouched |
 | `POST` | `/v1/reduction/compute` | Start the background clustering job. Refused with `409` while a run is in flight |

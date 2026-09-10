@@ -27,6 +27,10 @@ type ResourceReductionCreator struct {
 	// default a new Reduction is created with.
 	MatchingMode string `json:"matchingMode" schema:"matchingMode"`
 
+	// ExcludeExternalResources limits matching to the Extent. It defaults to
+	// false and is only used when creating, not extending, a Reduction.
+	ExcludeExternalResources bool `json:"excludeExternalResources" schema:"excludeExternalResources"`
+
 	// WinnerRule is the ordered criterion list. Empty means the default rule.
 	WinnerRule []string `json:"winnerRule" schema:"winnerRule"`
 

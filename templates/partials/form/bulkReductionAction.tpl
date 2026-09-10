@@ -49,6 +49,16 @@
             <input id="{{ panelId }}-name" type="text" x-model="name" placeholder="Resource Reduction"
                    data-testid="bulk-reduction-name"
                    class="mt-1 block w-full rounded-md border-stone-300 shadow-sm text-sm focus:border-amber-600 focus:ring-amber-600">
+            <label class="flex items-center gap-2 mt-2 text-sm text-stone-700">
+                <input type="checkbox" x-model="excludeExternalResources"
+                       data-testid="bulk-reduction-exclude-external"
+                       aria-describedby="{{ panelId }}-external-hint"
+                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                Exclude external resources
+            </label>
+            <p id="{{ panelId }}-external-hint" class="mt-1 text-xs text-stone-600">
+                Only compare resources within this Reduction's selection. Matches outside it will not be considered.
+            </p>
         </div>
 
         <div x-show="mode === 'existing'" class="mt-2">

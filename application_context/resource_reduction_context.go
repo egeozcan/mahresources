@@ -134,13 +134,14 @@ func (ctx *MahresourcesContext) CreateOrExtendResourceReduction(creator *query_m
 			return err
 		}
 		row := &models.ResourceReduction{
-			Name:                   truncateRunes(name, maxReductionName),
-			Status:                 models.ReductionStatusDraft,
-			MatchingMode:           normalizeMatchingMode(creator.MatchingMode),
-			KeepAsVersionIdentical: boolOr(creator.KeepAsVersionIdentical, false),
-			KeepAsVersionNear:      boolOr(creator.KeepAsVersionNear, true),
-			WinnerRule:             ruleJSON,
-			Extent:                 extentJSON,
+			Name:                     truncateRunes(name, maxReductionName),
+			Status:                   models.ReductionStatusDraft,
+			MatchingMode:             normalizeMatchingMode(creator.MatchingMode),
+			ExcludeExternalResources: creator.ExcludeExternalResources,
+			KeepAsVersionIdentical:   boolOr(creator.KeepAsVersionIdentical, false),
+			KeepAsVersionNear:        boolOr(creator.KeepAsVersionNear, true),
+			WinnerRule:               ruleJSON,
+			Extent:                   extentJSON,
 		}
 		if err := txCtx.db.Create(row).Error; err != nil {
 			return err

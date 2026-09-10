@@ -21,6 +21,8 @@ const idChunk = 500
 // because a Group's descendants and its contents both change and D23 makes
 // re-scanning an explicit act. This runs once per compute.
 type ReductionExtent struct {
+	// ExcludeExternalResources confines clustering candidates to this Extent.
+	ExcludeExternalResources bool
 	// ResourceIDs are the Resources named explicitly — filtered, like everything
 	// here, to what the current principal may see.
 	ResourceIDs map[uint]bool

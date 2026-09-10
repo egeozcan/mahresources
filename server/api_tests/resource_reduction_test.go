@@ -47,6 +47,7 @@ func TestCreateResourceReductionFromResources(t *testing.T) {
 	assert.Equal(t, "Holiday photos", red.Name)
 	assert.Equal(t, models.ReductionStatusDraft, red.Status)
 	assert.Equal(t, models.MatchingModeBothTiers, red.MatchingMode)
+	assert.False(t, red.ExcludeExternalResources, "external matching stays enabled by default")
 	assert.False(t, red.KeepAsVersionIdentical, "a byte-identical Loser has nothing to preserve")
 	assert.True(t, red.KeepAsVersionNear, "a Near-Identical Loser holds pixels worth a way back to")
 

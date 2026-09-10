@@ -247,6 +247,11 @@ func (ctx *MahresourcesContext) loadClusterCandidates(ids []uint, rule []string,
 
 	out := make([]clusterCandidate, 0, len(resources))
 	for _, r := range resources {
+		// Filter before winner selection and near-match claiming so an external
+		// match cannot displace an in-Extent Winner or split its Cluster.
+		if extent.ExcludeExternalResources && !inExtent[r.ID] {
+			continue
+		}
 		out = append(out, clusterCandidate{
 			WinnerCandidate: models.WinnerCandidate{Resource: r, Associations: associations[r.ID]},
 			InExtent:        inExtent[r.ID],

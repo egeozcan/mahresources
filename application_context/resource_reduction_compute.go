@@ -304,6 +304,7 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	if err != nil {
 		return plan, version, err
 	}
+	extent.ExcludeExternalResources = reduction.ExcludeExternalResources
 	if err := jobCtx.Err(); err != nil {
 		return plan, version, err
 	}

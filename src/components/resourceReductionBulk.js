@@ -28,6 +28,7 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
     busy: false,
     error: '',
     includeDescendants: false,
+    excludeExternalResources: false,
 
     hasSelection() {
       return ownerId !== 0 || this.selectedIds().length > 0;
@@ -95,6 +96,7 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
         body.id = Number(this.existingId);
       } else {
         body.name = this.name.trim();
+        body.excludeExternalResources = this.excludeExternalResources;
       }
       void this.post(body);
     },

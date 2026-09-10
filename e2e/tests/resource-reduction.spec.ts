@@ -120,20 +120,24 @@ test.describe('Resource Reduction', () => {
     await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
     await expect(panel.getByRole('checkbox', { name: 'Include resources from all subgroups' })).not.toBeChecked();
     await panel.getByTestId('bulk-reduction-name').fill(label);
+    await panel.getByRole('checkbox', { name: 'Exclude external resources' }).check();
     await panel.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(/\/reduction\?id=\d+/);
     const reductionURL = page.url();
     const reductionId = new URL(reductionURL).searchParams.get('id')!;
     await expect(page.getByTestId('reduction-extent')).toContainText('1 Resource and 0 Groups selected.');
+    await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
 
     await page.goto(`/group?id=${root.ID}`);
     await panel.getByRole('button', { name: 'Reduce', exact: true }).click();
     await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
     await panel.getByRole('radio', { name: 'Add to one I already have' }).check();
+    await expect(panel.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeVisible();
     await panel.getByTestId('bulk-reduction-existing').selectOption(reductionId);
     await panel.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(reductionURL);
     await expect(page.getByTestId('reduction-extent')).toContainText('3 Resources and 0 Groups selected.');
+    await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
   });
 
   test('offers subtree reduction when the parent owns no resources directly', async ({ page, apiClient }) => {
@@ -166,6 +170,8 @@ test.describe('Resource Reduction', () => {
 
     await page.getByTestId('bulk-reduction-action').click();
     await page.getByTestId('bulk-reduction-name').fill(label);
+    await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
+    await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
     await page.getByTestId('bulk-reduction-submit').click();
 
     // The bulk bar intercepts form submits and refreshes the list in place, so
@@ -174,6 +180,22 @@ test.describe('Resource Reduction', () => {
     await page.waitForURL(/\/reduction\?id=\d+/);
     await expect(page.getByTestId('reduction-page')).toBeVisible();
     await expect(page.getByRole('heading', { name: label })).toBeVisible();
+    await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
+  });
+
+  test('can exclude external resources from the groups bulk bar', async ({ page, apiClient }) => {
+    const label = `RR groups ${Date.now()}`;
+    const category = await apiClient.createCategory(label);
+    const group = await apiClient.createGroup({ name: label, categoryId: category.ID });
+    await page.goto(`/groups?Name=${encodeURIComponent(label)}`);
+    await page.getByRole('checkbox', { name: `Select ${group.Name}`, exact: true }).check();
+    await page.getByTestId('bulk-reduction-action').click();
+    await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+    await page.getByTestId('bulk-reduction-submit').click();
+    await page.waitForURL(/\/reduction\?id=\d+/);
+    await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
+    await page.reload();
+    await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
   });
 
   test('an Identical Cluster arrives checked, and the page says what decided it', async ({ page, apiClient, request, baseURL }) => {

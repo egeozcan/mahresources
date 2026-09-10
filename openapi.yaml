@@ -1735,6 +1735,8 @@ components:
             type: object
         ResourceReductionCreator:
             properties:
+                excludeExternalResources:
+                    type: boolean
                 groupIds:
                     items:
                         type: integer

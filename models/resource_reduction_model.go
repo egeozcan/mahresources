@@ -41,6 +41,10 @@ type ResourceReduction struct {
 	// MatchingMode selects which tiers the clustering job computes.
 	MatchingMode string `gorm:"size:20;not null" json:"matchingMode"`
 
+	// ExcludeExternalResources prevents Resources outside the Extent from
+	// participating in either matching tier. Fixed when the Reduction is created.
+	ExcludeExternalResources bool `gorm:"not null;default:false" json:"excludeExternalResources"`
+
 	// KeepAsVersionIdentical / KeepAsVersionNear are two flags rather than one
 	// because the default matching mode contains both tiers and they need
 	// opposite values: a byte-identical Loser has nothing to preserve, while a
