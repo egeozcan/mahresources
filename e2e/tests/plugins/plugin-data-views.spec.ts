@@ -277,9 +277,10 @@ test.describe('Data-views plugin shortcodes', () => {
     await page.goto(`/group?id=${grp2.ID}`);
     await page.waitForLoadState('load');
 
-    // Should render pie chart legend with category names (not "No data")
-    await expect(page.locator('main >> text=/Red/')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('main >> text=/Blue/')).toBeVisible();
+    // Match complete legend entries so unrelated controls such as Reduce cannot match.
+    const main = page.getByRole('main');
+    await expect(main.getByText('Red (40)', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(main.getByText('Blue (60)', { exact: true })).toBeVisible();
 
     await apiClient.deleteGroup(grp2.ID);
     await apiClient.deleteCategory(cat2.ID);
