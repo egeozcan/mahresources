@@ -113,7 +113,7 @@ func (ctx *MahresourcesContext) principalForcedScope() (scopeID uint, forced boo
 func (ctx *MahresourcesContext) WithPrincipal(p *auth.Principal) *MahresourcesContext {
 	cp := *ctx
 	cp.principal = p
-	applyPrincipalScope(&cp, ctx, p)
+	applyPrincipalScope(&cp, ctx, p, context.Background())
 	return &cp
 }
 
@@ -144,10 +144,9 @@ func (ctx *MahresourcesContext) WithMRQLPrincipal(parent context.Context, p *aut
 // auth-on the common actors (admin/editor/unscoped user) would otherwise execute
 // on the singleton db and stamp NULL. The scope filter is added only for
 // group-limited principals (preserving fail-closed empty-allowlist semantics).
-// The context parent is context.Background() — NOT the request context — so
-// admin/all writes are not tied to request cancellation (mirrors the historical
-// detached-write behaviour).
-func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p *auth.Principal) {
+// The parent controls cancellation: background callers use Background, while
+// request-bound callers retain the current request deadline and cancellation.
+func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p *auth.Principal, parent context.Context) {
 	// resolveActingUserID: just p.UserID (0 when p == nil). No root lookup here —
 	// under no-auth the principal already carries the root id (Phase 7), so this
 	// stays an allocation-free, DB-free read on the hot create path.
@@ -159,18 +158,16 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 	// Determine whether a group-subtree filter is required.
 	mustScope := p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
 
-	if actorID == 0 && !mustScope {
-		return // no actor to stamp and no scope to enforce: leave dst.db = base.db
-	}
-
-	ctx := context.Background()
+	ctx := parent
 	if actorID != 0 {
 		ctx = context.WithValue(ctx, actingUserCtxKey{}, actorID)
 	}
 	if mustScope {
 		var allowed []uint
 		if p.IsScoped() {
-			if ids, err := base.collectSubtreeGroupIDs(*p.ScopeGroupID); err == nil {
+			lookup := *base
+			lookup.db = base.db.WithContext(parent)
+			if ids, err := lookup.collectSubtreeGroupIDs(*p.ScopeGroupID); err == nil {
 				allowed = ids
 			}
 			// On error, allowed stays empty → deny-all (fail closed). A role that

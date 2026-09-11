@@ -7,9 +7,8 @@ import { downloadCockpit } from './downloadCockpit.js';
  *
  * Both are pure enough to pin here: the action calls are one fetch whose response
  * shape decides what the user is told, and the cap is a slice. Selection is no
- * longer the store's business — it reads the shared `bulkSelection` store, which
- * every entity list already exercises — so what is left to test is that it reads
- * it, that Delete asks first, and that the outcome reporting survived the move.
+ * longer the store's business: the toolbar passes its selection. Test that
+ * actions use only those IDs, Delete asks first, and outcomes remain visible.
  * The Playwright spec covers that the template is wired to it.
  */
 
@@ -56,16 +55,6 @@ afterEach(() => {
 });
 
 describe('selection', () => {
-    test('the selection is the shared bulkSelection store, not a private copy', () => {
-        const c = mountStore();
-        expect(c.selectedCount).toBe(0);
-
-        selectedIds.add(1);
-        selectedIds.add(2);
-        expect(c.selectedIds).toEqual([1, 2]);
-        expect(c.selectedCount).toBe(2);
-    });
-
     test('bulk actions send exactly what is selected', async () => {
         const c = mountStore();
         selectedIds.add(4);
@@ -73,7 +62,7 @@ describe('selection', () => {
         const fetchMock = vi.fn(async (_path: string, _init: any) => ({ ok: true, json: async () => ({ retried: 2 }) }));
         vi.stubGlobal('fetch', fetchMock);
 
-        await c.retrySelected();
+        await c.retrySelected({selectedIds});
 
         expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ ids: [4, 5] });
     });
@@ -194,7 +183,7 @@ describe('actions', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         await c.send('/v1/downloads/delete', [], 'deleted');
-        await c.removeSelected();
+        await c.removeSelected({selectedIds});
 
         expect(fetchMock).not.toHaveBeenCalled();
         // And nothing is confirmed either: an empty Delete must not raise a dialog
@@ -264,4 +253,14 @@ describe('jobs panel row cap', () => {
         c.jobs[0].status = 'downloading';
         expect(c.activeCount).toBe(1);
     });
+});
+
+
+test('download actions use the supplied scope instead of global selection', async () => {
+    const c = mountStore();
+    selectedIds.add(999);
+    const fetchMock = vi.fn(async () => ({ok:true,json:async () => ({retried:1})}));
+    vi.stubGlobal('fetch',fetchMock);
+    await c.retrySelected({selectedIds:new Set([42])});
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ids:[42]});
 });

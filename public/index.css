@@ -1861,8 +1861,22 @@ html {
     margin-bottom: 0.75rem;
 }
 
-.bulk-editors button {
-    order: 1;
+/* Hide synchronously: cascading x-show waits on child editor transitions
+   that can be interrupted when an ordinary list is refreshed. */
+.bulk-editors[hidden] { display: none; }
+.bulk-editors > *, .bulk-editors button { order: 1; }
+
+/* Form controls participate in the toolbar flex layout through Alpine scopes. */
+.bulk-action:has(> fieldset > [x-data="bulkSelectionForms"]),
+.bulk-action > fieldset:has(> [x-data="bulkSelectionForms"]),
+.bulk-action > fieldset > [x-data="bulkSelectionForms"] {
+    display: contents;
+}
+.bulk-editors .bulk-action-reason { order: 3; }
+.bulk-action:has(> fieldset > [x-data="bulkSelectionForms"]) > .bulk-action-reason { flex-basis: 100%; }
+.bulk-editors button:focus-visible {
+    outline: 2px solid #d97706;
+    outline-offset: 2px;
 }
 
 .bulk-editors form {
@@ -4048,3 +4062,11 @@ progress.export-progress-bar::-moz-progress-bar {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* Compact cards keep previews beside content and constrain long descriptions. */
+.mrql-compact.list-container { grid-template-columns: minmax(0, 1fr); }
+.mrql-compact .resource-card > [data-entity] { display: flow-root; }
+.mrql-compact .card-image { float: left; width: 6rem; height: 6rem; margin: 0.75rem 1rem 0.75rem 0.75rem; }
+.mrql-compact .card-image img { width: 100%; height: 100%; object-fit: cover; }
+.mrql-compact .card-description { max-height: 4.5rem; overflow: hidden; }
+.mrql-compact .card { margin-bottom: 0; }

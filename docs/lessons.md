@@ -1858,3 +1858,13 @@ obvious from the code. Drop the provenance, the measurement narrative, and the
 before-and-after. Where the history genuinely matters (an approach that was
 tried and withdrawn), it belongs in `docs/todo.md` alongside the plan, which is
 where the review's own record lives.
+
+
+## MRQL list review — 2026-09-11
+
+- A bound principal does not prove a database handle has an ORM scope. Test ancestor preloads and cancellation/deadlines on the handle actually used for hydration.
+- Bound rendered items, including items inside buckets, and preserve a continuation for every omitted item. Query bounds and display bounds are separate contracts.
+- Seed mutable page state before separate template executions; Pongo2 copies context maps. Cache literal includes and resolve shared actions outside card loops.
+- Validate shared toolbars on ordinary and MRQL lists after refresh. Wrapper elements change flex behavior, and child transitions can delay a parent’s visibility update.
+- SQL page boundaries need a unique tie-break, including inside bucket continuations. Verify identical sort values on PostgreSQL and compare page membership with ordinary execution.
+- Preserve the shared mixed-query comparator when optimizing hydration. Database collation can differ from Go's Unicode comparison; a smaller projection preserves query-wide action targets without loading full entity payloads.

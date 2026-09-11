@@ -350,7 +350,7 @@ type = resource ORDER BY created DESC LIMIT 20
 type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100
 ```
 
-With no `ORDER BY`, no ordering is sent to the database and the row order is undefined. Paging with `OFFSET` is only stable when the query names an `ORDER BY`.
+Nonrandom entity queries use ascending IDs to break equal sort values, so display pages retain the same order when rows have identical names or timestamps. With no `ORDER BY`, each entity type is ordered by ID. Concurrent changes to matching rows can still move page boundaries.
 
 A query with no `LIMIT` does not return everything. The server applies a default limit, set by `-mrql-default-limit` / `MRQL_DEFAULT_LIMIT` (500 by default) and editable at runtime as `mrql_default_limit`, and reports that it did so in the response as `default_limit_applied` and `applied_limit`. Write an explicit `LIMIT` when the count matters.
 
@@ -365,7 +365,7 @@ type = resource AND tags IS EMPTY ORDER BY RANDOM() LIMIT 20
 type = note ORDER BY name, RANDOM()        # random tiebreak within equal names
 ```
 
-`RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. Because the order is re-rolled on every request, paging past the first page (`LIMIT`/`OFFSET`) draws a fresh random sample that can repeat earlier rows -- this is the expected "give me N random items" behavior, not stable pagination.
+`RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. A fresh execution re-rolls the sample. The `/mrql` web UI retains a signed snapshot for display paging and query-wide Mass Edit, so those operations keep the same bounded sample for up to one hour. API callers using `render=list` must send the returned `snapshot` on subsequent pages. Requests without a snapshot (including ordinary `LIMIT`/`OFFSET` paging) draw a fresh sample and can repeat earlier rows.
 
 Random sampling must examine every matching row before applying `LIMIT`. A small
 limit bounds the result size, but does not bound the scan. MRQL's Explain output
@@ -637,7 +637,11 @@ curl -X POST "http://localhost:8181/v1/mrql?render=1" \
   -d '{"query": "type = resource AND tags = \"photos\""}'
 ```
 
-Entities without a `CustomMRQLResult` template omit the `renderedHTML` field from the JSON response. The `/mrql` web UI uses this field to display custom-rendered results inline.
+With `render=1`, entities without a `CustomMRQLResult` template omit `renderedHTML`. The `/mrql` web UI uses `render=list`: custom results remain supported inside a selectable card, with standard resource, note, or group cards as the fallback.
+
+For `render=list`, `displayPage` and `displaySize` are JSON body fields. The page size caps rendered cards at 100, including cards inside buckets. A bucket can continue onto another page: send `listPage.nextOffset` as `displayOffset` and `listPage.nextItemOffset` as `displayItemOffset`. These display controls preserve the authored per-bucket `LIMIT`. Flat `listPage.total` counts results within the query's `LIMIT`/`OFFSET`; bucket totals count matching buckets. Bucket page numbers become available as their continuation cursors are visited.
+
+Cards share CustomCSS and an inline MRQL query budget per response. If nested queries exhaust that budget, the results warning suggests reducing the page size. Deleted entities and entities moved outside the caller's scope disappear during hydration. Cards and Compact share selection and actions; Compact constrains thumbnails and descriptions for a denser layout.
 
 ## Examples Cookbook
 

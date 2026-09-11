@@ -1,9 +1,12 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"mahresources/auth"
 	"mahresources/constants"
@@ -381,5 +384,28 @@ func TestScoping_ReferenceCheckSeesSameTransactionRows(t *testing.T) {
 	}
 	if len(notes) != 1 || notes[0].Name != "same-tx" {
 		t.Fatalf("expected the same-transaction note to be attached, got %+v", notes)
+	}
+}
+
+func TestMRQLWithRequestScopesAndRetainsRenderContext(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	root, _, _, _ := scopingFixture(t, ctx)
+	p := &auth.Principal{Role: models.RoleUser, ScopeGroupID: &root.ID}
+	parent := auth.WithPrincipal(context.Background(), p)
+	bound := ctx.WithMRQLPrincipal(parent, p)
+	renderCtx, cancel := context.WithTimeout(parent, time.Minute)
+	defer cancel()
+	request := httptest.NewRequest("POST", "/v1/mrql?render=list", nil).WithContext(renderCtx)
+	hydrated := bound.WithRequest(request).(*MahresourcesContext)
+	if scopeFromContext(hydrated.db.Statement.Context) == nil {
+		t.Fatal("hydration has no subtree scope")
+	}
+	if _, ok := hydrated.db.Statement.Context.Deadline(); !ok {
+		t.Fatal("hydration has no render deadline")
+	}
+	cancel()
+	var rows []models.Group
+	if err := hydrated.db.Find(&rows).Error; !errors.Is(err, context.Canceled) {
+		t.Fatalf("hydration after cancellation: %v", err)
 	}
 }

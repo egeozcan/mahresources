@@ -261,11 +261,12 @@ type MRQLGroupedResult struct {
 	// that entry is not a group-by column. The renderer orders by this list and
 	// then appends whatever is left, so nothing that used to be shown stops
 	// being shown.
-	KeyColumns  []string     `json:"keyColumns,omitempty"`
-	Groups      []MRQLBucket `json:"groups,omitempty"`
-	Warnings    []string     `json:"warnings,omitempty"`
-	NextOffset  *int         `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
-	TotalGroups int          `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
+	KeyColumns     []string     `json:"keyColumns,omitempty"`
+	Groups         []MRQLBucket `json:"groups,omitempty"`
+	Warnings       []string     `json:"warnings,omitempty"`
+	NextItemOffset int          `json:"nextItemOffset,omitempty"`
+	NextOffset     *int         `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
+	TotalGroups    int          `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
 	// DefaultLimitApplied is true when the query had no explicit LIMIT clause
 	// and the server applied the configured default.
 	DefaultLimitApplied bool `json:"default_limit_applied"`
@@ -371,7 +372,7 @@ func (ctx *MahresourcesContext) executeMRQLParsed(reqCtx context.Context, parsed
 		result, err = ctx.executeSingleEntity(reqCtx, parsed, entityType, opts, policy)
 	} else {
 		// Cross-entity: fan out to all three entity types
-		result, err = ctx.executeCrossEntity(reqCtx, parsed, opts, policy)
+		result, err = ctx.executeCrossEntity(reqCtx, parsed, opts, policy, false)
 	}
 	if err != nil {
 		return nil, err
@@ -489,6 +490,17 @@ const maxBucketedTotalItems = 10000
 // by a set-based window query. Continuation remains available through NextOffset.
 const maxBucketQueries = 200
 
+// Stable ties keep the same bounded entities when display pages change the SQL
+// LIMIT/OFFSET. Random ordering retains its sampled order through snapshots.
+func stableMRQLEntityOrder(db *gorm.DB, parsed *mrql.Query, entityType mrql.EntityType) *gorm.DB {
+	for _, order := range parsed.OrderBy {
+		if order.Random {
+			return db
+		}
+	}
+	return db.Order(clause.OrderByColumn{Column: clause.Column{Table: entityType.String() + "s", Name: "id"}})
+}
+
 // executeSingleEntity runs the query against a single entity table.
 func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, policy mrqlExecutionPolicy) (*MRQLResult, error) {
 	parsed.EntityType = entityType
@@ -507,6 +519,7 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 	if err != nil {
 		return nil, err
 	}
+	db = stableMRQLEntityOrder(db, parsed, entityType)
 
 	// Apply a default limit cap if the query has no explicit LIMIT.
 	if parsed.Limit < 0 {
@@ -663,15 +676,21 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		warnings = append(warnings, fmt.Sprintf("This page is limited to %d bucket queries; continue at the next offset for remaining groups.", maxBucketQueries))
 	}
 
+	cardPage, cardPaging := reqCtx.Value(mrqlCardPageKey{}).(mrqlCardPage)
+	itemCap := maxBucketedTotalItems
+	if cardPaging {
+		itemCap = cardPage.size
+	}
+	nextItemOffset := 0
 	var buckets []MRQLBucket
 	totalItems := 0
 	totalKeys := requestedKeys
 	capOverflow := false
-	for _, key := range keys {
+	for keyIndex, key := range keys {
 		// Stop adding buckets once we've exceeded the global item cap.
-		// Each bucket gets its full per-bucket LIMIT — we never truncate a
-		// bucket mid-way, which would make its remaining items unreachable.
-		if totalItems >= maxBucketedTotalItems {
+		// Ordinary MRQL keeps whole buckets; card pages can split a bucket
+		// because their response carries an item continuation.
+		if totalItems >= itemCap {
 			break
 		}
 
@@ -679,6 +698,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		if err != nil {
 			return nil, err
 		}
+		bucketDB = stableMRQLEntityOrder(bucketDB, parsed, parsed.EntityType)
 
 		// Build public key — rename internal _gbid_ fields to user-friendly
 		// <field>_id keys so same-named relation buckets are distinguishable.
@@ -692,10 +712,18 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			}
 		}
 		bucket := MRQLBucket{Key: publicKey}
-		remaining := maxBucketedTotalItems - totalItems
+		remaining := itemCap - totalItems
 		probeLimit := remaining + 1
 		if parsed.Limit >= 0 && parsed.Limit < probeLimit {
 			probeLimit = parsed.Limit
+		}
+		itemOffset := 0
+		if cardPaging {
+			if keyIndex == 0 {
+				itemOffset = min(cardPage.itemOffset, parsed.Limit)
+			}
+			probeLimit = min(remaining+1, parsed.Limit-itemOffset)
+			bucketDB = bucketDB.Offset(itemOffset)
 		}
 		bucketDB = bucketDB.Limit(probeLimit)
 		bucketItems := 0
@@ -721,8 +749,21 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			bucket.Items, bucketItems = groups, len(groups)
 		}
 		if bucketItems > remaining {
-			capOverflow = true
-			break
+			if !cardPaging {
+				capOverflow = true
+				break
+			}
+			// Keep the same bucket cursor and resume after the displayed rows.
+			nextItemOffset = itemOffset + remaining
+			switch rows := bucket.Items.(type) {
+			case []models.Resource:
+				bucket.Items = rows[:remaining]
+			case []models.Note:
+				bucket.Items = rows[:remaining]
+			case []models.Group:
+				bucket.Items = rows[:remaining]
+			}
+			bucketItems = remaining
 		}
 		totalItems += bucketItems
 		buckets = append(buckets, bucket)
@@ -732,7 +773,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		buckets = []MRQLBucket{}
 	}
 
-	if (capOverflow || totalItems >= maxBucketedTotalItems) && len(buckets) < totalKeys {
+	if !cardPaging && (capOverflow || totalItems >= itemCap) && len(buckets) < totalKeys {
 		droppedGroups := totalKeys - len(buckets)
 		warnings = append(warnings, fmt.Sprintf(
 			"Results truncated at %d items (%d of %d groups shown, %d groups omitted). Narrow your query or add a filter.",
@@ -745,19 +786,23 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		offset = parsed.Offset
 	}
 	actualNextOffset := offset + len(buckets)
+	if nextItemOffset > 0 {
+		actualNextOffset--
+	}
 	var nextOffset *int
 	if actualNextOffset < len(allKeys) {
 		nextOffset = &actualNextOffset
 	}
 
 	return &MRQLGroupedResult{
-		EntityType:  parsed.EntityType.String(),
-		Mode:        "bucketed",
-		KeyColumns:  mrql.BucketKeyColumns(parsed),
-		Groups:      buckets,
-		Warnings:    warnings,
-		NextOffset:  nextOffset,
-		TotalGroups: len(allKeys),
+		EntityType:     parsed.EntityType.String(),
+		Mode:           "bucketed",
+		KeyColumns:     mrql.BucketKeyColumns(parsed),
+		Groups:         buckets,
+		Warnings:       warnings,
+		NextOffset:     nextOffset,
+		NextItemOffset: nextItemOffset,
+		TotalGroups:    len(allKeys),
 	}, nil
 }
 
@@ -786,7 +831,7 @@ func crossEntitySelectQuery(parsed *mrql.Query, entityType mrql.EntityType, perE
 // Each entity query gets its own timeout so a slow table doesn't block the
 // others. If an entity times out, its results are omitted and a warning is
 // included in the response.
-func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions, policy mrqlExecutionPolicy) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions, policy mrqlExecutionPolicy, identitiesOnly bool) (*MRQLResult, error) {
 	// Up-front regex/dialect gate: this path swallows per-entity TranslateErrors
 	// (a non-resolvable entity is skipped), so a SQLite regex query without a
 	// `type =` filter would otherwise return silent empty results instead of a
@@ -828,6 +873,11 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				continue
 			}
 			return nil, err
+		}
+		db = stableMRQLEntityOrder(db, &branch, et)
+		if identitiesOnly {
+			table := et.String() + "s"
+			db = db.Select(table + ".id, " + table + ".name, " + table + ".created_at, " + table + ".updated_at")
 		}
 
 		wg.Add(1)
@@ -1276,6 +1326,7 @@ func (ctx *MahresourcesContext) ExplainMRQLWithOptions(reqCtx context.Context, p
 		if err != nil {
 			return nil, err
 		}
+		built = stableMRQLEntityOrder(built, parsed, entityType)
 		result.Statements = append(result.Statements, mrql.ExplainDB(built, entityType.String(), explainDest(entityType)))
 		result.ExecutionShape = fixedExecutionShape("flat", len(result.Statements))
 
@@ -1294,6 +1345,7 @@ func (ctx *MahresourcesContext) ExplainMRQLWithOptions(reqCtx context.Context, p
 				}
 				return nil, err
 			}
+			built = stableMRQLEntityOrder(built, &branch, et)
 			result.Statements = append(result.Statements, mrql.ExplainDB(built, explainTableLabel(et), explainDest(et)))
 		}
 		result.ExecutionShape = fixedExecutionShape("cross_entity", len(result.Statements))
@@ -1633,6 +1685,7 @@ func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Cont
 	if err != nil {
 		return nil, err
 	}
+	db = stableMRQLEntityOrder(db, q, entityType)
 
 	if q.Limit < 0 {
 		db = db.Limit(ctx.defaultMRQLLimit())
@@ -1793,6 +1846,7 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 		if err != nil {
 			return nil, err
 		}
+		bucketDB = stableMRQLEntityOrder(bucketDB, parsed, parsed.EntityType)
 
 		publicKey := make(map[string]any, len(key))
 		for k, v := range key {
@@ -1926,7 +1980,7 @@ func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed
 	if entityType != mrql.EntityUnspecified {
 		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts, interactiveMRQLPolicy)
 	}
-	return ctx.executeCrossEntity(reqCtx, parsed, opts, interactiveMRQLPolicy)
+	return ctx.executeCrossEntity(reqCtx, parsed, opts, interactiveMRQLPolicy, false)
 }
 
 // CountMRQLScoped returns the true number of rows a non-grouped MRQL query

@@ -9346,4 +9346,35 @@ Round 3: Standards found no majors. Spec found one P2: opening Mass Edit in all-
 
 Round 4: Standards — no P0–P2 findings. Spec — no P0–P2 findings. Both reviewers independently verified the final Mass Edit correction and reported no remaining majors in the complete changes.
 
-Final validation: production build; all 1,320 frontend unit tests across 81 files; all 11 shared-list/lightbox browser regressions; Go application-context, server/API/template, architecture, and list-view suites; CSS scan; source whitespace checks. Eight major findings were resolved across four review rounds, along with the reported minor issues. Changes remain uncommitted.
+Final validation: production build; all 1,320 frontend unit tests across 81 files; all 11 shared-list/lightbox browser regressions; Go application-context, server/API/template, architecture, and list-view suites; CSS scan; source whitespace checks. Eight major findings were resolved across four review rounds, along with the reported minor issues.
+
+
+## MRQL review findings — 2026-09-11
+
+- [x] Reproduce and fix scope/deadline propagation and disappearing hydration rows.
+- [x] Bound bucket card rendering; improve flat paging, template reuse and snapshot size.
+- [x] Correct result counts, sort reset, customization and query-budget feedback.
+- [x] Restore shared toolbar layout, scoped actions and accessible list chrome.
+- [x] Update documentation, API metadata and architecture checks.
+- [x] Run focused regressions, build and required suites; record results.
+
+
+Review fixes: ORM scope is distinguished from MRQL principal binding, and request-bound database handles retain the render deadline and cancellation. Hydration drops vanished or inaccessible rows. Bucket pages cap cards and carry an item continuation inside a bucket; single-entity flat pages count within the authored bounds and page in SQL, while mixed pages merge only identity and sort fields before hydrating the display page. Hydration batches IDs, templates are cached, plugin action discovery is hoisted, CSS state is shared, and duplicate entity JSON in card markup is removed. Random snapshots compress their signed identity payload; a 10,000-item regression stays below 128 KiB.
+
+CustomMRQLResult works inside selectable cards again, with an actionable warning on inline-query budget exhaustion. Results counts, query-order restoration, heading levels, pagination, compact previews, toolbar rows, form visibility, scoped downloads/Mass Edit and singular labels are corrected. The results subtree captures its response while Alpine removes it, avoiding null reads during refresh. Expanded forms use a full toolbar row, including specialized form components; empty toolbars hide without waiting on interrupted child transitions.
+
+Validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 'json1 fts5' ./...`; all 1,342 Vitest tests; production build; OpenAPI generation; CSS scan; source whitespace checks. The shared-list browser suite passes on SQLite and PostgreSQL, and the dedicated PostgreSQL mixed-list SQL test passes. The broader browser/CLI matrix passed 155 cases with one skip before finding the details-view toolbar issue; its fix passed all 36 affected browser cases. Final toolbar/shared-list/details checks passed 22 cases and tag-merge checks passed six. Reviewed screenshots confirm compact previews and full-row editors with visible suggestion dropdowns. Run the CSS scan separately from Go template-walk tests: its temporary template probes can otherwise race the walker.
+
+## MRQL fixes review loop — 2026-09-11
+
+- [x] Pin the uncommitted review fixes, including new files, against `5d86f89fa4ab4b0c3d7ccc9fcb6169ff780c1c3b`.
+- [x] Start independent Standards and Spec agents using the original pasted review as the spec.
+- [x] Reproduce and fix major findings with focused regressions.
+- [x] Repeat independent reviews until neither axis reports P0–P2 findings.
+- [x] Record final validation and review outcomes.
+
+Round 1: Standards found one P2: PostgreSQL may repeat or omit tied rows across flat pages and bucket continuations. Spec found one P2: mixed SQL paging changed bounded membership for Unicode names and branch sort fields, so cards could disagree with query-wide actions. Stable ID ties now apply across shared execution and Explain. Mixed list queries reuse the original merge with only identity and sort fields, then hydrate the display page; single-entity pages retain SQL pagination. API parity regressions fail before the fixes and pass afterward; PostgreSQL tied-page, mixed-list, random and Explain checks pass.
+
+Round 2: Fresh Standards and Spec reviews both report no P0–P2 or P3 findings in the cumulative changes. Two major findings were resolved across two rounds.
+
+Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 'json1 fts5' ./...`; production build; 77 SQLite MRQL browser tests (one skip); 43 MRQL CLI tests; eight PostgreSQL shared-list browser tests; focused PostgreSQL tied-page, mixed-list, random and Explain tests; source whitespace checks. Earlier frontend unit, OpenAPI and CSS checks remain applicable because this loop changed backend ordering and regressions only.

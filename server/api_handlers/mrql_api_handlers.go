@@ -1,10 +1,12 @@
 package api_handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mahresources/auth"
 	"math"
 	"net/http"
@@ -26,16 +28,17 @@ import (
 // -- Request/response types for MRQL endpoints --
 
 type mrqlExecuteRequest struct {
-	Snapshot      string         `json:"snapshot" schema:"snapshot"`
-	DisplayOffset *int           `json:"displayOffset" schema:"displayOffset"`
-	DisplayPage   int            `json:"displayPage" schema:"displayPage"`
-	DisplaySize   int            `json:"displaySize" schema:"displaySize"`
-	Query         string         `json:"query" schema:"query"`
-	Limit         int            `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
-	Buckets       int            `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
-	Page          int            `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
-	Offset        int            `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
-	Params        map[string]any `json:"params" schema:"-"`        // $name placeholder bindings (JSON body only)
+	DisplayItemOffset int            `json:"displayItemOffset" schema:"displayItemOffset"`
+	Snapshot          string         `json:"snapshot" schema:"snapshot"`
+	DisplayOffset     *int           `json:"displayOffset" schema:"displayOffset"`
+	DisplayPage       int            `json:"displayPage" schema:"displayPage"`
+	DisplaySize       int            `json:"displaySize" schema:"displaySize"`
+	Query             string         `json:"query" schema:"query"`
+	Limit             int            `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
+	Buckets           int            `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
+	Page              int            `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
+	Offset            int            `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
+	Params            map[string]any `json:"params" schema:"-"`        // $name placeholder bindings (JSON body only)
 }
 
 type mrqlValidateRequest struct {
@@ -548,6 +551,7 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 			listPage, listSize := listPageRequest(req.DisplayPage, req.DisplaySize, 5)
 			baseOffset := max(0, parsed.Offset)
 			if listRender && len(parsed.GroupBy.Aggregates) == 0 {
+				request = request.WithContext(application_context.WithMRQLCardPage(request.Context(), listSize, req.DisplayItemOffset))
 				parsed.BucketLimit = listSize
 				relativeOffset := groupedPageOffset(listPage, listSize)
 				if req.DisplayOffset != nil && *req.DisplayOffset >= 0 {
@@ -582,7 +586,7 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 				_ = json.NewEncoder(writer).Encode(struct {
 					*application_context.MRQLGroupedResult
 					ListPage mrqlListPage `json:"listPage"`
-				}{grouped, mrqlListPage{Page: listPage, Size: listSize, Total: max(0, grouped.TotalGroups-baseOffset), HasNext: grouped.NextOffset != nil, NextOffset: relativeBucketOffset(grouped.NextOffset, baseOffset)}})
+				}{grouped, mrqlListPage{Page: listPage, Size: listSize, Total: max(0, grouped.TotalGroups-baseOffset), HasNext: grouped.NextOffset != nil, NextOffset: relativeBucketOffset(grouped.NextOffset, baseOffset), NextItemOffset: grouped.NextItemOffset}})
 				return
 			}
 			writer.Header().Set("Content-Type", constants.JSON)
@@ -596,9 +600,19 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 			limit, queryPage = 0, 0
 		}
 		var result *application_context.MRQLResult
+		var paging mrqlListPage
+		random := false
+		for _, order := range parsed.OrderBy {
+			random = random || order.Random
+		}
 		snapshot := req.Snapshot
 		if listRender && snapshot != "" {
 			result, err = ctx.ResolveMRQLSnapshot(request.Context(), req.Query, params, snapshot)
+		} else if listRender && !random {
+			page, size := listPageRequest(req.DisplayPage, req.DisplaySize, 25)
+			var total int
+			result, total, page, err = ctx.ExecuteMRQLListPage(request.Context(), parsed, page, size)
+			paging = mrqlListPage{Page: page, Size: size, Total: total, HasNext: page*size < total}
 		} else {
 			result, err = ctx.ExecuteMRQLParsed(request.Context(), parsed, limit, queryPage)
 			if err == nil && listRender {
@@ -617,12 +631,12 @@ func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.R
 
 		if listRender {
 			page, size := listPageRequest(req.DisplayPage, req.DisplaySize, 25)
-			paging := pageMRQLResult(result, page, size)
-			for _, items := range []any{result.Resources, result.Notes, result.Groups} {
-				if err := renderMRQLListCards(ctx, request, items); err != nil {
-					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-					return
-				}
+			if random {
+				paging = pageMRQLResult(result, page, size)
+			}
+			if err := renderMRQLListCards(ctx, request, result); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
 			}
 			writer.Header().Set("Content-Type", constants.JSON)
 			_ = json.NewEncoder(writer).Encode(struct {
@@ -978,6 +992,26 @@ func GetRunSavedMRQLQueryHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusNotFound))
+			return
+		}
+
+		if request.URL.Query().Get("render") == "list" {
+			var req mrqlExecuteRequest
+			if err := tryFillStructValuesFromRequest(&req, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			req.Query = saved.Query
+			body, err := json.Marshal(req)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			forwarded := request.Clone(request.Context())
+			forwarded.Body = io.NopCloser(bytes.NewReader(body))
+			forwarded.ContentLength = int64(len(body))
+			forwarded.Header.Set("Content-Type", constants.JSON)
+			GetExecuteMRQLHandler(ctx)(writer, forwarded)
 			return
 		}
 

@@ -1991,15 +1991,22 @@ Request body fields:
   - page    (integer)          — 1-based page number
   - offset  (integer)          — explicit cursor offset (takes precedence over page)
 
+  - displayPage (integer) — 1-based display page for render=list
+  - displaySize (integer) — cards per display page, capped at 100
+  - displayOffset (integer) — listPage.nextOffset from the preceding bucket page,
+    relative to the authored bucket OFFSET
+  - displayItemOffset (integer) — listPage.nextItemOffset from the preceding
+    bucket page; resumes within a bucket without changing its authored LIMIT
+  - snapshot (string) — signed random-sample token from a previous list response;
+    preserves the bounded sample and order for subsequent display pages
+
 Query parameter:
-  - render (0, 1, or list) — when 1, populates each result row's RenderedHTML using
-    the entity's CustomMRQLResult template. With list, uses the standard selectable
-    entity cards and returns listPage metadata. displayPage and displaySize in the
-    body paginate within the query's LIMIT/OFFSET; bucketed queries retain their
-    per-bucket item limit. For bucket navigation, pass listPage.nextOffset back as
-    displayOffset (relative to the authored bucket OFFSET). Randomly ordered flat
-    results also return a signed snapshot; send it as snapshot on later display
-    requests to keep the same bounded sample and order.
+  - render (0, 1, or list) — 1 populates RenderedHTML from CustomMRQLResult.
+    list returns bounded selectable cards using CustomMRQLResult when configured,
+    otherwise the standard entity partial. Flat listPage.total counts within the
+    query LIMIT/OFFSET. Bucketed pages bound cards across and within buckets;
+    pass both continuation offsets back to reach every item. An inline query
+    budget warning asks readers to reduce displaySize if card content is omitted.
 
 An aggregated GROUP BY response carries "columns": the result's column names in
 the order the query wrote them (group-by fields first, then aggregates), matching
@@ -2018,7 +2025,7 @@ distinguishable.`,
 		Tags:                mrqlTag,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ExtraQueryParams: []openapi.QueryParam{
-			{Name: "render", Type: "integer", Description: "Set to 1 to render CustomMRQLResult templates"},
+			{Name: "render", Type: "string", Description: "0: entity JSON; 1: CustomMRQLResult HTML; list: paginated selectable cards with listPage metadata"},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
@@ -2209,7 +2216,7 @@ The endpoint does not execute MRQL. The server sends the prompt and syntax-only 
 		Path:        "/v1/mrql/saved/run",
 		OperationID: "runSavedMRQLQuery",
 		Summary:     "Execute a saved MRQL query by id or name",
-		Description: "Runs a previously saved MRQL query. Accepts either `id` or `name` to identify the saved query, plus the same pagination params as /v1/mrql.",
+		Description: "Runs a previously saved MRQL query. Accepts either `id` or `name` to identify the saved query, plus the same pagination params as /v1/mrql. With render=list, accepts displayPage, displaySize, displayOffset, displayItemOffset and snapshot in the JSON body; returns the same bounded cards and continuation metadata.",
 		Tags:        mrqlTag,
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "id", Type: "integer", Description: "Saved query ID"},
@@ -2218,7 +2225,7 @@ The endpoint does not execute MRQL. The server sends the prompt and syntax-only 
 			{Name: "page", Type: "integer"},
 			{Name: "buckets", Type: "integer"},
 			{Name: "offset", Type: "integer"},
-			{Name: "render", Type: "integer", Description: "Set to 1 to render CustomMRQLResult templates"},
+			{Name: "render", Type: "string", Description: "0: entity JSON; 1: CustomMRQLResult HTML; list: paginated selectable cards with listPage metadata"},
 		},
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},

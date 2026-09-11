@@ -3,7 +3,7 @@
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div data-entity='{{ entity|json }}' x-data="{ entity: {{ entity|json }} }">
+    <div data-entity='{{ entity|json }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
         <div class="card-image">
             <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
                @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
@@ -21,9 +21,9 @@
 
         <header class="card-header card-header--compact">
             <div class="card-title-section">
-                <h2 class="card-title">
+                <h{{ cardHeadingLevel|default:2 }} class="card-title">
                     <a href="/resource?id={{ entity.ID }}" title="{{ entity.Name }}">{{ entity.Name }}</a>
-                </h2>
+                </h{{ cardHeadingLevel|default:2 }}>
                 <div class="card-meta">
                     <span class="card-meta-item">{{ entity.FileSize | humanReadableSize }}</span>
                     {% if entity.Owner %}

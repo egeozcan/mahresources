@@ -10,7 +10,7 @@ const btnClasses = `bulk-action-btn inline-flex justify-center
       border
       items-center
       text-sm font-medium rounded-md
-      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500`;
+      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600`;
 
 
 let _bulkLiveRegion = null;
@@ -306,9 +306,11 @@ export function createBulkSelection(scope = null) {
         $el.setAttribute("aria-expanded", isActive);
       }`);
 
-      form.setAttribute("x-show", "$selection.isActiveEditor($el)");
-      form.setAttribute("x-collapse", "");
-      form.setAttribute(":class", "$selection.isActiveEditor($el) && 'active'");
+      // Shared forms declare these before Alpine walks the subtree. Rewriting
+      // them during refresh can schedule a second directive initialization.
+      if (!form.hasAttribute("x-show")) form.setAttribute("x-show", "$selection.isActiveEditor($el)");
+      if (!form.hasAttribute("x-collapse")) form.setAttribute("x-collapse", "");
+      if (!form.hasAttribute(":class")) form.setAttribute(":class", "$selection.isActiveEditor($el) && 'active'");
       form.insertAdjacentElement("beforebegin", btn);
 
       this.editors.push(form);

@@ -8,13 +8,8 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
  * `prebody` block and the cards in `body`, and a Pongo2 block boundary is not
  * something an `x-data` subtree can span.
  *
- * Selection is not held here at all. It is the shared `bulkSelection` store, the
- * same one every entity list page uses, so Select All / Deselect All / shift-range
- * selection behave on this page exactly as they do on /notes. This used to be a
- * local Set, justified on the grounds that the shared store "carries entity
- * semantics" and a downloads row landing in it would offer "Add tags". It does
- * not: the store holds ids and nothing else, and the bulk *editors* that give
- * those ids meaning are a per-page include.
+ * The toolbar passes its scoped selection to bulk actions. The store keeps
+ * no selection of its own, so actions cannot read another toolbar's IDs.
  *
  * Every action reloads the page afterwards. The list is server-rendered and a
  * retry changes a row's status, its attempt count and its position, so patching
@@ -55,21 +50,12 @@ export function downloadsStore(Alpine) {
             this._liveRegion.announce(message);
         },
 
-        /** The shared selection, as an array of history-row ids. */
-        get selectedIds() {
-            return [...(Alpine.store('bulkSelection')?.selectedIds ?? [])];
-        },
-
-        get selectedCount() {
-            return this.selectedIds.length;
-        },
-
         retry(ids) {
             return this.send('/v1/downloads/retry', ids, 'retried');
         },
 
-        retrySelected() {
-            return this.retry(this.selectedIds);
+        retrySelected(selection) {
+            return this.retry([...selection.selectedIds]);
         },
 
         /**
@@ -94,8 +80,8 @@ export function downloadsStore(Alpine) {
             return this.send('/v1/downloads/delete', ids, 'deleted');
         },
 
-        removeSelected() {
-            return this.remove(this.selectedIds);
+        removeSelected(selection) {
+            return this.remove([...selection.selectedIds]);
         },
 
         /**

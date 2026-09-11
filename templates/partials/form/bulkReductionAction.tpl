@@ -12,9 +12,6 @@
 {#   reductionOwnerId — optional group detail action with a subtree checkbox    #}
 <div class="{% if reductionOwnerId %}relative{% else %}px-4{% endif %}" x-data="reductionBulkAction({ entity: '{{ entity }}', ownerId: {{ reductionOwnerId|default:0 }} })"
      @keydown.escape.stop="open = false; $refs.trigger.focus()" @click.outside="open = false">
-    {% if !reductionOwnerId %}
-    <span class="block text-sm font-mono font-medium text-stone-700 mt-3">Reduce</span>
-    {% endif %}
     <button type="button" x-ref="trigger"
             data-testid="bulk-reduction-action"
             :aria-expanded="open ? 'true' : 'false'"

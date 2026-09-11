@@ -31,7 +31,7 @@
                         </label>
                         <label class="flex items-center gap-2 text-sm mt-1">
                             <input type="radio" name="massEditTarget" value="filter" x-model="target">
-                            <span>Every <span x-text="noun()"></span> matching the current filter <span x-show="!queryTarget">(<span x-text="totalCount"></span> on this list)</span><span x-show="queryTarget">within the executed query’s limits; count checked before applying</span></span>
+                            <span>Every <span x-text="noun()"></span> <span x-show="!queryTarget">matching the current filter (<span x-text="totalCount"></span> on this list)</span><span x-show="queryTarget">within the executed query’s limits; count checked before applying</span></span>
                         </label>
                     </fieldset>
 
@@ -117,7 +117,7 @@
                     {% endif %}
 
                     <fieldset class="mass-edit-section">
-                        <legend class="mass-edit-legend">Owner{% if massEditEntity == 'group' %} (the parent group){% endif %}</legend>
+                        <legend class="mass-edit-legend">Owner<span x-show="entityType === 'group'"> (the parent group)</span></legend>
                         <label class="flex items-center gap-2 text-sm">
                             <input type="radio" name="massEditOwner" value="set" x-model="ownerMode">
                             <span>Set owner</span>

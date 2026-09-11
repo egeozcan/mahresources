@@ -4,9 +4,9 @@ export function bulkAction(action) {
         unavailableReason() {
             const selection = this.$selection;
             const count = selection.selectedIds.size;
-            if (action.Min === action.Max && action.Min > 0 && count !== action.Min) return `Select exactly ${action.Min} items to ${action.Label.toLowerCase()}.`;
+            if (action.Min === action.Max && action.Min > 0 && count !== action.Min) return `Select exactly ${action.Min} ${action.Min === 1 ? 'item' : 'items'} to ${action.Label.toLowerCase()}.`;
             if (count < (action.Min || 1)) return 'Select at least one item.';
-            if (action.Max > 0 && count > action.Max) return `Select at most ${action.Max} items.`;
+            if (action.Max > 0 && count > action.Max) return `Select at most ${action.Max} ${action.Max === 1 ? 'item' : 'items'}.`;
             const filters = action.Filters;
             if (!filters) return '';
             const entities = selection.selectedEntities();

@@ -82,7 +82,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"pluginDetailActions": true,
 				"pluginCardActions":   true,
 				"pluginBulkActions":   true,
-                "mrqlBulkActions": true,
+				"mrqlBulkActions":     true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}

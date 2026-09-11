@@ -3,7 +3,7 @@
     <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div data-entity='{{ entity|json }}' x-data='{ "entity": {{ entity|json }} }'>
+    <div data-entity='{{ entity|json }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
         <header class="card-header">
             <div class="card-avatar">
                 {% process_shortcodes entity.NoteType.CustomAvatar entity %}
@@ -12,9 +12,9 @@
                 {% endif %}
             </div>
             <div class="card-title-section">
-                <h2 class="card-title">
+                <h{{ cardHeadingLevel|default:2 }} class="card-title">
                     <a href="/note?id={{ entity.ID }}">{{ entity.Name }}</a>
-                </h2>
+                </h{{ cardHeadingLevel|default:2 }}>
                 {% process_shortcodes entity.NoteType.CustomSummary entity %}
             </div>
         </header>

@@ -1047,15 +1047,24 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	// write handlers (which already route through WithRequest) are confined to a
 	// group-limited principal's subtree.
 	p := auth.PrincipalFromContext(r.Context())
-	// If this context is already scoped to the same principal (e.g. it came from
-	// scopedAPI's WithPrincipal for this request), its db is already confined to
-	// the subtree — reuse it instead of resolving the subtree (and walking the
-	// recursive group-tree CTE) a second time for the same request.
-	if ctx.principal != nil && ctx.principal == p {
+	// A principal alone is not proof of ORM scoping: WithMRQLPrincipal
+	// deliberately leaves that filter to SQL. Reuse only an installed filter,
+	// rebasing it onto the latest request context (including render deadlines).
+	mustScope := p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
+	filter := scopeFromContext(ctx.db.Statement.Context)
+	if ctx.principal != nil && ctx.principal == p && (!mustScope || filter != nil) {
+		parent := r.Context()
+		if filter != nil {
+			parent = context.WithValue(parent, scopeCtxKey{}, filter)
+		}
+		if p.UserID != 0 {
+			parent = context.WithValue(parent, actingUserCtxKey{}, p.UserID)
+		}
+		ctxCopy.db = ctx.db.WithContext(parent)
 		return &ctxCopy
 	}
 	ctxCopy.principal = p
-	applyPrincipalScope(&ctxCopy, ctx, p)
+	applyPrincipalScope(&ctxCopy, ctx, p, r.Context())
 	return &ctxCopy
 }
 

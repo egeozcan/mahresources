@@ -299,7 +299,7 @@ export function massEditModal() {
 
             if (this.needsConfirm(ops, ownerSet)) {
                 const scope = this.target === 'filter'
-                    ? `all ${matched} ${this.noun()} matching the current filter`
+                    ? `all ${matched} ${this.noun()} ${this.queryTarget ? "within the executed query’s limits" : "matching the current filter"}`
                     : `the ${matched} selected ${this.noun()}`;
                 const confirmed = await askToConfirm(
                     `Apply ${this.describeOps(ops, ownerSet)} to ${scope}. This cannot be undone.`,
@@ -359,7 +359,7 @@ export function massEditModal() {
             if (!listContainer || !refreshedListContainer) {
                 throw new Error('Could not find refreshed list');
             }
-            window.Alpine.store('bulkSelection')?.deselectAll();
+            this.selection?.deselectAll();
             Alpine.morph(listContainer, refreshedListContainer, morphOptionsWithShortcodeElements());
         },
     };

@@ -28,6 +28,9 @@ export function mrqlEditor() {
     executedQuery: null,
     displayPage: 1,
     bucketOffsets: {1:0},
+    bucketItemOffsets: {1:0},
+    sortOrder: '',
+    queryOrderQuery: null,
     displaySize: 25,
     listLayout: 'cards',
 
@@ -87,14 +90,33 @@ export function mrqlEditor() {
         if (!focusOn(target)) parkFocus(document.querySelector('[data-mrql-page-status], [data-testid="mrql-execution-error"]'));
       });
     },
-    changePage(page) { return this.executeFromResultControl({pushState:false, snapshot:this.executedQuery, displayPage:page, reuseResult:true}); },
-    changePageSize(size) { this.displaySize = size; this.bucketOffsets = {1:0}; return this.changePage(1); },
+    changePage(page) {
+      return this.executeFromResultControl({pushState:false, snapshot:this.executedQuery, displayPage:page, reuseResult:true});
+    },
+    changePageSize(size) {
+      this.displaySize = size;
+      this.bucketOffsets = {1:0};
+      this.bucketItemOffsets = {1:0};
+      return this.changePage(1);
+    },
     sortResults(order) {
-      if (!order || !this.executedQuery) return;
-      const snapshot = {query: replaceMRQLSort(this.executedQuery.query, order), params: this.executedQuery.params};
+      if (!this.executedQuery) return;
+      this.queryOrderQuery ??= this.executedQuery.query;
+      this.sortOrder = order;
+      const snapshot = {query: order ? replaceMRQLSort(this.queryOrderQuery, order) : this.queryOrderQuery, params: this.executedQuery.params};
       this.setQuery(snapshot.query);
       this.bucketOffsets = {1:0};
+      this.bucketItemOffsets = {1:0};
       return this.executeFromResultControl({snapshot});
+    },
+
+    get pageEntries() {
+      const total = this.result?.mode === 'bucketed'
+        ? Math.max(this.displayPage, ...Object.keys(this.bucketOffsets).map(Number))
+        : Math.max(1, Math.ceil((this.result?.listPage?.total || 0) / this.displaySize));
+      const pages = [...new Set([1, total, this.displayPage-2, this.displayPage-1, this.displayPage, this.displayPage+1, this.displayPage+2])]
+        .filter(page => page >= 1 && page <= total).sort((a,b) => a-b);
+      return pages.flatMap((page,index) => index && page > pages[index-1]+1 ? [null,page] : [page]);
     },
 
     // Package 4: parameter placeholders ($name) derived from the validate
@@ -175,10 +197,11 @@ export function mrqlEditor() {
     // result read "Results (1 items)".
     get resultCountLabel() {
       if (!this.result) return '';
-      const n = this.totalCount;
+      const n = !this.result.mode && this.result.listPage ? this.result.listPage.total : this.totalCount;
       if (this.result.mode === 'aggregated') return `(${n} ${n === 1 ? 'row' : 'rows'})`;
       if (this.result.mode === 'bucketed') {
-        const g = this.result.groups?.length || 0;
+        const g = this.result.listPage?.total ?? this.result.groups?.length ?? 0;
+        if (this.result.listPage) return `(${g} ${g === 1 ? 'group' : 'groups'}, ${n} ${n === 1 ? 'item' : 'items'} on this page)`;
         return `(${g} ${g === 1 ? 'group' : 'groups'}, ${n} ${n === 1 ? 'item' : 'items'})`;
       }
       return `(${n} ${n === 1 ? 'item' : 'items'})`;
@@ -734,8 +757,13 @@ export function mrqlEditor() {
     async execute({ pushState = true, snapshot = null, displayPage = 1, reuseResult = false } = {}) {
       const query = snapshot?.query || this.getQuery().trim();
       const params = snapshot?.params || this.paramsPayload();
-      if (!snapshot) this.bucketOffsets = {1:0};
       if (!query) return;
+      if (!snapshot) {
+        this.bucketOffsets = {1:0};
+        this.bucketItemOffsets = {1:0};
+        this.sortOrder = '';
+        this.queryOrderQuery = query;
+      }
 
       this._executeController?.abort();
       const controller = new AbortController();
@@ -757,7 +785,7 @@ export function mrqlEditor() {
         const resp = await fetch('/v1/mrql?render=list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, params, snapshot:reuseResult ? snapshot?.snapshot : undefined, displayPage, displaySize:this.displaySize, displayOffset:this.bucketOffsets[displayPage] }),
+          body: JSON.stringify({ query, params, snapshot:reuseResult ? snapshot?.snapshot : undefined, displayPage, displaySize:this.displaySize, displayOffset:this.bucketOffsets[displayPage], displayItemOffset:this.bucketItemOffsets[displayPage] || 0 }),
           signal: controller.signal,
         });
         if (requestId !== this._executeRequestId || controller.signal.aborted) return;
@@ -775,7 +803,10 @@ export function mrqlEditor() {
         this.executedQuery = {query, params, ...(result.snapshot ? {snapshot:result.snapshot} : {})};
         this.executedEntityTypes = ['resource','note','group'].filter(type => this.hasEntityResults(type));
         this.displayPage = result.listPage?.page || displayPage;
-        if (result.mode === 'bucketed' && result.listPage?.nextOffset != null) this.bucketOffsets[this.displayPage+1] = result.listPage.nextOffset;
+        if (result.mode === 'bucketed' && result.listPage?.nextOffset != null) {
+          this.bucketOffsets[this.displayPage+1] = result.listPage.nextOffset;
+          this.bucketItemOffsets[this.displayPage+1] = result.listPage.nextItemOffset || 0;
+        }
         this.resultQuery = stamp;
         // BH-013: capture the default-limit signal from the response payload.
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);

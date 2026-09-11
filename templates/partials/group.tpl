@@ -4,7 +4,7 @@
         <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.GetName() }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
-    <div data-entity='{{ entity|json }}' x-data='{ "entity": {{ entity|json }} }'>
+    <div data-entity='{{ entity|json }}' x-data="{ entity: JSON.parse($el.dataset.entity) }">
         <header class="card-header">
             {% if !fullText %}
             <div class="card-avatar">
@@ -25,9 +25,9 @@
                 {# name. `reverse` keeps its other job: suppressing the          #}
                 {# relation description on the second half so it is not printed  #}
                 {# twice. #}
-                <h2 class="card-title">
+                <h{{ cardHeadingLevel|default:2 }} class="card-title">
                     <a href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">{{ entity.GetName() }}</a>
-                </h2>
+                </h{{ cardHeadingLevel|default:2 }}>
 
                 {% if relation %}
                     <a href="/relation?id={{ relation.ID }}" class="card-badge card-badge--relation mt-1">

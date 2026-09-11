@@ -14,6 +14,8 @@ test('MRQL paging retains keyboard focus, including at the first and last pages'
     await size.focus();
     await size.selectOption('5');
     await expect(page.locator('.note-card')).toHaveCount(5);
+    await expect(page.getByRole('heading', {name:'Results (11 items)', exact:true})).toBeVisible();
+    await expect(page.getByRole('navigation',{name:'MRQL result pages'}).locator('[aria-current=page]')).toHaveText('1');
     await expect(size).toBeFocused();
     const next = page.getByRole('button', {name:'Next',exact:true});
     const previous = page.getByRole('button', {name:'Previous',exact:true});
@@ -59,6 +61,7 @@ test('MRQL selects types independently, uses Mass Edit fields, and clears on pag
     await groups.getByRole('button',{name:'Mass edit all results',exact:true}).click();
     const groupModal = page.getByRole('dialog',{name:'Mass edit groups'});
     await expect(groupModal.getByRole('radio',{name:'Selected items (0)',exact:true})).toBeVisible();
+    await expect(groupModal.locator('legend').filter({hasText:'Owner'})).toContainText('(the parent group)');
     await groupModal.getByRole('button',{name:'Cancel',exact:true}).click();
     await page.getByLabel('Per page',{exact:false}).selectOption('5');
     await expect(notes.locator('.note-card')).toHaveCount(4);
@@ -152,6 +155,14 @@ test('bucket appearances share selection and a built-in mutation refreshes every
     await expect(notes.locator('form[action*="/v1/notes/addTags"]')).toBeVisible();
     await expect(notes.locator('form[action*="/v1/notes/removeTags"]')).not.toBeVisible();
     await expect.poll(() => form.evaluate(el => el.clientHeight >= el.scrollHeight)).toBe(true);
+    const toolbar = notes.locator('.bulk-editors');
+    const formBox = await form.boundingBox();
+    const toolbarBox = await toolbar.boundingBox();
+    expect(formBox!.width).toBeGreaterThan(toolbarBox!.width * 0.9);
+    const deselect = await toolbar.getByRole('button', {name:'Deselect All', exact:true}).boundingBox();
+    const massEdit = await toolbar.getByRole('button', {name:'Mass Edit Selected', exact:true}).boundingBox();
+    expect(deselect!.y).toBeLessThanOrEqual(massEdit!.y + 2);
+
     await notes.screenshot({path:testInfo.outputPath('shared-bucket-actions.png')});
     expect(errors).toEqual([]);
 });
@@ -219,4 +230,33 @@ test('random result pages and Mass Edit share the executed sample', async ({page
     const response = await request.post('/v1/mrql',{data:{query:`type = note AND tags = "${prefix}"`}});
     const result = await response.json();
     expect(result.notes.map((note:{Name:string})=>note.Name).sort()).toEqual(names.map(name=>name.trim()).sort());
+});
+
+
+test('MRQL restores query order and compact cards constrain image size', async ({page,apiClient}, testInfo) => {
+    const prefix = `review-display-${Date.now()}`;
+    for (let i=0;i<2;i++) await apiClient.createResource({name:prefix+' '+i,filePath:path.join(__dirname,`../../test-assets/sample-image-${35+i}.png`)});
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    const authored = `type = resource AND name ~ "${prefix}" ORDER BY name DESC LIMIT 2`;
+    await mrql.enterQuery(authored);
+    await mrql.executeQuery();
+    const names = page.locator('.resource-card .card-title');
+    await expect(names.first()).toContainText(prefix+' 1');
+    const sort = page.getByLabel('Sort', {exact:true});
+    await sort.selectOption('name ASC');
+    await expect(names.first()).toContainText(prefix+' 0');
+    await sort.selectOption('');
+    await expect(names.first()).toContainText(prefix+' 1');
+    await expect(mrql.editorContainer).toContainText(authored);
+    await page.getByRole('button',{name:'Compact',exact:true}).click();
+    const image = await page.locator('.resource-card .card-image').first().boundingBox();
+    expect(image!.width).toBeLessThanOrEqual(100);
+    expect(image!.height).toBeLessThanOrEqual(100);
+    await expect(page.getByRole('heading',{name:'resources',exact:true})).not.toBeVisible();
+    await expect(names.first()).toHaveJSProperty('tagName','H3');
+    await page.locator('[data-list-container]').screenshot({path:testInfo.outputPath('compact-results.png')});
+    await mrql.enterQuery(`type = resource AND name ~ "${prefix}" ORDER BY name ASC LIMIT 2`);
+    await mrql.executeQuery();
+    await expect(sort).toHaveValue('');
 });

@@ -44,7 +44,6 @@
     --color-emerald-600: oklch(59.6% 0.145 163.225);
     --color-emerald-700: oklch(50.8% 0.118 165.612);
     --color-emerald-900: oklch(37.8% 0.077 168.94);
-    --color-teal-500: oklch(70.4% 0.14 182.503);
     --color-teal-700: oklch(51.1% 0.096 186.391);
     --color-teal-800: oklch(43.7% 0.078 188.216);
     --color-teal-900: oklch(38.6% 0.063 188.416);
@@ -436,9 +435,6 @@
   }
   .z-\[9999\] {
     z-index: 9999;
-  }
-  .order-2 {
-    order: 2;
   }
   .col-span-2 {
     grid-column: span 2 / span 2;
@@ -4094,11 +4090,6 @@
   .focus\:ring-stone-500 {
     &:focus {
       --tw-ring-color: var(--color-stone-500);
-    }
-  }
-  .focus\:ring-teal-500 {
-    &:focus {
-      --tw-ring-color: var(--color-teal-500);
     }
   }
   .focus\:ring-white {

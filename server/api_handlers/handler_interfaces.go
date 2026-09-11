@@ -71,6 +71,7 @@ type MRQLAPIContext interface {
 	Principal() *auth.Principal
 	IssueMRQLSnapshot(reqCtx context.Context, query string, params map[string]any, result *application_context.MRQLResult) (string, error)
 	ResolveMRQLSnapshot(reqCtx context.Context, query string, params map[string]any, snapshot string) (*application_context.MRQLResult, error)
+	ExecuteMRQLListPage(parent context.Context, query *mrql.Query, page, size int) (*application_context.MRQLResult, int, int, error)
 	ExecuteMRQLParsed(reqCtx context.Context, parsed *mrql.Query, limit, page int) (*application_context.MRQLResult, error)
 	ExecuteMRQLGrouped(reqCtx context.Context, parsed *mrql.Query) (*application_context.MRQLGroupedResult, error)
 	ExplainMRQLWithOptions(reqCtx context.Context, parsed *mrql.Query, explainOptions application_context.MRQLExplainOptions) (*application_context.MRQLExplainResult, error)

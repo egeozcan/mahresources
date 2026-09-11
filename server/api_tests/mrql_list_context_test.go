@@ -68,7 +68,9 @@ func TestMRQLListRenderingAcceptsDecoratedContext(t *testing.T) {
 
 func TestMRQLSharedListsAndMassEditRespectPrincipalScope(t *testing.T) {
 	tc := setupAuthEnv(t)
-	root, outside := models.Group{Name: "list-scope-root"}, models.Group{Name: "list-scope-outside"}
+	ancestor := models.Group{Name: "SECRET-list-ancestor"}
+	require.NoError(t, tc.DB.Create(&ancestor).Error)
+	root, outside := models.Group{Name: "list-scope-root", OwnerId: &ancestor.ID}, models.Group{Name: "list-scope-outside"}
 	require.NoError(t, tc.DB.Create(&root).Error)
 	require.NoError(t, tc.DB.Create(&outside).Error)
 	insideGroup := models.Group{Name: "scope-item-group-inside", OwnerId: &root.ID}
@@ -98,6 +100,7 @@ func TestMRQLSharedListsAndMassEditRespectPrincipalScope(t *testing.T) {
 	require.Equal(t, insideResource.ID, result.Resources[0].ID)
 	require.Equal(t, insideNote.ID, result.Notes[0].ID)
 	require.Equal(t, insideGroup.ID, result.Groups[0].ID)
+	require.NotContains(t, response.Body.String(), "SECRET-list-ancestor")
 	require.NotContains(t, response.Body.String(), "scope-item-resource-outside")
 	require.NotContains(t, response.Body.String(), "scope-item-note-outside")
 	require.NotContains(t, response.Body.String(), "scope-item-group-outside")

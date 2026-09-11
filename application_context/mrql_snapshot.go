@@ -1,12 +1,16 @@
 package application_context
 
 import (
+	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"mahresources/auth"
@@ -25,7 +29,8 @@ var ErrInvalidMRQLSnapshot = errors.New("invalid or expired MRQL result snapshot
 type mrqlSnapshot struct {
 	Expires             int64
 	Binding             string
-	Order               []MRQLEntityIdentity
+	OrderPacked         string               `json:",omitempty"`
+	Order               []MRQLEntityIdentity `json:",omitempty"`
 	EntityType          string
 	Warnings            []string
 	DefaultLimitApplied bool
@@ -108,6 +113,25 @@ func (ctx *MahresourcesContext) IssueMRQLSnapshot(reqCtx context.Context, query 
 	snapshot := mrqlSnapshot{Expires: time.Now().Add(mrqlSnapshotLifetime).Unix(), Binding: binding, Order: order,
 		EntityType: result.EntityType, Warnings: result.Warnings,
 		DefaultLimitApplied: result.DefaultLimitApplied, AppliedLimit: result.AppliedLimit}
+	// Compress identities before sealing: a 10,000-item sample must fit small
+	// authenticated JSON request limits on every subsequent page click.
+	identities, err := json.Marshal(snapshot.Order)
+	if err != nil {
+		return "", err
+	}
+	var compressed bytes.Buffer
+	compressor, err := flate.NewWriter(&compressed, flate.BestCompression)
+	if err != nil {
+		return "", err
+	}
+	if _, err := compressor.Write(identities); err != nil {
+		return "", err
+	}
+	if err := compressor.Close(); err != nil {
+		return "", err
+	}
+	snapshot.OrderPacked = base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	snapshot.Order = nil
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return "", err
@@ -141,6 +165,18 @@ func (ctx *MahresourcesContext) ResolveMRQLSnapshot(reqCtx context.Context, quer
 	if !ok || typ != "mrql-result" || id != 0 || json.Unmarshal([]byte(body), &snapshot) != nil ||
 		snapshot.Expires <= time.Now().Unix() || snapshot.Binding != binding || len(snapshot.Order) > MaxMRQLInteractiveLimit {
 		return nil, ErrInvalidMRQLSnapshot
+	}
+	if snapshot.OrderPacked != "" {
+		compressed, err := base64.RawStdEncoding.DecodeString(snapshot.OrderPacked)
+		if err != nil {
+			return nil, ErrInvalidMRQLSnapshot
+		}
+		reader := flate.NewReader(bytes.NewReader(compressed))
+		raw, err := io.ReadAll(io.LimitReader(reader, maxMRQLSnapshotBytes+1))
+		reader.Close()
+		if err != nil || len(raw) > maxMRQLSnapshotBytes || json.Unmarshal(raw, &snapshot.Order) != nil || len(snapshot.Order) > MaxMRQLInteractiveLimit {
+			return nil, ErrInvalidMRQLSnapshot
+		}
 	}
 	reqCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()

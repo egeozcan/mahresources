@@ -425,3 +425,22 @@ describe('findings 23/46 — a Run and an Explain in flight at the same time', (
     expect(e.error).toBe('');
   });
 });
+
+it('reports the bounded result total rather than the current page count', () => {
+  const e = editor();
+  e.result = {resources:[{ID:1}], listPage:{total:31}};
+  expect(e.resultCountLabel).toBe('(31 items)');
+});
+
+it('restores the authored order after selecting a display sort', () => {
+  const e = editor();
+  const authored = 'type = resource ORDER BY updated ASC LIMIT 40';
+  e.executedQuery = {query:authored, params:{}};
+  e.setQuery = () => {};
+  e.executeFromResultControl = ({snapshot}) => { e.executedQuery = snapshot; };
+  e.sortResults('name DESC');
+  expect(e.executedQuery.query).toContain('ORDER BY name DESC');
+  e.sortResults('');
+  expect(e.executedQuery.query).toBe(authored);
+  expect(e.sortOrder).toBe('');
+});

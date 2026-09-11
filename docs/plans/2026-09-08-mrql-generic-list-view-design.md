@@ -18,7 +18,7 @@ For flat entity results, an explicit query LIMIT caps the result set rather than
 
 For `ORDER BY RANDOM()` results, pagination and query-wide Mass Edit preserve the bounded sample from that execution. The server seals its ordered typed identities in a token bound to the exact query, parameters, principal, and scope. The token expires after one hour; an expired or invalid token requires running the query again. Reusing a token checks live query membership and authorization, removes unavailable entities, and never samples replacements. Mass Edit requires that token and retains its count handshake. A new execution, sort change, or successful mutation refresh produces a fresh sample. The language already prohibits random ordering with GROUP BY.
 
-For bucketed results, preserve MRQL's existing semantics: LIMIT caps entities per bucket, OFFSET advances through buckets, and the bucket page size controls how many buckets are displayed. Selection can span the buckets on the current page.
+For bucketed results, LIMIT caps entities per bucket and OFFSET advances through buckets. Display page size caps cards across buckets; a continuation carries both the bucket offset and the item offset within that bucket, keeping all authored items reachable. Selection can span the buckets on the current page.
 
 Bulk actions come from central declarations identifying the entity types they support. Registering an action for an entity type makes it available in that entity's ordinary list and in MRQL when entities of that type are selected; neither surface should require its own action registration.
 
@@ -75,9 +75,9 @@ See [Shared declarations for bulk actions](../adr/0004-shared-bulk-action-declar
 - `listviews/bulk_actions.go` is the built-in action catalog. Add an entry naming its supported `Entities`, eligibility filters/counts, endpoint, inputs, and confirmation. Both list surfaces discover it automatically. A `Component` names a trusted partial under `templates/partials/bulkActions/` for specialized interactions.
 - `server/template_handlers/template_context_providers/bulk_actions.go` adapts access-filtered plugin registrations to the same declaration contract. Plugin declarations remain the source of their own entity, inputs, limits, and filters.
 - `templates/partials/bulkActions.tpl` renders the shared toolbar. Scoped `$selection` stores own selection, duplicate appearances, and refresh callbacks; ordinary lists retain their default selection store.
-- `server/api_handlers/mrql_list_render.go` hydrates bounded result pages and renders the existing resource, note, and group cards. `render=list` adds display-page metadata while preserving the authored query bounds and mixed-query ordering. Bucket continuations use the returned offset, including pages shortened by the query budget.
+- `server/api_handlers/mrql_list_render.go` hydrates bounded result pages through the scoped ORM; `server/template_handlers/list_card_renderer.go` renders cached shared cards and CustomMRQLResult overrides with shared CSS state. `render=list` adds display-page metadata while preserving the authored query bounds and mixed-query ordering. Bucket continuations use the returned offset, including pages shortened by the query budget.
 - `application_context/mass_edit_mrql.go` resolves MRQL targets within the existing Mass Edit ceiling and one query timeout, deduplicates bucket appearances, and retains the count handshake. The modal selects operations, tag suggestions, and metadata keys by entity type.
-- `src/components/mrqlEditor.js` retains the executed query and parameters for paging and mutation refresh. Display controls offer cards or a single-column list. Completed background plugin actions also refresh relevant entity results.
+- `src/components/mrqlEditor.js` retains the executed query and parameters for paging and mutation refresh. Display controls offer cards or a compact layout with constrained thumbnails. Completed background plugin actions also refresh relevant entity results.
 
 ## Validation
 

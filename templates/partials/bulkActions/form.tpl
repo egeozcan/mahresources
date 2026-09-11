@@ -3,7 +3,6 @@
           {% if action.NoAjax %}class="no-ajax"{% endif %} data-testid="bulk-{{ action.ID }}-{{ bulkEntity }}s-form" data-confirm-message="{{ action.Confirm }}"
           {% if action.ConfirmComponent %}x-data="{{ action.ConfirmComponent }}" x-bind="events"{% elif action.Confirm %}x-data="confirmAction()" x-bind="events"{% endif %}>
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
-        <fieldset :disabled="!!unavailableReason()">
         {% if action.Input == 'entity' %}
             {% if action.InputEntity == 'tag' and not action.Multiple %}
                 {% include "/partials/form/autocompleter.tpl" with profile='tag' usage=bulkEntity elName='editedId' title=action.InputLabel id=getNextId("bulk_input") %}
@@ -18,6 +17,5 @@
             {% include "/partials/form/freeFields.tpl" with name="Meta" url=bulkMetaURL(bulkEntity) jsonOutput=true id=getNextId("bulk_meta") %}
         {% endif %}
         {% include "/partials/form/searchButton.tpl" with text=action.SubmitLabel|default:action.Label danger=action.Danger %}
-        </fieldset>
     </form>
 </div>

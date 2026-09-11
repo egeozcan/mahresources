@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -157,4 +158,16 @@ func TestMRQLMassEditContinuesDuplicateHeavyBuckets(t *testing.T) {
 		TagsOp: "add", TagIds: []uint{tags[0].ID}, DryRun: true})
 	require.NoError(t, err)
 	require.EqualValues(t, 1001, result.Matched)
+}
+
+func TestMRQLSnapshotSizeAtInteractiveCeiling(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	result := &MRQLResult{EntityType: "resource"}
+	// Widely spaced IDs in shuffled order avoid relying on contiguous fixture IDs.
+	for _, i := range rand.New(rand.NewSource(42)).Perm(MaxMRQLInteractiveLimit) {
+		result.Order = append(result.Order, MRQLEntityIdentity{EntityType: "resource", ID: uint(i*7919 + 1000000)})
+	}
+	token, err := ctx.IssueMRQLSnapshot(context.Background(), "type = resource ORDER BY RANDOM() LIMIT 10000", nil, result)
+	require.NoError(t, err)
+	require.Less(t, len(token), 128*1024, "snapshot must leave space in a 128 KiB JSON body for query and params")
 }

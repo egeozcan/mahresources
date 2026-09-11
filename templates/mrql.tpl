@@ -517,7 +517,7 @@
         </template>
 
         <template x-if="result && !error">
-            <div class="space-y-3">
+            <div class="space-y-3" x-data="{ pageResult: result }">
                 <div class="flex items-center justify-between gap-2 flex-wrap">
                     <h2 class="text-base font-semibold font-mono text-stone-800">
                         Results
@@ -542,7 +542,7 @@
                             Export JSON
                         </button>
                         <span class="text-xs text-stone-500 font-mono"
-                              x-text="'Entity: ' + (['resource','note','group'].includes(result?.entityType) ? result?.entityType : 'all types')"></span>
+                              x-text="'Entity: ' + (['resource','note','group'].includes(pageResult.entityType) ? pageResult.entityType : 'all types')"></span>
                     </div>
                 </div>
 
@@ -561,9 +561,9 @@
                 </template>
 
                 {# Warnings (e.g. partial results, truncated buckets, timeouts) #}
-                <template x-if="result?.warnings && result?.warnings.length > 0">
+                <template x-if="pageResult.warnings && pageResult.warnings.length > 0">
                     <div class="rounded-md bg-amber-50 border border-amber-200 p-3 space-y-1" role="status">
-                        <template x-for="(warning, wIdx) in result?.warnings" :key="wIdx">
+                        <template x-for="(warning, wIdx) in pageResult.warnings" :key="wIdx">
                             <div class="flex">
                                 <div class="flex-shrink-0">
                                     <svg class="h-5 w-5 text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -579,15 +579,15 @@
                 </template>
 
                 {# Aggregated GROUP BY results — render as table                          #}
-                {# The header used to be Object.keys(result?.rows[0]), which discards the  #}
+                {# The header used to be Object.keys(pageResult.rows?.[0] || {}), which discards the  #}
                 {# order the query was written in: Go marshals a map's keys sorted, so    #}
                 {# `GROUP BY width, height, contentType COUNT()` rendered                 #}
                 {# contentType | count | height | width, byte-identical to the same       #}
-                {# GROUP BY written in reverse. `result?.columns` is the authored order,   #}
+                {# GROUP BY written in reverse. `pageResult.columns` is the authored order,   #}
                 {# the same list the CSV export has always used. The Object.keys fallback #}
                 {# keeps an older cached response rendering rather than blank.            #}
-                <template x-if="result?.mode === 'aggregated' && result?.rows && result?.rows.length > 0">
-                    <div class="overflow-x-auto" x-data="{ get cols() { return (result?.columns && result?.columns.length) ? result?.columns : Object.keys(result?.rows[0]); } }">
+                <template x-if="pageResult.mode === 'aggregated' && pageResult.rows && pageResult.rows.length > 0">
+                    <div class="overflow-x-auto" x-data="{ get cols() { return (pageResult.columns && pageResult.columns.length) ? pageResult.columns : Object.keys(pageResult.rows?.[0] || {}); } }">
                         <table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">
                             <thead class="bg-stone-100">
                                 <tr>
@@ -597,7 +597,7 @@
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-stone-100">
-                                <template x-for="(row, idx) in result?.rows" :key="idx">
+                                <template x-for="(row, idx) in pageResult.rows" :key="idx">
                                     <tr class="hover:bg-stone-50">
                                         <template x-for="key in cols" :key="key">
                                             <td class="px-3 py-2 text-stone-800 whitespace-nowrap" x-text="row[key] ?? '(null)'"></td>
@@ -609,21 +609,17 @@
                     </div>
                 </template>
 
-                <template x-if="result?.mode !== 'aggregated'">
+                <template x-if="pageResult.mode !== 'aggregated'">
                     <div data-list-container>
                         <div class="flex items-center gap-3 mb-4 flex-wrap">
-                            <label class="text-sm">Display
-                                <select x-model="listLayout" class="rounded border-stone-300">
-                                    <option value="cards">Cards</option><option value="list">List</option>
-                                </select>
-                            </label>
+                            {% include "/partials/boxSelect.tpl" with mrqlDisplay=true %}
                             <label class="text-sm">Per page
                                 <select data-mrql-result-control="page-size" :value="displaySize" @change="changePageSize(Number($event.target.value))" class="rounded border-stone-300">
                                     <option value="5">5</option><option value="25">25</option><option value="50">50</option><option value="100">100</option>
                                 </select>
                             </label>
                             <label class="text-sm">Sort
-                                <select data-mrql-result-control="sort" @change="sortResults($event.target.value)" class="rounded border-stone-300">
+                                <select aria-label="Sort" data-mrql-result-control="sort" :value="sortOrder" @change="sortResults($event.target.value)" class="rounded border-stone-300">
                                     <option value="">Query order</option><option value="name ASC">Name ascending</option><option value="name DESC">Name descending</option>
                                     <option value="created DESC">Newest first</option><option value="created ASC">Oldest first</option><option value="updated DESC">Recently updated</option>
                                 </select>
@@ -631,26 +627,26 @@
                         </div>
                         {% for bulkEntity in mrqlEntities %}
                         <section data-selection-scope="mrql-{{ bulkEntity }}" x-show="hasEntityResults('{{ bulkEntity }}')" class="mb-6" aria-label="{{ bulkEntity }} results">
-                            <h3 class="text-base font-semibold capitalize mb-2">{{ bulkEntity }}s</h3>
+                            <h3 x-show="pageResult.entityType === 'all'" class="text-base font-semibold capitalize mb-2">{{ bulkEntity }}s</h3>
                             {% include "/partials/bulkActions.tpl" with pluginBulkActions=mrqlBulkActions|lookup:bulkEntity %}
-                            <template x-if="!result?.mode">
-                                <div class="gallery list-container" :style="{gridTemplateColumns: listLayout === 'list' ? 'minmax(0, 1fr)' : null}">
+                            <template x-if="!pageResult.mode">
+                                <div class="gallery list-container" :class="{'mrql-compact': listLayout === 'list'}">
                                     <template x-for="entity in entitiesFor('{{ bulkEntity }}')" :key="entity.ID">
                                         <div x-html="entity.renderedHTML"></div>
                                     </template>
                                 </div>
                             </template>
-                            <template x-if="result?.mode === 'bucketed' && result?.entityType === '{{ bulkEntity }}'">
+                            <template x-if="pageResult.mode === 'bucketed' && pageResult.entityType === '{{ bulkEntity }}'">
                                 <div class="space-y-4">
-                                    <template x-for="(bucket, bIdx) in result?.groups" :key="JSON.stringify(bucket.key)">
+                                    <template x-for="(bucket, bIdx) in pageResult.groups" :key="JSON.stringify(bucket.key)">
                                         <section class="border border-stone-200 rounded-md overflow-hidden">
-                                            <header class="bg-stone-100 px-3 py-2 flex gap-2 flex-wrap">
+                                            <h3 class="bg-stone-100 px-3 py-2 flex gap-2 flex-wrap font-normal">
                                                 <template x-for="key in bucketKeyOrder(bucket)" :key="key">
                                                     <span class="text-sm"><span x-text="key + ': '"></span><strong x-text="bucket.key[key] ?? '(null)'"></strong></span>
                                                 </template>
-                                                <span class="ml-auto text-xs" x-text="bucket.items.length + ' items'"></span>
-                                            </header>
-                                            <div class="gallery list-container p-3" :style="{gridTemplateColumns: listLayout === 'list' ? 'minmax(0, 1fr)' : null}">
+                                                <span class="ml-auto text-xs" x-text="bucket.items.length + (bucket.items.length === 1 ? ' item' : ' items')"></span>
+                                            </h3>
+                                            <div class="gallery list-container p-3" :class="{'mrql-compact': listLayout === 'list'}">
                                                 <template x-for="entity in bucket.items" :key="entity.ID"><div x-html="entity.renderedHTML"></div></template>
                                             </div>
                                         </section>
@@ -659,16 +655,12 @@
                             </template>
                         </section>
                         {% endfor %}
-                        <nav aria-label="MRQL result pages" class="flex items-center justify-center gap-4 py-4" x-show="result?.listPage">
-                            <button type="button" data-mrql-result-control="previous" :disabled="executing || displayPage <= 1" @click="changePage(displayPage - 1)" class="px-3 py-2 border rounded disabled:opacity-50">Previous</button>
-                            <span data-mrql-page-status tabindex="-1" x-text="'Page ' + displayPage + ' · ' + (result?.listPage?.total || 0) + (result?.mode === 'bucketed' ? ' buckets' : ' items')"></span>
-                            <button type="button" data-mrql-result-control="next" :disabled="executing || !result?.listPage?.hasNext" @click="changePage(displayPage + 1)" class="px-3 py-2 border rounded disabled:opacity-50">Next</button>
-                        </nav>
+                        {% include "/partials/pagination.tpl" with mrqlPagination=true %}
                     </div>
                 </template>
-                <template x-if="result?.mode && totalCount === 0"><p class="text-sm text-stone-500 py-4 text-center">No results found.</p></template>
+                <template x-if="pageResult.mode && totalCount === 0"><p class="text-sm text-stone-500 py-4 text-center">No results found.</p></template>
 
-                <template x-if="!result?.mode && totalCount === 0">
+                <template x-if="!pageResult.mode && totalCount === 0">
                     <p class="text-sm text-stone-500 font-mono py-4 text-center">No results found.</p>
                 </template>
             </div>

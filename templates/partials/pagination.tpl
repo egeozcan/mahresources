@@ -1,4 +1,19 @@
-{% if pagination != nil %}
+{% if mrqlPagination %}
+<nav aria-label="MRQL result pages" class="border-t border-stone-200 px-4 flex items-center justify-between sm:px-0 pb-2" x-show="pageResult.listPage">
+    <div class="-mt-px flex-1 flex">
+        <button type="button" data-mrql-result-control="previous" :disabled="executing || displayPage <= 1" @click="changePage(displayPage - 1)" class="border-t-2 border-transparent pt-4 pr-1 inline-flex items-center text-sm font-mono font-medium text-stone-500 hover:text-stone-700 hover:border-stone-300 disabled:opacity-50">Previous</button>
+    </div>
+    <div class="hidden md:-mt-px md:flex">
+        <template x-for="(page, idx) in pageEntries" :key="idx">
+            <button type="button" :data-mrql-result-control="page ? 'page-' + page : null" :disabled="executing || !page" :aria-label="page ? 'Page ' + page : 'More pages'" :aria-current="page === displayPage ? 'page' : null" @click="page && changePage(page)" :class="page === displayPage ? 'border-amber-600 text-amber-700' : 'border-transparent text-stone-500 hover:text-stone-700 hover:border-stone-300'" class="border-t-2 pt-4 px-4 inline-flex items-center text-sm font-mono font-medium" x-text="page || '…'"></button>
+        </template>
+    </div>
+    <div class="-mt-px flex-1 flex justify-end">
+        <button type="button" data-mrql-result-control="next" :disabled="executing || !pageResult.listPage?.hasNext" @click="changePage(displayPage + 1)" class="border-t-2 border-transparent pt-4 pl-1 inline-flex items-center text-sm font-mono font-medium text-stone-500 hover:text-stone-700 hover:border-stone-300 disabled:opacity-50">Next</button>
+    </div>
+</nav>
+<p data-mrql-page-status tabindex="-1" class="text-center text-sm text-stone-600" x-show="pageResult.listPage" x-text="'Page ' + displayPage + ' · ' + (pageResult.listPage?.total || 0) + (pageResult.mode === 'bucketed' ? ' buckets in query' : ' items')"></p>
+{% elif pagination != nil %}
 <nav aria-label="Pagination" class="border-t border-stone-200 px-4 flex items-center justify-between sm:px-0 pb-2" data-has-prev="{% if pagination.PrevLink.Link != '' %}true{% else %}false{% endif %}" data-has-next="{% if pagination.NextLink.Link != '' %}true{% else %}false{% endif %}">
     <div class="-mt-px w-0 flex-1 flex {% if pagination.PrevLink.Link == '' %}invisible{% endif %}">
         {% if pagination.PrevLink.Link != '' %}

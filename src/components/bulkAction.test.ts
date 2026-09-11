@@ -28,3 +28,8 @@ describe('MRQL list sorting', () => {
             .toBe('name = "ORDER BY x LIMIT 8" AND tags = $tag ORDER BY name ASC LIMIT 100 OFFSET 20');
     });
 });
+
+it('uses singular item for a one-item action', () => {
+    const action = Object.assign(bulkAction({Min:1, Max:1, Label:'Open'}), {$selection:{selectedIds:new Set([1,2])}});
+    expect(action.unavailableReason()).toBe('Select exactly 1 item to open.');
+});
