@@ -1643,6 +1643,7 @@ Usage in a Custom field: `[plugin:my-plugin:rating max="5"]`
 | `notes` | table | No | Array of note strings |
 
 A shortcode carrying a non-empty `description` is documented in place, so it needs no separate `mah.doc` entry.
+Enabled plugin shortcodes are also added to the template-generation model's request-time shortcode reference. Provide a precise `description`, every accepted attribute in `attrs`, representative `examples`, and behavioral `notes` so generated templates can use the shortcode correctly. All shortcodes bundled with Mahresources are required to provide those fields; a shortcode with no attributes still supplies the other three.
 
 ### Render Context
 

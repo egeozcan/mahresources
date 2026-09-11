@@ -221,4 +221,16 @@ func TestTemplateGenerateGroundsOnSchemaAndSampleEntity(t *testing.T) {
 	if fake.seen.DocsBlock == "" {
 		t.Fatalf("handler did not assemble the shortcode docs block")
 	}
+	// The model needs the authoring contract, not the names-only index this
+	// prompt used to send. Check an attribute detail and examples from both ends
+	// of the built-in catalogue through the real handler seam.
+	for _, want := range []string{
+		"inline (boolean, optional, default=false, values=true|false)",
+		"Example (Formatted inline value): [meta path=\"published\" inline=\"true\" format=\"date\"]",
+		"Example (Labelled button): [reload]Refresh[/reload]",
+	} {
+		if !strings.Contains(fake.seen.DocsBlock, want) {
+			t.Errorf("handler shortcode docs are missing %q", want)
+		}
+	}
 }

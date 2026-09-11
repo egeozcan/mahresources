@@ -1651,8 +1651,32 @@ function init()
     register_pm_block_types(cached_taxonomy())
     register_pm_actions(cached_taxonomy())
     register_pm_hooks()
-    mah.shortcode({name="task-controls",label="Task controls",render=render_task_controls})
-    mah.shortcode({name="mini-board",label="Project mini board",render=render_mini_board})
+    mah.shortcode({
+        name = "task-controls",
+        label = "Task controls",
+        render = render_task_controls,
+        description = "Renders interactive status, due-date, and owner controls for a PM Task note.",
+        examples = {
+            { title = "Task detail controls", code = "[plugin:project-management:task-controls]" },
+        },
+        notes = {
+            "Use on PM Task notes, normally in CustomHeader.",
+            "Controls render read-only when the viewer cannot update the task.",
+        },
+    })
+    mah.shortcode({
+        name = "mini-board",
+        label = "Project mini board",
+        render = render_mini_board,
+        description = "Renders a compact status-column board for the PM Project or PM Epic group being viewed.",
+        examples = {
+            { title = "Replace owned entities with a board", code = "[plugin:project-management:mini-board]" },
+        },
+        notes = {
+            "Use on PM Project or PM Epic groups, normally in CustomOwnEntities.",
+            "Each status column shows at most five tasks.",
+        },
+    })
 
     -- ------------------------------------------------------------------
     -- Page shell. One handler serves all four views; the client switches on
@@ -1670,6 +1694,13 @@ function init()
         name = "view-links",
         label = "Project Management view links",
         description = "Links to the board, backlog, dashboard and timeline for the group being viewed.",
+        examples = {
+            { title = "Project navigation", code = "[plugin:project-management:view-links]" },
+        },
+        notes = {
+            "Use on PM Project or PM Epic groups.",
+            "For an epic, every link opens the owning project's view.",
+        },
         render = function(ctx)
             if ctx.entity_type ~= "group" or not ctx.entity_id or ctx.entity_id == 0 then
                 return ""
@@ -1707,6 +1738,13 @@ function init()
         name = "group-summary",
         label = "Project or epic summary",
         description = "Renders configured status, key and target date for a PM Project or PM Epic.",
+        examples = {
+            { title = "Compact group summary", code = "[plugin:project-management:group-summary]" },
+        },
+        notes = {
+            "Use on PM Project or PM Epic groups in compact card or detail slots.",
+            "Empty status, key, and target-date values are omitted.",
+        },
         render = render_group_summary,
     })
 
@@ -1714,6 +1752,13 @@ function init()
         name = "entity-context",
         label = "Project Management entity context",
         description = "Links a PM task or epic to its owning entities and board.",
+        examples = {
+            { title = "Ownership context", code = "[plugin:project-management:entity-context]" },
+        },
+        notes = {
+            "Use on PM Task notes or PM Epic groups.",
+            "The exact links depend on whether the current entity belongs directly to a project or to an epic.",
+        },
         render = function(ctx)
             if ctx.entity_type ~= "note" then return render_entity_context(ctx) end
             return '<span data-pm-region="context" data-pm-id="' .. ctx.entity_id .. '">' .. render_entity_context(ctx) .. '</span>'
@@ -1725,7 +1770,15 @@ function init()
         label = "Task progress bar",
         description = "Renders done/total task progress for the project or epic being viewed (or a project=\"id\" attribute).",
         attrs = {
-            { name = "project", type = "string", required = false, description = "Project group id" },
+            { name = "project", type = "number", required = false, description = "Explicit PM Project or PM Epic group id; defaults to the current group" },
+        },
+        examples = {
+            { title = "Current group progress", code = "[plugin:project-management:progress]" },
+            { title = "Explicit project progress", code = "[plugin:project-management:progress project=\"42\"]" },
+        },
+        notes = {
+            "Use on PM Project or PM Epic groups unless project is supplied.",
+            "The bar uses the plugin's configured done status and shows done versus total task counts.",
         },
         render = function(ctx)
             local target = ctx.attrs and ctx.attrs.project or nil
@@ -1778,7 +1831,15 @@ function init()
         label = "Recent tasks",
         description = "Lists the most recently updated tasks of the project or epic being viewed.",
         attrs = {
-            { name = "limit", type = "number", required = false, description = "How many tasks to list", default = "8" },
+            { name = "limit", type = "number", required = false, description = "Maximum number of recently updated tasks to list (capped at 25)", default = "8" },
+        },
+        examples = {
+            { title = "Default recent tasks", code = "[plugin:project-management:task-list]" },
+            { title = "Five recent tasks", code = "[plugin:project-management:task-list limit=\"5\"]" },
+        },
+        notes = {
+            "Use on PM Project or PM Epic groups.",
+            "Tasks are ordered by most recently updated first; completed tasks receive a completed-state class.",
         },
         render = function(ctx)
             local limit = tonumber(ctx.attrs and ctx.attrs.limit or "8") or 8
@@ -1818,6 +1879,13 @@ function init()
         name = "task-badges",
         label = "Task status and priority badges",
         description = "Renders the status and priority pills for a PM Task note.",
+        examples = {
+            { title = "Task card badges", code = "[plugin:project-management:task-badges]" },
+        },
+        notes = {
+            "Use on PM Task notes, normally in CustomSummary or CustomHoverCard.",
+            "The status always renders; the priority pill renders only when priority is set.",
+        },
         render = function(ctx)
             if ctx.entity_type ~= "note" then return "" end
             return '<span data-pm-region="badges" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_badges(ctx.value) .. '</span>'
@@ -1828,6 +1896,13 @@ function init()
         name = "task-avatar",
         label = "Status-aware task avatar",
         description = "Renders a task avatar whose glyph and colour reflect the effective status.",
+        examples = {
+            { title = "Task list avatar", code = "[plugin:project-management:task-avatar]" },
+        },
+        notes = {
+            "Use on PM Task notes in CustomAvatar.",
+            "Unknown statuses fall back to the first letter of the status name.",
+        },
         render = function(ctx)
             if ctx.entity_type ~= "note" then return "" end
             return '<span data-pm-region="avatar" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_avatar(ctx.value) .. '</span>'
@@ -1838,6 +1913,13 @@ function init()
         name = "task-date",
         label = "Task due date",
         description = "Renders a due date and marks unfinished past-due tasks as overdue.",
+        examples = {
+            { title = "Task due date", code = "[plugin:project-management:task-date]" },
+        },
+        notes = {
+            "Use on PM Task notes in compact summary or detail slots.",
+            "Tasks without a valid due date render no output; completed tasks are never marked overdue.",
+        },
         render = function(ctx) return '<span data-pm-region="date" data-pm-id="' .. ctx.entity_id .. '">' .. render_task_date(ctx) .. '</span>' end,
     })
 

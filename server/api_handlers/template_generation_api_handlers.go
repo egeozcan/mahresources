@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -57,6 +58,13 @@ func templateGenerateSlotAllowed(entityType, slot string) bool {
 // maxTemplatePartialsForPrompt caps how many partial names are injected into the
 // generation prompt.
 const maxTemplatePartialsForPrompt = 200
+
+// Plugin documentation is authored outside the application binary. Keep a
+// malicious or accidentally enormous enabled-plugin catalogue from exhausting
+// the provider context. Entries are included whole or omitted whole, so the
+// model never receives a misleading partial attribute contract. Built-in docs
+// are trusted source and sit outside this budget.
+const maxPluginShortcodePromptBytes = 128 << 10
 
 type templateGenerateRequest struct {
 	Target     string `json:"target" schema:"target"`
@@ -239,82 +247,137 @@ func templatePartialNames(ctx TemplateGenerationContext) []string {
 	return names
 }
 
-// serializeShortcodeDocsForPrompt renders a compact, token-efficient catalogue of
-// the built-in and enabled-plugin shortcodes for the generation prompt — one line
-// per shortcode (syntax, block capability, description, attribute summary, one
-// example). It is not the full /v1/shortcodes/docs JSON (that is too large).
-func serializeShortcodeDocsForPrompt(ctx TemplateGenerationContext) string {
+// serializeShortcodeDocsForPrompt renders the complete authoring catalogue for
+// the generation prompt. In particular, built-ins retain every attribute's
+// type, required/default/enum contract and description, plus every example and
+// its notes. A names-only summary made the model aware that an attribute
+// existed without teaching it what the attribute did, and keeping only the
+// first example hid most block/slot forms.
+func serializeShortcodeDocsForPrompt(ctx PluginManagerProvider) string {
 	var b strings.Builder
 	for _, d := range shortcodes.BuiltinDocs() {
-		writeShortcodeDocLine(&b, d.Syntax, string(d.IsBlock), d.Description, builtinAttrSummary(d.Attrs), firstBuiltinExampleCode(d.Examples))
+		writeBuiltinShortcodeDoc(&b, d)
 	}
 	if pm := ctx.PluginManager(); pm != nil {
-		for _, sc := range pm.AllShortcodeDocs() {
-			writeShortcodeDocLine(&b, pluginShortcodeSyntax(sc), "optional", sc.Description, pluginAttrSummary(sc.Attrs), firstPluginExampleCode(sc.Examples))
+		if omitted := appendPluginShortcodeDocsForPrompt(&b, pm.AllShortcodeDocs()); omitted > 0 {
+			fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
 		}
 	}
 	return b.String()
 }
 
-func writeShortcodeDocLine(b *strings.Builder, syntax, block, description, attrs, example string) {
-	b.WriteString("- ")
-	b.WriteString(syntax)
-	b.WriteString(" (block:")
-	b.WriteString(block)
-	b.WriteString(") — ")
-	b.WriteString(oneLine(description))
-	if attrs != "" {
-		b.WriteString(" | attrs: ")
-		b.WriteString(attrs)
+func appendPluginShortcodeDocsForPrompt(b *strings.Builder, docs []plugin_system.PluginShortcodeInfo) int {
+	used := 0
+	omitted := 0
+	for _, sc := range docs {
+		var entry strings.Builder
+		writePluginShortcodeDoc(&entry, sc)
+		if entry.Len() > maxPluginShortcodePromptBytes-used {
+			omitted++
+			continue
+		}
+		b.WriteString(entry.String())
+		used += entry.Len()
 	}
-	if example != "" {
-		b.WriteString(" | e.g. ")
-		b.WriteString(oneLine(example))
+	return omitted
+}
+
+func writeBuiltinShortcodeDoc(b *strings.Builder, d shortcodes.BuiltinDoc) {
+	b.WriteString("- ")
+	b.WriteString(d.Syntax)
+	b.WriteString(" (block form: ")
+	b.WriteString(string(d.IsBlock))
+	b.WriteString(")\n  Description: ")
+	b.WriteString(oneLine(d.Description))
+	writeBuiltinAttrs(b, d.Attrs)
+	for _, example := range d.Examples {
+		writePromptExample(b, example.Title, example.Code, example.Notes)
 	}
 	b.WriteByte('\n')
 }
 
-func builtinAttrSummary(attrs []shortcodes.DocAttr) string {
-	parts := make([]string, 0, len(attrs))
-	for _, a := range attrs {
-		name := a.Name
-		if a.Wildcard {
-			name += "*(prefix)"
-		} else if a.Required {
-			name += "*"
-		}
-		if len(a.Enum) > 0 {
-			name += "=" + strings.Join(a.Enum, "|")
-		}
-		parts = append(parts, name)
+func writeBuiltinAttrs(b *strings.Builder, attrs []shortcodes.DocAttr) {
+	b.WriteString("\n  Attributes:")
+	if len(attrs) == 0 {
+		b.WriteString(" none")
+		return
 	}
-	return strings.Join(parts, ", ")
+	for _, attr := range attrs {
+		b.WriteString("\n  - ")
+		b.WriteString(attr.Name)
+		b.WriteString(" (")
+		b.WriteString(attr.Type)
+		if attr.Wildcard {
+			b.WriteString(", wildcard prefix")
+		}
+		if attr.Required {
+			b.WriteString(", required")
+		} else {
+			b.WriteString(", optional")
+		}
+		if attr.Default != "" {
+			b.WriteString(", default=")
+			b.WriteString(attr.Default)
+		}
+		if len(attr.Enum) > 0 {
+			b.WriteString(", values=")
+			b.WriteString(strings.Join(attr.Enum, "|"))
+		}
+		b.WriteString("): ")
+		b.WriteString(oneLine(attr.Description))
+	}
 }
 
-func pluginAttrSummary(attrs []plugin_system.ShortcodeDocAttr) string {
-	parts := make([]string, 0, len(attrs))
-	for _, a := range attrs {
-		name := a.Name
-		if a.Required {
-			name += "*"
+func writePluginShortcodeDoc(b *strings.Builder, sc plugin_system.PluginShortcodeInfo) {
+	b.WriteString("- ")
+	b.WriteString(pluginShortcodeSyntax(sc))
+	b.WriteString(" (plugin shortcode; block form: optional)\n  Description: ")
+	b.WriteString(oneLine(sc.Description))
+	b.WriteString("\n  Attributes:")
+	if len(sc.Attrs) == 0 {
+		b.WriteString(" none")
+	} else {
+		for _, attr := range sc.Attrs {
+			b.WriteString("\n  - ")
+			b.WriteString(attr.Name)
+			b.WriteString(" (")
+			b.WriteString(attr.Type)
+			if attr.Required {
+				b.WriteString(", required")
+			} else {
+				b.WriteString(", optional")
+			}
+			if attr.Default != "" {
+				b.WriteString(", default=")
+				b.WriteString(attr.Default)
+			}
+			b.WriteString("): ")
+			b.WriteString(oneLine(attr.Description))
 		}
-		parts = append(parts, name)
 	}
-	return strings.Join(parts, ", ")
+	for _, example := range sc.Examples {
+		writePromptExample(b, example.Title, example.Code, example.Notes)
+	}
+	for _, note := range sc.Notes {
+		b.WriteString("\n  Note: ")
+		b.WriteString(oneLine(note))
+	}
+	b.WriteByte('\n')
 }
 
-func firstBuiltinExampleCode(examples []shortcodes.DocExample) string {
-	if len(examples) == 0 {
-		return ""
+func writePromptExample(b *strings.Builder, title, code, notes string) {
+	b.WriteString("\n  Example")
+	if title != "" {
+		b.WriteString(" (")
+		b.WriteString(oneLine(title))
+		b.WriteString(")")
 	}
-	return examples[0].Code
-}
-
-func firstPluginExampleCode(examples []plugin_system.ShortcodeDocExample) string {
-	if len(examples) == 0 {
-		return ""
+	b.WriteString(": ")
+	b.WriteString(oneLine(code))
+	if notes != "" {
+		b.WriteString(" | Notes: ")
+		b.WriteString(oneLine(notes))
 	}
-	return examples[0].Code
 }
 
 // oneLine collapses newlines/tabs so a multi-line description or example stays on

@@ -70,6 +70,50 @@ func TestBundledPluginsLoad(t *testing.T) {
 	}
 }
 
+// Enabled plugin shortcodes are appended to the template-generation prompt.
+// The generator cannot infer an opaque Lua renderer's contract, so every
+// shortcode we ship must describe itself completely at registration time.
+func TestBundledPluginShortcodesProvideGenerationDocs(t *testing.T) {
+	pm := enableAllBundledPlugins(t)
+	docs := pm.AllShortcodeDocs()
+	if len(docs) == 0 {
+		t.Fatal("bundled plugins registered no shortcodes")
+	}
+
+	for _, doc := range docs {
+		t.Run(doc.FullName, func(t *testing.T) {
+			if strings.TrimSpace(doc.Description) == "" {
+				t.Error("missing description")
+			}
+			if len(doc.Examples) == 0 {
+				t.Error("missing usage examples")
+			}
+			if len(doc.Notes) == 0 {
+				t.Error("missing behavioral notes")
+			}
+			for i, attr := range doc.Attrs {
+				if strings.TrimSpace(attr.Name) == "" {
+					t.Errorf("attribute %d has no name", i)
+				}
+				if strings.TrimSpace(attr.Type) == "" {
+					t.Errorf("attribute %q has no type", attr.Name)
+				}
+				if strings.TrimSpace(attr.Description) == "" {
+					t.Errorf("attribute %q has no description", attr.Name)
+				}
+			}
+			for i, example := range doc.Examples {
+				if strings.TrimSpace(example.Title) == "" {
+					t.Errorf("example %d has no title", i)
+				}
+				if strings.TrimSpace(example.Code) == "" {
+					t.Errorf("example %d has no shortcode source", i)
+				}
+			}
+		})
+	}
+}
+
 // The fal.ai plugin is the largest bundled plugin and the one whose model list
 // changes most often. Pin the shape its UI depends on: the exact selector lists,
 // their configurable controls, and the few deliberately fixed/shared cases.

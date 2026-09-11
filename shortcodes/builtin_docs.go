@@ -37,8 +37,9 @@ type DocExample struct {
 	Notes string `json:"notes,omitempty"`
 }
 
-// BuiltinDoc documents one built-in shortcode (meta, property, mrql,
-// conditional, link, each, item, partial, lazy, details, reload).
+// BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
+// property, mrql, conditional, link, each, item, partial, lazy, details,
+// reload).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -199,7 +200,7 @@ func BuiltinDocs() []BuiltinDoc {
 				{Name: "to", Type: "enum", Default: "self", Description: "Link target: self (this entity's page), owner (its group), root (top of the ownership chain), or category (its category/type page).", Enum: []string{"self", "owner", "root", "category"}},
 			},
 			Examples: []DocExample{
-				{Title: "Inline URL in an anchor", Code: `<a href="[link]" class="underline">Open</a>`},
+				{Title: "Inline URL in an anchor", Code: `<a href="[link]">Open</a>`},
 				{Title: "Block anchor", Code: "[link to=\"owner\"]Back to group[/link]"},
 				{Title: "Category page", Code: `[link to="category"]View type[/link]`},
 			},

@@ -642,9 +642,9 @@ Categories, Resource Categories, and Note Types can define a `customMRQLResult` 
 A Category with this `customMRQLResult`:
 
 ```html
-<div class="flex items-center gap-2 p-2 border rounded">
+<div class="recipe-result">
   <strong>[property path="Name"]</strong>
-  <span class="text-sm text-stone-500">[meta path="status"]</span>
+  <span class="recipe-result__status">[meta path="status"]</span>
 </div>
 ```
 
@@ -661,25 +661,53 @@ Template selection follows this priority:
 
 ## Styling Tips
 
-### Use Tailwind CSS
+### Use Template-Owned CSS
 
-Tailwind CSS is included. Use utility classes for styling:
+App-owned classes and Tailwind utilities are implementation details and may change. Give custom markup distinctive classes and define their presentation in the category's **Custom CSS** field:
 
 ```html
-<div class="p-4 bg-gray-50 rounded-lg shadow-sm">
-  <h3 class="text-lg font-semibold text-gray-900">Title</h3>
-  <p class="mt-2 text-gray-600">Description text</p>
-</div>
+<article class="recipe-card">
+  <h3 class="recipe-card__title">Title</h3>
+  <p class="recipe-card__description">Description text</p>
+</article>
+```
+
+```css
+.recipe-card {
+  padding: 1rem;
+  border: 1px solid #d6d3d1;
+  border-radius: 0.5rem;
+}
+
+.recipe-card__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.recipe-card__description {
+  margin-top: 0.5rem;
+  color: #57534e;
+}
 ```
 
 ### Responsive Design
 
-Use Tailwind responsive prefixes:
+Use ordinary media queries in Custom CSS:
 
-```html
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-  <!-- Content adapts to screen size -->
-</div>
+```css
+.recipe-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 48rem) {
+  .recipe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 64rem) {
+  .recipe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 ```
 
 ## Nested Alpine.js Scopes
