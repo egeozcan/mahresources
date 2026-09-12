@@ -147,10 +147,47 @@ func padDataURIToAspectRatio(dataURI, targetRatio string) (string, int, int, err
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(encoded), w, h, nil
 }
 
+// dataURIToPNG prepares an existing image for APIs that only accept PNG.
+// It preserves decoded pixels and dimensions; PNG inputs need no re-encoding.
+func dataURIToPNG(dataURI string) (string, error) {
+	_, encoded, ok := strings.Cut(dataURI, ",")
+	if !ok {
+		return "", fmt.Errorf("invalid data URI: missing comma separator")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode failed: %w", err)
+	}
+	img, format, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return "", fmt.Errorf("image decode failed: %w", err)
+	}
+	if format == "png" {
+		return "data:image/png;base64," + encoded, nil
+	}
+	pngBytes, _, err := encodeImage(img, "png")
+	if err != nil {
+		return "", err
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes), nil
+}
+
 // registerImageModule registers the mah.image sub-table with image processing
 // utilities for Lua plugins.
 func (pm *PluginManager) registerImageModule(L *lua.LState, mahMod *lua.LTable) {
 	imgMod := L.NewTable()
+
+	// mah.image.to_png(data_uri) -> png_data_uri or nil, error_string.
+	imgMod.RawSetString("to_png", L.NewFunction(func(L *lua.LState) int {
+		uri, err := dataURIToPNG(L.CheckString(1))
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LString(uri))
+		return 1
+	}))
 
 	// mah.image.pad_to_aspect_ratio(data_uri, target_ratio) -> padded_data_uri, new_width, new_height
 	// Pads the image with white borders to exactly match the target aspect ratio

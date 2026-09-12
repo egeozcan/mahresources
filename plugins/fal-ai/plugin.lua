@@ -27,7 +27,7 @@ plugin = {
         "fal.media", "*.fal.media",
     },
     name = "fal-ai",
-    version = "1.2.0",
+    version = "1.3.0",
     description = "AI-powered image processing using current fal.ai models for generation, editing, color, restoration, upscaling, and vectorization.",
     settings = {
         { name = "api_key", type = "password", label = "FAL.AI API Key" },
@@ -43,7 +43,10 @@ local FAL_ENDPOINTS = {
     creative = "fal-ai/creative-upscaler",
     seedvr = "fal-ai/seedvr/upscale/image",
     seedvr_seamless = "fal-ai/seedvr/upscale/image/seamless",
+    bria = "bria/increase-resolution",
     bria_creative = "bria/upscale/creative",
+    recraft_crisp = "fal-ai/recraft/upscale/crisp",
+    recraft_creative = "fal-ai/recraft/upscale/creative",
     topaz_precision = "topaz/upscale/image/precision",
     topaz_generative = "topaz/upscale/image/generative",
     topaz_creative = "topaz/upscale/image/creative",
@@ -81,6 +84,37 @@ local FAL_ENDPOINTS = {
     fibo15_generate = "bria/fibo-gen-1.5/text-to-image",
     nanobanana_lite_generate = "google/nano-banana-2-lite",
 }
+
+-- Last verified 2026-09-12 against fal's pricing API and model pages:
+-- https://fal.ai/models/<endpoint from FAL_ENDPOINTS>
+-- Topaz's pricing API exposes opaque "units"; use the model pages' documented
+-- started-output-MP blocks instead. These are published rates, not job charges.
+-- Keep this snapshot offline: opening an action must not need a key or a price
+-- lookup. Update the date and all rates together when checking prices again.
+local UPSCALE_PRICE_CHECKED_AT = "2026-09-12"
+local UPSCALE_PRICES = {
+    clarity = "$0.03/MP",
+    crystal = "$0.016/MP",
+    esrgan = "$0.00111/compute second; total depends on billed runtime",
+    creative = "$0.00125/compute second; total depends on billed runtime",
+    seedvr = "$0.001/MP; seamless endpoint $0.0025/MP",
+    bria = "$0.04/image",
+    bria_creative = "$0.04/image",
+    recraft_crisp = "$0.004/image",
+    recraft_creative = "$0.25/image",
+    topaz = "$0.08 per started 24 output MP (all Precision presets)",
+    topaz_generative = "$0.08 per started 8 output MP for Wonder 3/3.5; $0.08 per started 4 output MP for all other listed presets",
+    topaz_creative = "$0.08 per started 2 output MP",
+    topaz_transparent = "$0.08 per started 24 output MP",
+    drct = "$0.0045/MP",
+    aura_sr = "$0.0008/compute second; total depends on billed runtime",
+}
+
+local function with_upscale_price(model, description)
+    return description .. " Last known fal.ai cost (USD; checked "
+        .. UPSCALE_PRICE_CHECKED_AT .. "): " .. UPSCALE_PRICES[model]
+        .. ". Published rate only; final billing may differ."
+end
 
 -- Escape a value for output: HTML metacharacters, and the shortcode brackets
 -- with them, because this plugin's output goes back through the shortcode
@@ -251,10 +285,8 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             return FAL_ENDPOINTS.creative, payload
 
         elseif model == "crystal" then
-            -- Crystal Upscaler: Clarity AI's successor to clarity-upscaler, tuned
-            -- for facial detail and portrait photography. Preserves aspect ratio
-            -- (uniform scale_factor). `creativity` 0 is a faithful upscale; higher
-            -- values let the model invent detail.
+            -- Crystal uses a uniform scale factor. Low creativity constrains
+            -- reconstruction but cannot guarantee identical facial details.
             local payload = {image_url = data_uri}
             apply_num(payload, "creativity", params.crystal_creativity)
             apply_num(payload, "scale_factor", params.crystal_scale_factor)
@@ -280,6 +312,18 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             end
             mah.log("info", "[fal.ai] build_request: using SeedVR Upscaler, mode=" .. tostring(payload.upscale_mode) .. ", seamless=" .. tostring(seamless))
             return endpoint, payload
+
+        elseif model == "bria" then
+            local payload = {image_url = data_uri}
+            apply_num(payload, "desired_increase", params.bria_desired_increase)
+            apply_str(payload, "output_type", params.bria_output_type)
+            apply_bool(payload, "preserve_alpha", params.bria_precision_preserve_alpha)
+            apply_bool(payload, "preserve_color", params.bria_preserve_color)
+            return FAL_ENDPOINTS.bria, payload
+
+        elseif model == "recraft_crisp" or model == "recraft_creative" then
+            -- Both schemas accept a PNG image, with no prompt or scale control.
+            return FAL_ENDPOINTS[model], {image_url = data_uri}
 
         elseif model == "bria_creative" then
             local payload = {image_url = data_uri}
@@ -873,6 +917,16 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     local data_uri, mime_type = build_data_uri(resource_id)
     mah.log("info", "[fal.ai] process_image: data URI built, total size=" .. #data_uri .. " bytes, mime=" .. mime_type)
 
+    -- Recraft upscalers require PNG. Convert before submitting so JPEG and
+    -- other supported raster resources work without an avoidable paid failure.
+    if action_id == "upscale" and (params.model == "recraft_crisp" or params.model == "recraft_creative") then
+        local png_uri, conversion_err = mah.image.to_png(data_uri)
+        if not png_uri then
+            error("Recraft requires PNG input; conversion failed: " .. tostring(conversion_err))
+        end
+        data_uri = png_uri
+    end
+
     -- Pre-pad image for photo_restoration to prevent aspect ratio warping.
     -- The model always reshapes output to the selected fixed ratio, so
     -- adding white borders to the input ensures the content stays proportional.
@@ -1432,7 +1486,7 @@ function init()
     mah.action({
         id = "upscale",
         label = "Upscale",
-        description = "Upscale image resolution using AI",
+        description = "Enlarge images with fidelity or creative reconstruction, with model guidance and last-known fal.ai prices.",
         icon = "arrows-expand",
         entity = "resource",
         placement = {"detail", "card"},
@@ -1441,46 +1495,58 @@ function init()
         params = {
             {name = "model", type = "select", label = "Model", default = "clarity",
                 options = {"clarity", "crystal", "esrgan", "creative", "seedvr",
-                           "bria_creative", "topaz", "topaz_generative",
+                           "bria", "bria_creative", "recraft_crisp", "recraft_creative",
+                           "topaz", "topaz_generative",
                            "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
-                description = "Choose a faithful, restoration-aware, creative, portrait, or transparency-preserving upscaler."},
+                description = "Start with Topaz Precision or Bria for fidelity, SeedVR2 for degraded photos, ESRGAN for anime, or a creative model for invented detail. All options run on fal.ai and incur usage charges, including open-weight models."},
 
-            {name = "model_info_clarity", type = "info", label = "Clarity — prompt-guided general upscaling",
-                description = "Flexible diffusion upscaler with prompt, creativity, resemblance, CFG, and step controls. Good when you want to steer reconstructed detail; higher creativity can change the source.",
+            {name = "model_info_clarity", type = "info", label = "Clarity | prompt-guided reconstruction",
+                description = with_upscale_price("clarity", "Clarity AI diffusion upscaler for photos and artwork that need added texture. Flexible prompt, resemblance, and creativity controls; higher creativity may change objects or lettering. More inference steps take longer."),
                 show_when = {model = "clarity"}},
-            {name = "model_info_crystal", type = "info", label = "Crystal — faces and portraits",
-                description = "Clarity AI's newer portrait-focused upscaler. Creativity 0 is faithful; raising it invents facial and photographic detail.",
+            {name = "model_info_crystal", type = "info", label = "Crystal | portraits and faces",
+                description = with_upscale_price("crystal", "Clarity AI upscaler for photographic texture and facial detail. Start with low creativity for closer resemblance. Even at 0, reconstructed faces and fine features may differ from the source."),
                 show_when = {model = "crystal"}},
-            {name = "model_info_esrgan", type = "info", label = "ESRGAN — fast deterministic super-resolution",
-                description = "Classic Real-ESRGAN presets for photos, anime, and faces. Fast and predictable, but less capable at reconstructing severely degraded detail.",
+            {name = "model_info_esrgan", type = "info", label = "ESRGAN | photos and anime",
+                description = with_upscale_price("esrgan", "Real-ESRGAN presets are a practical, relatively lightweight choice for modest enlargements, illustration, and line art. Limited creative control; heavy sharpening can produce halos or plastic texture. Face enhancement may change identity."),
                 show_when = {model = "esrgan"}},
-            {name = "model_info_creative", type = "info", label = "Creative Upscaler — controlled reinterpretation",
-                description = "Adds prompt-guided detail with explicit creativity, detail, and shape-preservation controls. Best when some visual reinterpretation is welcome.",
+            {name = "model_info_creative", type = "info", label = "Creative Upscaler | prompt-guided detail",
+                description = with_upscale_price("creative", "fal-hosted creative upscaler for artwork and images where reinterpretation is welcome. Prompt, creativity, detail, and shape preservation balance richer texture against resemblance. Avoid strong settings when exact product details or text matter."),
                 show_when = {model = "creative"}},
-            {name = "model_info_seedvr", type = "info", label = "SeedVR2 — restoration-aware quality",
-                description = "Strong general upscaler for degraded inputs. Factor mode scales uniformly; target mode aims at a resolution. Seamless mode is useful for repeating textures.",
+            {name = "model_info_seedvr", type = "info", label = "SeedVR2 | restoration and value",
+                description = with_upscale_price("seedvr", "ByteDance restoration model for blurry, compressed, or degraded photos, with inexpensive MP pricing. Reconstructs texture without a prompt; inspect clean sources for unnecessary detail. Factor and target modes control size. Seamless uses a separate, higher-priced endpoint."),
                 show_when = {model = "seedvr"}},
-            {name = "model_info_bria", type = "info", label = "Bria Creative — licensed-data creative upscale",
-                description = "Commercially oriented creative upscaling from Bria, with optional alpha preservation and minimal tuning.",
+            {name = "model_info_bria_precision", type = "info", label = "Bria Increase Resolution | content preservation",
+                description = with_upscale_price("bria", "Bria SwinIR upscaler for photos, products, and graphics where the original content should remain recognizable. Offers 2x or 4x, up to 8192 x 8192, with alpha and color preservation controls. Less suited to imaginative reconstruction."),
+                show_when = {model = "bria"}},
+            {name = "model_info_bria", type = "info", label = "Bria Creative | fixed 2x enhancement",
+                description = with_upscale_price("bria_creative", "Bria creative upscaler adds texture to photos and artwork with minimal tuning. Fixed 2x, up to 10 MP output; optional alpha preservation. More reconstruction than Bria Increase Resolution, with no prompt or creativity slider on this endpoint."),
                 show_when = {model = "bria_creative"}},
-            {name = "model_info_topaz", type = "info", label = "Topaz Precision — faithful professional upscale",
-                description = "Current Topaz precision family. Standard V2 fits most photos; High Fidelity preserves professional detail; Low Resolution recovers compressed sources; CGI targets rendered art; Text Refine keeps text crisp.",
+            {name = "model_info_recraft_crisp", type = "info", label = "Recraft Crisp | simple detail refinement",
+                description = with_upscale_price("recraft_crisp", "Recraft upscaler for sharpening small details and faces with minimal setup and low per-image cost. More conservative than Recraft Creative, but exact text and facial identity still need review. No scale, prompt, or creativity controls. Input is converted to PNG; do not rely on preserved output transparency."),
+                show_when = {model = "recraft_crisp"}},
+            {name = "model_info_recraft_creative", type = "info", label = "Recraft Creative | richer reconstruction",
+                description = with_upscale_price("recraft_creative", "Recraft upscaler for artwork and photos where added texture is desirable. Can change fine details, shapes, and faces; considerably more expensive per image than Crisp. No scale, prompt, or creativity controls. Input is converted to PNG; do not rely on preserved output transparency."),
+                show_when = {model = "recraft_creative"}},
+            {name = "model_info_topaz", type = "info", label = "Topaz Precision | fidelity-first photo upscale",
+                description = with_upscale_price("topaz", "Topaz Labs models for keeping photos close to the original. Standard fits most photos; High Fidelity favors clean detail; Low Resolution targets small sources; CGI handles rendered art; Text Refine targets lettering. Face enhancement can still alter identity. Usually less imaginative than the Generative family."),
                 show_when = {model = "topaz"}},
-            {name = "model_info_topaz_generative", type = "info", label = "Topaz Generative — rebuild missing detail",
-                description = "Wonder 3.5/3 add realistic detail; Recover/Recovery rebuild tiny sources; Redefine enables prompt-guided reconstruction. More generative than Precision and usually more expensive.",
+            {name = "model_info_topaz_generative", type = "info", label = "Topaz Generative | rebuild missing detail",
+                description = with_upscale_price("topaz_generative", "Topaz Labs Wonder models reconstruct photographic detail; Recover/Recovery target tiny sources; Redefine supports prompt guidance. Stronger restoration potential than Precision, with more risk of invented features. Check faces, text, and product details. Price depends on the selected preset."),
                 show_when = {model = "topaz_generative"}},
-            {name = "model_info_topaz_creative", type = "info", label = "Topaz Creative — transform AI artwork",
-                description = "Bloom-family upscaling for AI-generated images. Creativity can substantially alter detail; color preservation reins in palette drift.",
+            {name = "model_info_topaz_creative", type = "info", label = "Topaz Creative | AI artwork and texture",
+                description = with_upscale_price("topaz_creative", "Topaz Labs Bloom/Realism models for creative enhancement of AI art and textures. High creativity can substantially change details; color preservation limits palette drift. Small output-MP billing blocks make large enlargements costly."),
                 show_when = {model = "topaz_creative"}},
-            {name = "model_info_topaz_transparent", type = "info", label = "Topaz Transparent — fixed 4x PNG",
-                description = "Preserves the alpha channel end to end for logos, stickers, and cutouts. Output is always PNG and exactly 4x in each dimension.",
+            {name = "model_info_topaz_transparent", type = "info", label = "Topaz Transparent | cutouts and logos",
+                description = with_upscale_price("topaz_transparent", "Topaz Labs alpha-preserving upscale for stickers, logos, and cutouts. Always PNG and fixed 4x in each dimension, so output pixel area is 16x the input. No tuning controls; check edges and lettering after enlargement."),
                 show_when = {model = "topaz_transparent"}},
-            {name = "model_info_drct", type = "info", label = "DRCT — compressed-photo super-resolution",
-                description = "Degradation-aware super-resolution trained for real-world artifacts. A strong faithful choice for JPEG-compressed photos.",
+            {name = "model_info_drct", type = "info", label = "DRCT | compressed-photo super-resolution",
+                description = with_upscale_price("drct", "Degradation-aware super-resolution for JPEG artifacts and real-world low-resolution photos. Relatively conservative and simple, with no prompt controls. Can still oversmooth fine texture; a poor source cannot supply verifiable missing detail."),
                 show_when = {model = "drct"}},
-            {name = "model_info_aura", type = "info", label = "Aura SR — tile-based 4x GAN",
-                description = "Efficient tile-based upscaling. Checkpoint v2 handles JPEG degradation better; overlapping tiles reduce seams.",
+            {name = "model_info_aura", type = "info", label = "Aura SR | fast 4x artwork enlargement",
+                description = with_upscale_price("aura_sr", "fal-hosted Aura SR GAN for efficient, fixed 4x enlargement, especially generated artwork. Checkpoint v2 reduces artifacts; overlapping tiles reduce seams but roughly double inference time. Weaker on severely degraded inputs than restoration-focused models."),
                 show_when = {model = "aura_sr"}},
+            {name = "upscale_cost_guide", type = "info", label = "Sizing, cost, and fidelity",
+                description = "2x width/height creates 4x as many pixels; 4x creates 16x. MP means one million pixels. Topaz rounds output up to the next billing block; compute-second models depend on billed runtime, not queue wait. Other MP rates use the endpoint's billing definition. Prices are a dated snapshot, not live quotes or measured job charges. Compare at the intended viewing size; plausible new detail is not recovered evidence."},
 
             -- Clarity
             {name = "clarity_prompt", type = "text", label = "Prompt",
@@ -1512,14 +1578,14 @@ function init()
                 description = "More steps may refine detail but take longer; returns diminish at higher values.",
                 show_when = {model = "clarity"}},
 
-            -- Crystal (Clarity AI's successor to clarity-upscaler, portrait-focused)
+            -- Crystal portrait controls
             {name = "crystal_scale_factor", type = "number", label = "Scale Factor",
                 default = 2, min = 1, max = 4, step = 0.25,
                 description = "Uniform width/height multiplier.",
                 show_when = {model = "crystal"}},
-            {name = "crystal_creativity", type = "number", label = "Creativity (0 = faithful)",
+            {name = "crystal_creativity", type = "number", label = "Creativity (0 = most conservative)",
                 default = 0, min = 0, max = 10, step = 0.5,
-                description = "0 is a faithful upscale; higher values reconstruct more aggressively.",
+                description = "0 minimizes creative changes; higher values reconstruct more aggressively. No setting guarantees identical facial detail.",
                 show_when = {model = "crystal"}},
             {name = "crystal_output_format", type = "select", label = "Output Format",
                 default = "png", options = {"png", "jpg"},
@@ -1540,7 +1606,7 @@ function init()
                 show_when = {model = "esrgan"}},
             {name = "esrgan_face", type = "boolean", label = "Face Mode (portraits)",
                 default = false,
-                description = "Runs face enhancement for portrait inputs.",
+                description = "Restores faces separately and may change identity. Leave off when resemblance matters more than sharper facial detail.",
                 show_when = {model = "esrgan"}},
             {name = "esrgan_output_format", type = "select", label = "Output Format",
                 default = "png", options = {"png", "jpeg"},
@@ -1591,8 +1657,26 @@ function init()
                 show_when = {model = "seedvr"}},
             {name = "seedvr_seamless", type = "boolean", label = "Seamless Tiling (slower)",
                 default = false,
-                description = "Runs the seamless SeedVR endpoint, which tiles without visible seams. Use for textures and patterns.",
+                description = "Use the separate seamless endpoint to reduce tiling seams. Last-known MP rate is 2.5x the regular endpoint; see model cost above.",
                 show_when = {model = "seedvr"}},
+
+            -- Bria Increase Resolution
+            {name = "bria_desired_increase", type = "select", label = "Upscale Factor",
+                default = "2", options = {"2", "4"},
+                description = "2x or 4x in width and height using the matching SwinIR checkpoint. Maximum output is 8192 x 8192.",
+                show_when = {model = "bria"}},
+            {name = "bria_output_type", type = "select", label = "Output Format",
+                default = "png", options = {"png", "jpeg"},
+                description = "PNG supports transparency; JPEG cannot retain an alpha channel.",
+                show_when = {model = "bria"}},
+            {name = "bria_preserve_color", type = "boolean", label = "Preserve Source Colors",
+                default = false,
+                description = "Correct the upscaled result's color cast against the source image. Useful for product and brand colors.",
+                show_when = {model = "bria"}},
+            {name = "bria_precision_preserve_alpha", type = "boolean", label = "Preserve Alpha Channel",
+                default = true,
+                description = "Reattach the source alpha channel. Applies only to PNG output.",
+                show_when = {model = "bria", bria_output_type = "png"}},
 
             -- Bria Creative
             {name = "bria_preserve_alpha", type = "boolean", label = "Preserve Alpha Channel",
@@ -1623,7 +1707,7 @@ function init()
                 show_when = {model = "topaz", topaz_face_enhancement = true}},
             {name = "topaz_face_enhancement_creativity", type = "number", label = "Face Creativity",
                 default = 0, min = 0, max = 1, step = 0.05,
-                description = "0 preserves identity most strongly; higher values may invent facial detail.",
+                description = "0 is the most conservative setting; higher values may invent facial detail. Disable Face Enhancement for stricter resemblance.",
                 show_when = {model = "topaz", topaz_face_enhancement = true}},
             {name = "topaz_fix_compression", type = "number", label = "Fix Compression (optional)",
                 min = 0, max = 1, step = 0.05,
@@ -2400,6 +2484,31 @@ function init()
     mah.menu("Generate Image", "generate")
 
     -- Documentation
+    local price_examples = {}
+    local price_models = {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria",
+        "bria_creative", "recraft_crisp", "recraft_creative", "topaz",
+        "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"}
+    for _, model in ipairs(price_models) do
+        local endpoint = model == "topaz" and FAL_ENDPOINTS.topaz_precision or FAL_ENDPOINTS[model]
+        price_examples[#price_examples + 1] = {
+            title = model,
+            code = UPSCALE_PRICES[model],
+            notes = "Source: https://fal.ai/models/" .. endpoint,
+        }
+    end
+    mah.doc({
+        name = "upscale-pricing",
+        label = "Upscaler Costs",
+        description = "Last-known fal.ai prices in USD, checked " .. UPSCALE_PRICE_CHECKED_AT .. ".",
+        category = "Action",
+        examples = price_examples,
+        notes = {
+            "Published rates are bundled with the plugin and remain visible without an API key or network lookup. They do not refresh automatically and are not the final charge for a job. Check fal.ai before large batches.",
+            "MP means one million pixels. Topaz bills started output-MP blocks, rounded up: a 25 MP Precision result costs $0.16 at this snapshot. Other MP rates follow each endpoint's billing definition; compute-second totals depend on billed runtime.",
+            "SeedVR seamless has its own price: https://fal.ai/models/fal-ai/seedvr/upscale/image/seamless.",
+            "Open-source code or open weights do not make hosted fal.ai inference free. Provider licenses and desktop subscriptions are separate from these API charges.",
+        },
+    })
     mah.doc({
         name = "getting-started",
         label = "Getting Started",
@@ -2452,20 +2561,21 @@ function init()
         description = "Increase image resolution using AI upscaling models.",
         category = "Action",
         attrs = {
-            { name = "model", type = "select", default = "clarity", description = "Backends: clarity, crystal, esrgan, creative, seedvr, bria_creative, topaz (Precision), topaz_generative, topaz_creative, topaz_transparent, drct, aura_sr." },
+            { name = "model", type = "select", default = "clarity", description = "Backends: clarity, crystal, esrgan, creative, seedvr, bria, bria_creative, recraft_crisp, recraft_creative, topaz (Precision), topaz_generative, topaz_creative, topaz_transparent, drct, aura_sr. Each model's inline guide includes a dated last-known cost; see Upscaler Costs for sources." },
             { name = "clarity_*", type = "various", description = "Clarity controls: prompt, negative_prompt, upscale_factor, creativity, resemblance, guidance_scale, num_inference_steps (shown when model=clarity)" },
-            { name = "crystal_*", type = "various", description = "Crystal controls: scale_factor, creativity (0 = faithful upscale, up to 10), output_format (shown when model=crystal)" },
+            { name = "crystal_*", type = "various", description = "Crystal controls: scale_factor, creativity (0 = most conservative, up to 10), output_format (shown when model=crystal)" },
             { name = "esrgan_*", type = "various", description = "ESRGAN controls: esrgan_model variant, scale, face mode, output_format (shown when model=esrgan)" },
             { name = "creative_*", type = "various", description = "Creative Upscaler controls: prompt, scale, creativity, detail, shape_preservation (shown when model=creative)" },
             { name = "seedvr_*", type = "various", description = "SeedVR controls: upscale_mode (factor|target), upscale_factor or target_resolution, noise_scale, output_format, seamless (switches to the seamless-tiling endpoint) (shown when model=seedvr)" },
             { name = "bria_preserve_alpha", type = "boolean", default = "true", description = "Preserve alpha channel (shown when model=bria_creative)" },
+            { name = "bria_*", type = "various", description = "Bria Increase Resolution controls: desired_increase (2 or 4), output_type (png or jpeg), preserve_color, precision_preserve_alpha (PNG only). Shown when model=bria." },
             { name = "topaz_*", type = "various", description = "Topaz Precision exposes preset, scale, subject/face handling, compression/denoise/sharpen overrides, and format. Generative exposes Wonder/Recover/Redefine controls; Creative exposes Bloom controls; Transparent is fixed 4x PNG." },
             { name = "drct_upscale_factor", type = "number", default = "4", description = "DRCT upscale factor 1-4 (shown when model=drct)" },
             { name = "aura_sr_*", type = "various", description = "Aura SR controls: checkpoint (v1|v2, default v2), upscale_factor, overlapping_tiles (shown when model=aura_sr)" },
         },
         examples = {
             { title = "Clarity Upscaler (default)", code = "Uses prompt-guided upscaling with quality-focused defaults.", notes = "Model: fal-ai/clarity-upscaler" },
-            { title = "Crystal Upscaler", code = "Clarity AI's newer upscaler, tuned for facial detail and portrait photography. Leave creativity at 0 for a faithful upscale.", notes = "Model: clarityai/crystal-upscaler" },
+            { title = "Crystal Upscaler", code = "Clarity AI upscaler for faces and portraits. Creativity 0 minimizes creative changes but does not guarantee identical facial detail.", notes = "Model: clarityai/crystal-upscaler" },
             { title = "ESRGAN", code = "4x upscaling with RealESRGAN_x4plus model.", notes = "Model: fal-ai/esrgan" },
             { title = "Creative Upscaler", code = "AI-enhanced upscaling with creative interpretation.", notes = "Model: fal-ai/creative-upscaler" },
             { title = "SeedVR", code = "High-quality upscaling with SeedVR model. Enable Seamless Tiling for textures and repeating patterns.", notes = "Models: fal-ai/seedvr/upscale/image, fal-ai/seedvr/upscale/image/seamless" },
@@ -2473,6 +2583,8 @@ function init()
             { title = "Topaz Precision", code = "Faithful professional upscaling with source-specific presets.", notes = "Model: topaz/upscale/image/precision" },
             { title = "Topaz Generative", code = "Rebuild missing detail with Wonder, Recover, Recovery, or prompt-guided Redefine.", notes = "Model: topaz/upscale/image/generative" },
             { title = "Topaz Creative / Transparent", code = "Bloom creatively enhances AI art; Transparent preserves alpha in a fixed 4x PNG.", notes = "Models: topaz/upscale/image/creative, topaz/upscale/image/transparent" },
+            { title = "Bria Increase Resolution", code = "Choose bria for content-preserving 2x/4x enlargement with PNG alpha and color-cast controls.", notes = "Model: bria/increase-resolution" },
+            { title = "Recraft Crisp / Creative", code = "Choose recraft_crisp for economical detail refinement or recraft_creative for richer reconstruction. Both accept PNG only; the plugin converts supported raster inputs without resizing. Conversion of animated GIFs uses the first frame; converted formats do not retain embedded metadata or color profiles.", notes = "Models: fal-ai/recraft/upscale/crisp, fal-ai/recraft/upscale/creative" },
             { title = "DRCT", code = "Degradation-aware super-resolution; handles JPEG-compressed sources better than pure-SR models.", notes = "Model: fal-ai/drct-super-resolution" },
             { title = "Aura SR", code = "Tile-based 4x GAN. Use checkpoint=v2 for JPEG-degraded inputs.", notes = "Model: fal-ai/aura-sr" },
         },

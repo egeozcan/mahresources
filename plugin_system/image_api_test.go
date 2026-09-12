@@ -9,7 +9,27 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+
+	lua "github.com/yuin/gopher-lua"
 )
+
+func TestImageToPNGRejectsInvalidInput(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+	mah := L.NewTable()
+	L.SetGlobal("mah", mah)
+	(&PluginManager{}).registerImageModule(L, mah)
+	for _, input := range []string{"missing separator", "data:image/png;base64,%%%", "data:image/png;base64,bm90IGFuIGltYWdl"} {
+		L.SetGlobal("input", lua.LString(input))
+		if err := L.DoString(`
+			local converted, err = mah.image.to_png(input)
+			assert(converted == nil, "invalid image accepted")
+			assert(type(err) == "string" and #err > 0, "missing conversion error")
+		`); err != nil {
+			t.Errorf("%q: %v", input, err)
+		}
+	}
+}
 
 // encodeTestImage creates a solid-color PNG image and returns it as a data URI.
 func encodeTestImage(t *testing.T, w, h int, c color.RGBA) string {

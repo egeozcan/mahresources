@@ -9378,3 +9378,15 @@ Round 1: Standards found one P2: PostgreSQL may repeat or omit tied rows across 
 Round 2: Fresh Standards and Spec reviews both report no P0–P2 or P3 findings in the cumulative changes. Two major findings were resolved across two rounds.
 
 Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 'json1 fts5' ./...`; production build; 77 SQLite MRQL browser tests (one skip); 43 MRQL CLI tests; eight PostgreSQL shared-list browser tests; focused PostgreSQL tied-page, mixed-list, random and Explain tests; source whitespace checks. Earlier frontend unit, OpenAPI and CSS checks remain applicable because this loop changed backend ordering and regressions only.
+
+## fal.ai upscaler guidance and pricing — 2026-09-12
+
+- [x] Check the bundled plugin and current fal.ai schemas and published prices.
+- [x] Add Bria Increase Resolution and Recraft Crisp/Creative with valid request options.
+- [x] Explain fidelity, creativity, suitable inputs, limitations, and dated last-known costs inline.
+- [x] Verify request routing, PNG preparation, model registration, and price coverage without paid API calls.
+- [x] Review the diff and prepare the commit and PR description.
+
+Review: Added three verified fal.ai endpoints and retained existing model IDs/defaults. Dated USD rates distinguish per-image, MP, rounded Topaz output-MP blocks, and compute-second billing; SeedVR seamless and Topaz preset pricing are explicit. Recraft PNG preparation preserves decoded pixels and dimensions and fails before submission on conversion errors. No API key, network lookup, or paid inference is needed to view prices or run the regressions.
+
+Validation: focused regressions reproduced missing endpoint routing/prices before implementation and pass afterward; full `plugin_system` tests pass; `go vet --tags 'json1 fts5' ./plugin_system` passes; server and CLI builds pass; 15 CLI plugin E2E checks pass. Full `go test --tags 'json1 fts5' ./...` has one pre-existing failure, `TestCommittedOpenAPISpecIsFresh`, reproduced on unchanged base `defeacf3b11c2040bd10a4b465a618cbcd754fbd`. Browser checks could not run because the Chromium download timed out. No paid fal.ai jobs were submitted.
