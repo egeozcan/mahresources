@@ -55,6 +55,7 @@
     "@codemirror/view": "^6.39.13",
     "alpinejs": "^3.15.4",
     "diff": "^9.0.0",
+    "focus-trap": "^8.2.2",
     "lit": "^3.3.2"
   }
 }

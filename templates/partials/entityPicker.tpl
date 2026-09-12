@@ -1,12 +1,13 @@
 {# One shared dialog; retained filter steps are hidden, never replaced beneath a child. #}
-<div x-data x-show="$store.entityPicker.isOpen" x-cloak
+<div x-data="{ init() { this.$store.entityPicker.attachDialog(this.$el); }, destroy() { this.$store.entityPicker.detachDialog(); } }"
+     x-show="$store.entityPicker.isOpen" x-cloak tabindex="-1"
      class="fixed inset-0 overflow-y-auto entity-picker-overlay-top"
      role="dialog" aria-modal="true" aria-labelledby="entity-picker-title" @keydown.stop @keyup.stop
      @keydown.escape.window.capture="if ($store.entityPicker.isOpen) { $event.preventDefault(); $event.stopImmediatePropagation(); $store.entityPicker.escape(); }">
     <div class="fixed inset-0 bg-black/50" aria-hidden="true" @click="$store.entityPicker.close()"></div>
     <div class="flex min-h-full items-center justify-center p-3">
         <div class="relative bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col"
-             @click.stop x-trap.noscroll.noreturn="$store.entityPicker.isOpen">
+             @click.stop>
             <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-200">
                 <button type="button" x-show="$store.entityPicker.steps.length > 1" @click="$store.entityPicker.back()" class="text-sm underline">Back</button>
                 <h2 id="entity-picker-title" class="text-lg font-semibold text-stone-900 flex-1" x-text="$store.entityPicker.title"></h2>

@@ -119,7 +119,9 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 			if sectionConfig != "" {
 				body["SectionConfig"] = sectionConfig
 			}
-			slots.applySet(body)
+			if err := slots.applySet(body); err != nil {
+				return err
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/note/noteType", nil, body, &raw); err != nil {
@@ -177,7 +179,9 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if cmd.Flags().Changed("section-config") {
 				body["SectionConfig"] = sectionConfig
 			}
-			slots.applyChangedAny(body)
+			if err := slots.applyChangedAny(body); err != nil {
+				return err
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/note/noteType/edit", nil, body, &raw); err != nil {

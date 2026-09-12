@@ -77,13 +77,13 @@ test.describe('Entity Picker - Resource Selection', () => {
 
     // Fill search and wait for the debounced API request to complete
     const searchResponsePromise = page.waitForResponse(resp =>
-      resp.url().includes('/v1/resources') && resp.status() === 200
+      resp.url().includes('/v1/entity-picker?') && new URL(resp.url()).searchParams.get('entity') === 'resource' && resp.status() === 200
     );
     await searchInput.fill('Test Resource');
     await searchResponsePromise;
 
     // Should show matching resource (use .first() since there might be multiple)
-    await expect(page.locator('[aria-labelledby="entity-picker-title"] [role="option"]').first()).toBeVisible();
+    await expect(page.locator('[aria-labelledby="entity-picker-title"] [data-picker-id]').first()).toBeVisible();
 
     // Close modal for next test
     await page.keyboard.press('Escape');
@@ -103,11 +103,11 @@ test.describe('Entity Picker - Resource Selection', () => {
     await page.locator('button:has-text("All Resources")').click();
 
     // Click on a resource to select it
-    const resourceOption = pickerModal.locator('[role="option"]').first();
-    await resourceOption.click();
+    const resourceOption = pickerModal.locator('[data-picker-id]').first().getByRole('checkbox');
+    await resourceOption.check();
 
     // Selection count should update
-    await expect(pickerModal.locator('text=1 selected')).toBeVisible();
+    await expect(pickerModal.getByText('1 pending', { exact: true })).toBeVisible();
 
     // Confirm selection
     await pickerModal.locator('button:has-text("Confirm")').click();
@@ -130,13 +130,13 @@ test.describe('Entity Picker - Resource Selection', () => {
     await page.locator('button:has-text("All Resources")').click();
 
     // Select a resource that isn't already added (not disabled)
-    const selectableOption = pickerModal.locator('[role="option"]:not([aria-disabled="true"])').first();
+    const selectableOption = pickerModal.locator('[data-picker-id] input[type="checkbox"]:enabled').first();
     // If no selectable option exists, the test previous test already added all available resources
     // which is fine - we can still test the cancel behavior
     const optionCount = await selectableOption.count();
     if (optionCount > 0) {
-      await selectableOption.click();
-      await expect(pickerModal.locator('text=1 selected')).toBeVisible();
+      await selectableOption.check();
+      await expect(pickerModal.getByText('1 pending', { exact: true })).toBeVisible();
     }
 
     // Cancel
@@ -249,20 +249,20 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
 
     // Switch to All Resources tab and wait for results to appear
     await page.locator('button:has-text("All Resources")').click();
-    await pickerModal.locator('[role="option"]').first().waitFor({ state: 'visible' });
+    await pickerModal.locator('[data-picker-id]').first().waitFor({ state: 'visible' });
 
     // Find the Tags filter input
-    const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
+    const tagsFilter = pickerModal.getByRole('combobox', { name: 'Tags', exact: true });
     await expect(tagsFilter).toBeVisible();
 
     // Type the tag name and wait for autocomplete dropdown
     await tagsFilter.fill('Filter Test');
-    const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
+    const tagOption = pickerModal.getByRole('option', { name: 'Filter Test Tag', exact: true });
     await tagOption.waitFor({ state: 'visible' });
 
     // Select the tag - this triggers a filtered API request
     const filteredResultsPromise = page.waitForResponse(resp =>
-      resp.url().includes('/v1/resources') && resp.url().includes('Tags=') && resp.status() === 200
+      resp.url().includes('/v1/entity-picker?') && new URLSearchParams(new URL(resp.url()).searchParams.get('filter') || '').get('Tags') === String(tagId) && resp.status() === 200
     );
     await tagOption.click();
     await filteredResultsPromise;
@@ -287,18 +287,18 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     await page.locator('button:has-text("All Resources")').click();
 
     // Add tag filter - type and wait for autocomplete dropdown
-    const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
+    const tagsFilter = pickerModal.getByRole('combobox', { name: 'Tags', exact: true });
     await tagsFilter.fill('Filter Test');
-    const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
+    const tagOption = pickerModal.getByRole('option', { name: 'Filter Test Tag', exact: true });
     await tagOption.waitFor({ state: 'visible' });
     await tagOption.click();
 
     // Verify chip appears
-    const tagChip = pickerModal.locator('span.inline-flex').filter({ hasText: 'Filter Test Tag' });
+    const tagChip = pickerModal.getByRole('button', { name: 'Remove Filter Test Tag', exact: true });
     await expect(tagChip).toBeVisible();
 
     // Remove the filter by clicking the x button
-    await tagChip.locator('button').click();
+    await tagChip.click();
 
     // Verify chip is removed
     await expect(tagChip).not.toBeVisible();
@@ -382,11 +382,11 @@ test.describe('Entity Picker - Group Selection', () => {
 
     // Wait for visible options to load - groups use flex layout, thumbnails use aspect-square
     // Use a visible filter to ensure we get the group cards, not hidden thumbnail options
-    const groupCard = pickerModal.locator('[role="option"].flex').first();
+    const groupCard = pickerModal.locator('[data-picker-id]').first();
     await groupCard.waitFor({ state: 'visible', timeout: 10000 });
 
     // Should contain group name text (groups use flex layout with p.font-medium)
-    await expect(groupCard.locator('p.font-medium')).toBeVisible();
+    await expect(groupCard.getByRole('link')).toBeVisible();
 
     // Close modal for next test
     await page.keyboard.press('Escape');
@@ -403,9 +403,10 @@ test.describe('Entity Picker - Group Selection', () => {
     const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
     await expect(pickerModal).toBeVisible();
 
-    // Select a group (use .flex to target group cards, not hidden thumbnail options)
-    await pickerModal.locator('[role="option"].flex').first().click();
-    await expect(pickerModal.locator('text=1 selected')).toBeVisible();
+    // Select this fixture's group, even when other suites filled earlier pages.
+    await pickerModal.getByRole('textbox', { name: 'Name', exact: true }).fill('Selectable Test Group');
+    await pickerModal.locator(`[data-picker-id="${selectableGroupId}"]`).getByRole('checkbox').check();
+    await expect(pickerModal.getByText('1 pending', { exact: true })).toBeVisible();
 
     // Confirm
     await pickerModal.locator('button:has-text("Confirm")').click();
@@ -426,22 +427,22 @@ test.describe('Entity Picker - Group Selection', () => {
     await expect(pickerModal).toBeVisible();
 
     // Category filter should be visible
-    const categoryFilter = pickerModal.locator('label:has-text("Category")').locator('..').locator('input');
+    const categoryFilter = pickerModal.getByRole('combobox', { name: 'Categories', exact: true });
     await expect(categoryFilter).toBeVisible();
 
     // Selecting a single-value filter applies it to the group query.
     await categoryFilter.fill('Group Picker Category');
-    const categoryOption = pickerModal.locator('.absolute.z-30').locator('text=Group Picker Category');
+    const categoryOption = pickerModal.getByRole('option', { name: 'Group Picker Category', exact: true });
     await categoryOption.waitFor({ state: 'visible' });
     const filteredGroups = page.waitForResponse(resp =>
-      resp.url().includes('/v1/groups')
-      && resp.url().includes(`categoryId=${categoryId}`)
+      resp.url().includes('/v1/entity-picker?')
+      && new URLSearchParams(new URL(resp.url()).searchParams.get('filter') || '').get('Categories') === String(categoryId)
       && resp.status() === 200
     );
     await categoryOption.click();
     await filteredGroups;
 
-    const categoryChip = pickerModal.locator('span.inline-flex').filter({ hasText: 'Group Picker Category' });
+    const categoryChip = pickerModal.getByRole('button', { name: 'Remove Group Picker Category', exact: true });
     await expect(categoryChip).toBeVisible();
 
     // Closing the picker discards the filter selectors, so reopening starts unfiltered.
@@ -450,8 +451,8 @@ test.describe('Entity Picker - Group Selection', () => {
 
     await page.locator('button:has-text("Select Groups")').first().click();
     await expect(pickerModal).toBeVisible();
-    await expect(pickerModal.locator('span.inline-flex').filter({ hasText: 'Group Picker Category' })).toHaveCount(0);
-    await expect(pickerModal.locator('label:has-text("Category")').locator('..').locator('input')).toHaveValue('');
+    await expect(pickerModal.getByRole('button', { name: 'Remove Group Picker Category', exact: true })).toHaveCount(0);
+    await expect(categoryFilter).toHaveValue('');
 
     // Close modal for next test
     await page.keyboard.press('Escape');
@@ -474,8 +475,12 @@ test.describe('Entity Picker - Group Selection', () => {
     const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
     await expect(pickerModal).toBeVisible();
 
-    // Find the already-added group and check for "Added" badge (use .flex to target group cards)
-    const addedBadge = pickerModal.locator('[role="option"].flex').filter({ hasText: 'Selectable Test Group' }).locator('text=Added').first();
+    // The target may be beyond the first page; identify it rather than assuming
+    // unrelated specs have left fewer than fifty groups in the library.
+    await pickerModal.getByRole('textbox', { name: 'Name', exact: true }).fill('Selectable Test Group');
+    const addedRow = pickerModal.locator(`[data-picker-id="${selectableGroupId}"]`);
+    await expect(addedRow.getByRole('checkbox')).toBeDisabled();
+    const addedBadge = addedRow.getByText('Already selected');
     await expect(addedBadge).toBeVisible();
 
     // Close modal for next test

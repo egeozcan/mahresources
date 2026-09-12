@@ -4,209 +4,137 @@ sidebar_position: 7
 
 # Entity Picker
 
-The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It ships with configurations for resources, groups, and notes. The shipped page UI opens only the resource and group pickers directly, but a plugin action's `entity_ref` param can open the picker for any of resource, note, or group. New entity types (e.g., tags, categories) can be added through configuration objects without modifying core logic.
+Use the **Browse** icon beside an entity selector when autocomplete alone is not
+enough. The shared dialog supports categories, groups, notes, note types, queries,
+relation types, resources, resource categories, series and tags. Block references,
+gallery blocks, plugin entity-reference parameters and autosaving tag editors use
+the same browser. Autocomplete remains available and unchanged.
 
-## Using the Picker
+## Search and selection
 
-### From Block Components
+- Search by **Name**, with the entity's category/type, owner and tags where applicable.
+  **More filters** exposes its additional list predicates, including metadata and
+  MRQL where supported. Filters narrow the source's existing restrictions; they
+  cannot override a field's eligibility rules or the current user's access.
+- Results contain identifying text and, for resources, a thumbnail where available.
+  Default name links open the detail page in a new tab **without selecting it**.
+  Use the separate checkbox or radio button to select a result.
+- Pages contain at most **50 results**. Use **Previous** and **Next**. Pending
+  choices survive page and filter changes, and can be removed from the pending list.
+  There is no “select all matching” operation. Pages use deterministic ordering,
+  not a database snapshot: concurrent library changes can move page boundaries.
+- In a multi-value field, confirmation **adds** new choices. Already selected
+  values are marked and cannot be removed in the dialog. Existing values and
+  pending choices count toward the field's limit.
+- In a single-value field, choosing a radio does not change the field. Explicit
+  **Confirm** replaces its value. Confirming the unchanged selection is a no-op.
+- **Cancel**, Close or Escape changes nothing. Confirmation revalidates pending
+  IDs and current field constraints. Missing or newly ineligible choices prevent
+  the entire update, rather than silently appending only some of them.
 
-Open the picker from any block component using the Alpine store:
+The originating field owns persistence. A normal form remains unsaved until you
+submit it; a lightbox tag editor autosaves through its normal tag-writing path;
+a reference block uses its normal block callback. The dialog itself never writes
+associations. Without JavaScript the Browse icon stays hidden and the underlying
+form submission behavior is unchanged.
 
-```javascript
-openPicker() {
-  Alpine.store('entityPicker').open({
-    entityType: 'resource',      // 'resource' or 'group'
-    noteId: this.noteId,         // optional, for resource context
-    existingIds: this.selectedIds,
-    onConfirm: (selectedIds) => {
-      this.handleSelection(selectedIds);
-    }
-  });
-}
-```
+## Browsing a filter
 
-### Configuration Options
+Filter selectors have Browse icons too. Opening one moves to a child step in the
+**same dialog**. Confirming the child updates that filter and returns to the
+parent. **Back** or Escape cancels the child; Escape at the outermost step cancels
+the whole session. The parent's filters, page and pending choices are retained,
+and focus returns to the button that opened the child. Reopening a closed browser
+starts a fresh session.
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `entityType` | string | Required. Entity type key: `'resource'`, `'group'`, or `'note'` |
-| `noteId` | number | Optional. Note ID for "Note's Resources" tab |
-| `existingIds` | number[] | IDs already selected (shown as "Added") |
-| `lockedFilters` | object | Optional. Filter values forced on every search (passed into `searchParams`), not user-editable. Defaults to `{}` |
-| `multiSelect` | boolean | Optional. Whether more than one entity can be selected at once. Defaults to `true` |
-| `onConfirm` | function | Callback receiving array of selected IDs |
+For resource blocks, **Note's Resources** means resources associated with that
+note, not resources whose owner happens to have the same numeric ID. **All
+Resources** removes that association filter but keeps the user's access and any
+locked restrictions. An empty search does not silently switch tabs.
 
-### Multi-Selection
+## Custom result content
 
-The picker supports selecting multiple entities at once. Click items to toggle their selection, then confirm the entire selection with the confirm button.
+Groups use their Category's `CustomEntityPickerResult`, notes their Note Type's,
+and resources their Resource Category's. Other entity families use the built-in
+result content. An empty or failed custom result falls back to the built-in
+content, **not** `CustomSummary`; rendering failures are logged at `/logs` and
+reported in the dialog.
 
-## Adding New Entity Types
-
-The picker is designed to be extensible. To add support for a new entity type (e.g., notes, tags):
-
-### 1. Add Configuration
-
-Edit `src/components/picker/entityConfigs.js`. A `note` configuration (with a `noteCard` render mode) already ships in this file as a complete worked example. No shipped page UI opens the note picker directly, though a plugin action's `entity_ref` param can select `entityType: 'note'` (as well as `'resource'` or `'group'`). Use it as a reference for the shape of a config object:
-
-```javascript
-export const entityConfigs = {
-  // existing configs...
-
-  note: {
-    entityType: 'note',
-    entityLabel: 'Notes',
-    searchEndpoint: '/v1/notes',
-    maxResults: 50,
-    searchParams: (query, filters, lockedFilters = {}, maxResults) => {
-      const params = new URLSearchParams({ MaxResults: String(maxResults) });
-      if (query) params.set('name', query);
-      if (filters.tags) filters.tags.forEach(id => params.append('Tags', id));
-      if (lockedFilters.note_type_ids) {
-        lockedFilters.note_type_ids.forEach(id => params.append('NoteTypeIds', id));
-      }
-      return params;
-    },
-    filters: [
-      { key: 'tags', label: 'Tags', endpoint: '/v1/tags', multi: true }
-    ],
-    tabs: null,
-    renderItem: 'noteCard',
-    gridColumns: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
-    getItemId: (item) => item.ID,
-    getItemLabel: (item) => item.Name || `Note ${item.ID}`
-  }
-};
-```
-
-The `searchParams` function takes four arguments in order: `query`, `filters`, `lockedFilters`, and `maxResults`.
-
-### 2. Add Render Mode (if needed)
-
-If your entity needs a custom card display, add a new render mode to `templates/partials/entityPicker.tpl`:
+Use server-side shortcodes against the current result entity; Alpine directives
+and Pongo expressions are not evaluated inside picker content. For a group:
 
 ```html
-{# Results grid - Note cards #}
-<div x-show="... && $store.entityPicker.config?.renderItem === 'noteCard'"
-     ...>
-  <template x-for="item in $store.entityPicker.displayResults" ...>
-    <!-- Custom card markup -->
-  </template>
+<div class="picker-person">
+  <a href="/group?id=[property path='ID']" target="_blank" rel="noopener noreferrer">
+    [property path="Name"] <span class="sr-only">(opens in a new tab)</span>
+  </a>
+  <span>[meta path="occupation" inline="true"]</span>
 </div>
 ```
 
-### 3. Add Metadata Fetcher (optional)
+Put its raw CSS in `CustomEntityPickerResultCSS`:
 
-If blocks need to display entity metadata, add a fetcher to `src/components/picker/entityMeta.js`:
+```css
+.entity-picker-result .picker-person { display: grid; gap: 0.25rem; }
+```
+
+The host owns the wrapper, selection inputs, focus and confirmation. Keep those
+controls out of custom content. Shared `CustomCSS` loads before the companion
+picker CSS, once per carrier on the current page. Styles are replaced on page or
+nested-step changes and removed when the dialog closes. They remain **global
+CSS**, not a sandbox: prefix selectors with `.entity-picker-result` and a class
+specific to your carrier. See [custom templates](./custom-templates.md#entity-picker-result-templates)
+for the carrier fields and editor previews.
+
+All three CLI carrier commands support the two inline flags on create and edit:
+`--custom-entity-picker-result` and `--custom-entity-picker-result-css`. Add `-file`
+to either flag to load UTF-8 content from a file, mutually exclusive with its
+inline counterpart. An explicit empty string or empty file on edit clears the
+slot. `category edit`, `resource-category edit` and `note-type edit` take `--id`;
+omitted fields remain unchanged. Group archives and template bundles preserve
+both fields.
+
+## Existing block and plugin integrations
+
+The compatibility entry point still receives IDs, not result HTML:
 
 ```javascript
-async function fetchNoteMeta(ids) {
-  const meta = {};
-  // ... fetch logic
-  return meta;
-}
-
-// Add to fetchers map
-const fetchers = {
-  resource: fetchResourceMeta,
-  group: fetchGroupMeta,
-  note: fetchNoteMeta  // Add this
-};
+Alpine.store('entityPicker').open({
+  entityType: 'resource',
+  noteId: this.noteId,             // optional resource association tab
+  existingIds: this.resourceIds,
+  multiSelect: true,
+  lockedFilters: { content_types: ['image/png', 'image/jpeg'] },
+  onConfirm: ids => this.addResources(ids),
+});
 ```
 
-## Architecture
+`lockedFilters` accepts the existing `content_types`, `category_ids` and
+`note_type_ids` lists. Multi-selection callbacks receive newly added IDs;
+single-selection callbacks receive the one confirmed ID. Cancel calls neither.
+New field integrations should use the selector profile/registry rather than
+scraping hidden inputs or mutating a selected-results array.
 
-```
-src/components/picker/
-├── entityConfigs.js    # Entity type configurations
-├── entityPicker.js     # Alpine store with picker logic
-├── entityMeta.js       # Metadata fetching utilities
-└── index.js            # Module exports
+## Architecture and API
 
-templates/partials/
-└── entityPicker.tpl    # Modal template
-```
+- `GET /v1/entity-picker`: `entity`, serialized list-query `filter`, independently
+  serialized `constraints`, and one-based `page`. Returns `{items, page, hasNext,
+  styles, warnings}`. Each item has a projected selector `value` and rendered `html`.
+- `GET /v1/entity-picker/resolve`: `entity`, `constraints` and repeated `id`
+  parameters (1–50 distinct nonzero IDs). Returns ordered, eligible `items`; it
+  does not apply the editable browse filter. The client batches larger selections
+  and publishes only after every batch succeeds.
+- `src/selector/` defines typed browse metadata, the HTTP transport and atomic
+  confirmation integration. `pickerSession.ts` owns nested steps and request
+  generations; `entityPicker.js` is the Alpine/legacy adapter.
+- `entityFilterConfigs.ts` maps the existing list predicates to filter controls.
+  `entityPickerDialog.js` owns one cancellable focus-trap lifecycle and restores
+  background inertness and scrolling on close.
+- Server browsing uses scoped queries and bounded hydration. Rendering keeps the
+  request's principal, plugin access, query budget and cancellation context.
 
-The picker is entity-agnostic. All entity-specific behavior comes from configuration objects.
-
-## Configuration Reference
-
-### Entity Config Properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `entityType` | string | Unique identifier for this entity type |
-| `entityLabel` | string | Display name for the modal title |
-| `searchEndpoint` | string | API endpoint for searching entities |
-| `maxResults` | number | Maximum results to fetch (default: 50) |
-| `searchParams` | function | Builds URLSearchParams from `query`, `filters`, `lockedFilters`, and `maxResults` |
-| `filters` | array | Filter definitions (see below) |
-| `tabs` | array\|null | Tab definitions (null for no tabs) |
-| `renderItem` | string | Render mode: `'thumbnail'`, `'groupCard'`, or `'noteCard'` |
-| `gridColumns` | string | Tailwind grid classes for results layout |
-| `getItemId` | function | Extracts ID from entity object |
-| `getItemLabel` | function | Extracts display label from entity object |
-
-### Filter Definition
-
-```javascript
-{
-  key: 'tags',           // Key used in filterValues
-  label: 'Tags',         // Display label
-  endpoint: '/v1/tags',  // Autocomplete suggestions endpoint
-  multi: true            // Allow multiple selections
-}
-```
-
-### Tab Definition
-
-```javascript
-{
-  id: 'note',                    // Tab identifier
-  label: "Note's Resources"      // Display label
-}
-```
-
-## Events
-
-The picker dispatches a custom event when closed:
-
-```javascript
-window.dispatchEvent(new CustomEvent('entity-picker-closed'));
-```
-
-Filter autocompleters listen for this event to reset their state.
-
-## Search Behavior
-
-- **Debouncing**: Search input is debounced by 200ms to reduce API calls during typing
-- **Request aborting**: Each new search cancels the previous in-flight request, preventing stale results from overwriting newer ones
-
-## Metadata Caching
-
-Entity metadata fetched for display in blocks is cached in memory to avoid redundant API requests. The cache has a 5-minute TTL and is automatically managed.
-
-### Cache Behavior
-
-- Metadata is cached per entity (keyed by `entityType:id`)
-- Cache entries expire after 5 minutes
-- Batched concurrency: maximum 5 concurrent metadata requests per batch
-- Failed requests retry up to 2 times with 500ms linear backoff
-- 4xx errors (client errors) are not retried
-- Cache is cleared on page reload
-
-### Clearing the Cache
-
-If you need to force-refresh metadata (e.g., after editing an entity):
-
-```javascript
-import { clearMetaCache } from './components/picker/index.js';
-
-// Clear all cached metadata
-clearMetaCache();
-
-// Clear only group metadata
-clearMetaCache('group');
-
-// Clear only resource metadata
-clearMetaCache('resource');
-```
+Search debounces by 200ms. New requests abort older ones; generation checks also
+reject late responses from transports that ignored cancellation. Block display
+metadata remains a separate cached helper in `entityMeta.js`, not the browse
+source. See the [selector architecture](https://github.com/egeozcan/mahresources/blob/master/docs/architecture/selector-architecture.md)
+before adding or changing a selector.

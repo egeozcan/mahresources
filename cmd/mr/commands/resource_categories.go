@@ -39,6 +39,7 @@ func NewResourceCategoryCmd(c *client.Client, opts *output.Options) *cobra.Comma
 
 	cmd.AddCommand(newResourceCategoryGetCmd(c, opts))
 	cmd.AddCommand(newResourceCategoryCreateCmd(c, opts))
+	cmd.AddCommand(newTemplateCarrierEditCmd(c, opts, "resource", "/v1/resourceCategory", helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_edit.md")))
 	cmd.AddCommand(newResourceCategoryDeleteCmd(c, opts))
 	cmd.AddCommand(newResourceCategoryEditNameCmd(c, opts))
 	cmd.AddCommand(newResourceCategoryEditDescriptionCmd(c, opts))
@@ -116,7 +117,9 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 			if sectionConfig != "" {
 				body["SectionConfig"] = sectionConfig
 			}
-			slots.applySet(body)
+			if err := slots.applySet(body); err != nil {
+				return err
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/resourceCategory", nil, body, &raw); err != nil {

@@ -368,7 +368,7 @@ test.describe('Component Accessibility - Entity Picker', () => {
       // entity picker dialog so we wait for its resource options, not any
       // hidden block-type option elsewhere in the page.
       await page.waitForSelector(
-        '[aria-labelledby="entity-picker-title"] [role="option"]',
+        '[aria-labelledby="entity-picker-title"] [data-picker-id]',
         { timeout: 5000 },
       );
 

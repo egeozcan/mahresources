@@ -22,6 +22,11 @@ is injected as a `<style>` block on detail and list pages. On success
 prints a confirmation line with the new ID; pass the global `--json`
 flag to emit the full record for scripting.
 
+Use `--custom-entity-picker-result-file` and
+`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
+exclusive with its corresponding inline flag. Use `resource-category edit --id`
+to update or clear slots later without changing the carrier's identity.
+
 # Example
 
   # Create a resource category with just a name

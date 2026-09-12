@@ -88,9 +88,9 @@ test.describe('entity_ref param: fal.ai edit action', () => {
     await expect(picker).toBeVisible();
 
     // Select r2 by clicking its thumbnail (role=option with aria-label matching name).
-    const r2Option = picker.locator('[role="option"]', { hasText: r2.Name }).first();
+    const r2Option = picker.locator(`[data-picker-id="${r2.ID}"]`).getByRole('checkbox');
     await expect(r2Option).toBeVisible({ timeout: 5000 });
-    await r2Option.click();
+    await r2Option.check();
 
     // Confirm the selection.
     await picker.getByRole('button', { name: 'Confirm' }).click();
@@ -242,14 +242,17 @@ test.describe('entity_ref param: fal.ai edit action', () => {
     const picker = page.locator('[aria-labelledby="entity-picker-title"]');
     await expect(picker).toBeVisible();
 
-    // Search specifically for the text resource name to narrow results.
+    // Await this exact filtered request, rather than letting an empty loading
+    // state satisfy the negative assertion before the server has answered.
+    const filtered = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/v1/entity-picker' && new URLSearchParams(url.searchParams.get('filter') || '').get('Name') === txt.Name;
+    });
     await picker.locator('input[placeholder="Search by name..."]').fill(txt.Name);
-
-    // Wait for search to debounce and results to update.
-    await page.waitForTimeout(400);
+    expect((await filtered).ok()).toBe(true);
 
     // The text resource must NOT appear because the picker is locked to image content types.
-    await expect(picker.locator('[role="option"]', { hasText: txt.Name })).toHaveCount(0);
+    await expect(picker.locator(`[data-picker-id="${txt.ID}"]`)).toHaveCount(0);
 
     // Close picker.
     await picker.getByRole('button', { name: 'Cancel' }).click();

@@ -1,4 +1,5 @@
 import { getEntityConfig } from './entityConfigs.js';
+import { createEntityPickerDialog } from './entityPickerDialog.js';
 import { createPickerSession } from './pickerSession.ts';
 import { createHttpEntityBrowseSource } from '../../selector/httpEntityBrowseSource.ts';
 import { createEntityBrowseConfirmation } from '../../selector/entityBrowseIntegration.ts';
@@ -21,9 +22,12 @@ export function registerEntityPickerStore(Alpine, { source = createHttpEntityBro
     return source.search(input, signal);
   } });
   const openers = new Map(), styleNodes = new Map();
+  let dialog = null;
   const nextTick = callback => Alpine.nextTick ? Alpine.nextTick(callback) : Promise.resolve().then(callback);
   const store = {
     isOpen: false, steps: [], views: [],
+    attachDialog(root) { dialog?.destroy();dialog = createEntityPickerDialog(root, { afterRender: nextTick });dialog.setOpen(this.isOpen); },
+    detachDialog() { this.close();dialog?.destroy();dialog = null; },
     get currentStep() { return this.steps.at(-1) || null; },
     get currentView() { return this.views.at(-1) || null; },
     get config() { return this.currentStep ? getEntityConfig(this.currentStep.options.browse.entity) : null; },
@@ -141,6 +145,7 @@ export function registerEntityPickerStore(Alpine, { source = createHttpEntityBro
     const returning = snapshot.isOpen ? removed.at(-1) : removed[0];
     const returnTo = returning && openers.get(returning.id);
     reactive.steps = snapshot.steps;reactive.isOpen = snapshot.isOpen;
+    dialog?.setOpen(snapshot.isOpen);
     reactive.views = snapshot.steps.map(step => previous.find(view => view.id === step.id) || {
       id: step.id, entity: step.options.browse.entity, filters: {}, more: false, metaFields: [], legacy: step.options.legacy,
     });

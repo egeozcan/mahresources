@@ -9395,7 +9395,7 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Task 5: headless nested session (9 new/existing session/picker tests passed).
 - [x] Task 6: field integration (174 selector/adapter/session tests passed, including standalone disabled/teardown and pending tag-write preservation).
 - [x] Task 7: shared dialog and all selector/filter hosts. Full unit suite passed (1,404 tests before the additional host-audit/root-label regressions); two focused browser scenarios and CSS scan pass.
-- [ ] Task 8: legacy consumer, custom rendering, modal nesting and accessibility end-to-end coverage.
+- [x] Task 8: legacy consumer, custom rendering, modal nesting and accessibility end-to-end coverage (32 focused cases plus no-JS; six CLI round trips).
 - [ ] Task 9: full validation and review.
 
 Review: the spec extends the existing picker across entity selectors, with property
@@ -9435,6 +9435,19 @@ The wider server/shortcode/architecture run passed except for the generated
 OpenAPI freshness check; regenerated the spec and re-ran that check successfully.
 Custom slots are shortcode HTML rather than Pongo templates: the default Pongo
 partial is parsed once, and carrier CSS is processed once per request.
+
+Task 8: 1,409 frontend tests pass, along with CLI unit/full groupio suites and
+CSS scan. Focused browser coverage proves all ten catalog families, note/resource
+association tabs, group-block persistence and cancellation, plugin single/multi
+parameters, lightbox autosaving, three custom carriers, cross-step CSS cleanup,
+logged template fallback, schema propagation and keyboard/axe behavior. No-JS
+keeps Browse hidden and the native form intact. Six CLI cases verify file input,
+partial edits and explicit clearing on every carrier; category/resource-category
+now have partial `edit --id` commands. Missing/invalid UTF-8 files and conflicting
+inline/file flags fail before HTTP. A rapid-close regression required replacing
+Alpine's unguarded delayed trap with a generation-owned dialog lifecycle that
+restores native background inertness and scrolling. Full integration and
+PostgreSQL verification remain Task 9.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 

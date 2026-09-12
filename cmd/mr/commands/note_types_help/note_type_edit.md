@@ -23,6 +23,11 @@ the stored value alone. `--section-config ""` is the exception: an empty
 section config is ignored rather than stored, so a section config cannot
 be cleared from the CLI.
 
+Use `--custom-entity-picker-result-file` and
+`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
+exclusive with its corresponding inline flag; an empty file clears the slot.
+Files are read before any HTTP request.
+
 # Example
 
   # Swap the JSON Schema on note type 1

@@ -879,7 +879,7 @@ identifying properties readable. For example, on a group Category:
 
 ```html
 <div class="picker-person">
-  <a href="/group?id=[property path=&quot;ID&quot;]" target="_blank" rel="noopener noreferrer">[property path="Name"]</a>
+  <a href="/group?id=[property path='ID']" target="_blank" rel="noopener noreferrer">[property path="Name"] <span class="sr-only">(opens in a new tab)</span></a>
   <span>[property path="Category.Name"]</span>
 </div>
 ```
@@ -894,7 +894,12 @@ The picker loads shared `CustomCSS` followed by `CustomEntityPickerResultCSS`.
 These are global styles, not a CSS sandbox; target `.entity-picker-result` and
 use distinctive class names. Copy/export/import template tools preserve both
 fields. The CLI exposes `--custom-entity-picker-result` and
-`--custom-entity-picker-result-css` on the carrier commands.
+`--custom-entity-picker-result-css` on create and edit for all three carriers.
+The corresponding `-file` flags read UTF-8 HTML/CSS; an empty file or explicit
+empty inline value clears a slot on edit. A failed custom result is logged and
+falls back to default content. Styles are replaced on page/step changes and
+removed on close. See [Entity Picker](./entity-picker.md) for pagination, nested
+filter browsing and confirmation semantics.
 
 ### Companion stylesheets
 

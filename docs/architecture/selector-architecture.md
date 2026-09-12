@@ -201,3 +201,47 @@ confirmation is a `cancelled` outcome, not an error, and returns focus to the in
 - **No caller mutates the selected array.** The core is the single source of truth; the adapter's
   `selectedResults` is a rendering mirror. Anything that needs to change a selection dispatches a
   command or goes through the registry handle.
+
+## Paginated browsing is separate from autocomplete
+
+Every entity profile publishes typed `EntityBrowseMetadata` (entity, cardinality,
+limit, live constraints and exclusions). `httpEntityBrowseSource.ts` speaks the
+bounded `/v1/entity-picker` and `/resolve` contracts; it never changes the lean
+autocomplete source. The ten catalog families all use this path, including
+standalone mounts, compare/upload/lightbox fields and the browser's own filters.
+A dynamic profile must name its entity explicitly, rather than inferring it from
+an arbitrary endpoint. The host's Browse button calls `openEntityBrowser()`.
+
+`pickerSession.ts` owns pending choices, page state, retained child steps and
+session/step/request generations. Filter controls address their own step ID so a
+child confirmation changes the parent filter, not whichever step is active.
+Back cancels only the child; outer cancellation disposes the whole session.
+Aborts are an optimization: generations still reject late responses from a
+source that ignored its signal.
+
+`entityBrowseIntegration.ts` re-resolves pending IDs under current constraints,
+then checks the live origin, exclusions and capacity before **one non-silent
+replacement** through the existing profile/core. It never mutates
+`selectedResults` or hidden inputs. Multi-select appends/deduplicates against the
+latest origin values; single-select explicitly replaces. If any choice became
+ineligible, none is appended. A destroyed or disabled origin cannot confirm.
+The original field owns ordinary change handling and persistence. For tag
+editors, a non-silent replacement must preserve unrelated in-flight tag writes;
+only silent hydration onto another owner cancels those writes.
+
+`entityPicker.js` adapts the session to Alpine and the legacy ID callback API.
+`entityPickerDialog.js` owns one focus trap across all steps; its render generation
+prevents late activation after close. Do not replace it with an unguarded delayed
+`x-trap`: rapid cancellation can activate a hidden dialog. Background native
+inertness and scroll styles are restored to their previous values on teardown;
+focus return remains the adapter's responsibility. Filter steps stay mounted but
+hidden/inert, retaining chips and metadata controls while a child is open.
+
+The server intersects independent scoped ID queries for editable filters and
+immutable constraints, discards list presentation limits, and hydrates only the
+50 visible IDs. Identity collection uses **Pluck, never Scan**, so GORM's scope
+callbacks run. Default or custom content is rendered under the request's principal,
+plugin access, MRQL budget and cancellation. Custom content is inserted beneath
+`x-ignore` while Alpine's DOM observer is suspended; native host-owned checkbox
+or radio controls sit outside it. Per-carrier shared/picker CSS is deduplicated
+for a page and replaced on navigation, but is deliberately not a CSS sandbox.

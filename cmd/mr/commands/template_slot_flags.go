@@ -1,7 +1,10 @@
 package commands
 
 import (
+	"fmt"
+	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
@@ -72,6 +75,7 @@ type customSlotFlags struct {
 	cmd    *cobra.Command
 	slots  []customSlotFlag
 	values []*string
+	files  map[int]*string
 }
 
 // carrierNouns maps the member noun to the carrier's own name.
@@ -86,9 +90,13 @@ var carrierNouns = map[string]string{
 func registerCustomSlotFlags(cmd *cobra.Command, member string) *customSlotFlags {
 	slots := append(append([]customSlotFlag{}, sharedCustomSlots...), carrierOnlyCustomSlots[member]...)
 	words := strings.NewReplacer("{member}", member, "{carrier}", carrierNouns[member])
-	f := &customSlotFlags{cmd: cmd, slots: slots, values: make([]*string, len(slots))}
+	f := &customSlotFlags{cmd: cmd, slots: slots, values: make([]*string, len(slots)), files: make(map[int]*string)}
 	for i, s := range slots {
 		f.values[i] = cmd.Flags().String(s.Flag, "", words.Replace(s.Usage))
+		if s.Field == "CustomEntityPickerResult" || s.Field == "CustomEntityPickerResultCSS" {
+			f.files[i] = cmd.Flags().String(s.Flag+"-file", "", "Read --"+s.Flag+" from a UTF-8 file (mutually exclusive with the inline flag)")
+			cmd.MarkFlagsMutuallyExclusive(s.Flag, s.Flag+"-file")
+		}
 	}
 	return f
 }
@@ -98,8 +106,19 @@ func registerCustomSlotFlags(cmd *cobra.Command, member string) *customSlotFlags
 // at the server default"; update commands take the explicitly-passed ones,
 // because passing an empty string is how a slot is cleared and an absent flag
 // must leave the stored value alone.
-func (f *customSlotFlags) each(changedOnly bool, set func(field, value string)) {
+func (f *customSlotFlags) each(changedOnly bool, set func(field, value string)) error {
 	for i, s := range f.slots {
+		if file, ok := f.files[i]; ok && f.cmd.Flags().Changed(s.Flag+"-file") {
+			data, err := os.ReadFile(*file)
+			if err != nil {
+				return fmt.Errorf("read --%s-file: %w", s.Flag, err)
+			}
+			if !utf8.Valid(data) {
+				return fmt.Errorf("--%s-file must contain UTF-8 text", s.Flag)
+			}
+			set(s.Field, string(data))
+			continue
+		}
 		if changedOnly {
 			if f.cmd.Flags().Changed(s.Flag) {
 				set(s.Field, *f.values[i])
@@ -110,17 +129,14 @@ func (f *customSlotFlags) each(changedOnly bool, set func(field, value string)) 
 			set(s.Field, *f.values[i])
 		}
 	}
+	return nil
 }
 
-// Two wrappers rather than the symmetric four, because only two combinations
-// occur: the create commands send a map[string]string, and note-type edit --
-// the one generic edit command, since category and resource-category expose
-// only edit-name and edit-description -- sends a map[string]any. staticcheck
-// fails the build on the unused pair, so add one when a command needs it.
-func (f *customSlotFlags) applySet(body map[string]string) {
-	f.each(false, func(k, v string) { body[k] = v })
+// Creates omit unset flags; partial edits include explicitly empty values.
+func (f *customSlotFlags) applySet(body map[string]string) error {
+	return f.each(false, func(k, v string) { body[k] = v })
 }
 
-func (f *customSlotFlags) applyChangedAny(body map[string]any) {
-	f.each(true, func(k, v string) { body[k] = v })
+func (f *customSlotFlags) applyChangedAny(body map[string]any) error {
+	return f.each(true, func(k, v string) { body[k] = v })
 }

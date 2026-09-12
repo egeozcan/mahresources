@@ -39,6 +39,7 @@ func NewCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 	cmd.AddCommand(newCategoryGetCmd(c, opts))
 	cmd.AddCommand(newCategoryCreateCmd(c, opts))
+	cmd.AddCommand(newTemplateCarrierEditCmd(c, opts, "group", "/v1/category", helptext.Load(categoriesHelpFS, "categories_help/category_edit.md")))
 	cmd.AddCommand(newCategoryDeleteCmd(c, opts))
 	cmd.AddCommand(newCategoryEditNameCmd(c, opts))
 	cmd.AddCommand(newCategoryEditDescriptionCmd(c, opts))
@@ -116,7 +117,9 @@ func newCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 			if sectionConfig != "" {
 				body["SectionConfig"] = sectionConfig
 			}
-			slots.applySet(body)
+			if err := slots.applySet(body); err != nil {
+				return err
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/category", nil, body, &raw); err != nil {

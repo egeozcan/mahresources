@@ -543,7 +543,7 @@ controls and a visible keyboard focus ring. No new icon dependency.
 - [x] Render host-owned native checkbox/radio controls beside an inert-to-Alpine content region (an `x-ignore` child populated by `Alpine.mutateDom`; putting `x-html` and `x-ignore` on the same element suppresses the binding itself). Name/author links remain normal anchors. Use stable step/entity IDs for keys and accessible labels outside custom content. Do not put links inside an ARIA option that flattens its interactive descendants.
 - [x] Show basic and More filters, Previous/Next, page indicator, pending count, retry/error/warnings and explicit Confirm for both modes. Keep names/category badges readable. Show already-added and capacity states as text plus controls, not color alone.
 - [x] Install active-step CSS by key using style elements' `textContent`, not executable markup interpolation; remove previous step styles and restore retained parent styles on Back. Remove all picker-owned styles on Cancel. Preserve selected values across filter search failures.
-- [ ] Test under an existing plugin-action modal and lightbox: picker owns keyboard/focus only while it is topmost; Escape must not close the parent surface. Re-run unit and focused browser tests, build JS/CSS, run CSS scan, commit `feat: expose accessible entity browsing beside selectors`.
+- [x] Test under an existing plugin-action modal and lightbox: picker owns keyboard/focus only while it is topmost; Escape must not close the parent surface. Re-run unit and focused browser tests, build JS/CSS, run CSS scan, commit `feat: expose accessible entity browsing beside selectors`.
 
 ## Task 8: Preserve all consumers and prove custom rendering end-to-end
 
@@ -561,12 +561,12 @@ note `note_type_ids` → `NoteTypeIds`. These are the DTO field spellings in
 `resource_query.go`, `group_query.go` and `note_query.go`. Keep this translation centralized.
 Resource note-tab constraints are `Notes=<noteID>`, not `OwnerId=<noteID>`.
 
-- [ ] Before adapting callers, add red tests for reference-block group persistence, resource note-tab association correctness, plugin single-entity explicit Confirm, and autosaving lightbox tags. Prove cancellation does not call the old callback.
-- [ ] Implement the compatibility mapping and preserve the resource picker note/all tabs as filters over the same paginated source; remove the separate unguarded `loadNoteResources` request. Changing tabs is a guarded filter transition. Do not discard the note tab just because one search/page is empty.
-- [ ] Add end-to-end slot tests for group/note/resource carriers via API setup and actual dialog rendering, covering two custom carriers on one page, default fallback, CSS replacement, a logged broken-template fallback, and a custom anchor that does not select.
-- [ ] Add CLI tests that create/edit/get the two slot fields for each carrier, including empty-string clearing and file input. Use the existing CLI fixture, not shell interpolation. Verify archive round trips with the Task 1 suite.
-- [ ] Add keyboard/axe tests: icon accessible name, nested step labels, focus return, checkbox/radio state, long names, new-tab indication, disabled origins and picker-from-modal nesting. Preserve no-JS native form behavior (icon is inert/hidden without Alpine; underlying field submission is unchanged).
-- [ ] Update documentation with custom slot variables, carrier mapping, example HTML/CSS, new-tab links, global-CSS warning, pagination, nested steps and confirmation semantics. Include a minimal author example:
+- [x] Before adapting callers, add red tests for reference-block group persistence, resource note-tab association correctness, plugin single-entity explicit Confirm, and autosaving lightbox tags. Prove cancellation does not call the old callback.
+- [x] Implement the compatibility mapping and preserve the resource picker note/all tabs as filters over the same paginated source; remove the separate unguarded `loadNoteResources` request. Changing tabs is a guarded filter transition. Do not discard the note tab just because one search/page is empty.
+- [x] Add end-to-end slot tests for group/note/resource carriers via API setup and actual dialog rendering, covering two custom carriers on one page, default fallback, CSS replacement, a logged broken-template fallback, and a custom anchor that does not select.
+- [x] Add CLI tests that create/edit/get the two slot fields for each carrier, including empty-string clearing and file input. Use the existing CLI fixture, not shell interpolation. Verify archive round trips with the Task 1 suite.
+- [x] Add keyboard/axe tests: icon accessible name, nested step labels, focus return, checkbox/radio state, long names, new-tab indication, disabled origins and picker-from-modal nesting. Preserve no-JS native form behavior (icon is inert/hidden without Alpine; underlying field submission is unchanged).
+- [x] Update documentation with custom slot variables, carrier mapping, example HTML/CSS, new-tab links, global-CSS warning, pagination, nested steps and confirmation semantics. Include a minimal author example:
 
 ```html
 <div class="picker-person">
@@ -580,7 +580,14 @@ group fixture; CSS uses `.entity-picker-result .picker-person` as the documented
 wrapper selector. Explain that template content owns no selection controls and
 Alpine initialization is not promised.
 
-- [ ] Run focused browser/CLI/a11y suites against ephemeral servers, all picker unit tests and archive tests. Build JS and commit `test: cover shared entity picker consumers and templates` with docs/assets.
+- [x] Run focused browser/CLI/a11y suites against ephemeral servers, all picker unit tests and archive tests. Build JS and commit `test: cover shared entity picker consumers and templates` with docs/assets.
+
+Task 8 evidence: 1,409 frontend tests, 32 focused browser/a11y/legacy cases,
+then the additional no-JS case, and six carrier CLI cases pass. CLI unit and
+full groupio round-trip suites pass; CSS scan passes. The modal now owns a
+cancellable render-generation trap rather than Alpine's uncancelled delayed
+activation. Category/resource-category partial `edit` commands and explicit
+picker `-file` flags close the remaining CLI clear/file-input gaps.
 
 ## Task 9: Full verification, review and delivery
 
