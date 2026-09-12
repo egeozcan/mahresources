@@ -9384,13 +9384,18 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Inspect existing picker, selector contracts and customization seams.
 - [x] Resolve product behavior through the design interview and obtain design approval.
 - [x] Write and self-review `docs/superpowers/specs/2026-09-12-shared-entity-picker-design.md`.
-- [ ] Obtain user review of the written spec.
-- [ ] Prepare the implementation plan after spec approval.
+- [x] Obtain user review of the written spec.
+- [x] Prepare and self-review `docs/superpowers/plans/2026-09-12-shared-entity-picker.md` after spec approval.
+- [ ] Select the execution approach and start implementation.
 
 Review: the spec extends the existing picker across entity selectors, with property
 filters, pagination, nested filter browsing and carrier-specific result template/CSS
 slots. Selection and persistence remain owned by the originating selector. This is
 documentation only; no application behavior changed and no runtime tests were run.
+The implementation plan has nine testable tasks with typed boundary contracts,
+red/green checks, full selector coverage and a requirement-to-task map. Self-review
+checked producer/consumer names, nested-step targeting, actual DTO/markup paths,
+and removal of placeholders. Runtime test results remain for execution.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 

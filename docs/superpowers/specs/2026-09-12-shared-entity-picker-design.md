@@ -1,6 +1,6 @@
 # Shared entity picker
 
-Status: design approved in conversation; written spec awaiting user review.
+Status: written spec approved by the user; implementation plan prepared.
 Date: 2026-09-12
 
 ## Goal
@@ -278,5 +278,5 @@ ownership, fresh reopening and shared CSS behavior are all represented.
 No new glossary entry is necessary: this adds a UI interaction, not a different
 meaning of Entity Selection, Bulk Action, Group or Mass Edit. No ADR is proposed;
 the reversible UI and integration choices do not meet the repository's ADR bar.
-Implementation has not started. The written spec requires user review before an
-implementation plan is prepared.
+The user approved the written spec. Implementation has not started; the plan is
+`docs/superpowers/plans/2026-09-12-shared-entity-picker.md`.
