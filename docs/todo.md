@@ -9391,3 +9391,15 @@ Review: the spec extends the existing picker across entity selectors, with prope
 filters, pagination, nested filter browsing and carrier-specific result template/CSS
 slots. Selection and persistence remain owned by the originating selector. This is
 documentation only; no application behavior changed and no runtime tests were run.
+
+## fal.ai upscaler guidance and pricing — 2026-09-12
+
+- [x] Check the bundled plugin and current fal.ai schemas and published prices.
+- [x] Add Bria Increase Resolution and Recraft Crisp/Creative with valid request options.
+- [x] Explain fidelity, creativity, suitable inputs, limitations, and dated last-known costs inline.
+- [x] Verify request routing, PNG preparation, model registration, and price coverage without paid API calls.
+- [x] Review the diff and prepare the commit and PR description.
+
+Review: Added three verified fal.ai endpoints and retained existing model IDs/defaults. Dated USD rates distinguish per-image, MP, rounded Topaz output-MP blocks, and compute-second billing; SeedVR seamless and Topaz preset pricing are explicit. Recraft PNG preparation preserves decoded pixels and dimensions and fails before submission on conversion errors. No API key, network lookup, or paid inference is needed to view prices or run the regressions.
+
+Validation: focused regressions reproduced missing endpoint routing/prices before implementation and pass afterward; full `plugin_system` tests pass; `go vet --tags 'json1 fts5' ./plugin_system` passes; server and CLI builds pass; 15 CLI plugin E2E checks pass. Full `go test --tags 'json1 fts5' ./...` has one pre-existing failure, `TestCommittedOpenAPISpecIsFresh`, reproduced on unchanged base `defeacf3b11c2040bd10a4b465a618cbcd754fbd`. Browser checks could not run because the Chromium download timed out. No paid fal.ai jobs were submitted.

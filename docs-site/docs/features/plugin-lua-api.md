@@ -1249,6 +1249,24 @@ The table must contain only consecutive integer keys starting at 1.
 
 Image manipulation utilities that operate on base64 data URIs.
 
+### mah.image.to_png(data_uri)
+
+Converts a base64 image data URI to PNG for APIs that require that format.
+Preserves decoded pixels, transparency, and dimensions without resizing or
+padding. Existing PNG bytes are kept unchanged. For animated GIFs, only the
+first frame is decoded; embedded metadata and color profiles are not copied
+when converting other formats.
+
+Returns `png_data_uri` on success, or `nil, error_string` on failure. Requires
+the `image` capability and performs no filesystem or network access.
+
+```lua
+local png_uri, err = mah.image.to_png(data_uri)
+if not png_uri then
+    error("PNG conversion failed: " .. err)
+end
+```
+
 ### mah.image.pad_to_aspect_ratio(data_uri, target_ratio)
 
 Pads an image with white borders so it exactly matches the target aspect ratio, without stretching or cropping the original content.
