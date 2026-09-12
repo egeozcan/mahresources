@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -151,7 +152,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			Known:          buildKnownShortcodes(ctx),
 			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
 		}
-		if target == "cluster" {
+		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
 			if !templateGenerateSlotAllowed(entityType, base) || !templateGenerateSlotAllowed(entityType, base+"CSS") {
 				http_utils.HandleError(errors.New("slot has no CSS companion"), writer, request, http.StatusBadRequest)
@@ -159,6 +160,25 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			}
 			input.Target = application_context.TemplateTargetBundle
 			input.BundleSlots = []string{base, base + "CSS"}
+			// Legacy single-slot requests still draft a pair. Preserve the saved partner
+			// as context, while the requested field uses the caller's current value.
+			if target == application_context.TemplateTargetSlot {
+				current := map[string]string{base: "", base + "CSS": ""}
+				if req.CategoryID != 0 {
+					carrier, err := loadPreviewCarrier(ctx, entityType, req.CategoryID)
+					if err != nil {
+						http_utils.HandleError(errors.New("cannot load the existing template pair"), writer, request, http.StatusBadRequest)
+						return
+					}
+					value := reflect.Indirect(reflect.ValueOf(carrier))
+					for _, field := range input.BundleSlots {
+						current[field] = value.FieldByName(field).String()
+					}
+				}
+				current[req.Slot] = req.Content
+				content, _ := json.Marshal(current)
+				input.CurrentContent = string(content)
+			}
 		}
 		if target == application_context.TemplateTargetBundle {
 			input.BundleSlots = templateGenerateBundleSlots(entityType)

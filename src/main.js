@@ -92,6 +92,7 @@ import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockR
 import { sharedTodos } from './components/sharedTodos.js';
 import { sharedCalendar } from './components/sharedCalendar.js';
 import { codeEditor } from './components/codeEditor.js';
+import { templateGeneration } from './components/templateGeneration.js';
 import { templatePreview } from './components/templatePreview.js';
 import { mrqlEditor } from './components/mrqlEditor.js';
 import { mrqlBar } from './components/mrqlBar.js';
@@ -233,6 +234,7 @@ Alpine.data('blockPlugin', blockPlugin);
 Alpine.data('sharedTodos', sharedTodos);
 Alpine.data('sharedCalendar', sharedCalendar);
 Alpine.data('codeEditor', codeEditor);
+Alpine.data('templateGeneration', templateGeneration);
 Alpine.data('templatePreview', templatePreview);
 Alpine.data('mrqlEditor', mrqlEditor);
 Alpine.data('mrqlBar', mrqlBar);

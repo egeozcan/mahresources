@@ -630,3 +630,20 @@ func TestTemplateGeneratorPreservesExplicitEmptyCompanion(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateGeneratorRejectsIncompletePairs(t *testing.T) {
+	for _, slots := range []string{
+		`{"CustomHeader":"<h1>new</h1>"}`,
+		`{"CustomHeaderCSS":".new{}"}`,
+		`{"CustomHeader":"<h1>new</h1>","CustomHeaderCSS":".new{}","CustomMRQLResult":"<p>partial</p>"}`,
+	} {
+		in := slotInput()
+		in.Target = TemplateTargetBundle
+		in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS", "CustomMRQLResult", "CustomMRQLResultCSS"}
+		provider := &fakeTemplateDraftProvider{response: `{"slots":` + slots + `,"explanation":"Draft."}`}
+		got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "style the template")
+		if !errors.Is(err, ErrTemplateGenerationProvider) || got != nil {
+			t.Fatalf("must reject entire incomplete draft: %#v, %v", got, err)
+		}
+	}
+}

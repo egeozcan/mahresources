@@ -222,6 +222,20 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 			allowed = append(allowed, k)
 		}
 	}
+	requested := make(map[string]bool, len(allowed))
+	for _, slotName := range allowed {
+		requested[slotName] = true
+	}
+	for _, slotName := range allowed {
+		if strings.HasSuffix(slotName, "CSS") || !requested[slotName+"CSS"] {
+			continue
+		}
+		_, htmlPresent := draft.Slots[slotName]
+		_, cssPresent := draft.Slots[slotName+"CSS"]
+		if htmlPresent != cssPresent {
+			return nil, fmt.Errorf("%w: provider must return %s and %s together", ErrTemplateGenerationProvider, slotName, slotName+"CSS")
+		}
+	}
 	for _, slotName := range allowed {
 		content, ok := draft.Slots[slotName]
 		if !ok {

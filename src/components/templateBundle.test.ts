@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { templateBundle } from './templateBundle.js';
 
 // entityToBundle is pure (no DOM), so it can be tested directly. The key hazard
@@ -40,4 +40,39 @@ describe('templateBundle.entityToBundle', () => {
     const bundle = tb.entityToBundle({ ID: 5, Name: 'Cat' }, 'category');
     expect(bundle.sectionConfig).toBe('');
   });
+});
+
+// Pair completeness is checked before touching any editor, including valid earlier pairs.
+describe('whole-template generation pairs', () => {
+  it('rejects a draft containing an unpaired field without applying anything', async () => {
+    const tb = templateBundle({ carrier: 'category' });
+    tb.generationPrompt = 'restyle';
+    tb.getEditor = () => 'existing';
+    tb.setEditor = vi.fn();
+    tb.notify = vi.fn();
+    vi.stubGlobal('window', { Alpine: { store: () => ({}) } });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: {
+      CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '', CustomMRQLResult: '<p>Incomplete</p>',
+    } }) })));
+    await tb.generateBundle();
+    expect(tb.setEditor).not.toHaveBeenCalled();
+    expect(tb.notify).toHaveBeenLastCalledWith(expect.stringContaining('CustomMRQLResultCSS together'), 'warn');
+  });
+
+  it('applies complete pairs including empty CSS', async () => {
+    const tb = templateBundle({ carrier: 'category' });
+    tb.generationPrompt = 'restyle';
+    tb.getEditor = () => 'existing';
+    tb.setEditor = vi.fn();
+    tb.notify = vi.fn();
+    vi.stubGlobal('window', { Alpine: { store: () => ({}) } });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ valid: true, slots: {
+      CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '',
+    } }) })));
+    await tb.generateBundle();
+    expect(tb.setEditor).toHaveBeenCalledTimes(2);
+    expect(tb.setEditor).toHaveBeenCalledWith('CustomHeader', '<h1>New</h1>');
+    expect(tb.setEditor).toHaveBeenCalledWith('CustomHeaderCSS', '');
+  });
+  afterEach(() => vi.unstubAllGlobals());
 });

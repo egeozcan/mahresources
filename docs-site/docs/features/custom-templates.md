@@ -867,6 +867,6 @@ during host page refreshes. Its attributes are still patched, and
 
 ### Companion stylesheets
 
-Every HTML template slot has its own global CSS companion, such as `CustomMRQLResultCSS` for `CustomMRQLResult`. The editor groups each template and stylesheet together. Generate on either editor can create or modify both, using the current unsaved values as context. Whole-template generation also includes companion stylesheets.
+Every HTML template slot has its own global CSS companion, such as `CustomMRQLResultCSS` for `CustomMRQLResult`. The editor groups each template and stylesheet together. A single shared prompt and Generate button above each pair creates or modifies both fields together, using the current unsaved values as context. Whole-template generation also enforces complete pairs. Direct generation API requests targeting an HTML slot or companion CSS are treated as paired requests and return both fields in `slots`, including explicit empty values when clearing content. Shared `CustomCSS` and metadata schema generation remain independent.
 
 Companion styles use the same page-level rendering and category deduplication as `CustomCSS`, following shared `CustomCSS` in the cascade. Use distinctive class names: these rules are global, not automatically scoped to the paired HTML. Public note shares include only `CustomHeaderCSS` and shared `CustomCSS`, and only when template sharing is enabled. Copy, bundle export/import, archive transfer, and CLI `--custom-…-css` flags preserve companion fields.

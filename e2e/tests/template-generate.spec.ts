@@ -104,6 +104,7 @@ test.describe('Template section generation', () => {
           target: 'bundle',
           slots: {
             CustomHeader: '<h1>Card</h1>',
+            CustomHeaderCSS: '',
             CustomCSS: '.card{padding:1rem}',
           },
           explanation: 'A simple card.',
@@ -124,3 +125,28 @@ test.describe('Template section generation', () => {
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('.card{padding:1rem}');
   });
 });
+
+for (const carrier of ['category', 'resourceCategory', 'noteType']) {
+  test(`${carrier} has one generation prompt per template/CSS pair`, async ({ page }) => {
+    await page.route(`**/v1/${carrier}/generateTemplate`, async (route) => {
+      expect(route.request().postDataJSON()).toMatchObject({ target: 'cluster', slot: 'CustomMRQLResult' });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        target: 'bundle', valid: true, explanation: 'Styles the card.',
+        slots: { CustomMRQLResult: '<p class="result">Card</p>', CustomMRQLResultCSS: '.result{color:red}' },
+      }) });
+    });
+    await page.goto(`/${carrier}/new`);
+    const clusters = page.locator('[data-template-cluster]');
+    await expect(clusters.first()).toBeVisible();
+    for (const cluster of await clusters.all()) {
+      await expect(cluster.locator('textarea[data-testid^="generate-prompt-"]')).toHaveCount(1);
+      await expect(cluster.locator('button[data-testid^="generate-button-"]')).toHaveCount(1);
+      await expect(cluster.locator('[x-ref="editorContainer"]')).toHaveCount(2);
+    }
+    const pair = page.locator('[data-template-cluster="CustomMRQLResult"]');
+    await pair.getByTestId('generate-prompt-CustomMRQLResult').fill('Style the result card');
+    await pair.getByTestId('generate-button-CustomMRQLResult').click();
+    await expect(pair.locator('input[name="CustomMRQLResult"]')).toHaveValue('<p class="result">Card</p>');
+    await expect(pair.locator('input[name="CustomMRQLResultCSS"]')).toHaveValue('.result{color:red}');
+  });
+}

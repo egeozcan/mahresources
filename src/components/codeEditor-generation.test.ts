@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { codeEditor } from './codeEditor.js';
+import { templateGeneration } from './templateGeneration.js';
 
-function fixture() {
+function fixture(shared = true) {
   document.body.innerHTML = `<form>${['CustomMRQLResult', 'CustomMRQLResultCSS'].map(name => `<div x-data><input name="${name}" value="old-${name}"><div x-ref="editorContainer"></div></div>`).join('')}</form>`;
   const views = Array.from(document.querySelectorAll('input')).map(input => {
     const container = input.parentElement!.querySelector('div')!;
@@ -14,7 +15,8 @@ function fixture() {
     return view;
   });
   Object.assign(window, { Alpine: { store: () => ({ generatePath: '/generate' }) } });
-  const editor = Object.assign(codeEditor({ mode: 'html', generate: true }), {
+  const editor = Object.assign(shared ? templateGeneration({ fieldName: 'CustomMRQLResult', mode: 'html' }) : codeEditor({ mode: 'html', generate: true }), {
+    $el: document.querySelector('form')!,
     view: views[0],
     $refs: { hiddenInput: document.querySelector('input'), editorContainer: document.querySelector('[x-ref]') },
     generationPrompt: 'Restyle this card',
@@ -25,6 +27,13 @@ const draft = { valid: true, slots: { CustomMRQLResult: '<p class="card">New</p>
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 
 describe('template cluster generation', () => {
+  it('keeps embedded generation controls functional', async () => {
+    const { editor, views } = fixture(false);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => draft })));
+    await editor.generateFromPrompt();
+    expect(views.map(v => v.state.doc.toString())).toEqual(Object.values(draft.slots));
+  });
+
   it('sends both current values and applies both generated values', async () => {
     const { editor, views } = fixture();
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => draft });

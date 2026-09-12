@@ -88,7 +88,7 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 	lines = append(lines, schemaLines(in.MetaSchema)...)
 	lines = append(lines, sampleLines(in.SampleMeta)...)
 	lines = append(lines, currentContentLines(in.CurrentContent, "requested slots (JSON map)")...)
-	lines = append(lines, "Preserve existing content and styles unless the request requires changing them. Return both members of every requested HTML/CSS pair, including an empty CSS value when no styles are needed.")
+	lines = append(lines, "Preserve existing content and styles unless the request requires changing them. Always return HTML and its companion CSS together. Never return only one member of a pair. Include an empty CSS value when no styles are needed.")
 	lines = append(lines, "User request: "+userPrompt)
 	return strings.Join(lines, "\n")
 }

@@ -448,6 +448,15 @@ export function templateBundle({ carrier } = {}) {
           return;
         }
         const slots = (data && data.slots) || {};
+        // Reject incomplete pairs before applying any part of the draft.
+        for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
+          const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
+          const cssPresent = Object.prototype.hasOwnProperty.call(slots, `${field}CSS`);
+          if (htmlPresent !== cssPresent || (htmlPresent && (typeof slots[field] !== 'string' || typeof slots[`${field}CSS`] !== 'string'))) {
+            this.notify(`The model must return ${field} and ${field}CSS together. No changes applied.`, 'warn');
+            return;
+          }
+        }
         let filled = 0;
         for (const field of Object.values(SLOT_FIELDS)) {
           if (Object.prototype.hasOwnProperty.call(slots, field)) {

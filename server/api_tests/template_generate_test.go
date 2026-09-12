@@ -3,6 +3,7 @@ package api_tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -250,5 +251,78 @@ func TestTemplateGenerateCluster(t *testing.T) {
 				t.Fatalf("wrong generation input: %#v", fake.seen)
 			}
 		})
+	}
+}
+
+func TestTemplateGenerateSlotAlwaysRequestsPair(t *testing.T) {
+	for _, target := range []string{"", "slot"} {
+		for _, slot := range []string{"CustomMRQLResult", "CustomMRQLResultCSS"} {
+			t.Run(target+"/"+slot, func(t *testing.T) {
+				tc := SetupTestEnv(t)
+				category := models.Category{Name: "Existing pair", CustomMRQLResult: "<p>saved</p>", CustomMRQLResultCSS: ".saved{}"}
+				if err := tc.DB.Create(&category).Error; err != nil {
+					t.Fatal(err)
+				}
+				fake := &fakeAPITemplateGenerator{result: slotResult()}
+				tc.AppCtx.SetTemplateGenerator(fake)
+				resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": target, "slot": slot, "prompt": "restyle", "categoryId": category.ID, "content": "unsaved"})
+				if resp.Code != http.StatusOK {
+					t.Fatalf("%d: %s", resp.Code, resp.Body.String())
+				}
+				if fake.seen.Target != application_context.TemplateTargetBundle || strings.Join(fake.seen.BundleSlots, ",") != "CustomMRQLResult,CustomMRQLResultCSS" {
+					t.Fatalf("single field request was not paired: %#v", fake.seen)
+				}
+				current := map[string]string{}
+				if err := json.Unmarshal([]byte(fake.seen.CurrentContent), &current); err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]string{"CustomMRQLResult": "<p>saved</p>", "CustomMRQLResultCSS": ".saved{}"}
+				want[slot] = "unsaved"
+				for field, value := range want {
+					if current[field] != value {
+						t.Errorf("%s context = %q, want %q", field, current[field], value)
+					}
+				}
+			})
+		}
+	}
+}
+
+type apiPairDraftProvider string
+
+func (p apiPairDraftProvider) GenerateDraft(context.Context, string, string, int) (string, error) {
+	return string(p), nil
+}
+
+func TestTemplateGenerateEnforcesPairsEndToEnd(t *testing.T) {
+	for _, target := range []string{"slot", "cluster", "bundle"} {
+		for _, complete := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/complete=%t", target, complete), func(t *testing.T) {
+				tc := SetupTestEnv(t)
+				draft := `{"slots":{"CustomHeader":"<p>Card</p>","CustomHeaderCSS":""},"explanation":"Plain card."}`
+				if !complete {
+					draft = `{"slots":{"CustomHeader":"<p>Card</p>"},"explanation":"Missing partner."}`
+				}
+				tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(apiPairDraftProvider(draft), application_context.TemplateGenerationConfig{APIKey: "test", Timeout: time.Second}))
+				resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": target, "slot": "CustomHeader", "prompt": "make a card"})
+				if !complete {
+					if resp.Code != http.StatusBadGateway {
+						t.Fatalf("incomplete pair accepted: %d %s", resp.Code, resp.Body.String())
+					}
+					return
+				}
+				if resp.Code != http.StatusOK {
+					t.Fatalf("%d %s", resp.Code, resp.Body.String())
+				}
+				var result application_context.TemplateGenerationResult
+				if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				css, present := result.Slots["CustomHeaderCSS"]
+				if !result.Valid || !present || css != "" || result.Slots["CustomHeader"] != "<p>Card</p>" || result.Content != "" {
+					t.Fatalf("expected complete pair, got %#v", result)
+				}
+			})
+		}
 	}
 }
