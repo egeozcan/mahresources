@@ -409,8 +409,8 @@ No DOM, Alpine or database behavior belongs in this unit. Debouncing occurs in
 the UI adapter, but state invalidates the previous request immediately when the
 filter changes. Use maps keyed by `String(ID)` to avoid numeric/string duplicates.
 
-- [ ] Write deterministic red tests with a deferred source that deliberately ignores AbortSignal. Include old responses arriving after a new query, a nested push, Back, Cancel and reopening; a stale finally block must not clear the newer loading state.
-- [ ] Write selection tests for multi-add, existing IDs, single explicit confirmation, remaining capacity, filtered-away pending rows, next-page persistence and rejection/exception from onConfirm. Include the skeleton below with a test source returning one page:
+- [x] Write deterministic red tests with a deferred source that deliberately ignores AbortSignal. Include old responses arriving after a new query, a nested push, Back, Cancel and reopening; a stale finally block must not clear the newer loading state.
+- [x] Write selection tests for multi-add, existing IDs, single explicit confirmation, remaining capacity, filtered-away pending rows, next-page persistence and rejection/exception from onConfirm. Include the skeleton below with a test source returning one page:
 
 ```ts
 const onConfirm = vi.fn(() => true);
@@ -428,11 +428,11 @@ resolves `{items: [], page: 1, hasNext: false, styles: [], warnings: []}` and wh
 `resolve` returns requested values. Define `browse` as group/multiple with empty
 parameter/exclusion callbacks. Add a separate controlled-promise source for races.
 
-- [ ] Run `npm run test:unit -- src/components/picker/pickerSession.test.ts` and retain red.
-- [ ] Implement immutable published snapshots, an internal stack, independent step IDs and monotonically increasing request generations. Abort active reads on transitions. A successful response applies only if session, step and request generations still match.
-- [ ] Implement `toggle` with no immediate confirmation; prevent new choices at remaining capacity and keep old values. `confirm` passes only pending additions for multi and the chosen row for single; callbacks return false to retain the dialog and choices. Reject duplicate confirmation while confirming. On nested success pop only the child; on outer success close all steps. A child callback may update its parent filter while it is hidden, so target steps by identity rather than the current top step during that transition.
-- [ ] Implement Back/Cancel/destroy with deterministic abortion and snapshot publication. Restore a parent's retained page/results on Back; a confirmed filter change resets that parent's page and reloads it. No reopen persistence.
-- [ ] Re-run session tests plus existing picker tests; build assets if imported by production code in this slice; commit `feat: model nested entity picker sessions`.
+- [x] Run `npm run test:unit -- src/components/picker/pickerSession.test.ts` and retain red.
+- [x] Implement immutable published snapshots, an internal stack, independent step IDs and monotonically increasing request generations. Abort active reads on transitions. A successful response applies only if session, step and request generations still match.
+- [x] Implement `toggle` with no immediate confirmation; prevent new choices at remaining capacity and keep old values. `confirm` passes only pending additions for multi and the chosen row for single; callbacks return false to retain the dialog and choices. Reject duplicate confirmation while confirming. On nested success pop only the child; on outer success close all steps. A child callback may update its parent filter while it is hidden, so target steps by identity rather than the current top step during that transition.
+- [x] Implement Back/Cancel/destroy with deterministic abortion and snapshot publication. Restore a parent's retained page/results on Back; a confirmed filter change resets that parent's page and reloads it. No reopen persistence.
+- [x] Re-run session tests plus existing picker tests; build assets if imported by production code in this slice; commit `feat: model nested entity picker sessions`.
 
 ## Task 6: Connect browser confirmation to existing selector ownership
 
