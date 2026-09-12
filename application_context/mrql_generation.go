@@ -14,7 +14,7 @@ const (
 	MaxMRQLGenerationPromptLength        = 2000
 	MaxMRQLGeneratedQueryLength          = 2000
 	MaxMRQLGeneratedExplanationLength    = 1000
-	DefaultDeepSeekMRQLGenerationModel   = "deepseek-v4-pro"
+	DefaultDeepSeekMRQLGenerationModel   = "deepseek-flash"
 	DefaultDeepSeekMRQLGenerationTimeout = 20 * time.Second
 )
 
