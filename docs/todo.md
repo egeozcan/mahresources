@@ -9378,3 +9378,16 @@ Round 1: Standards found one P2: PostgreSQL may repeat or omit tied rows across 
 Round 2: Fresh Standards and Spec reviews both report no P0–P2 or P3 findings in the cumulative changes. Two major findings were resolved across two rounds.
 
 Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 'json1 fts5' ./...`; production build; 77 SQLite MRQL browser tests (one skip); 43 MRQL CLI tests; eight PostgreSQL shared-list browser tests; focused PostgreSQL tied-page, mixed-list, random and Explain tests; source whitespace checks. Earlier frontend unit, OpenAPI and CSS checks remain applicable because this loop changed backend ordering and regressions only.
+
+## Shared entity picker design — 2026-09-12
+
+- [x] Inspect existing picker, selector contracts and customization seams.
+- [x] Resolve product behavior through the design interview and obtain design approval.
+- [x] Write and self-review `docs/superpowers/specs/2026-09-12-shared-entity-picker-design.md`.
+- [ ] Obtain user review of the written spec.
+- [ ] Prepare the implementation plan after spec approval.
+
+Review: the spec extends the existing picker across entity selectors, with property
+filters, pagination, nested filter browsing and carrier-specific result template/CSS
+slots. Selection and persistence remain owned by the originating selector. This is
+documentation only; no application behavior changed and no runtime tests were run.
