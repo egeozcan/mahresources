@@ -159,7 +159,10 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
     private dispatchSelectorCommand(
         command: SelectorCommand<TRaw>,
     ): SelectorCommandResult<TRaw> {
-        if (command.type === 'replace-selection') {
+        // Silent hydration/navigation invalidates the old owner's writes. A user
+        // browser confirmation is non-silent and changes this owner's selection;
+        // preserve operations on untouched keys, just like an ordinary select.
+        if (command.type === 'replace-selection' && command.silent) {
             for (const key of [...this.operations.keys()]) {
                 this.advanceVersion(key);
                 this.invalidateOperation(key);

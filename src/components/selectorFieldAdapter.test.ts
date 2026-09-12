@@ -44,7 +44,7 @@ function createForm() {
 
 function mountSelector(selector: MountedSelector, form: HTMLFormElement | null) {
     const root = createNode() as unknown as HTMLElement & { closest: (selector: string) => HTMLFormElement | null };
-    root.closest = vi.fn(() => form);
+    root.closest = vi.fn((query) => query === 'form' ? form : null);
     selector.$el = root;
     selector.$refs = {};
     selector.$watch = vi.fn();
@@ -82,6 +82,34 @@ describe('selector rendering adapter and registry integration', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    test('browser confirmation uses one ordinary registry change and no association write', async () => {
+        const { selector, form } = createSelector();
+        selector.init();
+        const observer = vi.fn(), openField = vi.fn();
+        const stop = selectorRegistry.observe(form!, 'tags', observer);
+        vi.stubGlobal('Alpine', { store: () => ({ openField }) });
+        vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ items: [{ ID: 2, Name: 'Beta' }, { ID: 3, Name: 'Gamma' }] })));
+        expect(selector.openEntityBrowser()).toBe(true);
+        expect(await openField.mock.calls[0][0].onConfirm([{ ID: 2, Name: 'Beta' }, { ID: 3, Name: 'Gamma' }])).toBe(true);
+        expect(observer).toHaveBeenCalledOnce();
+        expect(selector.selectedResults.map(value => value.ID)).toEqual([1, 2, 3]);
+        expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/v1/entity-picker/resolve?');
+        expect(fetch).toHaveBeenCalledOnce();
+        stop();selector.destroy();
+    });
+
+    test('a disabled or destroyed origin cannot accept a browser result', async () => {
+        const { selector } = createSelector();selector.init();
+        const openField = vi.fn();vi.stubGlobal('Alpine', { store: () => ({ openField }) });
+        selector.$refs.autocompleter = { disabled: true } as HTMLInputElement;
+        expect(selector.openEntityBrowser()).toBe(false);
+        selector.$refs.autocompleter = { disabled: false } as HTMLInputElement;
+        expect(selector.openEntityBrowser()).toBe(true);
+        selector.destroy();
+        expect(await openField.mock.calls[0][0].onConfirm([{ ID: 2, Name: 'Beta' }])).toBe(false);
+        expect(fetch).not.toHaveBeenCalled();
     });
 
     test('routes shared chip removal through the legacy command and restores combobox focus', () => {

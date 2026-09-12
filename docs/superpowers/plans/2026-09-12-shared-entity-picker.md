@@ -466,10 +466,10 @@ The origin uses the profile's core or registry integration method, never assigns
 `selectedResults`. Standalone mount disabled state must be visible to
 `isAvailable`, not merely a CSS class/pointer-events rule.
 
-- [ ] Add red tests that browser multi-add generates one change, single replacement generates one change with removed/added values, reconfirming is a no-op, and silent hydration still emits no event. Prove the autosave observer fires exactly once and ordinary form selection makes no association request.
-- [ ] Add red tests for destruction while resolving, changing exclusions/parameters, current selection changed externally, a missing resolved ID, resolve HTTP failure, limit reduced or origin disabled. Assert zero commit on any failure.
-- [ ] Run `npm run test:unit -- src/selector/entityBrowseIntegration.test.ts src/components/selectorFieldAdapter.test.ts` and capture red.
-- [ ] Implement confirmation: read latest constraints; resolve only pending IDs in batches of at most 50 through Task 4; abort if destroyed. Require every requested ID to return. Recheck availability, serialized constraints, exclusions and capacity after awaiting and before committing. A changed constraint invalidates the attempt and asks the user to refresh rather than guessing. Append to the origin's latest existing values for multi, replace for single.
+- [x] Add red tests that browser multi-add generates one change, single replacement generates one change with removed/added values, reconfirming is a no-op, and silent hydration still emits no event. Prove the autosave observer fires exactly once and ordinary form selection makes no association request.
+- [x] Add red tests for destruction while resolving, changing exclusions/parameters, current selection changed externally, a missing resolved ID, resolve HTTP failure, limit reduced or origin disabled. Assert zero commit on any failure.
+- [x] Run `npm run test:unit -- src/selector/entityBrowseIntegration.test.ts src/components/selectorFieldAdapter.test.ts` and capture red.
+- [x] Implement confirmation: read latest constraints; resolve only pending IDs in batches of at most 50 through Task 4; abort if destroyed. Require every requested ID to return. Recheck availability, serialized constraints, exclusions and capacity after awaiting and before committing. A changed constraint invalidates the attempt and asks the user to refresh rather than guessing. Append to the origin's latest existing values for multi, replace for single.
 
 ```ts
 const byId = new Map(origin.getValues().map(v => [String(v.ID), v]));
@@ -484,8 +484,8 @@ rollback behavior remain authoritative; successful publication is not a promise
 that an asynchronous save has already completed. Do not silently truncate to a
 maximum (the core's generic truncation behavior is not the picker policy).
 
-- [ ] Hook destroy into adapter/mount teardown and session cancellation. Keep registry notification timing unchanged. Ensure nested filter origins remain alive while hidden; Task 7 must not destroy the parent selector by swapping it through `x-if`.
-- [ ] Re-run all selector/adapter/mount tests; `npm run build-js`; commit `feat: apply browser selections through selector integration`.
+- [x] Hook destroy into adapter/mount teardown and session cancellation. Keep registry notification timing unchanged. Ensure nested filter origins remain alive while hidden; Task 7 must not destroy the parent selector by swapping it through `x-if`.
+- [x] Re-run all selector/adapter/mount tests; `npm run build-js`; commit `feat: apply browser selections through selector integration`.
 
 ## Task 7: Build the shared dialog, filter coverage and accessible navigation
 

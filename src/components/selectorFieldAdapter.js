@@ -1,3 +1,5 @@
+import { createEntityBrowseConfirmation } from '../selector/entityBrowseIntegration.ts';
+import { createHttpEntityBrowseSource } from '../selector/httpEntityBrowseSource.ts';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
@@ -52,6 +54,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         query: '',
         _unregisterSelector: null,
         _destroyed: false,
+        _browseConfirmation: null,
         _popover: null,
         _popoverMouseDownHandler: null,
         // The form this field publishes atomic changes under. Set only when the field is
@@ -60,6 +63,46 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         _form: null,
         _formSubmitHandler: null,
         _formResetHandler: null,
+
+        get browseLabel() {
+            const title = this.$el?.getAttribute?.('data-selector-title')
+                || this._refEl('autocompleter')?.getAttribute?.('aria-label')
+                || this.$el?.querySelector?.('label')?.textContent?.trim()
+                || profile.browse?.entity || 'entities';
+            return `Browse ${title}`;
+        },
+
+        get browserDisabled() {
+            return this._destroyed || !profile.browse || this.$el?.isConnected === false
+                || Boolean(this.$el?.closest?.('fieldset[disabled]'))
+                || Boolean(this._refEl('autocompleter')?.disabled);
+        },
+
+        openEntityBrowser(opener) {
+            const store = globalThis.Alpine?.store?.('entityPicker');
+            if (this.browserDisabled || !store?.openField) return false;
+            this._core?.dispatch({ type: 'close' });
+            this._browseConfirmation?.destroy();
+            const bridge = createEntityBrowseConfirmation({
+                metadata: profile.browse,
+                getValues: () => profile.selector.getSnapshot().selected.map(option => option.raw),
+                isAvailable: () => !this.browserDisabled,
+                replace: values => this._replaceSelection(values, { silent: false }),
+            }, createHttpEntityBrowseSource());
+            this._browseConfirmation = bridge;
+            const element = opener?.currentTarget || opener
+                || this.$el?.querySelector?.('[data-entity-browse]') || document.activeElement;
+            store.openField({
+                browse: profile.browse,
+                existing: profile.selector.getSnapshot().selected.map(option => option.raw),
+                onConfirm: bridge.confirm,
+                onDispose: () => {
+                    bridge.destroy();
+                    if (this._browseConfirmation === bridge) this._browseConfirmation = null;
+                },
+            }, element);
+            return true;
+        },
 
         init() {
             this._destroyed = false;
@@ -245,6 +288,8 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         destroy() {
             if (this._destroyed) return;
             this._destroyed = true;
+            this._browseConfirmation?.destroy();
+            this._browseConfirmation = null;
             this._unsubscribeCore?.();
             this._unsubscribeCore = null;
             this._core?.destroy();

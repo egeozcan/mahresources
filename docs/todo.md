@@ -9393,7 +9393,7 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Task 3: rendered browse API.
 - [x] Task 4: browse profiles and transport (155 selector/adapter tests passed; bundle rebuilt).
 - [x] Task 5: headless nested session (9 new/existing session/picker tests passed).
-- [ ] Task 6: field integration.
+- [x] Task 6: field integration (174 selector/adapter/session tests passed, including standalone disabled/teardown and pending tag-write preservation).
 - [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
 - [ ] Task 9: full validation and review.
 
