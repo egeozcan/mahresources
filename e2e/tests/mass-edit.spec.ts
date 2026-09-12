@@ -85,7 +85,7 @@ test.describe('Mass Edit', () => {
     await ownerCombo.fill(`Mass Edit Owner ${testRunId}`);
     await page.locator('[role="option"]').filter({ hasText: `Mass Edit Owner ${testRunId}` }).first().click();
 
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
     await expect(dialog).not.toBeVisible();
 
     // The list morphs in place: no navigation, and the tag lands on every
@@ -124,7 +124,7 @@ test.describe('Mass Edit', () => {
     await tagCombo.fill(`Mass Edit Second ${testRunId}`);
     await page.locator('[role="option"]').filter({ hasText: `Mass Edit Second ${testRunId}` }).first().click();
 
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
     // The confirm dialog states the blast radius; its title is this modal's own.
     const confirm = page.getByRole('alertdialog', { name: 'Mass edit' });
     await expect(confirm).toBeVisible();
@@ -198,7 +198,7 @@ test.describe('Mass Edit', () => {
     // Clearing the owner is destructive, so it demands the confirm with no
     // taxonomy fixture to pick first.
     await dialog.getByRole('radio', { name: 'Clear owner' }).check();
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
 
     const confirm = page.getByRole('alertdialog', { name: 'Mass edit' });
     await expect(confirm).toBeVisible();
@@ -232,7 +232,7 @@ test.describe('Mass Edit', () => {
 
     // Scroll to the bottom, where Apply is, before submitting with no op set.
     await dialog.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
 
     const error = dialog.getByRole('alert');
     await expect(error).toHaveText(/Choose at least one operation/);

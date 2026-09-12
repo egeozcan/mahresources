@@ -6,6 +6,6 @@ test.describe('Styled 404 page', () => {
     expect(response?.status()).toBe(404);
 
     // Should have the app's navigation (not bare plain text)
-    await expect(page.locator('nav')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
   });
 });

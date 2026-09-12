@@ -786,7 +786,11 @@ html {
     background: #f5f5f4;
     color: #57534e;
     border: 1px solid transparent;
-    white-space: nowrap;
+    /* Taxonomy names can be long. An unconstrained nowrap pill paints over
+       neighbouring cards and even the filter sidebar's controls. */
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
     text-decoration: none;
     transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }

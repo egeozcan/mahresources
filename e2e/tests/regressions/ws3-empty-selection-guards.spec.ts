@@ -51,7 +51,7 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
       await page.goto(`/tag?id=${winner.ID}`);
       await page.waitForLoadState('load');
 
-      const mergeButton = page.getByRole('button', { name: 'Merge' });
+      const mergeButton = page.getByRole('button', { name: 'Merge', exact: true });
       await expect(mergeButton).toBeVisible();
       await expect(mergeButton).toBeDisabled();
       await expect(page.getByText('Choose at least one tag to merge into this one.')).toBeVisible();
@@ -92,7 +92,7 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
     await field.fill(`ws3 gone ${runId}`);
     await page.locator(`[role="option"]:has-text("ws3 gone ${runId}")`).first().click();
 
-    const mergeButton = page.getByRole('button', { name: 'Merge' });
+    const mergeButton = page.getByRole('button', { name: 'Merge', exact: true });
     await expect(mergeButton).toBeEnabled();
     await mergeButton.click();
 

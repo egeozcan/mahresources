@@ -96,7 +96,7 @@ test.describe('B3: Detail pages return 400 (not 500) for non-numeric ID', () => 
     const response = await page.goto('/group?id=abc');
     expect(response?.status()).toBe(400);
     // Should have navigation (styled error page, not a raw 500)
-    await expect(page.locator('nav')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
   });
 });
 
@@ -129,6 +129,6 @@ test.describe('B4: List pages return 400 (not 500) for non-numeric filter params
   test('non-numeric filter should show error page, not crash', async ({ page }) => {
     const response = await page.goto('/groups?Tags=abc');
     expect(response?.status()).toBe(400);
-    await expect(page.locator('nav')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
   });
 });

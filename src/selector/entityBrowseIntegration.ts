@@ -13,7 +13,7 @@ export interface EntityBrowseOrigin {
 export function createEntityBrowseConfirmation(origin: EntityBrowseOrigin, source: EntityBrowseSource) {
  let destroyed = false, controller: AbortController | null = null;
  return Object.freeze({
-  async confirm(values: readonly BrowseValue[]): Promise<boolean> {
+  confirm: async (values: readonly BrowseValue[]): Promise<boolean> => {
    if (destroyed || controller || !origin.isAvailable()) return false;
    const metadata = origin.metadata, entity = metadata.entity, multiple = metadata.multiple;
    const ids = [...new Set(values.map(value => Number(value.ID)))];

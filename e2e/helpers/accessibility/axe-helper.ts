@@ -83,7 +83,7 @@ function formatNode(node: NodeResult): string {
     lines.push(`    HTML: ${html}`);
   }
   if (node.failureSummary) {
-    lines.push(`    Fix: ${node.failureSummary.split('\n')[0]}`);
+    lines.push(`    Fix: ${node.failureSummary.split('\n').join('\n      ')}`);
   }
   return lines.join('\n');
 }

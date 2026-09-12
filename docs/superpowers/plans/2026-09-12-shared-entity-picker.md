@@ -597,7 +597,7 @@ picker `-file` flags close the remaining CLI clear/file-input gaps.
 **Interfaces:** No new feature interfaces. Evidence consists of exact commands,
 exit codes, logs, review findings and the final diff/ref.
 
-- [ ] Run the full unit/build/layering matrix, saving long output outside chat:
+- [x] Run the full unit/build/layering matrix, saving long output outside chat:
 
 ```bash
 npm run test:unit
@@ -615,7 +615,7 @@ Run the CSS scan after Go template-walk tests, not concurrently with them.
 Check generated bundles contain current source, and only expected generated
 changes exist.
 
-- [ ] Run browser and CLI suites concurrently using the repository's two-server harness:
+- [x] Run browser and CLI suites concurrently using the repository's two-server harness:
 
 ```bash
 cd e2e && npm run test:with-server:all
@@ -625,7 +625,7 @@ Then run focused auth/a11y coverage if the full harness does not include those
 projects. Tests must exercise all ten entity families and at least one origin
 outside the shared form partial.
 
-- [ ] With Docker available, add PostgreSQL-specific browse regressions for tied/duplicate names, AND constraint intersection and scope/metadata parity to the existing API PostgreSQL harness. Run:
+- [x] With Docker available, add PostgreSQL-specific browse regressions for tied/duplicate names, AND constraint intersection and scope/metadata parity to the existing API PostgreSQL harness. Run:
 
 ```bash
 go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1
@@ -635,9 +635,9 @@ cd e2e && npm run test:with-server:postgres
 If Docker is unavailable, record that as an unresolved verification blocker;
 do not call PostgreSQL coverage passed.
 
-- [ ] Obtain fresh-context read-only Standards and Spec reviews. Provide the approved spec, this plan, the execution baseline and full final diff. Review all-selector coverage, renderer principal/budget binding, stale-response handling, nested focus/teardown, atomic persistence and archive/CLI round trips. The parent adjudicates findings; one writer implements accepted fixes and adds failing regression tests before fixing each.
-- [ ] Repeat affected tests and review after fixes. Do not stop at passing unit tests if an end-to-end family remains uncovered. Record residual risks rather than claiming snapshot pagination or CSS isolation.
-- [ ] Update `docs/todo.md` with actual validation results and mark only completed tasks. Commit remaining generated assets/docs with their source change. Offer integration options only after evidence supports completion; do not push or merge without authorization.
+- [x] Conduct Standards and Spec reviews against the approved spec, plan and execution baseline, covering all-selector coverage, renderer principal/budget binding, stale responses, nested focus/teardown, atomic persistence and archive/CLI round trips. **Execution adjustment:** the user's inline/no-subagent mode replaces the planned fresh-context reviews with an explicitly labelled self-review; no independent sign-off is claimed. Record: `docs/superpowers/reviews/2026-09-12-shared-entity-picker.md`.
+- [x] Repeat affected tests and review after fixes. Do not stop at passing unit tests if an end-to-end family remains uncovered. Record residual risks rather than claiming snapshot pagination or CSS isolation.
+- [x] Update `docs/todo.md` with actual validation results and mark only completed tasks. Commit remaining generated assets/docs with their source change. Offer integration options only after evidence supports completion; do not push or merge without authorization.
 
 ## Plan self-review and requirement map
 
@@ -661,5 +661,8 @@ retain the labels/fields required by existing profile observers without shipping
 carrier template source redundantly. The implementation must not reinterpret
 old max=0 or publish silent programmatic replacement as a user action.
 
-This is a plan, not execution evidence: no code or tests have been implemented by
-writing it. The next step is selecting the execution approach.
+Execution is complete in the `shared-entity-picker` worktree. Final evidence is
+in `docs/todo.md`: 1,409 frontend tests, full Go/vet/build/docs/CSS gates,
+PostgreSQL Go suites, 2,234 SQLite E2E passes (5 skips) and 2,235 PostgreSQL E2E
+passes (4 skips), with no failures or flaky retries on the final runs.
+Integration remains the user's decision; nothing has been pushed or merged.

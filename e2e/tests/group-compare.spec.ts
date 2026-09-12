@@ -234,7 +234,7 @@ test.describe.serial('Group Compare', () => {
     await page.goto(`/group/compare?g1=${leftGroupId}&g2=${rightGroupId}`);
     await page.waitForLoadState('load');
 
-    const leftInput = page.getByLabel('Search left group');
+    const leftInput = page.getByRole('combobox', { name: 'Search left group', exact: true });
     await leftInput.fill(thirdGroupName);
     const leftOption = page.locator(`div[role="option"]:visible:has-text("${thirdGroupName}")`).first();
     await expect(leftOption).toBeVisible({ timeout: 10000 });
@@ -243,7 +243,7 @@ test.describe.serial('Group Compare', () => {
       leftOption.click(),
     ]);
 
-    const rightInput = page.getByLabel('Search right group');
+    const rightInput = page.getByRole('combobox', { name: 'Search right group', exact: true });
     await rightInput.fill(leftGroupName);
     const rightOption = page.locator(`div[role="option"]:visible:has-text("${leftGroupName}")`).first();
     await expect(rightOption).toBeVisible({ timeout: 10000 });

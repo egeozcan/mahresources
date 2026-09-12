@@ -10,7 +10,7 @@
              @click.stop>
             <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-200">
                 <button type="button" x-show="$store.entityPicker.steps.length > 1" @click="$store.entityPicker.back()" class="text-sm underline">Back</button>
-                <h2 id="entity-picker-title" class="text-lg font-semibold text-stone-900 flex-1" x-text="$store.entityPicker.title"></h2>
+                <h2 id="entity-picker-title" class="text-lg font-semibold text-stone-900 flex-1" x-text="$store.entityPicker.title">Select</h2>
                 <button type="button" @click="$store.entityPicker.close()" aria-label="Close" class="w-9 h-9 text-stone-700 text-xl">×</button>
             </div>
             <div class="overflow-y-auto min-h-0 p-4 space-y-4">

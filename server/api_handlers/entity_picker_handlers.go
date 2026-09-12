@@ -47,6 +47,13 @@ type EntityPickerResolveResponse struct {
 // Values are copied and projected before transport. Carrier template sources,
 // note bodies and unloaded model associations are not selector state.
 func pickerValue(row contracts.EntityPickerEntity) map[string]any {
+	// Description is the note's body, potentially megabytes. Keep it available
+	// to custom rendering, but do not marshal/copy it into selector state.
+	note, isNote := row.Raw.(models.Note)
+	if isNote {
+		note.Description = ""
+		row.Raw = note
+	}
 	bytes, _ := json.Marshal(row.Raw)
 	var raw map[string]any
 	_ = json.Unmarshal(bytes, &raw)
@@ -55,6 +62,9 @@ func pickerValue(row contracts.EntityPickerEntity) map[string]any {
 		if v, ok := raw[key]; ok {
 			value[key] = v
 		}
+	}
+	if isNote {
+		delete(value, "Description")
 	}
 	for _, key := range []string{"Owner", "Category", "NoteType", "ResourceCategory", "Series"} {
 		if association, ok := raw[key].(map[string]any); ok {

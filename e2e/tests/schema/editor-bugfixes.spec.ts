@@ -166,7 +166,8 @@ test.describe('Bug 1: MetaSchema injection into Alpine x-data', () => {
       expect(jsErrors, 'selecting a category with an unparseable schema threw').toHaveLength(0);
       await expect(page.locator('button[type="submit"]').first()).toBeVisible();
     } finally {
-      await page.unroute('**/v1/categories?*');
+      // Let an in-flight fetch/fulfill finish before removing its route.
+      await page.unrouteAll({ behavior: 'wait' });
       await apiClient.deleteCategory(broken.ID);
       await apiClient.deleteCategory(good.ID);
     }

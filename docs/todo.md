@@ -9396,9 +9396,9 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Task 6: field integration (174 selector/adapter/session tests passed, including standalone disabled/teardown and pending tag-write preservation).
 - [x] Task 7: shared dialog and all selector/filter hosts. Full unit suite passed (1,404 tests before the additional host-audit/root-label regressions); two focused browser scenarios and CSS scan pass.
 - [x] Task 8: legacy consumer, custom rendering, modal nesting and accessibility end-to-end coverage (32 focused cases plus no-JS; six CLI round trips).
-- [ ] Task 9: full validation and review.
+- [x] Task 9: full validation and inline Standards/Spec review (the selected no-subagent mode replaces the planned independent review).
 
-Review: the spec extends the existing picker across entity selectors, with property
+Initial design review: the spec extends the existing picker across entity selectors, with property
 filters, pagination, nested filter browsing and carrier-specific result template/CSS
 slots. Selection and persistence remain owned by the originating selector. This is
 documentation only; no application behavior changed and no runtime tests were run.
@@ -9446,8 +9446,33 @@ partial edits and explicit clearing on every carrier; category/resource-category
 now have partial `edit --id` commands. Missing/invalid UTF-8 files and conflicting
 inline/file flags fail before HTTP. A rapid-close regression required replacing
 Alpine's unguarded delayed trap with a generation-owned dialog lifecycle that
-restores native background inertness and scrolling. Full integration and
-PostgreSQL verification remain Task 9.
+restores native background inertness and scrolling. At that checkpoint full
+integration and PostgreSQL verification remained Task 9.
+
+Task 9 final evidence:
+
+- Production and CLI builds, OpenAPI generation, CLI docs lint (0 warnings), CSS
+  scan, full tagged Go tests and Go vet pass.
+- All 1,409 frontend tests across 90 files pass.
+- PostgreSQL MRQL/API Go suites pass with `-count=1`.
+- Full SQLite browser/CLI/auth/a11y/doctest harness: **2,234 passed, 5 skipped**.
+- Full PostgreSQL E2E harness: **2,235 passed, 4 skipped**.
+- Neither final E2E run reports failed or flaky tests. Earlier attempts exposed
+  locator ambiguities, a route teardown race and overflowing category badges;
+  two concurrent matrix attempts hit their tool deadlines and are not counted
+  as passes. Final engines ran separately, retaining each harness's parallel
+  browser/CLI execution.
+- Regression evidence: note bodies stay out of selector state; authenticated
+  custom MRQL stays scoped and budgeted (budget bypass mutation fails); actual
+  PostgreSQL browse/resolve intersections are scoped and ordered. A long badge
+  geometry regression failed at x=3942 on a 1280px page before width/wrapping was
+  fixed. The incorrect checkbox-size and audit-scroll experiments were removed.
+
+Review: `docs/superpowers/reviews/2026-09-12-shared-entity-picker.md` records both
+axes inline, not independent sign-off. Full logs are in `/tmp/entity-picker-final-*`.
+Pagination is not a snapshot; custom CSS remains global; pending resolution uses
+bounded batches. Implementation is complete on `shared-entity-picker`; integration
+requires the user's choice, with no push or merge performed.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 

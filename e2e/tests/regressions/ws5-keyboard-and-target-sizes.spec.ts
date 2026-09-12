@@ -238,8 +238,11 @@ test('finding 13 — the details table scroller is reachable and scrollable by k
    * unfixed page, while 60 consecutive Tab presses never landed on it once.
    * Programmatic focus is not keyboard operability.
    */
+  // Bound traversal by the page's controls, not a fixed count that new Browse
+  // buttons can legitimately exceed. Still use real Tab, never wrap.focus().
+  const tabBudget = await page.locator('a[href]:visible, button:visible, input:visible, textarea:visible, select:visible, [tabindex]:visible').count() + 1;
   let reached = false;
-  for (let i = 0; i < 60 && !reached; i++) {
+  for (let i = 0; i < tabBudget && !reached; i++) {
     await page.keyboard.press('Tab');
     reached = await page.evaluate(() =>
       String(document.activeElement?.className || '').includes('detail-table-wrap'),
