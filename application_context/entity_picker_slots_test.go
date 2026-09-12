@@ -12,7 +12,7 @@ import (
 func TestEntityPickerSlotsPersistAndClear(t *testing.T) {
 	for _, kind := range []string{"category", "noteType", "resourceCategory"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx := createTestContext(t)
+			ctx := newPickerTestContext(t)
 			write := func(id uint, html, css string) (any, error) {
 				input := fmt.Sprintf(`{"ID":%d,"Name":"Picker carrier","CustomEntityPickerResult":%q,"CustomEntityPickerResultCSS":%q}`, id, html, css)
 				switch kind {
@@ -81,7 +81,7 @@ func TestEntityPickerSlotsGenericBuilders(t *testing.T) {
 }
 
 func TestEntityPickerSlotsPluginCreateUpdatePatch(t *testing.T) {
-	ctx := createTestContext(t)
+	ctx := newPickerTestContext(t)
 	adapter := &pluginDBAdapter{ctx: ctx}
 	for _, carrier := range []struct {
 		name          string

@@ -5,6 +5,8 @@ import "mahresources/contracts"
 // Compile-time interface compliance checks for MahresourcesContext.
 // These ensure the context implements all required interfaces.
 var (
+	_ contracts.EntityPickerReader = (*MahresourcesContext)(nil)
+
 	// Existing interfaces
 	_ contracts.ResourceMetaReader      = (*MahresourcesContext)(nil)
 	_ contracts.ResourceThumbnailLoader = (*MahresourcesContext)(nil)

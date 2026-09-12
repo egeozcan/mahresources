@@ -165,7 +165,7 @@ type EntityPickerReader interface {
 }
 ```
 
-- [ ] Add red tests for 51 groups, same-name stable ordering, property filters, scoped visibility, constraints/filter intersection, query `MaxResults` bypass attempts, invalid entity/page/IDs, and resolving selected rows that were deleted or reparented. Use existing `createTestContext(t)` for DB setup. Seed 51 rows with a loop, asserting every Create error.
+- [x] Add red tests for 51 groups, same-name stable ordering, property filters, scoped visibility, constraints/filter intersection, query `MaxResults` bypass attempts, invalid entity/page/IDs, and resolving selected rows that were deleted or reparented. Use `newPickerTestContext(t)`, an isolated, single-connection fixture, for DB setup. Execution found the older `createTestContext(t)` shares state across unrelated tests. Seed 51 rows with a loop, asserting every Create error.
 
 ```go
 page, err := ctx.BrowseEntities(&query_models.EntityPickerQuery{Entity: "group", Page: 1})
@@ -179,8 +179,8 @@ for _, row := range page.Items { seen[row.ID] = true }
 if seen[next.Items[0].ID] { t.Fatal("page repeated an entity") }
 ```
 
-- [ ] Run `go test --tags 'json1 fts5' ./application_context -run 'TestEntityPicker' -count=1` and retain red evidence.
-- [ ] Implement a fixed allowlisted entity-to-model/scope switch. Reuse these existing pairs:
+- [x] Run `go test --tags 'json1 fts5' ./application_context -run 'TestEntityPicker' -count=1` and retain red evidence.
+- [x] Implement a fixed allowlisted entity-to-model/scope switch. Reuse these existing pairs:
 
 | entity | model | scope |
 | --- | --- | --- |
@@ -209,7 +209,7 @@ aliases. This is AND, including overlapping category/type constraints. Query
 callbacks must still run on the final ORM read; do not replace Find/Pluck with
 Scan and lose subtree scoping.
 
-- [ ] Fetch 51 bounded identities to determine continuation; hydrate only the first 50 in one batch and restore identity order. Preload only needed tags, owner, category/type and thumbnail source associations. Do not preload all series resources, note blocks, group descendants or call per-result detail endpoints.
+- [x] Fetch 51 bounded identities to determine continuation; hydrate only the first 50 in one batch and restore identity order. Preload only needed tags, owner, category/type and thumbnail source associations. Do not preload all series resources, note blocks, group descendants or call per-result detail endpoints.
 
 ```go
 hasNext := len(ids) > query_models.EntityPickerPageSize
@@ -222,9 +222,15 @@ and resolve batches outside 1..50 fail with an explicit typed input error mapped
 to HTTP 400. Zero page defaults to 1. Bind IDs and filters; table names only come
 from the allowlist.
 
-- [ ] Resolve confirmation IDs through the same constraint predicate, independent of editable name/filter/page. Return surviving eligible rows in requested order; missing IDs are not replaced or silently committed by the client. Auth visibility remains server-owned even if Constraints is empty.
-- [ ] Add the compile-time `contracts.EntityPickerReader` assertion. Test every catalog branch and note association filtering with `Notes`, not `OwnerId`.
-- [ ] Run the focused tests plus `go test --tags 'json1 fts5' ./internal/arch/... ./models/...`; commit `feat: add scoped paginated entity browsing`.
+- [x] Resolve confirmation IDs through the same constraint predicate, independent of editable name/filter/page. Return surviving eligible rows in requested order; missing IDs are not replaced or silently committed by the client. Auth visibility remains server-owned even if Constraints is empty.
+- [x] Add the compile-time `contracts.EntityPickerReader` assertion. Test every catalog branch and note association filtering with `Notes`, not `OwnerId`.
+- [x] Run the focused tests plus `go test --tags 'json1 fts5' ./internal/arch/... ./models/...`; commit `feat: add scoped paginated entity browsing`.
+
+Execution evidence: `Pluck`→`Scan` mutation makes the scoped pagination test
+return zero visible rows instead of one; restored code passes. All picker tests
+and the previously polluted tree test pass `-count=3`. Full application-context,
+models, contracts and architecture suites pass. Request-time HTML/API integration
+is deliberately left to Task 3.
 
 ## Task 3: Render bounded picker results and expose the HTTP contract
 

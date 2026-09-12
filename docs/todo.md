@@ -9389,7 +9389,8 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Select inline execution and create `.worktrees/shared-entity-picker` on `shared-entity-picker`.
 - [x] Verify baseline: 1,352 frontend tests and the full tagged Go suite pass.
 - [x] Task 1: custom picker-result slot lifecycle.
-- [ ] Tasks 2–3: scoped browsing service and rendered API.
+- [x] Task 2: scoped browsing service.
+- [ ] Task 3: rendered browse API.
 - [ ] Tasks 4–6: browse profiles, session state and field integration.
 - [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
 - [ ] Task 9: full validation and review.
@@ -9414,6 +9415,16 @@ and covered. Template bundle export and author previews carry the new pair;
 picker preview styles are shared CSS plus picker CSS only. The browsing dialog
 itself is not implemented yet. PostgreSQL and the full browser/CLI matrix remain
 for the final integration gate.
+
+Task 2 validation: all picker tests plus the group-tree regression pass three
+consecutive runs; the full application-context, models, contracts and architecture
+suites pass. Coverage includes all ten entity families, 50-row pages, stable
+ordering, constraint intersection, metadata/note-association filters, full long
+names, missing/reparented rows and caller-transaction visibility. A mutation from
+Pluck to Scan fails the invisible-row pagination regression; restoring Pluck
+passes it. Picker fixtures now use isolated databases after the pagination seed
+exposed cross-test pollution from the older shared-memory helper. HTTP rendering
+and frontend browsing remain unimplemented.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 
