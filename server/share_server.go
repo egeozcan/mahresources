@@ -570,7 +570,7 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	if note.NoteType == nil || !note.NoteType.ApplyTemplatesToShares {
 		return "", ""
 	}
-	if note.NoteType.CustomHeader == "" && note.NoteType.CustomCSS == "" {
+	if note.NoteType.CustomHeader == "" && (note.NoteType.CustomCSS+"\n"+note.NoteType.CustomHeaderCSS) == "" {
 		return "", ""
 	}
 	metaCtx := template_filters.BuildMetaContextForEntity(note, s.appContext)
@@ -583,8 +583,15 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	if note.NoteType.CustomHeader != "" {
 		header = shortcodes.Process(reqCtx, note.NoteType.CustomHeader, *metaCtx, nil, nil)
 	}
-	if note.NoteType.CustomCSS != "" {
-		css = shortcodes.Process(reqCtx, note.NoteType.CustomCSS, *metaCtx, nil, nil)
+	if note.NoteType.CustomCSS != "" || note.NoteType.CustomHeaderCSS != "" {
+		styles := note.NoteType.CustomCSS
+		if note.NoteType.CustomHeaderCSS != "" {
+			if styles != "" {
+				styles += "\n"
+			}
+			styles += note.NoteType.CustomHeaderCSS
+		}
+		css = shortcodes.Process(reqCtx, styles, *metaCtx, nil, nil)
 	}
 	return header, css
 }

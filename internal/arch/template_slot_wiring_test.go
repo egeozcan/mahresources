@@ -127,7 +127,7 @@ func TestEveryCustomSlotIsRendered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk templates: %v", err)
 	}
-	sources = append(sources, readRepoFile(t, "server/routes.go"))
+	sources = append(sources, readRepoFile(t, "server/routes.go"), readRepoFile(t, "models/template_css.go"))
 	all := strings.Join(sources, "\n")
 
 	for _, c := range slotCarriers {

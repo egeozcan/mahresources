@@ -72,24 +72,36 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	resourceCategory := models.ResourceCategory{
-		Name:               query.Name,
-		Description:        query.Description,
-		CustomHeader:       query.CustomHeader,
-		CustomSidebar:      query.CustomSidebar,
-		CustomSummary:      query.CustomSummary,
-		CustomAvatar:       query.CustomAvatar,
-		CustomListHeader:   query.CustomListHeader,
-		CustomDetailFooter: query.CustomDetailFooter,
-		CustomListFooter:   query.CustomListFooter,
-		CustomHoverCard:    query.CustomHoverCard,
-		CustomPreview:      query.CustomPreview,
-		CustomLightbox:     query.CustomLightbox,
-		CustomCell:         query.CustomCell,
-		CustomMRQLResult:   query.CustomMRQLResult,
-		CustomCSS:          query.CustomCSS,
-		MetaSchema:         query.MetaSchema,
-		MetadataIndexes:    metadataIndexesValue(query.MetadataIndexes),
-		AutoDetectRules:    query.AutoDetectRules,
+		Name:                  query.Name,
+		Description:           query.Description,
+		CustomHeader:          query.CustomHeader,
+		CustomHeaderCSS:       query.CustomHeaderCSS,
+		CustomSidebar:         query.CustomSidebar,
+		CustomSidebarCSS:      query.CustomSidebarCSS,
+		CustomSummary:         query.CustomSummary,
+		CustomSummaryCSS:      query.CustomSummaryCSS,
+		CustomAvatar:          query.CustomAvatar,
+		CustomAvatarCSS:       query.CustomAvatarCSS,
+		CustomListHeader:      query.CustomListHeader,
+		CustomListHeaderCSS:   query.CustomListHeaderCSS,
+		CustomDetailFooter:    query.CustomDetailFooter,
+		CustomDetailFooterCSS: query.CustomDetailFooterCSS,
+		CustomListFooter:      query.CustomListFooter,
+		CustomListFooterCSS:   query.CustomListFooterCSS,
+		CustomHoverCard:       query.CustomHoverCard,
+		CustomHoverCardCSS:    query.CustomHoverCardCSS,
+		CustomPreview:         query.CustomPreview,
+		CustomPreviewCSS:      query.CustomPreviewCSS,
+		CustomLightbox:        query.CustomLightbox,
+		CustomLightboxCSS:     query.CustomLightboxCSS,
+		CustomCell:            query.CustomCell,
+		CustomCellCSS:         query.CustomCellCSS,
+		CustomMRQLResult:      query.CustomMRQLResult,
+		CustomMRQLResultCSS:   query.CustomMRQLResultCSS,
+		CustomCSS:             query.CustomCSS,
+		MetaSchema:            query.MetaSchema,
+		MetadataIndexes:       metadataIndexesValue(query.MetadataIndexes),
+		AutoDetectRules:       query.AutoDetectRules,
 	}
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
@@ -131,17 +143,29 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	}
 	resourceCategory.Description = query.Description
 	resourceCategory.CustomHeader = query.CustomHeader
+	resourceCategory.CustomHeaderCSS = query.CustomHeaderCSS
 	resourceCategory.CustomSidebar = query.CustomSidebar
+	resourceCategory.CustomSidebarCSS = query.CustomSidebarCSS
 	resourceCategory.CustomSummary = query.CustomSummary
+	resourceCategory.CustomSummaryCSS = query.CustomSummaryCSS
 	resourceCategory.CustomAvatar = query.CustomAvatar
+	resourceCategory.CustomAvatarCSS = query.CustomAvatarCSS
 	resourceCategory.CustomListHeader = query.CustomListHeader
+	resourceCategory.CustomListHeaderCSS = query.CustomListHeaderCSS
 	resourceCategory.CustomDetailFooter = query.CustomDetailFooter
+	resourceCategory.CustomDetailFooterCSS = query.CustomDetailFooterCSS
 	resourceCategory.CustomListFooter = query.CustomListFooter
+	resourceCategory.CustomListFooterCSS = query.CustomListFooterCSS
 	resourceCategory.CustomHoverCard = query.CustomHoverCard
+	resourceCategory.CustomHoverCardCSS = query.CustomHoverCardCSS
 	resourceCategory.CustomPreview = query.CustomPreview
+	resourceCategory.CustomPreviewCSS = query.CustomPreviewCSS
 	resourceCategory.CustomLightbox = query.CustomLightbox
+	resourceCategory.CustomLightboxCSS = query.CustomLightboxCSS
 	resourceCategory.CustomCell = query.CustomCell
+	resourceCategory.CustomCellCSS = query.CustomCellCSS
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
+	resourceCategory.CustomMRQLResultCSS = query.CustomMRQLResultCSS
 	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema
 	if query.MetadataIndexes != nil {

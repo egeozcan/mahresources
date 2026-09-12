@@ -75,7 +75,7 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 		lines = append(lines, "- "+slot+": "+slotRoleLine(slot, in.EntityType))
 	}
 	lines = append(lines,
-		"CustomCSS is CSS (no <style> wrapper); the other slots are HTML with shortcodes. Style them cohesively — use the same CSS class names in the HTML slots and CustomCSS. If CustomCSS is not requested, use inline style attributes for all required presentation rules instead; do not return extra slots.",
+		"Every slot ending in CSS is a stylesheet (no <style> wrapper); the other slots are HTML with shortcodes. Each HTML slot has a matching global CSS companion: for example CustomMRQLResult and CustomMRQLResultCSS. Generate or modify both together with matching, distinctive class names. Put slot-specific styles in its companion and reserve CustomCSS for shared rules. If neither the companion nor CustomCSS is requested, use inline styles; never return unrequested slots. CSS is emitted once per category, so never depend on per-item values for styling.",
 	)
 	lines = append(lines, bundleRuntimeLines(in.EntityType)...)
 	lines = append(lines,
@@ -87,6 +87,8 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 	lines = append(lines, partialLine(in.PartialNames))
 	lines = append(lines, schemaLines(in.MetaSchema)...)
 	lines = append(lines, sampleLines(in.SampleMeta)...)
+	lines = append(lines, currentContentLines(in.CurrentContent, "requested slots (JSON map)")...)
+	lines = append(lines, "Preserve existing content and styles unless the request requires changing them. Return both members of every requested HTML/CSS pair, including an empty CSS value when no styles are needed.")
 	lines = append(lines, "User request: "+userPrompt)
 	return strings.Join(lines, "\n")
 }
@@ -94,6 +96,9 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 // slotRoleLine describes where a slot renders and its constraints. Wording
 // mirrors the reference panels on the create forms.
 func slotRoleLine(slot, entityType string) string {
+	if slot != "CustomCSS" && strings.HasSuffix(slot, "CSS") {
+		return slot + " is the global CSS companion of " + strings.TrimSuffix(slot, "CSS") + ". Use distinctive template-owned selectors; no <style> wrapper. It shares the page-wide cascade with CustomCSS and other companion styles."
+	}
 	switch slot {
 	case "CustomHeader":
 		return "CustomHeader renders at the top of the entity's detail page, against the entity itself."
@@ -191,7 +196,7 @@ func bundleRuntimeLines(entityType string) []string {
 	serverOnlySlots = append(serverOnlySlots, "CustomListHeader", "CustomListFooter")
 	lines := []string{
 		"HTML slots are raw HTML processed for Mahresources shortcodes, not Pongo2 templates. Never output {{ ... }} or {% ... %} expressions.",
-		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, shared, template-owned class names, and style those names in CustomCSS when it is requested; otherwise use inline styles.",
+		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, shared, template-owned class names, and style those names in the requested companion CSS slot or CustomCSS; otherwise use inline styles.",
 		"Alpine.js directives and the outer `entity` variable work in these slots: " + strings.Join(alpineSlots, ", ") + ". They do not run in these slots: " + strings.Join(serverOnlySlots, ", ") + "; use shortcodes there.",
 		"CustomListHeader and CustomListFooter bind the category/type itself. The other HTML slots bind the current member entity.",
 		entityPropertyLine(entityType),
@@ -250,7 +255,7 @@ func resourceMediaLines() []string {
 
 func templateLayoutLines() []string {
 	return []string{
-		"Make styling concrete: every class used for presentation needs a CSS rule supplied in the requested CustomCSS slot, or equivalent inline styles in the HTML. Do not assume arbitrary class names provide layout or truncation.",
+		"Make styling concrete: every class used for presentation needs a CSS rule supplied in the requested companion CSS slot or CustomCSS, or equivalent inline styles in the HTML. Do not assume arbitrary class names provide layout or truncation.",
 		"For a single-line name that must not overflow, give its block display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap and put the full name in a title attribute. Flex/grid children and their containing card must also be allowed to shrink (min-width:0;max-width:100%); use minmax(0,1fr) for custom grid tracks. For wrapping instead of ellipsis, use white-space:normal;overflow-wrap:anywhere. Constrain thumbnails with display:block;max-width:100% and an explicit size/object-fit when needed.",
 	}
 }

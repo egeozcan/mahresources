@@ -106,3 +106,18 @@ func TestCustomCSS_SharedDedupAcrossTags(t *testing.T) {
 		t.Fatalf("expected 2 blocks (category 3 emitted once, category 4 once), got %d in %q", got, out)
 	}
 }
+
+func TestCustomCSS_CompanionsShareDedupedStylesheet(t *testing.T) {
+	group := grp(1, 2, ".shared{color:black}")
+	group.Category.CustomMRQLResultCSS = ".result{color:red}"
+	group.Category.CustomSummaryCSS = ".summary{color:blue}"
+	out := renderCustomCSS(t, `{% custom_css group %}{% custom_css group %}`, pongo2.Context{"group": group})
+	for _, rule := range []string{".shared{color:black}", ".result{color:red}", ".summary{color:blue}"} {
+		if strings.Count(out, rule) != 1 {
+			t.Errorf("expected one copy of %q in %q", rule, out)
+		}
+	}
+	if strings.Count(out, "<style ") != 1 {
+		t.Fatalf("styles were not deduplicated: %s", out)
+	}
+}

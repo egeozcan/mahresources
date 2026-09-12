@@ -228,16 +228,14 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 			continue
 		}
 		content = strings.TrimSpace(content)
-		if content == "" {
-			continue
-		}
+		// An explicitly empty slot clears its editor; an absent key leaves it unspecified.
 		if len(content) > MaxTemplateGeneratedContentLength {
 			content = content[:MaxTemplateGeneratedContentLength]
 		}
 		result.Slots[slotName] = content
 		// One input covers every slot of a bundle, so its Mode says nothing
-		// about the slot in hand: only CustomCSS is a stylesheet here.
-		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content, slotName == "CustomCSS")...)
+		// about the slot in hand: CustomCSS and its companions are stylesheets.
+		result.Issues = append(result.Issues, validateTemplateContent(TemplateTargetSlot, in, content, strings.HasSuffix(slotName, "CSS"))...)
 	}
 	if len(result.Slots) == 0 {
 		return nil, fmt.Errorf("%w: provider returned no recognized slots", ErrTemplateGenerationProvider)
@@ -263,7 +261,7 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 // markup, the safe reading.
 func singleSlotIsCSS(in TemplateGenerationInput) bool {
 	if in.Slot != "" {
-		return in.Slot == "CustomCSS"
+		return strings.HasSuffix(in.Slot, "CSS")
 	}
 	return strings.EqualFold(in.Mode, "css")
 }

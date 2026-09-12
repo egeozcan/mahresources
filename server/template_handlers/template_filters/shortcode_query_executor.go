@@ -256,7 +256,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 		if r.ResourceCategory != nil {
 			item.MetaSchema = r.ResourceCategory.MetaSchema
 			item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
-			item.CustomCSS = r.ResourceCategory.CustomCSS
+			item.CustomCSS = r.ResourceCategory.TemplateCSS()
 			item.CategoryID = r.ResourceCategory.ID
 		}
 		item.ScopeGroupID, item.ParentGroupID, item.RootGroupID = sentinel, sentinel, sentinel
@@ -282,7 +282,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 		if n.NoteType != nil {
 			item.MetaSchema = n.NoteType.MetaSchema
 			item.CustomMRQLResult = n.NoteType.CustomMRQLResult
-			item.CustomCSS = n.NoteType.CustomCSS
+			item.CustomCSS = n.NoteType.TemplateCSS()
 			item.CategoryID = n.NoteType.ID
 		}
 		item.ScopeGroupID, item.ParentGroupID, item.RootGroupID = sentinel, sentinel, sentinel
@@ -308,7 +308,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 		if g.Category != nil {
 			item.MetaSchema = g.Category.MetaSchema
 			item.CustomMRQLResult = g.Category.CustomMRQLResult
-			item.CustomCSS = g.Category.CustomCSS
+			item.CustomCSS = g.Category.TemplateCSS()
 			item.CategoryID = g.Category.ID
 		}
 		if g.OwnerId != nil && *g.OwnerId > 0 {

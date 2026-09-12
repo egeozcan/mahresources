@@ -41,7 +41,13 @@ func templateGenerateBundleSlots(entityType string) []string {
 	extra := templateGenerateCarrierSlots[entityType]
 	slots := make([]string, 0, len(templateGenerateSharedSlots)+len(extra))
 	slots = append(slots, templateGenerateSharedSlots...)
-	return append(slots, extra...)
+	slots = append(slots, extra...)
+	for _, slot := range append([]string(nil), slots...) {
+		if !strings.HasSuffix(slot, "CSS") {
+			slots = append(slots, slot+"CSS")
+		}
+	}
+	return slots
 }
 
 // templateGenerateSlotAllowed reports whether a single-slot generation may
@@ -101,7 +107,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			target = application_context.TemplateTargetSlot
 		}
 		switch target {
-		case application_context.TemplateTargetSlot:
+		case application_context.TemplateTargetSlot, "cluster":
 			if !templateGenerateSlotAllowed(entityType, req.Slot) {
 				http_utils.HandleError(errors.New("unknown template slot"), writer, request, http.StatusBadRequest)
 				return
@@ -144,6 +150,15 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			PartialNames:   templatePartialNames(ctx),
 			Known:          buildKnownShortcodes(ctx),
 			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
+		}
+		if target == "cluster" {
+			base := strings.TrimSuffix(req.Slot, "CSS")
+			if !templateGenerateSlotAllowed(entityType, base) || !templateGenerateSlotAllowed(entityType, base+"CSS") {
+				http_utils.HandleError(errors.New("slot has no CSS companion"), writer, request, http.StatusBadRequest)
+				return
+			}
+			input.Target = application_context.TemplateTargetBundle
+			input.BundleSlots = []string{base, base + "CSS"}
 		}
 		if target == application_context.TemplateTargetBundle {
 			input.BundleSlots = templateGenerateBundleSlots(entityType)

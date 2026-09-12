@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mahresources/auth"
 	"net/http"
+	"strings"
 
 	"mahresources/constants"
 	"mahresources/mrql"
@@ -138,7 +139,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// than adding to them, so reading markup as CSS silently drops the raw=
 		// "becomes real elements on the page" warning, which is the XSS one.
 		// Markup is the safe reading and was the endpoint's only one.
-		contentIsCSS := req.Slot == "CustomCSS"
+		contentIsCSS := strings.HasSuffix(req.Slot, "CSS")
 		lintOpts.CSSMode = contentIsCSS
 		issues := shortcodes.Lint(req.Content, lintOpts)
 

@@ -27,14 +27,23 @@ type customSlotFlag struct {
 // customSlotOrder mirrors the order the slots appear on the edit forms.
 var sharedCustomSlots = []customSlotFlag{
 	{"custom-header", "CustomHeader", "Rendered at the top of the {member} detail page"},
+	{"custom-header-css", "CustomHeaderCSS", "Global CSS for CustomHeader"},
 	{"custom-detail-footer", "CustomDetailFooter", "Rendered at the bottom of the {member} detail page, below every built-in section"},
+	{"custom-detail-footer-css", "CustomDetailFooterCSS", "Global CSS for CustomDetailFooter"},
 	{"custom-sidebar", "CustomSidebar", "Rendered in the {member} detail page sidebar"},
+	{"custom-sidebar-css", "CustomSidebarCSS", "Global CSS for CustomSidebar"},
 	{"custom-summary", "CustomSummary", "Rendered on {member} cards in list views, below the title"},
+	{"custom-summary-css", "CustomSummaryCSS", "Global CSS for CustomSummary"},
 	{"custom-avatar", "CustomAvatar", "Replaces the default avatar on {member} cards"},
+	{"custom-avatar-css", "CustomAvatarCSS", "Global CSS for CustomAvatar"},
 	{"custom-hover-card", "CustomHoverCard", "Rendered in the hover card for a {member} link; falls back to --custom-summary when unset"},
+	{"custom-hover-card-css", "CustomHoverCardCSS", "Global CSS for CustomHoverCard"},
 	{"custom-list-header", "CustomListHeader", "Rendered above {member} list pages filtered to exactly this {carrier}, against the {carrier} itself"},
+	{"custom-list-header-css", "CustomListHeaderCSS", "Global CSS for CustomListHeader"},
 	{"custom-list-footer", "CustomListFooter", "Rendered below {member} list pages filtered to exactly this {carrier}, against the {carrier} itself"},
+	{"custom-list-footer-css", "CustomListFooterCSS", "Global CSS for CustomListFooter"},
 	{"custom-mrql-result", "CustomMRQLResult", "Template for rendering {member}s of this {carrier} in MRQL results"},
+	{"custom-mrql-result-css", "CustomMRQLResultCSS", "Global CSS for CustomMRQLResult"},
 	{"custom-css", "CustomCSS", "CSS injected as a <style> block on the {member} detail page and its list pages"},
 }
 
@@ -43,11 +52,15 @@ var sharedCustomSlots = []customSlotFlag{
 var carrierOnlyCustomSlots = map[string][]customSlotFlag{
 	"group": {
 		{"custom-own-entities", "CustomOwnEntities", "Replaces the body of the group detail page's Own Entities section"},
+		{"custom-own-entities-css", "CustomOwnEntitiesCSS", "Global CSS for CustomOwnEntities"},
 	},
 	"resource": {
 		{"custom-preview", "CustomPreview", "Rendered above the built-in preview image, for file types it cannot show"},
+		{"custom-preview-css", "CustomPreviewCSS", "Global CSS for CustomPreview"},
 		{"custom-lightbox", "CustomLightbox", "Rendered in the lightbox details panel; falls back to --custom-sidebar when unset"},
+		{"custom-lightbox-css", "CustomLightboxCSS", "Global CSS for CustomLightbox"},
 		{"custom-cell", "CustomCell", "Rendered as one extra cell per row in the resources details table"},
+		{"custom-cell-css", "CustomCellCSS", "Global CSS for CustomCell"},
 	},
 	"note": nil,
 }

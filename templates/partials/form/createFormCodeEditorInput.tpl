@@ -34,7 +34,7 @@
                         class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap">
                     <span x-text="generating ? 'Generating…' : 'Generate'"></span>
                 </button>
-                <template x-if="generatedContent && generatedValid === false">
+                <template x-if="(generatedContent || generatedSlots) && (!generatedValid || generationStatus === 'Generated content is ready.')">
                     <button type="button"
                             @click="applyGenerated()"
                             data-testid="generate-apply-{{ name }}"

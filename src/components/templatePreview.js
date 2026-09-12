@@ -11,22 +11,35 @@ import * as userSettings from '../userSettings.js';
 // field is not on the other two models and offering it would preview nothing.
 const SLOTS = [
   { name: 'CustomHeader', label: 'Header' },
+  { name: 'CustomHeaderCSS', label: 'Header CSS' },
   { name: 'CustomDetailFooter', label: 'Detail Footer' },
+  { name: 'CustomDetailFooterCSS', label: 'Detail Footer CSS' },
   { name: 'CustomSidebar', label: 'Sidebar' },
+  { name: 'CustomSidebarCSS', label: 'Sidebar CSS' },
   { name: 'CustomPreview', label: 'Preview', only: 'resource' },
+  { name: 'CustomPreviewCSS', label: 'Preview CSS', only: 'resource' },
   { name: 'CustomLightbox', label: 'Lightbox', only: 'resource' },
+  { name: 'CustomLightboxCSS', label: 'Lightbox CSS', only: 'resource' },
   { name: 'CustomSummary', label: 'Summary' },
+  { name: 'CustomSummaryCSS', label: 'Summary CSS' },
   { name: 'CustomAvatar', label: 'Avatar' },
+  { name: 'CustomAvatarCSS', label: 'Avatar CSS' },
   { name: 'CustomHoverCard', label: 'Hover Card' },
+  { name: 'CustomHoverCardCSS', label: 'Hover Card CSS' },
   { name: 'CustomCell', label: 'Table Cell', only: 'resource' },
+  { name: 'CustomCellCSS', label: 'Table Cell CSS', only: 'resource' },
   { name: 'CustomOwnEntities', label: 'Own Entities', only: 'group' },
+  { name: 'CustomOwnEntitiesCSS', label: 'Own Entities CSS', only: 'group' },
   { name: 'CustomListHeader', label: 'List Header' },
+  { name: 'CustomListHeaderCSS', label: 'List Header CSS' },
   { name: 'CustomListFooter', label: 'List Footer' },
+  { name: 'CustomListFooterCSS', label: 'List Footer CSS' },
   { name: 'CustomMRQLResult', label: 'MRQL Result' },
+  { name: 'CustomMRQLResultCSS', label: 'MRQL Result CSS' },
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
-// The one slot whose buffer is a stylesheet rather than markup. Production has
+// CSS slots hold stylesheets rather than markup. Production has
 // three sinks for it and every one of them renders it as stylesheet content and
 // nothing else: the {% custom_css %} tag on detail and list pages
 // (server/template_handlers/template_filters/custom_css_tag.go), the per-card
@@ -153,7 +166,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       if (this._form) {
         this._form.addEventListener('template-slot-changed', (e) => {
           const changed = e.detail && e.detail.name;
-          if (changed === this.slot || changed === CSS_SLOT) {
+          if (changed === this.slot || changed?.endsWith('CSS')) {
             this._scheduleRefresh();
           }
         });
@@ -205,7 +218,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // isCarrierSlot reports whether the selected slot renders against the
     // category/type itself (carrier mode) rather than a member entity.
     isCarrierSlot() {
-      return CARRIER_SLOTS.has(this.slot);
+      return CARRIER_SLOTS.has(this.slot.replace(/CSS$/, ''));
     },
 
     // isCSSSlot reports whether the selected buffer is a stylesheet. It reaches
@@ -214,7 +227,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // while it is selected and the pane says why rather than leaving an
     // unexplained void.
     isCSSSlot() {
-      return this.slot === CSS_SLOT;
+      return this.slot.endsWith('CSS');
     },
 
     hasErrors() {
@@ -354,14 +367,16 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       this.loading = true;
       this.error = '';
       const content = this._readSlot(this.slot);
-      const css = this._readSlot(CSS_SLOT);
+      // Match TemplateCSS's production cascade: shared styles, then companion styles.
+      const cssFields = [CSS_SLOT, ...this.slots.filter((s) => s.name !== CSS_SLOT && s.name.endsWith('CSS')).map((s) => s.name)];
+      const css = cssFields.map((name) => this._readSlot(name)).filter(Boolean).join('\n');
       try {
         // The slot names which buffer `content` is. With CustomCSS selected it
         // is a stylesheet, which carries no <style> wrapper to say so, and the
         // server has to be told or its issue list stays silent where the editor
         // gutter warns.
         const slot = this.slot;
-        const cssSlot = slot === CSS_SLOT;
+        const cssSlot = slot.endsWith('CSS');
         const body = carrier
           ? { carrier: true, slot, content, css, categoryId: Number(this.categoryId) }
           : {

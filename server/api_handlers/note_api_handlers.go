@@ -267,32 +267,59 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					if _, sent := raw["CustomHeader"]; !sent {
 						editor.CustomHeader = existing.CustomHeader
 					}
+					if _, sent := raw["CustomHeaderCSS"]; !sent {
+						editor.CustomHeaderCSS = existing.CustomHeaderCSS
+					}
 					if _, sent := raw["CustomSidebar"]; !sent {
 						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if _, sent := raw["CustomSidebarCSS"]; !sent {
+						editor.CustomSidebarCSS = existing.CustomSidebarCSS
 					}
 					if _, sent := raw["CustomSummary"]; !sent {
 						editor.CustomSummary = existing.CustomSummary
 					}
+					if _, sent := raw["CustomSummaryCSS"]; !sent {
+						editor.CustomSummaryCSS = existing.CustomSummaryCSS
+					}
 					if _, sent := raw["CustomAvatar"]; !sent {
 						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if _, sent := raw["CustomAvatarCSS"]; !sent {
+						editor.CustomAvatarCSS = existing.CustomAvatarCSS
 					}
 					if _, sent := raw["CustomListHeader"]; !sent {
 						editor.CustomListHeader = existing.CustomListHeader
 					}
+					if _, sent := raw["CustomListHeaderCSS"]; !sent {
+						editor.CustomListHeaderCSS = existing.CustomListHeaderCSS
+					}
 					if _, sent := raw["CustomDetailFooter"]; !sent {
 						editor.CustomDetailFooter = existing.CustomDetailFooter
+					}
+					if _, sent := raw["CustomDetailFooterCSS"]; !sent {
+						editor.CustomDetailFooterCSS = existing.CustomDetailFooterCSS
 					}
 					if _, sent := raw["CustomListFooter"]; !sent {
 						editor.CustomListFooter = existing.CustomListFooter
 					}
+					if _, sent := raw["CustomListFooterCSS"]; !sent {
+						editor.CustomListFooterCSS = existing.CustomListFooterCSS
+					}
 					if _, sent := raw["CustomHoverCard"]; !sent {
 						editor.CustomHoverCard = existing.CustomHoverCard
+					}
+					if _, sent := raw["CustomHoverCardCSS"]; !sent {
+						editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 					}
 					if _, sent := raw["ApplyTemplatesToShares"]; !sent {
 						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
 					}
 					if _, sent := raw["CustomMRQLResult"]; !sent {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
+					}
+					if _, sent := raw["CustomMRQLResultCSS"]; !sent {
+						editor.CustomMRQLResultCSS = existing.CustomMRQLResultCSS
 					}
 					if _, sent := raw["CustomCSS"]; !sent {
 						editor.CustomCSS = existing.CustomCSS
@@ -321,26 +348,50 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					if editor.CustomHeader == "" && !formHasField(request, "CustomHeader") {
 						editor.CustomHeader = existing.CustomHeader
 					}
+					if editor.CustomHeaderCSS == "" && !formHasField(request, "CustomHeaderCSS") {
+						editor.CustomHeaderCSS = existing.CustomHeaderCSS
+					}
 					if editor.CustomSidebar == "" && !formHasField(request, "CustomSidebar") {
 						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if editor.CustomSidebarCSS == "" && !formHasField(request, "CustomSidebarCSS") {
+						editor.CustomSidebarCSS = existing.CustomSidebarCSS
 					}
 					if editor.CustomSummary == "" && !formHasField(request, "CustomSummary") {
 						editor.CustomSummary = existing.CustomSummary
 					}
+					if editor.CustomSummaryCSS == "" && !formHasField(request, "CustomSummaryCSS") {
+						editor.CustomSummaryCSS = existing.CustomSummaryCSS
+					}
 					if editor.CustomAvatar == "" && !formHasField(request, "CustomAvatar") {
 						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if editor.CustomAvatarCSS == "" && !formHasField(request, "CustomAvatarCSS") {
+						editor.CustomAvatarCSS = existing.CustomAvatarCSS
 					}
 					if editor.CustomListHeader == "" && !formHasField(request, "CustomListHeader") {
 						editor.CustomListHeader = existing.CustomListHeader
 					}
+					if editor.CustomListHeaderCSS == "" && !formHasField(request, "CustomListHeaderCSS") {
+						editor.CustomListHeaderCSS = existing.CustomListHeaderCSS
+					}
 					if editor.CustomDetailFooter == "" && !formHasField(request, "CustomDetailFooter") {
 						editor.CustomDetailFooter = existing.CustomDetailFooter
+					}
+					if editor.CustomDetailFooterCSS == "" && !formHasField(request, "CustomDetailFooterCSS") {
+						editor.CustomDetailFooterCSS = existing.CustomDetailFooterCSS
 					}
 					if editor.CustomListFooter == "" && !formHasField(request, "CustomListFooter") {
 						editor.CustomListFooter = existing.CustomListFooter
 					}
+					if editor.CustomListFooterCSS == "" && !formHasField(request, "CustomListFooterCSS") {
+						editor.CustomListFooterCSS = existing.CustomListFooterCSS
+					}
 					if editor.CustomHoverCard == "" && !formHasField(request, "CustomHoverCard") {
 						editor.CustomHoverCard = existing.CustomHoverCard
+					}
+					if editor.CustomHoverCardCSS == "" && !formHasField(request, "CustomHoverCardCSS") {
+						editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 					}
 					// ApplyTemplatesToShares is a bool, so absence can't be detected by
 					// a zero-value check (unchecked and omitted both decode to false).
@@ -352,6 +403,9 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					}
 					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
+					}
+					if editor.CustomMRQLResultCSS == "" && !formHasField(request, "CustomMRQLResultCSS") {
+						editor.CustomMRQLResultCSS = existing.CustomMRQLResultCSS
 					}
 					if editor.CustomCSS == "" && !formHasField(request, "CustomCSS") {
 						editor.CustomCSS = existing.CustomCSS

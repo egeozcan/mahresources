@@ -284,29 +284,39 @@ type SeriesPayload struct {
 // CategoryDef / NoteTypeDef / ResourceCategoryDef share the same shape — all
 // the Custom HTML fields plus MetaSchema and SectionConfig.
 type CategoryDef struct {
-	ExportID         string `json:"export_id"`
-	SourceID         uint   `json:"source_id"`
-	GUID             string `json:"guid,omitempty"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	CustomHeader     string `json:"custom_header"`
-	CustomSidebar    string `json:"custom_sidebar"`
-	CustomSummary    string `json:"custom_summary"`
-	CustomAvatar     string `json:"custom_avatar"`
-	CustomListHeader string `json:"custom_list_header,omitempty"`
+	ExportID            string `json:"export_id"`
+	SourceID            uint   `json:"source_id"`
+	GUID                string `json:"guid,omitempty"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	CustomHeader        string `json:"custom_header"`
+	CustomHeaderCSS     string `json:"custom_header_css"`
+	CustomSidebar       string `json:"custom_sidebar"`
+	CustomSidebarCSS    string `json:"custom_sidebar_css"`
+	CustomSummary       string `json:"custom_summary"`
+	CustomSummaryCSS    string `json:"custom_summary_css"`
+	CustomAvatar        string `json:"custom_avatar"`
+	CustomAvatarCSS     string `json:"custom_avatar_css"`
+	CustomListHeader    string `json:"custom_list_header,omitempty"`
+	CustomListHeaderCSS string `json:"custom_list_header_css,omitempty"`
 	// The slots below are additive (schema_version stays 1): omitempty keeps them
 	// out of archives that do not use them, and older readers ignore unknown keys.
 	// CustomOwnEntities is group-category-only; NoteTypeDef and ResourceCategoryDef
 	// embed this struct and never set it, so omitempty keeps it out of their JSON.
-	CustomDetailFooter string         `json:"custom_detail_footer,omitempty"`
-	CustomListFooter   string         `json:"custom_list_footer,omitempty"`
-	CustomHoverCard    string         `json:"custom_hover_card,omitempty"`
-	CustomOwnEntities  string         `json:"custom_own_entities,omitempty"`
-	CustomMRQLResult   string         `json:"custom_mrql_result"`
-	CustomCSS          string         `json:"custom_css"`
-	MetaSchema         string         `json:"meta_schema"`
-	MetadataIndexes    string         `json:"metadata_indexes,omitempty"`
-	SectionConfig      map[string]any `json:"section_config"`
+	CustomDetailFooter    string         `json:"custom_detail_footer,omitempty"`
+	CustomDetailFooterCSS string         `json:"custom_detail_footer_css,omitempty"`
+	CustomListFooter      string         `json:"custom_list_footer,omitempty"`
+	CustomListFooterCSS   string         `json:"custom_list_footer_css,omitempty"`
+	CustomHoverCard       string         `json:"custom_hover_card,omitempty"`
+	CustomHoverCardCSS    string         `json:"custom_hover_card_css,omitempty"`
+	CustomOwnEntities     string         `json:"custom_own_entities,omitempty"`
+	CustomOwnEntitiesCSS  string         `json:"custom_own_entities_css,omitempty"`
+	CustomMRQLResult      string         `json:"custom_mrql_result"`
+	CustomMRQLResultCSS   string         `json:"custom_mrql_result_css"`
+	CustomCSS             string         `json:"custom_css"`
+	MetaSchema            string         `json:"meta_schema"`
+	MetadataIndexes       string         `json:"metadata_indexes,omitempty"`
+	SectionConfig         map[string]any `json:"section_config"`
 }
 
 // NoteTypeDef is CategoryDef plus the note-type-only ApplyTemplatesToShares
@@ -323,9 +333,12 @@ type ResourceCategoryDef struct {
 	CategoryDef
 	AutoDetectRules string `json:"auto_detect_rules"`
 	// Resource-only slots; additive, same rules as the CategoryDef additions.
-	CustomPreview  string `json:"custom_preview,omitempty"`
-	CustomLightbox string `json:"custom_lightbox,omitempty"`
-	CustomCell     string `json:"custom_cell,omitempty"`
+	CustomPreview     string `json:"custom_preview,omitempty"`
+	CustomPreviewCSS  string `json:"custom_preview_css,omitempty"`
+	CustomLightbox    string `json:"custom_lightbox,omitempty"`
+	CustomLightboxCSS string `json:"custom_lightbox_css,omitempty"`
+	CustomCell        string `json:"custom_cell,omitempty"`
+	CustomCellCSS     string `json:"custom_cell_css,omitempty"`
 }
 
 type TagDef struct {

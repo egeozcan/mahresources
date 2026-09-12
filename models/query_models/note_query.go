@@ -48,15 +48,24 @@ type NoteTypeEditor struct {
 	Name                   string
 	Description            string
 	CustomHeader           string
+	CustomHeaderCSS        string
 	CustomSidebar          string
+	CustomSidebarCSS       string
 	CustomSummary          string
+	CustomSummaryCSS       string
 	CustomAvatar           string
+	CustomAvatarCSS        string
 	CustomListHeader       string
+	CustomListHeaderCSS    string
 	CustomDetailFooter     string
+	CustomDetailFooterCSS  string
 	CustomListFooter       string
+	CustomListFooterCSS    string
 	CustomHoverCard        string
+	CustomHoverCardCSS     string
 	ApplyTemplatesToShares bool
 	CustomMRQLResult       string
+	CustomMRQLResultCSS    string
 	CustomCSS              string
 	MetaSchema             string
 	MetadataIndexes        *string

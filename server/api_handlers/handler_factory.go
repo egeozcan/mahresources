@@ -369,32 +369,62 @@ func CreateCategoryHandler(ctx contracts.CategoryCRUDReader) http.HandlerFunc {
 				if !fieldWasSent("CustomHeader") {
 					editor.CustomHeader = existing.CustomHeader
 				}
+				if !fieldWasSent("CustomHeaderCSS") {
+					editor.CustomHeaderCSS = existing.CustomHeaderCSS
+				}
 				if !fieldWasSent("CustomSidebar") {
 					editor.CustomSidebar = existing.CustomSidebar
+				}
+				if !fieldWasSent("CustomSidebarCSS") {
+					editor.CustomSidebarCSS = existing.CustomSidebarCSS
 				}
 				if !fieldWasSent("CustomSummary") {
 					editor.CustomSummary = existing.CustomSummary
 				}
+				if !fieldWasSent("CustomSummaryCSS") {
+					editor.CustomSummaryCSS = existing.CustomSummaryCSS
+				}
 				if !fieldWasSent("CustomAvatar") {
 					editor.CustomAvatar = existing.CustomAvatar
+				}
+				if !fieldWasSent("CustomAvatarCSS") {
+					editor.CustomAvatarCSS = existing.CustomAvatarCSS
 				}
 				if !fieldWasSent("CustomListHeader") {
 					editor.CustomListHeader = existing.CustomListHeader
 				}
+				if !fieldWasSent("CustomListHeaderCSS") {
+					editor.CustomListHeaderCSS = existing.CustomListHeaderCSS
+				}
 				if !fieldWasSent("CustomDetailFooter") {
 					editor.CustomDetailFooter = existing.CustomDetailFooter
+				}
+				if !fieldWasSent("CustomDetailFooterCSS") {
+					editor.CustomDetailFooterCSS = existing.CustomDetailFooterCSS
 				}
 				if !fieldWasSent("CustomListFooter") {
 					editor.CustomListFooter = existing.CustomListFooter
 				}
+				if !fieldWasSent("CustomListFooterCSS") {
+					editor.CustomListFooterCSS = existing.CustomListFooterCSS
+				}
 				if !fieldWasSent("CustomHoverCard") {
 					editor.CustomHoverCard = existing.CustomHoverCard
+				}
+				if !fieldWasSent("CustomHoverCardCSS") {
+					editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 				}
 				if !fieldWasSent("CustomOwnEntities") {
 					editor.CustomOwnEntities = existing.CustomOwnEntities
 				}
+				if !fieldWasSent("CustomOwnEntitiesCSS") {
+					editor.CustomOwnEntitiesCSS = existing.CustomOwnEntitiesCSS
+				}
 				if !fieldWasSent("CustomMRQLResult") {
 					editor.CustomMRQLResult = existing.CustomMRQLResult
+				}
+				if !fieldWasSent("CustomMRQLResultCSS") {
+					editor.CustomMRQLResultCSS = existing.CustomMRQLResultCSS
 				}
 				if !fieldWasSent("CustomCSS") {
 					editor.CustomCSS = existing.CustomCSS
@@ -490,38 +520,74 @@ func CreateResourceCategoryHandler(writer contracts.ResourceCategoryWriter) http
 				if !fieldWasSent("CustomHeader") {
 					editor.CustomHeader = existing.CustomHeader
 				}
+				if !fieldWasSent("CustomHeaderCSS") {
+					editor.CustomHeaderCSS = existing.CustomHeaderCSS
+				}
 				if !fieldWasSent("CustomSidebar") {
 					editor.CustomSidebar = existing.CustomSidebar
+				}
+				if !fieldWasSent("CustomSidebarCSS") {
+					editor.CustomSidebarCSS = existing.CustomSidebarCSS
 				}
 				if !fieldWasSent("CustomSummary") {
 					editor.CustomSummary = existing.CustomSummary
 				}
+				if !fieldWasSent("CustomSummaryCSS") {
+					editor.CustomSummaryCSS = existing.CustomSummaryCSS
+				}
 				if !fieldWasSent("CustomAvatar") {
 					editor.CustomAvatar = existing.CustomAvatar
+				}
+				if !fieldWasSent("CustomAvatarCSS") {
+					editor.CustomAvatarCSS = existing.CustomAvatarCSS
 				}
 				if !fieldWasSent("CustomListHeader") {
 					editor.CustomListHeader = existing.CustomListHeader
 				}
+				if !fieldWasSent("CustomListHeaderCSS") {
+					editor.CustomListHeaderCSS = existing.CustomListHeaderCSS
+				}
 				if !fieldWasSent("CustomDetailFooter") {
 					editor.CustomDetailFooter = existing.CustomDetailFooter
+				}
+				if !fieldWasSent("CustomDetailFooterCSS") {
+					editor.CustomDetailFooterCSS = existing.CustomDetailFooterCSS
 				}
 				if !fieldWasSent("CustomListFooter") {
 					editor.CustomListFooter = existing.CustomListFooter
 				}
+				if !fieldWasSent("CustomListFooterCSS") {
+					editor.CustomListFooterCSS = existing.CustomListFooterCSS
+				}
 				if !fieldWasSent("CustomHoverCard") {
 					editor.CustomHoverCard = existing.CustomHoverCard
+				}
+				if !fieldWasSent("CustomHoverCardCSS") {
+					editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 				}
 				if !fieldWasSent("CustomPreview") {
 					editor.CustomPreview = existing.CustomPreview
 				}
+				if !fieldWasSent("CustomPreviewCSS") {
+					editor.CustomPreviewCSS = existing.CustomPreviewCSS
+				}
 				if !fieldWasSent("CustomLightbox") {
 					editor.CustomLightbox = existing.CustomLightbox
+				}
+				if !fieldWasSent("CustomLightboxCSS") {
+					editor.CustomLightboxCSS = existing.CustomLightboxCSS
 				}
 				if !fieldWasSent("CustomCell") {
 					editor.CustomCell = existing.CustomCell
 				}
+				if !fieldWasSent("CustomCellCSS") {
+					editor.CustomCellCSS = existing.CustomCellCSS
+				}
 				if !fieldWasSent("CustomMRQLResult") {
 					editor.CustomMRQLResult = existing.CustomMRQLResult
+				}
+				if !fieldWasSent("CustomMRQLResultCSS") {
+					editor.CustomMRQLResultCSS = existing.CustomMRQLResultCSS
 				}
 				if !fieldWasSent("CustomCSS") {
 					editor.CustomCSS = existing.CustomCSS

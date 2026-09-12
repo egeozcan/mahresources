@@ -425,3 +425,23 @@ describe('template preview startup', () => {
         expect((stored.templatePreview as { entityId: number }).entityId).toBe(42);
     });
 });
+
+// Equal-specificity companion rules must override shared rules exactly as on saved pages.
+describe('companion CSS cascade', () => {
+    afterEach(() => vi.unstubAllGlobals());
+    test.each(['group', 'resource', 'note'])('shared CSS comes first for %s', async (entityType) => {
+        const fetchMock = stubFetch();
+        const component = templatePreview({ entityType, previewPath: '/preview', categoryId: 7 });
+        component._form = formWith({
+            CustomHeader: '<p class="card">Card</p>',
+            CustomCSS: '.card{color:red}',
+            CustomHeaderCSS: '.card{color:green}',
+            CustomMRQLResultCSS: '.card{color:blue}',
+        });
+        component.$refs = {};
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+        await component.refresh();
+        expect(sentBody(fetchMock).css).toBe('.card{color:red}\n.card{color:green}\n.card{color:blue}');
+    });
+});

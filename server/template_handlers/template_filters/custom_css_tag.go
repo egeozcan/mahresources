@@ -149,7 +149,11 @@ func customCSSForEntity(entity any) (entityType string, catID uint, css string, 
 	if !idField.IsValid() || idField.Kind() != reflect.Uint {
 		return
 	}
-	return entityType, uint(idField.Uint()), cssField.String(), true
+	css = cssField.String()
+	if carrier, hasCompanions := catField.Interface().(interface{ TemplateCSS() string }); hasCompanions {
+		css = carrier.TemplateCSS()
+	}
+	return entityType, uint(idField.Uint()), css, true
 }
 
 // customCSSReqCtx mirrors process_shortcodes: reuse the per-render MRQL-cache-wrapped request

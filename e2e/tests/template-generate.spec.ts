@@ -16,8 +16,8 @@ test.describe('Template section generation', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          target: 'slot',
-          content: '<h1>[property path="Name"]</h1>',
+          target: 'bundle',
+          slots: { CustomHeader: '<h1>[property path="Name"]</h1>', CustomHeaderCSS: 'h1{color:red}' },
           explanation: 'Shows the name.',
           valid: true,
         }),
@@ -37,9 +37,10 @@ test.describe('Template section generation', () => {
       { timeout: 10000 },
     );
     await expect(page.getByTestId('generate-status-CustomHeader')).toContainText('applied');
+    await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:red}');
 
     // The request must carry the target + slot so the server routes correctly.
-    expect(seenBody).toMatchObject({ target: 'slot', slot: 'CustomHeader', prompt: 'a header with the name' });
+    expect(seenBody).toMatchObject({ target: 'cluster', slot: 'CustomHeader', prompt: 'a header with the name' });
   });
 
   test('an invalid slot draft stays out of the editor until "Use anyway"', async ({ page }) => {
@@ -48,8 +49,8 @@ test.describe('Template section generation', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          target: 'slot',
-          content: '<div>[meta]</div>',
+          target: 'bundle',
+          slots: { CustomHeader: '<div>[meta]</div>', CustomHeaderCSS: '.meta{color:red}' },
           explanation: 'Broken.',
           valid: false,
           issues: [{ severity: 'error', message: '[meta] is missing required attribute "path"' }],
@@ -71,6 +72,7 @@ test.describe('Template section generation', () => {
     // Explicit opt-in applies it.
     await page.getByTestId('generate-apply-CustomHeader').click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<div>[meta]</div>');
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.meta{color:red}');
   });
 
   test('a provider error leaves the editor unchanged', async ({ page }) => {

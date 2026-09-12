@@ -864,3 +864,9 @@ A note-type detail page also loads CSS for its displayed note cards.
 A custom element with `data-morph-client-owned` keeps its client-rendered children
 during host page refreshes. Its attributes are still patched, and
 `refreshFromMorph(toElement)` can reconcile the new attributes.
+
+### Companion stylesheets
+
+Every HTML template slot has its own global CSS companion, such as `CustomMRQLResultCSS` for `CustomMRQLResult`. The editor groups each template and stylesheet together. Generate on either editor can create or modify both, using the current unsaved values as context. Whole-template generation also includes companion stylesheets.
+
+Companion styles use the same page-level rendering and category deduplication as `CustomCSS`, following shared `CustomCSS` in the cascade. Use distinctive class names: these rules are global, not automatically scoped to the paired HTML. Public note shares include only `CustomHeaderCSS` and shared `CustomCSS`, and only when template sharing is enabled. Copy, bundle export/import, archive transfer, and CLI `--custom-…-css` flags preserve companion fields.

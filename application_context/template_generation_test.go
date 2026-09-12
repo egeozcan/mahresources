@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func TestTemplateGeneratorBundlePromptDoesNotDependOnAppStyles(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Do not rely on Tailwind utility classes or app-owned CSS classes",
-		"style those names in CustomCSS",
+		"style those names in the requested companion CSS slot or CustomCSS",
 		"They do not run in these slots: CustomMRQLResult, CustomCell, CustomListHeader, CustomListFooter",
 		"data-lightbox-item",
 	} {
@@ -583,6 +584,48 @@ func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
 			// branch stands in place of this warning rather than beside it.
 			if n := countIssuesContaining(got.Issues, "becomes real elements"); n != 1 {
 				t.Fatalf("expected CustomHeader's markup XSS warning, got %d: %#v", n, got.Issues)
+			}
+		})
+	}
+}
+
+func TestTemplateGeneratorCompanionPair(t *testing.T) {
+	provider := &fakeTemplateDraftProvider{response: `{"slots":{"CustomMRQLResult":"<div class=\"recipe\">[property path=\"Name\"]</div>","CustomMRQLResultCSS":".recipe{color:red}"},"explanation":"Styles the card."}`}
+	in := slotInput()
+	in.Target = TemplateTargetBundle
+	in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS"}
+	in.CurrentContent = `{"CustomMRQLResult":"old card","CustomMRQLResultCSS":".recipe{color:blue}"}`
+	got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "make it red")
+	if err != nil || !got.Valid || got.Slots["CustomMRQLResultCSS"] != ".recipe{color:red}" {
+		t.Fatalf("result: %#v, %v", got, err)
+	}
+	for _, text := range []string{in.CurrentContent, "global CSS companion", "Generate or modify both together", "Alpine directives are unavailable"} {
+		if !strings.Contains(provider.seenUser, text) {
+			t.Errorf("prompt lacks %q", text)
+		}
+	}
+	if !singleSlotIsCSS(TemplateGenerationInput{Slot: "CustomMRQLResultCSS", Mode: "html"}) {
+		t.Fatal("CSS companion interpreted as markup")
+	}
+}
+
+func TestTemplateGeneratorPreservesExplicitEmptyCompanion(t *testing.T) {
+	for _, css := range []string{"", "   "} {
+		t.Run(fmt.Sprintf("css=%q", css), func(t *testing.T) {
+			provider := &fakeTemplateDraftProvider{response: fmt.Sprintf(`{"slots":{"CustomMRQLResult":"<p>Card</p>","CustomMRQLResultCSS":%q},"explanation":"Removed styles."}`, css)}
+			in := slotInput()
+			in.Target = TemplateTargetBundle
+			in.BundleSlots = []string{"CustomMRQLResult", "CustomMRQLResultCSS", "CustomSummary"}
+			got, err := NewTemplateGenerator(provider, templateGenConfig()).GenerateTemplate(context.Background(), in, "remove the CSS")
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, present := got.Slots["CustomMRQLResultCSS"]
+			if !got.Valid || !present || value != "" {
+				t.Fatalf("empty companion must survive: %#v", got)
+			}
+			if _, present := got.Slots["CustomSummary"]; present {
+				t.Fatal("absent slot must remain absent")
 			}
 		})
 	}

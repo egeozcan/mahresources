@@ -517,15 +517,24 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	}
 	noteType.Description = query.Description
 	noteType.CustomHeader = query.CustomHeader
+	noteType.CustomHeaderCSS = query.CustomHeaderCSS
 	noteType.CustomSidebar = query.CustomSidebar
+	noteType.CustomSidebarCSS = query.CustomSidebarCSS
 	noteType.CustomSummary = query.CustomSummary
+	noteType.CustomSummaryCSS = query.CustomSummaryCSS
 	noteType.CustomAvatar = query.CustomAvatar
+	noteType.CustomAvatarCSS = query.CustomAvatarCSS
 	noteType.CustomListHeader = query.CustomListHeader
+	noteType.CustomListHeaderCSS = query.CustomListHeaderCSS
 	noteType.CustomDetailFooter = query.CustomDetailFooter
+	noteType.CustomDetailFooterCSS = query.CustomDetailFooterCSS
 	noteType.CustomListFooter = query.CustomListFooter
+	noteType.CustomListFooterCSS = query.CustomListFooterCSS
 	noteType.CustomHoverCard = query.CustomHoverCard
+	noteType.CustomHoverCardCSS = query.CustomHoverCardCSS
 	noteType.ApplyTemplatesToShares = query.ApplyTemplatesToShares
 	noteType.CustomMRQLResult = query.CustomMRQLResult
+	noteType.CustomMRQLResultCSS = query.CustomMRQLResultCSS
 	noteType.CustomCSS = query.CustomCSS
 	noteType.MetaSchema = query.MetaSchema
 	if query.MetadataIndexes != nil {

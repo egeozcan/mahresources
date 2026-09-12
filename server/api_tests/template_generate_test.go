@@ -234,3 +234,21 @@ func TestTemplateGenerateGroundsOnSchemaAndSampleEntity(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateGenerateCluster(t *testing.T) {
+	for _, slot := range []string{"CustomMRQLResult", "CustomMRQLResultCSS"} {
+		t.Run(slot, func(t *testing.T) {
+			tc := SetupTestEnv(t)
+			fake := &fakeAPITemplateGenerator{result: slotResult()}
+			tc.AppCtx.SetTemplateGenerator(fake)
+			content := `{"CustomMRQLResult":"old","CustomMRQLResultCSS":".old{}"}`
+			resp := tc.MakeRequest(http.MethodPost, "/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": slot, "content": content, "prompt": "restyle the card"})
+			if resp.Code != http.StatusOK {
+				t.Fatalf("%d: %s", resp.Code, resp.Body.String())
+			}
+			if fake.seen.Target != application_context.TemplateTargetBundle || strings.Join(fake.seen.BundleSlots, ",") != "CustomMRQLResult,CustomMRQLResultCSS" || fake.seen.CurrentContent != content {
+				t.Fatalf("wrong generation input: %#v", fake.seen)
+			}
+		})
+	}
+}
