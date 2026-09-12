@@ -1912,6 +1912,18 @@ func registerQueryRoutes(r *openapi.Registry) {
 }
 
 func registerSearchRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/entity-picker", OperationID: "browseEntities",
+		Summary: "Browse up to 50 eligible entities with rendered identifying content", Tags: []string{"search"},
+		QueryType: reflect.TypeOf(query_models.EntityPickerQuery{}), ResponseType: reflect.TypeOf(api_handlers.EntityPickerResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/entity-picker/resolve", OperationID: "resolvePickerEntities",
+		Summary: "Revalidate up to 50 selected identities against current scope and constraints", Tags: []string{"search"},
+		QueryType: reflect.TypeOf(query_models.EntityPickerResolveQuery{}), ResponseType: reflect.TypeOf(api_handlers.EntityPickerResolveResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 	searchQueryType := reflect.TypeOf(query_models.GlobalSearchQuery{})
 	searchResponseType := reflect.TypeOf(query_models.GlobalSearchResponse{})
 

@@ -179,7 +179,10 @@ type mrqlSavedQueryRequest struct {
 
 // buildPluginRenderer creates a PluginRenderer from the app context's plugin manager.
 // Returns nil if plugins are disabled — shortcodes.Process handles nil gracefully.
-func buildPluginRenderer(appCtx MRQLAPIContext, reqCtx context.Context) shortcodes.PluginRenderer {
+func buildPluginRenderer(appCtx interface {
+	PluginManagerProvider
+	PluginAllowsScopedPrincipals(string) bool
+}, reqCtx context.Context) shortcodes.PluginRenderer {
 	// Plugin Lua runs against the unscoped DB handle, so a group-confined
 	// principal must not reach it. reqCtx descends from the request context, so
 	// the principal is available here.

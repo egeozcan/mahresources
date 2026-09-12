@@ -142,6 +142,40 @@ func deferredSignerFrom(ctx context.Context) DeferredSigner {
 // "mrql" shortcodes use the provided executor callback (left as-is if nil).
 // Plugin shortcodes (starting with "plugin:") use the provided renderer callback.
 // If renderer is nil, plugin shortcodes are left as-is.
+// ProcessResult preserves the legacy HTML while exposing execution failures.
+// Diagnostics are local to this synchronous render, including nested expansion.
+type ProcessResult struct {
+	HTML   string
+	Errors []error
+}
+
+func ProcessWithDiagnostics(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) ProcessResult {
+	result := ProcessResult{}
+	record := func(err error) {
+		if err != nil && !errors.Is(err, ErrPluginUnavailable) && len(result.Errors) < 64 {
+			result.Errors = append(result.Errors, err)
+		}
+	}
+	if renderer != nil {
+		original := renderer
+		renderer = func(name string, sc Shortcode, meta MetaShortcodeContext) (string, error) {
+			html, err := original(name, sc, meta)
+			record(err)
+			return html, err
+		}
+	}
+	if executor != nil {
+		original := executor
+		executor = func(c context.Context, query string, opts QueryOptions) (*QueryResult, error) {
+			value, err := original(c, query, opts)
+			record(err)
+			return value, err
+		}
+	}
+	result.HTML = Process(reqCtx, input, ctx, renderer, executor)
+	return result
+}
+
 func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) string {
 	return processWithDepth(reqCtx, input, ctx, renderer, executor, 0)
 }

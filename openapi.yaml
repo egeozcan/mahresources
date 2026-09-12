@@ -339,6 +339,59 @@ components:
                 ID:
                     type: integer
             type: object
+        EntityPickerQuery:
+            properties:
+                Constraints:
+                    type: string
+                Entity:
+                    type: string
+                Filter:
+                    type: string
+                Page:
+                    type: integer
+            type: object
+        EntityPickerResolveQuery:
+            properties:
+                Constraints:
+                    type: string
+                Entity:
+                    type: string
+                IDs:
+                    items:
+                        type: integer
+                    type: array
+            type: object
+        EntityPickerResolveResponse:
+            properties:
+                items:
+                    items:
+                        additionalProperties: {}
+                        type: object
+                    type: array
+            type: object
+        EntityPickerResponse:
+            properties:
+                hasNext:
+                    type: boolean
+                items:
+                    items:
+                        $ref: '#/components/schemas/EntityPickerResultPartial'
+                    type: array
+                page:
+                    type: integer
+                styles:
+                    items:
+                        $ref: '#/components/schemas/EntityPickerStylePartial'
+                    type: array
+                warnings:
+                    items:
+                        type: string
+                    type: array
+            type: object
+        EntityPickerResultPartial:
+            type: object
+        EntityPickerStylePartial:
+            type: object
         ExportEstimate:
             properties:
                 counts:
@@ -3523,6 +3576,66 @@ paths:
             summary: Retry stored downloads
             tags:
                 - downloads
+    /v1/entity-picker:
+        get:
+            operationId: browseEntities
+            parameters:
+                - in: query
+                  name: Entity
+                  schema:
+                    type: string
+                - in: query
+                  name: Filter
+                  schema:
+                    type: string
+                - in: query
+                  name: Constraints
+                  schema:
+                    type: string
+                - in: query
+                  name: Page
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EntityPickerResponse'
+                    description: Successful response
+            summary: Browse up to 50 eligible entities with rendered identifying content
+            tags:
+                - search
+    /v1/entity-picker/resolve:
+        get:
+            operationId: resolvePickerEntities
+            parameters:
+                - in: query
+                  name: Entity
+                  schema:
+                    type: string
+                - in: query
+                  name: Constraints
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: IDs
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EntityPickerResolveResponse'
+                    description: Successful response
+            summary: Revalidate up to 50 selected identities against current scope and constraints
+            tags:
+                - search
     /v1/exports/{jobId}/download:
         get:
             description: Streams the tar file produced by a completed group-export job. Returns 409 if the job isn't completed yet, 410 if the file has expired off disk, 404 if no such job.

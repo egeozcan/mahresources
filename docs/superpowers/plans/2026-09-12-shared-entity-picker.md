@@ -268,8 +268,8 @@ contracts/models. The handler context embeds `contracts.EntityPickerReader` and
 the existing render context interfaces it actually consumes. Mount it with a
 principal-bound context in `routes.go`, not a singleton passed through unchecked.
 
-- [ ] Write API red tests asserting exact envelope keys, at most 50 results, principal scoping on both routes, invalid-input 400, and inaccessible IDs omitted from resolve. Test with ordinary guest read access as well as admin.
-- [ ] Write renderer tests for all three carriers, long names/categories, HTML-escaped names, new-tab link attributes, scoped owner/tags, empty slot default, carrier CSS deduplication and custom failure fallback. Default content contains no checkbox: Task 7 owns selection controls outside returned HTML.
+- [x] Write API red tests asserting exact envelope keys, at most 50 results, principal scoping on both routes, invalid-input 400, and inaccessible IDs omitted from resolve. Test with ordinary guest read access as well as admin.
+- [x] Write renderer tests for all three carriers, long names/categories, HTML-escaped names, new-tab link attributes, scoped owner/tags, empty slot default, carrier CSS deduplication and custom failure fallback. Default content contains no checkbox: Task 7 owns selection controls outside returned HTML.
 
 ```go
 // A default result's markup must preserve normal navigation.
@@ -279,10 +279,10 @@ if !strings.Contains(html, `target="_blank"`) || !strings.Contains(html, `rel="n
 if strings.Contains(html, `type="checkbox"`) { t.Fatal("renderer owns content, not selection") }
 ```
 
-- [ ] Run `go test --tags 'json1 fts5' ./server/api_tests ./server/template_handlers -run EntityPicker -count=1`; retain the missing-handler/renderer failures.
-- [ ] Build a request-local renderer using `BuildMetaContextForEntity`, existing shortcode processing and the shared render-context builder. Set the same plugin access predicate, request deadline, query cache/budget and render-data cache as current server-rendered cards. Read template definitions from the stored carrier, never from caller-supplied HTML on this read endpoint.
-- [ ] Cache parsed templates and prepare CSS once per `entity:carrierID`. Emit `CustomCSS` then `CustomEntityPickerResultCSS`, not the carrier's all-slot CSS aggregation. For other types use the default template and verified detail routes from `server/routes.go`. Copy/sanitize model values before serialization as the existing deferred-render path does; avoid serializing full carrier template strings redundantly into every `value`. Include ID, Name and the model fields/association labels needed by existing profile consumers, not executable template source.
-- [ ] Make failure observable without scraping error-box HTML. If the shortcode processor lacks an error result, add a backward-compatible diagnostic variant, keeping the current `Process` output unchanged for existing callers:
+- [x] Run `go test --tags 'json1 fts5' ./server/api_tests ./server/template_handlers -run EntityPicker -count=1`; retain the missing-handler/renderer failures.
+- [x] Build a request-local renderer using `BuildMetaContextForEntity`, existing shortcode processing and the shared render-context builder. Set the same plugin access predicate, request deadline, query cache/budget and render-data cache as current server-rendered cards. Read template definitions from the stored carrier, never from caller-supplied HTML on this read endpoint.
+- [x] Cache parsed templates and prepare CSS once per `entity:carrierID`. Emit `CustomCSS` then `CustomEntityPickerResultCSS`, not the carrier's all-slot CSS aggregation. For other types use the default template and verified detail routes from `server/routes.go`. Copy/sanitize model values before serialization as the existing deferred-render path does; avoid serializing full carrier template strings redundantly into every `value`. Include ID, Name and the model fields/association labels needed by existing profile consumers, not executable template source.
+- [x] Make failure observable without scraping error-box HTML. If the shortcode processor lacks an error result, add a backward-compatible diagnostic variant, keeping the current `Process` output unchanged for existing callers:
 
 ```go
 type ProcessResult struct { HTML string; Errors []error }
@@ -298,7 +298,7 @@ Do not log full template contents or secrets. Budget exhaustion yields the
 existing diagnostic plus a concise response warning. Cancellation does not become
 an endless fallback/render retry.
 
-- [ ] Register both routes in runtime and OpenAPI metadata. Run the renderer/API/shortcode suites, `go run ./cmd/openapi-gen` and architecture tests. Commit `feat: serve custom entity picker result pages` including generated API artifacts.
+- [x] Register both routes in runtime and OpenAPI metadata. Run the renderer/API/shortcode suites, `go run ./cmd/openapi-gen` and architecture tests. Commit `feat: serve custom entity picker result pages` including generated API artifacts.
 
 ## Task 4: Publish browse metadata and add a typed transport
 

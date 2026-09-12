@@ -835,6 +835,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))
+	router.Methods(http.MethodGet).Path("/v1/entity-picker").HandlerFunc(scopedAPI(appContext, api_handlers.GetEntityPickerHandler))
+	router.Methods(http.MethodGet).Path("/v1/entity-picker/resolve").HandlerFunc(scopedAPI(appContext, api_handlers.GetEntityPickerResolveHandler))
 
 	// Download Queue (background remote downloads)
 	// Submit runs on a request-scoped context so a group-limited principal can

@@ -9390,7 +9390,7 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Verify baseline: 1,352 frontend tests and the full tagged Go suite pass.
 - [x] Task 1: custom picker-result slot lifecycle.
 - [x] Task 2: scoped browsing service.
-- [ ] Task 3: rendered browse API.
+- [x] Task 3: rendered browse API.
 - [ ] Tasks 4–6: browse profiles, session state and field integration.
 - [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
 - [ ] Task 9: full validation and review.
@@ -9423,8 +9423,15 @@ ordering, constraint intersection, metadata/note-association filters, full long
 names, missing/reparented rows and caller-transaction visibility. A mutation from
 Pluck to Scan fails the invisible-row pagination regression; restoring Pluck
 passes it. Picker fixtures now use isolated databases after the pagination seed
-exposed cross-test pollution from the older shared-memory helper. HTTP rendering
-and frontend browsing remain unimplemented.
+exposed cross-test pollution from the older shared-memory helper. HTTP rendering was implemented in Task 3; frontend browsing remains pending.
+
+Task 3: browse/resolve routes, projected values, default result markup, all three
+custom carriers, request-local CSS deduplication, nested execution diagnostics and
+custom-error fallback are implemented. Focused API/renderer/diagnostic tests pass.
+The wider server/shortcode/architecture run passed except for the generated
+OpenAPI freshness check; regenerated the spec and re-ran that check successfully.
+Custom slots are shortcode HTML rather than Pongo templates: the default Pongo
+partial is parsed once, and carrier CSS is processed once per request.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 

@@ -2,6 +2,14 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Execution checkpoints are progress reports, not implicit approval gates
+
+When a user authorizes an implementation plan, report completed slices without
+ending execution merely because a commit is clean. Choosing inline execution
+with checkpoints does not mean asking for another “go” after every task. Continue
+through the approved plan and verification; pause only at an explicit approval
+gate or a genuine blocker requiring the user's decision.
+
 ## `expect.poll` is satisfied by a transient early state, so it cannot assert where something *ends up*
 
 The finding-66 focus test passed against the bug. Clicking "Select All" collapses the wrapper the

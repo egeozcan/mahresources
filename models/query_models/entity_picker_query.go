@@ -10,16 +10,16 @@ const EntityPickerPageSize = 50
 var ErrEntityPickerInput = errors.New("invalid entity picker request")
 
 type EntityPickerQuery struct {
-	Entity      string
-	Filter      string
-	Constraints string
-	Page        int
+	Entity      string `schema:"entity"`
+	Filter      string `schema:"filter"`
+	Constraints string `schema:"constraints"`
+	Page        int    `schema:"page"`
 }
 
 type EntityPickerResolveQuery struct {
-	Entity      string
-	Constraints string
-	IDs         []uint
+	Entity      string `schema:"entity"`
+	Constraints string `schema:"constraints"`
+	IDs         []uint `schema:"id"`
 }
 
 // DecodeEntityPickerFilter uses the list DTOs and metadata decoder. Filters and
