@@ -9391,7 +9391,8 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Task 1: custom picker-result slot lifecycle.
 - [x] Task 2: scoped browsing service.
 - [x] Task 3: rendered browse API.
-- [ ] Tasks 4–6: browse profiles, session state and field integration.
+- [x] Task 4: browse profiles and transport (155 selector/adapter tests passed; bundle rebuilt).
+- [ ] Tasks 5–6: session state and field integration.
 - [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
 - [ ] Task 9: full validation and review.
 

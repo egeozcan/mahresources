@@ -55,6 +55,7 @@ describe('entity field profiles', () => {
         });
 
         expect(Object.keys(profile).sort()).toEqual([
+            'browse',
             'form',
             'interaction',
             'lookup',
@@ -180,6 +181,7 @@ describe('dynamic entity selector profile', () => {
 
         const profile = createDynamicEntitySelectorProfile<EntityValue>({
             searchUrl: '/v1/categories',
+            entity: 'category',
             multiple: false,
         });
 
@@ -215,6 +217,7 @@ describe('dynamic entity selector profile', () => {
 
         const profile = createDynamicEntitySelectorProfile<EntityValue>({
             searchUrl: '/v1/tags',
+            entity: 'tag',
             multiple: true,
         });
 

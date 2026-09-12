@@ -1,3 +1,4 @@
+import type { EntityBrowseMetadata } from './entityBrowseTypes';
 import { createDebouncedSelectorSource } from './debouncedSelectorSource';
 import {
     createHttpSelectorSource,
@@ -63,6 +64,7 @@ export interface EntityFieldLookupMetadata {
 
 export interface EntityFieldProfile<TRaw extends SelectorEntityValue> {
     readonly selector: SelectorHandle<TRaw>;
+    readonly browse: EntityBrowseMetadata;
     readonly form: EntityFieldFormMetadata | null;
     readonly lookup: EntityFieldLookupMetadata;
     readonly interaction: EntityFieldInteractionMetadata;
@@ -113,6 +115,7 @@ export interface CreatableEntityFieldProfileOptions<TRaw extends SelectorEntityV
 }
 
 export interface DynamicEntitySelectorProfileOptions<TRaw extends SelectorEntityValue> {
+    readonly entity: EntityProfileName;
     /** Endpoint resolved at runtime rather than from the private entity catalog. */
     readonly searchUrl: string;
     readonly multiple: boolean;
@@ -155,6 +158,7 @@ function presentationMetadata(categoryDecoration: boolean): EntityFieldPresentat
 }
 
 interface BuildSelectorProfileOptions<TRaw extends SelectorEntityValue> {
+    readonly entity: EntityProfileName;
     readonly searchUrl: string;
     readonly createUrl?: string;
     readonly parameters?: () => Readonly<Record<string, SelectorHttpParameter>>;
@@ -212,6 +216,13 @@ function buildSelectorProfile<TRaw extends SelectorEntityValue>(
 
     return Object.freeze({
         selector,
+        browse: Object.freeze({
+            entity: options.entity,
+            multiple: options.multiple,
+            maximum: options.maximum,
+            parameters: options.parameters ?? (() => ({})),
+            excludedKeys: options.excludeValues ?? (() => []),
+        }),
         form: formMetadata(options.form),
         lookup: Object.freeze({ searchUrl: options.searchUrl }),
         interaction: interactionMetadata(),
@@ -251,6 +262,7 @@ function buildEntityFieldProfile<TRaw extends SelectorEntityValue>(
         : undefined;
 
     return buildSelectorProfile({
+        entity: options.entity,
         searchUrl,
         createUrl,
         parameters,
@@ -293,6 +305,7 @@ export function createDynamicEntitySelectorProfile<TRaw extends SelectorEntityVa
     options: DynamicEntitySelectorProfileOptions<TRaw>,
 ): EntityFieldProfile<TRaw> {
     return buildSelectorProfile({
+        entity: options.entity,
         searchUrl: options.searchUrl,
         parameters: options.parameters,
         selected: options.selected,

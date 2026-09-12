@@ -19,8 +19,8 @@ export const entityConfigs = {
       return params;
     },
     filters: [
-      { key: 'tags', label: 'Tags', endpoint: '/v1/tags', multi: true },
-      { key: 'group', label: 'Group', endpoint: '/v1/groups', multi: false }
+      { key: 'tags', entity: 'tag', label: 'Tags', endpoint: '/v1/tags', multi: true },
+      { key: 'group', entity: 'group', label: 'Group', endpoint: '/v1/groups', multi: false }
     ],
     tabs: [
       { id: 'note', label: "Note's Resources" },
@@ -47,7 +47,7 @@ export const entityConfigs = {
       return params;
     },
     filters: [
-      { key: 'category', label: 'Category', endpoint: '/v1/categories', multi: false }
+      { key: 'category', entity: 'category', label: 'Category', endpoint: '/v1/categories', multi: false }
     ],
     tabs: null,
     renderItem: 'groupCard',
@@ -71,7 +71,7 @@ export const entityConfigs = {
       return params;
     },
     filters: [
-      { key: 'tags', label: 'Tags', endpoint: '/v1/tags', multi: true }
+      { key: 'tags', entity: 'tag', label: 'Tags', endpoint: '/v1/tags', multi: true }
     ],
     tabs: null,
     renderItem: 'noteCard',

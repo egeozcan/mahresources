@@ -88,6 +88,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
     readonly selector: EntityFieldProfile<TRaw>['selector'];
     readonly form: EntityFieldProfile<TRaw>['form'];
     readonly lookup: EntityFieldProfile<TRaw>['lookup'];
+    readonly browse: EntityFieldProfile<TRaw>['browse'];
     readonly interaction: EntityFieldProfile<TRaw>['interaction'];
     readonly presentation: EntityFieldProfile<TRaw>['presentation'];
 
@@ -117,6 +118,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
         });
         this.form = field.form;
         this.lookup = field.lookup;
+        this.browse = field.browse;
         this.interaction = field.interaction;
         this.presentation = field.presentation;
         this.association = association;

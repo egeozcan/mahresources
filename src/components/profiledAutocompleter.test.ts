@@ -167,6 +167,7 @@ describe('profiled autocompleter bridge', () => {
         const onChange = vi.fn();
         const selector = mount(dynamicEntitySelector({
             searchUrl: '/v1/categories',
+            entity: 'category',
             multiple: false,
             onChange,
         }) as ProfiledSelector);
@@ -199,6 +200,7 @@ describe('profiled autocompleter bridge', () => {
         const onChange = vi.fn();
         const selector = mount(dynamicEntitySelector({
             searchUrl: '/v1/tags',
+            entity: 'tag',
             multiple: true,
             onChange,
         }) as ProfiledSelector);

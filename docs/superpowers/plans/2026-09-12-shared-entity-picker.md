@@ -334,8 +334,8 @@ sites; retain their current searchUrl for autocomplete compatibility. Do not
 reverse-engineer entity type from plural endpoint strings. The existing factories
 continue translating template `max=0` to unlimited before constructing profiles.
 
-- [ ] Write failing tests proving every profile family publishes the right entity/multiplicity/maximum, live parameter/exclusion callbacks and unchanged autocomplete endpoint. Test lean tag suggestions retain their autocomplete path but browse as `tag`.
-- [ ] Write transport tests for repeated values, distinct encoded filter/constraints parameters, AbortSignal forwarding, invalid JSON/envelope, non-2xx errors and resolve batches. Example request assertion:
+- [x] Write failing tests proving every profile family publishes the right entity/multiplicity/maximum, live parameter/exclusion callbacks and unchanged autocomplete endpoint. Test lean tag suggestions retain their autocomplete path but browse as `tag`.
+- [x] Write transport tests for repeated values, distinct encoded filter/constraints parameters, AbortSignal forwarding, invalid JSON/envelope, non-2xx errors and resolve batches. Example request assertion:
 
 ```ts
 const params = new URL(capturedURL, 'http://localhost').searchParams;
@@ -358,9 +358,9 @@ afterEach(() => vi.unstubAllGlobals());
 ``` A decoder must reject non-array items, invalid page or hasNext, and missing
 numeric ID/string Name rather than passing broken state to selection code.
 
-- [ ] Run `npm run test:unit -- src/selector/entityFieldProfiles.test.ts src/selector/httpEntityBrowseSource.test.ts` and capture red.
-- [ ] Implement the metadata as part of profile construction. Implement search/resolve with `URLSearchParams`, preserving repeated inner filter values by encoding the full filter string once as an outer parameter. Use `fetch` so the host wrapper remains in effect; never interpolate HTML into executable Alpine expressions.
-- [ ] Re-run all selector/profile tests, `npm run build-js`, and commit `feat: expose entity browser profiles and transport` with generated assets.
+- [x] Run `npm run test:unit -- src/selector/entityFieldProfiles.test.ts src/selector/httpEntityBrowseSource.test.ts` and capture red.
+- [x] Implement the metadata as part of profile construction. Implement search/resolve with `URLSearchParams`, preserving repeated inner filter values by encoding the full filter string once as an outer parameter. Use `fetch` so the host wrapper remains in effect; never interpolate HTML into executable Alpine expressions.
+- [x] Re-run all selector/profile tests, `npm run build-js`, and commit `feat: expose entity browser profiles and transport` with generated assets.
 
 ## Task 5: Implement the headless nested picker session
 

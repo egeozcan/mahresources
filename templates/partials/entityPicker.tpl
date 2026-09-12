@@ -72,6 +72,7 @@
                             <div class="flex-1"
                                  x-data="dynamicEntitySelector({
                                      searchUrl: filter.endpoint,
+                                     entity: filter.entity,
                                      multiple: filter.multi,
                                      onChange: (change) =>
                                          $store.entityPicker.applyFilterChange(filter.key, filter.multi, change)

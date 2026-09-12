@@ -6,6 +6,9 @@ export {
     createSingleEntityFieldProfile,
     createTagFieldProfile,
 } from './entityFieldProfiles';
+export { createHttpEntityBrowseSource } from './httpEntityBrowseSource';
+export { encodeBrowseParameters } from './entityBrowseTypes';
+export type { BrowsePage, BrowseResult, BrowseStyle, BrowseValue, EntityBrowseSource, EntityBrowseMetadata } from './entityBrowseTypes';
 export { createTagEditorProfile } from './tagEditorProfile';
 export { createHttpSelectorSource, HttpSelectorSourceError } from './httpSelectorSource';
 export { InMemorySelectorSource } from './inMemorySelectorSource';
