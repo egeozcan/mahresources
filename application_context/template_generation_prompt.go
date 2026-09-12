@@ -37,6 +37,7 @@ func buildSlotUserMessage(in TemplateGenerationInput, userPrompt string) string 
 		"Shortcode reference:",
 		strings.TrimSpace(in.DocsBlock),
 	)
+	lines = append(lines, templateLayoutLines()...)
 	lines = append(lines, partialLine(in.PartialNames))
 	lines = append(lines, schemaLines(in.MetaSchema)...)
 	lines = append(lines, sampleLines(in.SampleMeta)...)
@@ -74,7 +75,7 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 		lines = append(lines, "- "+slot+": "+slotRoleLine(slot, in.EntityType))
 	}
 	lines = append(lines,
-		"CustomCSS is CSS (no <style> wrapper); the other slots are HTML with shortcodes. Style them cohesively — use the same CSS class names in the HTML slots and CustomCSS.",
+		"CustomCSS is CSS (no <style> wrapper); the other slots are HTML with shortcodes. Style them cohesively — use the same CSS class names in the HTML slots and CustomCSS. If CustomCSS is not requested, use inline style attributes for all required presentation rules instead; do not return extra slots.",
 	)
 	lines = append(lines, bundleRuntimeLines(in.EntityType)...)
 	lines = append(lines,
@@ -82,6 +83,7 @@ func buildBundleUserMessage(in TemplateGenerationInput, userPrompt string) strin
 		"Shortcode reference:",
 		strings.TrimSpace(in.DocsBlock),
 	)
+	lines = append(lines, templateLayoutLines()...)
 	lines = append(lines, partialLine(in.PartialNames))
 	lines = append(lines, schemaLines(in.MetaSchema)...)
 	lines = append(lines, sampleLines(in.SampleMeta)...)
@@ -158,7 +160,7 @@ func slotRuntimeLines(slot, entityType, mode string) []string {
 
 	lines := []string{
 		"This is raw HTML processed for Mahresources shortcodes, not a Pongo2 template. Never output {{ ... }} or {% ... %} expressions.",
-		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, template-owned class names; put their presentation rules in CustomCSS when generating a whole template.",
+		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML. This request updates only this slot, not CustomCSS: implement requested styling with inline style attributes. Invented class names alone have no visual effect; do not assume matching CSS exists or merely suggest adding it later.",
 	}
 	if slotSupportsAlpine(slot) {
 		lines = append(lines, "Alpine.js directives work in this slot. The outer page already provides the full current entity as `entity`; do not add x-data merely to expose it.")
@@ -189,7 +191,7 @@ func bundleRuntimeLines(entityType string) []string {
 	serverOnlySlots = append(serverOnlySlots, "CustomListHeader", "CustomListFooter")
 	lines := []string{
 		"HTML slots are raw HTML processed for Mahresources shortcodes, not Pongo2 templates. Never output {{ ... }} or {% ... %} expressions.",
-		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, shared, template-owned class names, and style those names in CustomCSS.",
+		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, shared, template-owned class names, and style those names in CustomCSS when it is requested; otherwise use inline styles.",
 		"Alpine.js directives and the outer `entity` variable work in these slots: " + strings.Join(alpineSlots, ", ") + ". They do not run in these slots: " + strings.Join(serverOnlySlots, ", ") + "; use shortcodes there.",
 		"CustomListHeader and CustomListFooter bind the category/type itself. The other HTML slots bind the current member entity.",
 		entityPropertyLine(entityType),
@@ -239,8 +241,17 @@ func resourceMediaLines() []string {
 	return []string{
 		"Resource routes are /resource?id=ID for the detail page, /v1/resource/preview?id=ID&height=PIXELS for a thumbnail, and /v1/resource/view?id=ID for the original file.",
 		"When the request calls for a clickable resource thumbnail, use this lightbox-capable pattern (it opens image/* and video/* in the app viewer and follows href for other types):",
-		`<a href="/v1/resource/view?id=[property path='ID']&v=[property path='Hash']#[property path='ContentType']" onclick="window.Alpine.store('lightbox').openFromClick(event, Number(this.dataset.resourceId), this.dataset.contentType)" data-lightbox-item data-resource-id="[property path='ID']" data-content-type="[property path='ContentType']" data-resource-name="[property path='Name']" data-resource-hash="[property path='Hash']" data-resource-width="[property path='Width']" data-resource-height="[property path='Height']"><img src="/v1/resource/preview?id=[property path='ID']&height=300&v=[property path='Hash']" alt="Preview of [property path='Name']" loading="lazy"></a>`,
-		"Keep the static onclick expression and put entity values only in the escaped data attributes. For a self-contained set of thumbnails, wrap the set in an element with data-lightbox-scope so arrow navigation stays within it.",
+		`<div style="min-width:0;max-width:100%;overflow:hidden"><a style="display:block;max-width:100%" href="/v1/resource/view?id=[property path='ID']&v=[property path='Hash']#[property path='ContentType']" onclick="window.Alpine.store('lightbox').openFromClick(event, Number(this.dataset.resourceId), this.dataset.contentType)" data-lightbox-item data-resource-id="[property path='ID']" data-content-type="[property path='ContentType']" data-resource-name="[property path='Name']" data-resource-hash="[property path='Hash']" data-resource-width="[property path='Width']" data-resource-height="[property path='Height']"><img style="display:block;width:100%;max-width:100%;height:200px;object-fit:contain" src="/v1/resource/preview?id=[property path='ID']&height=300&v=[property path='Hash']" alt="Preview of [property path='Name']" loading="lazy"></a><div style="display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="[property path='Name']">[property path="Name"]</div></div>`,
+		"Keep the static onclick expression exactly as shown (window.Alpine, with no backslash before the dot), and put entity values only in escaped data attributes. data-lightbox-item registers a gallery candidate; it does not attach a click handler. Use native onclick in CustomMRQLResult, not @click or x-on:click. Keep a real href for non-image/video files.",
+		"CustomMRQLResult renders ONE resource card at a time. For navigation to the other thumbnails on the page, do NOT put data-lightbox-scope on the card or its thumbnail: the nearest scope restricts navigation to its descendants, so a per-card scope creates a one-item gallery. Leave the scope absent and let the app collect data-lightbox-item links from its existing list/gallery containers. Do not add app-owned container classes or data-lightbox-source to individual cards.",
+		"Only use data-lightbox-scope when deliberately authoring a separate gallery: put it ONCE on a common ancestor containing ALL its thumbnails, outside any per-item loop. It limits navigation to that set and disables page fetching; never use it for page-wide navigation from a repeated CustomMRQLResult slot.",
+	}
+}
+
+func templateLayoutLines() []string {
+	return []string{
+		"Make styling concrete: every class used for presentation needs a CSS rule supplied in the requested CustomCSS slot, or equivalent inline styles in the HTML. Do not assume arbitrary class names provide layout or truncation.",
+		"For a single-line name that must not overflow, give its block display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap and put the full name in a title attribute. Flex/grid children and their containing card must also be allowed to shrink (min-width:0;max-width:100%); use minmax(0,1fr) for custom grid tracks. For wrapping instead of ellipsis, use white-space:normal;overflow-wrap:anywhere. Constrain thumbnails with display:block;max-width:100% and an explicit size/object-fit when needed.",
 	}
 }
 
