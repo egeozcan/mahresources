@@ -36,7 +36,7 @@ func falBenchmarkImage(t testing.TB) string {
 
 // Run the bundled action up to its first HTTP request, using the real image
 // and JSON bindings. Storage is in memory and HTTP is stopped before any I/O.
-func falPreparation(t testing.TB, uri string) func(string, string) (map[string]any, int, time.Duration) {
+func falPreparation(t testing.TB, uri string, submittedURL ...*string) func(string, string) (map[string]any, int, time.Duration) {
 	t.Helper()
 	L := lua.NewState()
 	t.Cleanup(L.Close)
@@ -67,6 +67,9 @@ func falPreparation(t testing.TB, uri string) func(string, string) (map[string]a
 	}))
 	var payload map[string]any
 	mah.RawGetString("http").(*lua.LTable).RawSetString("post_sync", L.NewFunction(func(L *lua.LState) int {
+		if len(submittedURL) > 0 {
+			*submittedURL[0] = L.CheckString(1)
+		}
 		if err := json.Unmarshal([]byte(L.CheckString(2)), &payload); err != nil {
 			t.Fatal(err)
 		}

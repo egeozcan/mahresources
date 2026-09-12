@@ -161,13 +161,13 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 		// Both Topaz Adjust presets share output_format and differ only by the
 		// endpoint's model value selected in build_request.
 		"adjust": {"adjust_v2": true, "white_balance": true},
-		// Topaz Transparent is deliberately a fixed 4x PNG operation.
-		"upscale": {"topaz_transparent": true},
+		// Topaz Transparent is fixed 4x PNG; Recraft exposes no scale/prompt controls.
+		"upscale": {"topaz_transparent": true, "recraft_crisp": true, "recraft_creative": true},
 	}
 	for actionID, wantModels := range map[string][]string{
 		"colorize": {"ddcolor", "topaz_colorize"},
 		"adjust":   {"adjust_v2", "white_balance"},
-		"upscale":  {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria_creative", "topaz", "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
+		"upscale":  {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria", "bria_creative", "recraft_crisp", "recraft_creative", "topaz", "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
 		"restore":  {"photo_restoration", "codeformer", "swin2sr", "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
 		"edit":     {"flux2", "flux2pro", "nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage2", "seedream5", "grok2", "muse", "fibo15", "flux1dev"},
 		"polish":   {"post_processing", "topaz_sharpen"},
