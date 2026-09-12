@@ -55,6 +55,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         _unregisterSelector: null,
         _destroyed: false,
         _browseConfirmation: null,
+        _fieldElement: null,
         _popover: null,
         _popoverMouseDownHandler: null,
         // The form this field publishes atomic changes under. Set only when the field is
@@ -65,16 +66,18 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         _formResetHandler: null,
 
         get browseLabel() {
-            const title = this.$el?.getAttribute?.('data-selector-title')
+            const root = this._fieldElement || this.$el;
+            const title = root?.getAttribute?.('data-selector-title')
+                || root?.querySelector?.('label')?.textContent?.trim()
                 || this._refEl('autocompleter')?.getAttribute?.('aria-label')
-                || this.$el?.querySelector?.('label')?.textContent?.trim()
                 || profile.browse?.entity || 'entities';
             return `Browse ${title}`;
         },
 
         get browserDisabled() {
-            return this._destroyed || !profile.browse || this.$el?.isConnected === false
-                || Boolean(this.$el?.closest?.('fieldset[disabled]'))
+            const root = this._fieldElement || this.$el;
+            return this._destroyed || !profile.browse || root?.isConnected === false
+                || Boolean(root?.closest?.('fieldset[disabled]'))
                 || Boolean(this._refEl('autocompleter')?.disabled);
         },
 
@@ -105,6 +108,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         },
 
         init() {
+            this._fieldElement = this.$el;
             this._destroyed = false;
             // Alpine calls init with the raw data object. Core subscriptions run later, so use
             // its public reactive data proxy to keep DOM bindings current.

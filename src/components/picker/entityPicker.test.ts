@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { registerEntityPickerStore } from './entityPicker.js';
 
 interface FilterStore {
     config: unknown;
+    openField: (options: unknown, opener: unknown) => void;
+    destroy: () => void;
     filterValues: Record<string, unknown>;
     loadResults: () => void;
     applyFilterChange: (key: string, multiple: boolean, change: unknown) => void;
@@ -16,12 +18,17 @@ function option(id: number, name: string) {
 function createStore(): FilterStore {
     let store: FilterStore | null = null;
     registerEntityPickerStore({
-        store: (_name: string, value: FilterStore) => {
-            store = value;
+        store: (_name: string, value?: FilterStore) => {
+            if (value) store = value;
+            return store;
         },
-    });
+    }, { debounceMs: 0, source: {
+        search: async () => ({ items: [], page: 1, hasNext: false, styles: [], warnings: [] }),
+        resolve: async () => [],
+    } });
     const created = store as FilterStore | null;
     if (!created) throw new Error('entityPicker store was not registered');
+    created.openField({ browse: { entity: 'group', multiple: true, parameters: () => ({}), excludedKeys: () => [] }, existing: [], onConfirm: () => true }, null);
     created.loadResults = vi.fn();
     return created;
 }
@@ -32,6 +39,8 @@ describe('entity picker filter changes', () => {
     beforeEach(() => {
         store = createStore();
     });
+
+    afterEach(() => store.destroy());
 
     test('a single-value filter takes the replacement selection in one reload', () => {
         store.applyFilterChange('group', false, {

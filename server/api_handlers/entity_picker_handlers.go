@@ -51,7 +51,7 @@ func pickerValue(row contracts.EntityPickerEntity) map[string]any {
 	var raw map[string]any
 	_ = json.Unmarshal(bytes, &raw)
 	value := map[string]any{"ID": row.ID, "Name": row.Name}
-	for _, key := range []string{"Description", "Meta", "OwnerId", "CategoryId", "NoteTypeId", "ResourceCategoryId", "SeriesID", "ContentType", "Width", "Height", "FileSize", "CreatedAt", "UpdatedAt"} {
+	for _, key := range []string{"Description", "Meta", "MetaSchema", "OwnerId", "CategoryId", "NoteTypeId", "ResourceCategoryId", "SeriesID", "ContentType", "Width", "Height", "FileSize", "CreatedAt", "UpdatedAt"} {
 		if v, ok := raw[key]; ok {
 			value[key] = v
 		}

@@ -19,11 +19,14 @@
                     categoryDecoration: true,
                     onChange: (change) => change.added[0] && onGroup1Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[180px]">
+                    <div class="flex items-center gap-1">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            role="combobox"
-                           class="w-full border rounded px-3 py-1.5 text-sm"
+                           class="w-full min-w-0 border rounded px-3 py-1.5 text-sm"
                            placeholder="Search groups..."
                            aria-label="Search left group">
+                    {% include "/partials/form/entityBrowseButton.tpl" %}
+                    </div>
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"
@@ -50,11 +53,14 @@
                     categoryDecoration: true,
                     onChange: (change) => change.added[0] && onGroup2Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[180px]">
+                    <div class="flex items-center gap-1">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            role="combobox"
-                           class="w-full border rounded px-3 py-1.5 text-sm"
+                           class="w-full min-w-0 border rounded px-3 py-1.5 text-sm"
                            placeholder="Search groups..."
                            aria-label="Search right group">
+                    {% include "/partials/form/entityBrowseButton.tpl" %}
+                    </div>
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"

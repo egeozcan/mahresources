@@ -9394,7 +9394,8 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Task 4: browse profiles and transport (155 selector/adapter tests passed; bundle rebuilt).
 - [x] Task 5: headless nested session (9 new/existing session/picker tests passed).
 - [x] Task 6: field integration (174 selector/adapter/session tests passed, including standalone disabled/teardown and pending tag-write preservation).
-- [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
+- [x] Task 7: shared dialog and all selector/filter hosts. Full unit suite passed (1,404 tests before the additional host-audit/root-label regressions); two focused browser scenarios and CSS scan pass.
+- [ ] Task 8: legacy consumer, custom rendering, modal nesting and accessibility end-to-end coverage.
 - [ ] Task 9: full validation and review.
 
 Review: the spec extends the existing picker across entity selectors, with property

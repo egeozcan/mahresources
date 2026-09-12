@@ -100,6 +100,18 @@ describe('selector rendering adapter and registry integration', () => {
         stop();selector.destroy();
     });
 
+    test('browse labels and availability use the field root, not Alpine’s current button $el', () => {
+        const { selector } = createSelector();
+        const root = selector.$el;
+        root.getAttribute = (name) => name === 'data-selector-title' ? 'Owner' : null;
+        selector.init();
+        selector.$el = createNode() as unknown as HTMLElement;
+        expect(selector.browseLabel).toBe('Browse Owner');
+        Object.defineProperty(root, 'isConnected', { value: false });
+        expect(selector.browserDisabled).toBe(true);
+        selector.destroy();
+    });
+
     test('a disabled or destroyed origin cannot accept a browser result', async () => {
         const { selector } = createSelector();selector.init();
         const openField = vi.fn();vi.stubGlobal('Alpine', { store: () => ({ openField }) });
@@ -635,7 +647,9 @@ describe('selector rendering adapter and registry integration', () => {
             'utf8',
         );
 
-        expect(entityPickerMarkup).toContain('@entity-picker-closed.window="clearSelection()"');
+        expect(entityPickerMarkup).toContain('x-for="view in $store.entityPicker.views"');
+        expect(entityPickerMarkup).toContain(':key="view.id"');
+        expect(entityPickerMarkup).toContain(':inert="view.id !== $store.entityPicker.currentStep?.id"');
         expect(entityPickerMarkup).not.toContain('@entity-picker-closed.window="selectedResults = []"');
         // The lightbox tag editor routes its external synchronization through the tag-editor
         // profile, which resets on navigation and reconciles same-resource changes per key.

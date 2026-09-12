@@ -454,14 +454,18 @@
                                                  class="relative">
                                                 <template x-if="!addModeForTag">
                                                     <div>
+                                                        <div class="flex items-center gap-1">
                                                         <input
                                                             x-ref="autocompleter"
+                                                            aria-label="Query"
                                                             type="text"
                                                             x-bind="inputEvents"
                                                             class="w-full px-2 py-1 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                                             :placeholder="selectedResults.length ? '' : 'Search queries...'"
                                                             autocomplete="off"
                                                         >
+                                                        {% include "/partials/form/entityBrowseButton.tpl" %}
+                                                        </div>
                                                         {# Dropdown results #}
                                                         <template x-if="dropdownActive && results.length > 0">
                                                             <div class="absolute z-20 mt-1 w-48 bg-white border border-stone-200 rounded shadow-lg max-h-48 overflow-y-auto">

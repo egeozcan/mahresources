@@ -45,7 +45,7 @@
     {# .noreturn (WS4 finding 74): the trap records whatever had focus when it #}
     {# activated and restores to it on release, which raced and then beat     #}
     {# close()'s own restore. close() owns that decision now.                 #}
-    x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen"
+    x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.entityPicker.isOpen"
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
@@ -500,12 +500,13 @@
                 <!-- Add tag input -->
                 <template x-if="!addModeForTag">
                     <div class="relative mb-3">
+                        <div class="flex items-center gap-1">
                         <input
                             x-ref="autocompleter"
                             data-tag-editor-input
                             type="text"
                             x-bind="inputEvents"
-                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
+                            class="w-full min-w-0 px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Search or add tags..."
                             aria-label="Search or add tags"
                             autocomplete="off"
@@ -516,6 +517,8 @@
                             :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                         >
 
+                        {% include "/partials/form/entityBrowseButton.tpl" %}
+                        </div>
                         <!-- Tag search results dropdown (popover) -->
                         <div x-ref="dropdown" popover
                              id="lightbox-tag-listbox"
@@ -706,9 +709,9 @@
                         <!-- EDITING MODE: pills + autocomplete -->
                         <template x-if="isEditing">
                             <div class="w-full min-h-[4.5rem] rounded-lg border-2 border-stone-500 bg-stone-800 p-2 flex flex-col gap-1.5"
-                                 @click.outside="$store.lightbox.editingSlotIndex = null"
+                                 @click.outside="!$store.entityPicker.isOpen && ($store.lightbox.editingSlotIndex = null)"
                                  @keydown.escape.stop="$store.lightbox.editingSlotIndex = null"
-                                 @focusout="$nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.editingSlotIndex = null })">
+                                 @focusout="$nextTick(() => { if (!$store.entityPicker.isOpen && !$el.contains(document.activeElement)) $store.lightbox.editingSlotIndex = null })">
                                 <kbd class="text-xs font-mono text-stone-500 self-center" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                 <!-- Tag pills -->
                                 <div class="flex flex-wrap gap-1">
@@ -732,12 +735,13 @@
                                              change.added.forEach(option => $store.lightbox.addTagToSlot(idx, option.raw))
                                      })">
                                     <div class="relative">
+                                        <div class="flex items-center gap-1">
                                         <input
                                             x-ref="autocompleter"
                                             type="text"
                                             x-bind="inputEvents"
                                             x-init="$nextTick(() => $el.focus())"
-                                            class="w-full px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            class="w-full min-w-0 px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-400"
                                             placeholder="Add tag..."
                                             :aria-label="'Add tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                             autocomplete="off"
@@ -745,6 +749,8 @@
                                             aria-autocomplete="list"
                                             :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                                         >
+                                        {% include "/partials/form/entityBrowseButton.tpl" %}
+                                        </div>
                                         <div x-ref="dropdown" popover
                                              class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
                                              role="listbox">

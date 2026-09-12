@@ -1,90 +1,25 @@
-// src/components/picker/entityConfigs.js
+import { entityFilterConfigs } from './entityFilterConfigs.ts';
 
-export const entityConfigs = {
-  resource: {
-    entityType: 'resource',
-    entityLabel: 'Resources',
-    searchEndpoint: '/v1/resources',
-    maxResults: 50,
-    searchParams: (query, filters, lockedFilters = {}, maxResults) => {
-      const params = new URLSearchParams({ MaxResults: String(maxResults) });
-      if (query) params.set('name', query);
-      if (filters.tags) {
-        filters.tags.forEach(id => params.append('Tags', id));
-      }
-      if (filters.group) params.set('Groups', filters.group);
-      if (lockedFilters.content_types) {
-        lockedFilters.content_types.forEach(ct => params.append('ContentTypes', ct));
-      }
-      return params;
-    },
-    filters: [
-      { key: 'tags', entity: 'tag', label: 'Tags', endpoint: '/v1/tags', multi: true },
-      { key: 'group', entity: 'group', label: 'Group', endpoint: '/v1/groups', multi: false }
-    ],
-    tabs: [
-      { id: 'note', label: "Note's Resources" },
-      { id: 'all', label: 'All Resources' }
-    ],
-    renderItem: 'thumbnail',
-    gridColumns: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5',
-    getItemId: (item) => item.ID,
-    getItemLabel: (item) => item.Name || `Resource ${item.ID}`
-  },
-
-  group: {
-    entityType: 'group',
-    entityLabel: 'Groups',
-    searchEndpoint: '/v1/groups',
-    maxResults: 50,
-    searchParams: (query, filters, lockedFilters = {}, maxResults) => {
-      const params = new URLSearchParams({ MaxResults: String(maxResults) });
-      if (query) params.set('name', query);
-      if (filters.category) params.set('categoryId', filters.category);
-      if (lockedFilters.category_ids) {
-        lockedFilters.category_ids.forEach(id => params.append('Categories', id));
-      }
-      return params;
-    },
-    filters: [
-      { key: 'category', entity: 'category', label: 'Category', endpoint: '/v1/categories', multi: false }
-    ],
-    tabs: null,
-    renderItem: 'groupCard',
-    gridColumns: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
-    getItemId: (item) => item.ID,
-    getItemLabel: (item) => item.Name || `Group ${item.ID}`
-  },
-
-  note: {
-    entityType: 'note',
-    entityLabel: 'Notes',
-    searchEndpoint: '/v1/notes',
-    maxResults: 50,
-    searchParams: (query, filters, lockedFilters = {}, maxResults) => {
-      const params = new URLSearchParams({ MaxResults: String(maxResults) });
-      if (query) params.set('name', query);
-      if (filters.tags) filters.tags.forEach(id => params.append('Tags', id));
-      if (lockedFilters.note_type_ids) {
-        lockedFilters.note_type_ids.forEach(id => params.append('NoteTypeIds', id));
-      }
-      return params;
-    },
-    filters: [
-      { key: 'tags', entity: 'tag', label: 'Tags', endpoint: '/v1/tags', multi: true }
-    ],
-    tabs: null,
-    renderItem: 'noteCard',
-    gridColumns: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
-    getItemId: (item) => item.ID,
-    getItemLabel: (item) => item.Name || `Note ${item.ID}`
-  }
+const catalog = {
+  resource: ['Resources', '/v1/resources'],
+  group: ['Groups', '/v1/groups'],
+  note: ['Notes', '/v1/notes'],
+  category: ['Categories', '/v1/categories'],
+  noteType: ['Note Types', '/v1/note/noteTypes'],
+  resourceCategory: ['Resource Categories', '/v1/resourceCategories'],
+  tag: ['Tags', '/v1/tags'],
+  query: ['Queries', '/v1/queries'],
+  relationType: ['Relation Types', '/v1/relationTypes'],
+  series: ['Series', '/v1/seriesList'],
 };
+
+export const entityConfigs = Object.fromEntries(Object.entries(catalog).map(([entityType, [entityLabel, searchEndpoint]]) => [entityType, {
+  entityType, entityLabel, searchEndpoint,
+  filters: entityFilterConfigs[entityType].map(filter => ({ ...filter, endpoint: filter.kind === 'entity' ? catalog[filter.entity][1] : undefined })),
+}]));
 
 export function getEntityConfig(entityType) {
   const config = entityConfigs[entityType];
-  if (!config) {
-    throw new Error(`Unknown entity type: ${entityType}`);
-  }
+  if (!config) throw new Error(`Unknown entity type: ${entityType}`);
   return config;
 }

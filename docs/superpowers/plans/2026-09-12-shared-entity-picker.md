@@ -519,11 +519,11 @@ Metadata uses the existing schema/free-meta controls rather than new JSON-path
 semantics. Scalar/range/checkbox descriptors use the actual list form field
 names. Entity descriptors create explicitly typed dynamic profiles from Task 4.
 
-- [ ] Add red browser tests for the group selector's Browse button, category filtering and duplicate names, new-tab navigation without selection, pending selection across two pages, nested category Browse/Back, and keyboard Escape returning focus.
-- [ ] Add a filter-coverage test comparing configured field names against the ordinary list filter controls for all ten types. Read `templates/partials/form/searchFormResource.tpl`, `templates/listGroups.tpl`, `templates/listNotes.tpl`, and other catalog list templates. Exclude only documented presentation controls (sort, page, bulk actions); do not omit metadata, relation-side, dimension, date or boolean filters that those forms expose.
-- [ ] Run `cd e2e && npm run test:with-server -- tests/selector/entity-browser.spec.ts` and retain the absent-Browse failure. Run the configuration unit test separately.
-- [ ] Make the store a thin adapter over Task 5. Keep each parent step's filter DOM mounted but hidden/inert while its child is active, so callbacks do not refer to destroyed Alpine scopes. One trap/overlay remains active for the stack. Capture refs before teardown; restore focus after trap release. Escape handlers stop propagation and act on the top picker step only.
-- [ ] Insert the reusable icon partial beside shared autocomplete and custom tag-editor/filter inputs. Use the field's accessible title for its label, e.g.:
+- [x] Add red browser tests for the group selector's Browse button, category filtering and duplicate names, new-tab navigation without selection, pending selection across two pages, nested category Browse/Back, and keyboard Escape returning focus.
+- [x] Add a filter-coverage test comparing configured field names against the ordinary list filter controls for all ten types. Read `templates/partials/form/searchFormResource.tpl`, `templates/listGroups.tpl`, `templates/listNotes.tpl`, and other catalog list templates. Exclude only documented presentation controls (sort, page, bulk actions); do not omit metadata, relation-side, dimension, date or boolean filters that those forms expose.
+- [x] Run `cd e2e && npm run test:with-server -- tests/selector/entity-browser.spec.ts` and retain the absent-Browse failure. Run the configuration unit test separately.
+- [x] Make the store a thin adapter over Task 5. Keep each parent step's filter DOM mounted but hidden/inert while its child is active, so callbacks do not refer to destroyed Alpine scopes. One trap/overlay remains active for the stack. Capture refs before teardown; restore focus after trap release. Escape handlers stop propagation and act on the top picker step only.
+- [x] Insert the reusable icon partial beside shared autocomplete and custom tag-editor/filter inputs. Use the field's accessible title for its label, e.g.:
 
 ```html
 <button type="button" @click="openEntityBrowser()"
@@ -540,9 +540,9 @@ names. Entity descriptors create explicitly typed dynamic profiles from Task 4.
 availability and the entity label catalog. Use the button styling of neighboring
 controls and a visible keyboard focus ring. No new icon dependency.
 
-- [ ] Render host-owned native checkbox/radio controls beside an inert-to-Alpine content region (`x-ignore` with `x-html` on the content container). Name/author links remain normal anchors. Use stable step/entity IDs for keys and accessible labels outside custom content. Do not put links inside an ARIA option that flattens its interactive descendants.
-- [ ] Show basic and More filters, Previous/Next, page indicator, pending count, retry/error/warnings and explicit Confirm for both modes. Keep names/category badges readable. Show already-added and capacity states as text plus controls, not color alone.
-- [ ] Install active-step CSS by key using style elements' `textContent`, not executable markup interpolation; remove previous step styles and restore retained parent styles on Back. Remove all picker-owned styles on Cancel. Preserve selected values across filter search failures.
+- [x] Render host-owned native checkbox/radio controls beside an inert-to-Alpine content region (an `x-ignore` child populated by `Alpine.mutateDom`; putting `x-html` and `x-ignore` on the same element suppresses the binding itself). Name/author links remain normal anchors. Use stable step/entity IDs for keys and accessible labels outside custom content. Do not put links inside an ARIA option that flattens its interactive descendants.
+- [x] Show basic and More filters, Previous/Next, page indicator, pending count, retry/error/warnings and explicit Confirm for both modes. Keep names/category badges readable. Show already-added and capacity states as text plus controls, not color alone.
+- [x] Install active-step CSS by key using style elements' `textContent`, not executable markup interpolation; remove previous step styles and restore retained parent styles on Back. Remove all picker-owned styles on Cancel. Preserve selected values across filter search failures.
 - [ ] Test under an existing plugin-action modal and lightbox: picker owns keyboard/focus only while it is topmost; Escape must not close the parent surface. Re-run unit and focused browser tests, build JS/CSS, run CSS scan, commit `feat: expose accessible entity browsing beside selectors`.
 
 ## Task 8: Preserve all consumers and prove custom rendering end-to-end

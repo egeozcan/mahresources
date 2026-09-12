@@ -146,6 +146,8 @@ export function tagEditorSelector(arguments_) {
         syncEntityTags(entityKey, tags) {
             const values = tags || [];
             if (entityKey !== this._syncedEntityKey) {
+                this._browseConfirmation?.destroy();
+                this._browseConfirmation = null;
                 this._syncedEntityKey = entityKey;
                 // Through the profile's own selector, so the navigation invalidates every
                 // in-flight association write rather than only the keys that moved.

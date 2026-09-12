@@ -143,17 +143,17 @@ describe('profiled autocompleter bridge', () => {
 
     test('entity picker filters use the dynamic profile and translate changes through the store', () => {
         const markup = readFileSync(
-            new URL('../../templates/partials/entityPicker.tpl', import.meta.url),
+            new URL('../../templates/partials/entityPickerFilters.tpl', import.meta.url),
             'utf8',
         );
 
         expect(markup).toContain('dynamicEntitySelector({');
         expect(markup).toContain('searchUrl: filter.endpoint');
-        expect(markup).toContain('multiple: filter.multi');
-        expect(markup).toContain('$store.entityPicker.applyFilterChange(filter.key, filter.multi, change)');
-        // The runtime picker keeps its close-time reset but no longer restores state through
-        // legacy flags or per-item select/remove callbacks.
-        expect(markup).toContain("@entity-picker-closed.window=\"clearSelection()\"");
+        expect(markup).toContain('multiple: filter.multiple');
+        expect(markup).toContain('$store.entityPicker.applyFilterChange(filter.key, filter.multiple, change, view.id)');
+        // A nested confirmation targets its retained parent's identity. Closing
+        // the session destroys its views instead of broadcasting a child reset.
+        expect(markup).not.toContain('@entity-picker-closed.window');
         expect(markup).not.toContain('standalone: true');
         expect(markup).not.toContain('onSelect: (item)');
         expect(markup).not.toContain('onRemove: (item)');

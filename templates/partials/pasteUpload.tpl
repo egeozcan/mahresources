@@ -22,7 +22,7 @@
     <div class="flex min-h-full items-center justify-center p-4">
         <div class="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
              @click.stop
-             x-trap.noscroll="$store.pasteUpload.isOpen">
+             x-trap.noscroll="$store.pasteUpload.isOpen && !$store.entityPicker.isOpen">
             {# Header #}
             <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
                 {# Finding 144: this read "Upload to " + (name || 'Unknown'), and the #}
@@ -145,13 +145,16 @@
                         <label class="block text-xs text-stone-500 font-mono mb-1">Tags</label>
                         <div class="relative">
                             <template x-if="!addModeForTag">
+                                <div class="flex items-center gap-1">
                                 <input x-ref="autocompleter"
                                        type="text"
                                        x-bind="inputEvents"
-                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                       class="w-full min-w-0 px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search tags..."
                                        aria-label="Search tags"
                                        autocomplete="off">
+                                {% include "/partials/form/entityBrowseButton.tpl" %}
+                                </div>
                             </template>
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">
@@ -180,13 +183,16 @@
                          class="relative w-full">
                         <label class="block text-xs text-stone-500 font-mono mb-1">Category</label>
                         <div class="relative">
+                            <div class="flex items-center gap-1">
                             <input x-ref="autocompleter"
                                    type="text"
                                    x-bind="inputEvents"
-                                   class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                   class="w-full min-w-0 px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                    placeholder="Search categories..."
                                    aria-label="Search categories"
                                    autocomplete="off">
+                            {% include "/partials/form/entityBrowseButton.tpl" %}
+                            </div>
                             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-category" title="Category" %}
                             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
                         </div>
@@ -201,13 +207,16 @@
                         <label class="block text-xs text-stone-500 font-mono mb-1">Series</label>
                         <div class="relative">
                             <template x-if="!addModeForTag">
+                                <div class="flex items-center gap-1">
                                 <input x-ref="autocompleter"
                                        type="text"
                                        x-bind="inputEvents"
-                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                       class="w-full min-w-0 px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search or create series..."
                                        aria-label="Search or create series"
                                        autocomplete="off">
+                                {% include "/partials/form/entityBrowseButton.tpl" %}
+                                </div>
                             </template>
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">

@@ -1,244 +1,164 @@
-// src/components/picker/entityPicker.js
-import { abortableFetch } from '../../index.js';
 import { getEntityConfig } from './entityConfigs.js';
+import { createPickerSession } from './pickerSession.ts';
+import { createHttpEntityBrowseSource } from '../../selector/httpEntityBrowseSource.ts';
+import { createEntityBrowseConfirmation } from '../../selector/entityBrowseIntegration.ts';
+import { encodeBrowseParameters } from '../../selector/entityBrowseTypes.ts';
+import { generateParamNameForMeta } from '../freeFields.js';
 
-export function registerEntityPickerStore(Alpine) {
-  Alpine.store('entityPicker', {
-    // Configuration
-    config: null,
+function waitForInput(signal, delay) {
+  if (!delay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
 
-    // UI state
-    isOpen: false,
-    activeTab: null,
-    loading: false,
-    error: null,
+export function registerEntityPickerStore(Alpine, { source = createHttpEntityBrowseSource(), debounceMs = 200 } = {}) {
+  const session = createPickerSession({ ...source, search: async (input, signal) => {
+    await waitForInput(signal, debounceMs);
+    return source.search(input, signal);
+  } });
+  const openers = new Map(), styleNodes = new Map();
+  const nextTick = callback => Alpine.nextTick ? Alpine.nextTick(callback) : Promise.resolve().then(callback);
+  const store = {
+    isOpen: false, steps: [], views: [],
+    get currentStep() { return this.steps.at(-1) || null; },
+    get currentView() { return this.views.at(-1) || null; },
+    get config() { return this.currentStep ? getEntityConfig(this.currentStep.options.browse.entity) : null; },
+    get title() { return this.currentStep?.options.title || `Browse ${this.config?.entityLabel || 'Entities'}`; },
+    get loading() { return this.currentStep?.status === 'loading'; },
+    get confirming() { return this.currentStep?.status === 'confirming'; },
+    get error() { return this.currentStep?.error; },
+    get selectionCount() { return this.currentStep?.pending.length || 0; },
+    get multiSelect() { return this.currentStep?.options.browse.multiple ?? true; },
+    get displayResults() { return this.currentStep?.items || []; },
+    get activeTab() { return this.currentView?.legacy?.mode.tab || 'all'; },
+    get noteId() { return this.currentView?.legacy?.noteId; },
+    get filterValues() { return this.currentView?.filters || {}; },
+    get searchQuery() { return this.filterValues.Name || ''; },
+    set searchQuery(value) { if (this.currentView) this.currentView.filters.Name = value; },
+    get capacityReached() {
+      const step = this.currentStep;
+      return step && step.options.browse.multiple && step.options.browse.maximum !== undefined
+        && new Set([...step.options.existing, ...step.pending].map(v => String(v.ID))).size >= step.options.browse.maximum;
+    },
+    renderResult(host, html) {
+      // The ignored child is never initialized as Alpine code. Keep the DOM
+      // observer suspended while inserting author HTML, including on refresh.
+      Alpine.mutateDom(() => { host.firstElementChild.innerHTML = html; });
+    },
+    filtersFor(entity) { return getEntityConfig(entity).filters; },
+    stepFor(id) { return this.steps.find(step => step.id === id); },
+    viewFor(id) { return this.views.find(view => view.id === id); },
 
-    // Context
-    noteId: null,
+    openField(options, opener) {
+      const parentID = Number(opener?.closest?.('[data-picker-step]')?.getAttribute('data-picker-step'));
+      if (parentID && parentID !== this.currentStep?.id) return false;
+      if (this.isOpen && parentID) session.push(options);else session.open(options);
+      if (this.currentStep) openers.set(this.currentStep.id, opener);
+      return true;
+    },
 
-    // Search state
-    searchQuery: '',
-    filterValues: {},
-    results: [],
-    tabResults: {}, // { note: [], all: [] } for resource picker
-
-    // Selection state
-    selectedIds: new Set(),
-    existingIds: new Set(),
-
-    // Picker options
-    lockedFilters: {},
-    multiSelect: true,
-
-    // Callback
-    onConfirm: null,
-
-    // Internal
-    searchDebounceTimer: null,
-    requestAborter: null,
-
+    // Compatibility with blocks and plugin action parameters. These consumers
+    // still receive IDs, but eligibility and pagination use the same session.
     open({ entityType, noteId = null, existingIds = [], lockedFilters = {}, multiSelect = true, onConfirm }) {
-      this.config = getEntityConfig(entityType);
-      this.noteId = noteId;
-      this.existingIds = new Set(existingIds);
-      this.lockedFilters = lockedFilters;
-      this.multiSelect = multiSelect;
-      this.onConfirm = onConfirm;
-      this.selectedIds = new Set();
-      this.searchQuery = '';
-      this.filterValues = {};
-      this.error = null;
-      this.results = [];
-      this.tabResults = {};
-      this.isOpen = true;
-
-      // Set initial tab
-      if (this.config.tabs) {
-        // For resources: start on 'note' tab if noteId provided, else 'all'
-        this.activeTab = noteId ? this.config.tabs[0].id : this.config.tabs[1]?.id || this.config.tabs[0].id;
-        // Load tab-specific data
-        if (this.activeTab === 'note' && noteId) {
-          this.loadNoteResources();
-        }
-      } else {
-        this.activeTab = null;
-      }
-
-      // Load main results
-      this.loadResults();
+      getEntityConfig(entityType);
+      const mode = { tab: entityType === 'resource' && noteId ? 'note' : 'all' };
+      const existing = existingIds.map(ID => ({ ID: Number(ID), Name: `#${ID}` }));
+      const metadata = { entity: entityType, multiple: multiSelect, excludedKeys: () => [], parameters: () => ({
+        ...(lockedFilters.content_types?.length ? { ContentTypes: lockedFilters.content_types } : {}),
+        ...(lockedFilters.category_ids?.length ? { Categories: lockedFilters.category_ids } : {}),
+        ...(lockedFilters.note_type_ids?.length ? { NoteTypeIds: lockedFilters.note_type_ids } : {}),
+        ...(mode.tab === 'note' ? { Notes: [noteId] } : {}),
+      }) };
+      let callbackResult;
+      const bridge = createEntityBrowseConfirmation({
+        metadata, getValues: () => existing,
+        isAvailable: () => session.snapshot().steps.some(step => step.options.browse === metadata),
+        replace: values => {
+          const previous = new Set(existing.map(v => String(v.ID)));
+          callbackResult = onConfirm?.(values.filter(value => !multiSelect || !previous.has(String(value.ID))).map(value => value.ID));
+        },
+      }, source);
+      this.openField({ browse: metadata, existing,
+        title: `Select ${getEntityConfig(entityType).entityLabel}`, legacy: { noteId, mode },
+        onConfirm: async values => (await bridge.confirm(values)) && (await callbackResult) !== false,
+        onDispose: bridge.destroy,
+      }, typeof document === 'undefined' ? null : document.activeElement);
     },
-
-    close() {
-      this.isOpen = false;
-      this.results = [];
-      this.tabResults = {};
-      this.selectedIds = new Set();
-      this.lockedFilters = {};
-      this.multiSelect = true;
-      this.config = null;
-      // Clean up pending debounce timer
-      if (this.searchDebounceTimer) {
-        clearTimeout(this.searchDebounceTimer);
-        this.searchDebounceTimer = null;
-      }
-      if (this.requestAborter) {
-        this.requestAborter();
-        this.requestAborter = null;
-      }
-      // Dispatch event for filter cleanup
-      window.dispatchEvent(new CustomEvent('entity-picker-closed'));
+    close() { session.cancel(); },
+    back() { session.back(); },
+    escape() { if (this.steps.length > 1) this.back();else this.close(); },
+    confirm() { return session.confirm(); },
+    retry() { session.retry(); },
+    nextPage() { if (this.currentStep?.hasNext) session.setPage(this.currentStep.page + 1); },
+    previousPage() { if (this.currentStep?.page > 1) session.setPage(this.currentStep.page - 1); },
+    toggleSelection(value) {
+      const row = typeof value === 'object' ? value : this.currentStep?.items.find(item => String(item.value.ID) === String(value))?.value;
+      if (row) session.toggle(row);
     },
-
-    confirm() {
-      if (this.onConfirm && this.selectedIds.size > 0) {
-        this.onConfirm([...this.selectedIds]);
-      }
-      this.close();
+    isSelected(id) { return Boolean(this.currentStep?.pending.some(value => String(value.ID) === String(id))); },
+    isAlreadyAdded(id) { return Boolean(this.currentStep?.options.existing.some(value => String(value.ID) === String(id))); },
+    rowDisabled(id) { return this.confirming || this.isAlreadyAdded(id) || (this.capacityReached && !this.isSelected(id)); },
+    setActiveTab(tab) {
+      const view = this.currentView;
+      if (!view?.legacy || (tab === 'note' && !view.legacy.noteId)) return;
+      view.legacy.mode.tab = tab;
+      if (this.currentStep.page !== 1) session.setPage(1);else session.retry();
     },
-
-    async loadNoteResources() {
-      if (!this.noteId) return;
-
-      try {
-        const res = await fetch(`/v1/resources?ownerId=${this.noteId}&MaxResults=100`);
-        if (!res.ok) throw new Error('Failed to load note resources');
-        this.tabResults.note = await res.json();
-        if (this.tabResults.note.length === 0 && this.activeTab === 'note') {
-          this.activeTab = 'all';
-        }
-      } catch (err) {
-        console.error('Error loading note resources:', err);
-      }
+    setFilter(key, value, stepID = this.currentStep?.id) {
+      const view = this.viewFor(stepID);if (!view) return;
+      if (value === '' || value === null || value === undefined || value === false || (Array.isArray(value) && value.length === 0)) delete view.filters[key];
+      else view.filters[key] = value;
+      this.loadResults(stepID);
     },
-
-    async loadResults() {
-      if (this.requestAborter) {
-        this.requestAborter();
-      }
-
-      this.loading = true;
-      this.error = null;
-
-      const maxResults = this.config.maxResults || 50;
-      const params = this.config.searchParams(this.searchQuery.trim(), this.filterValues, this.lockedFilters, maxResults);
-      const url = `${this.config.searchEndpoint}?${params}`;
-
-      const { abort, ready } = abortableFetch(url);
-      this.requestAborter = abort;
-
-      try {
-        const res = await ready;
-        if (!res.ok) throw new Error(`Failed to load ${this.config.entityLabel.toLowerCase()}`);
-        const data = await res.json();
-        this.results = data;
-        if (this.config.tabs) {
-          this.tabResults.all = data;
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          this.error = err.message || `Failed to load ${this.config.entityLabel.toLowerCase()}`;
-          console.error('Error loading results:', err);
-        }
-      } finally {
-        this.loading = false;
-      }
+    applyFilterChange(key, multiple, change, stepID = this.currentStep?.id) {
+      this.setFilter(key, multiple ? change.current.map(option => option.raw.ID) : (change.current[0]?.raw.ID ?? null), stepID);
     },
-
-    onSearchInput() {
-      if (this.searchDebounceTimer) {
-        clearTimeout(this.searchDebounceTimer);
-      }
-      this.searchDebounceTimer = setTimeout(() => {
-        this.loadResults();
-      }, 200);
+    onSearchInput(stepID = this.currentStep?.id) { this.loadResults(stepID); },
+    loadResults(stepID = this.currentStep?.id) {
+      const view = this.viewFor(stepID);if (!view) return;
+      session.setFilter(encodeBrowseParameters(view.filters), stepID);
     },
-
-    setFilter(key, value) {
-      if (value === null || value === undefined) {
-        delete this.filterValues[key];
-      } else {
-        this.filterValues[key] = value;
-      }
-      this.loadResults();
+    applyMetaFilter(stepID) {
+      const view = this.viewFor(stepID);if (!view) return;
+      for (const key of Object.keys(view.filters)) if (key.startsWith('MetaQuery.')) delete view.filters[key];
+      view.metaFields.filter(field => field.name && field.value !== '').forEach((field, i) => {
+        view.filters[`MetaQuery.${i}`] = generateParamNameForMeta(field);
+      });
+      this.loadResults(stepID);
     },
-
-    addToFilter(key, value) {
-      if (!this.filterValues[key]) {
-        this.filterValues[key] = [];
+    destroy() { session.destroy(); },
+  };
+  Alpine.store('entityPicker', store);
+  const reactive = Alpine.store('entityPicker') || store;
+  session.subscribe(snapshot => {
+    const previous = reactive.views, oldIDs = new Set(previous.map(view => view.id));
+    const nextIDs = new Set(snapshot.steps.map(step => step.id));
+    const removed = previous.filter(view => !nextIDs.has(view.id));
+    const returning = snapshot.isOpen ? removed.at(-1) : removed[0];
+    const returnTo = returning && openers.get(returning.id);
+    reactive.steps = snapshot.steps;reactive.isOpen = snapshot.isOpen;
+    reactive.views = snapshot.steps.map(step => previous.find(view => view.id === step.id) || {
+      id: step.id, entity: step.options.browse.entity, filters: {}, more: false, metaFields: [], legacy: step.options.legacy,
+    });
+    removed.forEach(view => openers.delete(view.id));
+    if (returnTo) nextTick(() => { if (returnTo.isConnected !== false) returnTo.focus?.(); });
+    const latest = snapshot.steps.at(-1);
+    if (latest && !oldIDs.has(latest.id)) nextTick(() => {
+      if (typeof document !== 'undefined') document.querySelector(`[data-picker-step="${latest.id}"] input[name="Name"]`)?.focus();
+    });
+    if (typeof document !== 'undefined' && document.head) {
+      const styles = latest?.styles || [], keys = new Set(styles.map(style => style.key));
+      for (const [key, node] of styleNodes) if (!keys.has(key)) {node.remove();styleNodes.delete(key);}
+      for (const style of styles) {
+        let node = styleNodes.get(style.key);
+        if (!node) {node = document.createElement('style');node.setAttribute('data-entity-picker-style', style.key);document.head.appendChild(node);styleNodes.set(style.key, node);}
+        if (node.textContent !== style.css) node.textContent = style.css;
       }
-      if (!this.filterValues[key].includes(value)) {
-        this.filterValues[key] = [...this.filterValues[key], value];
-        this.loadResults();
-      }
-    },
-
-    // Applies one atomic selector change from a filter selector. A single-value filter takes the
-    // resulting selection directly, so an atomic replacement issues one reload rather than a
-    // clear followed by a set.
-    applyFilterChange(key, multiple, change) {
-      if (!multiple) {
-        this.setFilter(key, change.current[0]?.raw.ID ?? null);
-        return;
-      }
-      for (const option of change.removed) {
-        this.removeFromFilter(key, option.raw.ID);
-      }
-      for (const option of change.added) {
-        this.addToFilter(key, option.raw.ID);
-      }
-    },
-
-    removeFromFilter(key, value) {
-      if (this.filterValues[key]) {
-        this.filterValues[key] = this.filterValues[key].filter(v => v !== value);
-        if (this.filterValues[key].length === 0) {
-          delete this.filterValues[key];
-        }
-        this.loadResults();
-      }
-    },
-
-    toggleSelection(itemId) {
-      if (this.existingIds.has(itemId)) return;
-      if (!this.multiSelect) {
-        this.selectedIds = new Set([itemId]);
-        this.confirm(); // auto-confirm in single-select mode
-        return;
-      }
-      if (this.selectedIds.has(itemId)) {
-        this.selectedIds.delete(itemId);
-      } else {
-        this.selectedIds.add(itemId);
-      }
-      // Trigger reactivity
-      this.selectedIds = new Set(this.selectedIds);
-    },
-
-    isSelected(itemId) {
-      return this.selectedIds.has(itemId);
-    },
-
-    isAlreadyAdded(itemId) {
-      return this.existingIds.has(itemId);
-    },
-
-    setActiveTab(tabId) {
-      this.activeTab = tabId;
-    },
-
-    get displayResults() {
-      if (this.config?.tabs && this.activeTab === 'note') {
-        return this.tabResults.note || [];
-      }
-      return this.results;
-    },
-
-    get hasTabResults() {
-      return this.tabResults.note?.length > 0;
-    },
-
-    get selectionCount() {
-      return this.selectedIds.size;
     }
+    if (previous.length && !snapshot.isOpen && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('entity-picker-closed'));
   });
 }

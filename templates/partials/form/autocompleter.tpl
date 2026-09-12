@@ -24,6 +24,7 @@
     })"
         data-selector-field="{{ elName }}"
         data-selector-profile="{{ profile }}"
+        data-selector-title="{{ title }}"
         class="relative w-full"
 >
     {# Finding 58: min=1 already told this partial the field is required — the #}
@@ -41,11 +42,12 @@
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="!addModeForTag">
         <div>
+            <div class="flex items-center gap-1">
             <input
                     id="{{ id }}"
                     x-ref="autocompleter"
                     type="text"
-                    class="focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded mt-1"
+                    class="focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full min-w-0 text-sm border-stone-300 rounded mt-1"
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
                     autocomplete="off"
@@ -65,6 +67,8 @@
                     aria-owns="{{ id }}-listbox"
                     :aria-activedescendant="selectedIndex >= 0 ? '{{ id }}-result-' + selectedIndex : null"
             >
+            {% include "/partials/form/entityBrowseButton.tpl" %}
+            </div>
             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
         </div>
