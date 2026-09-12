@@ -1,5 +1,5 @@
 ---
-outputShape: Category object with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+outputShape: Full Category JSON record, including ID, Name, Description, template slots (CustomEntityPickerResult and CustomEntityPickerResultCSS included), MetaSchema, sectionConfig, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: category create, category edit-name, categories list
 ---
@@ -11,7 +11,8 @@ GET endpoint, so the CLI fetches the first page of the category list, the 50
 most recently created, and filters in-process; a category outside that window
 is reported as not found, and the global `--page` flag does not move the
 window. Output is a key/value table by default; pass the global `--json` flag
-to emit the raw record for scripting.
+to emit the full raw record for scripting, including template slots and their
+companion stylesheets, metadata schema and section configuration.
 
 # Example
 

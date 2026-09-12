@@ -414,6 +414,12 @@ func CreateCategoryHandler(ctx contracts.CategoryCRUDReader) http.HandlerFunc {
 				if !fieldWasSent("CustomHoverCardCSS") {
 					editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 				}
+				if !fieldWasSent("CustomEntityPickerResult") {
+					editor.CustomEntityPickerResult = existing.CustomEntityPickerResult
+				}
+				if !fieldWasSent("CustomEntityPickerResultCSS") {
+					editor.CustomEntityPickerResultCSS = existing.CustomEntityPickerResultCSS
+				}
 				if !fieldWasSent("CustomOwnEntities") {
 					editor.CustomOwnEntities = existing.CustomOwnEntities
 				}
@@ -564,6 +570,12 @@ func CreateResourceCategoryHandler(writer contracts.ResourceCategoryWriter) http
 				}
 				if !fieldWasSent("CustomHoverCardCSS") {
 					editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
+				}
+				if !fieldWasSent("CustomEntityPickerResult") {
+					editor.CustomEntityPickerResult = existing.CustomEntityPickerResult
+				}
+				if !fieldWasSent("CustomEntityPickerResultCSS") {
+					editor.CustomEntityPickerResultCSS = existing.CustomEntityPickerResultCSS
 				}
 				if !fieldWasSent("CustomPreview") {
 					editor.CustomPreview = existing.CustomPreview

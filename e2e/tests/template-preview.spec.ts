@@ -6,6 +6,20 @@
 import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('Template live preview', () => {
+  test('picker result previews with its wrapper and companion CSS', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Picker Preview ${Date.now()}`);
+    const groupName = `Picker Target ${Date.now()}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName);
+    await page.locator('.cm-content[aria-label="Entity Picker Result"]').fill('<b>[property path="Name"]</b>');
+    await page.locator('.cm-content[aria-label="Entity Picker Result CSS"]').fill('.entity-picker-result b { color: rgb(12, 34, 56); }');
+    await page.locator('#tp-slot-group').selectOption('CustomEntityPickerResult');
+    const result = page.frameLocator('iframe[title="Template slot preview"]').locator('.entity-picker-result b');
+    await expect(result).toHaveText(groupName);
+    await expect(result).toHaveCSS('color', 'rgb(12, 34, 56)');
+  });
+
   test('editing Custom Header renders against a seeded group', async ({ page, apiClient }) => {
     const category = await apiClient.createCategory('Preview Cat');
     const groupName = `Preview Target ${Date.now()}`;

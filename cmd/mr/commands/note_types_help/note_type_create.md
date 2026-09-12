@@ -1,5 +1,5 @@
 ---
-outputShape: Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+outputShape: Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type get, note-type edit, note-types list
 ---
@@ -12,7 +12,10 @@ metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
 pages. There is a `--custom-*` flag for every note type template slot --
 the detail page header, sidebar and footer, the list card summary, avatar
-and hover card, the list page header and footer, and MRQL result cards.
+and hover card, the list page header and footer, MRQL result cards, and entity
+picker results. `--custom-entity-picker-result` sets picker content and
+`--custom-entity-picker-result-css` sets its stylesheet; selection controls
+remain host-owned.
 Each accepts raw HTML or a template string that the server injects into
 note pages and MRQL result cards; `--custom-css` is injected as a
 `<style>` block on detail and list pages. Run

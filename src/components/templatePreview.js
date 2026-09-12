@@ -36,6 +36,8 @@ const SLOTS = [
   { name: 'CustomListFooterCSS', label: 'List Footer CSS' },
   { name: 'CustomMRQLResult', label: 'MRQL Result' },
   { name: 'CustomMRQLResultCSS', label: 'MRQL Result CSS' },
+  { name: 'CustomEntityPickerResult', label: 'Entity Picker Result' },
+  { name: 'CustomEntityPickerResultCSS', label: 'Entity Picker Result CSS' },
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
@@ -368,7 +370,10 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       this.error = '';
       const content = this._readSlot(this.slot);
       // Match TemplateCSS's production cascade: shared styles, then companion styles.
-      const cssFields = [CSS_SLOT, ...this.slots.filter((s) => s.name !== CSS_SLOT && s.name.endsWith('CSS')).map((s) => s.name)];
+      const pickerSlot = this.slot === 'CustomEntityPickerResult' || this.slot === 'CustomEntityPickerResultCSS';
+      const cssFields = pickerSlot
+        ? [CSS_SLOT, 'CustomEntityPickerResultCSS']
+        : [CSS_SLOT, ...this.slots.filter((s) => s.name !== CSS_SLOT && s.name !== 'CustomEntityPickerResultCSS' && s.name.endsWith('CSS')).map((s) => s.name)];
       const css = cssFields.map((name) => this._readSlot(name)).filter(Boolean).join('\n');
       try {
         // The slot names which buffer `content` is. With CustomCSS selected it
@@ -461,6 +466,10 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // src/userSettings.js — a seeded page serves reads from the snapshot and
       // never touches the network.
       const settingsJson = JSON.stringify(userSettings.snapshot()).replace(/</g, '\\u003c');
+      const pickerSlot = this.slot === 'CustomEntityPickerResult' || this.slot === 'CustomEntityPickerResultCSS';
+      const wrapper = pickerSlot
+        ? 'class="entity-picker-result" x-ignore'
+        : 'x-data="{ entity: window.__previewEntity }"';
       frame.srcdoc = `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -472,7 +481,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 <script>window.__previewEntity = ${entityJson};
 window.__mahUserSettings = ${settingsJson};</script>
 </head><body>
-<div x-data="{ entity: window.__previewEntity }">
+<div ${wrapper}>
 ${html}
 </div>
 <script type="module" src="/public/dist/main.js"></script>

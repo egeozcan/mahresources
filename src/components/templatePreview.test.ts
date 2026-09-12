@@ -429,6 +429,22 @@ describe('template preview startup', () => {
 // Equal-specificity companion rules must override shared rules exactly as on saved pages.
 describe('companion CSS cascade', () => {
     afterEach(() => vi.unstubAllGlobals());
+    test.each(['group', 'resource', 'note'])('picker preview uses only shared and picker styles for %s', async (entityType) => {
+        const fetchMock = stubFetch();
+        const component = templatePreview({ entityType, previewPath: '/preview', categoryId: 7 });
+        component._form = formWith({
+            CustomEntityPickerResult: '<p class="card">Picker</p>',
+            CustomCSS: '.card{color:red}',
+            CustomHeaderCSS: '.card{color:green}',
+            CustomEntityPickerResultCSS: '.card{color:blue}',
+        });
+        component.$refs = {};
+        component.entityId = 42;
+        component.slot = 'CustomEntityPickerResult';
+        await component.refresh();
+        expect(sentBody(fetchMock).content).toBe('<p class="card">Picker</p>');
+        expect(sentBody(fetchMock).css).toBe('.card{color:red}\n.card{color:blue}');
+    });
     test.each(['group', 'resource', 'note'])('shared CSS comes first for %s', async (entityType) => {
         const fetchMock = stubFetch();
         const component = templatePreview({ entityType, previewPath: '/preview', categoryId: 7 });

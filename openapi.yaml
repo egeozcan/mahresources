@@ -96,6 +96,10 @@ components:
                     type: string
                 CustomDetailFooterCSS:
                     type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomHeaderCSS:
@@ -169,6 +173,10 @@ components:
                 CustomDetailFooter:
                     type: string
                 CustomDetailFooterCSS:
+                    type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
                     type: string
                 CustomHeader:
                     type: string
@@ -1162,6 +1170,10 @@ components:
                     type: string
                 CustomDetailFooterCSS:
                     type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomHeaderCSS:
@@ -1233,6 +1245,10 @@ components:
                 CustomDetailFooter:
                     type: string
                 CustomDetailFooterCSS:
+                    type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
                     type: string
                 CustomHeader:
                     type: string
@@ -1557,6 +1573,10 @@ components:
                     type: string
                 CustomDetailFooterCSS:
                     type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomHeaderCSS:
@@ -1640,6 +1660,10 @@ components:
                 CustomDetailFooter:
                     type: string
                 CustomDetailFooterCSS:
+                    type: string
+                CustomEntityPickerResult:
+                    type: string
+                CustomEntityPickerResultCSS:
                     type: string
                 CustomHeader:
                     type: string

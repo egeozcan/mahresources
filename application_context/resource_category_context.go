@@ -72,36 +72,38 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	resourceCategory := models.ResourceCategory{
-		Name:                  query.Name,
-		Description:           query.Description,
-		CustomHeader:          query.CustomHeader,
-		CustomHeaderCSS:       query.CustomHeaderCSS,
-		CustomSidebar:         query.CustomSidebar,
-		CustomSidebarCSS:      query.CustomSidebarCSS,
-		CustomSummary:         query.CustomSummary,
-		CustomSummaryCSS:      query.CustomSummaryCSS,
-		CustomAvatar:          query.CustomAvatar,
-		CustomAvatarCSS:       query.CustomAvatarCSS,
-		CustomListHeader:      query.CustomListHeader,
-		CustomListHeaderCSS:   query.CustomListHeaderCSS,
-		CustomDetailFooter:    query.CustomDetailFooter,
-		CustomDetailFooterCSS: query.CustomDetailFooterCSS,
-		CustomListFooter:      query.CustomListFooter,
-		CustomListFooterCSS:   query.CustomListFooterCSS,
-		CustomHoverCard:       query.CustomHoverCard,
-		CustomHoverCardCSS:    query.CustomHoverCardCSS,
-		CustomPreview:         query.CustomPreview,
-		CustomPreviewCSS:      query.CustomPreviewCSS,
-		CustomLightbox:        query.CustomLightbox,
-		CustomLightboxCSS:     query.CustomLightboxCSS,
-		CustomCell:            query.CustomCell,
-		CustomCellCSS:         query.CustomCellCSS,
-		CustomMRQLResult:      query.CustomMRQLResult,
-		CustomMRQLResultCSS:   query.CustomMRQLResultCSS,
-		CustomCSS:             query.CustomCSS,
-		MetaSchema:            query.MetaSchema,
-		MetadataIndexes:       metadataIndexesValue(query.MetadataIndexes),
-		AutoDetectRules:       query.AutoDetectRules,
+		Name:                        query.Name,
+		Description:                 query.Description,
+		CustomHeader:                query.CustomHeader,
+		CustomHeaderCSS:             query.CustomHeaderCSS,
+		CustomSidebar:               query.CustomSidebar,
+		CustomSidebarCSS:            query.CustomSidebarCSS,
+		CustomSummary:               query.CustomSummary,
+		CustomSummaryCSS:            query.CustomSummaryCSS,
+		CustomAvatar:                query.CustomAvatar,
+		CustomAvatarCSS:             query.CustomAvatarCSS,
+		CustomListHeader:            query.CustomListHeader,
+		CustomListHeaderCSS:         query.CustomListHeaderCSS,
+		CustomDetailFooter:          query.CustomDetailFooter,
+		CustomDetailFooterCSS:       query.CustomDetailFooterCSS,
+		CustomListFooter:            query.CustomListFooter,
+		CustomListFooterCSS:         query.CustomListFooterCSS,
+		CustomHoverCard:             query.CustomHoverCard,
+		CustomHoverCardCSS:          query.CustomHoverCardCSS,
+		CustomPreview:               query.CustomPreview,
+		CustomPreviewCSS:            query.CustomPreviewCSS,
+		CustomLightbox:              query.CustomLightbox,
+		CustomLightboxCSS:           query.CustomLightboxCSS,
+		CustomCell:                  query.CustomCell,
+		CustomCellCSS:               query.CustomCellCSS,
+		CustomMRQLResult:            query.CustomMRQLResult,
+		CustomMRQLResultCSS:         query.CustomMRQLResultCSS,
+		CustomEntityPickerResult:    query.CustomEntityPickerResult,
+		CustomEntityPickerResultCSS: query.CustomEntityPickerResultCSS,
+		CustomCSS:                   query.CustomCSS,
+		MetaSchema:                  query.MetaSchema,
+		MetadataIndexes:             metadataIndexesValue(query.MetadataIndexes),
+		AutoDetectRules:             query.AutoDetectRules,
 	}
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
@@ -166,6 +168,8 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomCellCSS = query.CustomCellCSS
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
 	resourceCategory.CustomMRQLResultCSS = query.CustomMRQLResultCSS
+	resourceCategory.CustomEntityPickerResult = query.CustomEntityPickerResult
+	resourceCategory.CustomEntityPickerResultCSS = query.CustomEntityPickerResultCSS
 	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema
 	if query.MetadataIndexes != nil {

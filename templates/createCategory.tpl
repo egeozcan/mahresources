@@ -378,6 +378,14 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=category.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result CSS" name="CustomMRQLResultCSS" value=category.CustomMRQLResultCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         </fieldset>
+        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomEntityPickerResult">
+        <legend class="px-2 text-sm font-semibold text-stone-700">Entity Picker Result</legend>
+        <div x-data="templateGeneration({ fieldName: 'CustomEntityPickerResult', mode: 'html' })">
+        {% include "/partials/form/templateGenerationControls.tpl" with title="Entity Picker Result and CSS" name="CustomEntityPickerResult" field_id="CustomEntityPickerResult" %}
+        </div>
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result" name="CustomEntityPickerResult" value=category.CustomEntityPickerResult mode="html" description="Content of one group result in the entity picker. Leave empty for the default card. The host owns selection controls; use shortcodes, not Alpine directives." shortcodes=true generate=false %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result CSS" name="CustomEntityPickerResultCSS" value=category.CustomEntityPickerResultCSS mode="css" description="Global styles loaded with shared CustomCSS in the picker. Target .entity-picker-result to avoid affecting other page content." shortcodes=true generate=false %}
+        </fieldset>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=category.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
     </fieldset>
 

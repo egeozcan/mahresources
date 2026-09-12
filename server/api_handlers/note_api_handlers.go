@@ -315,6 +315,12 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					if _, sent := raw["ApplyTemplatesToShares"]; !sent {
 						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
 					}
+					if _, sent := raw["CustomEntityPickerResult"]; !sent {
+						editor.CustomEntityPickerResult = existing.CustomEntityPickerResult
+					}
+					if _, sent := raw["CustomEntityPickerResultCSS"]; !sent {
+						editor.CustomEntityPickerResultCSS = existing.CustomEntityPickerResultCSS
+					}
 					if _, sent := raw["CustomMRQLResult"]; !sent {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
 					}
@@ -400,6 +406,12 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					// rather than silently turning it off.
 					if !formHasField(request, "ApplyTemplatesToShares") {
 						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
+					}
+					if !formHasField(request, "CustomEntityPickerResult") {
+						editor.CustomEntityPickerResult = existing.CustomEntityPickerResult
+					}
+					if !formHasField(request, "CustomEntityPickerResultCSS") {
+						editor.CustomEntityPickerResultCSS = existing.CustomEntityPickerResultCSS
 					}
 					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
 						editor.CustomMRQLResult = existing.CustomMRQLResult

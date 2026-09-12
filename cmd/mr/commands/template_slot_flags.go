@@ -44,6 +44,8 @@ var sharedCustomSlots = []customSlotFlag{
 	{"custom-list-footer-css", "CustomListFooterCSS", "Global CSS for CustomListFooter"},
 	{"custom-mrql-result", "CustomMRQLResult", "Template for rendering {member}s of this {carrier} in MRQL results"},
 	{"custom-mrql-result-css", "CustomMRQLResultCSS", "Global CSS for CustomMRQLResult"},
+	{"custom-entity-picker-result", "CustomEntityPickerResult", "Template for {member} content inside an entity picker result"},
+	{"custom-entity-picker-result-css", "CustomEntityPickerResultCSS", "Global CSS for CustomEntityPickerResult"},
 	{"custom-css", "CustomCSS", "CSS injected as a <style> block on the {member} detail page and its list pages"},
 }
 

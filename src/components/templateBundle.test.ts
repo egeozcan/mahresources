@@ -36,6 +36,14 @@ describe('templateBundle.entityToBundle', () => {
     expect(bundle.sectionConfig).toBe(str);
   });
 
+  it('keeps picker HTML and CSS in an exported carrier bundle', () => {
+    const bundle = tb.entityToBundle({ ID: 6, Name: 'Person',
+      CustomEntityPickerResult: '<b>Person</b>', CustomEntityPickerResultCSS: '.person{color:red}',
+    }, 'category');
+    expect(bundle.slots.entityPickerResult).toBe('<b>Person</b>');
+    expect(bundle.slots.entityPickerResultCSS).toBe('.person{color:red}');
+  });
+
   it('yields an empty section config when the entity has none', () => {
     const bundle = tb.entityToBundle({ ID: 5, Name: 'Cat' }, 'category');
     expect(bundle.sectionConfig).toBe('');

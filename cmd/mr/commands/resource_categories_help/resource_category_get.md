@@ -1,5 +1,5 @@
 ---
-outputShape: ResourceCategory object with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+outputShape: Full ResourceCategory JSON record, including ID, Name, Description, template slots (CustomEntityPickerResult and CustomEntityPickerResultCSS included), MetaSchema, sectionConfig, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: resource-category create, resource-category edit-name, resource-categories list
 ---
@@ -14,9 +14,8 @@ as `resource category <id> not found`, so use
 `resource-categories list --name <substring>` to locate it instead.
 
 Output is a key/value table by default; pass the global `--json` flag to
-emit those fields as JSON for scripting. The template slots, MetaSchema
-and SectionConfig are not included; read them from
-`resource-categories list --json`.
+emit the full raw record for scripting, including template slots and their
+companion stylesheets, metadata schema and section configuration.
 
 # Example
 

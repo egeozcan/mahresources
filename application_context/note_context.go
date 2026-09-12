@@ -535,6 +535,8 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.ApplyTemplatesToShares = query.ApplyTemplatesToShares
 	noteType.CustomMRQLResult = query.CustomMRQLResult
 	noteType.CustomMRQLResultCSS = query.CustomMRQLResultCSS
+	noteType.CustomEntityPickerResult = query.CustomEntityPickerResult
+	noteType.CustomEntityPickerResultCSS = query.CustomEntityPickerResultCSS
 	noteType.CustomCSS = query.CustomCSS
 	noteType.MetaSchema = query.MetaSchema
 	if query.MetadataIndexes != nil {

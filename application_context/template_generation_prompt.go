@@ -132,6 +132,8 @@ func slotRoleLine(slot, entityType string) string {
 		return "CustomListFooter renders once below the results on a list page filtered to exactly this one category/type, against the category itself — same binding as CustomListHeader: [property path=\"Name\"] is the category's own name, [meta] renders its empty state, and [mrql] runs at global scope."
 	case "CustomMRQLResult":
 		return "CustomMRQLResult renders once per item in MRQL result cards; Alpine directives are unavailable, so keep it self-contained HTML plus shortcodes."
+	case "CustomEntityPickerResult":
+		return "CustomEntityPickerResult renders the content of one compact entity picker result. The host owns the selection control and keyboard behavior; do not add checkboxes or radios. Use self-contained HTML plus shortcodes, not Alpine directives. Make names and distinguishing category/type information readable. Detail links should open in a new tab with target=\"_blank\" and rel=\"noopener noreferrer\". Put matching styles in CustomEntityPickerResultCSS, targeted beneath .entity-picker-result."
 	case "CustomCSS":
 		return "CustomCSS is emitted on entity detail pages, list pages, and custom MRQL result cards. It is not emitted on dashboard cards or timeline list views. Scope selectors so they do not affect the rest of the page. No <style> wrapper."
 	default:
@@ -185,7 +187,7 @@ func slotRuntimeLines(slot, entityType, mode string) []string {
 // request, where no single slot can stand in for the Alpine/binding rules.
 func bundleRuntimeLines(entityType string) []string {
 	alpineSlots := []string{"CustomHeader", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomDetailFooter", "CustomHoverCard"}
-	serverOnlySlots := []string{"CustomMRQLResult"}
+	serverOnlySlots := []string{"CustomMRQLResult", "CustomEntityPickerResult"}
 	switch entityType {
 	case "resource":
 		alpineSlots = append(alpineSlots, "CustomPreview", "CustomLightbox")
@@ -210,7 +212,7 @@ func bundleRuntimeLines(entityType string) []string {
 
 func slotSupportsAlpine(slot string) bool {
 	switch slot {
-	case "CustomMRQLResult", "CustomCell", "CustomListHeader", "CustomListFooter", "CustomCSS":
+	case "CustomMRQLResult", "CustomEntityPickerResult", "CustomCell", "CustomListHeader", "CustomListFooter", "CustomCSS":
 		return false
 	default:
 		return true

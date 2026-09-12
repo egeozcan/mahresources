@@ -564,6 +564,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomOwnEntitiesCSS = def.CustomOwnEntitiesCSS
 				cat.CustomMRQLResult = def.CustomMRQLResult
 				cat.CustomMRQLResultCSS = def.CustomMRQLResultCSS
+				cat.CustomEntityPickerResult = def.CustomEntityPickerResult
+				cat.CustomEntityPickerResultCSS = def.CustomEntityPickerResultCSS
 				cat.CustomCSS = def.CustomCSS
 				cat.MetaSchema = def.MetaSchema
 				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "group"); err != nil {
@@ -660,6 +662,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.ApplyTemplatesToShares = def.ApplyTemplatesToShares
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomMRQLResultCSS = def.CustomMRQLResultCSS
+				nt.CustomEntityPickerResult = def.CustomEntityPickerResult
+				nt.CustomEntityPickerResultCSS = def.CustomEntityPickerResultCSS
 				nt.CustomCSS = def.CustomCSS
 				nt.MetaSchema = def.MetaSchema
 				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "note"); err != nil {
@@ -751,6 +755,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomHoverCardCSS = def.CustomHoverCardCSS
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.CustomMRQLResultCSS = def.CustomMRQLResultCSS
+				rc.CustomEntityPickerResult = def.CustomEntityPickerResult
+				rc.CustomEntityPickerResultCSS = def.CustomEntityPickerResultCSS
 				rc.CustomCSS = def.CustomCSS
 				rc.MetaSchema = def.MetaSchema
 				if _, err := mrql.ParseMetadataIndexKeys(def.MetadataIndexes, "resource"); err != nil {

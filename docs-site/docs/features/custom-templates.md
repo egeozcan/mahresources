@@ -45,6 +45,7 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomListHeader** | Above the results on a list page, only when it is filtered to exactly this one category/type (see [List page slots](#list-page-slots)) |
 | **CustomListFooter** | Below the results on the same pages, above the pager |
 | **CustomMRQLResult** | Result cards in `[mrql]` queries (see [Custom MRQL Result](#custom-mrql-result-templates)) |
+| **CustomEntityPickerResult** | Content inside an entity picker result; selection controls remain host-owned |
 | **CustomCSS** | Raw CSS injected as a page-level `<style>` block (see [CustomCSS](#customcss)) |
 
 Every slot above holds HTML markup except `CustomCSS`, which holds raw CSS and exists so the others can be styled globally without inlining `<style>` tags in each.
@@ -60,7 +61,7 @@ For the same reason, the Own Entities section auto-opens whenever `CustomOwnEnti
 Custom template content is processed in two ways:
 
 - **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, and plugin shortcodes) are expanded server-side.
-- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first two the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first two, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomEntityPickerResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first three the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first three, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
 
 :::caution Pongo2 expressions do not work
 
@@ -864,6 +865,36 @@ A note-type detail page also loads CSS for its displayed note cards.
 A custom element with `data-morph-client-owned` keeps its client-rendered children
 during host page refreshes. Its attributes are still patched, and
 `refreshFromMorph(toElement)` can reconcile the new attributes.
+
+### Entity picker result templates
+
+Group Categories, Note Types and Resource Categories each offer
+`CustomEntityPickerResult` and `CustomEntityPickerResultCSS`. The HTML replaces
+only result content, not the host's checkbox/radio, selection state or keyboard
+controls. Leave the HTML empty for the default name, tags, thumbnail, owner and
+category/type presentation where available; it does not fall back to CustomSummary.
+
+Use HTML and shortcodes, not Pongo2 or Alpine directives. Keep names and
+identifying properties readable. For example, on a group Category:
+
+```html
+<div class="picker-person">
+  <a href="/group?id=[property path=&quot;ID&quot;]" target="_blank" rel="noopener noreferrer">[property path="Name"]</a>
+  <span>[property path="Category.Name"]</span>
+</div>
+```
+
+Put matching styles in the companion field:
+
+```css
+.entity-picker-result .picker-person { display: grid; gap: 0.25rem; }
+```
+
+The picker loads shared `CustomCSS` followed by `CustomEntityPickerResultCSS`.
+These are global styles, not a CSS sandbox; target `.entity-picker-result` and
+use distinctive class names. Copy/export/import template tools preserve both
+fields. The CLI exposes `--custom-entity-picker-result` and
+`--custom-entity-picker-result-css` on the carrier commands.
 
 ### Companion stylesheets
 

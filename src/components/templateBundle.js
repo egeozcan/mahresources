@@ -48,6 +48,8 @@ const SLOT_FIELDS = {
   listFooterCSS: 'CustomListFooterCSS',
   mrqlResult: 'CustomMRQLResult',
   mrqlResultCSS: 'CustomMRQLResultCSS',
+  entityPickerResult: 'CustomEntityPickerResult',
+  entityPickerResultCSS: 'CustomEntityPickerResultCSS',
   css: 'CustomCSS',
 };
 

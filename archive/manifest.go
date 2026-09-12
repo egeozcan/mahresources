@@ -303,20 +303,22 @@ type CategoryDef struct {
 	// out of archives that do not use them, and older readers ignore unknown keys.
 	// CustomOwnEntities is group-category-only; NoteTypeDef and ResourceCategoryDef
 	// embed this struct and never set it, so omitempty keeps it out of their JSON.
-	CustomDetailFooter    string         `json:"custom_detail_footer,omitempty"`
-	CustomDetailFooterCSS string         `json:"custom_detail_footer_css,omitempty"`
-	CustomListFooter      string         `json:"custom_list_footer,omitempty"`
-	CustomListFooterCSS   string         `json:"custom_list_footer_css,omitempty"`
-	CustomHoverCard       string         `json:"custom_hover_card,omitempty"`
-	CustomHoverCardCSS    string         `json:"custom_hover_card_css,omitempty"`
-	CustomOwnEntities     string         `json:"custom_own_entities,omitempty"`
-	CustomOwnEntitiesCSS  string         `json:"custom_own_entities_css,omitempty"`
-	CustomMRQLResult      string         `json:"custom_mrql_result"`
-	CustomMRQLResultCSS   string         `json:"custom_mrql_result_css"`
-	CustomCSS             string         `json:"custom_css"`
-	MetaSchema            string         `json:"meta_schema"`
-	MetadataIndexes       string         `json:"metadata_indexes,omitempty"`
-	SectionConfig         map[string]any `json:"section_config"`
+	CustomDetailFooter          string         `json:"custom_detail_footer,omitempty"`
+	CustomDetailFooterCSS       string         `json:"custom_detail_footer_css,omitempty"`
+	CustomListFooter            string         `json:"custom_list_footer,omitempty"`
+	CustomListFooterCSS         string         `json:"custom_list_footer_css,omitempty"`
+	CustomHoverCard             string         `json:"custom_hover_card,omitempty"`
+	CustomHoverCardCSS          string         `json:"custom_hover_card_css,omitempty"`
+	CustomOwnEntities           string         `json:"custom_own_entities,omitempty"`
+	CustomOwnEntitiesCSS        string         `json:"custom_own_entities_css,omitempty"`
+	CustomMRQLResult            string         `json:"custom_mrql_result"`
+	CustomMRQLResultCSS         string         `json:"custom_mrql_result_css"`
+	CustomEntityPickerResult    string         `json:"custom_entity_picker_result,omitempty"`
+	CustomEntityPickerResultCSS string         `json:"custom_entity_picker_result_css,omitempty"`
+	CustomCSS                   string         `json:"custom_css"`
+	MetaSchema                  string         `json:"meta_schema"`
+	MetadataIndexes             string         `json:"metadata_indexes,omitempty"`
+	SectionConfig               map[string]any `json:"section_config"`
 }
 
 // NoteTypeDef is CategoryDef plus the note-type-only ApplyTemplatesToShares

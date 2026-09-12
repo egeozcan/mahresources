@@ -1,5 +1,5 @@
 ---
-outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type edit-name, note-type edit-description, note-type get
 ---
@@ -14,7 +14,8 @@ semantics). Use this command when you need to change the `MetaSchema`,
 description of where it renders under `mr note-type edit --help`. The
 dedicated `edit-name` / `edit-description` commands only touch those two
 scoped fields. `--custom-css` is injected as a `<style>` block on detail
-and list pages.
+and list pages. Use `--custom-entity-picker-result` and
+`--custom-entity-picker-result-css` to edit the picker result content and styles.
 
 Because only explicitly-passed flags are sent, passing a `--custom-*`
 flag with an empty string is how a slot is cleared; omitting it leaves

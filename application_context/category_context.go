@@ -85,31 +85,33 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	category := models.Category{
-		Name:                  categoryQuery.Name,
-		Description:           categoryQuery.Description,
-		CustomHeader:          categoryQuery.CustomHeader,
-		CustomHeaderCSS:       categoryQuery.CustomHeaderCSS,
-		CustomSidebar:         categoryQuery.CustomSidebar,
-		CustomSidebarCSS:      categoryQuery.CustomSidebarCSS,
-		CustomSummary:         categoryQuery.CustomSummary,
-		CustomSummaryCSS:      categoryQuery.CustomSummaryCSS,
-		CustomAvatar:          categoryQuery.CustomAvatar,
-		CustomAvatarCSS:       categoryQuery.CustomAvatarCSS,
-		CustomListHeader:      categoryQuery.CustomListHeader,
-		CustomListHeaderCSS:   categoryQuery.CustomListHeaderCSS,
-		CustomDetailFooter:    categoryQuery.CustomDetailFooter,
-		CustomDetailFooterCSS: categoryQuery.CustomDetailFooterCSS,
-		CustomListFooter:      categoryQuery.CustomListFooter,
-		CustomListFooterCSS:   categoryQuery.CustomListFooterCSS,
-		CustomHoverCard:       categoryQuery.CustomHoverCard,
-		CustomHoverCardCSS:    categoryQuery.CustomHoverCardCSS,
-		CustomOwnEntities:     categoryQuery.CustomOwnEntities,
-		CustomOwnEntitiesCSS:  categoryQuery.CustomOwnEntitiesCSS,
-		CustomMRQLResult:      categoryQuery.CustomMRQLResult,
-		CustomMRQLResultCSS:   categoryQuery.CustomMRQLResultCSS,
-		CustomCSS:             categoryQuery.CustomCSS,
-		MetaSchema:            categoryQuery.MetaSchema,
-		MetadataIndexes:       metadataIndexesValue(categoryQuery.MetadataIndexes),
+		Name:                        categoryQuery.Name,
+		Description:                 categoryQuery.Description,
+		CustomHeader:                categoryQuery.CustomHeader,
+		CustomHeaderCSS:             categoryQuery.CustomHeaderCSS,
+		CustomSidebar:               categoryQuery.CustomSidebar,
+		CustomSidebarCSS:            categoryQuery.CustomSidebarCSS,
+		CustomSummary:               categoryQuery.CustomSummary,
+		CustomSummaryCSS:            categoryQuery.CustomSummaryCSS,
+		CustomAvatar:                categoryQuery.CustomAvatar,
+		CustomAvatarCSS:             categoryQuery.CustomAvatarCSS,
+		CustomListHeader:            categoryQuery.CustomListHeader,
+		CustomListHeaderCSS:         categoryQuery.CustomListHeaderCSS,
+		CustomDetailFooter:          categoryQuery.CustomDetailFooter,
+		CustomDetailFooterCSS:       categoryQuery.CustomDetailFooterCSS,
+		CustomListFooter:            categoryQuery.CustomListFooter,
+		CustomListFooterCSS:         categoryQuery.CustomListFooterCSS,
+		CustomHoverCard:             categoryQuery.CustomHoverCard,
+		CustomHoverCardCSS:          categoryQuery.CustomHoverCardCSS,
+		CustomOwnEntities:           categoryQuery.CustomOwnEntities,
+		CustomOwnEntitiesCSS:        categoryQuery.CustomOwnEntitiesCSS,
+		CustomMRQLResult:            categoryQuery.CustomMRQLResult,
+		CustomMRQLResultCSS:         categoryQuery.CustomMRQLResultCSS,
+		CustomEntityPickerResult:    categoryQuery.CustomEntityPickerResult,
+		CustomEntityPickerResultCSS: categoryQuery.CustomEntityPickerResultCSS,
+		CustomCSS:                   categoryQuery.CustomCSS,
+		MetaSchema:                  categoryQuery.MetaSchema,
+		MetadataIndexes:             metadataIndexesValue(categoryQuery.MetadataIndexes),
 	}
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
@@ -192,6 +194,8 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomOwnEntitiesCSS = categoryQuery.CustomOwnEntitiesCSS
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
 	category.CustomMRQLResultCSS = categoryQuery.CustomMRQLResultCSS
+	category.CustomEntityPickerResult = categoryQuery.CustomEntityPickerResult
+	category.CustomEntityPickerResultCSS = categoryQuery.CustomEntityPickerResultCSS
 	category.CustomCSS = categoryQuery.CustomCSS
 	category.MetaSchema = categoryQuery.MetaSchema
 	if categoryQuery.MetadataIndexes != nil {

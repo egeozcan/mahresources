@@ -9386,7 +9386,13 @@ Final loop validation: full `go test --tags 'json1 fts5' ./...`; `go vet --tags 
 - [x] Write and self-review `docs/superpowers/specs/2026-09-12-shared-entity-picker-design.md`.
 - [x] Obtain user review of the written spec.
 - [x] Prepare and self-review `docs/superpowers/plans/2026-09-12-shared-entity-picker.md` after spec approval.
-- [ ] Select the execution approach and start implementation.
+- [x] Select inline execution and create `.worktrees/shared-entity-picker` on `shared-entity-picker`.
+- [x] Verify baseline: 1,352 frontend tests and the full tagged Go suite pass.
+- [x] Task 1: custom picker-result slot lifecycle.
+- [ ] Tasks 2–3: scoped browsing service and rendered API.
+- [ ] Tasks 4–6: browse profiles, session state and field integration.
+- [ ] Tasks 7–8: accessible dialog, all consumers and end-to-end coverage.
+- [ ] Task 9: full validation and review.
 
 Review: the spec extends the existing picker across entity selectors, with property
 filters, pagination, nested filter browsing and carrier-specific result template/CSS
@@ -9395,7 +9401,19 @@ documentation only; no application behavior changed and no runtime tests were ru
 The implementation plan has nine testable tasks with typed boundary contracts,
 red/green checks, full selector coverage and a requirement-to-task map. Self-review
 checked producer/consumer names, nested-step targeting, actual DTO/markup paths,
-and removal of placeholders. Runtime test results remain for execution.
+and removal of placeholders. Task 1 validation: 1,356 frontend tests; Go application-context, groupio, API
+handlers/API integration, models, archive, CLI and architecture suites; production
+build, OpenAPI regeneration, CLI docs lint and CSS scan. Browser validation passed
+15 authoring/preview/a11y cases, followed by all six preview cases including the
+new picker CSS/wrapper test. The 34-case carrier CLI suite passes, including new
+picker-slot create/read/partial-edit and note-type clear regressions.
+
+Task 1 tests exposed missing slot copies on HTTP partial edits and the CLI's
+reduced JSON reserialization for category/resource-category get. Both are fixed
+and covered. Template bundle export and author previews carry the new pair;
+picker preview styles are shared CSS plus picker CSS only. The browsing dialog
+itself is not implemented yet. PostgreSQL and the full browser/CLI matrix remain
+for the final integration gate.
 
 ## fal.ai upscaler guidance and pricing — 2026-09-12
 

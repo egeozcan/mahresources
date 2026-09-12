@@ -1,5 +1,5 @@
 ---
-outputShape: Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/CSS, CreatedAt, UpdatedAt
+outputShape: Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: resource-category get, resource-category edit-name, resource-categories list
 ---
@@ -12,7 +12,10 @@ every template slot, and structural fields (`--meta-schema`,
 `--section-config`). Resource categories carry three slots the other
 carriers do not: `--custom-preview` (above the built-in preview image),
 `--custom-lightbox` (the lightbox details panel), and `--custom-cell`
-(an extra column in the resources details table). Run
+(an extra column in the resources details table).
+`--custom-entity-picker-result` sets picker result content, and
+`--custom-entity-picker-result-css` sets its companion stylesheet. Selection
+controls remain host-owned. Run
 `mr resource-category create --help` for the full list with a one-line
 description of where each renders. `--custom-css`
 is injected as a `<style>` block on detail and list pages. On success

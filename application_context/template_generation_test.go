@@ -174,7 +174,7 @@ func TestTemplateGeneratorBundlePromptDoesNotDependOnAppStyles(t *testing.T) {
 	for _, want := range []string{
 		"Do not rely on Tailwind utility classes or app-owned CSS classes",
 		"style those names in the requested companion CSS slot or CustomCSS",
-		"They do not run in these slots: CustomMRQLResult, CustomCell, CustomListHeader, CustomListFooter",
+		"They do not run in these slots: CustomMRQLResult, CustomEntityPickerResult, CustomCell, CustomListHeader, CustomListFooter",
 		"data-lightbox-item",
 	} {
 		if !strings.Contains(provider.seenUser, want) {

@@ -74,7 +74,7 @@ request DTOs. Archive fields use `custom_entity_picker_result` and
 schema version 1. CLI flags are `--custom-entity-picker-result` and
 `--custom-entity-picker-result-css` and inherit existing file-input conventions.
 
-- [ ] Add a failing reflection test across carrier models and DTOs, then round-trip tests using the existing create/edit context and archive test fixtures. Assert actual stored values, not just JSON field presence. Include clearing previously nonempty slots.
+- [x] Add failing persistence and round-trip tests using the existing create/edit context and archive fixtures. Execution used JSON create/edit/reload assertions instead of the proposed reflection-only test, so a dropped mapping fails through observable behavior. Assert actual stored values, not just JSON field presence. Include clearing previously nonempty slots.
 
 ```go
 func TestEntityPickerSlotsExist(t *testing.T) {
@@ -98,8 +98,8 @@ Import `reflect`, `testing`, `mahresources/models` and
 `mahresources/models/query_models` in the test. Embedded creator fields remain
 visible through `FieldByName`, so this checks both create and edit DTOs.
 
-- [ ] Run `go test --tags 'json1 fts5' ./application_context -run TestEntityPickerSlots -count=1`; record the missing-field failure.
-- [ ] Add the paired fields beside existing `CustomMRQLResult` fields and copy them at every explicit carrier mapping. Use this field shape:
+- [x] Run `go test --tags 'json1 fts5' ./application_context -run TestEntityPickerSlots -count=1`; record the missing-field failure.
+- [x] Add the paired fields beside existing `CustomMRQLResult` fields and copy them at every explicit carrier mapping. Use this field shape:
 
 ```go
 CustomEntityPickerResult    string `gorm:"type:text"`
@@ -110,10 +110,19 @@ Do not blindly append picker CSS to `TemplateCSS()`: that currently gathers all
 slots for ordinary pages. Task 3 emits only shared CSS plus this slot in the
 picker; picker-specific CSS should not newly leak onto unrelated list pages.
 
-- [ ] Add editor fieldsets using `data-template-cluster="CustomEntityPickerResult"`, the existing generation controls, and two code-editor inputs. Add the slot to server-only template-generation guidance (native links; no Alpine promise), supported-slot checks, preview handling and CLI flag declarations.
-- [ ] Add archive JSON fields and all three export/import carrier mappings without changing the manifest version. Test an old archive with neither new field, and a new archive round-trip containing both.
-- [ ] Run `go test --tags 'json1 fts5' ./application_context ./groupio ./server/api_handlers ./cmd/mr/commands -count=1`; run `npm run build-cli && ./mr docs lint`. Fix affected documentation inventories and tests.
-- [ ] Commit only this slot lifecycle slice: `feat: add entity picker result template slots`.
+- [x] Add editor fieldsets using `data-template-cluster="CustomEntityPickerResult"`, the existing generation controls, and two code-editor inputs. Add the slot to server-only template-generation guidance (native links; no Alpine promise), supported-slot checks, preview handling and CLI flag declarations.
+- [x] Add archive JSON fields and all three export/import carrier mappings without changing the manifest version. Test an old archive with neither new field, and a new archive round-trip containing both.
+- [x] Run `go test --tags 'json1 fts5' ./application_context ./groupio ./server/api_handlers ./cmd/mr/commands -count=1`; run `npm run build-cli && ./mr docs lint`. Fix affected documentation inventories and tests.
+- [x] Commit only this slot lifecycle slice: `feat: add entity picker result template slots`.
+
+Execution findings: the CLI category/resource-category get commands serialized
+reduced response structs and dropped template fields. They now retain the raw
+matching record for JSON output, with 34 passing carrier CLI cases. Additional
+slot lifecycle consumers found and updated: `src/components/templateBundle.js`
+and `src/components/templatePreview.js`. Preview uses only shared/picker CSS and
+the picker wrapper. See `docs/todo.md` for red/green and validation evidence.
+Existing custom-slot flags accept literal strings, not a new `@file` syntax;
+this feature preserves that existing contract.
 
 ## Task 2: Add bounded scoped browsing and confirmation lookup
 

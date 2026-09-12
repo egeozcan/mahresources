@@ -85,6 +85,9 @@ type ResourceCategory struct {
 	// initialized in the rendered output.
 	CustomMRQLResult    string `gorm:"type:text"`
 	CustomMRQLResultCSS string `gorm:"type:text"`
+	// CustomEntityPickerResult replaces content inside a picker result's host-owned selection wrapper.
+	CustomEntityPickerResult    string `gorm:"type:text"`
+	CustomEntityPickerResultCSS string `gorm:"type:text"`
 	// CustomCSS is injected as a page-level <style> block on pages that render this category's
 	// templates (resource detail page, resource list pages, and [mrql] result cards that use a
 	// CustomMRQLResult template), so the other Custom* slots can be styled globally. Shortcodes are

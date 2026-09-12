@@ -67,14 +67,17 @@ func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Co
 				return err
 			}
 
-			var categories []resourceCategoryResponse
+			var categories []json.RawMessage
 			if err := json.Unmarshal(raw, &categories); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			for _, cat := range categories {
+			for _, catJSON := range categories {
+				var cat resourceCategoryResponse
+				if err := json.Unmarshal(catJSON, &cat); err != nil {
+					return fmt.Errorf("parsing resource category: %w", err)
+				}
 				if uint64(cat.ID) == targetID {
-					catJSON, _ := json.Marshal(cat)
 					output.PrintSingle(*opts, []output.KeyValue{
 						{Key: "ID", Value: strconv.FormatUint(uint64(cat.ID), 10)},
 						{Key: "Name", Value: cat.Name},
