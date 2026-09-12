@@ -196,12 +196,12 @@ MRQL generation is optional and configured with environment variables only. Ther
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
 | `DEEPSEEK_API_KEY` | (disabled) | DeepSeek API key for `/mrql` natural-language generation |
-| `DEEPSEEK_MODEL` | `deepseek-v4-pro` | DeepSeek model used to draft MRQL |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model used to draft MRQL |
 | `DEEPSEEK_TIMEOUT` | `20s` | Timeout for one DeepSeek MRQL generation call. Invalid duration values fail startup |
 
 ```bash
 DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_MODEL=deepseek-flash
 DEEPSEEK_TIMEOUT=20s
 ```
 

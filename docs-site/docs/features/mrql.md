@@ -33,7 +33,7 @@ Navigate to `/mrql` in the web UI. The page provides:
 
 When `DEEPSEEK_API_KEY` is configured, the `/mrql` editor can draft MRQL from a "Describe results" prompt. The server sends only the text you type and syntax-only MRQL instructions to DeepSeek. It does not send local tag lists, category names, note types, resource categories, saved queries, or database contents.
 
-Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled. `DEEPSEEK_MODEL` (default `deepseek-v4-pro`) and `DEEPSEEK_TIMEOUT` (default 20s) tune the call, and generation is limited to 10 requests per minute per client address, beyond which the editor reports HTTP 429.
+Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled. `DEEPSEEK_MODEL` (default `deepseek-flash`) and `DEEPSEEK_TIMEOUT` (default 20s) tune the call, and generation is limited to 10 requests per minute per client address, beyond which the editor reports HTTP 429.
 
 ## Filtering List Pages
 

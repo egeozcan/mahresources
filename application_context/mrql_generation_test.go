@@ -28,7 +28,7 @@ func TestMRQLGeneratorSuccessValidatesAndExplains(t *testing.T) {
 		query:       `type = resource AND contentType ~ "image/*" LIMIT 50`,
 		explanation: "Finds up to 50 image resources.",
 	}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	got, err := gen.GenerateMRQL(context.Background(), "show image resources")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestMRQLGeneratorSuccessValidatesAndExplains(t *testing.T) {
 }
 
 func TestMRQLGeneratorMissingKey(t *testing.T) {
-	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{Model: "deepseek-flash", Timeout: time.Second})
 	_, err := gen.GenerateMRQL(context.Background(), "anything")
 	if !errors.Is(err, ErrMRQLGenerationNotConfigured) {
 		t.Fatalf("expected ErrMRQLGenerationNotConfigured, got %v", err)
@@ -51,7 +51,7 @@ func TestMRQLGeneratorMissingKey(t *testing.T) {
 }
 
 func TestMRQLGeneratorPromptLength(t *testing.T) {
-	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 	_, err := gen.GenerateMRQL(context.Background(), strings.Repeat("x", MaxMRQLGenerationPromptLength+1))
 	if !errors.Is(err, ErrMRQLGenerationBadRequest) {
 		t.Fatalf("expected bad request for long prompt, got %v", err)
@@ -60,7 +60,7 @@ func TestMRQLGeneratorPromptLength(t *testing.T) {
 
 func TestMRQLGeneratorInvalidGeneratedQuery(t *testing.T) {
 	provider := &fakeMRQLDraftProvider{query: `type = resource LIMIT 1000000`, explanation: "Too many."}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	got, err := gen.GenerateMRQL(context.Background(), "all resources")
 	if err != nil {
@@ -76,7 +76,7 @@ func TestMRQLGeneratorInvalidGeneratedQuery(t *testing.T) {
 
 func TestMRQLGeneratorDoesNotLeakLocalVocabularyIntoPrompt(t *testing.T) {
 	provider := &fakeMRQLDraftProvider{query: `TEXT ~ "invoice" LIMIT 50`, explanation: "Finds invoice text."}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	_, err := gen.GenerateMRQL(context.Background(), "find invoices")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestMRQLGeneratorPromptExplainsTagSyntaxAndBansHas(t *testing.T) {
 		query:       `type = resource AND contentType ~ "image/*" AND tags = "keo" LIMIT 50`,
 		explanation: "Finds image resources tagged keo.",
 	}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	_, err := gen.GenerateMRQL(context.Background(), `images with the tag "keo"`)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		query:       `type = resource AND name ~ "report*" LIMIT 50`,
 		explanation: "Finds resource names matching report.",
 	}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	_, err := gen.GenerateMRQL(context.Background(), "resource names like report")
 	if err != nil {
@@ -164,7 +164,7 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 func TestMRQLGeneratorProviderErrors(t *testing.T) {
 	gen := NewMRQLGenerator(
 		&fakeMRQLDraftProvider{err: errors.New("provider exploded")},
-		MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second},
+		MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second},
 	)
 
 	_, err := gen.GenerateMRQL(context.Background(), "anything")
@@ -176,7 +176,7 @@ func TestMRQLGeneratorProviderErrors(t *testing.T) {
 func TestMahresourcesContextMRQLGeneratorSeam(t *testing.T) {
 	gen := NewMRQLGenerator(
 		&fakeMRQLDraftProvider{query: `type = resource LIMIT 50`, explanation: "Finds resources."},
-		MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second},
+		MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second},
 	)
 	ctx := &MahresourcesContext{}
 

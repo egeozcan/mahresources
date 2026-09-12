@@ -19,7 +19,7 @@ func TestDeepSeekTemplateClientSendsConfigurableMaxTokens(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewDeepSeekTemplateDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	provider := NewDeepSeekTemplateDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	raw, err := provider.GenerateDraft(context.Background(), "sys", "user", 4000)
 	if err != nil {
 		t.Fatalf("GenerateDraft: %v", err)
@@ -40,7 +40,7 @@ func TestDeepSeekTemplateClientToleratesLengthFinishReason(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewDeepSeekTemplateDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	provider := NewDeepSeekTemplateDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	raw, err := provider.GenerateDraft(context.Background(), "sys", "user", 4000)
 	if err != nil {
 		t.Fatalf("template provider should tolerate a truncated (length) response, got: %v", err)

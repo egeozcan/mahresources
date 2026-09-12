@@ -32,7 +32,7 @@ The repo already has a complete MRQL path:
 
 Auth already treats MRQL execution, validation, completion, and saved-query running as read-via-POST operations for read-only principals. That read-via-POST list is also used for CSRF exemption, so the generation endpoint must not be added there. MRQL execution itself applies group-scope RBAC at query time.
 
-DeepSeek's current official docs describe an OpenAI-compatible chat completions API at `https://api.deepseek.com/chat/completions`, models including `deepseek-v4-flash` and `deepseek-v4-pro`, and JSON output through `response_format: {"type":"json_object"}` when the prompt explicitly asks for JSON. Their docs also note that `deepseek-chat` and `deepseek-reasoner` are scheduled to be deprecated on 2026-07-24 15:59 UTC.
+DeepSeek's current official docs describe an OpenAI-compatible chat completions API at `https://api.deepseek.com/chat/completions`, models including `deepseek-v4-flash` and `deepseek-flash`, and JSON output through `response_format: {"type":"json_object"}` when the prompt explicitly asks for JSON. Their docs also note that `deepseek-chat` and `deepseek-reasoner` are scheduled to be deprecated on 2026-07-24 15:59 UTC.
 
 References checked on 2026-06-27:
 
@@ -111,7 +111,7 @@ Frontend pieces:
 Environment variables:
 
 - `DEEPSEEK_API_KEY`: required to enable generation.
-- `DEEPSEEK_MODEL`: optional, default `deepseek-v4-pro`.
+- `DEEPSEEK_MODEL`: optional, default `deepseek-flash`.
 - `DEEPSEEK_TIMEOUT`: optional Go duration string, default `20s`; invalid values fail startup with a clear error.
 
 Boot config should add `DeepSeekAPIKey`, `DeepSeekModel`, and `DeepSeekTimeout` fields. The API key intentionally has no CLI flag in v1, to reduce accidental process-list exposure.

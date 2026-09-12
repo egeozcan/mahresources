@@ -319,7 +319,7 @@ func TestMRQLGeneratorSuccessValidatesAndExplains(t *testing.T) {
 		query:       `type = resource AND contentType ~ "image/*" LIMIT 50`,
 		explanation: "Finds up to 50 image resources.",
 	}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	got, err := gen.GenerateMRQL(context.Background(), "show image resources")
 	if err != nil {
@@ -334,7 +334,7 @@ func TestMRQLGeneratorSuccessValidatesAndExplains(t *testing.T) {
 }
 
 func TestMRQLGeneratorMissingKey(t *testing.T) {
-	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{Model: "deepseek-flash", Timeout: time.Second})
 	_, err := gen.GenerateMRQL(context.Background(), "anything")
 	if !errors.Is(err, ErrMRQLGenerationNotConfigured) {
 		t.Fatalf("expected ErrMRQLGenerationNotConfigured, got %v", err)
@@ -342,7 +342,7 @@ func TestMRQLGeneratorMissingKey(t *testing.T) {
 }
 
 func TestMRQLGeneratorPromptLength(t *testing.T) {
-	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(&fakeMRQLDraftProvider{}, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 	_, err := gen.GenerateMRQL(context.Background(), strings.Repeat("x", MaxMRQLGenerationPromptLength+1))
 	if !errors.Is(err, ErrMRQLGenerationBadRequest) {
 		t.Fatalf("expected bad request for long prompt, got %v", err)
@@ -351,7 +351,7 @@ func TestMRQLGeneratorPromptLength(t *testing.T) {
 
 func TestMRQLGeneratorInvalidGeneratedQuery(t *testing.T) {
 	provider := &fakeMRQLDraftProvider{query: `type = resource LIMIT 1000000`, explanation: "Too many."}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	got, err := gen.GenerateMRQL(context.Background(), "all resources")
 	if err != nil {
@@ -367,7 +367,7 @@ func TestMRQLGeneratorInvalidGeneratedQuery(t *testing.T) {
 
 func TestMRQLGeneratorDoesNotLeakLocalVocabularyIntoPrompt(t *testing.T) {
 	provider := &fakeMRQLDraftProvider{query: `TEXT ~ "invoice" LIMIT 50`, explanation: "Finds invoice text."}
-	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second})
 
 	_, err := gen.GenerateMRQL(context.Background(), "find invoices")
 	if err != nil {
@@ -412,7 +412,7 @@ const (
 	MaxMRQLGenerationPromptLength      = 2000
 	MaxMRQLGeneratedQueryLength        = 2000
 	MaxMRQLGeneratedExplanationLength  = 1000
-	DefaultDeepSeekMRQLGenerationModel = "deepseek-v4-pro"
+	DefaultDeepSeekMRQLGenerationModel = "deepseek-flash"
 	DefaultDeepSeekMRQLGenerationTimeout = 20 * time.Second
 )
 
@@ -601,7 +601,7 @@ func TestDeepSeekClientSendsJSONChatRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	got, err := client.GenerateDraft(context.Background(), "prompt body")
 	if err != nil {
 		t.Fatalf("GenerateDraft: %v", err)
@@ -609,7 +609,7 @@ func TestDeepSeekClientSendsJSONChatRequest(t *testing.T) {
 	if auth != "Bearer secret-key" {
 		t.Fatalf("Authorization header = %q", auth)
 	}
-	for _, want := range []string{`"model":"deepseek-v4-pro"`, `"stream":false`, `"response_format"`, `"json_object"`, `"max_tokens":800`} {
+	for _, want := range []string{`"model":"deepseek-flash"`, `"stream":false`, `"response_format"`, `"json_object"`, `"max_tokens":800`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("request body missing %s: %s", want, body)
 		}
@@ -625,7 +625,7 @@ func TestDeepSeekClientRejectsMalformedProviderContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	if _, err := client.GenerateDraft(context.Background(), "prompt body"); err == nil {
 		t.Fatal("expected malformed content error")
 	}
@@ -637,7 +637,7 @@ func TestDeepSeekClientRejectsLengthFinishReason(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	if _, err := client.GenerateDraft(context.Background(), "prompt body"); err == nil {
 		t.Fatal("expected finish_reason error")
 	}
@@ -649,7 +649,7 @@ func TestDeepSeekClientTimeoutUsesContext(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	if _, err := client.GenerateDraft(ctx, "prompt body"); err == nil {
@@ -1547,7 +1547,7 @@ Modify the configuration table in `CLAUDE.md`:
 
 ```markdown
 | `DEEPSEEK_API_KEY` | DeepSeek API key for `/mrql` natural-language generation. Env-only; no CLI flag in v1. |
-| `DEEPSEEK_MODEL` | DeepSeek model for MRQL generation (default: `deepseek-v4-pro`). |
+| `DEEPSEEK_MODEL` | DeepSeek model for MRQL generation (default: `deepseek-flash`). |
 | `DEEPSEEK_TIMEOUT` | Timeout for one DeepSeek MRQL generation call (default: `20s`). Invalid values fail startup. |
 ```
 

@@ -23,7 +23,7 @@ func TestDeepSeekClientSendsJSONChatRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	got, err := client.GenerateDraft(context.Background(), "prompt body")
 	if err != nil {
 		t.Fatalf("GenerateDraft: %v", err)
@@ -31,7 +31,7 @@ func TestDeepSeekClientSendsJSONChatRequest(t *testing.T) {
 	if auth != "Bearer secret-key" {
 		t.Fatalf("Authorization header = %q", auth)
 	}
-	for _, want := range []string{`"model":"deepseek-v4-pro"`, `"stream":false`, `"response_format"`, `"json_object"`, `"max_tokens":800`} {
+	for _, want := range []string{`"model":"deepseek-flash"`, `"stream":false`, `"response_format"`, `"json_object"`, `"max_tokens":800`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("request body missing %s: %s", want, body)
 		}
@@ -67,7 +67,7 @@ func TestDeepSeekClientRejectsMalformedProviderContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	if _, err := client.GenerateDraft(context.Background(), "prompt body"); err == nil {
 		t.Fatal("expected malformed content error")
 	}
@@ -79,7 +79,7 @@ func TestDeepSeekClientRejectsLengthFinishReason(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	if _, err := client.GenerateDraft(context.Background(), "prompt body"); err == nil {
 		t.Fatal("expected finish_reason error")
 	}
@@ -91,7 +91,7 @@ func TestDeepSeekClientTimeoutUsesContext(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-v4-pro", server.Client())
+	client := NewDeepSeekMRQLDraftProvider(server.URL, "secret-key", "deepseek-flash", server.Client())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	if _, err := client.GenerateDraft(ctx, "prompt body"); err == nil {

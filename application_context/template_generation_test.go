@@ -31,7 +31,7 @@ func (f *fakeTemplateDraftProvider) GenerateDraft(ctx context.Context, systemPro
 }
 
 func templateGenConfig() TemplateGenerationConfig {
-	return TemplateGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second}
+	return TemplateGenerationConfig{APIKey: "key", Model: "deepseek-flash", Timeout: time.Second}
 }
 
 func slotInput() TemplateGenerationInput {
