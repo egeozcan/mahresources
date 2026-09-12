@@ -49,18 +49,30 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--meta-schema` | string | `` | Meta schema JSON |
 | `--section-config` | string | `` | JSON controlling which sections are visible on resource detail pages for this category |
 | `--custom-header` | string | `` | Rendered at the top of the resource detail page |
+| `--custom-header-css` | string | `` | Global CSS for CustomHeader |
 | `--custom-detail-footer` | string | `` | Rendered at the bottom of the resource detail page, below every built-in section |
+| `--custom-detail-footer-css` | string | `` | Global CSS for CustomDetailFooter |
 | `--custom-sidebar` | string | `` | Rendered in the resource detail page sidebar |
+| `--custom-sidebar-css` | string | `` | Global CSS for CustomSidebar |
 | `--custom-summary` | string | `` | Rendered on resource cards in list views, below the title |
+| `--custom-summary-css` | string | `` | Global CSS for CustomSummary |
 | `--custom-avatar` | string | `` | Replaces the default avatar on resource cards |
+| `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a resource link; falls back to --custom-summary when unset |
+| `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
 | `--custom-list-header` | string | `` | Rendered above resource list pages filtered to exactly this resource category, against the resource category itself |
+| `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below resource list pages filtered to exactly this resource category, against the resource category itself |
+| `--custom-list-footer-css` | string | `` | Global CSS for CustomListFooter |
 | `--custom-mrql-result` | string | `` | Template for rendering resources of this resource category in MRQL results |
+| `--custom-mrql-result-css` | string | `` | Global CSS for CustomMRQLResult |
 | `--custom-css` | string | `` | CSS injected as a &lt;style&gt; block on the resource detail page and its list pages |
 | `--custom-preview` | string | `` | Rendered above the built-in preview image, for file types it cannot show |
+| `--custom-preview-css` | string | `` | Global CSS for CustomPreview |
 | `--custom-lightbox` | string | `` | Rendered in the lightbox details panel; falls back to --custom-sidebar when unset |
+| `--custom-lightbox-css` | string | `` | Global CSS for CustomLightbox |
 | `--custom-cell` | string | `` | Rendered as one extra cell per row in the resources details table |
+| `--custom-cell-css` | string | `` | Global CSS for CustomCell |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

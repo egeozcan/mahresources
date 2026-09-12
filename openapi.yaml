@@ -88,25 +88,45 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomDetailFooter:
                     type: string
+                CustomDetailFooterCSS:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHeaderCSS:
                     type: string
                 CustomHoverCard:
                     type: string
+                CustomHoverCardCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomOwnEntities:
                     type: string
+                CustomOwnEntitiesCSS:
+                    type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string
@@ -142,25 +162,45 @@ components:
             properties:
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomDetailFooter:
                     type: string
+                CustomDetailFooterCSS:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHeaderCSS:
                     type: string
                 CustomHoverCard:
                     type: string
+                CustomHoverCardCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomOwnEntities:
                     type: string
+                CustomOwnEntitiesCSS:
+                    type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string
@@ -1114,23 +1154,41 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomDetailFooter:
                     type: string
+                CustomDetailFooterCSS:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHeaderCSS:
                     type: string
                 CustomHoverCard:
                     type: string
+                CustomHoverCardCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string
@@ -1168,23 +1226,41 @@ components:
                     type: boolean
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomDetailFooter:
                     type: string
+                CustomDetailFooterCSS:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHeaderCSS:
                     type: string
                 CustomHoverCard:
                     type: string
+                CustomHoverCardCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string
@@ -1469,29 +1545,53 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomCell:
                     type: string
+                CustomCellCSS:
+                    type: string
                 CustomDetailFooter:
+                    type: string
+                CustomDetailFooterCSS:
                     type: string
                 CustomHeader:
                     type: string
+                CustomHeaderCSS:
+                    type: string
                 CustomHoverCard:
+                    type: string
+                CustomHoverCardCSS:
                     type: string
                 CustomLightbox:
                     type: string
+                CustomLightboxCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomPreview:
                     type: string
+                CustomPreviewCSS:
+                    type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string
@@ -1529,29 +1629,53 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomAvatarCSS:
+                    type: string
                 CustomCSS:
                     type: string
                 CustomCell:
                     type: string
+                CustomCellCSS:
+                    type: string
                 CustomDetailFooter:
+                    type: string
+                CustomDetailFooterCSS:
                     type: string
                 CustomHeader:
                     type: string
+                CustomHeaderCSS:
+                    type: string
                 CustomHoverCard:
+                    type: string
+                CustomHoverCardCSS:
                     type: string
                 CustomLightbox:
                     type: string
+                CustomLightboxCSS:
+                    type: string
                 CustomListFooter:
+                    type: string
+                CustomListFooterCSS:
                     type: string
                 CustomListHeader:
                     type: string
+                CustomListHeaderCSS:
+                    type: string
                 CustomMRQLResult:
+                    type: string
+                CustomMRQLResultCSS:
                     type: string
                 CustomPreview:
                     type: string
+                CustomPreviewCSS:
+                    type: string
                 CustomSidebar:
                     type: string
+                CustomSidebarCSS:
+                    type: string
                 CustomSummary:
+                    type: string
+                CustomSummaryCSS:
                     type: string
                 Description:
                     type: string

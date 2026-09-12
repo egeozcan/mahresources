@@ -6,8 +6,8 @@
  * A single quote in any entity field terminates the HTML attribute, breaking
  * Alpine.js initialization. This can cause JS errors and broken UI.
  *
- * Fix: Modify the |json filter to HTML-entity-encode single quotes (&#39;)
- * when the output will be used in HTML attributes.
+ * Entity JSON now lives in data-entity and is parsed by x-data. Verify both
+ * the escaped attribute payload and Alpine's initialized entity state.
  */
 import { test, expect } from '../../fixtures/base.fixture';
 
@@ -34,7 +34,7 @@ test.describe('Single Quotes in Entity Data - x-data Safety', () => {
     noteId = note.ID;
   });
 
-  test('group card with single-quote name should have valid x-data attribute', async ({ page }) => {
+  test('group card with single-quote name should initialize complete entity data', async ({ page }) => {
     await page.goto('/groups');
     await page.waitForLoadState('load');
 
@@ -42,16 +42,25 @@ test.describe('Single Quotes in Entity Data - x-data Safety', () => {
     const card = page.locator('article.group-card', { hasText: "O'Brien" });
     await expect(card).toBeVisible();
 
-    // The x-data attribute on the inner div should NOT be truncated by a stray single quote.
-    // If the attribute is broken, it would be cut off at the first unescaped single quote.
-    const xDataDiv = card.locator('div[x-data]').first();
-    const xDataAttr = await xDataDiv.getAttribute('x-data');
+    const entityDiv = card.locator('div[data-entity][x-data]').first();
+    const expectedEntity = {
+      ID: groupId,
+      Name: "O'Brien's Test Group",
+      Description: "Description with 'quotes' inside",
+    };
 
-    // The attribute must contain the entity name (possibly with &#39; decoded to ')
-    // and must end with a closing brace, proving it wasn't truncated.
-    expect(xDataAttr).not.toBeNull();
-    expect(xDataAttr!).toContain('Brien');
-    expect(xDataAttr!.trim()).toMatch(/\}$/); // ends with }
+    // A stray quote must not truncate the serialized payload.
+    const entityJSON = await entityDiv.getAttribute('data-entity');
+    expect(entityJSON).not.toBeNull();
+    expect(JSON.parse(entityJSON!)).toMatchObject(expectedEntity);
+
+    // Rendering the name alone cannot prove Alpine initialized successfully.
+    await expect.poll(() => entityDiv.evaluate((el) => {
+      const alpineWindow = window as unknown as {
+        Alpine: { $data: (element: Element) => { entity?: unknown } };
+      };
+      return alpineWindow.Alpine.$data(el).entity;
+    })).toMatchObject(expectedEntity);
   });
 
   test('note detail page with single-quote name should render correctly', async ({ page }) => {

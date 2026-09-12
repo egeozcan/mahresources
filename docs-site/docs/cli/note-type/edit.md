@@ -55,14 +55,23 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--meta-schema` | string | `` | JSON Schema defining the metadata structure for notes of this type |
 | `--section-config` | string | `` | JSON controlling which sections are visible on note detail pages |
 | `--custom-header` | string | `` | Rendered at the top of the note detail page |
+| `--custom-header-css` | string | `` | Global CSS for CustomHeader |
 | `--custom-detail-footer` | string | `` | Rendered at the bottom of the note detail page, below every built-in section |
+| `--custom-detail-footer-css` | string | `` | Global CSS for CustomDetailFooter |
 | `--custom-sidebar` | string | `` | Rendered in the note detail page sidebar |
+| `--custom-sidebar-css` | string | `` | Global CSS for CustomSidebar |
 | `--custom-summary` | string | `` | Rendered on note cards in list views, below the title |
+| `--custom-summary-css` | string | `` | Global CSS for CustomSummary |
 | `--custom-avatar` | string | `` | Replaces the default avatar on note cards |
+| `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a note link; falls back to --custom-summary when unset |
+| `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
 | `--custom-list-header` | string | `` | Rendered above note list pages filtered to exactly this note type, against the note type itself |
+| `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below note list pages filtered to exactly this note type, against the note type itself |
+| `--custom-list-footer-css` | string | `` | Global CSS for CustomListFooter |
 | `--custom-mrql-result` | string | `` | Template for rendering notes of this note type in MRQL results |
+| `--custom-mrql-result-css` | string | `` | Global CSS for CustomMRQLResult |
 | `--custom-css` | string | `` | CSS injected as a &lt;style&gt; block on the note detail page and its list pages |
 ### Inherited global flags
 

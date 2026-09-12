@@ -50,16 +50,26 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--meta-schema` | string | `` | Meta schema JSON |
 | `--section-config` | string | `` | JSON controlling which sections are visible on group detail pages for this category |
 | `--custom-header` | string | `` | Rendered at the top of the group detail page |
+| `--custom-header-css` | string | `` | Global CSS for CustomHeader |
 | `--custom-detail-footer` | string | `` | Rendered at the bottom of the group detail page, below every built-in section |
+| `--custom-detail-footer-css` | string | `` | Global CSS for CustomDetailFooter |
 | `--custom-sidebar` | string | `` | Rendered in the group detail page sidebar |
+| `--custom-sidebar-css` | string | `` | Global CSS for CustomSidebar |
 | `--custom-summary` | string | `` | Rendered on group cards in list views, below the title |
+| `--custom-summary-css` | string | `` | Global CSS for CustomSummary |
 | `--custom-avatar` | string | `` | Replaces the default avatar on group cards |
+| `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a group link; falls back to --custom-summary when unset |
+| `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
 | `--custom-list-header` | string | `` | Rendered above group list pages filtered to exactly this category, against the category itself |
+| `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below group list pages filtered to exactly this category, against the category itself |
+| `--custom-list-footer-css` | string | `` | Global CSS for CustomListFooter |
 | `--custom-mrql-result` | string | `` | Template for rendering groups of this category in MRQL results |
+| `--custom-mrql-result-css` | string | `` | Global CSS for CustomMRQLResult |
 | `--custom-css` | string | `` | CSS injected as a &lt;style&gt; block on the group detail page and its list pages |
 | `--custom-own-entities` | string | `` | Replaces the body of the group detail page's Own Entities section |
+| `--custom-own-entities-css` | string | `` | Global CSS for CustomOwnEntities |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |
