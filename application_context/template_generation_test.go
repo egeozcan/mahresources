@@ -36,14 +36,15 @@ func templateGenConfig() TemplateGenerationConfig {
 
 func slotInput() TemplateGenerationInput {
 	return TemplateGenerationInput{
-		Target:       TemplateTargetSlot,
-		Mode:         "html",
-		Slot:         "CustomHeader",
-		EntityType:   "group",
-		MetaSchema:   `{"type":"object","properties":{"rating":{"type":"number"}}}`,
-		DocsBlock:    "meta · [meta path=\"...\"] · renders a Meta value",
-		Known:        shortcodes.KnownFromBuiltins(),
-		ValidateMRQL: func(string) error { return nil },
+		Target:        TemplateTargetSlot,
+		Mode:          "html",
+		Slot:          "CustomHeader",
+		EntityType:    "group",
+		MetaSchema:    `{"type":"object","properties":{"rating":{"type":"number"}}}`,
+		DocsBlock:     "meta · [meta path=\"...\"] · renders a Meta value",
+		PluginContext: "Active plugins and their registered note blocks:\n- Plugin: project-management (version 1.0)\n  Note blocks:\n  - plugin:project-management:subtasks (label: Subtasks)\n    Usage: Add this structured block to a Note with the note block editor; its type is plugin:project-management:subtasks. It is not template shortcode markup.",
+		Known:         shortcodes.KnownFromBuiltins(),
+		ValidateMRQL:  func(string) error { return nil },
 	}
 }
 
@@ -69,7 +70,10 @@ func TestTemplateGeneratorSlotSuccess(t *testing.T) {
 		"renders at the top of the entity's detail page",
 		"Shortcode reference:",
 		"renders a Meta value", // DocsBlock survives into the prompt
-		`"rating"`,             // schema embedded
+		"Enabled plugin and note-block reference:",
+		"plugin:project-management:subtasks",
+		"They are not shortcodes and cannot be inserted directly into a custom-template slot",
+		`"rating"`, // schema embedded
 		"User request: show the name in a div",
 	} {
 		if !strings.Contains(provider.seenUser, want) {
@@ -599,7 +603,7 @@ func TestTemplateGeneratorCompanionPair(t *testing.T) {
 	if err != nil || !got.Valid || got.Slots["CustomMRQLResultCSS"] != ".recipe{color:red}" {
 		t.Fatalf("result: %#v, %v", got, err)
 	}
-	for _, text := range []string{in.CurrentContent, "global CSS companion", "Generate or modify both together", "Alpine directives are unavailable"} {
+	for _, text := range []string{in.CurrentContent, "global CSS companion", "Generate or modify both together", "Alpine directives are unavailable", "Enabled plugin and note-block reference:", "plugin:project-management:subtasks"} {
 		if !strings.Contains(provider.seenUser, text) {
 			t.Errorf("prompt lacks %q", text)
 		}

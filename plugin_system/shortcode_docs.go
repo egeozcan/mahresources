@@ -27,6 +27,98 @@ type PluginShortcodeInfo struct {
 	Notes       []string
 }
 
+// AuthoringSnapshot is one internally consistent view of the enabled plugin
+// capabilities that an authoring client can present together. Its values are
+// plain data: it deliberately omits Lua functions and VM handles, which may be
+// retired as soon as the manager releases its registry lock.
+//
+// Shortcodes and note blocks must be captured with their owning plugin list in
+// one lock hold. Taking those views independently lets a concurrent
+// enable/disable produce a catalogue that never existed at one instant.
+type AuthoringSnapshot struct {
+	Plugins    []AuthoringPluginInfo
+	Shortcodes []PluginShortcodeInfo
+	Blocks     []PluginBlockInfo
+}
+
+// AuthoringPluginInfo is the plugin metadata needed by authoring clients. It
+// intentionally excludes Manifest and its nested collections so a returned
+// snapshot cannot retain references to manager-owned state.
+type AuthoringPluginInfo struct {
+	Name        string
+	Version     string
+	Description string
+}
+
+// PluginBlockInfo is the authoring-facing, data-only description of a
+// plugin-defined note block. The schema, defaults, and filters let callers
+// explain how the block is used without retaining the block renderer or VM.
+type PluginBlockInfo struct {
+	PluginName     string
+	TypeName       string
+	Label          string
+	Description    string
+	ContentSchema  json.RawMessage
+	StateSchema    json.RawMessage
+	DefaultContent json.RawMessage
+	DefaultState   json.RawMessage
+	Filters        BlockTypeFilter
+}
+
+// AuthoringSnapshot returns the active plugin list, shortcode documentation,
+// and registered note-block contracts captured under a single registry lock.
+func (pm *PluginManager) AuthoringSnapshot() AuthoringSnapshot {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	snapshot := AuthoringSnapshot{
+		Plugins: make([]AuthoringPluginInfo, 0, len(pm.plugins)),
+	}
+	active := make(map[string]bool, len(pm.plugins))
+	for _, plugin := range pm.plugins {
+		active[plugin.Name] = true
+		snapshot.Plugins = append(snapshot.Plugins, AuthoringPluginInfo{
+			Name:        plugin.Name,
+			Version:     plugin.Version,
+			Description: plugin.Description,
+		})
+	}
+	for _, shortcode := range pm.allShortcodeDocsLocked() {
+		if active[shortcode.PluginName] {
+			snapshot.Shortcodes = append(snapshot.Shortcodes, shortcode)
+		}
+	}
+	for pluginName, blocks := range pm.blockTypes {
+		if !active[pluginName] {
+			continue
+		}
+		for _, block := range blocks {
+			snapshot.Blocks = append(snapshot.Blocks, PluginBlockInfo{
+				PluginName:     block.PluginName,
+				TypeName:       block.TypeName,
+				Label:          block.Label,
+				Description:    block.Description,
+				ContentSchema:  cloneRawMessage(block.ContentSchema),
+				StateSchema:    cloneRawMessage(block.StateSchema),
+				DefaultContent: cloneRawMessage(block.DefContent),
+				DefaultState:   cloneRawMessage(block.DefState),
+				Filters: BlockTypeFilter{
+					NoteTypeIDs: append([]uint(nil), block.Filters.NoteTypeIDs...),
+					CategoryIDs: append([]uint(nil), block.Filters.CategoryIDs...),
+				},
+			})
+		}
+	}
+	sort.Slice(snapshot.Blocks, func(i, j int) bool {
+		return snapshot.Blocks[i].TypeName < snapshot.Blocks[j].TypeName
+	})
+	return snapshot
+}
+
+func cloneRawMessage(raw json.RawMessage) json.RawMessage {
+	return append(json.RawMessage(nil), raw...)
+}
+
 // AllShortcodeDocs returns a snapshot of every shortcode registered by an
 // enabled plugin (documented or not), sorted by full type name for stable
 // output. Only enabled plugins have entries in pm.shortcodes, so disabled
@@ -34,24 +126,70 @@ type PluginShortcodeInfo struct {
 func (pm *PluginManager) AllShortcodeDocs() []PluginShortcodeInfo {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
+	return pm.allShortcodeDocsLocked()
+}
 
+// allShortcodeDocsLocked is the documentation slice shared by
+// AllShortcodeDocs and AuthoringSnapshot. Caller must hold pm.mu.RLock.
+func (pm *PluginManager) allShortcodeDocsLocked() []PluginShortcodeInfo {
 	var out []PluginShortcodeInfo
 	for _, scs := range pm.shortcodes {
 		for _, sc := range scs {
-			out = append(out, PluginShortcodeInfo{
-				FullName:    sc.TypeName,
-				Name:        shortcodeName(sc),
-				PluginName:  sc.PluginName,
-				Label:       sc.Label,
-				Description: sc.Description,
-				Attrs:       sc.Attrs,
-				Examples:    sc.Examples,
-				Notes:       sc.Notes,
-			})
+			out = append(out, clonePluginShortcodeInfo(sc))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FullName < out[j].FullName })
 	return out
+}
+
+func clonePluginShortcodeInfo(sc *PluginShortcode) PluginShortcodeInfo {
+	info := PluginShortcodeInfo{
+		FullName:    sc.TypeName,
+		Name:        shortcodeName(sc),
+		PluginName:  sc.PluginName,
+		Label:       sc.Label,
+		Description: sc.Description,
+		Attrs:       append([]ShortcodeDocAttr(nil), sc.Attrs...),
+		Notes:       append([]string(nil), sc.Notes...),
+	}
+	if len(sc.Examples) > 0 {
+		info.Examples = make([]ShortcodeDocExample, len(sc.Examples))
+		for i, example := range sc.Examples {
+			info.Examples[i] = ShortcodeDocExample{
+				Title:       example.Title,
+				Code:        example.Code,
+				Notes:       example.Notes,
+				ExampleData: cloneExampleData(example.ExampleData),
+			}
+		}
+	}
+	return info
+}
+
+func cloneExampleData(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	clone := make(map[string]any, len(data))
+	for key, value := range data {
+		clone[key] = cloneExampleValue(value)
+	}
+	return clone
+}
+
+func cloneExampleValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneExampleData(value)
+	case []any:
+		clone := make([]any, len(value))
+		for i, item := range value {
+			clone[i] = cloneExampleValue(item)
+		}
+		return clone
+	default:
+		return value
+	}
 }
 
 // docItem is the unified representation used by the docs renderer.

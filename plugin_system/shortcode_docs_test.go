@@ -940,3 +940,76 @@ func TestAllShortcodeDocs(t *testing.T) {
 	require.NoError(t, pm.DisablePlugin("sc-list"))
 	assert.Empty(t, pm.AllShortcodeDocs())
 }
+
+func TestAuthoringSnapshotKeepsPluginShortcodesAndBlocksTogether(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "authoring", `
+		plugin = { name = "authoring", version = "1.0", description = "Authoring tools." }
+		function init()
+			mah.shortcode({
+				name = "status",
+				label = "Status",
+				render = function(ctx) return "<span>status</span>" end,
+				description = "Shows a status.",
+			})
+			mah.block_type({
+				type = "plan",
+				label = "Plan",
+				description = "A project plan.",
+				content_schema = { type = "object", properties = { title = { type = "string" } } },
+				default_content = { title = "Ship" },
+				filters = { note_type_ids = { 9 } },
+				render_view = function(ctx) return "<div>plan</div>" end,
+				render_edit = function(ctx) return "<div>plan edit</div>" end,
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("authoring"))
+
+	snapshot := pm.AuthoringSnapshot()
+	require.Len(t, snapshot.Plugins, 1)
+	assert.Equal(t, "authoring", snapshot.Plugins[0].Name)
+	require.Len(t, snapshot.Shortcodes, 1)
+	assert.Equal(t, "plugin:authoring:status", snapshot.Shortcodes[0].FullName)
+	require.Len(t, snapshot.Blocks, 1)
+	block := snapshot.Blocks[0]
+	assert.Equal(t, "plugin:authoring:plan", block.TypeName)
+	assert.JSONEq(t, `{"title":"Ship"}`, string(block.DefaultContent))
+	assert.JSONEq(t, `{"type":"object","properties":{"title":{"type":"string"}}}`, string(block.ContentSchema))
+	assert.Equal(t, []uint{9}, block.Filters.NoteTypeIDs)
+
+	require.NoError(t, pm.DisablePlugin("authoring"))
+	snapshot = pm.AuthoringSnapshot()
+	assert.Empty(t, snapshot.Plugins)
+	assert.Empty(t, snapshot.Shortcodes)
+	assert.Empty(t, snapshot.Blocks)
+}
+
+func TestAuthoringSnapshotExcludesRegistrationsUntilPluginPublished(t *testing.T) {
+	pm := &PluginManager{
+		shortcodes: map[string][]*PluginShortcode{
+			"loading": {{PluginName: "loading", TypeName: "plugin:loading:status"}},
+		},
+		blockTypes: map[string][]*PluginBlockType{
+			"loading": {{PluginName: "loading", TypeName: "plugin:loading:plan"}},
+		},
+	}
+
+	// init() may register capabilities before loadPlugin publishes its
+	// PluginInfo. That intermediate state is not active and must never reach an
+	// authoring prompt.
+	snapshot := pm.AuthoringSnapshot()
+	assert.Empty(t, snapshot.Plugins)
+	assert.Empty(t, snapshot.Shortcodes)
+	assert.Empty(t, snapshot.Blocks)
+
+	pm.plugins = []PluginInfo{{Name: "loading", Version: "1.0"}}
+	snapshot = pm.AuthoringSnapshot()
+	require.Len(t, snapshot.Plugins, 1)
+	require.Len(t, snapshot.Shortcodes, 1)
+	require.Len(t, snapshot.Blocks, 1)
+}

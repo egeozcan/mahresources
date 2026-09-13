@@ -1,11 +1,13 @@
 package api_handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,6 +75,11 @@ const maxTemplatePartialsForPrompt = 200
 // are trusted source and sit outside this budget.
 const maxPluginShortcodePromptBytes = 128 << 10
 
+// maxPluginContextPromptBytes independently caps the enabled-plugin and note
+// block reference. Block schemas and defaults are plugin-authored and can be
+// large, so each plugin's context is included whole or omitted whole.
+const maxPluginContextPromptBytes = 128 << 10
+
 type templateGenerateRequest struct {
 	Target     string `json:"target" schema:"target"`
 	Mode       string `json:"mode" schema:"mode"`
@@ -139,6 +146,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			}
 		}
 
+		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
 		input := application_context.TemplateGenerationInput{
 			Target:         target,
 			Mode:           req.Mode,
@@ -147,9 +155,10 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			CurrentContent: req.Content,
 			MetaSchema:     metaSchema,
 			SampleMeta:     loadSampleMeta(ctx, entityType, req.CategoryID, req.EntityID),
-			DocsBlock:      serializeShortcodeDocsForPrompt(ctx),
+			DocsBlock:      pluginReferences.DocsBlock,
+			PluginContext:  pluginReferences.PluginContext,
 			PartialNames:   templatePartialNames(ctx),
-			Known:          buildKnownShortcodes(ctx),
+			Known:          pluginReferences.Known,
 			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
 		}
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
@@ -289,16 +298,35 @@ func templatePartialNames(ctx TemplateGenerationContext) []string {
 // existed without teaching it what the attribute did, and keeping only the
 // first example hid most block/slot forms.
 func serializeShortcodeDocsForPrompt(ctx PluginManagerProvider) string {
+	return serializeTemplateGenerationPluginReferencesForPrompt(ctx).DocsBlock
+}
+
+// serializeTemplateGenerationPluginReferencesForPrompt reads every
+// plugin-derived prompt component from one AuthoringSnapshot. A generation
+// request therefore sees shortcode contracts, plugins, and blocks from one
+// real registry state even while an administrator enables or disables plugins.
+type templateGenerationPluginReferences struct {
+	DocsBlock     string
+	PluginContext string
+	Known         shortcodes.KnownShortcodes
+}
+
+func serializeTemplateGenerationPluginReferencesForPrompt(ctx PluginManagerProvider) templateGenerationPluginReferences {
 	var b strings.Builder
 	for _, d := range shortcodes.BuiltinDocs() {
 		writeBuiltinShortcodeDoc(&b, d)
 	}
+	references := templateGenerationPluginReferences{Known: shortcodes.KnownFromBuiltins()}
 	if pm := ctx.PluginManager(); pm != nil {
-		if omitted := appendPluginShortcodeDocsForPrompt(&b, pm.AllShortcodeDocs()); omitted > 0 {
+		snapshot := pm.AuthoringSnapshot()
+		if omitted := appendPluginShortcodeDocsForPrompt(&b, snapshot.Shortcodes); omitted > 0 {
 			fmt.Fprintf(&b, "- %d enabled plugin shortcode reference(s) omitted because the plugin documentation exceeded the generation prompt safety limit.\n", omitted)
 		}
+		references.PluginContext = serializePluginContextFromSnapshot(snapshot)
+		references.Known = buildKnownShortcodesFromPluginDocs(snapshot.Shortcodes)
 	}
-	return b.String()
+	references.DocsBlock = b.String()
+	return references
 }
 
 func appendPluginShortcodeDocsForPrompt(b *strings.Builder, docs []plugin_system.PluginShortcodeInfo) int {
@@ -315,6 +343,137 @@ func appendPluginShortcodeDocsForPrompt(b *strings.Builder, docs []plugin_system
 		used += entry.Len()
 	}
 	return omitted
+}
+
+// serializePluginContextForPrompt describes the plugins that are actually
+// loaded now, including their registered note block types. Shortcode contracts
+// remain in DocsBlock; this separate reference gives the model the surrounding
+// plugin capabilities and the structured-block usage needed to design a
+// complementary note template.
+func serializePluginContextForPrompt(ctx PluginManagerProvider) string {
+	pm := ctx.PluginManager()
+	if pm == nil {
+		return ""
+	}
+	return serializePluginContextFromSnapshot(pm.AuthoringSnapshot())
+}
+
+func serializePluginContextFromSnapshot(snapshot plugin_system.AuthoringSnapshot) string {
+	plugins := snapshot.Plugins
+	if len(plugins) == 0 {
+		return ""
+	}
+	sort.Slice(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
+
+	blocksByPlugin := make(map[string][]plugin_system.PluginBlockInfo)
+	for _, block := range snapshot.Blocks {
+		blocksByPlugin[block.PluginName] = append(blocksByPlugin[block.PluginName], block)
+	}
+	for _, blocks := range blocksByPlugin {
+		sort.Slice(blocks, func(i, j int) bool { return blocks[i].TypeName < blocks[j].TypeName })
+	}
+
+	var b strings.Builder
+	b.WriteString("Active plugins and their registered note blocks:\n")
+	used, omitted := 0, 0
+	for _, plugin := range plugins {
+		var entry strings.Builder
+		writePluginContextEntry(&entry, plugin, blocksByPlugin[plugin.Name])
+		if entry.Len() > maxPluginContextPromptBytes-used {
+			omitted++
+			continue
+		}
+		b.WriteString(entry.String())
+		used += entry.Len()
+	}
+	if omitted > 0 {
+		fmt.Fprintf(&b, "- %d enabled plugin reference(s) omitted because their complete metadata and block registration exceeded the generation prompt safety limit.\n", omitted)
+	}
+	return b.String()
+}
+
+func writePluginContextEntry(b *strings.Builder, plugin plugin_system.AuthoringPluginInfo, blocks []plugin_system.PluginBlockInfo) {
+	b.WriteString("- Plugin: ")
+	b.WriteString(plugin.Name)
+	if plugin.Version != "" {
+		b.WriteString(" (version ")
+		b.WriteString(plugin.Version)
+		b.WriteByte(')')
+	}
+	if description := oneLine(plugin.Description); description != "" {
+		b.WriteString("\n  Description: ")
+		b.WriteString(description)
+	}
+	if len(blocks) == 0 {
+		b.WriteString("\n  Note blocks: none registered.\n")
+		return
+	}
+	b.WriteString("\n  Note blocks:\n")
+	for _, block := range blocks {
+		writePluginBlockContext(b, block)
+	}
+}
+
+func writePluginBlockContext(b *strings.Builder, block plugin_system.PluginBlockInfo) {
+	b.WriteString("  - ")
+	b.WriteString(block.TypeName)
+	if block.Label != "" {
+		b.WriteString(" (label: ")
+		b.WriteString(oneLine(block.Label))
+		b.WriteByte(')')
+	}
+	if description := oneLine(block.Description); description != "" {
+		b.WriteString("\n    Description: ")
+		b.WriteString(description)
+	}
+	b.WriteString("\n    Usage: Add this structured block to a Note with the note block editor; its type is ")
+	b.WriteString(block.TypeName)
+	b.WriteString(". It is not template shortcode markup.")
+	writePluginBlockJSON(b, "Default content", block.DefaultContent)
+	writePluginBlockJSON(b, "Default state", block.DefaultState)
+	writePluginBlockJSON(b, "Content validation schema", block.ContentSchema)
+	writePluginBlockJSON(b, "State validation schema", block.StateSchema)
+	if len(block.Filters.NoteTypeIDs) > 0 || len(block.Filters.CategoryIDs) > 0 {
+		b.WriteString("\n    Availability: requires")
+		if len(block.Filters.NoteTypeIDs) > 0 {
+			b.WriteString(" note type IDs ")
+			b.WriteString(formatPluginBlockFilterIDs(block.Filters.NoteTypeIDs))
+		}
+		if len(block.Filters.NoteTypeIDs) > 0 && len(block.Filters.CategoryIDs) > 0 {
+			b.WriteString(" and")
+		}
+		if len(block.Filters.CategoryIDs) > 0 {
+			b.WriteString(" owning-group category IDs ")
+			b.WriteString(formatPluginBlockFilterIDs(block.Filters.CategoryIDs))
+		}
+		b.WriteByte('.')
+	}
+	b.WriteByte('\n')
+}
+
+func writePluginBlockJSON(b *strings.Builder, label string, value json.RawMessage) {
+	if len(value) == 0 {
+		return
+	}
+	b.WriteString("\n    ")
+	b.WriteString(label)
+	b.WriteString(": ")
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, value); err == nil {
+		b.WriteString(compact.String())
+		return
+	}
+	// Plugin block registration has already validated these values as JSON. The
+	// fallback keeps malformed data visible without rewriting its string values.
+	b.Write(value)
+}
+
+func formatPluginBlockFilterIDs(ids []uint) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func writeBuiltinShortcodeDoc(b *strings.Builder, d shortcodes.BuiltinDoc) {

@@ -179,13 +179,19 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 // plus every enabled plugin shortcode. A plugin shortcode is treated as
 // "documented" (attribute checks enabled) only when it declares attributes.
 func buildKnownShortcodes(ctx PluginManagerProvider) shortcodes.KnownShortcodes {
-	known := shortcodes.KnownFromBuiltins()
-
 	pm := ctx.PluginManager()
 	if pm == nil {
-		return known
+		return buildKnownShortcodesFromPluginDocs(nil)
 	}
-	for _, sc := range pm.AllShortcodeDocs() {
+	return buildKnownShortcodesFromPluginDocs(pm.AuthoringSnapshot().Shortcodes)
+}
+
+// buildKnownShortcodesFromPluginDocs derives lint rules from an already
+// captured plugin catalogue. Template generation uses this form so the model's
+// prompt and the result linter see the same request-time plugin state.
+func buildKnownShortcodesFromPluginDocs(docs []plugin_system.PluginShortcodeInfo) shortcodes.KnownShortcodes {
+	known := shortcodes.KnownFromBuiltins()
+	for _, sc := range docs {
 		attrs := make(map[string]shortcodes.DocAttr, len(sc.Attrs))
 		for _, a := range sc.Attrs {
 			attrs[a.Name] = shortcodes.DocAttr{

@@ -57,8 +57,12 @@ type TemplateGenerationInput struct {
 	MetaSchema     string // the (possibly unsaved) MetaSchema being authored
 	SampleMeta     string // an example entity's Meta JSON, or "" (schema-only)
 	DocsBlock      string // pre-serialized built-in + plugin shortcode docs
-	PartialNames   []string
-	BundleSlots    []string // target=bundle: which slot fields to fill
+	// PluginContext describes the enabled plugins and their note block types.
+	// It is separate from DocsBlock because blocks are selected in the note
+	// editor, not invoked as shortcodes in template markup.
+	PluginContext string
+	PartialNames  []string
+	BundleSlots   []string // target=bundle: which slot fields to fill
 
 	// Validation seams (keep the generator plugin-agnostic and DB-free).
 	Known        shortcodes.KnownShortcodes

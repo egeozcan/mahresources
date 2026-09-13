@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,5 +231,111 @@ end
 	}
 	if got := serializeShortcodeDocsForPrompt(promptPluginProvider{pm: pm}); strings.Contains(got, "plugin:prompt-extension:chip") {
 		t.Error("disabled plugin shortcode remained in the request-time prompt")
+	}
+}
+
+// Active-plugin context is distinct from shortcode documentation: a plugin can
+// add a note block without adding any shortcode. The generation model needs
+// both the plugin's purpose and the block's concrete usage contract so it can
+// design a complementary custom template without trying to emit the block as
+// shortcode markup.
+func TestGenerationPromptIncludesActivePluginsAndRegisteredBlocks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "project-tools")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := `
+plugin = {
+    name = "project-tools",
+    version = "2.3",
+    description = "Planning features for project notes."
+}
+
+function init()
+    mah.shortcode({
+        name = "sprint-status",
+        label = "Sprint status",
+        render = function(ctx) return "<span>status</span>" end,
+        description = "Shows the current sprint status.",
+        attrs = { { name = "tone", type = "string", description = "Status colour" } }
+    })
+    mah.block_type({
+        type = "sprint-plan",
+        label = "Sprint plan",
+        description = "Tracks a sprint goal and its planned work.",
+        content_schema = {
+            type = "object",
+            properties = { goal = { type = "string" } },
+            required = { "goal" }
+        },
+        state_schema = {
+            type = "object",
+            properties = { collapsed = { type = "boolean" } }
+        },
+        default_content = { goal = "Ship the release" },
+        default_state = { collapsed = false },
+        filters = { note_type_ids = { 7 }, category_ids = { 12 } },
+        render_view = function(ctx) return "<div>sprint</div>" end,
+        render_edit = function(ctx) return "<div>sprint edit</div>" end
+    })
+end
+`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.lua"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pm, err := plugin_system.NewPluginManager(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("project-tools"); err != nil {
+		t.Fatal(err)
+	}
+
+	references := serializeTemplateGenerationPluginReferencesForPrompt(promptPluginProvider{pm: pm})
+	if references.DocsBlock == "" {
+		t.Fatal("shortcode reference disappeared while building the combined plugin snapshot")
+	}
+	if _, ok := references.Known["plugin:project-tools:sprint-status"]; !ok {
+		t.Fatal("generation linter did not use the same snapshot as its plugin prompt")
+	}
+	got := references.PluginContext
+	for _, want := range []string{
+		"Plugin: project-tools (version 2.3)",
+		"Description: Planning features for project notes.",
+		"plugin:project-tools:sprint-plan (label: Sprint plan)",
+		"Description: Tracks a sprint goal and its planned work.",
+		"Usage: Add this structured block to a Note with the note block editor; its type is plugin:project-tools:sprint-plan. It is not template shortcode markup.",
+		`Default content: {"goal":"Ship the release"}`,
+		`Default state: {"collapsed":false}`,
+		`Content validation schema: {"properties":{"goal":{"type":"string"}},"required":["goal"],"type":"object"}`,
+		`State validation schema: {"properties":{"collapsed":{"type":"boolean"}},"type":"object"}`,
+		"Availability: requires note type IDs 7 and owning-group category IDs 12.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("active-plugin context missing %q\n%s", want, got)
+		}
+	}
+
+	if err := pm.DisablePlugin("project-tools"); err != nil {
+		t.Fatal(err)
+	}
+	if got := serializePluginContextForPrompt(promptPluginProvider{pm: pm}); got != "" {
+		t.Errorf("disabled plugin remained in generation context: %q", got)
+	}
+}
+
+func TestPluginBlockJSONPreservesWhitespaceInStringValues(t *testing.T) {
+	var prompt strings.Builder
+	writePluginBlockJSON(&prompt, "Default content", json.RawMessage(`{
+  "pattern": "keep  two   spaces",
+  "title": "Release plan"
+}`))
+
+	got := prompt.String()
+	if !strings.Contains(got, `{"pattern":"keep  two   spaces","title":"Release plan"}`) {
+		t.Fatalf("block JSON string values were altered: %q", got)
 	}
 }
