@@ -7,9 +7,9 @@ title: Built-in Plugins
 
 Mahresources ships with seven plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
-The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
+The data-views, meta-editors, and widgets plugins register shortcodes for use in a category's custom template slots (see [Custom Templates](./custom-templates.md)) and entity descriptions. Full interactive documentation is available on each plugin's documentation page after enabling: shortcode pages render their supplied examples, while documented note-block pages show their defaults, validation schemas, filters, and a safe view-mode preview whenever the block can render without live data.
 
-All six ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
+All seven ship an `api_version = 1` manifest, and enabling one is your consent to exactly the capabilities it declares. See [Plugin Permissions](./plugin-permissions.md) for what each capability grants.
 
 | Plugin | Declared capabilities | Network |
 |--------|-----------------------|---------|
@@ -214,4 +214,4 @@ mr plugin enable data-views
 
 ## Plugin Documentation Pages
 
-After enabling a plugin, its documentation page shows all registered shortcodes with descriptions, parameters, and live previews using example data. Access it from the plugin management page by clicking the **View documentation** link shown under the plugin (present only when the plugin ships docs).
+After enabling a plugin, its documentation page shows registered shortcodes with descriptions, parameters, and live previews using example data. It also shows every documented custom note block with its full type, default content and state, JSON Schema validation rules, availability filters, and a read-only view preview when the default renderer does not need live data. Preview renders receive no viewer identity, request data, or plugin settings, and cannot call host data, network, KV, media, download, job, or sleep APIs; a preview is omitted if the renderer attempts any of them. Access it from the plugin management page by clicking the **View documentation** link shown under the plugin (present only when the plugin ships docs).

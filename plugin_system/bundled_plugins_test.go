@@ -114,6 +114,44 @@ func TestBundledPluginShortcodesProvideGenerationDocs(t *testing.T) {
 	}
 }
 
+// Blocks are selected from the note editor rather than written as shortcode
+// text, so their generated docs are built from the block registration itself.
+// Keep the shipped registrations descriptive enough to expose that reference.
+func TestBundledPluginBlocksProvideDocs(t *testing.T) {
+	pm := enableAllBundledPlugins(t)
+	blocks := pm.GetBlockTypes()
+	if len(blocks) == 0 {
+		t.Fatal("bundled plugins registered no block types")
+	}
+
+	for _, block := range blocks {
+		t.Run(block.TypeName, func(t *testing.T) {
+			if strings.TrimSpace(block.Description) == "" {
+				t.Fatal("missing description")
+			}
+			path := "docs/blocks/" + blockTypeName(block)
+			if !pm.HasPage(block.PluginName, path) {
+				t.Fatalf("missing generated docs page %q", path)
+			}
+			html, err := pm.HandleDocsPage(context.Background(), block.PluginName, path)
+			if err != nil {
+				t.Fatalf("rendering generated docs: %v", err)
+			}
+			if !strings.Contains(html, block.TypeName) {
+				t.Errorf("docs do not name block type %q", block.TypeName)
+			}
+			if !strings.Contains(html, "Defaults") {
+				t.Error("docs do not show block defaults")
+			}
+			if block.TypeName == "plugin:example-blocks:counter" {
+				if !strings.Contains(html, "Preview") || !strings.Contains(html, "My Counter") {
+					t.Error("the counter block's default view did not render in its docs")
+				}
+			}
+		})
+	}
+}
+
 // The fal.ai plugin is the largest bundled plugin and the one whose model list
 // changes most often. Pin the shape its UI depends on: the exact selector lists,
 // their configurable controls, and the few deliberately fixed/shared cases.

@@ -72,6 +72,8 @@ type PluginBlockType struct {
 	Icon          string
 	Description   string
 	Scripts       []string // ordered URLs within this plugin's public assets
+	ContentSchema json.RawMessage
+	StateSchema   json.RawMessage
 	contentSchema *jsonschema.Schema
 	stateSchema   *jsonschema.Schema
 	DefContent    json.RawMessage
@@ -111,18 +113,20 @@ func NewPluginBlockType(cfg PluginBlockTypeConfig) (*PluginBlockType, error) {
 		scripts = append(scripts, "/plugins/"+cfg.PluginName+"/public/"+script)
 	}
 	bt := &PluginBlockType{
-		PluginName:  cfg.PluginName,
-		TypeName:    cfg.TypeName,
-		Label:       cfg.Label,
-		Icon:        cfg.Icon,
-		Description: cfg.Description,
-		Scripts:     scripts,
-		DefContent:  cfg.DefContent,
-		DefState:    cfg.DefState,
-		Filters:     cfg.Filters,
-		RenderView:  cfg.RenderView,
-		RenderEdit:  cfg.RenderEdit,
-		State:       cfg.State,
+		PluginName:    cfg.PluginName,
+		TypeName:      cfg.TypeName,
+		Label:         cfg.Label,
+		Icon:          cfg.Icon,
+		Description:   cfg.Description,
+		Scripts:       scripts,
+		ContentSchema: json.RawMessage(cfg.ContentSchema),
+		StateSchema:   json.RawMessage(cfg.StateSchema),
+		DefContent:    cfg.DefContent,
+		DefState:      cfg.DefState,
+		Filters:       cfg.Filters,
+		RenderView:    cfg.RenderView,
+		RenderEdit:    cfg.RenderEdit,
+		State:         cfg.State,
 	}
 
 	if cfg.ContentSchema != "" {

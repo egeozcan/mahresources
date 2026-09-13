@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -56,7 +57,7 @@ func (pm *PluginManager) AllShortcodeDocs() []PluginShortcodeInfo {
 // docItem is the unified representation used by the docs renderer.
 // Both PluginShortcode and PluginDoc convert to this before rendering.
 type docItem struct {
-	Name        string // URL slug
+	Name        string // Relative URL path below /plugins/<plugin>/docs
 	Label       string
 	Description string
 	Category    string // "Shortcode", "Action", etc. Empty = no badge.
@@ -64,6 +65,7 @@ type docItem struct {
 	Attrs       []ShortcodeDocAttr
 	Examples    []ShortcodeDocExample
 	Notes       []string
+	Block       *PluginBlockType // non-nil for auto-documented plugin block types
 }
 
 func shortcodeToDocItem(sc *PluginShortcode) docItem {
@@ -92,6 +94,20 @@ func pluginDocToDocItem(d *PluginDoc) docItem {
 	}
 }
 
+func blockTypeToDocItem(bt *PluginBlockType) docItem {
+	return docItem{
+		// Keep block pages in their own namespace. A plugin may reasonably have
+		// both a shortcode and a block named "card"; neither should hide the
+		// other's documentation.
+		Name:        "blocks/" + blockTypeName(bt),
+		Label:       bt.Label,
+		Description: bt.Description,
+		Category:    "Block",
+		PluginName:  bt.PluginName,
+		Block:       bt,
+	}
+}
+
 // collectDocItems merges documented shortcodes and general docs into a single list.
 // Caller must hold pm.mu.RLock.
 func (pm *PluginManager) collectDocItems(pluginName string) []docItem {
@@ -106,16 +122,33 @@ func (pm *PluginManager) collectDocItems(pluginName string) []docItem {
 			items = append(items, pluginDocToDocItem(d))
 		}
 	}
+	for _, bt := range pm.blockTypes[pluginName] {
+		// Match the existing shortcode contract: a description opts a feature
+		// into the generated reference. This keeps private/experimental blocks
+		// out of user-facing documentation while making documented blocks
+		// discoverable without duplicating their registration in mah.doc().
+		if bt.Description != "" {
+			items = append(items, blockTypeToDocItem(bt))
+		}
+	}
 	return items
 }
 
 // shortcodeName extracts the short name from a TypeName like "plugin:foo:badge".
 func shortcodeName(sc *PluginShortcode) string {
-	parts := strings.SplitN(sc.TypeName, ":", 3)
+	return registeredTypeName(sc.TypeName)
+}
+
+func blockTypeName(bt *PluginBlockType) string {
+	return registeredTypeName(bt.TypeName)
+}
+
+func registeredTypeName(fullTypeName string) string {
+	parts := strings.SplitN(fullTypeName, ":", 3)
 	if len(parts) == 3 {
 		return parts[2]
 	}
-	return sc.TypeName
+	return fullTypeName
 }
 
 // PluginHasDocs returns true if the named plugin has any documented items.
@@ -212,6 +245,51 @@ func renderExamplePreview(reqCtx context.Context, pm *PluginManager, pluginName,
 	return result
 }
 
+// renderBlockPreview renders a block's registered default content in a
+// read-only, synthetic note. It intentionally returns no preview when a block
+// needs live data: documentation remains useful without giving the preview a
+// database record, write permission, or a misleading error panel.
+func renderBlockPreview(reqCtx context.Context, pm *PluginManager, bt *PluginBlockType) string {
+	content := defaultBlockMap(bt.DefContent)
+	state := defaultBlockMap(bt.DefState)
+	previewCtx := newDocsPreviewContext(reqCtx)
+
+	result, err := pm.RenderBlock(previewCtx, bt.PluginName, bt.TypeName, "view", BlockRenderContext{
+		Block: BlockRenderData{
+			Content: content,
+			State:   state,
+		},
+		Note:     NoteRenderData{Name: "Documentation preview"},
+		Settings: map[string]any{},
+	})
+	if err != nil || docsPreviewRequestedHostData(previewCtx) {
+		return ""
+	}
+	return result
+}
+
+func defaultBlockMap(raw json.RawMessage) map[string]any {
+	value := map[string]any{}
+	if len(raw) == 0 {
+		return value
+	}
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
+func formatDefaultBlockJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, raw, "", "  "); err != nil {
+		return string(raw)
+	}
+	return pretty.String()
+}
+
 func renderDocsIndex(pluginName string, items []docItem) string {
 	var b strings.Builder
 
@@ -225,7 +303,9 @@ func renderDocsIndex(pluginName string, items []docItem) string {
 	fmt.Fprintf(&b, "%d items", len(items))
 	b.WriteString(`</p>`)
 
-	// Quick reference for shortcodes only
+	// Quick reference for shortcodes only. Blocks have no template syntax, so
+	// their individual pages show their registered type, defaults, filters, and
+	// (when it can run without application data) a rendered view preview.
 	var shortcodeItems []docItem
 	for _, item := range items {
 		if item.Category == "Shortcode" {
@@ -271,7 +351,11 @@ func renderDocsIndex(pluginName string, items []docItem) string {
 		}
 		b.WriteString(`</div>`)
 		b.WriteString(`<span class="text-xs text-stone-400 font-mono">`)
-		b.WriteString(html.EscapeString(item.Name))
+		if item.Block != nil {
+			b.WriteString(html.EscapeString(item.Block.TypeName))
+		} else {
+			b.WriteString(html.EscapeString(item.Name))
+		}
 		b.WriteString(`</span>`)
 		b.WriteString(`</div>`)
 
@@ -323,7 +407,9 @@ func renderDocsDetail(reqCtx context.Context, pm *PluginManager, pluginName stri
 	b.WriteString(html.EscapeString(item.Description))
 	b.WriteString(`</p>`)
 
-	// Syntax snippet — only for shortcodes
+	// Syntax snippet — only for shortcodes. Block types are added from the note
+	// editor rather than pasted into a template, so show the full registered
+	// type instead.
 	if item.Category == "Shortcode" {
 		b.WriteString(`<code class="text-xs bg-stone-100 px-2 py-1 rounded font-mono text-stone-600">`)
 		fmt.Fprintf(&b, `[plugin:%s:%s`, html.EscapeString(pluginName), html.EscapeString(item.Name))
@@ -333,6 +419,14 @@ func renderDocsDetail(reqCtx context.Context, pm *PluginManager, pluginName stri
 			}
 		}
 		b.WriteString(`]</code>`)
+	} else if item.Block != nil {
+		b.WriteString(`<code class="text-xs bg-stone-100 px-2 py-1 rounded font-mono text-stone-600">`)
+		b.WriteString(html.EscapeString(item.Block.TypeName))
+		b.WriteString(`</code>`)
+	}
+
+	if item.Block != nil {
+		renderBlockDocs(&b, reqCtx, pm, item.Block)
 	}
 
 	// Attributes table
@@ -466,4 +560,76 @@ func renderDocsDetail(reqCtx context.Context, pm *PluginManager, pluginName stri
 
 	b.WriteString(`</div>`)
 	return b.String()
+}
+
+func renderBlockDocs(b *strings.Builder, reqCtx context.Context, pm *PluginManager, bt *PluginBlockType) {
+	// The preview is deliberately view-mode only. It has no persisted block or
+	// note backing it, and is wrapped to prevent an author-supplied control from
+	// attempting a state write against the synthetic block id.
+	if pm != nil {
+		if preview := renderBlockPreview(reqCtx, pm, bt); preview != "" {
+			b.WriteString(`<div class="mt-8"><h2 class="text-lg font-semibold text-stone-800 mb-3">Preview</h2>`)
+			b.WriteString(`<div class="border border-stone-200 rounded-lg overflow-hidden">`)
+			b.WriteString(`<div class="px-4 py-2 bg-stone-50 border-b border-stone-200 text-xs text-stone-500">`)
+			b.WriteString(`View mode with the registered defaults; interactive controls are disabled.</div>`)
+			b.WriteString(`<div class="px-4 py-3 pointer-events-none" inert aria-disabled="true">`)
+			b.WriteString(preview)
+			b.WriteString(`</div></div></div>`)
+		}
+	}
+
+	b.WriteString(`<div class="mt-8"><h2 class="text-lg font-semibold text-stone-800 mb-3">Defaults</h2>`)
+	renderBlockDefaultJSON(b, "Content", bt.DefContent)
+	renderBlockDefaultJSON(b, "State", bt.DefState)
+	b.WriteString(`</div>`)
+	renderBlockValidationDocs(b, bt)
+
+	if len(bt.Filters.NoteTypeIDs) == 0 && len(bt.Filters.CategoryIDs) == 0 {
+		return
+	}
+	b.WriteString(`<div class="mt-8"><h2 class="text-lg font-semibold text-stone-800 mb-3">Availability</h2>`)
+	b.WriteString(`<p class="text-sm text-stone-600">This block is available only when all of its filters match the parent note.</p>`)
+	b.WriteString(`<ul class="list-disc list-inside mt-2 space-y-1 text-sm text-stone-600">`)
+	if len(bt.Filters.NoteTypeIDs) > 0 {
+		b.WriteString(`<li>Note type IDs: <code class="font-mono text-xs">`)
+		b.WriteString(html.EscapeString(formatBlockFilterIDs(bt.Filters.NoteTypeIDs)))
+		b.WriteString(`</code></li>`)
+	}
+	if len(bt.Filters.CategoryIDs) > 0 {
+		b.WriteString(`<li>Owning-group category IDs: <code class="font-mono text-xs">`)
+		b.WriteString(html.EscapeString(formatBlockFilterIDs(bt.Filters.CategoryIDs)))
+		b.WriteString(`</code></li>`)
+	}
+	b.WriteString(`</ul></div>`)
+}
+
+func renderBlockDefaultJSON(b *strings.Builder, label string, value json.RawMessage) {
+	b.WriteString(`<h3 class="text-sm font-medium text-stone-700 mb-2">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</h3><pre class="mb-4 p-3 rounded bg-stone-100 text-xs font-mono text-stone-700 overflow-x-auto">`)
+	b.WriteString(html.EscapeString(formatDefaultBlockJSON(value)))
+	b.WriteString(`</pre>`)
+}
+
+func renderBlockValidationDocs(b *strings.Builder, bt *PluginBlockType) {
+	if len(bt.ContentSchema) == 0 && len(bt.StateSchema) == 0 {
+		return
+	}
+	b.WriteString(`<div class="mt-8"><h2 class="text-lg font-semibold text-stone-800 mb-3">Validation</h2>`)
+	b.WriteString(`<p class="text-sm text-stone-600 mb-3">Content and state are validated against the registered JSON Schema. The schema records required fields, limits, patterns, and allowed shapes.</p>`)
+	if len(bt.ContentSchema) > 0 {
+		renderBlockDefaultJSON(b, "Content schema", bt.ContentSchema)
+	}
+	if len(bt.StateSchema) > 0 {
+		renderBlockDefaultJSON(b, "State schema", bt.StateSchema)
+	}
+	b.WriteString(`</div>`)
+}
+
+func formatBlockFilterIDs(ids []uint) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, ", ")
 }

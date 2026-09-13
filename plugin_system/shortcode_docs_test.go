@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"mahresources/auth"
+	"mahresources/models"
 )
 
 func TestShortcodeDocParsing(t *testing.T) {
@@ -144,6 +146,127 @@ func TestHasDocsPageUndocumented(t *testing.T) {
 
 	assert.False(t, pm.HasPage("no-docs", "docs"))
 	assert.False(t, pm.HasPage("no-docs", "docs/plain"))
+}
+
+func TestBlockDocsUseTheirOwnPathAndRenderDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "block-docs", `
+		plugin = { api_version = 1, name = "block-docs", version = "1.0", capabilities = { "render", "db:read" } }
+		function init()
+			mah.shortcode({
+				name = "card", label = "Card shortcode", render = function() return "shortcode" end,
+				description = "A shortcode with the same short name as the block.",
+			})
+			mah.block_type({
+				type = "card", label = "Card block", icon = "C",
+				description = "A rendered card block.",
+				content_schema = {
+					type = "object", required = { "message" },
+					properties = { message = { type = "string", maxLength = 100 } },
+				},
+				default_content = { message = "Default block content" },
+				default_state = { expanded = true },
+				filters = { note_type_ids = { 7 }, category_ids = { 12 } },
+				render_view = function(ctx)
+					if not ctx.preview or not ctx.read_only or ctx.can_write then return "<article>UNSAFE_CONTEXT</article>" end
+					return "<article>" .. mah.html_escape(ctx.block.content.message) .. "</article>"
+				end,
+				render_edit = function() return "<input>" end,
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("block-docs"))
+
+	assert.True(t, pm.HasPage("block-docs", "docs"))
+	assert.True(t, pm.HasPage("block-docs", "docs/card"))
+	assert.True(t, pm.HasPage("block-docs", "docs/blocks/card"))
+
+	index, err := pm.HandleDocsPage(context.Background(), "block-docs", "docs")
+	require.NoError(t, err)
+	assert.Contains(t, index, `/plugins/block-docs/docs/card`)
+	assert.Contains(t, index, `/plugins/block-docs/docs/blocks/card`)
+	assert.Contains(t, index, `plugin:block-docs:card`)
+	assert.Contains(t, index, `2 items`)
+
+	pm.SetEntityQuerier(&mockQuerier{})
+	writableDocsRequest := auth.WithPrincipal(context.Background(), &auth.Principal{Role: models.RoleEditor})
+	html, err := pm.HandleDocsPage(writableDocsRequest, "block-docs", "docs/blocks/card")
+	require.NoError(t, err)
+	assert.Contains(t, html, `Card block`)
+	assert.Contains(t, html, `plugin:block-docs:card`)
+	assert.Contains(t, html, `Default block content`)
+	assert.Contains(t, html, `&#34;expanded&#34;: true`)
+	assert.Contains(t, html, `Validation`)
+	assert.Contains(t, html, `&#34;maxLength&#34;: 100`)
+	assert.Contains(t, html, `Note type IDs:`)
+	assert.Contains(t, html, `Owning-group category IDs:`)
+	assert.Contains(t, html, `<article>Default block content</article>`)
+	assert.NotContains(t, html, `UNSAFE_CONTEXT`)
+	assert.Contains(t, html, `interactive controls are disabled`)
+}
+
+func TestBlockDocsOmitPreviewThatRequestsHostData(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "host-data-block", `
+		plugin = { api_version = 1, name = "host-data-block", version = "1.0", capabilities = { "render", "db:read" } }
+		function init()
+			mah.block_type({
+				type = "live-data", label = "Live data", description = "Needs host data.",
+				default_content = {}, default_state = {},
+				render_view = function()
+					local note = mah.db.get_note(1)
+					local secret = mah.get_setting("api_key")
+					return "<article>fallback " .. tostring(note) .. " " .. tostring(secret) .. "</article>"
+				end,
+				render_edit = function() return "" end,
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	pm.SetEntityQuerier(&mockQuerier{})
+	pm.SetPluginSettings("host-data-block", map[string]any{"api_key": "secret-value"})
+	require.NoError(t, pm.EnablePlugin("host-data-block"))
+
+	writableDocsRequest := auth.WithPrincipal(context.Background(), &auth.Principal{Role: models.RoleEditor})
+	html, err := pm.HandleDocsPage(writableDocsRequest, "host-data-block", "docs/blocks/live-data")
+	require.NoError(t, err)
+	assert.Contains(t, html, `Needs host data.`)
+	assert.NotContains(t, html, `>Preview</h2>`)
+	assert.NotContains(t, html, `fallback`)
+	assert.NotContains(t, html, `secret-value`)
+}
+
+func TestBlockDocsKeepReferenceWhenPreviewCannotRender(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "unpreviewable-block", `
+		plugin = { api_version = 1, name = "unpreviewable-block", version = "1.0", capabilities = { "render" } }
+		function init()
+			mah.block_type({
+				type = "live-data", label = "Live data", description = "Needs a persisted record.",
+				default_content = {}, default_state = {},
+				render_view = function() return nil end,
+				render_edit = function() return "" end,
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("unpreviewable-block"))
+
+	html, err := pm.HandleDocsPage(context.Background(), "unpreviewable-block", "docs/blocks/live-data")
+	require.NoError(t, err)
+	assert.Contains(t, html, `Needs a persisted record.`)
+	assert.Contains(t, html, `Defaults`)
+	assert.NotContains(t, html, `>Preview</h2>`)
 }
 
 func TestHandleDocsIndex(t *testing.T) {

@@ -1430,6 +1430,15 @@ Duplicate registrations for the same method + path overwrite the previous handle
 
 Register a custom block type for the note block editor. Call during `init()`.
 
+When `description` is present, the block is also included automatically on the
+plugin's generated documentation page. Its page names the full registered type,
+shows the default content and state, JSON Schema validation rules, and any
+availability filters, and attempts a read-only view preview using those defaults. A preview is intentionally omitted
+when the renderer needs live application data; documentation never creates a
+note or runs a write-capable block just to produce a preview. The preview uses
+an isolated context, not the docs visitor's request: host data, network, KV,
+media, downloads, jobs, and sleep calls are unavailable.
+
 ### mah.block_type(config)
 
 | Parameter | Type | Required | Description |
@@ -1479,7 +1488,8 @@ Both `render_view` and `render_edit` receive a context table:
 | `ctx.note.id` | number | Parent note ID |
 | `ctx.note.name` | string | Parent note name |
 | `ctx.note.note_type_id` | number | Parent note's note type ID |
-| `ctx.settings` | table | Plugin settings key-value pairs |
+| `ctx.settings` | table | Plugin settings key-value pairs; empty in an isolated documentation preview |
+| `ctx.preview` | boolean | `true` only for an isolated documentation preview; settings, database, KV, MRQL, network, media, download, job, and sleep APIs are unavailable |
 
 Each function must return an HTML string. Use `mah.html_escape(str)` to escape user-provided content.
 

@@ -53,6 +53,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 
 	// mah.http.get(url, [options,] callback)
 	httpMod.RawSetString("get", L.NewFunction(func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.http.get") {
+			return 0
+		}
 		url := L.CheckString(1)
 		headers, timeout, callback := parseOptionsAndCallback(L, 2)
 		if callback == nil {
@@ -81,6 +84,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 
 	// mah.http.post(url, body, [options,] callback)
 	httpMod.RawSetString("post", L.NewFunction(func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.http.post") {
+			return 0
+		}
 		url := L.CheckString(1)
 		body := L.CheckString(2)
 		headers, timeout, callback := parseOptionsAndCallback(L, 3)
@@ -110,6 +116,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 
 	// mah.http.request(method, url, options, callback)
 	httpMod.RawSetString("request", L.NewFunction(func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.http.request") {
+			return 0
+		}
 		method := strings.ToUpper(L.CheckString(1))
 		url := L.CheckString(2)
 		optsTbl := L.CheckTable(3)
@@ -246,6 +255,9 @@ const errRevoked = "this plugin has been disabled"
 // Add-after-Wait rule and leaves a callback queued against a VM about to close,
 // with the drain goroutine already gone.
 func (pm *PluginManager) beginHTTP(L *lua.LState) bool {
+	if pm.isDocsPreview(L) {
+		return false
+	}
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	if pm.closed.Load() {
@@ -266,6 +278,9 @@ func (pm *PluginManager) beginHTTP(L *lua.LState) bool {
 
 // executeSyncHttpRequest performs a blocking HTTP request and returns the response as a Lua table.
 func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
+	if pm.markDocsPreviewHostData(L) {
+		return buildSyncErrorResponse(L, method, url, "mah.http is unavailable in documentation previews")
+	}
 	if pm.closed.Load() {
 		return buildSyncErrorResponse(L, method, url, errShuttingDown)
 	}

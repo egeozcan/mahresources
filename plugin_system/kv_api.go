@@ -13,6 +13,9 @@ import (
 // until it finishes, and a disable reported complete should not still be able
 // to write the plugin's stored data.
 func (pm *PluginManager) kvStoreFor(L *lua.LState) KVStore {
+	if pm.markDocsPreviewHostData(L) {
+		return nil
+	}
 	if !pm.stateIsLive(L) {
 		return nil
 	}

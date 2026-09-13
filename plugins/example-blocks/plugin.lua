@@ -13,7 +13,7 @@ function init()
         type = "counter",
         label = "Counter",
         icon = "🔢",
-        description = "A simple click counter block",
+        description = "A simple click counter whose label is edited in place and whose value is stored in block state.",
 
         content_schema = {
             type = "object",

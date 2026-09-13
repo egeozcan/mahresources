@@ -86,6 +86,9 @@ func (pm *PluginManager) registerDownloadModule(L *lua.LState, mahMod *lua.LTabl
 
 	// mah.download.submit(url, options) -> table or (nil, error)
 	mod.RawSetString("submit", L.NewFunction(func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.download.submit") {
+			return 0
+		}
 		// A queued download outlives the transaction that would be waiting for
 		// it, and a transaction held open across a network fetch is what this
 		// refusal exists for everywhere else it appears.

@@ -1244,7 +1244,7 @@ end
 local function register_work_blocks(filters)
     local item_schema = {type='object',required={'id','label'},additionalProperties=false,properties={
         id={type='string',minLength=1,maxLength=100},label={type='string',maxLength=2000},task_id={type='integer',minimum=1}}}
-    mah.block_type({type='subtasks',label='Subtasks',icon='ST',filters=filters,scripts=BLOCK_SCRIPTS,
+    mah.block_type({type='subtasks',label='Subtasks',icon='ST',description='A checklist of up to 100 subtask rows. Checked IDs are block state; a row can be promoted once to a PM Task.',filters=filters,scripts=BLOCK_SCRIPTS,
         content_schema={type='object',required={'items'},additionalProperties=false,properties={items={type='array',maxItems=100,items=item_schema}}},
         state_schema={type='object',properties={checked={type='array',maxItems=100,uniqueItems=true,items={type='string'}}},additionalProperties=false},
         default_content={items=mah.json.array({})},default_state={checked=mah.json.array({})},
@@ -1269,7 +1269,7 @@ local function register_work_blocks(filters)
             return '<section class="pm-content-block pm-block-editor" data-testid="pm-subtasks-editor"><h3>Subtasks</h3>' .. table.concat(rows) .. block_button(ctx,'add','Add subtask') .. '</section>'
         end})
     local ids = {type='array',maxItems=50,uniqueItems=true,items={type='integer',minimum=1}}
-    mah.block_type({type='dependencies',label='Dependencies',icon='DP',filters=filters,scripts=BLOCK_SCRIPTS,
+    mah.block_type({type='dependencies',label='Dependencies',icon='DP',description='Task relationships by note ID: blockers that must finish first and tasks this task blocks. Missing or unreadable tasks remain unnamed.',filters=filters,scripts=BLOCK_SCRIPTS,
         content_schema={type='object',additionalProperties=false,properties={blocked_by=ids,blocks=ids},required={'blocked_by','blocks'}},
         default_content={blocked_by=mah.json.array({}),blocks=mah.json.array({})},default_state={},
         render_view=function(ctx)
@@ -1298,7 +1298,7 @@ local function register_work_blocks(filters)
             end
             return '<section class="pm-content-block pm-block-editor" data-testid="pm-dependencies-editor"><h3>Dependencies</h3>' .. table.concat(rows) .. '</section>'
         end})
-    mah.block_type({type='time-log',label='Time log',icon='TM',filters=filters,scripts=BLOCK_SCRIPTS,
+    mah.block_type({type='time-log',label='Time log',icon='TM',description='An effort estimate plus dated hour entries. The view totals logged hours and compares them with the estimate.',filters=filters,scripts=BLOCK_SCRIPTS,
         content_schema={type='object',required={'estimate_hours','entries'},additionalProperties=false,properties={
             estimate_hours={type='number',minimum=0,maximum=100000},entries={type='array',maxItems=200,items={type='object',required={'date','hours','note'},additionalProperties=false,properties={
                 date={type='string',pattern='^\\d{4}-\\d{2}-\\d{2}$'},hours={type='number',minimum=0,maximum=10000},note={type='string',maxLength=2000}}}}}},

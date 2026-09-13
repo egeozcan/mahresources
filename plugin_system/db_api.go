@@ -239,6 +239,9 @@ func (pm *PluginManager) getPrincipalBinder() PrincipalBinder {
 // change data.
 
 func (pm *PluginManager) querierFor(L *lua.LState) EntityQuerier {
+	if pm.markDocsPreviewHostData(L) {
+		return nil
+	}
 	if !pm.stateIsLive(L) {
 		return nil
 	}
@@ -292,6 +295,9 @@ func bindOntoTransaction(tx TransactionBinding, inv *Invocation) (EntityQuerier,
 // plugin's egress policy rides along on the invocation, so the host-side
 // downloader can apply layers (b) and (c) to the request it makes.
 func (pm *PluginManager) querierForFetch(L *lua.LState, egress NetworkPolicy) EntityQuerier {
+	if pm.markDocsPreviewHostData(L) {
+		return nil
+	}
 	if !pm.stateIsLive(L) {
 		return nil
 	}
@@ -314,6 +320,9 @@ func (pm *PluginManager) querierForFetch(L *lua.LState, egress NetworkPolicy) En
 // writerFor is querierFor for writes. This is the call that makes a plugin's
 // creates land with a real CreatedByUserId instead of NULL.
 func (pm *PluginManager) writerFor(L *lua.LState) EntityWriter {
+	if pm.markDocsPreviewHostData(L) {
+		return nil
+	}
 	if !pm.stateIsLive(L) {
 		return nil
 	}
@@ -338,6 +347,9 @@ func (pm *PluginManager) writerFor(L *lua.LState) EntityWriter {
 // and a row written on a second connection blocks on the writer lock the
 // transaction is holding.
 func (pm *PluginManager) loggerFor(L *lua.LState) PluginLogger {
+	if pm.isDocsPreview(L) {
+		return nil
+	}
 	if tx := pm.invocationFor(L).transactionBinding(); tx != nil {
 		return tx
 	}
@@ -402,6 +414,9 @@ func (pm *PluginManager) SetMRQLExecutor(me MRQLExecutor) {
 // global or group-scoped query never touches it — so the liveness check on
 // those two accessors did not cover this one.
 func (pm *PluginManager) mrqlExecutorFor(L *lua.LState) MRQLExecutor {
+	if pm.markDocsPreviewHostData(L) {
+		return nil
+	}
 	if !pm.stateIsLive(L) {
 		return nil
 	}

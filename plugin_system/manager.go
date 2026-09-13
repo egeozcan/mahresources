@@ -1179,6 +1179,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	})
 
 	setIf("", "log", func(L *lua.LState) int {
+		if pm.isDocsPreview(L) {
+			return 0
+		}
 		level := L.CheckString(1)
 		message := L.CheckString(2)
 
@@ -1204,6 +1207,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf("", "get_setting", func(L *lua.LState) int {
 		key := L.CheckString(1)
 		name := *pluginNamePtr
+		if pm.markDocsPreviewHostData(L) {
+			L.Push(lua.LNil)
+			return 1
+		}
 
 		pm.mu.RLock()
 		settings := pm.pluginSettings[name]
@@ -1532,6 +1539,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	})
 
 	setIfAny([]string{CapActions, CapJobs}, "job_progress", func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.job_progress") {
+			return 0
+		}
 		jobID := L.CheckString(1)
 		percent := L.CheckInt(2)
 		message := L.CheckString(3)
@@ -1566,6 +1576,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	})
 
 	setIfAny([]string{CapActions, CapJobs}, "job_complete", func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.job_complete") {
+			return 0
+		}
 		jobID := L.CheckString(1)
 		resultTbl := L.OptTable(2, nil)
 
@@ -1599,6 +1612,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	})
 
 	setIfAny([]string{CapActions, CapJobs}, "job_fail", func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.job_fail") {
+			return 0
+		}
 		jobID := L.CheckString(1)
 		errMsg := L.CheckString(2)
 
@@ -1623,6 +1639,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	// Returns the job ID immediately. The callback receives the job_id as its argument and can use
 	// mah.job_progress, mah.job_complete, mah.job_fail to report status.
 	setIf(CapJobs, "start_job", func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.start_job") {
+			return 0
+		}
 		label := L.CheckString(1)
 		fn := L.CheckFunction(2)
 
@@ -1707,6 +1726,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	// Bounded to [0, 30] seconds to prevent abuse. Useful for polling external
 	// async APIs (e.g. fal.ai queue) from within a sync action handler.
 	setIf("", "sleep", func(L *lua.LState) int {
+		if pm.refuseDocsPreview(L, "mah.sleep") {
+			return 0
+		}
 		// Raised rather than returned: sleep has no return value to carry a
 		// refusal, and returning 0 silently would make a plugin that polls an
 		// external API inside a transaction look like it worked while it held
@@ -2117,6 +2139,9 @@ func (pm *PluginManager) stateIsLive(L *lua.LState) bool {
 // page by writing the same path. The vmLocks entry is the same liveness token
 // dispatch uses, so registration and dispatch agree on when a VM is gone.
 func (pm *PluginManager) stateMayRegisterLocked(L *lua.LState) bool {
+	if pm.isDocsPreview(L) {
+		return false
+	}
 	if pm.closed.Load() {
 		return false
 	}
