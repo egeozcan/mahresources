@@ -207,7 +207,7 @@ func TestFalAIPluginRegistersModels(t *testing.T) {
 		"adjust":   {"adjust_v2", "white_balance"},
 		"upscale":  {"clarity", "crystal", "esrgan", "creative", "seedvr", "bria", "bria_creative", "recraft_crisp", "recraft_creative", "topaz", "topaz_generative", "topaz_creative", "topaz_transparent", "drct", "aura_sr"},
 		"restore":  {"photo_restoration", "codeformer", "swin2sr", "nafnet_denoise", "nafnet_deblur", "topaz_restore", "topaz_denoise"},
-		"edit":     {"flux2", "flux2pro", "nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage2", "seedream5", "grok2", "muse", "fibo15", "flux1dev"},
+		"edit":     {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex", "nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage25_flare", "gptimage25_sunburst", "gptimage2", "qwen3", "mai25", "mai25pro", "ideogram_v4", "seedream5lite", "seedream5", "grok2", "muse", "fibo15", "flux1dev"},
 		"polish":   {"post_processing", "topaz_sharpen"},
 	} {
 		action, ok := actions[actionID]
@@ -284,8 +284,10 @@ func TestFalAIGeneratePageListsModels(t *testing.T) {
 	}
 
 	for _, model := range []string{
-		"nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage2",
-		"seedream5", "grok2", "muse", "fibo15",
+		"nanobanana2", "nanobananapro", "nanobanana_lite", "gptimage25_flare",
+		"gptimage25_sunburst", "gptimage2", "qwen3", "mai25", "mai25pro",
+		"ideogram_v4", "recraft_v4_style", "recraft_v4_style_pro", "krea2_style",
+		"seedream5lite", "seedream5", "grok2", "muse", "fibo15",
 	} {
 		if !strings.Contains(html, `<option value="`+model+`">`) {
 			t.Errorf("generate form is missing the %q model option", model)

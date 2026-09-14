@@ -27,7 +27,7 @@ plugin = {
         "fal.media", "*.fal.media",
     },
     name = "fal-ai",
-    version = "1.3.0",
+    version = "1.4.0",
     description = "AI-powered image processing using current fal.ai models for generation, editing, color, restoration, upscaling, and vectorization.",
     settings = {
         { name = "api_key", type = "password", label = "FAL.AI API Key" },
@@ -65,10 +65,20 @@ local FAL_ENDPOINTS = {
     post_processing = "fal-ai/post-processing",
     flux2 = "fal-ai/flux-2/turbo/edit",
     flux2pro = "fal-ai/flux-2-pro/edit",
+    flux2max = "fal-ai/flux-2-max/edit",
+    flux2flash = "fal-ai/flux-2/flash/edit",
+    flux2flex = "fal-ai/flux-2-flex/edit",
     flux1dev = "fal-ai/flux/dev/image-to-image",
     nanobanana2 = "fal-ai/nano-banana-2/edit",
     nanobananapro = "fal-ai/nano-banana-pro/edit",
+    gptimage25_flare = "openai/gpt-image-2.5/flare/edit",
+    gptimage25_sunburst = "openai/gpt-image-2.5/sunburst/edit",
     gptimage2 = "openai/gpt-image-2/edit",
+    qwen3 = "alibaba/qwen-image-3/edit",
+    mai25 = "microsoft/mai-image-2.5/edit",
+    mai25pro = "microsoft/mai-image-2.5-pro/edit",
+    ideogram_v4 = "ideogram/v4/image-to-image",
+    seedream5lite = "bytedance/seedream/v5/lite/edit",
     seedream5 = "bytedance/seedream/v5/pro/edit",
     grok2 = "xai/grok-imagine-image/v2.0/edit",
     muse = "meta/muse-image/edit",
@@ -77,7 +87,17 @@ local FAL_ENDPOINTS = {
     vectorize = "fal-ai/recraft/vectorize",
     nanobanana2_generate = "fal-ai/nano-banana-2",
     nanobananapro_generate = "fal-ai/nano-banana-pro",
+    gptimage25_flare_generate = "openai/gpt-image-2.5/flare/text-to-image",
+    gptimage25_sunburst_generate = "openai/gpt-image-2.5/sunburst/text-to-image",
     gptimage2_generate = "openai/gpt-image-2",
+    qwen3_generate = "alibaba/qwen-image-3/text-to-image",
+    mai25_generate = "microsoft/mai-image-2.5",
+    mai25pro_generate = "microsoft/mai-image-2.5-pro",
+    ideogram_v4_generate = "ideogram/v4/instant",
+    recraft_v4_style_generate = "recraft/v4/style/text-to-image",
+    recraft_v4_style_pro_generate = "recraft/v4/style/pro/text-to-image",
+    krea2_style_generate = "fal-ai/krea-2/turbo/style",
+    seedream5lite_generate = "bytedance/seedream/v5/lite/text-to-image",
     seedream5_generate = "bytedance/seedream/v5/pro/text-to-image",
     grok2_generate = "xai/grok-imagine-image/v2.0/text-to-image",
     muse_generate = "meta/muse-image/text-to-image",
@@ -564,6 +584,104 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: nanobananapro edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", safety=" .. tostring(payload.safety_tolerance))
             return FAL_ENDPOINTS.nanobananapro, payload
 
+        elseif model == "gptimage25_flare" or model == "gptimage25_sunburst" then
+            -- GPT Image 2.5 Flare and Sunburst share the same edit schema:
+            -- prompt + up to 16 images, with mask, quality, background, and
+            -- output-compression controls.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 16 then
+                error("GPT Image 2.5 accepts at most 16 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "mask_url", params.gptimage25_mask_url)
+            apply_str(payload, "image_size", params.gptimage25_image_size)
+            apply_str(payload, "quality", params.gptimage25_quality)
+            apply_str(payload, "background", params.gptimage25_background)
+            apply_str(payload, "output_format", params.gptimage25_output_format)
+            if payload.background == "transparent" and payload.output_format == "jpeg" then
+                payload.output_format = "png"
+            end
+            if payload.output_format == "jpeg" or payload.output_format == "webp" then
+                apply_num(payload, "output_compression", params.gptimage25_output_compression)
+            end
+            mah.log("info", "[fal.ai] build_request: " .. model .. " edit mode, image_count=" .. #image_urls .. ", size=" .. tostring(payload.image_size) .. ", quality=" .. tostring(payload.quality))
+            return FAL_ENDPOINTS[model], payload
+
+        elseif model == "qwen3" then
+            -- Qwen Image 3 accepts 1-3 reference images and uses an explicit
+            -- prompt-expansion and safety-checker switch.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 3 then
+                error("Qwen Image 3 accepts at most 3 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            if params.qwen3_negative_prompt and #params.qwen3_negative_prompt > 500 then
+                error("Qwen Image 3 negative prompts are limited to 500 characters.")
+            end
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "negative_prompt", params.qwen3_negative_prompt)
+            apply_str(payload, "image_size", params.qwen3_image_size)
+            apply_bool(payload, "enable_prompt_expansion", params.qwen3_enable_prompt_expansion)
+            apply_num(payload, "seed", params.qwen3_seed)
+            apply_bool(payload, "enable_safety_checker", params.qwen3_enable_safety_checker)
+            apply_str(payload, "output_format", params.qwen3_output_format)
+            mah.log("info", "[fal.ai] build_request: Qwen Image 3 edit mode, image_count=" .. #image_urls)
+            return FAL_ENDPOINTS.qwen3, payload
+
+        elseif model == "mai25" or model == "mai25pro" then
+            -- MAI Image 2.5 uses one singular image_url for editing, unlike
+            -- the multi-reference image models in this action.
+            local payload = {
+                image_url = data_uri,
+                prompt = prompt,
+            }
+            apply_str(payload, "aspect_ratio", params.mai25_aspect_ratio)
+            apply_str(payload, "output_format", params.mai25_output_format)
+            mah.log("info", "[fal.ai] build_request: " .. model .. " edit mode, aspect=" .. tostring(payload.aspect_ratio))
+            return FAL_ENDPOINTS[model], payload
+
+        elseif model == "ideogram_v4" then
+            -- Ideogram V4 image-to-image uses one source image and exposes
+            -- rendering speed, prompt expansion, strength, and safety controls.
+            local payload = {
+                image_url = data_uri,
+                prompt = prompt,
+            }
+            apply_str(payload, "expansion_model", params.ideogram_v4_expansion_model)
+            apply_str(payload, "image_size", params.ideogram_v4_image_size)
+            apply_str(payload, "rendering_speed", params.ideogram_v4_rendering_speed)
+            apply_str(payload, "acceleration", params.ideogram_v4_acceleration)
+            apply_num(payload, "strength", params.ideogram_v4_strength)
+            apply_num(payload, "seed", params.ideogram_v4_seed)
+            apply_bool(payload, "enable_safety_checker", params.ideogram_v4_enable_safety_checker)
+            apply_str(payload, "output_format", params.ideogram_v4_output_format)
+            mah.log("info", "[fal.ai] build_request: Ideogram V4 edit mode, size=" .. tostring(payload.image_size) .. ", strength=" .. tostring(payload.strength))
+            return FAL_ENDPOINTS.ideogram_v4, payload
+
+        elseif model == "seedream5lite" then
+            -- Seedream 5.0 Lite supports up to 10 references, automatic 2K/3K/4K
+            -- sizing, and a boolean safety checker. Its output is natively PNG.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            if #image_urls > 10 then
+                error("Seedream 5.0 Lite accepts at most 10 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "image_size", params.seedream5lite_image_size)
+            apply_bool(payload, "enable_safety_checker", params.seedream5lite_enable_safety_checker)
+            mah.log("info", "[fal.ai] build_request: Seedream 5.0 Lite edit mode, image_count=" .. #image_urls .. ", size=" .. tostring(payload.image_size))
+            return FAL_ENDPOINTS.seedream5lite, payload
+
         elseif model == "gptimage2" then
             -- GptImage2EditInput sizes the output with an image_size enum (no
             -- aspect_ratio / resolution) and has no safety_tolerance; `quality`
@@ -671,12 +789,32 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
                 image_urls = image_urls,
                 prompt = prompt,
             }
-            if model == "flux2pro" then
-                apply_str(payload, "image_size", params.flux2pro_image_size)
-                apply_str(payload, "output_format", params.flux2pro_output_format)
-                apply_str(payload, "safety_tolerance", params.flux2pro_safety_tolerance)
-                apply_num(payload, "seed", params.flux2pro_seed)
-                apply_bool(payload, "enable_safety_checker", params.flux2pro_enable_safety_checker)
+            if model == "flux2pro" or model == "flux2max" then
+                local prefix = model == "flux2max" and "flux2max" or "flux2pro"
+                apply_str(payload, "image_size", params[prefix .. "_image_size"])
+                apply_str(payload, "output_format", params[prefix .. "_output_format"])
+                apply_str(payload, "safety_tolerance", params[prefix .. "_safety_tolerance"])
+                apply_num(payload, "seed", params[prefix .. "_seed"])
+                apply_bool(payload, "enable_safety_checker", params[prefix .. "_enable_safety_checker"])
+            elseif model == "flux2flash" then
+                if #image_urls > 4 then
+                    error("FLUX.2 Flash accepts at most 4 input images, but "
+                        .. #image_urls .. " were sent. Remove some from Additional Images.")
+                end
+                payload.guidance_scale = tonumber(params.flux2flash_guidance_scale) or 2.5
+                apply_str(payload, "image_size", params.flux2flash_image_size)
+                apply_str(payload, "output_format", params.flux2flash_output_format)
+                apply_num(payload, "seed", params.flux2flash_seed)
+                apply_bool(payload, "enable_prompt_expansion", params.flux2flash_enable_prompt_expansion)
+                apply_bool(payload, "enable_safety_checker", params.flux2flash_enable_safety_checker)
+            elseif model == "flux2flex" then
+                payload.guidance_scale = tonumber(params.flux2flex_guidance_scale) or 3.5
+                payload.num_inference_steps = tonumber(params.flux2flex_num_inference_steps) or 28
+                apply_str(payload, "image_size", params.flux2flex_image_size)
+                apply_str(payload, "output_format", params.flux2flex_output_format)
+                apply_str(payload, "safety_tolerance", params.flux2flex_safety_tolerance)
+                apply_num(payload, "seed", params.flux2flex_seed)
+                apply_bool(payload, "enable_safety_checker", params.flux2flex_enable_safety_checker)
             else
                 if #image_urls > 4 then
                     error("FLUX.2 Turbo accepts at most 4 input images, but "
@@ -1135,6 +1273,38 @@ local function optional_choice(value, omitted)
     return value
 end
 
+-- Generate-page style references arrive as a comma- or whitespace-separated
+-- list because the page has no resource context from which to upload files.
+local function split_urls(value)
+    local urls = {}
+    for url in tostring(value or ""):gmatch("[^,%s]+") do
+        urls[#urls + 1] = url
+    end
+    return urls
+end
+
+local function parse_hex_color(value)
+    local hex = tostring(value or ""):match("^#?(%x%x%x%x%x%x)$")
+    if not hex then return nil end
+    return {
+        r = tonumber(hex:sub(1, 2), 16),
+        g = tonumber(hex:sub(3, 4), 16),
+        b = tonumber(hex:sub(5, 6), 16),
+    }
+end
+
+local function parse_hex_colors(value)
+    local colors = {}
+    for token in tostring(value or ""):gmatch("[^,%s]+") do
+        local color = parse_hex_color(token)
+        if not color then
+            error("Recraft colors must be six-digit hex values, such as #2f80ed.")
+        end
+        colors[#colors + 1] = color
+    end
+    return colors
+end
+
 local function jpeg_or_png(value)
     if value == "png" then return "png" end
     return "jpeg"
@@ -1153,6 +1323,12 @@ local function nearest_resolution(resolution, allowed)
     end
     return best
 end
+
+local GENERATE_SEEDREAM_LITE_IMAGE_SIZES = {
+    square_hd = true, square = true, portrait_4_3 = true, portrait_16_9 = true,
+    landscape_4_3 = true, landscape_16_9 = true,
+    auto_2K = true, auto_3K = true, auto_4K = true,
+}
 
 -- Text-to-image models offered by the Generate page. The page renders one shared
 -- form (prompt / resolution / aspect ratio / safety tolerance), but the schemas
@@ -1217,6 +1393,195 @@ local GENERATE_MODELS = {
         end,
     },
     {
+        id = "gptimage25_flare", label = "GPT Image 2.5 Flare",
+        info = "OpenAI's newest fast image model. Supports automatic or preset sizing, six quality tiers, transparency, and JPEG/WebP compression.",
+        endpoint = FAL_ENDPOINTS.gptimage25_flare_generate,
+        build = function(o)
+            local format = o.output_format
+            if o.background == "transparent" and format == "jpeg" then format = "png" end
+            local compression = (format == "jpeg" or format == "webp") and o.output_compression or nil
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "auto",
+                quality = o.quality,
+                background = o.background,
+                output_format = format,
+                output_compression = compression,
+            }
+        end,
+    },
+    {
+        id = "gptimage25_sunburst", label = "GPT Image 2.5 Sunburst",
+        info = "OpenAI's newest high-quality image model. It shares GPT Image 2.5's sizing, quality, background, and compression controls.",
+        endpoint = FAL_ENDPOINTS.gptimage25_sunburst_generate,
+        build = function(o)
+            local format = o.output_format
+            if o.background == "transparent" and format == "jpeg" then format = "png" end
+            local compression = (format == "jpeg" or format == "webp") and o.output_compression or nil
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "auto",
+                quality = o.quality,
+                background = o.background,
+                output_format = format,
+                output_compression = compression,
+            }
+        end,
+    },
+    {
+        id = "qwen3", label = "Qwen Image 3",
+        info = "Alibaba's current image model with prompt expansion, negative prompts, safety control, and model-native output-size presets.",
+        endpoint = FAL_ENDPOINTS.qwen3_generate,
+        build = function(o)
+            if o.negative_prompt and #o.negative_prompt > 500 then
+                error("Qwen Image 3 negative prompts are limited to 500 characters.")
+            end
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                negative_prompt = optional_choice(o.negative_prompt, ""),
+                enable_prompt_expansion = o.enable_prompt_expansion,
+                seed = o.seed,
+                enable_safety_checker = o.enable_safety_checker,
+                output_format = o.output_format,
+            }
+        end,
+    },
+    {
+        id = "seedream5lite", label = "Seedream 5.0 Lite",
+        info = "ByteDance's faster Seedream variant. It supports 2K/3K/4K automatic sizing, up to 10 edit references, and built-in safety checking.",
+        endpoint = FAL_ENDPOINTS.seedream5lite_generate,
+        extension = "png",
+        build = function(o)
+            local image_size = GENERATE_SEEDREAM_LITE_IMAGE_SIZES[o.seedream_lite_image_size]
+                and o.seedream_lite_image_size or "auto_2K"
+            return {
+                prompt = o.prompt,
+                image_size = image_size,
+                num_images = 1,
+                max_images = 1,
+                enable_safety_checker = o.enable_safety_checker,
+            }
+        end,
+    },
+    {
+        id = "mai25", label = "MAI Image 2.5",
+        info = "Microsoft's current general-purpose image model with explicit aspect-ratio and output-format controls.",
+        endpoint = FAL_ENDPOINTS.mai25_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                output_format = o.output_format,
+            }
+        end,
+    },
+    {
+        id = "mai25pro", label = "MAI Image 2.5 Pro",
+        info = "Microsoft's higher-fidelity MAI model with explicit aspect-ratio and output-format controls.",
+        endpoint = FAL_ENDPOINTS.mai25pro_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                output_format = o.output_format,
+            }
+        end,
+    },
+    {
+        id = "ideogram_v4", label = "Ideogram V4 Instant",
+        info = "Ideogram's fast current model for typography and layouts, with optional prompt expansion and safety checking.",
+        endpoint = FAL_ENDPOINTS.ideogram_v4_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                expansion_model = o.expansion_model,
+                num_images = 1,
+                seed = o.seed,
+                enable_safety_checker = o.enable_safety_checker,
+                output_format = jpeg_or_png(o.output_format),
+            }
+        end,
+    },
+    {
+        id = "recraft_v4_style", label = "Recraft V4 Style",
+        info = "Recraft's current style-aware model. Use a saved style ID when you need consistent brand or illustration treatment.",
+        endpoint = FAL_ENDPOINTS.recraft_v4_style_generate,
+        extension = "webp",
+        build = function(o)
+            local reference_image_urls = split_urls(o.style_reference_urls)
+            local colors = parse_hex_colors(o.recraft_colors)
+            local background_color = parse_hex_color(o.recraft_background_color)
+            if o.recraft_background_color ~= nil and o.recraft_background_color ~= "" and not background_color then
+                error("Recraft background color must be a six-digit hex value, such as #ffffff.")
+            end
+            if #reference_image_urls > 10 then
+                error("Recraft V4 Style accepts at most 10 style reference URLs.")
+            end
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                enable_safety_checker = o.enable_safety_checker,
+                style_id = optional_choice(o.style_id, ""),
+                style_match = optional_choice(o.style_match, ""),
+                image_urls = #reference_image_urls > 0 and reference_image_urls or nil,
+                colors = #colors > 0 and colors or nil,
+                background_color = background_color,
+            }
+        end,
+    },
+    {
+        id = "recraft_v4_style_pro", label = "Recraft V4 Style Pro",
+        info = "Recraft's higher-quality style-aware model. Use a saved style ID or one to ten style reference URLs for consistent brand or illustration treatment.",
+        endpoint = FAL_ENDPOINTS.recraft_v4_style_pro_generate,
+        extension = "webp",
+        build = function(o)
+            local reference_image_urls = split_urls(o.style_reference_urls)
+            local colors = parse_hex_colors(o.recraft_colors)
+            local background_color = parse_hex_color(o.recraft_background_color)
+            if o.recraft_background_color ~= nil and o.recraft_background_color ~= "" and not background_color then
+                error("Recraft background color must be a six-digit hex value, such as #ffffff.")
+            end
+            if #reference_image_urls > 10 then
+                error("Recraft V4 Style Pro accepts at most 10 style reference URLs.")
+            end
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                enable_safety_checker = o.enable_safety_checker,
+                style_id = optional_choice(o.style_id, ""),
+                style_match = optional_choice(o.style_match, ""),
+                image_urls = #reference_image_urls > 0 and reference_image_urls or nil,
+                colors = #colors > 0 and colors or nil,
+                background_color = background_color,
+            }
+        end,
+    },
+    {
+        id = "krea2_style", label = "Krea 2 Turbo Style",
+        info = "Krea 2's fast style-reference model. Requires one to three public reference-image URLs and supports speed, style strength, seed, and safety controls.",
+        endpoint = FAL_ENDPOINTS.krea2_style_generate,
+        build = function(o)
+            local reference_image_urls = split_urls(o.style_reference_urls)
+            if #reference_image_urls < 1 or #reference_image_urls > 3 then
+                error("Krea 2 Turbo Style requires 1 to 3 comma-separated style reference URLs.")
+            end
+            local acceleration = ({none = true, regular = true})[o.acceleration] and o.acceleration or "none"
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "square_hd",
+                reference_image_urls = reference_image_urls,
+                num_images = 1,
+                acceleration = acceleration,
+                enable_safety_checker = o.enable_safety_checker,
+                output_format = jpeg_or_png(o.output_format),
+                style_scale = o.style_scale,
+                seed = o.seed,
+            }
+        end,
+    },
+    {
         id = "gptimage2", label = "GPT Image 2",
         info = "OpenAI's detail and typography specialist. Quality changes both detail and cost; transparent background works with PNG or WebP.",
         endpoint = FAL_ENDPOINTS.gptimage2_generate,
@@ -1228,7 +1593,7 @@ local GENERATE_MODELS = {
             return {
                 prompt = o.prompt,
                 image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "auto",
-                quality = o.quality,
+                quality = ({auto = true, low = true, medium = true, high = true})[o.quality] and o.quality or "high",
                 background = o.background,
                 output_format = format,
             }
@@ -1310,7 +1675,10 @@ local GENERATE_SAFETY = {
     ["4"] = true, ["5"] = true, ["6"] = true,
 }
 local GENERATE_OUTPUT_FORMATS = {jpeg = true, png = true, webp = true}
-local GENERATE_QUALITY = {auto = true, low = true, medium = true, high = true}
+local GENERATE_QUALITY = {auto = true, low = true, medium = true, high = true, xhigh = true, max = true}
+local GENERATE_EXPANSION_MODEL = {None = true, Medium = true}
+local GENERATE_STYLE_MATCH = {precise = true, flexible = true}
+local GENERATE_ACCELERATION = {none = true, low = true, regular = true, high = true}
 local GENERATE_BACKGROUND = {auto = true, transparent = true, opaque = true}
 local GENERATE_THINKING = {off = true, minimal = true, high = true}
 local GENERATE_STYLE_PRESETS = {["No Style"] = true, Photoreal = true}
@@ -1362,6 +1730,13 @@ local function generate_form()
         .. '<option value="2K">2K</option>'
         .. '<option value="4K">4K</option>'
         .. '</select><p class="text-xs text-gray-500 mt-1">Unsupported sizes are mapped to the nearest model-native size; models with automatic sizing ignore this.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="seedream_lite_image_size">Seedream 5.0 Lite Image Size</label>'
+        .. '<select id="seedream_lite_image_size" name="seedream_lite_image_size" class="w-full border rounded p-2">'
+        .. '<option value="auto_2K" selected>Auto 2K</option><option value="auto_3K">Auto 3K</option><option value="auto_4K">Auto 4K</option>'
+        .. '<option value="square_hd">Square HD</option><option value="square">Square</option>'
+        .. '<option value="portrait_4_3">Portrait 4:3</option><option value="portrait_16_9">Portrait 16:9</option>'
+        .. '<option value="landscape_4_3">Landscape 4:3</option><option value="landscape_16_9">Landscape 16:9</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Seedream 5.0 Lite only; its native size control is separate from the shared resolution/aspect fields.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="aspect_ratio">Aspect Ratio</label>'
         .. '<select id="aspect_ratio" name="aspect_ratio" class="w-full border rounded p-2">'
         .. '<option value="1:1" selected>1:1</option>'
@@ -1390,7 +1765,10 @@ local function generate_form()
         .. '<option value="jpeg" selected>JPEG (small, no transparency)</option>'
         .. '<option value="png">PNG (lossless / transparency)</option>'
         .. '<option value="webp">WebP (small / transparency)</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Seedream and Fibo do not support WebP; Seedream falls back to JPEG and Fibo chooses its native output.</p></div>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Seedream and Fibo do not support WebP; Seedream falls back to JPEG, Krea falls back to JPEG, and Recraft chooses its native WebP output.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="output_compression">Output Compression (optional)</label>'
+        .. '<input id="output_compression" name="output_compression" type="number" min="0" max="100" step="1" class="w-full border rounded p-2" '
+        .. 'placeholder="Model default"><p class="text-xs text-gray-500 mt-1">GPT Image 2.5 only; JPEG/WebP quality from 0 (most compressed) to 100.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="seed">Seed (optional)</label>'
         .. '<input id="seed" name="seed" type="number" step="1" class="w-full border rounded p-2" '
         .. 'placeholder="Model default"><p class="text-xs text-gray-500 mt-1">Reuses the model\'s random starting point where supported. Fibo defaults to deterministic seed 5555; other models may choose randomly.</p></div>'
@@ -1398,7 +1776,8 @@ local function generate_form()
         .. '<select id="quality" name="quality" class="w-full border rounded p-2">'
         .. '<option value="auto">Auto</option><option value="low">Low</option>'
         .. '<option value="medium">Medium</option><option value="high" selected>High</option>'
-        .. '</select><p class="text-xs text-gray-500 mt-1">Used by GPT Image 2 and Grok. Higher GPT quality increases detail and cost; Grok maps auto/high to its maximum, medium.</p></div>'
+        .. '<option value="xhigh">XHigh</option><option value="max">Max</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">GPT Image 2.5 supports all six tiers; GPT Image 2 supports auto/low/medium/high; Grok maps auto/high/xhigh/max to its maximum.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="background">Background</label>'
         .. '<select id="background" name="background" class="w-full border rounded p-2">'
         .. '<option value="auto" selected>Auto</option><option value="opaque">Opaque</option>'
@@ -1412,12 +1791,50 @@ local function generate_form()
         .. '<div><label class="block font-medium mb-1" for="system_prompt">System Prompt (optional)</label>'
         .. '<textarea id="system_prompt" name="system_prompt" class="w-full border rounded p-2" rows="2" '
         .. 'placeholder="Persistent style or behavior instruction"></textarea><p class="text-xs text-gray-500 mt-1">Nano Banana family only; steers the model separately from the image prompt.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="negative_prompt">Negative Prompt (optional)</label>'
+        .. '<textarea id="negative_prompt" name="negative_prompt" class="w-full border rounded p-2" rows="2" '
+        .. 'placeholder="What should the image avoid?"></textarea><p class="text-xs text-gray-500 mt-1">Qwen Image 3 only.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="enable_prompt_expansion">Prompt Expansion</label>'
+        .. '<select id="enable_prompt_expansion" name="enable_prompt_expansion" class="w-full border rounded p-2">'
+        .. '<option value="true" selected>Enabled</option><option value="false">Disabled</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3 only. Expands short prompts into richer instructions.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="expansion_model">Ideogram Expansion Model</label>'
+        .. '<select id="expansion_model" name="expansion_model" class="w-full border rounded p-2">'
+        .. '<option value="Medium" selected>Medium</option><option value="None">None</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Ideogram V4 Instant only. Medium expands prompts for richer detail.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="enable_safety_checker">Safety Checker</label>'
+        .. '<select id="enable_safety_checker" name="enable_safety_checker" class="w-full border rounded p-2">'
+        .. '<option value="true" selected>Enabled</option><option value="false">Disabled</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Qwen Image 3, Ideogram V4, and Recraft V4 Style. Your account may still enforce moderation.</p></div>'
         .. '<div><label class="inline-flex items-center gap-2"><input type="checkbox" name="enable_web_search" value="true">'
         .. '<span class="font-medium">Enable Web Search</span></label><p class="text-xs text-gray-500 mt-1">Nano Banana 2 / Pro only. Grounds time-sensitive prompts in current web information and may add cost.</p></div>'
         .. '<div><label class="block font-medium mb-1" for="style_preset">Style Preset</label>'
         .. '<select id="style_preset" name="style_preset" class="w-full border rounded p-2">'
         .. '<option value="No Style" selected>No Style</option><option value="Photoreal">Photoreal</option>'
         .. '</select><p class="text-xs text-gray-500 mt-1">Bria Fibo Gen 1.5 only.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="style_id">Recraft Style ID (optional)</label>'
+        .. '<input id="style_id" name="style_id" type="text" class="w-full border rounded p-2" '
+        .. 'placeholder="Your Recraft style ID"><p class="text-xs text-gray-500 mt-1">Recraft V4 Style only; create or obtain a style ID in fal.ai first.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="recraft_colors">Recraft Preferred Colors (optional)</label>'
+        .. '<input id="recraft_colors" name="recraft_colors" type="text" class="w-full border rounded p-2" '
+        .. 'placeholder="#2f80ed, #f2994a"><p class="text-xs text-gray-500 mt-1">Recraft V4 Style only. Enter one or more six-digit hex colors, separated by commas.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="recraft_background_color">Recraft Background Color (optional)</label>'
+        .. '<input id="recraft_background_color" name="recraft_background_color" type="text" class="w-full border rounded p-2" '
+        .. 'placeholder="#ffffff"><p class="text-xs text-gray-500 mt-1">Recraft V4 Style only; use a six-digit hex color.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="style_match">Recraft Style Match (optional)</label>'
+        .. '<select id="style_match" name="style_match" class="w-full border rounded p-2">'
+        .. '<option value="" selected>No override</option><option value="precise">Precise</option><option value="flexible">Flexible</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Recraft V4 Style only, when using a style ID or reference style.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="style_reference_urls">Style Reference URLs (optional)</label>'
+        .. '<textarea id="style_reference_urls" name="style_reference_urls" class="w-full border rounded p-2" rows="2" '
+        .. 'placeholder="https://.../style.png, https://.../style-2.png"></textarea><p class="text-xs text-gray-500 mt-1">Recraft V4 Style accepts up to 10; Krea 2 Turbo Style requires 1–3 public image URLs. Separate URLs with commas or spaces.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="acceleration">Acceleration</label>'
+        .. '<select id="acceleration" name="acceleration" class="w-full border rounded p-2">'
+        .. '<option value="none" selected>None</option><option value="low">Low</option><option value="regular">Regular</option><option value="high">High</option>'
+        .. '</select><p class="text-xs text-gray-500 mt-1">Krea 2 Turbo Style only; unsupported levels are reduced to the nearest supported option.</p></div>'
+        .. '<div><label class="block font-medium mb-1" for="style_scale">Krea Style Scale</label>'
+        .. '<input id="style_scale" name="style_scale" type="number" min="0" step="0.05" value="1" class="w-full border rounded p-2">'
+        .. '<p class="text-xs text-gray-500 mt-1">Krea 2 Turbo Style only. Higher values follow the reference style more strongly.</p></div>'
         .. '<button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Generate</button>'
         .. '</form>'
 end
@@ -1969,8 +2386,10 @@ function init()
             {name = "prompt", type = "text", label = "Edit Prompt", required = true,
                 description = "Describe the change precisely, including what must stay unchanged."},
             {name = "model", type = "select", label = "Model", default = "flux2",
-                options = {"flux2", "flux2pro", "nanobanana2", "nanobananapro",
-                           "nanobanana_lite", "gptimage2", "seedream5", "grok2",
+                options = {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex",
+                           "nanobanana2", "nanobananapro", "nanobanana_lite",
+                           "gptimage25_flare", "gptimage25_sunburst", "gptimage2",
+                           "qwen3", "mai25", "mai25pro", "ideogram_v4", "seedream5lite", "seedream5", "grok2",
                            "muse", "fibo15", "flux1dev"},
                 description = "Choose by quality, speed, reference-image support, typography, commercial provenance, and available controls."},
 
@@ -1980,6 +2399,15 @@ function init()
             {name = "model_info_flux2pro", type = "info", label = "FLUX.2 Pro — premium photorealism",
                 description = "Quality-focused FLUX editor with automatic sizing, seed, and a five-level safety tolerance. It supports JPEG/PNG but not WebP.",
                 show_when = {model = "flux2pro"}},
+            {name = "model_info_flux2max", type = "info", label = "FLUX.2 Max — highest-quality FLUX editing",
+                description = "The current maximum-quality FLUX editor with multi-image references, automatic sizing, seed, safety tolerance, and JPEG/PNG output.",
+                show_when = {model = "flux2max"}},
+            {name = "model_info_flux2flash", type = "info", label = "FLUX.2 Flash — fast multi-reference editing",
+                description = "A faster FLUX.2 editor with up to 4 reference images, CFG, prompt expansion, seed, and JPEG/PNG/WebP output.",
+                show_when = {model = "flux2flash"}},
+            {name = "model_info_flux2flex", type = "info", label = "FLUX.2 Flex — controllable FLUX editing",
+                description = "A configurable FLUX.2 editor with CFG, inference-step control, seed, safety tolerance, and automatic sizing.",
+                show_when = {model = "flux2flex"}},
             {name = "model_info_nanobanana2", type = "info", label = "Nano Banana 2 — reasoning and current-world edits",
                 description = "Google's flexible editor with 0.5K-4K output, optional thinking, web search, system instruction, and multiple references.",
                 show_when = {model = "nanobanana2"}},
@@ -1992,6 +2420,27 @@ function init()
             {name = "model_info_gptimage2", type = "info", label = "GPT Image 2 — typography and fine detail",
                 description = "OpenAI's detailed editor, especially useful for rendered text. Quality drives both detail and cost; background can be transparent with PNG/WebP.",
                 show_when = {model = "gptimage2"}},
+            {name = "model_info_gptimage25_flare", type = "info", label = "GPT Image 2.5 Flare — latest fast OpenAI editing",
+                description = "Supports up to 16 reference images, masks, automatic or preset sizing, six quality tiers, transparency, and output compression.",
+                show_when = {model = "gptimage25_flare"}},
+            {name = "model_info_gptimage25_sunburst", type = "info", label = "GPT Image 2.5 Sunburst — latest high-quality OpenAI editing",
+                description = "The high-quality GPT Image 2.5 editor with the same mask, multi-reference, sizing, quality, transparency, and compression controls as Flare.",
+                show_when = {model = "gptimage25_sunburst"}},
+            {name = "model_info_qwen3", type = "info", label = "Qwen Image 3 — prompt expansion and negative prompts",
+                description = "Alibaba's current editor supports up to 3 reference images, negative prompts, prompt expansion, explicit safety checking, and flexible image-size presets.",
+                show_when = {model = "qwen3"}},
+            {name = "model_info_mai25", type = "info", label = "MAI Image 2.5 — current Microsoft editing",
+                description = "A current Microsoft editor using one source image, explicit aspect ratio, and JPEG/PNG/WebP output.",
+                show_when = {model = "mai25"}},
+            {name = "model_info_mai25pro", type = "info", label = "MAI Image 2.5 Pro — higher-fidelity Microsoft editing",
+                description = "Microsoft's higher-fidelity editor using one source image, explicit aspect ratio, and JPEG/PNG/WebP output.",
+                show_when = {model = "mai25pro"}},
+            {name = "model_info_ideogram_v4", type = "info", label = "Ideogram V4 — typography-focused image editing",
+                description = "Restyles one source image while preserving its core structure. Supports prompt expansion, rendering speed, acceleration, strength, sizing, and safety controls.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "model_info_seedream5lite", type = "info", label = "Seedream 5.0 Lite — fast multi-image editing",
+                description = "ByteDance's faster Seedream 5.0 editor supports up to 10 references, auto 2K/3K/4K sizing, and a built-in safety checker. Output is PNG.",
+                show_when = {model = "seedream5lite"}},
             {name = "model_info_seedream5", type = "info", label = "Seedream 5.0 Pro — region-precise editing",
                 description = "Changes one element while preserving the rest of the frame, with up to 10 references and source-ratio-preserving auto sizes.",
                 show_when = {model = "seedream5"}},
@@ -2052,6 +2501,73 @@ function init()
             {name = "flux2pro_enable_safety_checker", type = "boolean", label = "Safety Checker",
                 default = true, description = "Disable only if your fal.ai account is authorized; tolerance still controls moderation strictness.",
                 show_when = {model = "flux2pro"}},
+
+            -- Flux 2 Max. Same safety and sizing family as Flux 2 Pro.
+            {name = "flux2max_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "auto lets the model infer output size from the references and instruction.",
+                show_when = {model = "flux2max"}},
+            {name = "flux2max_output_format", type = "select", label = "Output Format",
+                default = "jpeg", options = {"jpeg", "png"},
+                description = "JPEG is smaller; PNG is lossless.",
+                show_when = {model = "flux2max"}},
+            {name = "flux2max_safety_tolerance", type = "select", label = "Safety Tolerance",
+                default = "2", options = {"1", "2", "3", "4", "5"},
+                description = "1 is strictest; 5 is most permissive.",
+                show_when = {model = "flux2max"}},
+            {name = "flux2max_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "flux2max"}},
+            {name = "flux2max_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized; tolerance still controls moderation strictness.",
+                show_when = {model = "flux2max"}},
+
+            -- Flux 2 Flash. Fast variant with Turbo-like guidance controls.
+            {name = "flux2flash_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "Output shape/size preset.", show_when = {model = "flux2flash"}},
+            {name = "flux2flash_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "JPEG is smallest; PNG is lossless; WebP balances size and transparency.",
+                show_when = {model = "flux2flash"}},
+            {name = "flux2flash_guidance_scale", type = "number", label = "Guidance Scale (CFG)",
+                default = 2.5, min = 0, max = 20, step = 0.5,
+                description = "How strongly the output follows the prompt.", show_when = {model = "flux2flash"}},
+            {name = "flux2flash_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "flux2flash"}},
+            {name = "flux2flash_enable_prompt_expansion", type = "boolean", label = "Expand Prompt",
+                default = false, description = "Let FLUX elaborate the instruction for richer detail.",
+                show_when = {model = "flux2flash"}},
+            {name = "flux2flash_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "flux2flash"}},
+
+            -- Flux 2 Flex. Configurable guidance and inference-step variant.
+            {name = "flux2flex_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "Output shape/size preset.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png"},
+                description = "JPEG is smaller; PNG is lossless.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_guidance_scale", type = "number", label = "Guidance Scale (CFG)",
+                default = 3.5, min = 0, max = 20, step = 0.5,
+                description = "How strongly the output follows the prompt.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_num_inference_steps", type = "number", label = "Inference Steps",
+                default = 28, min = 1, max = 100, step = 1,
+                description = "More steps can refine detail but take longer.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_safety_tolerance", type = "select", label = "Safety Tolerance",
+                default = "2", options = {"1", "2", "3", "4", "5"},
+                description = "1 is strictest; 5 is most permissive.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "flux2flex"}},
+            {name = "flux2flex_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "flux2flex"}},
 
             -- Nano Banana 2
             {name = "nanobanana2_aspect_ratio", type = "select", label = "Aspect Ratio",
@@ -2169,6 +2685,108 @@ function init()
                 description = "transparent requires PNG or WebP; opaque forces a filled background.",
                 show_when = {model = "gptimage2"}},
 
+            -- GPT Image 2.5 Flare / Sunburst. Both endpoints expose the same
+            -- multi-reference edit schema, including an optional mask.
+            {name = "gptimage25_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "auto lets the model infer size from references; presets force a specific output shape.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+            {name = "gptimage25_quality", type = "select", label = "Quality",
+                default = "high", options = {"auto", "low", "medium", "high", "xhigh", "max"},
+                description = "Detail/cost tier. xhigh and max are the newest premium tiers.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+            {name = "gptimage25_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "Use PNG or WebP for transparency; JPEG is smaller and always opaque.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+            {name = "gptimage25_background", type = "select", label = "Background",
+                default = "auto", options = {"auto", "transparent", "opaque"},
+                description = "transparent requires PNG or WebP; opaque forces a filled background.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+            {name = "gptimage25_output_compression", type = "number", label = "Output Compression (optional)",
+                min = 0, max = 100, step = 1,
+                description = "JPEG/WebP compression quality from 0 to 100. Leave blank for fal.ai's default.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+            {name = "gptimage25_mask_url", type = "text", label = "Mask URL (optional)",
+                description = "A mask URL for localized edits. The mask must be hosted at a URL fal.ai can read.",
+                show_when = {model = {"gptimage25_flare", "gptimage25_sunburst"}}},
+
+            -- Qwen Image 3
+            {name = "qwen3_negative_prompt", type = "text", label = "Negative Prompt (optional)",
+                description = "Describe content or qualities to avoid; fal.ai accepts up to 500 characters.",
+                show_when = {model = "qwen3"}},
+            {name = "qwen3_image_size", type = "select", label = "Image Size",
+                default = "square_hd",
+                options = {"square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "Qwen's output-size presets; the shared aspect control is intentionally not sent to this endpoint.",
+                show_when = {model = "qwen3"}},
+            {name = "qwen3_enable_prompt_expansion", type = "boolean", label = "Expand Prompt",
+                default = true, description = "Expand short instructions into richer prompts.", show_when = {model = "qwen3"}},
+            {name = "qwen3_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Enable fal.ai's safety checker; your account may enforce moderation regardless.",
+                show_when = {model = "qwen3"}},
+            {name = "qwen3_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "JPEG is smallest; PNG is lossless; WebP balances size and transparency.", show_when = {model = "qwen3"}},
+            {name = "qwen3_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "qwen3"}},
+
+            -- MAI Image 2.5 / Pro use the same single-image edit schema.
+            {name = "mai25_aspect_ratio", type = "select", label = "Aspect Ratio",
+                default = "auto", options = {"auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"},
+                description = "auto lets MAI preserve the source shape; fixed values reshape the result.",
+                show_when = {model = {"mai25", "mai25pro"}}},
+            {name = "mai25_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                description = "JPEG is smaller; PNG is lossless; WebP is compact.",
+                show_when = {model = {"mai25", "mai25pro"}}},
+
+            -- Ideogram V4 image-to-image
+            {name = "ideogram_v4_expansion_model", type = "select", label = "Prompt Expansion",
+                default = "Medium", options = {"None", "Medium"},
+                description = "None is literal; Medium uses Ideogram's fast prompt expansion.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                description = "auto matches the input size; presets force a specific output shape.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_rendering_speed", type = "select", label = "Rendering Speed",
+                default = "BALANCED", options = {"TURBO", "BALANCED", "QUALITY"},
+                description = "TURBO is fastest; QUALITY uses more denoising steps for maximum detail.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_acceleration", type = "select", label = "Acceleration",
+                default = "none", options = {"none", "low", "regular", "high"},
+                description = "Higher acceleration reduces latency and may trade some quality.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_strength", type = "number", label = "Strength",
+                default = 0.8, min = 0, max = 1, step = 0.05,
+                description = "How much to transform the source. 1.0 ignores the source; lower values preserve more of it.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_seed", type = "number", label = "Seed (optional)",
+                description = "Reuse a random seed for more comparable results.", show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "ideogram_v4"}},
+            {name = "ideogram_v4_output_format", type = "select", label = "Output Format",
+                default = "jpeg", options = {"jpeg", "png"},
+                description = "JPEG is smaller; PNG is lossless.", show_when = {model = "ideogram_v4"}},
+
+            -- Seedream 5.0 Lite
+            {name = "seedream5lite_image_size", type = "select", label = "Image Size",
+                default = "auto_2K",
+                options = {"auto_2K", "auto_3K", "auto_4K", "square_hd", "square", "portrait_4_3",
+                           "portrait_16_9", "landscape_4_3", "landscape_16_9"},
+                description = "auto sizes preserve the source ratio at the selected tier; fixed presets choose a shape.",
+                show_when = {model = "seedream5lite"}},
+            {name = "seedream5lite_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = true, description = "Disable only if your fal.ai account is authorized.",
+                show_when = {model = "seedream5lite"}},
+
             -- Seedream 5.0 Pro. auto_1K / auto_2K keep the source's aspect ratio and
             -- only set the target area; the fixed enums reshape to that ratio.
             {name = "seedream5_image_size", type = "select", label = "Image Size",
@@ -2257,10 +2875,11 @@ function init()
                 label = "Additional Images", multi = true,
                 min = 0, max = 9,
                 default = "trigger",
-                description = "Ordered reference images. Flux 1 Dev ignores them; Grok allows 3; FLUX.2 Turbo and Fibo allow 4; Seedream and Muse allow 10. The action reports an over-limit count where fal.ai would otherwise truncate or reject it.",
-                show_when = { model = {"flux2", "flux2pro", "nanobanana2", "nanobananapro",
-                                       "nanobanana_lite", "gptimage2", "seedream5", "grok2",
-                                       "muse", "fibo15"} },
+                description = "Ordered reference images. MAI and Flux 1 Dev use only the trigger image; Qwen allows 3; FLUX.2 Flash allows 4; GPT Image 2.5 allows 16; Seedream and Muse allow 10. The action reports an over-limit count where fal.ai would otherwise truncate or reject it.",
+                show_when = { model = {"flux2", "flux2pro", "flux2max", "flux2flash", "flux2flex",
+                                       "nanobanana2", "nanobananapro", "nanobanana_lite",
+                                       "gptimage25_flare", "gptimage25_sunburst", "gptimage2",
+                                       "qwen3", "seedream5lite", "seedream5", "grok2", "muse", "fibo15"} },
                 filters = { content_types = IMAGE_CONTENT_TYPES },
             },
 
@@ -2391,8 +3010,18 @@ function init()
             local background = one_of(params.background, GENERATE_BACKGROUND, "auto")
             local thinking_level = one_of(params.thinking_level, GENERATE_THINKING, "off")
             local style_preset = one_of(params.style_preset, GENERATE_STYLE_PRESETS, "No Style")
+            local expansion_model = one_of(params.expansion_model, GENERATE_EXPANSION_MODEL, "Medium")
+            local style_match = one_of(params.style_match, GENERATE_STYLE_MATCH, nil)
+            local acceleration = one_of(params.acceleration, GENERATE_ACCELERATION, "none")
+            local seedream_lite_image_size = one_of(params.seedream_lite_image_size,
+                GENERATE_SEEDREAM_LITE_IMAGE_SIZES, "auto_2K")
             local seed = tonumber(params.seed)
             if seed then seed = math.floor(seed) end
+            local output_compression = tonumber(params.output_compression)
+            if output_compression then
+                output_compression = math.floor(math.max(0, math.min(100, output_compression)))
+            end
+            local style_scale = math.max(0, tonumber(params.style_scale) or 1)
 
             mah.log("info", "[fal.ai] generate page: starting async job, model=" .. model .. ", prompt=" .. prompt:sub(1, 100) .. ", safety=" .. safety_tolerance)
 
@@ -2410,11 +3039,24 @@ function init()
                     output_format = output_format,
                     quality = quality,
                     background = background,
+                    output_compression = output_compression,
                     seed = seed,
                     thinking_level = thinking_level,
                     system_prompt = params.system_prompt or "",
                     enable_web_search = params.enable_web_search == "true",
+                    negative_prompt = params.negative_prompt or "",
+                    enable_prompt_expansion = params.enable_prompt_expansion ~= "false",
+                    enable_safety_checker = params.enable_safety_checker ~= "false",
+                    expansion_model = expansion_model,
+                    acceleration = acceleration,
+                    seedream_lite_image_size = seedream_lite_image_size,
                     style_preset = style_preset,
+                    style_id = params.style_id or "",
+                    style_match = style_match,
+                    style_reference_urls = params.style_reference_urls or "",
+                    style_scale = style_scale,
+                    recraft_colors = params.recraft_colors or "",
+                    recraft_background_color = params.recraft_background_color or "",
                 })
 
                 mah.log("info", "[fal.ai] generate job: endpoint=" .. endpoint
@@ -2631,16 +3273,19 @@ function init()
         category = "Action",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the desired edit" },
-            { name = "model", type = "select", default = "flux2", description = "Models: FLUX 2 Turbo/Pro, Nano Banana 2/Pro/Lite, GPT Image 2, Seedream 5 Pro, Grok Imagine 2, Meta Muse, Bria Fibo Edit 1.5, and FLUX 1 Dev." },
-            { name = "flux2_* / flux2pro_*", type = "various", description = "FLUX controls include size/format, seed, safety checker, plus Turbo prompt expansion + CFG or Pro safety tolerance." },
+            { name = "model", type = "select", default = "flux2", description = "Models: FLUX 2 Turbo/Pro/Max/Flash/Flex, Nano Banana 2/Pro/Lite, GPT Image 2/2.5, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, Bria Fibo Edit 1.5, and FLUX 1 Dev." },
+            { name = "flux2_* / flux2pro_* / flux2max_* / flux2flash_* / flux2flex_*", type = "various", description = "FLUX controls include size/format, seed, safety checker, plus Turbo/Flash prompt expansion + CFG, Pro/Max safety tolerance, and Flex inference steps." },
             { name = "nanobanana*", type = "various", description = "Nano Banana controls include aspect/format/safety, seed, system prompt, generation limiting, optional thinking (2/Lite), resolution and web search where supported." },
             { name = "gptimage2_*", type = "various", description = "GPT Image 2 exposes size, quality, format, and background. Quality drives detail/cost; transparent background needs PNG/WebP." },
+            { name = "gptimage25_*", type = "various", description = "GPT Image 2.5 Flare/Sunburst expose size, six quality tiers, mask URL, background, format, and JPEG/WebP output compression. Both accept up to 16 references." },
+            { name = "qwen3_* / mai25_* / ideogram_v4_*", type = "various", description = "Qwen Image 3 adds negative prompt, prompt expansion, safety, and up to 3 references. MAI uses one source image. Ideogram V4 adds expansion, rendering speed, acceleration, strength, size, safety, and output format." },
+            { name = "seedream5lite_*", type = "various", description = "Seedream 5.0 Lite exposes auto_2K/auto_3K/auto_4K and fixed image sizes, safety checking, and up to 10 references; output is PNG." },
             { name = "seedream5_image_size / seedream5_output_format / seedream5_enable_safety_checker", type = "various", description = "Seedream 5.0 Pro controls (shown when model=seedream5). image_size auto_1K / auto_2K keep the source's aspect ratio; safety is a boolean, not a tolerance." },
             { name = "grok2_aspect_ratio / grok2_resolution / grok2_quality / grok2_output_format", type = "various", description = "Grok Imagine Image 2.0 controls (shown when model=grok2). Own aspect_ratio enum, lowercase '1k'/'2k' resolution, quality low|medium. No safety_tolerance in the schema." },
             { name = "muse_* / fibo15_*", type = "various", description = "Muse exposes aspect and output format with up to 10 references. Fibo exposes aspect and seed with up to 4 ordered references." },
             { name = "strength", type = "number", default = "0.95", description = "Edit strength 0.01-1.0 (shown when model=flux1dev)." },
             { name = "flux1dev_num_inference_steps / flux1dev_guidance_scale / flux1dev_acceleration", type = "various", description = "Flux 1 Dev controls (shown when model=flux1dev). safety_tolerance is not in the schema for this endpoint." },
-            { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. Every model except Flux 1 Dev uses these. Defaults to the trigger resource (the source image) — picker lets the user add more or remove the source." },
+            { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. MAI, Ideogram V4, and Flux 1 Dev use only the trigger image; other editors consume the references, with model-specific ceilings enforced by the request builder." },
         },
         examples = {
             { title = "Change background", code = 'Prompt: "change the background to a sunset beach"' },
@@ -2651,8 +3296,8 @@ function init()
         notes = {
             "Result is added as a new version of the original resource.",
             "Available from detail view only.",
-            "All models except Flux 1 Dev accept multiple input images via the 'Additional Images' picker. The trigger image is included by default.",
-            "The picker's nine-image maximum is shared by every model. The request builder reports explicit over-limit errors for Grok (3), FLUX.2 Turbo and Fibo (4); Seedream and Muse accept 10, while GPT Image 2 accepts 16 (above the picker's limit).",
+            "MAI Image 2.5, Ideogram V4, and Flux 1 Dev accept only the trigger image. Other edit models accept multiple input images via the 'Additional Images' picker; the trigger image is included by default.",
+            "The picker's nine-image maximum is shared by every model. The request builder reports explicit over-limit errors for Qwen (3), Grok (3), FLUX.2 Turbo/Flash (4), Seedream/Muse (10), and GPT Image 2/2.5 (16; above the picker limit).",
             "Flux 1 Dev accepts only a single input image and supports a strength parameter.",
         },
     })
@@ -2697,17 +3342,17 @@ function init()
         category = "Page",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the image to generate" },
-            { name = "model", type = "select", default = "nanobanana2", description = "Models: Nano Banana 2/Pro/Lite, GPT Image 2, Seedream 5 Pro, Grok Imagine 2, Meta Muse, and Bria Fibo Gen 1.5." },
-            { name = "resolution", type = "select", default = "1K", description = "0.5K-4K union. Values map to each model's nearest native tier; Lite/Muse/GPT/Seedream auto-size, and Fibo maps to 1MP/4MP." },
-            { name = "aspect_ratio", type = "select", default = "1:1", description = "Shared aspect union; GPT/Seedream receive the closest image_size preset." },
-            { name = "safety_tolerance", type = "select", default = "6", description = "1 strictest to 6 most permissive. Nano Banana receives it; Seedream maps 1-2 to its boolean checker; other models ignore it." },
-            { name = "output_format / seed / quality / background", type = "various", description = "Format is mapped to model support; seed is sent where supported; quality/background apply to GPT Image 2 and quality also maps to Grok." },
+            { name = "model", type = "select", default = "nanobanana2", description = "Models: Nano Banana 2/Pro/Lite, GPT Image 2/2.5 Flare/Sunburst, Qwen Image 3, MAI Image 2.5/Pro, Ideogram V4, Recraft V4 Style/Style Pro, Krea 2 Turbo Style, Seedream 5 Lite/Pro, Grok Imagine 2, Meta Muse, and Bria Fibo Gen 1.5." },
+            { name = "resolution", type = "select", default = "1K", description = "0.5K-4K union. Values map to each model's native tier where supported; Seedream Lite has its own auto_2K/3K/4K control, and Fibo maps to 1MP/4MP." },
+            { name = "aspect_ratio", type = "select", default = "1:1", description = "Shared aspect union; image-size models receive the closest supported preset while model-specific controls handle native size enums." },
+            { name = "safety_tolerance", type = "select", default = "6", description = "1 strictest to 6 most permissive. Nano Banana receives it; Seedream maps 1-2 to its boolean checker; Qwen/Ideogram/Recraft use their explicit safety control; other models ignore it." },
+            { name = "output_format / seed / quality / background / output_compression", type = "various", description = "Format is mapped to model support; seed is sent where supported; quality/background/compression apply to GPT Image 2/2.5 and quality also maps to Grok." },
             { name = "thinking_level / system_prompt / enable_web_search", type = "various", description = "Advanced Nano Banana controls. The inline form says exactly which family members accept each field." },
-            { name = "style_preset", type = "select", default = "No Style", description = "Bria Fibo Gen 1.5 style preset: No Style or Photoreal." },
+            { name = "style_preset / style_id / style_match / style_reference_urls", type = "various", description = "Bria Fibo keeps its No Style/Photoreal preset. Recraft accepts a style ID, style match mode, optional style-reference URLs, preferred hex colors, and a background color. Krea 2 requires 1-3 style-reference URLs and uses style_scale." },
         },
         examples = {
             { title = "Basic generation", code = 'Prompt: "a serene mountain landscape at golden hour"' },
-            { title = "Text in the image", code = 'Use GPT Image 2 or Seedream 5.0 Pro when the image has to contain readable text.' },
+            { title = "Text in the image", code = 'Use GPT Image 2.5, Nano Banana 2, Ideogram V4, or Seedream 5.0 Pro when the image has to contain readable text.' },
         },
         notes = {
             "Accessible via the Generate Image menu item.",

@@ -137,6 +137,66 @@ func TestFalPreparationPreservesMatchingImage(t *testing.T) {
 	}
 }
 
+func TestFalLatestEditModelsMapTheirLiveSchemas(t *testing.T) {
+	uri := encodeTestImage(t, 20, 20, color.RGBA{R: 255, A: 255})
+	for _, tc := range []struct {
+		name, params, endpoint string
+		want, absent           []string
+	}{
+		{
+			name:     "gpt image 2.5",
+			params:   `{model="gptimage25_flare", prompt="test", extra_images={1}, gptimage25_image_size="auto", gptimage25_quality="max", gptimage25_output_format="webp", gptimage25_output_compression=80, gptimage25_background="auto", gptimage25_mask_url="https://example.com/mask.png"}`,
+			endpoint: "https://queue.fal.run/openai/gpt-image-2.5/flare/edit",
+			want:     []string{"image_urls", "mask_url", "image_size", "quality", "output_format", "output_compression"},
+		},
+		{
+			name:     "qwen image 3",
+			params:   `{model="qwen3", prompt="test", extra_images={1}, qwen3_negative_prompt="avoid", qwen3_image_size="square", qwen3_enable_prompt_expansion=false, qwen3_enable_safety_checker=true, qwen3_output_format="webp", qwen3_seed=42}`,
+			endpoint: "https://queue.fal.run/alibaba/qwen-image-3/edit",
+			want:     []string{"image_urls", "negative_prompt", "image_size", "enable_prompt_expansion", "enable_safety_checker", "output_format", "seed"},
+		},
+		{
+			name:     "mai image 2.5",
+			params:   `{model="mai25", prompt="test", extra_images={1}, mai25_aspect_ratio="16:9", mai25_output_format="jpeg"}`,
+			endpoint: "https://queue.fal.run/microsoft/mai-image-2.5/edit",
+			want:     []string{"image_url", "aspect_ratio", "output_format"},
+			absent:   []string{"image_urls"},
+		},
+		{
+			name:     "ideogram v4",
+			params:   `{model="ideogram_v4", prompt="test", extra_images={1}, ideogram_v4_expansion_model="None", ideogram_v4_image_size="auto", ideogram_v4_rendering_speed="QUALITY", ideogram_v4_acceleration="high", ideogram_v4_strength=0.6, ideogram_v4_seed=42, ideogram_v4_enable_safety_checker=true, ideogram_v4_output_format="png"}`,
+			endpoint: "https://queue.fal.run/ideogram/v4/image-to-image",
+			want:     []string{"image_url", "expansion_model", "image_size", "rendering_speed", "acceleration", "strength", "seed", "enable_safety_checker", "output_format"},
+			absent:   []string{"image_urls"},
+		},
+		{
+			name:     "seedream 5 lite",
+			params:   `{model="seedream5lite", prompt="test", extra_images={1}, seedream5lite_image_size="auto_3K", seedream5lite_enable_safety_checker=true}`,
+			endpoint: "https://queue.fal.run/bytedance/seedream/v5/lite/edit",
+			want:     []string{"image_urls", "image_size", "enable_safety_checker"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var submittedURL string
+			run := falPreparation(t, uri, &submittedURL)
+			payload, _, _ := run("edit", tc.params)
+			if submittedURL != tc.endpoint {
+				t.Fatalf("endpoint: got %q, want %q", submittedURL, tc.endpoint)
+			}
+			for _, key := range tc.want {
+				if _, ok := payload[key]; !ok {
+					t.Errorf("payload is missing live-schema field %q: %v", key, payload)
+				}
+			}
+			for _, key := range tc.absent {
+				if _, ok := payload[key]; ok {
+					t.Errorf("payload contains field %q that this model does not accept: %v", key, payload)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkFalPreparation(b *testing.B) {
 	// Setup is excluded: these measure the actual Lua preparation stage.
 	for _, ratio := range []string{"1:1", "4:3"} {
