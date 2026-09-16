@@ -562,7 +562,7 @@ html {
    sidebar and scrolls its own results; the trigger remains visible above it. */
 .content .sidebar[data-list-sidebar]:has(form[aria-label^="Filter "]) > .saved-searches {
     display: flex;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     flex-direction: column;
     min-height: 2.25rem;
     max-height: 40%;

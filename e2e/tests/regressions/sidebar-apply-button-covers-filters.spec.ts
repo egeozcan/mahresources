@@ -116,8 +116,19 @@ test.describe('sidebar Apply Filters button', () => {
       await savedSearches.getByRole('button', { name: 'Saved searches', exact: true }).click();
       const panel = savedSearches.locator('.saved-searches-panel');
       await expect(panel).toHaveCSS('overflow-y', 'auto');
-      await savedSearches.getByRole('link', { name: `${prefix}-14`, exact: true }).scrollIntoViewIfNeeded();
-      await expect(savedSearches.getByRole('link', { name: `${prefix}-14`, exact: true })).toBeVisible();
+      const lastLink = savedSearches.getByRole('link', { name: `${prefix}-14`, exact: true });
+      const lastItem = lastLink.locator('..');
+      await lastItem.scrollIntoViewIfNeeded();
+      await expect(lastLink).toBeVisible();
+      await expect(lastItem.getByRole('button', { name: `Rename saved search: ${prefix}-14` })).toBeVisible();
+      await expect(lastItem.getByRole('button', { name: `Replace saved search: ${prefix}-14` })).toBeVisible();
+      await expect(lastItem.getByRole('button', { name: `Delete saved search: ${prefix}-14` })).toBeVisible();
+      const itemFits = await panel.evaluate((element, item) => {
+        const panelRect = element.getBoundingClientRect();
+        const itemRect = item.getBoundingClientRect();
+        return itemRect.top >= panelRect.top && itemRect.bottom <= panelRect.bottom;
+      }, await lastItem.elementHandle());
+      expect(itemFits, 'an expanded saved-search row should fit fully inside its panel').toBe(true);
 
       const submit = sidebar.getByRole('button', { name: 'Apply Filters', exact: true });
       const controls = sidebar.locator('.filter-controls-scroll');
@@ -125,6 +136,40 @@ test.describe('sidebar Apply Filters button', () => {
       await expect(submit).toBeInViewport();
       expect(await controls.evaluate(element => element.clientHeight)).toBeGreaterThan(0);
       await expectControlsAreNotCovered(page, controls, submit.locator('..'));
+    }
+  });
+
+  test('expands enough to show one complete saved search', async ({ page, request }) => {
+    const name = `single-saved-search-${Date.now()}`;
+    const createdResponse = await request.post('/v1/account/saved-searches', {
+      data: { name, url: '/notes?Name=single-saved-search' },
+    });
+    const created = await createdResponse.json();
+    try {
+      await page.goto('/notes');
+
+      const sidebar = page.locator('aside.sidebar');
+      const savedSearches = sidebar.getByRole('region', { name: 'Saved searches', exact: true });
+      await savedSearches.getByRole('button', { name: 'Saved searches', exact: true }).click();
+      const panel = savedSearches.locator('.saved-searches-panel');
+      const item = savedSearches.getByRole('link', { name, exact: true }).locator('..');
+      const geometry = await panel.evaluate((element, savedItem) => {
+        const panelRect = element.getBoundingClientRect();
+        const itemRect = savedItem.getBoundingClientRect();
+        return {
+          itemTop: itemRect.top,
+          itemBottom: itemRect.bottom,
+          panelTop: panelRect.top,
+          panelBottom: panelRect.bottom,
+          hasOverflow: element.scrollHeight > element.clientHeight,
+        };
+      }, await item.elementHandle());
+
+      expect(geometry.hasOverflow, 'one saved search should not need an internal scrollbar').toBe(false);
+      expect(geometry.itemTop).toBeGreaterThanOrEqual(geometry.panelTop);
+      expect(geometry.itemBottom).toBeLessThanOrEqual(geometry.panelBottom);
+    } finally {
+      await request.delete(`/v1/account/saved-searches/${created.id}`);
     }
   });
 });
