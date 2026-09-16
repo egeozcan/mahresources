@@ -13,6 +13,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter groups">
+        <div class="filter-controls-scroll">
         {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% if popularTags %}
         <div class="sidebar-group">
@@ -49,7 +50,8 @@
             {% include "/partials/form/freeFields.tpl" with name="MetaQuery" url='/v1/groups/meta/keys' fields=parsedQuery.MetaQuery id=getNextId("freeField") %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

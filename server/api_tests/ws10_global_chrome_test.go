@@ -277,27 +277,12 @@ func TestFooter_IsNotSticky(t *testing.T) {
 	}
 }
 
-// TestSidebarSubmit_IsNotSticky is the second instance of finding 102, found
-// while widening WCAG_AA_TAGS to WCAG 2.2 (deferred-work item 4).
-//
-// TestFooter_IsNotSticky above dropped the footer's pin because "a bar fixed to
-// the viewport bottom covers page content at every scroll offset", measured on
-// the /logs "After" date input. templates/partials/form/searchButton.tpl was
-// doing the same thing with `sticky bottom-12 ... z-10` and had never been
-// checked against that ruling — and it reproduced the defect on that same input.
-// Measured at 1280x720, the submit covered a filter control on 6 of the 37 pages
-// in the accessibility sweep, and elementFromPoint inside the overlap returned
-// the button rather than the field.
-//
-// axe saw only one of the six, as a target-size `partiallyObscured` node on
-// /groups, which is what blocked the WCAG 2.2 tag flip. The geometry half of the
-// guard is e2e/tests/regressions/sidebar-apply-button-covers-filters.spec.ts;
-// this half is here so CI, which does not run the browser suite in full, still
-// catches the class being put back.
-func TestSidebarSubmit_IsNotSticky(t *testing.T) {
+// List filters are often taller than the viewport. Their primary action is
+// intentionally bottom-sticky now, and the selector is scoped to aria-labelled
+// filter forms so other searchButton.tpl consumers do not start floating.
+func TestSidebarSubmit_IsSticky(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	// /logs is the page finding 102 was measured on; /groups is the one axe saw.
 	for _, path := range []string{"/logs", "/groups"} {
 		_, body := tc.getHTML(t, path)
 
@@ -323,16 +308,22 @@ func TestSidebarSubmit_IsNotSticky(t *testing.T) {
 			t.Fatalf("%s: no submit button in the sidebar — this test measured nothing", path)
 		}
 
-		// Only bottom-pinning is forbidden. A `sticky top-…` filter header would be
-		// fine: it covers content the reader has already scrolled past, not content
-		// they are scrolling towards.
-		for _, tag := range openTagsWithin(sidebar, "div") {
-			pinned := strings.Contains(tag, "sticky") || strings.Contains(tag, "fixed")
-			if pinned && strings.Contains(tag, "bottom-") {
-				t.Errorf("finding 102: %s pins a sidebar element to the viewport bottom again, which covers whatever filter field is there — measured on the /logs \"After\" date input and the /groups Categories autocompleter at 1280x720.\ntag: %s",
-					path, whitespaceRe.ReplaceAllString(tag, " "))
-			}
+		if !strings.Contains(sidebar, `class="filter-submit-bar`) {
+			t.Errorf("%s: filter submit lost its sticky wrapper", path)
 		}
+	}
+
+	css, err := os.ReadFile("../../public/index.css")
+	if err != nil {
+		t.Fatalf("read index.css: %v", err)
+	}
+	block := cssBlock(string(css), `.content .sidebar[data-list-sidebar] form[aria-label^="Filter "] > .filter-submit-bar {`)
+	if !strings.Contains(block, "position: sticky") || !strings.Contains(block, "bottom: 0") {
+		t.Errorf("filter submit is not bottom-sticky.\nblock: %s", whitespaceRe.ReplaceAllString(block, " "))
+	}
+	controls := cssBlock(string(css), `.content .sidebar[data-list-sidebar] form[aria-label^="Filter "] .filter-controls-scroll {`)
+	if !strings.Contains(controls, "overflow-y: auto") {
+		t.Errorf("filter controls do not have their own scroll area, so the sticky submit can obscure them.\nblock: %s", whitespaceRe.ReplaceAllString(controls, " "))
 	}
 }
 

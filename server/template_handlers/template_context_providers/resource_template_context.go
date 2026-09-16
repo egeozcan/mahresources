@@ -273,8 +273,14 @@ func ResourceTimelineContextProvider(context ResourcePageContext) func(request *
 			mrqlError = fe.Error()
 		}
 
+		var resourceCount int64
 		var popularTags []application_context.PopularTag
 		if mrqlError == "" {
+			resourceCount, err = context.GetResourceCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
 			popularTags, err = context.GetPopularResourceTags(&query)
 			if err != nil {
 				return addErrContext(err, baseContext)
@@ -285,6 +291,9 @@ func ResourceTimelineContextProvider(context ResourcePageContext) func(request *
 
 		return pongo2.Context{
 			"pageTitle":                "Resources - Timeline",
+			"totalCount":               resourceCount,
+			"massEditEntity":           "resource",
+			"massEditMetaKeysUrl":      "/v1/resources/meta/keys",
 			"mrqlError":                mrqlError,
 			"tags":                     tags,
 			"popularTags":              popularTags,

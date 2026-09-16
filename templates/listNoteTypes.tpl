@@ -23,8 +23,10 @@
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
         <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter note types">
+            <div class="filter-controls-scroll">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
+            </div>
             {% include "/partials/form/searchButton.tpl" %}
         </form>
     </div>

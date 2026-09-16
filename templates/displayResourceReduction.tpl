@@ -157,6 +157,7 @@
 {% block sidebar %}
 <div x-data>
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter Clusters" action="/reduction" method="get">
+        <div class="filter-controls-scroll">
         <input type="hidden" name="id" value="{{ raw.ID }}">
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Filter" %}
@@ -195,8 +196,9 @@
                 Clusters with potential data loss or unusually many resources.
             </p>
 
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 
     <div class="sidebar-group">

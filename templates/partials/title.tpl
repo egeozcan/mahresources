@@ -52,6 +52,9 @@
                 <span class="break-words">{% if headingTitle %}{{ headingTitle }}{% else %}{{ pageTitle }}{% endif %}</span>
             {% endif %}
         </h1>
+        {% if massEditEntity %}
+            {% include "/partials/massEditAllButton.tpl" %}
+        {% endif %}
         {% if action %}
         <a href="{{ action.Url }}" class="
             ml-4 inline-flex items-center

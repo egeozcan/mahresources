@@ -1,6 +1,23 @@
 import { test, expect } from '../fixtures/base.fixture';
 import * as path from 'path';
 
+test('mass edit all is in the title bar on every supported list layout', async ({ page }) => {
+  const paths = [
+    '/resources', '/resources/details', '/resources/simple', '/resources/timeline',
+    '/notes', '/notes/timeline', '/groups', '/groups/text', '/groups/timeline',
+  ];
+  for (const route of paths) {
+    await page.goto(route);
+    const action = page.locator('section.title').getByRole('button', { name: /Mass edit all \d+ results/ });
+    await expect(action, route).toBeVisible();
+    await action.click();
+    const dialog = page.getByRole('dialog', { name: /^Mass edit / });
+    await expect(dialog, `${route}: title-bar action should open mass edit`).toBeVisible();
+    await expect(dialog.getByRole('radio', { name: /Every .* matching the current filter/ })).toBeChecked();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  }
+});
+
 test.describe('Mass Edit', () => {
   let testRunId: string;
   let tagId: number;
@@ -111,7 +128,9 @@ test.describe('Mass Edit', () => {
     await page.goto(`/resources?tags=${tagId}`);
     await page.waitForLoadState('load');
 
-    await page.getByRole('button', { name: /Mass edit all \d+ results/ }).click();
+    const massEditAll = page.locator('section.title').getByRole('button', { name: /Mass edit all \d+ results/ });
+    await expect(massEditAll).toBeVisible();
+    await massEditAll.click();
     const dialog = page.getByRole('dialog', { name: /Mass edit/ });
     await expect(dialog).toBeVisible();
 

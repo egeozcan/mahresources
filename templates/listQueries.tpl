@@ -23,6 +23,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter queries">
+        <div class="filter-controls-scroll">
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Sort" %}
             {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
@@ -33,7 +34,8 @@
             {% include "/partials/form/textInput.tpl" with name='Text' label='Text' value=queryValues.Text.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

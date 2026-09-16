@@ -3,6 +3,11 @@ import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 async function openSearches(page: Page) {
+  const disclosure = page.locator('#sidebar-disclosure');
+  const summary = disclosure.locator('summary');
+  if (await summary.isVisible() && await disclosure.getAttribute('open') === null) {
+    await summary.click();
+  }
   const region = page.getByRole('region', { name: 'Saved searches', exact: true });
   await region.getByRole('button', { name: 'Saved searches', exact: true }).click();
   await expect(region.getByRole('button', { name: 'Save current search', exact: true })).toBeEnabled();
@@ -102,6 +107,7 @@ test('restores timeline settings and retains them through filter submission', as
 });
 
 test('keeps failed saves open, supports keyboard dismissal, and fits mobile contact sheets', async ({ page }, testInfo) => {
+  const retryName = `Retry this search ${Date.now()}`;
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/resources/simple?Name=empty-saved-search-test');
   const region = await openSearches(page);
@@ -114,23 +120,23 @@ test('keeps failed saves open, supports keyboard dismissal, and fits mobile cont
   await expect(save).toBeFocused();
   await page.keyboard.press('Enter');
   dialog = page.getByRole('dialog', { name: 'Save current search', exact: true });
-  await dialog.getByLabel('Name', { exact: true }).fill('Retry this search');
+  await dialog.getByLabel('Name', { exact: true }).fill(retryName);
   await page.route('**/v1/account/saved-searches', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Temporarily unavailable"}' }));
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('Temporarily unavailable');
-  await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Retry this search');
-  await expect(region.getByRole('link', { name: 'Retry this search', exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue(retryName);
+  await expect(region.getByRole('link', { name: retryName, exact: true })).toHaveCount(0);
   await page.unroute('**/v1/account/saved-searches');
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect(region.getByRole('link', { name: 'Retry this search', exact: true })).toBeVisible();
+  await expect(region.getByRole('link', { name: retryName, exact: true })).toBeVisible();
   const box = await region.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath('saved-searches-mobile.png') });
   const accessibility = await new AxeBuilder({ page }).include('section[aria-label="Saved searches"]').analyze();
   expect(accessibility.violations).toEqual([]);
-  await region.getByRole('button', { name: 'Rename saved search: Retry this search', exact: true }).click();
+  await region.getByRole('button', { name: `Rename saved search: ${retryName}`, exact: true }).click();
   const dialogAccessibility = await new AxeBuilder({ page }).include('[role="dialog"][aria-modal="true"]').analyze();
   expect(dialogAccessibility.violations).toEqual([]);
 });
@@ -148,7 +154,10 @@ test('menu appears on every registered list layout and not on detail pages', asy
   for (const path of paths) {
     const response = await page.goto(path);
     expect(response?.status(), path).toBe(200);
-    await expect(page.getByRole('button', { name: 'Saved searches', exact: true }), path).toBeVisible();
+    const sidebar = page.locator('aside.sidebar');
+    const savedSearches = sidebar.getByRole('region', { name: 'Saved searches', exact: true });
+    await expect(savedSearches.getByRole('button', { name: 'Saved searches', exact: true }), path).toBeVisible();
+    await expect(sidebar.locator(':scope > :first-child'), path).toHaveAttribute('aria-label', 'Saved searches');
   }
   await page.goto('/tag/new');
   await expect(page.getByRole('button', { name: 'Saved searches', exact: true })).toHaveCount(0);

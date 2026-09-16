@@ -210,8 +210,14 @@ func GroupTimelineContextProvider(context GroupPageContext) func(request *http.R
 			mrqlError = fe.Error()
 		}
 
+		var groupsCount int64
 		var popularTags []application_context.PopularTag
 		if mrqlError == "" {
+			groupsCount, err = context.GetGroupsCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
 			popularTags, err = context.GetPopularGroupTags(&query)
 			if err != nil {
 				return addErrContext(err, baseContext)
@@ -229,17 +235,20 @@ func GroupTimelineContextProvider(context GroupPageContext) func(request *http.R
 		}
 
 		return pongo2.Context{
-			"pageTitle":         "Groups - Timeline",
-			"owners":            owners,
-			"groupsSelection":   groupsSelection,
-			"categories":        categories,
-			"listHeaderCarrier": listHeaderCarrier,
-			"mrqlError":         mrqlError,
-			"tags":              tags,
-			"popularTags":       popularTags,
-			"notes":             notes,
-			"resources":         resources,
-			"parsedQuery":       query,
+			"pageTitle":           "Groups - Timeline",
+			"totalCount":          groupsCount,
+			"massEditEntity":      "group",
+			"massEditMetaKeysUrl": "/v1/groups/meta/keys",
+			"owners":              owners,
+			"groupsSelection":     groupsSelection,
+			"categories":          categories,
+			"listHeaderCarrier":   listHeaderCarrier,
+			"mrqlError":           mrqlError,
+			"tags":                tags,
+			"popularTags":         popularTags,
+			"notes":               notes,
+			"resources":           resources,
+			"parsedQuery":         query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",

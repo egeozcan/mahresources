@@ -1,7 +1,7 @@
 {# Mass Edit: one modal over several ops in one transaction.                  #}
-{# Included once from layouts/base.tpl for the three list pages (the context  #}
-{# providers publish massEditEntity beside totalCount). The opener buttons    #}
-{# live in the bulk editor partials and dispatch `mass-edit-open`.            #}
+{# Included once from layouts/base.tpl on supported list pages (the context   #}
+{# providers publish massEditEntity beside totalCount). The title-bar action #}
+{# and selected-item bulk actions dispatch `mass-edit-open`.                  #}
 {#                                                                            #}
 {# Focus is owned by the component through focusedElement()/restoreFocus, the #}
 {# pattern pluginActionModal.tpl settled on: x-trap's own restore points at   #}

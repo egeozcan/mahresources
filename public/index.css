@@ -440,27 +440,15 @@ html {
    amber on hover) and none of it had ever rendered, because the hammer declared
    `display` and the styling rule does not.
 
-   Nothing replaces it. The page title section is hidden by `.simple .title`
-   below, the card's own description, tags, meta and badges by their own rule,
-   and no page-level h2, h4 or .description survives on this template. */
+   Nothing replaces it. The card's own description, tags, meta and badges are
+   hidden by their own rule, and no page-level h2, h4 or .description survives
+   on this template. */
 
-/* The whole title section goes, not just its paint. It was visually hidden for
-   one release, to keep the page's only <h1> exposed after `display: none` made
-   /resources/simple the one page failing `page-has-heading-one` -- but this
-   section is not only a heading. It also carries the page action link
-   ("Create"), and on other pages a secondary action, a delete button,
-   breadcrumb links and an <inline-edit>. Visually hiding it left every one of
-   those keyboard-focusable and invisible, so tabbing here landed on a control
-   with no visible focus indicator: a worse defect than the one it fixed.
-
-   The heading is not lost, because it is not this section's to give on this
-   page: listResourcesSimple.tpl renders its own `sr-only` <h1> inside <main>,
-   which keeps `page-has-heading-one` satisfied and `region` with it. Hiding
-   only the focusable descendants was the other candidate and was rejected --
-   it would have to enumerate what is focusable, forever, and any control added
-   to partials/title.tpl later would silently reappear here invisible. */
+/* The contact sheet keeps the shared title/action bar now that list-wide actions
+   live there. Its content grid remains edge-to-edge; this margin aligns only the
+   page heading and actions with the header chrome. */
 .simple .title {
-    display: none;
+    margin-inline: 1rem;
 }
 
 /* Grid: uniform square cells, tight contact-sheet gaps */
@@ -559,6 +547,90 @@ html {
     flex-direction: column;
     gap: 1rem;
     max-width: 94vw;
+}
+
+/* List filters can be substantially taller than the viewport. The controls own
+   the scroll area while the submit occupies a separate form row, so keeping the
+   action visible never paints its hit area over another input. */
+.content .sidebar[data-list-sidebar]:has(form[aria-label^="Filter "]) {
+    height: calc(100dvh - 10rem);
+    overflow: hidden;
+}
+
+/* Saved searches stay first in the sidebar, but an expanded library must not
+   consume the filter form's action row. The library gets a bounded share of the
+   sidebar and scrolls its own results; the trigger remains visible above it. */
+.content .sidebar[data-list-sidebar]:has(form[aria-label^="Filter "]) > .saved-searches {
+    display: flex;
+    flex: 0 1 auto;
+    flex-direction: column;
+    min-height: 2.25rem;
+    max-height: 40%;
+    overflow: hidden;
+}
+
+.content .sidebar[data-list-sidebar]:has(form[aria-label^="Filter "]) > .saved-searches > .saved-searches-panel {
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.content .sidebar[data-list-sidebar] form[aria-label^="Filter "] {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* A few administrative lists wrap their filter form in a sidebar group. Let
+   that group participate in the same constrained flex layout instead of
+   allowing its intrinsic form height to be clipped by the sidebar. */
+.content .sidebar[data-list-sidebar] .sidebar-group:has(> form[aria-label^="Filter "]) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.content .sidebar[data-list-sidebar] form[aria-label^="Filter "] .filter-controls-scroll {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.content .sidebar[data-list-sidebar] form[aria-label^="Filter "] > .filter-submit-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    flex: 0 0 auto;
+    padding-bottom: 0.25rem;
+    background: var(--bg-accent);
+    box-shadow: 0 -1px 0 var(--nav-border);
+}
+
+@media only screen and (min-width: 901px) {
+    .content .filter-disclosure:has(> .sidebar[data-list-sidebar] form[aria-label^="Filter "]) {
+        position: sticky;
+        top: 3rem;
+        align-self: start;
+    }
+}
+
+@media only screen and (max-width: 900px) {
+    .content .sidebar[data-list-sidebar]:has(form[aria-label^="Filter "]) {
+        /* Leave room for the mobile header, title bar, and disclosure summary so
+           the submit row is visible immediately after the sidebar is opened. */
+        height: calc(100dvh - 14rem);
+    }
+
+    .content .sidebar[data-list-sidebar] form[aria-label^="Filter "] > .filter-submit-bar {
+        background: #fff;
+    }
 }
 
 /*

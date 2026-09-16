@@ -34,6 +34,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter downloads">
+        <div class="filter-controls-scroll">
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Filter" %}
             <fieldset class="w-full mt-2">
@@ -69,7 +70,8 @@
             {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Submitted before' value=queryValues.CreatedBefore.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CompletedAfter' label='Finished after' value=queryValues.CompletedAfter.0 %}
             {% include "/partials/form/dateInput.tpl" with name='CompletedBefore' label='Finished before' value=queryValues.CompletedBefore.0 %}
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

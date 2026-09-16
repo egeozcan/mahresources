@@ -24,6 +24,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter notes">
+        <div class="filter-controls-scroll">
         {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% if popularTags %}
         <div class="sidebar-group">
@@ -56,7 +57,8 @@
             {% include "/partials/form/dateInput.tpl" with name='EndDateBefore' label='End Date Before' value=queryValues.EndDateBefore.0 %}
             {% include "/partials/form/dateInput.tpl" with name='EndDateAfter' label='End Date After' value=queryValues.EndDateAfter.0 %}
             {% include "/partials/form/checkboxInput.tpl" with name='Shared' label='Shared Only' value=queryValues.Shared.0 id=getNextId("Shared") %}
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

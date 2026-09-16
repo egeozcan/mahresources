@@ -23,6 +23,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter Resource Reductions">
+        <div class="filter-controls-scroll">
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Filter" %}
             <fieldset class="w-full mt-2">
@@ -39,7 +40,8 @@
             </fieldset>
 
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name contains' value=queryValues.Name.0 %}
-            {% include "/partials/form/searchButton.tpl" %}
         </div>
+        </div>
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

@@ -1,4 +1,5 @@
 <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter resources">
+    <div class="filter-controls-scroll">
     {# Preserve the package 5 MRQL filter bar value when refining sidebar filters. #}
     {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
     {% if popularTags %}
@@ -41,6 +42,7 @@
         {% include "/partials/form/textInput.tpl" with name='MaxHeight' label='Max Height' value=queryValues.MaxHeight.0 %}
         {% include "/partials/form/checkboxInput.tpl" with name='ShowWithSimilar' label='Show Only With Existing Similar Images' value=queryValues.ShowWithSimilar.0 id=getNextId("ShowWithSimilar") %}
         {% include "/partials/form/checkboxInput.tpl" with name='Untagged' label='Only Untagged' value=queryValues.Untagged.0 id=getNextId("Untagged") %}
-        {% include "/partials/form/searchButton.tpl" %}
     </div>
+    </div>
+    {% include "/partials/form/searchButton.tpl" %}
 </form>

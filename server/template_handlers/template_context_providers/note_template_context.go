@@ -193,8 +193,14 @@ func NoteTimelineContextProvider(context NotePageContext) func(request *http.Req
 			mrqlError = fe.Error()
 		}
 
+		var noteCount int64
 		var popularTags []application_context.PopularTag
 		if mrqlError == "" {
+			noteCount, err = context.GetNoteCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
 			popularTags, err = context.GetPopularNoteTags(&query)
 			if err != nil {
 				return addErrContext(err, baseContext)
@@ -209,15 +215,18 @@ func NoteTimelineContextProvider(context NotePageContext) func(request *http.Req
 		}
 
 		return pongo2.Context{
-			"pageTitle":         "Notes - Timeline",
-			"groups":            groups,
-			"owners":            owners,
-			"mrqlError":         mrqlError,
-			"tags":              tags,
-			"popularTags":       popularTags,
-			"noteTypes":         noteTypes,
-			"listHeaderCarrier": listHeaderCarrier,
-			"parsedQuery":       query,
+			"pageTitle":           "Notes - Timeline",
+			"totalCount":          noteCount,
+			"massEditEntity":      "note",
+			"massEditMetaKeysUrl": "/v1/notes/meta/keys",
+			"groups":              groups,
+			"owners":              owners,
+			"mrqlError":           mrqlError,
+			"tags":                tags,
+			"popularTags":         popularTags,
+			"noteTypes":           noteTypes,
+			"listHeaderCarrier":   listHeaderCarrier,
+			"parsedQuery":         query,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/note/new",

@@ -2,10 +2,12 @@
 <div x-data>
     <div class="pb-3" x-show="$selection.selectedIds.size === 0" x-collapse>
         {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
-        {% for action in actions %}{% if action.ID == 'mass-edit' %}
+        {# MRQL can render resources, notes, and groups in separate result buckets, #}
+        {# so it has no single page-level entity action to move into the title bar. #}
+        {% if mrqlLists %}{% for action in actions %}{% if action.ID == 'mass-edit' %}
         <button type="button" class="bulk-action-btn mt-3 px-3 py-1.5 border rounded-md"
-                @click="$dispatch('mass-edit-open', { entityType: '{{ bulkEntity }}', target: 'filter', selection: $selection })">Mass edit all {% if not mrqlLists %}{{ totalCount|default:0 }} {% endif %}results</button>
-        {% endif %}{% endfor %}
+                @click="$dispatch('mass-edit-open', { entityType: '{{ bulkEntity }}', target: 'filter', selection: $selection })">Mass edit all results</button>
+        {% endif %}{% endfor %}{% endif %}
     </div>
     <div class="sticky top-0 z-30 flex pb-2 gap-2 flex-wrap bulk-editors items-start" :hidden="$selection.selectedIds.size === 0" hidden x-cloak>
         {% include "/partials/form/formParts/connected/deselectButton.tpl" %}

@@ -32,11 +32,13 @@
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
         <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter relations">
+            <div class="filter-controls-scroll">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='relationType' elName='GroupRelationTypeId' title='Type' max=1 selectedItems=fromTypes id=getNextId("autocompleter") %}
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true elName='FromGroupId' title='From Group' max=1 selectedItems=fromGroups id=getNextId("autocompleter") %}
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true elName='ToGroupId' title='To Group' max=1 selectedItems=toGroups id=getNextId("autocompleter") %}
+            </div>
             {% include "/partials/form/searchButton.tpl" %}
         </form>
     </div>

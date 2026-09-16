@@ -1,4 +1,4 @@
-<section x-data="savedSearches('{{ savedSearchView.Family }}')" x-cloak class="mb-4 min-w-0" aria-label="Saved searches"
+<section x-data="savedSearches('{{ savedSearchView.Family }}')" x-cloak class="saved-searches mb-4 min-w-0" aria-label="Saved searches"
          x-id="['saved-searches-panel', 'saved-search-name', 'saved-search-dialog']"
          @keydown.escape.stop.prevent="close()">
     <button type="button" x-ref="trigger" @click="toggle()" :aria-expanded="open" :aria-controls="$id('saved-searches-panel')"
@@ -6,7 +6,7 @@
         Saved searches <span aria-hidden="true" x-text="open ? '▴' : '▾'"></span>
     </button>
     <p role="status" class="text-sm text-stone-600 mt-1" x-text="status"></p>
-    <div x-show="open" :id="$id('saved-searches-panel')" class="mt-2 rounded border border-stone-300 bg-white p-3 space-y-3">
+    <div x-show="open" :id="$id('saved-searches-panel')" class="saved-searches-panel mt-2 rounded border border-stone-300 bg-white p-3 space-y-3">
         <button type="button" x-ref="save" @click="startDialog()" :disabled="busy || loading"
                 class="rounded bg-amber-700 px-3 py-1.5 text-sm font-mono text-white hover:bg-amber-800 disabled:opacity-50">Save current search</button>
         <p x-show="loading" role="status" class="text-sm text-stone-600">Loading saved searches…</p>

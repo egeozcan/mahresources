@@ -41,10 +41,8 @@
 </head>
 {# `bodyClass` is server-rendered rather than a class a page adds from script:  #}
 {# a page mode that only exists once JS has run is a page whose CSS is wrong    #}
-{# for every reader with scripts blocked. /resources/simple is the one page     #}
-{# that uses it -- its contact-sheet CSS hides `partials/title.tpl` and the     #}
-{# page reissues that section's <h1> itself, so a class arriving late left both #}
-{# headings exposed. Overriders emit their own leading space.                   #}
+{# for every reader with scripts blocked. /resources/simple uses it to activate #}
+{# its contact-sheet layout before first paint. Overriders emit a leading space. #}
 <body class="site bg-stone-50{% block bodyClass %}{% endblock %}">
     <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-amber-700">Skip to main content</a>
     {% plugin_slot "page_top" %}
@@ -107,7 +105,11 @@
         {# and would resolve to the wrapper, which precedes the aside in document order. #}
         <details id="sidebar-disclosure" class="detail-collapsible filter-disclosure" open>
             <summary class="filter-disclosure-summary">Filters and details</summary>
-            <aside class="sidebar">
+            <aside class="sidebar"{% if savedSearchView %} data-list-sidebar{% endif %}>
+            {# Saved searches belong to the filter controls they capture. Keeping #}
+            {# this in the base layout makes it the first sidebar control on every #}
+            {# registered list view, regardless of the page-specific filter form. #}
+            {% if savedSearchView %}{% include "/partials/savedSearches.tpl" %}{% endif %}
             {% if mainEntity && (!sc || sc.Timestamps) %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
@@ -154,7 +156,6 @@
                 </div>
             </div>
             {% endif %}
-            {% if savedSearchView %}{% include "/partials/savedSearches.tpl" %}{% endif %}
             {% block body %}{% endblock %}
         </main>
     </div>
