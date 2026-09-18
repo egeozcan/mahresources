@@ -50,19 +50,20 @@ type testGroup struct {
 func (testGroup) TableName() string { return "groups" }
 
 type testResource struct {
-	ID           uint      `gorm:"primarykey"`
-	CreatedAt    time.Time `gorm:"index"`
-	UpdatedAt    time.Time `gorm:"index"`
-	Name         string    `gorm:"index"`
-	Description  string
-	ContentType  string `gorm:"index"`
-	FileSize     int64
-	Width        uint
-	Height       uint
-	Hash         string
-	OriginalName string
-	Meta         string `gorm:"type:JSON"`
-	OwnerID      *uint  `gorm:"index"`
+	ID                 uint      `gorm:"primarykey"`
+	CreatedAt          time.Time `gorm:"index"`
+	UpdatedAt          time.Time `gorm:"index"`
+	Name               string    `gorm:"index"`
+	Description        string
+	ContentType        string `gorm:"index"`
+	FileSize           int64
+	Width              uint
+	Height             uint
+	Hash               string
+	OriginalName       string
+	Meta               string `gorm:"type:JSON"`
+	ResourceCategoryID uint
+	OwnerID            *uint `gorm:"index"`
 }
 
 func (testResource) TableName() string { return "resources" }

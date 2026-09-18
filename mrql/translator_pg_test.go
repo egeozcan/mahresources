@@ -57,6 +57,52 @@ func TestPG_MetaJsonExtract(t *testing.T) {
 	}
 }
 
+func TestPG_MetaJsonBooleanComparison(t *testing.T) {
+	db := setupPostgresTestDB(t)
+	metadata := map[uint]string{
+		1: `{"trending":true,"info":{"el":{"node":{"music_metadata":{"original_sound_info":{"consumption_info":{"is_trending_in_clips":true}}}}}}}`,
+		2: `{"trending":"true","info":{"el":{"node":{"music_metadata":{"original_sound_info":{"consumption_info":{"is_trending_in_clips":"true"}}}}}}}`,
+		3: `{"trending":false,"info":{"el":{"node":{"music_metadata":{"original_sound_info":{"consumption_info":{"is_trending_in_clips":false}}}}}}}`,
+	}
+	for id, meta := range metadata {
+		if err := db.Model(&testResource{}).Where("id = ?", id).Update("meta", meta).Error; err != nil {
+			t.Fatalf("seed resource %d metadata: %v", id, err)
+		}
+	}
+	if err := db.Model(&testResource{}).Where("id IN ?", []uint{1, 2}).Update("resource_category_id", 2).Error; err != nil {
+		t.Fatalf("seed resource category 2: %v", err)
+	}
+	if err := db.Model(&testResource{}).Where("id = ?", 3).Update("resource_category_id", 3).Error; err != nil {
+		t.Fatalf("seed resource category 3: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		wantName string
+	}{
+		{name: "true", query: `meta.trending = true`, wantName: "sunset.jpg"},
+		{name: "false", query: `meta.trending = false`, wantName: "report.pdf"},
+		{
+			name:     "production nested path",
+			query:    `category = 2 AND meta.info.el.node.music_metadata.original_sound_info.consumption_info.is_trending_in_clips = true`,
+			wantName: "sunset.jpg",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseAndTranslate(t, tt.query, EntityResource, db)
+			var resources []testResource
+			if err := result.Find(&resources).Error; err != nil {
+				t.Fatalf("query error: %v", err)
+			}
+			if len(resources) != 1 || resources[0].Name != tt.wantName {
+				t.Fatalf("expected [%s], got %v", tt.wantName, namesOfResources(resources))
+			}
+		})
+	}
+}
+
 func TestPG_OwnerDirect(t *testing.T) {
 	db := setupPostgresTestDB(t)
 	result := parseAndTranslate(t, `owner = "Vacation"`, EntityResource, db)

@@ -72,3 +72,24 @@ func TestPG_RecursiveAncestorsDescendants(t *testing.T) {
 		}
 	}
 }
+
+func TestPG_BooleanMetaTraversal(t *testing.T) {
+	db := setupPostgresTestDB(t)
+	metadata := map[uint]string{
+		1: `{"trending":true}`,
+		2: `{"trending":"true"}`,
+		3: `{"trending":false}`,
+	}
+	for id, meta := range metadata {
+		if err := db.Model(&testGroup{}).Where("id = ?", id).Update("meta", meta).Error; err != nil {
+			t.Fatalf("seed group %d metadata: %v", id, err)
+		}
+	}
+
+	if got, want := pgResourceIDs(t, db, `owner.meta.trending = true`), []uint{1}; !slices.Equal(got, want) {
+		t.Errorf("owner meta comparison: got %v want %v", got, want)
+	}
+	if got, want := pgGroupIDs(t, db, `ancestors.meta.trending = true`), []uint{2, 4, 5}; !slices.Equal(got, want) {
+		t.Errorf("ancestor meta comparison: got %v want %v", got, want)
+	}
+}

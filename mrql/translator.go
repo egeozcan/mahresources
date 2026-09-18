@@ -612,15 +612,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	}
 
 	innerAlias := steps[len(steps)-1].alias
-	isNumericVal := isNumericValue(val)
-	var jsonExpr string
-	var numericFilter string
-	if isNumericVal {
-		jsonExpr = tc.metaNumericExprOn(innerAlias, segments)
-		numericFilter = tc.metaTypeFilterOn(innerAlias, segments)
-	} else {
-		jsonExpr = tc.metaJsonExprOn(innerAlias, segments)
-	}
+	jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(innerAlias, segments, val)
 
 	textExpr := tc.metaJsonTextExprOn(innerAlias, segments)
 	// Every supported FK step selects groups, regardless of the root entity.
@@ -750,14 +742,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 		if err != nil {
 			return "", nil, err
 		}
-		isNumericVal := isNumericValue(val)
-		var jsonExpr, numericFilter string
-		if isNumericVal {
-			jsonExpr = tc.metaNumericExprOn("gm", segments)
-			numericFilter = tc.metaTypeFilterOn("gm", segments)
-		} else {
-			jsonExpr = tc.metaJsonExprOn("gm", segments)
-		}
+		jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn("gm", segments, val)
 		textExpr := tc.metaJsonTextExprOn("gm", segments)
 		clause, clauseVal := tc.buildMetaClause(jsonExpr, textExpr, posOp, val, isNumericVal, tc.hasReadyNumericIndex(EntityGroup, segments))
 		if numericFilter != "" {
@@ -816,6 +801,15 @@ func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op
 	// Regex match applies to the text-extracted value, not the raw JSON value.
 	if isRegexOperator(op) {
 		return textExpr + " " + sqlOp + " ?", []interface{}{val}
+	}
+
+	// PostgreSQL's ->> operator returns text, so binding a Go bool beside it
+	// makes pgx try (and fail) to encode that bool as text. Keep the JSON value
+	// type and explicitly type the parameter as boolean instead. Casting the
+	// JSON column expression to jsonb also preserves the distinction between
+	// the JSON boolean true and the JSON string "true".
+	if tc.requiresNativeJSONBooleanComparison(val) {
+		return "(" + jsonExpr + ")::jsonb " + sqlOp + " to_jsonb(?::boolean)", []interface{}{val}
 	}
 
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
@@ -1405,6 +1399,27 @@ func isNumericValue(val interface{}) bool {
 	return false
 }
 
+func (tc *translateContext) requiresNativeJSONBooleanComparison(val interface{}) bool {
+	_, isBooleanVal := val.(bool)
+	return isBooleanVal && tc.isPostgres()
+}
+
+// metaComparisonExprOn selects an extraction expression whose SQL type matches
+// the comparison value. PostgreSQL booleans need the type-preserving JSON path;
+// SQLite's json_extract already preserves scalar types.
+func (tc *translateContext) metaComparisonExprOn(alias string, segments []string, val interface{}) (jsonExpr, numericFilter string, isNumericVal bool) {
+	if tc.requiresNativeJSONBooleanComparison(val) {
+		return pgJsonPath(alias, segments), "", false
+	}
+
+	isNumericVal = isNumericValue(val)
+	if isNumericVal {
+		return tc.metaNumericExprOn(alias, segments), tc.metaTypeFilterOn(alias, segments), true
+	}
+
+	return tc.metaJsonExprOn(alias, segments), "", false
+}
+
 // translateMetaComparison handles meta.key comparisons using json_extract.
 func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
 	segments := metaSubpathSegments(fd.Name)
@@ -1413,15 +1428,9 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		return nil, &TranslateError{Message: err.Error(), Pos: 0}
 	}
 
-	isNumericVal := isNumericValue(val)
-	var jsonExpr string
-	if isNumericVal {
-		jsonExpr = tc.metaNumericExpr(segments)
-		if filter := tc.metaTypeFilterOn(tc.tableName, segments); filter != "" {
-			db = db.Where(filter)
-		}
-	} else {
-		jsonExpr = tc.metaJsonExpr(segments)
+	jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(tc.tableName, segments, val)
+	if numericFilter != "" {
+		db = db.Where(numericFilter)
 	}
 
 	clause, values := tc.buildMetaClause(jsonExpr, tc.metaJsonTextExpr(segments), op, val, isNumericVal, tc.hasReadyNumericIndex(tc.entityType, segments))
