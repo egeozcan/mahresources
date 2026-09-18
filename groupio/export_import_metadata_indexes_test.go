@@ -13,7 +13,7 @@ import (
 
 func TestExportImportPreservesCategoryMetadataIndexes(t *testing.T) {
 	src := createGUIDIsolatedContext(t, t.Name()+"-src")
-	keys := `[{"key":"score","kind":"numeric"},{"key":"camera.model","kind":"text"}]`
+	keys := `[{"key":"score","kind":"numeric"},{"key":"camera.model","kind":"text"},{"key":"flags.active","kind":"boolean"}]`
 	category := models.Category{Name: "Indexed groups", MetadataIndexes: keys}
 	noteType := models.NoteType{Name: "Indexed notes", MetadataIndexes: keys}
 	resourceCategory := models.ResourceCategory{Name: "Indexed resources", MetadataIndexes: keys}

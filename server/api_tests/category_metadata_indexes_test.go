@@ -14,7 +14,7 @@ func TestCategoryMetadataIndexesRoundTrip(t *testing.T) {
 	for _, path := range []string{"/v1/resourceCategory", "/v1/category", "/v1/note/noteType"} {
 		t.Run(path, func(t *testing.T) {
 			tc := SetupTestEnv(t)
-			raw := `[{"key":"score","kind":"numeric"},{"key":"camera.model","kind":"text"}]`
+			raw := `[{"key":"score","kind":"numeric"},{"key":"camera.model","kind":"text"},{"key":"flags.active","kind":"boolean"}]`
 			created := tc.MakeRequest(http.MethodPost, path, map[string]any{"Name": "Indexed category", "MetadataIndexes": raw})
 			if created.Code != http.StatusOK {
 				t.Fatalf("create: %d %s", created.Code, created.Body.String())

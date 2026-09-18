@@ -612,12 +612,12 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	}
 
 	innerAlias := steps[len(steps)-1].alias
-	jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(innerAlias, segments, val)
+	comparisonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(innerAlias, segments, val)
 
 	textExpr := tc.metaJsonTextExprOn(innerAlias, segments)
 	// Every supported FK step selects groups, regardless of the root entity.
 	indexedNumeric := tc.hasReadyNumericIndex(EntityGroup, segments)
-	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, textExpr, expr.Operator, val, isNumericVal, indexedNumeric)
+	innerWhere, innerVal := tc.buildMetaClause(comparisonExpr, textExpr, expr.Operator, val, isNumericVal, indexedNumeric)
 	if numericFilter != "" {
 		innerWhere = numericFilter + " AND " + innerWhere
 	}
@@ -627,7 +627,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 
 	if isNegated && isChildrenRoot {
 		positiveOp := tc.flipOperator(expr.Operator)
-		posWhere, posVal := tc.buildMetaClause(jsonExpr, textExpr, positiveOp, val, isNumericVal, indexedNumeric)
+		posWhere, posVal := tc.buildMetaClause(comparisonExpr, textExpr, positiveOp, val, isNumericVal, indexedNumeric)
 		if numericFilter != "" {
 			posWhere = numericFilter + " AND " + posWhere
 		}
@@ -742,9 +742,9 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 		if err != nil {
 			return "", nil, err
 		}
-		jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn("gm", segments, val)
+		comparisonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn("gm", segments, val)
 		textExpr := tc.metaJsonTextExprOn("gm", segments)
-		clause, clauseVal := tc.buildMetaClause(jsonExpr, textExpr, posOp, val, isNumericVal, tc.hasReadyNumericIndex(EntityGroup, segments))
+		clause, clauseVal := tc.buildMetaClause(comparisonExpr, textExpr, posOp, val, isNumericVal, tc.hasReadyNumericIndex(EntityGroup, segments))
 		if numericFilter != "" {
 			clause = numericFilter + " AND " + clause
 		}
@@ -786,7 +786,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 // buildMetaClause builds a WHERE clause for a meta JSON comparison.
 // It receives pre-built JSON and text expressions so it works with both
 // single keys and subpaths.
-func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal, indexedNumeric bool) (string, []interface{}) {
+func (tc *translateContext) buildMetaClause(comparisonExpr string, textExpr string, op Token, val interface{}, isNumericVal, indexedNumeric bool) (string, []interface{}) {
 	if op.Type == TokenLike || op.Type == TokenNotLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
@@ -804,23 +804,28 @@ func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op
 	}
 
 	// PostgreSQL's ->> operator returns text, so binding a Go bool beside it
-	// makes pgx try (and fail) to encode that bool as text. Keep the JSON value
-	// type and explicitly type the parameter as boolean instead. Casting the
-	// JSON column expression to jsonb also preserves the distinction between
-	// the JSON boolean true and the JSON string "true".
+	// makes pgx try (and fail) to encode that bool as text. The boolean metadata
+	// expression yields SQL boolean only for native JSON booleans, preserving the
+	// distinction between true and the string "true" while matching its index.
 	if tc.requiresNativeJSONBooleanComparison(val) {
-		return "(" + jsonExpr + ")::jsonb " + sqlOp + " to_jsonb(?::boolean)", []interface{}{val}
+		return comparisonExpr + " " + sqlOp + " ?::boolean", []interface{}{val}
+	}
+	// SQLite's boolean expression maps only native JSON booleans to integer
+	// scalars, so direct comparison stays distinct from strings and numbers and
+	// matches the expression used by boolean metadata indexes.
+	if isBooleanValue(val) {
+		return comparisonExpr + " " + sqlOp + " ?", []interface{}{val}
 	}
 
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
-		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", []interface{}{val}
+		return "LOWER(" + comparisonExpr + ") " + sqlOp + " LOWER(?)", []interface{}{val}
 	}
 
 	if indexedNumeric && isNumericVal && op.Type != TokenNeq {
 		return pgIndexedMetaNumericComparison(textExpr, sqlOp), []interface{}{val, val}
 	}
 
-	return jsonExpr + " " + sqlOp + " ?", []interface{}{val}
+	return comparisonExpr + " " + sqlOp + " ?", []interface{}{val}
 }
 
 // entityTableName returns the database table name for an entity type.
@@ -1388,6 +1393,11 @@ func sqliteJsonPath(alias string, segments []string) string {
 	return fmt.Sprintf("json_extract(%s, '%s')", metaColumn(alias), path)
 }
 
+func sqliteMetaBooleanExpr(alias string, segments []string) string {
+	path := "$." + strings.Join(segments, ".")
+	return fmt.Sprintf("CASE json_type(%s, '%s') WHEN 'true' THEN 1 WHEN 'false' THEN 0 ELSE NULL END", metaColumn(alias), path)
+}
+
 // isNumericValue returns true if the value is a numeric Go type.
 func isNumericValue(val interface{}) bool {
 	switch val.(type) {
@@ -1399,17 +1409,24 @@ func isNumericValue(val interface{}) bool {
 	return false
 }
 
-func (tc *translateContext) requiresNativeJSONBooleanComparison(val interface{}) bool {
+func isBooleanValue(val interface{}) bool {
 	_, isBooleanVal := val.(bool)
-	return isBooleanVal && tc.isPostgres()
+	return isBooleanVal
+}
+
+func (tc *translateContext) requiresNativeJSONBooleanComparison(val interface{}) bool {
+	return isBooleanValue(val) && tc.isPostgres()
 }
 
 // metaComparisonExprOn selects an extraction expression whose SQL type matches
-// the comparison value. PostgreSQL booleans need the type-preserving JSON path;
-// SQLite's json_extract already preserves scalar types.
-func (tc *translateContext) metaComparisonExprOn(alias string, segments []string, val interface{}) (jsonExpr, numericFilter string, isNumericVal bool) {
-	if tc.requiresNativeJSONBooleanComparison(val) {
-		return pgJsonPath(alias, segments), "", false
+// the comparison value. Boolean expressions are type-checked on both engines;
+// other SQLite scalars retain json_extract's native representation.
+func (tc *translateContext) metaComparisonExprOn(alias string, segments []string, val interface{}) (comparisonExpr, numericFilter string, isNumericVal bool) {
+	if isBooleanValue(val) {
+		if tc.isPostgres() {
+			return pgMetaBooleanExpr(alias, segments), "", false
+		}
+		return sqliteMetaBooleanExpr(alias, segments), "", false
 	}
 
 	isNumericVal = isNumericValue(val)
@@ -1428,12 +1445,12 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		return nil, &TranslateError{Message: err.Error(), Pos: 0}
 	}
 
-	jsonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(tc.tableName, segments, val)
+	comparisonExpr, numericFilter, isNumericVal := tc.metaComparisonExprOn(tc.tableName, segments, val)
 	if numericFilter != "" {
 		db = db.Where(numericFilter)
 	}
 
-	clause, values := tc.buildMetaClause(jsonExpr, tc.metaJsonTextExpr(segments), op, val, isNumericVal, tc.hasReadyNumericIndex(tc.entityType, segments))
+	clause, values := tc.buildMetaClause(comparisonExpr, tc.metaJsonTextExpr(segments), op, val, isNumericVal, tc.hasReadyNumericIndex(tc.entityType, segments))
 	return db.Where(clause, values...), nil
 }
 

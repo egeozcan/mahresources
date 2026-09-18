@@ -9,11 +9,20 @@ import (
 )
 
 // MetadataIndex identifies a query expression to index, not a constraint on
-// stored metadata. Numeric and text indexes can coexist for a mixed-type key.
+// stored metadata. Numeric, text, and boolean indexes can coexist for a
+// mixed-type key.
+type MetadataIndexKind string
+
+const (
+	MetadataIndexKindNumeric MetadataIndexKind = "numeric"
+	MetadataIndexKindText    MetadataIndexKind = "text"
+	MetadataIndexKindBoolean MetadataIndexKind = "boolean"
+)
+
 type MetadataIndex struct {
-	Entity string `json:"entity"`
-	Key    string `json:"key"`
-	Kind   string `json:"kind"`
+	Entity string            `json:"entity"`
+	Key    string            `json:"key"`
+	Kind   MetadataIndexKind `json:"kind"`
 }
 
 const MaxMetadataIndexes = 32
@@ -54,8 +63,8 @@ func (index MetadataIndex) Validate() error {
 	if _, ok := ValidEntityTypes[index.Entity]; !ok {
 		return fmt.Errorf("entity must be resource, note, or group")
 	}
-	if index.Kind != "numeric" && index.Kind != "text" {
-		return fmt.Errorf("kind must be numeric or text")
+	if index.Kind != MetadataIndexKindNumeric && index.Kind != MetadataIndexKindText && index.Kind != MetadataIndexKindBoolean {
+		return fmt.Errorf("kind must be numeric, text, or boolean")
 	}
 	if len(index.Key) == 0 || len(index.Key) > 128 {
 		return fmt.Errorf("metadata key must contain 1–128 characters")
@@ -76,9 +85,9 @@ func (index MetadataIndex) Name() string {
 }
 
 func (index MetadataIndex) physicalName(role string) string {
-	sum := sha256.Sum256([]byte(index.Entity + "\x00" + index.Key + "\x00" + index.Kind))
+	sum := sha256.Sum256([]byte(index.Entity + "\x00" + index.Key + "\x00" + string(index.Kind)))
 	if role != "" {
-		sum = sha256.Sum256([]byte(index.Entity + "\x00" + index.Key + "\x00" + index.Kind + "\x00" + role))
+		sum = sha256.Sum256([]byte(index.Entity + "\x00" + index.Key + "\x00" + string(index.Kind) + "\x00" + role))
 	}
 	return fmt.Sprintf("mah_midx_v2_%x", sum[:16])
 }
@@ -110,25 +119,31 @@ func (index MetadataIndex) Indexes(dialect string) ([]PhysicalMetadataIndex, err
 	switch dialect {
 	case "postgres":
 		expression = pgJsonTextPath("", segments)
-		if index.Kind == "numeric" {
+		switch index.Kind {
+		case MetadataIndexKindNumeric:
 			expression = pgBoundedMetaNumericExpr(expression)
+		case MetadataIndexKindBoolean:
+			expression = pgMetaBooleanExpr("", segments)
 		}
 		concurrently = " CONCURRENTLY"
-		if index.Kind == "text" {
+		if index.Kind == MetadataIndexKindText {
 			method = " USING HASH"
 		} else {
 			include = " INCLUDE (id)"
 		}
 	case "sqlite":
 		expression = sqliteJsonPath("", segments)
+		if index.Kind == MetadataIndexKindBoolean {
+			expression = sqliteMetaBooleanExpr("", segments)
+		}
 	default:
 		return nil, fmt.Errorf("metadata indexes are unsupported on %q", dialect)
 	}
-	if index.Kind == "text" {
+	if index.Kind == MetadataIndexKindText {
 		expression = "LOWER(" + expression + ")"
 	}
 	indexes := []PhysicalMetadataIndex{{Name: index.Name(), SQL: fmt.Sprintf(`CREATE INDEX%s "%s" ON "%s"%s ((%s))%s`, concurrently, index.Name(), index.Table(), method, expression, include)}}
-	if dialect == "postgres" && index.Kind == "numeric" {
+	if dialect == "postgres" && index.Kind == MetadataIndexKindNumeric {
 		// The fallback indexes only IDs, never the oversized value. This keeps
 		// arbitrary valid JSON writable while making rare outliers discoverable
 		// without scanning the whole entity table on every numeric comparison.
@@ -140,6 +155,11 @@ func (index MetadataIndex) Indexes(dialect string) ([]PhysicalMetadataIndex, err
 
 func pgMetaNumericExpr(alias string, segments []string) string {
 	return pgMetaNumericTextExpr(pgJsonTextPath(alias, segments))
+}
+
+func pgMetaBooleanExpr(alias string, segments []string) string {
+	jsonExpr := "(" + pgJsonPath(alias, segments) + ")::jsonb"
+	return "CASE WHEN jsonb_typeof(" + jsonExpr + ") = 'boolean' THEN (" + jsonExpr + ")::boolean ELSE NULL END"
 }
 
 func pgMetaNumericTextExpr(textExpr string) string {
@@ -179,8 +199,8 @@ func metaColumn(alias string) string {
 // MetadataIndexKey is stored on a category; its entity type is supplied by the
 // carrier (resource category, group category, or note type), never user SQL.
 type MetadataIndexKey struct {
-	Key  string `json:"key"`
-	Kind string `json:"kind"`
+	Key  string            `json:"key"`
+	Kind MetadataIndexKind `json:"kind"`
 }
 
 func ParseMetadataIndexKeys(raw, entity string) ([]MetadataIndex, error) {

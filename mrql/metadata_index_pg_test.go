@@ -38,7 +38,7 @@ func TestMetadataNumericTranslationRequiresReadyMatchingIndex(t *testing.T) {
 		{`ancestors.meta.score = 10`, EntityResource, MetadataIndex{"resource", "score", "numeric"}, false},
 		{`descendants.meta.score = 10`, EntityGroup, MetadataIndex{"group", "score", "numeric"}, true},
 	} {
-		t.Run(test.entity.String()+"_"+test.query+"_"+test.ready.Entity+"_"+test.ready.Key+"_"+test.ready.Kind, func(t *testing.T) {
+		t.Run(test.entity.String()+"_"+test.query+"_"+test.ready.Entity+"_"+test.ready.Key+"_"+string(test.ready.Kind), func(t *testing.T) {
 			query := "type = " + test.entity.String() + " AND " + test.query
 			buildSQL := func(opts TranslateOptions) string {
 				built := parseAndTranslate(t, query, test.entity, db, opts)
@@ -76,6 +76,40 @@ func TestMetadataTextIndexPostgresLongValues(t *testing.T) {
 	// exceeding B-tree tuple limits must remain writable.
 	if err := db.Exec(`UPDATE resources SET meta = json_build_object('label', (SELECT string_agg(md5(n::text), '') FROM generate_series(1,1000) n)) WHERE id = 1`).Error; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMetadataBooleanIndexPostgresIgnoresNonBooleanValues(t *testing.T) {
+	db := setupPostgresTestDB(t)
+	index := MetadataIndex{"resource", "flags.active", "boolean"}
+	indexes, err := index.Indexes("postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, physical := range indexes {
+		if err := db.Exec(physical.SQL).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	longString := strings.Repeat("x", 100000)
+	encoded, err := json.Marshal(map[string]any{"flags": map[string]any{"active": longString}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&testResource{}).Where("id = ?", 2).Update("meta", string(encoded)).Error; err != nil {
+		t.Fatalf("write non-boolean metadata with boolean index: %v", err)
+	}
+	if err := db.Model(&testResource{}).Where("id = ?", 1).Update("meta", `{"flags":{"active":true}}`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var resources []testResource
+	if err := parseAndTranslate(t, `meta.flags.active = true`, EntityResource, db).Find(&resources).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(resources) != 1 || resources[0].ID != 1 {
+		t.Fatalf("boolean index changed typed comparison: got %v", namesOfResources(resources))
 	}
 }
 

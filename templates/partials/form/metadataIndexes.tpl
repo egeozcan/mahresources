@@ -9,13 +9,13 @@
         <div class="flex flex-wrap gap-2 items-center">
             <input type="text" x-model="entry.key" placeholder="score or camera.iso" :aria-label="'Metadata key for index ' + (i + 1)" maxlength="128" class="border border-stone-300 rounded px-2 py-1 text-sm flex-1 min-w-0 font-mono" />
             <select x-model="entry.kind" :aria-label="'Kind for index ' + (i + 1)" class="border border-stone-300 rounded px-2 py-1 text-sm">
-                <option value="numeric">Numeric</option><option value="text">Text equality</option>
+                <option value="numeric">Numeric</option><option value="text">Text equality</option><option value="boolean">Boolean equality</option>
             </select>
             <button type="button" @click="entries.splice(i, 1)" :aria-label="'Remove index ' + (i + 1)" class="text-sm text-red-700 underline">Remove</button>
         </div>
     </template>
     <button type="button" @click="entries.push({key: '', kind: 'numeric'})" :disabled="entries.length >= 32 || !!error" class="text-sm text-amber-700 underline disabled:opacity-50">Add indexed key</button>
-    <p class="text-xs text-stone-500">Numeric indexes support equality and ranges. Text indexes support case-insensitive equality. Builds run in the background; SQLite builds may delay writes. Categories using the same key share an index. Removing a key here keeps that index while another category still uses it.</p>
+    <p class="text-xs text-stone-500">Numeric indexes support equality and ranges. Text indexes support case-insensitive equality. Boolean indexes support native <code>true</code>/<code>false</code> equality. Builds run in the background; SQLite builds may delay writes. Categories using the same key share an index. Removing a key here keeps that index while another category still uses it.</p>
 </fieldset>
 <script>
 window.metadataIndexEditor = function (initial) {
@@ -23,8 +23,8 @@ window.metadataIndexEditor = function (initial) {
     try {
         entries = JSON.parse(initial || '[]');
         if (!Array.isArray(entries)) throw new Error('Expected a list of indexed keys');
-        if (entries.some(entry => !entry || typeof entry.key !== 'string' || !['numeric', 'text'].includes(entry.kind))) {
-            throw new Error('Each indexed key needs a key and a numeric or text kind');
+        if (entries.some(entry => !entry || typeof entry.key !== 'string' || !['numeric', 'text', 'boolean'].includes(entry.kind))) {
+            throw new Error('Each indexed key needs a key and a numeric, text, or boolean kind');
         }
     } catch (e) { entries = []; error = 'Invalid index definitions: ' + e.message; }
     return {

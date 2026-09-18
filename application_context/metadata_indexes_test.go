@@ -57,10 +57,11 @@ func checkMetadataIndexerLifecycle(t *testing.T, db *gorm.DB, settings *gorm.DB,
 	t.Helper()
 	numeric := mrql.MetadataIndex{Entity: "resource", Key: "score", Kind: "numeric"}
 	text := mrql.MetadataIndex{Entity: "note", Key: "camera.model", Kind: "text"}
+	boolean := mrql.MetadataIndex{Entity: "group", Key: "flags.active", Kind: "boolean"}
 	if err := db.Exec("CREATE INDEX operator_index ON resources(id)").Error; err != nil {
 		t.Fatal(err)
 	}
-	setMetadataIndexes(t, settings, numeric, text)
+	setMetadataIndexes(t, settings, numeric, text, boolean)
 	if err := manager.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func checkMetadataIndexerLifecycle(t *testing.T, db *gorm.DB, settings *gorm.DB,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(indexes) != len(numericParts)+1 || !indexes[numeric.Name()].Valid || !indexes[text.Name()].Valid {
+	if len(indexes) != len(numericParts)+2 || !indexes[numeric.Name()].Valid || !indexes[text.Name()].Valid || !indexes[boolean.Name()].Valid {
 		t.Fatalf("indexes=%v", indexes)
 	}
 	if manager.Status().State != "ready" {

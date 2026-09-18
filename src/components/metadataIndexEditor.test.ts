@@ -10,17 +10,21 @@ test('category editor submits key and kind without a selectable entity', () => {
     const editor = factory('');
     editor.entries.push({ key: 'score', kind: 'numeric' });
     editor.entries.push({ key: 'camera.model', kind: 'text' });
+    editor.entries.push({ key: 'flags.active', kind: 'boolean' });
     expect(JSON.parse(editor.serialized)).toEqual([
         { key: 'score', kind: 'numeric' }, { key: 'camera.model', kind: 'text' },
+        { key: 'flags.active', kind: 'boolean' },
     ]);
     editor.entries.splice(0, 1);
-    expect(JSON.parse(editor.serialized)).toEqual([{ key: 'camera.model', kind: 'text' }]);
-    editor.entries.splice(0, 1);
+    expect(JSON.parse(editor.serialized)).toEqual([
+        { key: 'camera.model', kind: 'text' }, { key: 'flags.active', kind: 'boolean' },
+    ]);
+    editor.entries.splice(0, 2);
     expect(editor.serialized).toBe('[]');
 });
 
 test('existing declarations load without losing their kinds or nested paths', () => {
-    const raw = '[{"key":"camera.iso","kind":"numeric"}]';
+    const raw = '[{"key":"flags.active","kind":"boolean"}]';
     expect(factory(raw).serialized).toBe(raw);
 });
 

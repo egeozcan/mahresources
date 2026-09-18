@@ -363,8 +363,9 @@ The strip only lists the **Custom templates** entry when at least one slot is se
 
 Each resource-category, group-category, and note-type editor has an **Indexed
 metadata keys** section beside its metadata schema. Click **Add indexed key**,
-enter `score` or a nested path such as `camera.iso`, choose **Numeric** or **Text
-equality**, and save the category/type. Use the key without the `meta.` prefix.
+enter `score` or a nested path such as `camera.iso`, choose **Numeric**, **Text
+equality**, or **Boolean equality**, and save the category/type. Use the key
+without the `meta.` prefix.
 Keys can be indexed even when no JSON Schema is defined.
 
 For `type = resource AND meta.score = 10 ORDER BY RANDOM() LIMIT 50`, add
@@ -383,12 +384,16 @@ path.
   `meta.camera.model = "X100"`. PostgreSQL uses a hash index so long text values
   remain writable; SQLite uses an expression B-tree. Substring searches,
   regular expressions, and metadata ordering are not the purpose of these indexes.
+- **Boolean equality** supports native JSON boolean comparisons such as
+  `meta.flags.active = true` while keeping the boolean `true` distinct from the
+  string `"true"` and the number `1`. Both databases index a type-checked
+  boolean expression derived from the JSON path.
 
 Declarations belong to categories/types, while physical indexes cover the whole
 entity type. Categories requesting the same key and kind share the same physical indexes. This
 also accelerates queries without a category filter. Removing a declaration or
 deleting a category keeps the shared index until its last requester disappears.
-Both index kinds can coexist for a mixed-type key.
+All three index kinds can coexist for a mixed-type key.
 
 Builds run in the background after saving. **Admin → Settings → Metadata index
 builds** shows progress and failures. PostgreSQL builds and removes indexes
