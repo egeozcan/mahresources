@@ -89,7 +89,7 @@
                     {# transfers — which is why the compare page labels the current version #}
                     {# rather than calling either side "newer". #}
                     <template x-if="compareMode && selected.length === 2">
-                        <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + Math.min(...selected) + '&v2=' + Math.max(...selected)"
+                        <a :href="'/resource/compare?r1={{ resourceId }}&r2={{ resourceId }}&v1=' + Math.min(...selected) + '&v2=' + Math.max(...selected)"
                            class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800 whitespace-nowrap">
                             Compare Selected
                         </a>

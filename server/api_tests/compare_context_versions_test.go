@@ -13,6 +13,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	template_context_providers "mahresources/server/template_handlers/template_context_providers"
+	"mahresources/server/template_handlers/template_entities"
 )
 
 // addCompareVersion appends a version row and points the resource at it, which is
@@ -44,11 +45,23 @@ func newCompareResource(t *testing.T, tc *TestContext, name, body string) *model
 	return resource
 }
 
-// A compare URL naming only a resource used to render the empty state while both
-// version dropdowns displayed a version: the redirect that fills the numbers in
-// ran for cross-resource comparisons only. Picking a version from that state
-// wrote v1=0 into the URL and the empty state came back with nothing said.
-func TestCompareContextProvider_SameResourceFillsVersions(t *testing.T) {
+func TestResourceContextProvider_OffersUninitializedCompare(t *testing.T) {
+	tc := SetupTestEnv(t)
+	res := newCompareResource(t, tc, "Compare From Details", "details-body")
+
+	provider := template_context_providers.ResourceContextProvider(tc.AppCtx)
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource?id=%d", res.ID), nil))
+
+	action, ok := ctx["secondaryAction"].(template_entities.Entry)
+	assert.True(t, ok)
+	assert.Equal(t, "Compare", action.Name)
+	assert.Equal(t, fmt.Sprintf("/resource/compare?r1=%d", res.ID), action.Url)
+}
+
+// A compare URL from resource details names only the resource on the left. It
+// must wait for a second resource instead of silently turning into a version
+// comparison against itself.
+func TestCompareContextProvider_ResourceDetailsWaitsForSecondResource(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	res := newCompareResource(t, tc, "Redirect Target", "compare-redirect-v1")
@@ -57,16 +70,14 @@ func TestCompareContextProvider_SameResourceFillsVersions(t *testing.T) {
 	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
 
 	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d", res.ID), nil))
-	redirect, ok := ctx["_redirect"].(string)
-	assert.True(t, ok, "a URL with no versions should redirect to one that names them")
-	// Previous versus current: the comparison someone opening a version panel means.
-	assert.Contains(t, redirect, "v1=1")
-	assert.Contains(t, redirect, "v2=2")
-
-	// The redirect target itself must be stable, or the browser loops.
-	settled := provider(httptest.NewRequest("GET", redirect, nil))
-	_, loops := settled["_redirect"]
-	assert.False(t, loops, "the resolved URL must not redirect again")
+	_, redirects := ctx["_redirect"]
+	assert.False(t, redirects)
+	assert.Equal(t, true, ctx["needsResource2"])
+	assert.Nil(t, ctx["resource2"])
+	assert.Nil(t, ctx["comparison"])
+	assert.Equal(t, res.ID, ctx["resource1"].(*models.Resource).ID)
+	assert.Equal(t, 2, ctx["query"].(query_models.CrossVersionCompareQuery).Version1,
+		"the current left version is ready so choosing the second resource is the only remaining action")
 }
 
 // A single-version resource resolves both sides to the same number, which is the
@@ -77,7 +88,7 @@ func TestCompareContextProvider_SingleVersionDoesNotLoop(t *testing.T) {
 	res := newCompareResource(t, tc, "Single Version", "compare-single-version")
 
 	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
-	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d", res.ID), nil))
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d&r2=%d", res.ID, res.ID), nil))
 
 	redirect, ok := ctx["_redirect"].(string)
 	if !ok {
@@ -221,7 +232,7 @@ func TestCompareContextProvider_RedirectKeepsTheRequestedSuffix(t *testing.T) {
 	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
 
 	for _, suffix := range []string{"", ".json", ".body"} {
-		path := fmt.Sprintf("/resource/compare%s?r1=%d", suffix, res.ID)
+		path := fmt.Sprintf("/resource/compare%s?r1=%d&r2=%d", suffix, res.ID, res.ID)
 		ctx := provider(httptest.NewRequest("GET", path, nil))
 
 		redirect, ok := ctx["_redirect"].(string)
@@ -262,7 +273,7 @@ func TestCompareContextProvider_CurrentIsLowestStillFindsAPartner(t *testing.T) 
 	}
 
 	provider := template_context_providers.CompareContextProvider(tc.AppCtx)
-	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d", res.ID), nil))
+	ctx := provider(httptest.NewRequest("GET", fmt.Sprintf("/resource/compare?r1=%d&r2=%d", res.ID, res.ID), nil))
 
 	redirect, ok := ctx["_redirect"].(string)
 	assert.True(t, ok, "a resource with three versions has something to compare")

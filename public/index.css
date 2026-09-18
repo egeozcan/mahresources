@@ -2649,6 +2649,17 @@ html {
     color: var(--nav-active);
 }
 
+.compare-swap-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.compare-swap-btn:disabled:hover {
+    transform: none;
+    border-color: #a8a29e;
+    color: #57534e;
+}
+
 /* Swap button — small inline variant */
 .compare-swap-btn-sm {
     display: inline-flex;

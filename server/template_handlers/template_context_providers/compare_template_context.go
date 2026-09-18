@@ -37,11 +37,6 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			})
 		}
 
-		// Default r2 to r1 if not provided
-		if query.Resource2ID == 0 {
-			query.Resource2ID = query.Resource1ID
-		}
-
 		// Get resource 1 and its versions for the picker
 		resource1, err := context.GetResource(query.Resource1ID)
 		if err != nil {
@@ -52,6 +47,45 @@ func CompareContextProvider(context ComparePageContext) func(request *http.Reque
 			return addErrContext(err, baseContext)
 		}
 		versions1 = persistedVersions(versions1)
+
+		// A resource-details Compare link names only its resource. That is a
+		// resource-to-resource comparison waiting to be completed, not an implicit
+		// request to compare two versions of the same resource. Keep the right side
+		// genuinely empty so its picker is the only remaining action. URLs that name
+		// either version retain the older same-resource shorthand for bookmarks and
+		// clients; the version panel now names r2 explicitly below.
+		needsResource2 := query.Resource2ID == 0 && query.Version1 == 0 && query.Version2 == 0
+		if needsResource2 {
+			current1 := currentVersionNumber(resource1, versions1)
+			query.Version1 = current1
+
+			compareUnavailableReason := ""
+			if len(versions1) == 0 {
+				compareUnavailableReason = fmt.Sprintf("%s has no version history yet, so there is nothing to compare it against.", shortResourceName(resource1))
+			}
+
+			return baseContext.Update(pongo2.Context{
+				"pageTitle":                compareTitle(resource1, nil, false, query.Version1, 0),
+				"resource1":                resource1,
+				"name1":                    shortResourceName(resource1),
+				"resource1Picker":          comparePickerItems(resource1),
+				"resource2Picker":          comparePickerItems(nil),
+				"versions1":                versionOptions(versions1, current1),
+				"versions2":                []CompareVersionOption{},
+				"compareUnavailableReason": compareUnavailableReason,
+				"query":                    query,
+				"crossResource":            false,
+				"needsResource2":           true,
+				"label1":                   shortResourceName(resource1),
+				"label2":                   "Select resource",
+			})
+		}
+
+		// A URL that already names versions but omits r2 is the established
+		// same-resource shorthand.
+		if query.Resource2ID == 0 {
+			query.Resource2ID = query.Resource1ID
+		}
 
 		// Get resource 2 and its versions
 		resource2, err := context.GetResource(query.Resource2ID)

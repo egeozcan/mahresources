@@ -34,7 +34,7 @@
             {# offer. An empty select is a control that cannot be used and does not #}
             {# say so. #}
             {% if versions1 %}
-            <select x-model.number="v1" @change="updateUrl()" class="compare-version-select" aria-label="Left version">
+            <select x-model.number="v1" @change="updateUrl()" class="compare-version-select" aria-label="Left version"{% if needsResource2 %} disabled{% endif %}>
                 {# Only reachable when the other side has no history, so the redirect that #}
                 {# fills the numbers in never ran: without this the select displays its #}
                 {# first option while the page holds nothing. #}
@@ -51,14 +51,18 @@
         </div>
 
         <button type="button" class="compare-swap-btn" @click="swapSides()"
-                aria-label="Swap the two sides and reload">
+                aria-label="Swap the two sides and reload"{% if needsResource2 %} disabled{% endif %}>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
         </button>
 
         <div class="compare-toolbar-side">
             <span class="compare-side-label--new">{{ label2 }}</span>
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resource' elName='r2' selectedItems=resource2Picker max=1 id='compare-right-resource' title='Right resource' placeholder='Search resources...' onChange='onResource2Selected' %}
-            {% if versions2 %}
+            {% if needsResource2 %}
+            <select class="compare-version-select" aria-label="Right version" disabled>
+                <option>Select a resource first</option>
+            </select>
+            {% elif versions2 %}
             <select x-model.number="v2" @change="updateUrl()" class="compare-version-select" aria-label="Right version">
                 {# Only reachable when the other side has no history, so the redirect that #}
                 {# fills the numbers in never ran: without this the select displays its #}
@@ -329,6 +333,9 @@
         {% if compareUnavailableReason %}
         <p class="text-lg font-medium text-stone-700">Nothing to compare</p>
         <p class="text-sm max-w-xs">{{ compareUnavailableReason }}</p>
+        {% elif needsResource2 %}
+        <p class="text-lg font-medium text-stone-700">Ready to Compare</p>
+        <p class="text-sm max-w-xs">Select a second resource above to compare it with {{ name1 }}.</p>
         {% else %}
         <p class="text-lg font-medium text-stone-700">Ready to Compare</p>
         <p class="text-sm max-w-xs">Select resources and versions above to see a detailed comparison.</p>

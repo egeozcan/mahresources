@@ -364,6 +364,10 @@ func ResourceContextProvider(context ResourcePageContext) func(request *http.Req
 				Name: "Edit",
 				Url:  "/resource/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
+			"secondaryAction": template_entities.Entry{
+				Name: "Compare",
+				Url:  "/resource/compare?r1=" + strconv.Itoa(int(query.ID)),
+			},
 			"deleteAction": template_entities.Entry{
 				Name: "Delete",
 				Url:  "/v1/resource/delete",
