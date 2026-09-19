@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: final — approved by gpt-6-astra review (with the two closing clarifications applied)
+Status: final — approved by gpt-6-astra review; operator findings 1-7 applied
 Date: 2026-09-19
 
 ## Goal
@@ -193,6 +193,18 @@ a consent label of the shape:
   server, with the service account's privileges:"* followed by each command
   verbatim (shell-joined argv, timeout). The enable flow surfaces the same
   panel before the acknowledgement is recorded.
+- **The CLI enable path carries the acknowledgement explicitly.**
+  `mr plugin enable` POSTs `/v1/plugin/enable` with only the name today
+  (`cmd/mr/commands/plugins.go:52-58`; the handler reads only the name,
+  `plugin_api_handlers.go:125-133`), so under the two-step rule it would be
+  refused for command-bearing plugins with no way to satisfy the check —
+  or worse, a bare flag would silently turn the two-step gesture back into
+  one. v1 therefore adds **`--confirm-commands`**: without the flag, the
+  enable request is refused and the CLI prints the command list — argv
+  rendered verbatim, exactly as the panel does — plus the instruction to
+  re-run with `--confirm-commands`; with the flag, the CLI sends the
+  acknowledgement and the printed argv is the record of what was confirmed.
+  The CLI is a deliberate second step, not a bypass.
 
 ## 3. Execution model
 
@@ -265,10 +277,29 @@ properties made explicit rather than inherited:
 
 ### Durable run records
 
-A new persisted table `plugin_command_runs` (id, plugin name, command name,
-redacted parameter view, actor user id, created/started/finished timestamps,
-status, exit code, error text, **spawned process group id**) survives
-restarts and is independent of the queue's 1-hour terminal retention.
+The persistence model is **three tables plus one managed map**, named here
+because later sections reference their contents:
+
+- **`plugin_command_runs`** — the run row: id, plugin name, command name,
+  redacted parameter view, actor user id, created/started/finished
+  timestamps, status, exit code, error text, spawned process group id.
+  Small; survives restarts; independent of the queue's 1-hour terminal
+  retention.
+- **`plugin_command_run_output`** — one row per run holding the **argv as
+  actually executed** (sensitive elements redacted, per §4) and the **64 KB
+  combined stdout/stderr tail**. This is the large column; splitting it out
+  is what makes retention split possible: run rows and import maps must
+  survive indefinitely (§5's idempotency depends on them), the output tail
+  needn't — it is prunable after a configurable age (default 30 days) with
+  no effect on recovery. 640 MB per 10,000 runs is exactly the growth term
+  a single exhaustive table would make unprunable on SQLite.
+- **`plugin_command_imports`** — the import claims: import id, run id, file
+  name, submitting plugin generation, actor user id, created/started/
+  finished timestamps, status, error text (§5). Small; retained with the
+  run.
+- **The import map** (`name → { import_id, resource_id, status, error }`,
+  §5) — persisted as a table keyed by run id, the piece idempotent
+  re-import depends on. Small; retained indefinitely.
 
 **Crash-safe launch registration.** Launch registration is tracked on the
 row (the persisted pgid field) rather than as a public status, so the
@@ -300,9 +331,20 @@ follows:
    on Linux, the process args interface on macOS).
 2. **Verified dead** (no group, or empty group): the processes are gone;
    stamp `interrupted` with a finished timestamp. Nothing is writing.
-3. **Verified alive**: descendants survived the crash; SIGKILL the group,
-   wait for exit, then stamp `interrupted`. This closes the orphaned-writer
-   case from the previous draft without touching unrelated groups.
+3. **Verified alive**: descendants survived the crash; the identity check
+   is repeated immediately before signalling, then the group is SIGKILLed
+   and reaped, and the run is stamped `interrupted`. This closes the
+   orphaned-writer case from the previous draft without touching unrelated
+   groups. A narrow residual race remains — between the pre-signal check
+   and signal delivery, the group can exit and the pgid be reused by an
+   unrelated process, so the SIGKILL could land on it. It is **accepted
+   and documented** rather than hidden: the window is sub-millisecond and
+   exploitation requires the pid counter to wrap past every intervening
+   allocation within that window — the same risk class the dispatcher's
+   own runtime `kill(-pgid)` accepts against groups it created moments
+   earlier. Post-signal, the group is re-enumerated once more; if surviving
+   members do not carry the run id, a warning naming the pgid is logged for
+   post-mortem visibility.
 4. **Unverifiable** (group exists but no member's environment matches —
    the reuse case — or no pgid was ever persisted, the spawn-crash case):
    stamp `interrupted` **with `output_unverified = true`**. The exchange
@@ -342,10 +384,14 @@ published. No window exists in which a run is both disabled and spawning
 unobserved. Tests cover disable before the fork and disable between fork
 and pgid persistence.
 
-**Retention:** `plugin_command_runs` rows are retained indefinitely in v1 —
-pruning a row would destroy the import map (§5) that idempotent re-import
-depends on, and run counts are bounded by usage. Future pruning tooling must
-preserve import maps or accept losing idempotency for swept runs.
+**Retention:** run rows, import claims and import maps are retained
+indefinitely in v1 — pruning any of them destroys the identity or the map
+that idempotent re-import (§5) depends on, and run counts are bounded by
+usage. The **output tail is the one prunable piece**: `plugin_command_run_output`
+rows older than the configurable output retention (default 30 days) are
+deleted by the sweep, with the run row itself untouched. Future pruning
+tooling must preserve run rows, claims and maps; only output tails are
+fair game.
 
 ### Host hardening
 
@@ -372,15 +418,26 @@ preserve import maps or accept losing idempotency for swept runs.
 Timeout bounds time; it does not bound bytes. Two operator-configurable
 quotas close that gap:
 
-- **Per-run exchange quota** (default 4 GiB): what one run may write into its
-  exchange folder. The host samples the folder's size periodically; when the
+- **Per-run exchange quota** (default **8 GiB**): what one run may write
+  into its exchange folder. The default is sized for **merge peak**, not
+  final size: yt-dlp's default `bestvideo*+bestaudio/best` selector
+  downloads video and audio as separate files and then muxes a third, so a
+  2.2 GiB result transiently occupies ~4.4 GiB — a 4 GiB quota kills such a
+  run during its merge, at the end of a 2-hour download. §6's operator note
+  repeats this: size the quota for the merge peak of your largest expected
+  download. The host samples the folder's size periodically; when the
   sample exceeds the quota, the process group is killed and the run is
   marked `failed` with error text naming the quota. Enforcement is
   approximate (sampling, not a syscall-level rlimit) and documented as such;
   a tool that writes fast between samples can overshoot the quota.
 - **Global staging quota** (default 50 GiB): what all exchange folders may
-  hold combined. While above it, new command runs are refused until the
-  sweep brings the total down.
+  hold combined. While above it, **new command runs are refused** until the
+  sweep brings the total down. **The drain path is exempt**: imports of
+  already-admitted runs proceed even above the global quota — draining the
+  exchange folders (by importing and deleting their files) is exactly what
+  brings the total down, so refusing an import for want of space that only
+  that import can free would deadlock. Import temps therefore count toward
+  the accounting but never trigger the admission refusal.
 
 ### Process-tree termination
 
@@ -545,8 +602,19 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   the bytes — `1178-1179` acquires the hash lock inside `AddResource`,
   `1201-1203` short-circuits on an existing row).
 
-  The import path instead extends **AddResource's own hash-locked
-  destination handling** — with the committed-row lookup strictly first.
+  **This is a standing data-integrity fix, not an import-scoped one.** The
+  truncation bug is pre-existing in `AddResource` and affects uploads and
+  queue downloads **today** (`download_queue/manager.go:103`,
+  `contracts/resource_interfaces.go:19` are among its callers); commands
+  only make it likelier by moving multi-GB files. The validation therefore
+  lands in the shared `AddResource` path and benefits every caller, with a
+  **test outside the import path** (an upload-flow crash/replay asserting a
+  complete resource). It is recommended that this be landed as its **own
+  change** before (or alongside) the commands work: a standing fix buried
+  in a commands PR gets reverted by accident when commands is rolled back.
+
+  The import path uses that shared fix — with the committed-row lookup
+  strictly first.
   Under the hash lock, the existing committed-resource lookup and merge
   (`1201-1203`) remains the first branch: destination validation/replacement
   happens **only after that lookup returns not-found**, and before the
@@ -743,13 +811,24 @@ Notes on the template and its settings:
   escape the exchange folder — and this value comes from a *settings text
   field* typed by an operator, not from the consented template. The plugin
   rejects absolute paths, path separators and `..` in `output_template`,
-  refusing the run submission with an explanatory error. (The trust model
-  covers the host-vs-plugin boundary; this is the plugin holding its own
-  operator-supplied input inside the sandbox the host built.)
+  refusing the run submission with an explanatory error. **What this
+  validation does and does not defend:** it covers the literal operator
+  string; the interpolated result is a different surface — `%(title)s`
+  values come from remote, uploader-controlled metadata. yt-dlp sanitizes
+  separators in field values, so interpolation is almost certainly safe in
+  practice, but the spec does not rest on that: the **load-bearing defence
+  is structural** — `--paths` pins the root, `--no-directories` forbids
+  subdirectories, the folder is per-run and flat, and `mah.fs` addresses
+  only top-level regular files (§5). The validation is defense-in-depth
+  for the operator-supplied half, not the wall the remote half leans on.
 - The default format selector `bestvideo*+bestaudio/best` makes yt-dlp
   **shell out to ffmpeg** for the merge: the operator note must say ffmpeg
   must be on the trusted `PATH` too (or the setting changed to a
   pre-merged single format).
+- The operator note must also say: **size the per-run exchange quota for
+  the merge peak, not the final size** — with the default selector, peak
+  disk use is roughly 2× the final size because video and audio download
+  separately before muxing (§3).
 
 Flow: a plugin page (capability `pages`) where the operator pastes a URL
 triggers `mah.commands.run("download", { url = url, output_template = tpl,
@@ -879,6 +958,13 @@ Core (mahresources):
   `mah.fs.create_resource` imports through the configured afero filesystem —
   including a **MemoryFS target** (small files), proving the import path
   works through `MemMapFs`.
+- **Destination-integrity fix, outside the import path**: the shared
+  `AddResource` validation is tested from an ordinary **upload-flow
+  crash/replay** (no commands involved), since the fix is a standing
+  data-integrity change for uploads and queue downloads too.
+- **Output-tail retention**: `plugin_command_run_output` rows older than
+  the retention are pruned by the sweep while the run row, claims and map
+  survive.
 - Sweep: retention measured from completion; runs with active import, read
   or discard leases skipped (lease/sweep lock coordination); nonterminal runs
   skipped; expired runs' directories fully deleted including
@@ -917,6 +1003,11 @@ Core (mahresources):
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
 enable flow shows it and requires the acknowledgement; a changed command set
 forces re-consent; legacy-record upgrade paths covered by tests per §2.
+**CLI**: `mr plugin enable` on a command-bearing manifest without
+`--confirm-commands` is refused and prints the verbatim command list; with
+the flag the acknowledgement is recorded (the CLI is a deliberate second
+step, not a bypass — tested that the refusal text renders argv exactly as
+the panel does).
 
 Plugin repository: integration tests through the mahresources plugin test
 harness — the command template pointed at a fake `yt-dlp` stub script,
