@@ -238,18 +238,18 @@ func (e *exchangeService) authorizeRun(access Access, runID string, allowUnverif
 	if !access.AllowsRun(run) || !validExchangeComponent(run.ID) || !validExchangeComponent(run.PluginName) {
 		return RunRecord{}, ErrExchangeRunNotFound
 	}
+	if !RunStatusTerminal(run.Status) {
+		return RunRecord{}, ErrExchangeRunNotFinished
+	}
+	if run.OutputUnverified && !allowUnverified {
+		return RunRecord{}, ErrExchangeOutputUnverified
+	}
 	rootInfo, rootErr := os.Lstat(e.settings.StagingRoot())
 	if rootErr == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
 		return RunRecord{}, fmt.Errorf("staging root is a symlink")
 	}
 	if rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {
 		return RunRecord{}, fmt.Errorf("inspect staging root: %w", rootErr)
-	}
-	if !RunStatusTerminal(run.Status) {
-		return RunRecord{}, ErrExchangeRunNotFinished
-	}
-	if run.OutputUnverified && !allowUnverified {
-		return RunRecord{}, ErrExchangeOutputUnverified
 	}
 	return run, nil
 }

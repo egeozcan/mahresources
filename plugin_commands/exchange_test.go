@@ -191,6 +191,40 @@ func TestExchangeAuthorizesBeforeInputsAndLeaseState(t *testing.T) {
 	}
 }
 
+func TestExchangeStateRefusalPrecedesStagingRootInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	realRoot := t.TempDir()
+	linkRoot := filepath.Join(t.TempDir(), "staging")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatal(err)
+	}
+	store := newExchangeTestStore()
+	for _, status := range []string{RunStatusQueued, RunStatusRunning} {
+		id := "bad-root-" + status
+		store.runs[id] = RunRecord{
+			ID:              id,
+			PluginName:      "alpha",
+			CreatedByUserID: uintPtr(7),
+			Status:          status,
+		}
+	}
+	service := NewExchange(store, exchangeTestSettings{root: linkRoot})
+	owner := Access{PluginName: "alpha", ActorUserID: uintPtr(7)}
+	wrong := Access{PluginName: "alpha", ActorUserID: uintPtr(8)}
+
+	for _, status := range []string{RunStatusQueued, RunStatusRunning} {
+		id := "bad-root-" + status
+		if _, err := service.List(wrong, id); !errors.Is(err, ErrExchangeRunNotFound) {
+			t.Fatalf("unauthorized %s run with bad root = %v, want run not found", status, err)
+		}
+		if _, err := service.List(owner, id); !errors.Is(err, ErrExchangeRunNotFinished) {
+			t.Fatalf("authorized %s run with bad root = %v, want run not finished", status, err)
+		}
+	}
+}
+
 func TestExchangeRefusesSymlinkedManagedDirectoryComponents(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("v1 exchange mediation is unsupported on Windows")
