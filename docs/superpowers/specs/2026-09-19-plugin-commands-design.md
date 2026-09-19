@@ -1,14 +1,14 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft for user review
+Status: draft 2 — revised after gpt-6-astra design review
 Date: 2026-09-19
 
 ## Goal
 
 Let a plugin declare, in its manifest, a fixed set of server command templates
 that the host may execute on its behalf, run them as asynchronous background
-jobs triggered from Lua, and give the plugin a mediated way to turn the files a
-command produces into library resources.
+jobs, and give the plugin a mediated way to turn the files a command produces
+into library resources.
 
 Motivating use case: a yt-dlp plugin. yt-dlp is an external binary; the plugin
 VM deliberately has no filesystem access and no process execution, so neither
@@ -17,21 +17,55 @@ two missing powers as one cohesive capability: **declared commands** (host
 executes a fixed argv template) and **exchange folders** (host mediates the
 files a command writes back into the plugin's reach).
 
-The design philosophy follows the one `mah.media` already established: the
-plugin names *what* should happen, never a path, a binary flag it invented, or
-a shell string. The host owns every path and every argument boundary.
+## Trust model (stated plainly)
+
+**This is trusted execution, not sandboxing.** A command runs with the full
+privileges of the mahresources service account: its filesystem, its network,
+its credentials. The host guarantees:
+
+- The host never spawns a shell. The process is created from an argv vector,
+  and argument boundaries established by the manifest are preserved.
+- argv[0] is a literal, nonempty executable **basename** — no path separators,
+  no leading dash, no placeholders — resolved via a trusted PATH. A plugin
+  cannot point the command at an arbitrary executable.
+- A parameter replaces an entire argv element. The host never re-parses,
+  re-quotes or splits a parameter.
+
+The host does **not** guarantee that the invoked program interprets those
+parameters safely. A program consumes its arguments according to its own
+grammar: a value supplied by a plugin can be interpreted as a flag (yt-dlp's
+`--exec=…` is the canonical example), and the declared argv[0] may itself be an
+interpreter. Parameter validation below (§3) rejects the degenerate cases the
+host can see; it cannot make a plugin's use of a program safe. Enabling the
+`commands` capability means trusting the plugin author with execution under the
+service account. The capability label and the enable-time warning say this
+explicitly.
+
+Two consequences follow, stated in the consent label and docs rather than
+papered over:
+
+- The per-plugin **egress policy does not apply** to spawned processes. A
+  command may reach private hosts and the loopback. (Process/network
+  confinement is a possible future addition; v1 does not attempt it.)
+- Operator-level configuration visible to the command (e.g. a `yt-dlp` config
+  file in the service account's home) can alter program behaviour in ways no
+  manifest consent covers. The environment allowlist (§3) bounds this to
+  deliberate operator configuration.
+
+The one structural guarantee retained from the shell-free design is that the
+*host* cannot be made to misparse: whatever the program does with its
+arguments, it receives exactly the argv the template and parameters produce.
 
 ## Non-goals
 
 - Operator-initiated runs (UI forms supplying parameters). Commands are
-  plugin-initiated from Lua only. A UI trigger can be layered on later without
-  changing anything here.
-- Per-run operator approval. Consent is given once, at enable time, to the full
-  declared command set.
-- Automatic retries of failed command runs. The plugin decides whether to rerun.
-- Command stdout as a data channel for the plugin. Output is captured to the
-  job history for debugging only; files are the data channel.
-- Distribution/installation of plugins (separate roadmap item).
+  plugin-initiated from Lua only.
+- Per-run operator approval. Consent is given once, at enable time, to the
+  full declared command set.
+- Automatic retries of failed command runs.
+- Process or network confinement of spawned commands.
+- Command stdout as a data channel for the plugin; files are the data channel.
+- Plugin distribution/installation (separate roadmap item).
 
 ## 1. Manifest
 
@@ -46,57 +80,93 @@ plugin = {
     commands = {
         {
             name = "download",
-            argv = { "yt-dlp", "{{url}}", "--paths", "{{exchange_dir}}",
-                     "-o", "%(title)s [%(id)s].%(ext)s" },
+            argv = { "yt-dlp",
+                     "--paths", "{{exchange_dir}}",
+                     "-o", "{{output_template}}",
+                     "--format", "{{format}}",
+                     "--no-playlist",
+                     "--no-directories",
+                     "--", "{{url}}" },
             timeout = 7200,
+            sensitive_params = { "url" },
         },
     },
 }
 ```
 
-Parse-time rules (fail loudly, in the style of the existing `network` parser):
+Parse-time rules (fail loudly, in the style of the existing manifest parser):
 
-- `argv` is a **list of exec arguments, never a shell string**. At run time the
-  host `exec`s argv directly with the substituted elements. No shell is
-  involved anywhere in the pipeline, so quoting/escaping as a failure class
-  does not exist.
-- A `{{placeholder}}` must be an **entire element** of `argv`. Partial
-  interpolation inside an element (e.g. `"--paths={{dir}}"`) is a load error.
-  Substitution replaces the whole element with the parameter string.
-- Every `{{placeholder}}` appearing in `argv` must be supplied at run time or
-  the run is refused. There is no empty-string substitution. The one exception
-  is `{{exchange_dir}}` (§4), which the host fills itself.
-- `name` is a unique slug within the plugin; duplicates are a load error.
-- `timeout` is optional, in seconds; default 3600, host-capped maximum 86400
-  (24h), like other bounded powers.
-- A manifest with `commands` but without the `commands` capability in
-  `capabilities` is a load error, in the same way `network` requires `http`.
+- `argv` is a **list of exec arguments, never a shell string**. The host
+  creates the process from the argv vector directly. No shell is spawned
+  anywhere in the pipeline.
+- `{{placeholder}}` must be an **entire element** of `argv`; partial
+  interpolation inside an element is a load error. Substitution replaces the
+  whole element with the parameter string.
+- Every `{{placeholder}}` must be supplied at run time or the run is refused.
+  No empty-string substitution. `{{exchange_dir}}` (§5) is host-filled.
+- `argv[0]` must be a literal, nonempty **basename**: no `/`, no `..`, no
+  `-` prefix, no placeholders, no path separators. It is resolved via `PATH`
+  at run time from the host's trusted directories. Anything else is a load
+  error, so a template can never name an arbitrary executable or path.
+- Placeholders must **not** occupy a flag position. By convention and by
+  review guidance, variable data follows a fixed flag (`"--format",
+  "{{format}}"`), never forms one. The parser cannot understand each program's
+  grammar, so this is a convention the manifest reviewer sees in the warning —
+  not a host-enforced invariant — and the warning says parameters may alter
+  the invoked program's behaviour.
+- `name` is a unique slug per plugin; duplicates are a load error.
+- `timeout` is optional, in seconds; default 3600, host-capped at 86400.
+  The clock starts when the process is spawned, after the run leaves the queue.
+- `sensitive_params` is an optional list of parameter names whose values are
+  replaced with `[redacted]` in the job history (§6).
+- At most 32 parameters per run and 64 KB of aggregate parameter bytes;
+  exceeding either refuses the run.
+- A manifest with `commands` but without the `commands` capability is a load
+  error. (Note: unlike this spec's first draft claimed, `network` carries no
+  such dependency on `http` today, and none is added here.)
+- `name`, `argv` and `timeout` participate in manifest identity
+  (`Manifest.Equal` and the discovery/load integrity check), so an edited
+  template is detected the same way a changed `network` rule is.
 
-The manifest never stores a shell-joined string. The manage UI derives a
-human-readable display by shell-quoting and joining argv at render time.
+The manifest never stores a shell-joined string; the manage UI derives a
+human display by shell-quoting and joining argv at render time.
 
 ### New capability
 
-`commands` joins `AllCapabilities` (slug `commands`, surfaces note `mah.commands, mah.fs`)
-with a consent label of the shape:
+`commands` joins `AllCapabilities` (surfaces note `mah.commands, mah.fs`) with
+a consent label of the shape:
 
-> Run the commands this plugin declares on the server machine, and read the
-> files those commands write into its private exchange folders.
+> Run the commands this plugin declares on the server machine with the
+> service account's full privileges (filesystem and network, without
+> sandboxing), and read the files those commands write into its private
+> exchange folders.
 
 ## 2. Consent and the warning
 
 - The grant is **all-or-nothing**: enabling a plugin with `commands` granted
   consents to every command the manifest declares.
-- **Widening detection extends to commands.** The persisted consent record
-  stores the consented command list — for each command, its `name`, `argv` and
-  `timeout`. `CompareGrants` treats an added command, a changed argv template,
-  or a changed timeout as a widening: the plugin refuses to load until the
-  operator re-enables. Editing plugin code can never smuggle in a new command;
-  only a fresh consent can.
+- **Consent covers command declarations explicitly on every code path.** The
+  persisted consent record gains a command list — for each command its `name`,
+  `argv` (compared **positionally**, element by element, not via the
+  order-insensitive `sameStrings`) and `timeout`.
+  - The legacy-consent short-circuit in `CompareGrants` runs **after** command
+    comparison: a legacy consent record paired with a manifest that declares
+    any command is a widening requiring re-consent.
+  - A legacy manifest (`Declared == false`) cannot declare commands, so no
+    upgrade path can introduce commands without a manifest change, which is
+    itself caught.
+  - Grandfathering (no consent record): the recorded grant is taken from the
+    manifest **including** its command list, so a later added or changed
+    command is a caught widening. The load-time integrity check between
+    discovery and load also covers commands via `Manifest.Equal`.
+- **Widening detection**: an added command, a changed argv (positionally), a
+  changed timeout, or a changed `sensitive_params` list is a widening; the
+  plugin refuses to load until the operator re-enables.
 - **Manage UI.** The plugin list shows a warning panel for any plugin
   declaring commands: *"⚠ This plugin can run the following commands on the
-  server:"* followed by each command verbatim (shell-joined argv, timeout). The
-  enable/consent flow surfaces the same panel before consent is recorded.
+  server, with the service account's privileges:"* followed by each command
+  verbatim (shell-joined argv, timeout). The enable flow surfaces the same
+  panel before consent is recorded.
 
 ## 3. Execution model
 
@@ -106,105 +176,188 @@ with a consent label of the shape:
 mah.commands.run(name, params [, callback]) -> run_id | nil, err
 ```
 
-- `name` is the declared command slug. `params` is a Lua table of
-  string→string values. `callback`, if given, is a Lua function executed in a
-  background VM goroutine when the run reaches a terminal state (same
-  machinery as `mah.start_job`), receiving one result table:
+- `name` is the declared command slug; `params` is a Lua table of
+  string→string values (each value capped at 8 KB; 32 values maximum).
+- `callback`, if given, is a Lua function executed in a background VM
+  goroutine when the run reaches a terminal state (same machinery as
+  `mah.start_job`), receiving one result table:
 
   ```lua
   { ok = bool, exit_code = n|nil, error = string|nil, run_id = "..." }
   ```
 
-- The call is refused inside DB transactions, exactly like
-  `mah.download.submit`: the command runs for minutes and transactions do not
-  wait.
+- **Callback delivery is at-most-once.** If the VM is unavailable at
+  completion (plugin disabled, process restart), the callback is dropped and
+  the terminal result remains readable through the durable run record (§4).
+  A restart marks interrupted runs failed; callbacks are not replayed.
+- Refused inside DB transactions, like `mah.download.submit`. Also refused
+  when the invoking VM is revoked mid-flight, and when the plugin has been
+  disabled since submission.
 - Requires the `commands` capability. Ungranted, `mah.commands` is never
-  installed (the standard withheld-module behaviour).
+  installed.
 
-### Job machinery
+### Scheduling
 
-A command run is a new job kind on the download-queue machinery (Approach A):
-attempt structure, history capture, job events, progress sink, sweep/pausing
-and actor attribution all come from the existing infrastructure. The command
-runner is a `JobRunFn`.
+Command runs use a dedicated dispatcher over the download-queue job
+machinery — not the generic semaphore-goroutine submission path — with these
+properties made explicit rather than inherited:
 
-- History captures: argv as run (post-substitution), exit code, duration, and
-  a size-capped tail of combined stdout/stderr (64 KB). The tail is for
-  debugging in the job history UI, not a plugin data channel.
-- **No automatic retry.** A failed run terminates as failed; the callback and
-  history report it. A plugin that wants a retry calls `run` again.
-- Concurrency: at most 2 concurrently running command jobs per plugin, and a
-  global cap across plugins. Beyond that, runs queue FIFO.
-- Cancellation: an operator can cancel a queued or running command job through
-  the existing job UI (process killed, run marked cancelled, callback fires
-  with `ok = false`).
+- **FIFO per plugin**, at most 2 concurrently running command jobs per plugin
+  and a bounded global cap; queue admission bounded the same way the download
+  queue is (`MaxQueueSize`).
+- **No pause and no manual retry for command jobs in v1.** Pausing a process
+  tree and retrying under the same job ID both conflict with fresh-exchange-dir
+  semantics; a rerun is a new `mah.commands.run` call with a new run id.
+- **Timeout vs cancellation are distinct terminal states.** Timeout begins at
+  process launch (not submission) and kills the process group; cancellation is
+  operator-initiated.
+
+### Durable run records
+
+A new persisted table `plugin_command_runs` (id, plugin name, command name,
+redacted parameter view, actor user id, created/started/finished timestamps,
+status, exit code, error text) survives restarts and is independent of the
+queue's 1-hour terminal retention. On startup, runs recorded as running with
+no live process are marked `interrupted` and their exchange folders are
+retained until the sweep reaches them.
+
+Plugin disable semantics: a disabled plugin's queued runs are refused at
+dispatch; running processes are killed (process group) and marked cancelled.
 
 ### Host hardening
 
-- argv[0] is resolved with `PATH` lookup at run time. No plugin-configurable
-  binary path.
+- argv[0] resolved via `PATH` over operator-controlled directories at run
+  time; no plugin-configurable binary path.
 - Parameters are passed as exec arguments directly. The host never re-parses
-  or re-quotes them.
-- Each parameter value is capped at 8 KB; longer values refuse the run.
-- The working directory of the spawned process is the run's exchange folder.
-- Environment: a minimal environment (PATH, HOME, TMPDIR, TZ plus whatever the
-  host already exports to ffmpeg for `mah.media`). yt-dlp's own cookie/config
-  needs are served by files the operator places in the service account's home,
-  not by plugin-supplied values.
+  them.
+- Per-parameter cap 8 KB; aggregate argv cap 64 KB; at most 32 parameters.
+- The spawned process runs with its working directory set to the run's
+  exchange folder.
+- **Environment is an explicit allowlist**, not inherited:
+  `PATH` (operator-configured trusted directories), `HOME`, `TMPDIR` (private
+  per-run temp), `LANG`, `TZ`, and run-context variables `MAHR_PLUGIN_NAME`,
+  `MAHR_COMMAND_RUN_ID`, `MAHR_EXCHANGE_DIR`. Nothing else. Operator
+  configuration reachable through these variables (e.g. a yt-dlp config file
+  in `HOME`) is deliberate operator action and is documented as such.
+- Spawned processes have **no egress enforcement**: they do not pass through
+  the plugin HTTP egress layer and may reach private hosts. Documented as part
+  of the trust model, not hidden.
 
-## 4. Exchange folders and `mah.fs`
+### Process-tree termination
 
-### Layout
+- On Unix the child is started with its own process group (`Setpgid`);
+  timeout or cancellation kills the whole group (`kill(-pgid)`). On Windows,
+  a Job Object with kill-on-close.
+- Output pipes are drained with a size cap; termination waits (bounded) for
+  reap and pipe EOF. **Output is final only when the process group is dead
+  and pipes are closed** — descendant writers (e.g. an ffmpeg spawned by
+  yt-dlp) cannot keep writing into an exchange folder declared finished.
+- Command workers are registered with the queue's shutdown tracking; on
+  server shutdown, process groups are terminated and runs are recorded
+  `interrupted` (exchange dirs retained for later inspection until swept).
 
-The host creates one scratch directory per run before launching the command,
-on the same afero filesystem resources live on (so MemoryFS and alternate
-filesystems keep working):
+## 4. History
 
-```
-<file save path>/plugin_exchange/<plugin-name>/<run-id>/
-```
+Job history for command runs records: the command name, the **redacted
+parameter view** (`sensitive_params` values replaced by `[redacted]`, all
+other values shown), the argv as actually executed, exit code, duration and a
+64 KB tail of combined stdout/stderr. Rendering HTML-escapes output (terminal
+control characters stripped). History access follows the existing job-history
+authorization (administrative UI).
+
+## 5. Exchange folders and `mah.fs`
+
+### Staging
+
+Exchange directories are **OS-backed directories** — real paths under a
+host-configurable staging root (default under the server's data directory) —
+never an in-process afero view, which an external process cannot see. Import
+copies the file through the configured resource filesystem via the same
+`AddResource` path as uploads. On a MemoryFS deployment, command runs are
+refused at submission with an explanatory error (there is no OS-backed
+resource storage to import into).
+
+Layout: `<staging root>/plugin_exchange/<plugin-name>/<run-id>/`, created
+private (0700) by the host before launch.
 
 ### The `{{exchange_dir}}` placeholder
 
-Any command template may use `{{exchange_dir}}`; the host substitutes the
-run's actual directory. Plugins never construct or see paths — file identity is
-always a `(run_id, name)` pair inside the plugin's own scratch space.
+Any template may use `{{exchange_dir}}`; the host substitutes the run's
+actual OS path. Plugins never construct or see paths — file identity is a
+`(run_id, name)` pair inside the plugin's own scratch space. Exchange folders
+are flat: only top-level regular files are addressable; the yt-dlp template
+passes flat-output flags so yt-dlp does not create subdirectories.
 
 ### `mah.fs` surface
 
-Granted with the `commands` capability (a plugin can only ever reach its own
-runs' folders; a separate capability name would be grant sprawl without a
-separable power to withhold):
+Granted with the `commands` capability:
 
-- `mah.fs.list(run_id)` → array of `{ name, size, modified }` tables.
-  Names come from the host's `readdir` of the real directory, never from
-  plugin-supplied strings, so path traversal is structurally impossible.
-  `run_id` must belong to a finished run of the *calling* plugin; anything else
-  is an error.
-- `mah.fs.read(run_id, name, max_bytes)` → file content as a string,
-  refusing beyond `max_bytes` (hard cap 4 MB). For small sidecars such as a
-  yt-dlp metadata JSON destined for resource meta.
-- `mah.fs.create_resource(run_id, name, fields)` → resource id. The host
-  streams the file into resource storage through the same code path as an
-  upload; `fields` carries name, description, tags, groups and meta exactly as
-  `mah.db.create_resource` does. On success the file is deleted from the
-  exchange folder (import consumes the file).
-- `mah.fs.discard(run_id, name)` → deletes one file from the exchange folder
-  (e.g. `.part` leftovers the plugin chose not to import).
+- `mah.fs.list(run_id)` → array of `{ name, size, modified }`, capped at
+  10,000 entries (beyond which the call refuses). Names come from the host's
+  `readdir`.
+- `mah.fs.read(run_id, name, max_bytes)` → content as a string; refuses beyond
+  `max_bytes` (hard cap 4 MB).
+- `mah.fs.create_resource(run_id, name, fields)` → resource id. Requires
+  **both** `commands` and `db:write` (creating library content is a write
+  power; see §6). Streams the file from the staging directory into the
+  configured resource filesystem through the `AddResource` path. Refused
+  inside DB transactions, like `create_resource_from_data`. Import consumes
+  the file: on success the file is marked `imported` and deleted; if deletion
+  fails the file is marked `imported-pending-delete` and re-import is
+  idempotent (returns the already-created resource id, recorded in the run's
+  import map).
+- `mah.fs.discard(run_id, name)` → deletes one file.
+- `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
+  status, started_at, finished_at, exit_code, error }`, oldest first —
+  including `interrupted` runs after restart — so recovery does not depend on
+  a live callback.
 
-`runs` accessor: `mah.fs.runs()` → array of the calling plugin's run ids that
-still have exchange folders, oldest first, so a callback-less plugin can
-enumerate after the fact.
+### Enforcement on every operation
 
-### Cleanup sweep
+Every `mah.fs` operation performs, in order, before touching the filesystem:
 
-A sweep pass (same pattern as the existing export sweep) removes exchange
-directories of finished runs older than 7 days (host-configurable). The sweep
-logs what it removed. Anything a plugin wants kept must be imported or read
-before the sweep reaches it; the 7-day default is generous for the intended
-"import in the completion callback" flow.
+1. **Run ownership**: `run_id` must exist, belong to the calling plugin, and
+   (for runs with a submitter) belong to the acting user; actor-less
+   (schedule-submitted) runs are accessible to any principal acting for the
+   plugin.
+2. **Finished state**: the run must be terminal; `list/read/create_resource/
+   discard` against a running or queued run are refused.
+3. **Name validation**: the name must match the plugin-visible character set
+   (no `/`, `\`, null bytes, no `.` or `..`, length-capped), must be a
+   **regular file** (`lstat`; directories, symlinks, devices and other
+   specials are refused), and is opened **relative to the run directory with
+   `O_NOFOLLOW`** (and re-verified after open), so a symlink swapped in after
+   `readdir` cannot escape. On platforms without `O_NOFOLLOW` the open is
+   refused unless the platform provides an equivalent.
+4. **Size caps**: `read` enforces `max_bytes`; import streams with a total
+   quota.
 
-## 5. The yt-dlp plugin (separate repository)
+`runs` and files are addressed only as `(run_id, name)` pairs inside the
+calling plugin's own exchange tree; any other resolution is refused.
+
+**Honest isolation statement.** This is *Lua-level* isolation: the plugin's
+VM code can only reach its own runs. It is **not** process-level isolation —
+every command runs under the same service account and can, by ordinary
+filesystem permissions, read sibling exchange folders of other plugins and
+runs. Operators running mutually distrusting plugins on one host should not
+enable `commands` for all of them.
+
+### Sweep and synchronization
+
+- A sweep pass removes finished runs' exchange directories once a
+  configurable retention (default 7 days, measured from **completion**, not
+  creation) has elapsed. A run is skipped by the sweep while it has an active
+  import lease or an unfinished run record.
+- Import, read and discard take a per-file lease for their duration;
+  `create_resource` inside a DB transaction is refused (same rule as
+  `create_resource_from_data`), so a rollback can never silently lose the
+  source file.
+- Errors are explicit: `run not found`, `file not found`, `run swept`,
+  `already imported` (which returns the existing resource id).
+- Successful imports are recorded per run (`run_id, name → resource id`);
+  the sweep leaves marked-imported names alone even if deletion failed.
+
+## 6. The yt-dlp plugin (separate repository)
 
 Shipped after the core lands. Lives in its own repository
 (`yt-dlp-plugin-for-mahresources`), installed into the configured plugin path.
@@ -213,17 +366,23 @@ Shipped after the core lands. Lives in its own repository
 plugin = {
     api_version = 1,
     name = "yt-dlp",
-    capabilities = { "db:write", "commands" },
+    capabilities = { "db:write", "commands", "pages" },
     commands = {
         {
             name = "download",
-            argv = { "yt-dlp", "{{url}}", "--paths", "{{exchange_dir}}",
-                     "-o", "%(title)s [%(id)s].%(ext)s",
-                     "{{format_arg}}", "--no-playlist" },
+            argv = { "yt-dlp",
+                     "--paths", "{{exchange_dir}}",
+                     "-o", "{{output_template}}",
+                     "--format", "{{format}}",
+                     "--no-playlist",
+                     "--", "{{url}}" },
             timeout = 7200,
+            sensitive_params = { "url" },
         },
     },
     settings = {
+        { name = "output_template", type = "string", label = "Output filename template",
+          default = "%(title)s [%(id)s].%(ext)s" },
         { name = "format", type = "string", label = "yt-dlp format selector",
           default = "bestvideo*+bestaudio/best" },
         { name = "import_extensions", type = "string",
@@ -233,51 +392,88 @@ plugin = {
 }
 ```
 
-Flow: a plugin page (or action) where the operator pastes a URL →
-`mah.commands.run("download", { url = url, format_arg = "--format " .. format },
-on_complete)` → in the callback: `mah.fs.list(run_id)`, filter to importable
-extensions (skip `.part`/`.ytdl`/thumbnail/sidecar files), `create_resource`
-each remaining file with the source URL recorded in meta and description,
-`mah.fs.discard` the rest.
+Notes on the template: variable data always travels as a **value after a
+fixed flag** (`--format {{format}}`), never as a flag-valued element; the URL
+is last, after `--`, so it can never be parsed as an option; `--paths` pins
+the download directory to the exchange folder. A plugin page (capability
+`pages`) where the operator pastes a URL triggers
+`mah.commands.run("download", { url = url, output_template = tpl,
+format = format }, on_complete)`; in the callback: `mah.fs.list(run_id)`,
+filter to importable extensions (skip `.part`/`.ytdl`/thumbnails), create a
+resource per remaining file with the source URL recorded in meta and
+description, `mah.fs.discard` the rest. `yt-dlp` is resolved from the host's
+trusted `PATH`; the operator installs it.
 
-`yt-dlp` is resolved from the server's `PATH`; the operator installs it on the
-host. No binary-path setting exists to spoof.
+Resource creation uses the same field schema as the existing resource
+creators (`mah.db.create_resource_from_url` / `create_resource_from_data`
+options: name, description, tags, groups, meta).
 
-## 6. Testing
+## 7. Capability interactions
+
+- `commands` alone grants: running commands, and `mah.fs.list/read/discard/
+  runs`.
+- **`mah.fs.create_resource` additionally requires `db:write`.** A plugin
+  with `commands` but no `db:write` can download and read files but cannot
+  create resources. The consent label for `commands` says so explicitly.
+- Actor propagation: the run record keeps the acting user; the import is
+  attributed to that actor and revalidated against their **current** role and
+  scope at import time (a user demoted between run and import cannot use a
+  stale grant). Actor-less runs (schedules) require the acting principal to
+  hold `db:write` and are attributed to the acting user.
+
+## 8. Testing
 
 Core (mahresources):
 
-- Manifest parsing: placeholder-must-be-whole-element, unknown/duplicate
-  command names, timeout cap, `commands` without the capability is a load
-  error.
-- Consent: command list persisted; added/changed command argv or timeout is a
-  widening that blocks load until re-consent.
-- Substitution: assert the *exec argv* the host builds (parameter replaces the
-  whole element; `{{exchange_dir}}` filled by host; missing parameter refuses
-  the run). No shell is ever constructed — a regression test asserts the
-  runner does not use a shell anywhere.
-- Refused in transaction; parameter size cap; per-plugin and global
-  concurrency caps; timeout kills the process and records the failure.
-- History capture (argv, exit code, stderr tail cap).
-- `mah.fs`: list/read/create_resource/discard; path-traversal regression
-  (names can only come from readdir; `(run_id, name)` must resolve inside the
-  plugin's own exchange tree); cross-plugin run access refused; import
-  consumes the file; MemoryFS path works.
-- Sweep: finished runs older than the retention are removed, fresh ones kept.
+- Manifest parsing: whole-element placeholders, argv[0] basename rule, timeout
+  cap, `commands` without the capability is a load error.
+- Consent: positional argv comparison; **upgrade-path tests** — legacy
+  manifest + commands → refused until re-consent; legacy consent record +
+  newly declared commands → widening detected despite the legacy short-circuit;
+  missing consent record → declared commands recorded at first load and any
+  later change refused; changed `sensitive_params` or timeout → widening.
+- Substitution: assert the **exec argv** the host builds (whole-element
+  replacement; `{{exchange_dir}}` host-filled; missing parameter refuses the
+  run; aggregate caps). A regression test asserts no shell is constructed
+  anywhere and that argv[0] validation rejects paths and dashes.
+- Refused in transaction (both `run` and `create_resource`); parameter count
+  and size caps; per-plugin and global concurrency; timeout kills the **whole
+  process group** — a regression test uses a child that spawns a long-lived
+  descendant and asserts the descendant dies too.
+- Terminal-state delivery: callback fires on completion, cancellation and
+  timeout; disabled/disabled-then-re-enabled plugin semantics; restart marks
+  interrupted runs; durable run record readable after the 1-hour queue
+  retention expires.
+- `mah.fs`: enforcement tests for name validation, symlink refusal
+  (including a swap-after-lstat race), directory/special refusal, cross-plugin
+  and cross-run access refusal, actor checks, idempotent re-import after a
+  failed delete, refusal inside transactions, listing cap, read cap.
+- **MemoryFS/staging**: with MemoryFS resource storage, command runs are
+  refused; with OS-backed storage, a **real subprocess** (not a stub)
+  writes a file that `mah.fs.create_resource` imports through the configured
+  afero filesystem.
+- Sweep: retention measured from completion; active-lease runs skipped;
+  imported marks survive; fresh runs kept.
+- Queue integration: FIFO per-plugin dispatch, per-plugin/global caps, no
+  pause and no retry exposed for command jobs, terminal state reaches the
+  callback and the durable record even when the generic queue's event
+  machinery does not fire.
 
-Manage UI: warning panel renders verbatim commands; enable flow shows it;
-granted-but-changed manifest forces re-consent.
+Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
+enable flow shows it; a changed command set forces re-consent; legacy-record
+upgrade paths covered by tests per §2.
 
-Plugin repository: integration-style tests through the mahresources plugin test
+Plugin repository: integration tests through the mahresources plugin test
 harness — the command template pointed at a fake `yt-dlp` stub script,
-exercising run → callback → list → import end to end; standalone Lua tests for
-extension filtering where they can run without the host.
+exercising run → callback → list → import end to end; standalone Lua tests
+for extension filtering.
 
-## 7. Out of scope (future)
+## 9. Explicitly out of scope
 
 - Operator-initiated command runs from the UI.
 - Automatic retry policies.
-- Command stdout/stderr as structured plugin data.
-- Streaming progress from the command into the job progress sink (yt-dlp
-  `--progress-template` could map later).
+- Process/network confinement of spawned commands (the trust model in §Trust
+  model is the honest statement for v1).
+- Streaming progress from the command into the job progress sink.
+- Command stdout as structured plugin data.
 - Plugin-package distribution format.
