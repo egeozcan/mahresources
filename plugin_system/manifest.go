@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 
+	"mahresources/plugin_commands"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -59,6 +61,10 @@ const (
 	// unattended observation of other people's activity, which is a different
 	// power and gets its own name so CompareGrants reports the widening.
 	CapJobEvents = "job_events" // mah.on for the after_job_* events
+	// CapCommands authorizes service-account process execution. It is separate
+	// from db:write: a command can read the host filesystem and use unrestricted
+	// process networking even when none of its output may enter the library.
+	CapCommands = "commands" // mah.commands, mah.fs
 )
 
 // AllCapabilities is every grantable capability, in the order the manage UI
@@ -66,7 +72,7 @@ const (
 var AllCapabilities = []string{
 	CapDBRead, CapDBWrite, CapHTTP, CapKV, CapImage, CapMedia,
 	CapHooks, CapInject, CapRender, CapPages, CapAPI, CapActions, CapJobs, CapSchedule,
-	CapJobEvents,
+	CapJobEvents, CapCommands,
 }
 
 // CapabilityLabels are the human sentences the manage UI renders instead of
@@ -87,6 +93,7 @@ var CapabilityLabels = map[string]string{
 	CapJobs:      "Run background jobs",
 	CapSchedule:  "Run its own work on a repeating schedule, without anyone asking",
 	CapJobEvents: "See every background job in this deployment finish, whoever started it",
+	CapCommands:  "Run declared commands as the server service account from the operator-configured command path, without sandboxing and with unrestricted process networking; commands can read anything that OS account can read (including sibling plugin exchange folders), and importing output requires db:write",
 }
 
 // CapabilitySurfaces names what each capability installs, for the one log line
@@ -108,6 +115,7 @@ var CapabilitySurfaces = map[string]string{
 	CapJobs:      "mah.start_job, and the job_* reporters",
 	CapSchedule:  "mah.schedule",
 	CapJobEvents: "mah.on for the after_job_* events",
+	CapCommands:  "mah.commands, mah.fs",
 }
 
 // CapabilitySurfacesWithoutReporters is what to say about actions or jobs when
@@ -153,14 +161,15 @@ func newCapabilitySet(names []string) CapabilitySet {
 // the network rules — those are a vulnerability fix, and exempting the plugins
 // that exist today would exempt exactly the population that has the hole.
 type Manifest struct {
-	Declared          bool            `json:"declared"`
-	APIVersion        int             `json:"api_version,omitempty"`
-	CapabilityList    []string        `json:"capabilities,omitempty"`
-	Network           []string        `json:"network,omitempty"`
-	DownloadLimits    []DownloadLimit `json:"download_limits,omitempty"`
-	AllowPrivateHosts bool            `json:"allow_private_hosts,omitempty"`
-	Dependencies      []string        `json:"dependencies,omitempty"`
-	MinAppVersion     string          `json:"min_app_version,omitempty"`
+	Declared          bool                          `json:"declared"`
+	APIVersion        int                           `json:"api_version,omitempty"`
+	CapabilityList    []string                      `json:"capabilities,omitempty"`
+	Network           []string                      `json:"network,omitempty"`
+	DownloadLimits    []DownloadLimit               `json:"download_limits,omitempty"`
+	AllowPrivateHosts bool                          `json:"allow_private_hosts,omitempty"`
+	Dependencies      []string                      `json:"dependencies,omitempty"`
+	MinAppVersion     string                        `json:"min_app_version,omitempty"`
+	Commands          []plugin_commands.Declaration `json:"commands,omitempty"`
 
 	// rules is Network parsed, kept so matching never re-parses and never has
 	// to handle a parse failure at request time.
@@ -253,7 +262,8 @@ func (m Manifest) Equal(other Manifest) bool {
 	return sameStrings(m.CapabilityList, other.CapabilityList) &&
 		sameStrings(m.Network, other.Network) &&
 		sameStrings(m.Dependencies, other.Dependencies) &&
-		sameDownloadLimits(m.DownloadLimits, other.DownloadLimits)
+		sameDownloadLimits(m.DownloadLimits, other.DownloadLimits) &&
+		plugin_commands.SameDeclarations(m.Commands, other.Commands)
 }
 
 func sameStrings(a, b []string) bool {
@@ -290,7 +300,7 @@ func sameDownloadLimits(a, b []DownloadLimit) bool {
 // manifestKeys are the fields that only mean something inside a manifest.
 // Declaring one without api_version is an error rather than a silent grant of
 // everything, because the plugin plainly meant to declare a manifest.
-var manifestKeys = []string{"capabilities", "network", "download_limits", "allow_private_hosts", "dependencies", "min_app_version"}
+var manifestKeys = []string{"capabilities", "network", "download_limits", "allow_private_hosts", "dependencies", "min_app_version", "commands"}
 
 // ParseManifest reads the manifest fields off a plugin's `plugin` table.
 // A table with no api_version is legacy, provided it declares no other manifest
@@ -354,6 +364,15 @@ func ParseManifest(tbl *lua.LTable) (Manifest, error) {
 		seen[c] = struct{}{}
 		m.CapabilityList = append(m.CapabilityList, c)
 	}
+
+	commands, err := manifestCommands(tbl)
+	if err != nil {
+		return m, err
+	}
+	if tbl.RawGetString("commands") != lua.LNil && !m.Capabilities().Has(CapCommands) {
+		return m, fmt.Errorf("plugin declares commands but does not include the %q capability", CapCommands)
+	}
+	m.Commands = commands
 
 	hosts, err := manifestStrings(tbl, "network")
 	if err != nil {
@@ -606,6 +625,155 @@ func manifestStrings(tbl *lua.LTable, key string) ([]string, error) {
 		out = append(out, trimmed)
 	}
 	return out, nil
+}
+
+func manifestCommands(tbl *lua.LTable) ([]plugin_commands.Declaration, error) {
+	v := tbl.RawGetString("commands")
+	if v == lua.LNil {
+		return nil, nil
+	}
+	arr, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("commands must be an array of tables, got %s", v.Type())
+	}
+	if err := requireDenseArray(arr, "commands"); err != nil {
+		return nil, err
+	}
+
+	out := make([]plugin_commands.Declaration, 0, arr.Len())
+	seen := make(map[string]struct{}, arr.Len())
+	for i := 1; i <= arr.Len(); i++ {
+		value := arr.RawGetInt(i)
+		entry, ok := value.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("commands[%d] must be a table, got %s", i, value.Type())
+		}
+		declaration, err := parseManifestCommand(entry, i)
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[declaration.Name]; duplicate {
+			return nil, fmt.Errorf("commands contains duplicate name %q", declaration.Name)
+		}
+		seen[declaration.Name] = struct{}{}
+		out = append(out, declaration)
+	}
+	return out, nil
+}
+
+func parseManifestCommand(tbl *lua.LTable, idx int) (plugin_commands.Declaration, error) {
+	label := fmt.Sprintf("commands[%d]", idx)
+	if tbl.Metatable != nil && tbl.Metatable != lua.LNil {
+		return plugin_commands.Declaration{}, fmt.Errorf("%s must not have a metatable", label)
+	}
+	allowed := map[string]struct{}{
+		"name": {}, "argv": {}, "timeout": {}, "sensitive_params": {},
+	}
+	var badKey error
+	tbl.ForEach(func(key, _ lua.LValue) {
+		if badKey != nil {
+			return
+		}
+		name, ok := key.(lua.LString)
+		if !ok {
+			badKey = fmt.Errorf("%s has unexpected key %v", label, key)
+			return
+		}
+		if _, ok := allowed[string(name)]; !ok {
+			badKey = fmt.Errorf("%s has unknown field %q", label, string(name))
+		}
+	})
+	if badKey != nil {
+		return plugin_commands.Declaration{}, badKey
+	}
+
+	nameValue := tbl.RawGetString("name")
+	name, ok := nameValue.(lua.LString)
+	if !ok {
+		if nameValue == lua.LNil {
+			return plugin_commands.Declaration{}, fmt.Errorf("%s.name is required", label)
+		}
+		return plugin_commands.Declaration{}, fmt.Errorf("%s.name must be a string, got %s", label, nameValue.Type())
+	}
+
+	argvValue := tbl.RawGetString("argv")
+	if argvValue == lua.LNil {
+		return plugin_commands.Declaration{}, fmt.Errorf("%s.argv is required", label)
+	}
+	argv, err := exactStringArray(argvValue, label+".argv")
+	if err != nil {
+		return plugin_commands.Declaration{}, err
+	}
+
+	sensitive := []string(nil)
+	if value := tbl.RawGetString("sensitive_params"); value != lua.LNil {
+		sensitive, err = exactStringArray(value, label+".sensitive_params")
+		if err != nil {
+			return plugin_commands.Declaration{}, err
+		}
+	}
+
+	timeout := plugin_commands.DefaultTimeout
+	if value := tbl.RawGetString("timeout"); value != lua.LNil {
+		number, ok := value.(lua.LNumber)
+		if !ok {
+			return plugin_commands.Declaration{}, fmt.Errorf("%s.timeout must be a whole number of seconds, got %s", label, value.Type())
+		}
+		seconds := float64(number)
+		if seconds != float64(int64(seconds)) || seconds <= 0 {
+			return plugin_commands.Declaration{}, fmt.Errorf("%s.timeout must be a positive whole number of seconds", label)
+		}
+		if seconds > plugin_commands.MaxTimeout.Seconds() {
+			return plugin_commands.Declaration{}, fmt.Errorf("%s.timeout exceeds the maximum %.0f seconds", label, plugin_commands.MaxTimeout.Seconds())
+		}
+		timeout = time.Duration(int64(seconds)) * time.Second
+	}
+
+	declaration := plugin_commands.Declaration{
+		Name:            string(name),
+		Argv:            argv,
+		Timeout:         timeout,
+		SensitiveParams: sensitive,
+	}
+	if err := plugin_commands.ValidateDeclaration(declaration); err != nil {
+		return plugin_commands.Declaration{}, fmt.Errorf("%s: %w", label, err)
+	}
+	return declaration, nil
+}
+
+func exactStringArray(value lua.LValue, label string) ([]string, error) {
+	arr, ok := value.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings, got %s", label, value.Type())
+	}
+	if err := requireDenseArray(arr, label); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, arr.Len())
+	for i := 1; i <= arr.Len(); i++ {
+		item := arr.RawGetInt(i)
+		str, ok := item.(lua.LString)
+		if !ok {
+			return nil, fmt.Errorf("%s entries must be strings, got %s", label, item.Type())
+		}
+		out = append(out, string(str))
+	}
+	return out, nil
+}
+
+func requireDenseArray(arr *lua.LTable, label string) error {
+	n := arr.Len()
+	var extra error
+	arr.ForEach(func(key, _ lua.LValue) {
+		if extra != nil {
+			return
+		}
+		idx, ok := key.(lua.LNumber)
+		if !ok || float64(idx) != float64(int(idx)) || int(idx) < 1 || int(idx) > n {
+			extra = fmt.Errorf("%s must be an array: unexpected key %v", label, key)
+		}
+	})
+	return extra
 }
 
 func manifestDownloadLimits(tbl *lua.LTable) ([]DownloadLimit, error) {

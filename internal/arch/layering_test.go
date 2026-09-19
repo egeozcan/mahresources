@@ -248,6 +248,31 @@ func TestSearchStaysBelowApplicationContext(t *testing.T) {
 // caller's, arriving as an *http.Client already decorated; reaching for the
 // policy itself would let it build one, and a package that can build a policy
 // can build the wrong one.
+// TestPluginCommandsStaysBelowItsConsumers keeps command declarations and
+// execution contracts usable from both plugin_system and application_context.
+// The package may depend on shared leaf contracts, but never reach back into a
+// consumer that imports it.
+func TestPluginCommandsStaysBelowItsConsumers(t *testing.T) {
+	allowed := func(imp string) bool {
+		return imp == modulePath+"/constants" ||
+			imp == modulePath+"/contracts" ||
+			imp == modulePath+"/models" ||
+			strings.HasPrefix(imp, modulePath+"/models/")
+	}
+	for dir, imports := range pkgImports(t) {
+		if !under(dir, "plugin_commands") {
+			continue
+		}
+		for _, imp := range sorted(imports) {
+			if !allowed(imp) {
+				t.Errorf("%s imports %s\n"+
+					"\tplugin_commands/ is shared below plugin_system and application_context; "+
+					"it may depend only on contracts/, models/ and constants/.", dir, imp)
+			}
+		}
+	}
+}
+
 func TestHLSStaysBelowItsConsumers(t *testing.T) {
 	forbidden := []string{
 		modulePath + "/application_context",

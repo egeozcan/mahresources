@@ -56,6 +56,27 @@ func mustEnable(t *testing.T, dir, name, code string) *PluginManager {
 	return pm
 }
 
+func TestCommandCapabilityCataloguesDescribeTheHostPrivilege(t *testing.T) {
+	if !newCapabilitySet(AllCapabilities).Has(CapCommands) {
+		t.Fatal("commands is missing from AllCapabilities")
+	}
+	label := CapabilityLabels[CapCommands]
+	for _, phrase := range []string{
+		"server service account",
+		"unrestricted process networking",
+		"anything that OS account can read",
+		"sibling plugin exchange folders",
+		"db:write",
+	} {
+		if !strings.Contains(label, phrase) {
+			t.Errorf("commands consent label %q does not say %q", label, phrase)
+		}
+	}
+	if got := CapabilitySurfaces[CapCommands]; got != "mah.commands, mah.fs" {
+		t.Fatalf("commands surfaces = %q, want %q", got, "mah.commands, mah.fs")
+	}
+}
+
 func TestDeclaredCapabilitiesInstallOnlyWhatWasDeclared(t *testing.T) {
 	pm := mustEnable(t, t.TempDir(), "narrow", `
 plugin = { name = "narrow", version = "1.0", api_version = 1,

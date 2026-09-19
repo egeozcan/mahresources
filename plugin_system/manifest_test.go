@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/plugin_commands"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -677,6 +679,110 @@ func TestConfusableManifestKeysAreRefused(t *testing.T) {
 		if err == nil {
 			t.Errorf("a confusable key was accepted, and the plugin reads as %v", m.Capabilities().Sorted())
 		}
+	}
+}
+
+func TestManifestCommands(t *testing.T) {
+	m, err := manifestFromLua(t, `plugin = {
+		name = "x", api_version = 1, capabilities = {"commands"},
+		commands = {
+			{name = "download", argv = {"tool", "--", "{{url}}"}, sensitive_params = {"url"}},
+			{name = "probe", argv = {"probe"}, timeout = 7200},
+		},
+	}`)
+	if err != nil {
+		t.Fatalf("valid commands manifest refused: %v", err)
+	}
+	if !m.Capabilities().Has(CapCommands) {
+		t.Fatal("commands capability was not granted")
+	}
+	want := []plugin_commands.Declaration{
+		{Name: "download", Argv: []string{"tool", "--", "{{url}}"}, Timeout: plugin_commands.DefaultTimeout, SensitiveParams: []string{"url"}},
+		{Name: "probe", Argv: []string{"probe"}, Timeout: 2 * time.Hour},
+	}
+	if !plugin_commands.SameDeclarations(m.Commands, want) {
+		t.Fatalf("Commands = %#v, want %#v", m.Commands, want)
+	}
+}
+
+func TestCommandManifestRejectsMalformedDeclarations(t *testing.T) {
+	cases := map[string]string{
+		"duplicate names": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"}},{name="download",argv={"other"}}}}`,
+		"partial placeholder": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool","prefix-{{url}}"}}}}`,
+		"empty argv": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={}}}}`,
+		"placeholder argv0": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"{{tool}}"}}}}`,
+		"literal path argv0": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"/usr/bin/tool"}}}}`,
+		"leading dash argv0": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"-tool"}}}}`,
+		"timeout over cap": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},timeout=86401}}}`,
+		"fractional timeout": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},timeout=1.5}}}`,
+		"missing commands capability": `plugin={api_version=1,capabilities={},commands={
+			{name="download",argv={"tool"}}}}`,
+		"commands not an array": `plugin={api_version=1,capabilities={"commands"},commands={download={
+			name="download",argv={"tool"}}}}`,
+		"command not a table": `plugin={api_version=1,capabilities={"commands"},commands={"tool"}}`,
+		"argv not an array": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv="tool"}}}`,
+		"sensitive not an array": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool","{{url}}"},sensitive_params="url"}}}`,
+		"invalid name": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="Download Job",argv={"tool"}}}}`,
+	}
+	for name, source := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := manifestFromLua(t, source); err == nil {
+				t.Fatal("expected malformed command declaration to be refused")
+			}
+		})
+	}
+}
+
+func TestCommandManifestRequiresAPIVersion(t *testing.T) {
+	_, err := manifestFromLua(t, `plugin={capabilities={"commands"},commands={{name="download",argv={"tool"}}}}`)
+	if err == nil {
+		t.Fatal("commands without api_version were accepted as a legacy manifest")
+	}
+	if !strings.Contains(err.Error(), "api_version") {
+		t.Fatalf("error must explain the missing api_version: %v", err)
+	}
+}
+
+func TestCommandManifestIdentity(t *testing.T) {
+	parse := func(t *testing.T, commands string) Manifest {
+		t.Helper()
+		m, err := manifestFromLua(t, `plugin={api_version=1,capabilities={"commands"},commands={`+commands+`}}`)
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		return m
+	}
+	base := parse(t, `{name="one",argv={"tool","--","{{url}}","{{token}}"},timeout=60,sensitive_params={"url","token"}},
+		{name="two",argv={"other"}}`)
+	reordered := parse(t, `{name="two",argv={"other"}},
+		{name="one",argv={"tool","--","{{url}}","{{token}}"},timeout=60,sensitive_params={"token","url"}}`)
+	if !base.Equal(reordered) {
+		t.Fatal("command declaration order and sensitive_params order must not change manifest identity")
+	}
+	for name, commands := range map[string]string{
+		"argv order": `{name="one",argv={"tool","{{url}}","--","{{token}}"},timeout=60,sensitive_params={"url","token"}},
+			{name="two",argv={"other"}}`,
+		"timeout": `{name="one",argv={"tool","--","{{url}}","{{token}}"},timeout=61,sensitive_params={"url","token"}},
+			{name="two",argv={"other"}}`,
+		"sensitive set": `{name="one",argv={"tool","--","{{url}}","{{token}}"},timeout=60,sensitive_params={"url"}},
+			{name="two",argv={"other"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if base.Equal(parse(t, commands)) {
+				t.Fatal("changed command declaration compared equal")
+			}
+		})
 	}
 }
 
