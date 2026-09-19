@@ -1,3 +1,37 @@
+# Plugin-declared server commands implementation (2026-09-19)
+
+**Goal:** Execute `docs/superpowers/plans/2026-09-19-plugin-commands.md`
+test-first in the isolated `feature/plugin-commands` worktree.
+
+## Plan
+
+- [x] Task 1: Make shared resource destinations replay-safe.
+- [ ] Task 2: Parse and compare command declarations.
+- [ ] Task 3: Require persistent, explicit command consent.
+- [ ] Task 4: Add durable run, output, import and map records.
+- [ ] Task 5: Add managed live jobs and dedicated dispatch pools.
+- [ ] Task 6: Execute commands with hardened argv, environment, output and quotas.
+- [ ] Task 7: Recover crashed runs and coordinate disable/shutdown.
+- [ ] Task 8: Implement safe exchange-folder operations and leases.
+- [ ] Task 9: Dispatch durable, replayable resource imports.
+- [ ] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
+- [ ] Task 11: Wire startup recovery, configuration, sweep and shutdown.
+- [ ] Task 12: Add administrator command history and authoritative job UI.
+- [ ] Task 13: Prove the complete host interface and document plugin authorship.
+
+## Review
+
+Task 1 landed in `bb768950` with test hardening in `44ac48df`. Parent
+verification passed the focused replay/precedence/concurrency cases and the
+broader `TestAddResource|TestUpload` selection. Independent GPT-5.6-sol spec and
+quality review approved after the precedence test began intercepting read-only
+`Open` and asserting the duplicate error's resource ID. The initial full Go
+baseline still has the pre-existing `server/api_tests`
+`TestSidebar_IsWrappedInADisclosure` failure; frontend unit tests pass (90 files,
+1409 tests).
+
+---
+
 # Plugin-declared server commands implementation planning (2026-09-19)
 
 **Goal:** Turn the approved command/exchange-folder design into a test-first,

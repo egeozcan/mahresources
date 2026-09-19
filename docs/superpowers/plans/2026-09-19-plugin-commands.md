@@ -70,7 +70,7 @@ Tasks 1–3 establish safe storage and informed consent. Tasks 4–8 establish d
 - Preserves the public `AddResource(contracts.File, string, *query_models.ResourceCreator)` interface unchanged.
 - Later Task 9 calls the private helper from `application_context` with an import claim's managed scratch directory.
 
-- [ ] **Step 1: Write the failing interrupted-copy replay test**
+- [x] **Step 1: Write the failing interrupted-copy replay test**
 
 Create the spec's mid-destination-copy crash/replay test with an Afero wrapper whose first `Create` for the resource destination returns a file that writes a strict prefix and then returns a sentinel error. Call `AddResource`, assert the first call fails and leaves the prefix, restore ordinary writes, call it again, and assert the committed resource's backing file equals the complete literal payload.
 
@@ -91,13 +91,13 @@ func TestAddResource_ReplayReplacesATruncatedUncommittedDestination(t *testing.T
 }
 ```
 
-- [ ] **Step 2: Run the replay test and verify the stale-prefix failure**
+- [x] **Step 2: Run the replay test and verify the stale-prefix failure**
 
 Run: `go test --tags 'json1 fts5' ./application_context -run TestAddResource_ReplayReplacesATruncatedUncommittedDestination -count=1`
 
 Expected: FAIL because the second call takes the current `Stat`/reuse branch and commits a resource whose backing file is the short prefix.
 
-- [ ] **Step 3: Write the committed-row precedence and concurrent controls**
+- [x] **Step 3: Write the committed-row precedence and concurrent controls**
 
 Add one test that creates a committed resource, replaces its backing file with a same-path sentinel, and repeats the upload. Assert the hash lookup returns/merges the committed row without opening, deleting or replacing the destination. Add the spec's concurrent same-content test with two goroutines, asserting one logical resource and a complete backing file.
 
@@ -131,7 +131,7 @@ func TestAddResource_ConcurrentSameContentNeverUnlinksTheWinner(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Add the private options-aware helper**
+- [x] **Step 4: Add the private options-aware helper**
 
 Keep the public method as the compatibility wrapper and route only its temporary snapshot directory through the option:
 
@@ -154,7 +154,7 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 }
 ```
 
-- [ ] **Step 5: Validate and replace only a mismatched uncommitted destination**
+- [x] **Step 5: Validate and replace only a mismatched uncommitted destination**
 
 Under `ResourceHashLock`, retain the committed-row lookup as the first branch. Add `io/fs` to the imports. Only after `gorm.ErrRecordNotFound`, compare `Stat().Size()` with `preFileSize`; reuse equal-size files, but close/remove a mismatched file and create/copy the complete snapshot. Rewind the snapshot before every copy.
 
@@ -177,7 +177,7 @@ default:
 
 Treat non-`IsNotExist` stat errors as errors; do not turn an unreadable destination into permission to overwrite it.
 
-- [ ] **Step 6: Verify red/green and mutation sensitivity**
+- [x] **Step 6: Verify red/green and mutation sensitivity**
 
 Run the three focused tests, then temporarily restore unconditional stale-file reuse and confirm the replay test fails. Restore the fix and run:
 
@@ -187,7 +187,7 @@ go test --tags 'json1 fts5' ./application_context -run 'TestAddResource|TestUplo
 git diff --check
 ```
 
-- [ ] **Step 7: Commit the standalone fix**
+- [x] **Step 7: Commit the standalone fix**
 
 ```bash
 git add application_context/resource_upload_context.go application_context/resource_upload_replay_test.go application_context/resource_upload_concurrency_test.go
