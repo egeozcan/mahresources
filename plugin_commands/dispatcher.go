@@ -62,9 +62,10 @@ type commandSubmission struct {
 }
 
 type importSubmission struct {
-	spec  ImportJobSpec
-	run   func(context.Context, Progress) Outcome
-	reply chan error
+	spec    ImportJobSpec
+	run     func(context.Context, Progress) Outcome
+	release func()
+	reply   chan error
 }
 
 type cancelSubmission struct {
@@ -89,13 +90,19 @@ type commandCompleted struct {
 type importCompleted struct{ importID string }
 
 type queuedImport struct {
-	spec ImportJobSpec
-	run  func(context.Context, Progress) Outcome
+	spec    ImportJobSpec
+	run     func(context.Context, Progress) Outcome
+	release func()
 }
 
 type activeCommand struct {
 	plugin string
 	cancel context.CancelCauseFunc
+}
+
+type activeImport struct {
+	cancel  context.CancelCauseFunc
+	release func()
 }
 
 type commandDispatchFailure struct {
@@ -131,7 +138,7 @@ type dispatcherState struct {
 	importCursor   int
 
 	activeCommands        map[string]activeCommand
-	activeImports         map[string]context.CancelCauseFunc
+	activeImports         map[string]activeImport
 	activeByPlugin        map[string]int
 	failedCommandDispatch map[string]*commandDispatchFailure
 	failedImportDispatch  map[string]*importDispatchFailure
@@ -145,6 +152,9 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 	}
 	if deps.Inspector == nil {
 		deps.Inspector = nativeProcessInspector{}
+	}
+	if deps.Leases == nil {
+		deps.Leases = NewLeaseManager()
 	}
 	return &Dispatcher{deps: deps, inbox: make(chan any, 256), done: make(chan struct{})}
 }
@@ -297,11 +307,26 @@ func (d *Dispatcher) submitImport(spec ImportJobSpec, run func(context.Context, 
 	if run == nil {
 		return fmt.Errorf("plugin_commands: import run function is required")
 	}
-	request := importSubmission{spec: spec, run: run, reply: make(chan error, 1)}
-	if err := d.send(context.Background(), request); err != nil {
+	if spec.RunID == "" {
+		return fmt.Errorf("plugin_commands: import requires run id")
+	}
+	// Pin at durable admission, before the import waits in the private queue.
+	// The sweep cannot pass its skip-check until the import commits or reaches a
+	// durable terminal failure.
+	release, err := d.deps.Leases.Acquire(spec.RunID)
+	if err != nil {
 		return err
 	}
-	return awaitDispatcherReply(request.reply, d.done)
+	request := importSubmission{spec: spec, run: run, release: release, reply: make(chan error, 1)}
+	if err := d.send(context.Background(), request); err != nil {
+		release()
+		return err
+	}
+	if err := awaitDispatcherReply(request.reply, d.done); err != nil {
+		release()
+		return err
+	}
+	return nil
 }
 
 // awaitDispatcherReply gives an accepted message's reply precedence over
@@ -348,7 +373,7 @@ func (d *Dispatcher) run(ctx context.Context) {
 		commandSeen:           make(map[string]bool),
 		importSeen:            make(map[string]bool),
 		activeCommands:        make(map[string]activeCommand),
-		activeImports:         make(map[string]context.CancelCauseFunc),
+		activeImports:         make(map[string]activeImport),
 		activeByPlugin:        make(map[string]int),
 		failedCommandDispatch: make(map[string]*commandDispatchFailure),
 		failedImportDispatch:  make(map[string]*importDispatchFailure),
@@ -386,8 +411,9 @@ func (d *Dispatcher) run(ctx context.Context) {
 			case commandCompleted:
 				d.completeCommand(&state, message)
 			case importCompleted:
-				if cancel, ok := state.activeImports[message.importID]; ok {
-					cancel(nil)
+				if active, ok := state.activeImports[message.importID]; ok {
+					active.cancel(nil)
+					active.release()
 					delete(state.activeImports, message.importID)
 				}
 			case stopDispatcher:
@@ -405,8 +431,8 @@ func (s *dispatcherState) cancelActive(cause error) {
 	for _, active := range s.activeCommands {
 		active.cancel(cause)
 	}
-	for _, cancel := range s.activeImports {
-		cancel(cause)
+	for _, active := range s.activeImports {
+		active.cancel(cause)
 	}
 }
 
@@ -428,6 +454,7 @@ func (d *Dispatcher) disableQueuedImports(state *dispatcherState, plugin, reason
 		if !won {
 			d.deps.Logf("plugin command import %s was no longer pending during plugin disable", item.spec.ImportID)
 		}
+		item.release()
 	}
 	state.imports[plugin] = kept
 	for _, failure := range state.failedImportDispatch {
@@ -491,6 +518,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
+			item.release()
 		}
 		delete(state.imports, plugin)
 	}
@@ -502,8 +530,10 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			firstErr = err
 		}
 		delete(state.failedImportDispatch, id)
-		if cancel, ok := state.activeImports[failure.item.spec.ImportID]; ok {
-			cancel(errDispatcherShutdown)
+		failure.item.release()
+		if active, ok := state.activeImports[failure.item.spec.ImportID]; ok {
+			active.cancel(errDispatcherShutdown)
+			active.release()
 			delete(state.activeImports, failure.item.spec.ImportID)
 		}
 	}
@@ -526,6 +556,11 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 
 	if err := d.deps.Store.InterruptNonterminalImports(time.Now().UTC()); err != nil && firstErr == nil {
 		firstErr = err
+	}
+	for id, active := range state.activeImports {
+		active.cancel(errDispatcherShutdown)
+		active.release()
+		delete(state.activeImports, id)
 	}
 	for id, active := range state.activeCommands {
 		result, err := d.finishShutdownRun(id, timedOut)
@@ -639,7 +674,7 @@ func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmissi
 	if len(state.imports[plugin]) >= limit {
 		return fmt.Errorf("plugin %q import queue is full (max %d pending)", plugin, limit)
 	}
-	state.imports[plugin] = append(state.imports[plugin], queuedImport{spec: request.spec, run: request.run})
+	state.imports[plugin] = append(state.imports[plugin], queuedImport{spec: request.spec, run: request.run, release: request.release})
 	if !state.importSeen[plugin] {
 		state.importSeen[plugin] = true
 		state.importPlugins = append(state.importPlugins, plugin)
@@ -817,8 +852,9 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 
 func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	runCtx, cancel := context.WithCancelCause(context.Background())
-	state.activeImports[item.spec.ImportID] = cancel
+	state.activeImports[item.spec.ImportID] = activeImport{cancel: cancel, release: item.release}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
+		defer item.release()
 		if !d.beginWorker() {
 			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
 		}
@@ -954,8 +990,10 @@ func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failur
 		return false, err
 	}
 	delete(state.failedImportDispatch, failure.item.spec.ImportID)
-	if cancel, ok := state.activeImports[failure.item.spec.ImportID]; ok {
-		cancel(nil)
+	failure.item.release()
+	if active, ok := state.activeImports[failure.item.spec.ImportID]; ok {
+		active.cancel(nil)
+		active.release()
 		delete(state.activeImports, failure.item.spec.ImportID)
 	}
 	if !won {

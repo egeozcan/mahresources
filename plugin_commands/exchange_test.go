@@ -156,6 +156,89 @@ func TestExchangeOwnershipStateAndNameMatrix(t *testing.T) {
 	}
 }
 
+func TestExchangeAuthorizesBeforeInputsAndLeaseState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	root := t.TempDir()
+	store := newExchangeTestStore()
+	addExchangeRun(t, store, root, RunRecord{ID: "owned-order", PluginName: "alpha", CreatedByUserID: uintPtr(7)}, map[string]string{"ok": "ok"})
+	addExchangeRun(t, store, root, RunRecord{ID: "running-order", PluginName: "alpha", CreatedByUserID: uintPtr(7), Status: RunStatusRunning}, map[string]string{"ok": "partial"})
+	service := NewExchange(store, exchangeTestSettings{root: root}).(*exchangeService)
+	owner := Access{PluginName: "alpha", ActorUserID: uintPtr(7)}
+	wrong := Access{PluginName: "alpha", ActorUserID: uintPtr(8)}
+
+	if _, err := service.Read(wrong, "owned-order", "../bad", 0); !errors.Is(err, ErrExchangeRunNotFound) {
+		t.Fatalf("unauthorized malformed read = %v, want run not found", err)
+	}
+	if err := service.Discard(wrong, "owned-order", "../bad"); !errors.Is(err, ErrExchangeRunNotFound) {
+		t.Fatalf("unauthorized malformed discard = %v, want run not found", err)
+	}
+	if _, err := service.Read(owner, "running-order", "../bad", 0); !errors.Is(err, ErrExchangeRunNotFinished) {
+		t.Fatalf("nonterminal malformed read = %v, want run not finished", err)
+	}
+
+	endSweep, ok := service.leases.BeginSweep("owned-order")
+	if !ok {
+		t.Fatal("begin sweep")
+	}
+	defer endSweep()
+	if _, err := service.List(wrong, "owned-order"); !errors.Is(err, ErrExchangeRunNotFound) {
+		t.Fatalf("unauthorized list during sweep = %v, want run not found", err)
+	}
+	if err := service.DiscardRun(wrong, "owned-order"); !errors.Is(err, ErrExchangeRunNotFound) {
+		t.Fatalf("unauthorized discard_run during sweep = %v, want run not found", err)
+	}
+}
+
+func TestExchangeRefusesSymlinkedManagedDirectoryComponents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	for _, component := range []string{"plugin_exchange", "plugin"} {
+		t.Run(component, func(t *testing.T) {
+			root := t.TempDir()
+			outside := t.TempDir()
+			store := newExchangeTestStore()
+			store.runs["component-link"] = RunRecord{ID: "component-link", PluginName: "alpha", CreatedByUserID: uintPtr(7), Status: RunStatusSucceeded}
+			outsideRun := filepath.Join(outside, "alpha", "component-link")
+			if err := os.MkdirAll(outsideRun, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			secret := filepath.Join(outsideRun, "secret")
+			if err := os.WriteFile(secret, []byte("outside"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			switch component {
+			case "plugin_exchange":
+				if err := os.Symlink(outside, filepath.Join(root, "plugin_exchange")); err != nil {
+					t.Fatal(err)
+				}
+			case "plugin":
+				if err := os.Mkdir(filepath.Join(root, "plugin_exchange"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "alpha"), filepath.Join(root, "plugin_exchange", "alpha")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			exchange := NewExchange(store, exchangeTestSettings{root: root})
+			access := Access{PluginName: "alpha", ActorUserID: uintPtr(7)}
+			if _, err := exchange.List(access, "component-link"); err == nil {
+				t.Fatal("list followed a managed-directory symlink")
+			}
+			if err := exchange.DiscardRun(access, "component-link"); err == nil {
+				t.Fatal("discard_run followed a managed-directory symlink")
+			}
+			body, err := os.ReadFile(secret)
+			if err != nil || string(body) != "outside" {
+				t.Fatalf("outside file changed: %q, %v", body, err)
+			}
+		})
+	}
+}
+
 func TestExchangeRefusesSymlinkedStagingRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("v1 exchange mediation is unsupported on Windows")
@@ -264,6 +347,106 @@ func TestExchangeRefusesSpecialFilesAndSymlinkSwap(t *testing.T) {
 	got, err = os.ReadFile(secret)
 	if err != nil || string(got) != "outside-secret" {
 		t.Fatalf("outside secret removed or changed: %q, %v", got, err)
+	}
+}
+
+func TestExchangeSpecialFileSwapDoesNotBlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	root := t.TempDir()
+	store := newExchangeTestStore()
+	dir := addExchangeRun(t, store, root, RunRecord{ID: "fifo-swap", PluginName: "alpha", CreatedByUserID: uintPtr(7)}, map[string]string{"victim": "inside"})
+	service := NewExchange(store, exchangeTestSettings{root: root}).(*exchangeService)
+	service.afterLstat = func(name string) {
+		service.afterLstat = nil
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+		if err := makeTestFIFO(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Read(Access{PluginName: "alpha", ActorUserID: uintPtr(7)}, "fifo-swap", "victim", MaxReadBytes)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("FIFO swap error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO swap blocked while holding the run lease")
+	}
+	end, ok := service.leases.BeginSweep("fifo-swap")
+	if !ok {
+		t.Fatal("read leaked the run lease after FIFO refusal")
+	}
+	end()
+}
+
+func TestExchangeDirectoryPathSwapStaysDescriptorRelative(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	root := t.TempDir()
+	store := newExchangeTestStore()
+	dir := addExchangeRun(t, store, root, RunRecord{ID: "dir-swap", PluginName: "alpha", CreatedByUserID: uintPtr(7)}, map[string]string{"inside": "original"})
+	service := NewExchange(store, exchangeTestSettings{root: root}).(*exchangeService)
+	moved := filepath.Join(filepath.Dir(dir), "moved-original")
+	service.afterOpenRunDir = func() {
+		service.afterOpenRunDir = nil
+		if err := os.Rename(dir, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "substitute"), []byte("wrong"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listing, err := service.List(Access{PluginName: "alpha", ActorUserID: uintPtr(7)}, "dir-swap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Entries) != 1 || listing.Entries[0].Name != "inside" {
+		t.Fatalf("listing escaped opened directory: %+v", listing.Entries)
+	}
+}
+
+func TestDiscardRunDoesNotDeleteSubstitutedTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	root := t.TempDir()
+	store := newExchangeTestStore()
+	dir := addExchangeRun(t, store, root, RunRecord{ID: "discard-swap", PluginName: "alpha", CreatedByUserID: uintPtr(7)}, map[string]string{"inside": "original"})
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret")
+	if err := os.WriteFile(secret, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewExchange(store, exchangeTestSettings{root: root}).(*exchangeService)
+	moved := filepath.Join(filepath.Dir(dir), "moved-discard")
+	service.beforeRemoveRun = func() {
+		service.beforeRemoveRun = nil
+		if err := os.Rename(dir, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.DiscardRun(Access{PluginName: "alpha", ActorUserID: uintPtr(7)}, "discard-swap"); err == nil {
+		t.Fatal("discard_run accepted a substituted run path")
+	}
+	body, err := os.ReadFile(secret)
+	if err != nil || string(body) != "outside" {
+		t.Fatalf("substituted outside tree changed: %q, %v", body, err)
 	}
 }
 

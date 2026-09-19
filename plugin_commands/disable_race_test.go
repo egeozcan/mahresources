@@ -132,7 +132,7 @@ func TestDisableCancelsQueuedImportsButLetsRunningImportsFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"running-a", "running-b", "queued-c"} {
-		if err := d.submitImport(ImportJobSpec{ImportID: id, PluginName: "p"}, func(context.Context, Progress) Outcome {
+		if err := d.submitImport(ImportJobSpec{ImportID: id, RunID: "run-" + id, PluginName: "p"}, func(context.Context, Progress) Outcome {
 			return Outcome{Status: ImportStatusSucceeded}
 		}); err != nil {
 			t.Fatal(err)
@@ -174,7 +174,7 @@ func TestDisableCancelsImportWaitingInDispatchFailureRetry(t *testing.T) {
 	if err := d.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.submitImport(ImportJobSpec{ImportID: "retry-import", PluginName: "p"}, func(context.Context, Progress) Outcome {
+	if err := d.submitImport(ImportJobSpec{ImportID: "retry-import", RunID: "run-retry-import", PluginName: "p"}, func(context.Context, Progress) Outcome {
 		return Outcome{Status: ImportStatusSucceeded}
 	}); err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestShutdownCancelsRunningImportSourceAndDrainsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
-	if err := d.submitImport(ImportJobSpec{ImportID: "running-import", PluginName: "p"}, func(ctx context.Context, _ Progress) Outcome {
+	if err := d.submitImport(ImportJobSpec{ImportID: "running-import", RunID: "run-running-import", PluginName: "p"}, func(ctx context.Context, _ Progress) Outcome {
 		close(started)
 		<-ctx.Done()
 		if !errors.Is(context.Cause(ctx), errDispatcherShutdown) {

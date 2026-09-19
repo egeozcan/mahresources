@@ -66,7 +66,7 @@ func TestQuotaGlobalLimitDoesNotBlockImportDrain(t *testing.T) {
 		defer cancel()
 		_ = dispatcher.Stop(ctx)
 	})
-	if err := dispatcher.submitImport(ImportJobSpec{ImportID: "import-1", PluginName: "plug"}, func(context.Context, Progress) Outcome {
+	if err := dispatcher.submitImport(ImportJobSpec{ImportID: "import-1", RunID: "run-import-1", PluginName: "plug"}, func(context.Context, Progress) Outcome {
 		return Outcome{Status: ImportStatusSucceeded}
 	}); err != nil {
 		t.Fatalf("import drain was blocked by global command quota: %v", err)

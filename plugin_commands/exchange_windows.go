@@ -4,7 +4,7 @@ package plugin_commands
 
 import "os"
 
-func openExchangeRunDir(string) (*os.File, error) {
+func openExchangeRunDir(string, string, string) (*os.File, error) {
 	return nil, ErrExchangeUnsupported
 }
 
@@ -12,6 +12,14 @@ func openExchangeRegularAt(*os.File, string, func(string)) (*os.File, error) {
 	return nil, ErrExchangeUnsupported
 }
 
+func statExchangeRegularAt(*os.File, string) (os.FileInfo, error) {
+	return nil, ErrExchangeUnsupported
+}
+
 func unlinkExchangeRegularAt(*os.File, string, func(string)) error {
+	return ErrExchangeUnsupported
+}
+
+func removeExchangeRunDir(string, string, string, func()) error {
 	return ErrExchangeUnsupported
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ var (
 	ErrExchangeOutputUnverified = errors.New("output unverified")
 	ErrExchangeRunNotFinished   = errors.New("run not finished")
 	ErrExchangeFileNotRegular   = errors.New("file is not a regular file")
+	errExchangePathChanged      = errors.New("exchange path changed during operation")
 )
 
 type Entry struct {
@@ -46,10 +46,12 @@ type Exchange interface {
 }
 
 type exchangeService struct {
-	store      Store
-	settings   Settings
-	leases     *LeaseManager
-	afterLstat func(string) // test barrier; nil in production
+	store           Store
+	settings        Settings
+	leases          *LeaseManager
+	afterLstat      func(string) // test barrier; nil in production
+	afterOpenRunDir func()       // test barrier; nil in production
+	beforeRemoveRun func()       // test barrier; nil in production
 }
 
 func NewExchange(store Store, settings Settings) Exchange {
@@ -69,35 +71,34 @@ func (e *exchangeService) List(access Access, runID string) (Listing, error) {
 	if err := exchangePlatformSupported(); err != nil {
 		return Listing{}, err
 	}
-	release, err := e.leases.Acquire(runID)
+	run, release, err := e.authorizeAndLease(access, runID, false)
 	if err != nil {
 		return Listing{}, err
 	}
 	defer release()
 
-	run, err := e.authorizeRun(access, runID, false)
-	if err != nil {
-		return Listing{}, err
-	}
-	dir, err := openExchangeRunDir(e.runDir(run))
+	dir, err := openExchangeRunDir(e.settings.StagingRoot(), run.PluginName, run.ID)
 	if err != nil {
 		return Listing{}, classifyRunDirError(err)
 	}
 	defer dir.Close()
+	if e.afterOpenRunDir != nil {
+		e.afterOpenRunDir()
+	}
 
 	entries := make([]Entry, 0, min(MaxListEntries, 64))
 	for {
 		batch, readErr := dir.ReadDir(256)
 		for _, item := range batch {
-			info, infoErr := item.Info()
+			info, infoErr := statExchangeRegularAt(dir, item.Name())
 			if infoErr != nil {
 				if errors.Is(infoErr, os.ErrNotExist) {
 					continue
 				}
+				if errors.Is(infoErr, ErrExchangeFileNotRegular) {
+					continue
+				}
 				return Listing{}, fmt.Errorf("list exchange file %q: %w", item.Name(), infoErr)
-			}
-			if !info.Mode().IsRegular() {
-				continue
 			}
 			if len(entries) == MaxListEntries {
 				return Listing{Entries: entries, Truncated: true}, nil
@@ -117,23 +118,19 @@ func (e *exchangeService) Read(access Access, runID, name string, maxBytes int64
 	if err := exchangePlatformSupported(); err != nil {
 		return nil, err
 	}
+	run, release, err := e.authorizeAndLease(access, runID, false)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := validateExchangeName(name); err != nil {
 		return nil, err
 	}
 	if maxBytes < 1 || maxBytes > MaxReadBytes {
 		return nil, fmt.Errorf("max_bytes must be between 1 and %d", MaxReadBytes)
 	}
-	release, err := e.leases.Acquire(runID)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 
-	run, err := e.authorizeRun(access, runID, false)
-	if err != nil {
-		return nil, err
-	}
-	dir, err := openExchangeRunDir(e.runDir(run))
+	dir, err := openExchangeRunDir(e.settings.StagingRoot(), run.PluginName, run.ID)
 	if err != nil {
 		return nil, classifyRunDirError(err)
 	}
@@ -158,20 +155,16 @@ func (e *exchangeService) Discard(access Access, runID, name string) error {
 	if err := exchangePlatformSupported(); err != nil {
 		return err
 	}
-	if err := validateExchangeName(name); err != nil {
-		return err
-	}
-	release, err := e.leases.Acquire(runID)
+	run, release, err := e.authorizeAndLease(access, runID, false)
 	if err != nil {
 		return err
 	}
 	defer release()
-
-	run, err := e.authorizeRun(access, runID, false)
-	if err != nil {
+	if err := validateExchangeName(name); err != nil {
 		return err
 	}
-	dir, err := openExchangeRunDir(e.runDir(run))
+
+	dir, err := openExchangeRunDir(e.settings.StagingRoot(), run.PluginName, run.ID)
 	if err != nil {
 		return classifyRunDirError(err)
 	}
@@ -186,14 +179,18 @@ func (e *exchangeService) DiscardRun(access Access, runID string) error {
 	if err := exchangePlatformSupported(); err != nil {
 		return err
 	}
+	// Authorization precedes observable lease state. Revalidate after reserving
+	// the sweep so actor deletion or a concurrent state change fails closed.
+	run, err := e.authorizeRun(access, runID, true)
+	if err != nil {
+		return err
+	}
 	endSweep, ok := e.leases.BeginSweep(runID)
 	if !ok {
 		return fmt.Errorf("active file operation prevents discard_run")
 	}
 	defer endSweep()
-
-	run, err := e.authorizeRun(access, runID, true)
-	if err != nil {
+	if run, err = e.authorizeRun(access, runID, true); err != nil {
 		return err
 	}
 	active, err := e.store.HasNonterminalImports(runID)
@@ -204,18 +201,27 @@ func (e *exchangeService) DiscardRun(access Access, runID string) error {
 		return fmt.Errorf("nonterminal import prevents discard_run")
 	}
 
-	dirPath := e.runDir(run)
-	dir, err := openExchangeRunDir(dirPath)
-	if err != nil {
+	if err := removeExchangeRunDir(e.settings.StagingRoot(), run.PluginName, run.ID, e.beforeRemoveRun); err != nil {
 		return classifyRunDirError(err)
 	}
-	if err := dir.Close(); err != nil {
-		return fmt.Errorf("close exchange folder: %w", err)
-	}
-	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf("discard run exchange folder: %w", err)
-	}
 	return nil
+}
+
+func (e *exchangeService) authorizeAndLease(access Access, runID string, allowUnverified bool) (RunRecord, func(), error) {
+	run, err := e.authorizeRun(access, runID, allowUnverified)
+	if err != nil {
+		return RunRecord{}, nil, err
+	}
+	release, err := e.leases.Acquire(runID)
+	if err != nil {
+		return RunRecord{}, nil, err
+	}
+	run, err = e.authorizeRun(access, runID, allowUnverified)
+	if err != nil {
+		release()
+		return RunRecord{}, nil, err
+	}
+	return run, release, nil
 }
 
 func (e *exchangeService) authorizeRun(access Access, runID string, allowUnverified bool) (RunRecord, error) {
@@ -246,10 +252,6 @@ func (e *exchangeService) authorizeRun(access Access, runID string, allowUnverif
 		return RunRecord{}, ErrExchangeOutputUnverified
 	}
 	return run, nil
-}
-
-func (e *exchangeService) runDir(run RunRecord) string {
-	return filepath.Join(e.settings.StagingRoot(), "plugin_exchange", run.PluginName, run.ID)
 }
 
 func validateExchangeName(name string) error {

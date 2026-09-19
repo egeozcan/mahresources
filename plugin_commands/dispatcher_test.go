@@ -611,7 +611,7 @@ func TestDispatcherRetriesImportDispatchFailurePersistence(t *testing.T) {
 	store.mu.Lock()
 	store.finishImportErr = errors.New("finish unavailable")
 	store.mu.Unlock()
-	if err := d.submitImport(ImportJobSpec{ImportID: "import-retry", PluginName: "p"}, func(context.Context, Progress) Outcome {
+	if err := d.submitImport(ImportJobSpec{ImportID: "import-retry", RunID: "run-import-retry", PluginName: "p"}, func(context.Context, Progress) Outcome {
 		return Outcome{Status: ImportStatusSucceeded}
 	}); err != nil {
 		t.Fatal(err)
@@ -695,7 +695,7 @@ func TestDispatcherImportSubmitStopNeverRejectsAcceptedWork(t *testing.T) {
 		stopResult := make(chan error, 1)
 		go func() {
 			<-start
-			submitResult <- d.submitImport(ImportJobSpec{ImportID: "import", PluginName: "p"}, func(context.Context, Progress) Outcome {
+			submitResult <- d.submitImport(ImportJobSpec{ImportID: "import", RunID: "run-import", PluginName: "p"}, func(context.Context, Progress) Outcome {
 				return Outcome{Status: ImportStatusSucceeded}
 			})
 		}()
@@ -720,12 +720,12 @@ func TestDispatcherImportSubmitStopNeverRejectsAcceptedWork(t *testing.T) {
 func TestDispatcherImportQueueHasIndependentCapAndTwoSlots(t *testing.T) {
 	d, _, jobs := startTestDispatcher(t, 2)
 	for i := 0; i < 4; i++ {
-		if err := d.submitImport(ImportJobSpec{ImportID: string(rune('a' + i)), PluginName: "p"}, func(context.Context, Progress) Outcome { return Outcome{Status: ImportStatusSucceeded} }); err != nil {
+		if err := d.submitImport(ImportJobSpec{ImportID: string(rune('a' + i)), RunID: "run-" + string(rune('a'+i)), PluginName: "p"}, func(context.Context, Progress) Outcome { return Outcome{Status: ImportStatusSucceeded} }); err != nil {
 			t.Fatalf("submit import %d: %v", i, err)
 		}
 	}
 	waitFor(t, func() bool { return jobs.importCount() == 2 })
-	if err := d.submitImport(ImportJobSpec{ImportID: "overflow", PluginName: "p"}, func(context.Context, Progress) Outcome { return Outcome{} }); err == nil {
+	if err := d.submitImport(ImportJobSpec{ImportID: "overflow", RunID: "run-overflow", PluginName: "p"}, func(context.Context, Progress) Outcome { return Outcome{} }); err == nil {
 		t.Fatal("import beyond pending cap admitted")
 	}
 	if jobs.importCount() != 2 {

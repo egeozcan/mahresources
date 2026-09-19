@@ -167,6 +167,7 @@ type RunJobSpec struct {
 
 type ImportJobSpec struct {
 	ImportID    string
+	RunID       string
 	PluginName  string
 	OwnerUserID *uint
 }
@@ -220,5 +221,6 @@ type Dependencies struct {
 	Executor  Executor
 	Settings  Settings
 	Inspector ProcessInspector
+	Leases    *LeaseManager
 	Logf      func(string, ...any)
 }
