@@ -19,7 +19,11 @@ const (
 	dispatchFailureRetryDelay  = 100 * time.Millisecond
 )
 
-var errDispatcherStopped = errors.New("plugin command dispatcher is stopped")
+var (
+	errDispatcherStopped  = errors.New("plugin command dispatcher is stopped")
+	errDispatcherShutdown = errors.New("plugin command dispatcher is shutting down")
+	errOperatorCancelled  = errors.New("plugin command was cancelled")
+)
 
 type commandAdmission interface {
 	Prepare(QueuedRun) error
@@ -33,6 +37,10 @@ type Dispatcher struct {
 	started bool
 	inbox   chan any
 	done    chan struct{}
+
+	workerMu      sync.Mutex
+	workerClosing bool
+	workers       sync.WaitGroup
 }
 
 type commandSubmission struct {
@@ -52,7 +60,15 @@ type cancelSubmission struct {
 	reply  chan error
 }
 
-type stopDispatcher struct{ reply chan struct{} }
+type stopDispatcher struct {
+	ctx   context.Context
+	reply chan error
+}
+type disablePluginSubmission struct {
+	plugin string
+	reason string
+	reply  chan error
+}
 type commandCompleted struct{ runID string }
 type importCompleted struct{ importID string }
 
@@ -63,7 +79,7 @@ type queuedImport struct {
 
 type activeCommand struct {
 	plugin string
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 }
 
 type commandDispatchFailure struct {
@@ -97,7 +113,7 @@ type dispatcherState struct {
 	importCursor   int
 
 	activeCommands        map[string]activeCommand
-	activeImports         map[string]context.CancelFunc
+	activeImports         map[string]context.CancelCauseFunc
 	activeByPlugin        map[string]int
 	failedCommandDispatch map[string]*commandDispatchFailure
 	failedImportDispatch  map[string]*importDispatchFailure
@@ -107,6 +123,9 @@ type dispatcherState struct {
 func NewDispatcher(deps Dependencies) *Dispatcher {
 	if deps.Logf == nil {
 		deps.Logf = func(string, ...any) {}
+	}
+	if deps.Inspector == nil {
+		deps.Inspector = nativeProcessInspector{}
 	}
 	return &Dispatcher{deps: deps, inbox: make(chan any, 256), done: make(chan struct{})}
 }
@@ -126,20 +145,25 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 }
 
 func (d *Dispatcher) Stop(ctx context.Context) error {
-	reply := make(chan struct{})
-	if err := d.send(ctx, stopDispatcher{reply: reply}); err != nil {
+	reply := make(chan error, 1)
+	if err := d.send(ctx, stopDispatcher{ctx: ctx, reply: reply}); err != nil {
 		if errors.Is(err, errDispatcherStopped) {
 			return nil
 		}
 		return err
 	}
 	select {
-	case <-reply:
-		return nil
+	case err := <-reply:
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-d.done:
-		return nil
+		select {
+		case err := <-reply:
+			return err
+		default:
+			return nil
+		}
 	}
 }
 
@@ -179,7 +203,38 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 }
 
 func (d *Dispatcher) Cancel(runID, reason string) error {
+	// The durable latch is taken before the owner goroutine can move the run
+	// across its queue/fork boundary. The runner reads the same latch immediately
+	// before Start, so a cancellation cannot be acknowledged while a process is
+	// still able to appear afterwards.
+	if err := d.deps.Store.RequestRunCancel(runID, reason); err != nil {
+		return err
+	}
 	request := cancelSubmission{runID: runID, reason: reason, reply: make(chan error, 1)}
+	if err := d.send(context.Background(), request); err != nil {
+		return err
+	}
+	return awaitDispatcherReply(request.reply, d.done)
+}
+
+// DisablePlugin cancels every nonterminal command for plugin through the same
+// durable primitive used by operator cancellation, then cancels imports which
+// are still pending in the dispatcher's private queue. Running imports are left
+// alone so a commit already in progress can finish atomically.
+func (d *Dispatcher) DisablePlugin(plugin, reason string) error {
+	runs, err := d.deps.Store.NonterminalRuns()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.PluginName != plugin {
+			continue
+		}
+		if err := d.Cancel(run.ID, reason); err != nil && !errors.Is(err, ErrRunNotCancellable) {
+			return err
+		}
+	}
+	request := disablePluginSubmission{plugin: plugin, reason: reason, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), request); err != nil {
 		return err
 	}
@@ -243,7 +298,7 @@ func (d *Dispatcher) run(ctx context.Context) {
 		commandSeen:           make(map[string]bool),
 		importSeen:            make(map[string]bool),
 		activeCommands:        make(map[string]activeCommand),
-		activeImports:         make(map[string]context.CancelFunc),
+		activeImports:         make(map[string]context.CancelCauseFunc),
 		activeByPlugin:        make(map[string]int),
 		failedCommandDispatch: make(map[string]*commandDispatchFailure),
 		failedImportDispatch:  make(map[string]*importDispatchFailure),
@@ -253,7 +308,9 @@ func (d *Dispatcher) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			state.cancelActive()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), groupDrainTimeout)
+			_ = d.shutdown(shutdownCtx, &state)
+			cancel()
 			return
 		case <-retryTicker.C:
 			d.retryDispatchFailures(&state)
@@ -266,20 +323,21 @@ func (d *Dispatcher) run(ctx context.Context) {
 				message.reply <- d.acceptImport(&state, message)
 			case cancelSubmission:
 				message.reply <- d.cancel(&state, message.runID, message.reason)
+			case disablePluginSubmission:
+				message.reply <- d.disableQueuedImports(&state, message.plugin, message.reason)
 			case commandCompleted:
 				if active, ok := state.activeCommands[message.runID]; ok {
-					active.cancel()
+					active.cancel(nil)
 					delete(state.activeCommands, message.runID)
 					state.activeByPlugin[active.plugin]--
 				}
 			case importCompleted:
 				if cancel, ok := state.activeImports[message.importID]; ok {
-					cancel()
+					cancel(nil)
 					delete(state.activeImports, message.importID)
 				}
 			case stopDispatcher:
-				state.cancelActive()
-				close(message.reply)
+				message.reply <- d.shutdown(message.ctx, &state)
 				return
 			}
 			d.schedule(&state)
@@ -287,13 +345,162 @@ func (d *Dispatcher) run(ctx context.Context) {
 	}
 }
 
-func (s *dispatcherState) cancelActive() {
+func (s *dispatcherState) cancelActive(cause error) {
 	for _, active := range s.activeCommands {
-		active.cancel()
+		active.cancel(cause)
 	}
 	for _, cancel := range s.activeImports {
-		cancel()
+		cancel(cause)
 	}
+}
+
+func (d *Dispatcher) disableQueuedImports(state *dispatcherState, plugin, reason string) error {
+	queue := state.imports[plugin]
+	kept := queue[:0]
+	var firstErr error
+	for _, item := range queue {
+		won, err := d.deps.Store.FinishImport(item.spec.ImportID, ImportFinish{
+			Status: ImportStatusCancelled, Error: reason, FinishedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			kept = append(kept, item)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if !won {
+			d.deps.Logf("plugin command import %s was no longer pending during plugin disable", item.spec.ImportID)
+		}
+	}
+	state.imports[plugin] = kept
+	return firstErr
+}
+
+func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error {
+	const shutdownReason = "server interrupted"
+	d.workerMu.Lock()
+	d.workerClosing = true
+	d.workerMu.Unlock()
+	var firstErr error
+
+	for plugin, queue := range state.commands {
+		for _, run := range queue {
+			result, err := d.finishShutdownRun(run.RunID, false)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			deliverCompletion(run.Request.Completion, result)
+		}
+		delete(state.commands, plugin)
+	}
+	for id, cancellation := range state.queuedCancellations {
+		if _, err := d.persistQueuedCancellation(state, cancellation); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		delete(state.queuedCancellations, id)
+	}
+	for id, failure := range state.failedCommandDispatch {
+		result, err := d.finishShutdownRun(id, false)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		d.releaseCommandDispatchFailure(state, failure, result)
+	}
+	for plugin, queue := range state.imports {
+		for _, item := range queue {
+			_, err := d.deps.Store.FinishImport(item.spec.ImportID, ImportFinish{
+				Status: ImportStatusInterrupted, Error: shutdownReason, FinishedAt: time.Now().UTC(),
+			})
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		delete(state.imports, plugin)
+	}
+	for id, failure := range state.failedImportDispatch {
+		_, err := d.deps.Store.FinishImport(id, ImportFinish{
+			Status: ImportStatusInterrupted, Error: shutdownReason, FinishedAt: time.Now().UTC(),
+		})
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		delete(state.failedImportDispatch, id)
+		if cancel, ok := state.activeImports[failure.item.spec.ImportID]; ok {
+			cancel(errDispatcherShutdown)
+			delete(state.activeImports, failure.item.spec.ImportID)
+		}
+	}
+
+	state.cancelActive(errDispatcherShutdown)
+	workersDone := make(chan struct{})
+	go func() {
+		d.workers.Wait()
+		close(workersDone)
+	}()
+	timedOut := false
+	select {
+	case <-workersDone:
+	case <-ctx.Done():
+		timedOut = true
+		if firstErr == nil {
+			firstErr = ctx.Err()
+		}
+	}
+
+	if err := d.deps.Store.InterruptNonterminalImports(time.Now().UTC()); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	for id, active := range state.activeCommands {
+		result, err := d.finishShutdownRun(id, timedOut)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		active.cancel(errDispatcherShutdown)
+		delete(state.activeCommands, id)
+		state.activeByPlugin[active.plugin]--
+		_ = result
+	}
+	return firstErr
+}
+
+func (d *Dispatcher) finishShutdownRun(runID string, outputUnverified bool) (Result, error) {
+	record, output, err := d.deps.Store.Run(runID)
+	if err != nil {
+		return Result{}, err
+	}
+	if RunStatusTerminal(record.Status) {
+		return resultFromRun(record), nil
+	}
+	status, reason := RunStatusInterrupted, "server interrupted"
+	if record.CancelRequested {
+		status, reason = RunStatusCancelled, record.Error
+	}
+	won, err := d.deps.Store.FinishRun(runID, RunFinish{
+		Status: status, Error: reason, OutputTail: output.OutputTail,
+		OutputUnverified: outputUnverified, FinishedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	if won {
+		record.Status, record.Error = status, reason
+		return resultFromRun(record), nil
+	}
+	record, _, err = d.deps.Store.Run(runID)
+	if err != nil {
+		return Result{}, err
+	}
+	return resultFromRun(record), nil
 }
 
 func (d *Dispatcher) acceptCommand(state *dispatcherState, run QueuedRun) error {
@@ -366,9 +573,6 @@ func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmissi
 }
 
 func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error {
-	if err := d.deps.Store.RequestRunCancel(runID, reason); err != nil {
-		return err
-	}
 	if failure, ok := state.failedCommandDispatch[runID]; ok {
 		failure.status = RunStatusCancelled
 		failure.reason = reason
@@ -376,7 +580,7 @@ func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error 
 		return err
 	}
 	if active, ok := state.activeCommands[runID]; ok {
-		active.cancel()
+		active.cancel(errOperatorCancelled)
 		return nil
 	}
 	for plugin, queue := range state.commands {
@@ -390,6 +594,20 @@ func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error 
 			_, err := d.persistQueuedCancellation(state, cancellation)
 			return err
 		}
+	}
+	// A durable queued row can outlive the process which owned its private
+	// queue. Disable and operator cancellation still have to settle it without
+	// spawning work; recovery must not be required to complete an acknowledged
+	// cancellation in the current process.
+	record, output, err := d.deps.Store.Run(runID)
+	if err != nil {
+		return err
+	}
+	if !RunStatusTerminal(record.Status) && record.CancelRequested {
+		_, err = d.deps.Store.FinishRun(runID, RunFinish{
+			Status: RunStatusCancelled, Error: reason, OutputTail: output.OutputTail, FinishedAt: time.Now().UTC(),
+		})
+		return err
 	}
 	return ErrRunNotCancellable
 }
@@ -450,7 +668,7 @@ func (s *dispatcherState) nextImport() (queuedImport, bool) {
 }
 
 func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
-	execCtx, cancel := context.WithCancel(context.Background())
+	execCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeCommands[run.RunID] = activeCommand{plugin: run.Request.PluginName, cancel: cancel}
 	state.activeByPlugin[run.Request.PluginName]++
 
@@ -459,7 +677,11 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 	}, func(reason string) error {
 		return d.Cancel(run.RunID, reason)
 	}, func(liveCtx context.Context, progress Progress) Outcome {
-		stop := context.AfterFunc(liveCtx, cancel)
+		if !d.beginWorker() {
+			return Outcome{Status: RunStatusInterrupted, Error: "server interrupted"}
+		}
+		defer d.workers.Done()
+		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
 		outcome := d.deps.Executor.Execute(execCtx, run)
 		stop()
 		result := Result{OK: outcome.Status == RunStatusSucceeded, Error: outcome.Error, RunID: run.RunID}
@@ -474,7 +696,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		return
 	}
 
-	cancel()
+	cancel(err)
 	failure := &commandDispatchFailure{
 		run: run, dispatchErr: err, status: RunStatusFailed, reason: err.Error(),
 	}
@@ -483,10 +705,14 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 }
 
 func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeImports[item.spec.ImportID] = cancel
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
-		stop := context.AfterFunc(liveCtx, cancel)
+		if !d.beginWorker() {
+			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
+		}
+		defer d.workers.Done()
+		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
 		outcome := item.run(runCtx, progress)
 		stop()
 		d.post(importCompleted{importID: item.spec.ImportID})
@@ -495,7 +721,7 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	if err == nil {
 		return
 	}
-	cancel()
+	cancel(err)
 	failure := &importDispatchFailure{item: item, dispatchErr: err}
 	state.failedImportDispatch[item.spec.ImportID] = failure
 	_, _ = d.persistImportDispatchFailure(state, failure)
@@ -590,7 +816,7 @@ func (d *Dispatcher) persistCommandDispatchFailure(state *dispatcherState, failu
 func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failure *commandDispatchFailure, result Result) {
 	delete(state.failedCommandDispatch, failure.run.RunID)
 	if active, ok := state.activeCommands[failure.run.RunID]; ok {
-		active.cancel()
+		active.cancel(nil)
 		delete(state.activeCommands, failure.run.RunID)
 		state.activeByPlugin[active.plugin]--
 	}
@@ -607,7 +833,7 @@ func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failur
 	}
 	delete(state.failedImportDispatch, failure.item.spec.ImportID)
 	if cancel, ok := state.activeImports[failure.item.spec.ImportID]; ok {
-		cancel()
+		cancel(nil)
 		delete(state.activeImports, failure.item.spec.ImportID)
 	}
 	if !won {
@@ -627,6 +853,16 @@ func deliverCompletion(completion func(Result), result Result) {
 	if completion != nil {
 		go completion(result)
 	}
+}
+
+func (d *Dispatcher) beginWorker() bool {
+	d.workerMu.Lock()
+	defer d.workerMu.Unlock()
+	if d.workerClosing {
+		return false
+	}
+	d.workers.Add(1)
+	return true
 }
 
 func (d *Dispatcher) post(message any) {

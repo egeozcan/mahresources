@@ -31,6 +31,11 @@ type ProcessInspector interface {
 	KillGroup(pgid int) error
 }
 
+// nativeProcessInspector is implemented per platform. Ownership inspection is
+// intentionally stronger than process-group existence: recovery must not signal
+// a reused pgid belonging to another process.
+type nativeProcessInspector struct{}
+
 type RunnerDependencies struct {
 	Store     Store
 	Settings  Settings

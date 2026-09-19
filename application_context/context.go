@@ -27,6 +27,7 @@ import (
 	"mahresources/groupio"
 	"mahresources/idlock"
 	"mahresources/models"
+	"mahresources/plugin_commands"
 	"mahresources/plugin_system"
 	"mahresources/search"
 	"mahresources/storage"
@@ -471,6 +472,10 @@ type MahresourcesContext struct {
 	icsCache *ICSCache
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
+	// pluginCommandDispatcher owns process-lifetime command/import admission.
+	// It is installed after construction; shallow request/transaction clones
+	// intentionally share the same dispatcher pointer.
+	pluginCommandDispatcher *plugin_commands.Dispatcher
 	// pluginScheduler owns the clock that fires plugin schedules, and is the only
 	// thing that can run one on demand. It is installed by main after the
 	// scheduler is constructed, the way the two worker queues above are, because

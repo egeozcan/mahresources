@@ -139,8 +139,18 @@ func (s *runnerTestStore) Run(id string) (RunRecord, RunOutput, error) {
 	}
 	return run, s.outputs[id], nil
 }
-func (s *runnerTestStore) Runs(Access) ([]RunView, error)                     { return nil, nil }
-func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error)              { return nil, nil }
+func (s *runnerTestStore) Runs(Access) ([]RunView, error) { return nil, nil }
+func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var runs []RunRecord
+	for _, run := range s.runs {
+		if !RunStatusTerminal(run.Status) {
+			runs = append(runs, run)
+		}
+	}
+	return runs, nil
+}
 func (s *runnerTestStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) { return nil, nil }
 func (s *runnerTestStore) PruneRunOutputs(time.Time) (int64, error)           { return 0, nil }
 func (s *runnerTestStore) ImportMap(string, string) (ImportMapEntry, bool, error) {

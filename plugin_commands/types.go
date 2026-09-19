@@ -214,9 +214,10 @@ type Executor interface {
 }
 
 type Dependencies struct {
-	Store    Store
-	Jobs     LiveJobs
-	Executor Executor
-	Settings Settings
-	Logf     func(string, ...any)
+	Store     Store
+	Jobs      LiveJobs
+	Executor  Executor
+	Settings  Settings
+	Inspector ProcessInspector
+	Logf      func(string, ...any)
 }

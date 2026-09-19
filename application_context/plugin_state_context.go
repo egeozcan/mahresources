@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mahresources/models"
+	"mahresources/plugin_commands"
 	"mahresources/plugin_system"
 )
 
@@ -204,6 +205,14 @@ type PluginEnableOptions struct {
 	ConfirmCommands bool
 }
 
+// SetPluginCommandDispatcher installs the process-lifetime dispatcher after the
+// application context has been constructed. Task 11 owns constructing, starting
+// and stopping it; this seam only lets plugin disable revoke command work after
+// the VM has been removed.
+func (ctx *MahresourcesContext) SetPluginCommandDispatcher(dispatcher *plugin_commands.Dispatcher) {
+	ctx.pluginCommandDispatcher = dispatcher
+}
+
 func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool) error {
 	return ctx.SetPluginEnabledWithOptions(pluginName, enabled, PluginEnableOptions{})
 }
@@ -298,12 +307,18 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, e
 				return err
 			}
 			// Not loaded and no load in flight: the caller asked for a state the
-			// process is already in, which is success rather than a failure to
-			// report.
-			if !ctx.pluginManager.IsEnabled(pluginName) {
-				return nil
+			// process is already in. Still continue through command revocation:
+			// durable work can survive the VM which submitted it.
+			if ctx.pluginManager.IsEnabled(pluginName) {
+				return err
 			}
-			return err
+		}
+		if ctx.pluginCommandDispatcher != nil {
+			if err := ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
+				ctx.Logger().Error("system", "plugin", nil, pluginName,
+					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": err.Error()})
+				return err
+			}
 		}
 	}
 

@@ -58,13 +58,30 @@ func (s *dispatcherTestStore) MarkRunRunning(id string, started time.Time) (bool
 	s.runs[id] = record
 	return true, nil
 }
-func (s *dispatcherTestStore) SetRunProcessGroup(string, int) error { return nil }
+func (s *dispatcherTestStore) SetRunProcessGroup(id string, pgid int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.runs[id]
+	if !ok || record.Status != RunStatusRunning || record.ProcessGroupID != nil {
+		return errors.New("run is not awaiting a process group")
+	}
+	record.ProcessGroupID = &pgid
+	s.runs[id] = record
+	return nil
+}
 func (s *dispatcherTestStore) RequestRunCancel(id, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.runs[id]; !ok {
+	record, ok := s.runs[id]
+	if !ok {
 		return ErrRunNotFound
 	}
+	if RunStatusTerminal(record.Status) || record.CancelRequested {
+		return ErrRunNotCancellable
+	}
+	record.CancelRequested = true
+	record.Error = reason
+	s.runs[id] = record
 	s.cancelled = append(s.cancelled, id)
 	return nil
 }
@@ -81,6 +98,7 @@ func (s *dispatcherTestStore) FinishRun(id string, f RunFinish) (bool, error) {
 	record.Status = f.Status
 	record.Error = f.Error
 	record.ExitCode = f.ExitCode
+	record.OutputUnverified = f.OutputUnverified
 	record.FinishedAt = &f.FinishedAt
 	s.runs[id] = record
 	s.finishes[id] = f

@@ -26,6 +26,11 @@ type commandExecutor struct {
 	deps           RunnerDependencies
 	cleanupTimeout time.Duration
 	quotaInterval  time.Duration
+	// Test barriers sit on the two cancellation boundaries which must remain
+	// closed: the last check before fork and the interval after Start before pgid
+	// persistence. Nil in production.
+	beforeStart func()
+	afterStart  func()
 }
 
 func NewExecutor(deps RunnerDependencies) Executor {
@@ -122,8 +127,8 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if !won {
 		return e.finishWithoutStart(run, "command was no longer queued")
 	}
-	if err := ctx.Err(); err != nil {
-		return e.finish(run, RunFinish{Status: RunStatusCancelled, Error: e.cancelReason(run.RunID), FinishedAt: time.Now().UTC()})
+	if outcome, stop := e.stopBeforeStart(ctx, run); stop {
+		return outcome
 	}
 
 	path, err := resolveExecutable(run.Invocation.Argv[0], e.deps.Settings.CommandPath())
@@ -174,11 +179,26 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		Stdin: stdin, Stdout: stdoutW, Stderr: stderrW,
 		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
 	}
+	// Re-read both cancellation channels at the last safe point. Cancel first
+	// persists its latch and only then asks the dispatcher to cancel this context,
+	// so either observation closes the pre-fork race.
+	if e.beforeStart != nil {
+		e.beforeStart()
+	}
+	if outcome, stop := e.stopBeforeStart(ctx, run); stop {
+		stdoutW.Close()
+		stderrW.Close()
+		<-drainDone
+		return outcome
+	}
 	if err := cmd.Start(); err != nil {
 		stdoutW.Close()
 		stderrW.Close()
 		<-drainDone
 		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
+	}
+	if e.afterStart != nil {
+		e.afterStart()
 	}
 
 	// The timeout belongs to the spawned process, not to the bookkeeping that
@@ -225,11 +245,35 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		}
 	}
 	killGroup := func() {
+		if !processGroupRecorded {
+			// The direct os.Process is still the child returned by Start and cannot
+			// be a reused pid until Wait reaps it. Stop that exact process to keep
+			// timeout/shutdown bounded, but do not signal its group until pgid
+			// persistence and ownership verification have both completed.
+			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
+				appendReason(fmt.Sprintf("kill command process: %v", processErr))
+			}
+			return
+		}
+		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
+		if inspectErr != nil || identity.State != GroupAliveOwned {
+			if identity.State != GroupDead {
+				outputUnverified = true
+				if inspectErr != nil {
+					appendReason(fmt.Sprintf("verify process group before kill: %v", inspectErr))
+				} else {
+					appendReason("process group ownership could not be verified before kill")
+				}
+			}
+			// The direct child is still the exact os.Process returned by Start and
+			// may be reaped safely. Never signal an unverified process *group*.
+			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
+				appendReason(fmt.Sprintf("kill command process: %v", processErr))
+			}
+			return
+		}
 		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
 			appendReason(fmt.Sprintf("kill process group: %v", err))
-			// The inspector is replaceable and may itself be unavailable. Killing
-			// the child directly still guarantees cmd.Wait can reap the process;
-			// any unverified descendants make the output unusable below.
 			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
 				appendReason(fmt.Sprintf("kill command process: %v", processErr))
 			}
@@ -249,7 +293,8 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		select {
 		case <-ctxDone:
 			ctxDone = nil
-			terminate(RunStatusCancelled, e.cancelReason(run.RunID), true)
+			cancelStatus, cancelReason := e.contextTermination(ctx, run.RunID)
+			terminate(cancelStatus, cancelReason, true)
 		case <-timerDone:
 			timerDone = nil
 			terminate(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout), false)
@@ -274,6 +319,10 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			pgidDone = nil
 			if persistErr != nil {
 				terminate(RunStatusFailed, fmt.Sprintf("persist command process group: %v", persistErr), false)
+			} else if status != "" {
+				// Cancellation may have arrived after Start but before the pgid was
+				// durable. Do not signal until that durability barrier has crossed.
+				killGroup()
 			}
 		case <-groupTicker.C:
 		}
@@ -364,6 +413,35 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		finish.Error = "command cleanup exceeded its deadline"
 	}
 	return e.finish(run, finish)
+}
+
+func (e *commandExecutor) stopBeforeStart(ctx context.Context, run QueuedRun) (Outcome, bool) {
+	record, _, err := e.deps.Store.Run(run.RunID)
+	if err != nil {
+		return e.finish(run, RunFinish{
+			Status: RunStatusFailed, Error: "read command cancellation latch: " + err.Error(), FinishedAt: time.Now().UTC(),
+		}), true
+	}
+	if record.CancelRequested {
+		return e.finish(run, RunFinish{
+			Status: RunStatusCancelled, Error: record.Error, FinishedAt: time.Now().UTC(),
+		}), true
+	}
+	if ctx.Err() == nil {
+		return Outcome{}, false
+	}
+	status, reason := e.contextTermination(ctx, run.RunID)
+	return e.finish(run, RunFinish{Status: status, Error: reason, FinishedAt: time.Now().UTC()}), true
+}
+
+func (e *commandExecutor) contextTermination(ctx context.Context, runID string) (string, string) {
+	if record, _, err := e.deps.Store.Run(runID); err == nil && record.CancelRequested {
+		return RunStatusCancelled, record.Error
+	}
+	if errors.Is(context.Cause(ctx), errDispatcherShutdown) {
+		return RunStatusInterrupted, "server interrupted"
+	}
+	return RunStatusCancelled, e.cancelReason(runID)
 }
 
 func (e *commandExecutor) finishWithoutStart(run QueuedRun, fallback string) Outcome {
@@ -467,22 +545,4 @@ func commandExitError(waitErr error, code *int) string {
 		return fmt.Sprintf("wait for command: %v", waitErr)
 	}
 	return "command exited without a status"
-}
-
-type nativeProcessInspector struct{}
-
-func (nativeProcessInspector) InspectGroup(pgid int, _ string) (GroupIdentity, error) {
-	err := syscall.Kill(-pgid, 0)
-	switch {
-	case err == nil || errors.Is(err, syscall.EPERM):
-		return GroupIdentity{State: GroupAliveUnverified}, nil
-	case errors.Is(err, syscall.ESRCH):
-		return GroupIdentity{State: GroupDead}, nil
-	default:
-		return GroupIdentity{}, err
-	}
-}
-
-func (nativeProcessInspector) KillGroup(pgid int) error {
-	return syscall.Kill(-pgid, syscall.SIGKILL)
 }
