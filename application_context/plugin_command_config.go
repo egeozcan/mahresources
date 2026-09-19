@@ -107,6 +107,14 @@ func ResolvePluginCommandConfig(input PluginCommandConfigInput) (PluginCommandCo
 		}
 		stagingPath = filepath.Join(input.FileSavePath, "_plugin_commands")
 	}
+	absoluteStagingPath, err := filepath.Abs(stagingPath)
+	if err != nil {
+		if temporary {
+			_ = os.RemoveAll(stagingPath)
+		}
+		return PluginCommandConfig{}, fmt.Errorf("resolve plugin command staging root: %w", err)
+	}
+	stagingPath = absoluteStagingPath
 	if err := ensurePluginCommandStagingRoot(stagingPath); err != nil {
 		if temporary {
 			_ = os.RemoveAll(stagingPath)

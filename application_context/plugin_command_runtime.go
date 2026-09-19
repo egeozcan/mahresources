@@ -125,18 +125,29 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 	return nil
 }
 
+// StartPluginCommandsIfEnabled is the production admission gate. Keeping the
+// disabled branch beside construction makes it testable and guarantees that a
+// disabled deployment creates no dispatcher goroutine or Lua host surface.
+func (ctx *MahresourcesContext) StartPluginCommandsIfEnabled(callCtx context.Context, settings plugin_commands.Settings) error {
+	if ctx == nil {
+		return fmt.Errorf("plugin command context is unavailable")
+	}
+	if ctx.Config.PluginsDisabled {
+		return nil
+	}
+	return ctx.StartPluginCommands(callCtx, settings)
+}
+
 // StopPluginCommands drains terminal persistence before the download manager
-// and plugin manager are stopped. It is deliberately bounded so shutdown cannot
-// wait forever on a command that ignores cancellation.
-func (ctx *MahresourcesContext) StopPluginCommands() {
+// and plugin manager are stopped. Its error is part of process shutdown: a
+// terminal write that did not persist must make the process exit unsuccessfully.
+func (ctx *MahresourcesContext) StopPluginCommands() error {
 	if ctx == nil || ctx.pluginCommandDispatcher == nil {
-		return
+		return nil
 	}
 	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := ctx.pluginCommandDispatcher.Stop(stopCtx); err != nil {
-		log.Printf("[plugin] command dispatcher shutdown failed: %v", err)
-	}
+	return ctx.pluginCommandDispatcher.Stop(stopCtx)
 }
 
 // SubmitPluginCommand implements plugin_system.CommandSubmitter.

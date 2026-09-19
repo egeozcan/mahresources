@@ -201,7 +201,7 @@ func TestDisableCancelsImportWaitingInDispatchFailureRetry(t *testing.T) {
 	}
 }
 
-func TestStopWaitsForAcceptedTerminalPersistenceAfterDeadline(t *testing.T) {
+func TestStopHonorsDeadlineWhileAcceptedTerminalPersistenceIsBlocked(t *testing.T) {
 	store := newDispatcherTestStore()
 	release := make(chan struct{})
 	store.finishRunStarted = make(chan struct{}, 1)
@@ -224,14 +224,15 @@ func TestStopWaitsForAcceptedTerminalPersistenceAfterDeadline(t *testing.T) {
 		t.Fatal("shutdown did not begin terminal persistence")
 	}
 	<-ctx.Done()
-	select {
-	case err := <-stopped:
-		t.Fatalf("Stop returned before accepted terminal persistence drained: %v", err)
-	default:
+	if err := <-stopped; !errors.Is(err, context.DeadlineExceeded) {
+		close(release)
+		t.Fatalf("Stop error = %v, want deadline exceeded", err)
 	}
 	close(release)
-	if err := <-stopped; err != nil {
-		t.Fatal(err)
+	select {
+	case <-d.done:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not finish after terminal persistence released")
 	}
 }
 

@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
@@ -40,6 +43,48 @@ func TestPluginCommandConfigDefaultsAndValidation(t *testing.T) {
 	info, err := os.Stat(got.StagingPath)
 	if err != nil || !info.IsDir() {
 		t.Fatalf("staging root not created as directory: info=%v err=%v", info, err)
+	}
+}
+
+func TestPluginCommandConfigResolvesRelativeStagingRoots(t *testing.T) {
+	workDir := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	commandDir := t.TempDir()
+	absoluteWorkDir, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fromFiles, err := ResolvePluginCommandConfig(PluginCommandConfigInput{
+		InheritedPath: commandDir,
+		FileSavePath:  "relative-files",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := filepath.Join(absoluteWorkDir, "relative-files", "_plugin_commands")
+	if fromFiles.StagingPath != wantFiles || !filepath.IsAbs(fromFiles.StagingPath) {
+		t.Fatalf("relative file-save staging = %q, want absolute %q", fromFiles.StagingPath, wantFiles)
+	}
+
+	explicit, err := ResolvePluginCommandConfig(PluginCommandConfigInput{
+		InheritedPath:       commandDir,
+		StagingPath:         "relative-staging",
+		StagingPathExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExplicit := filepath.Join(absoluteWorkDir, "relative-staging")
+	if explicit.StagingPath != wantExplicit || !filepath.IsAbs(explicit.StagingPath) {
+		t.Fatalf("explicit relative staging = %q, want absolute %q", explicit.StagingPath, wantExplicit)
 	}
 }
 
@@ -127,10 +172,38 @@ func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
-	if err := ctx.StartPluginCommands(context.Background(), settings); err != nil {
+	recoveryBlocked := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	var blockOnce sync.Once
+	const callbackName = "test:plugin-command-recovery-publication"
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(callbackName, func(db *gorm.DB) {
+		if db.Statement.Table == "plugin_command_runs" {
+			blockOnce.Do(func() {
+				close(recoveryBlocked)
+				<-releaseRecovery
+			})
+		}
+	}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ctx.StopPluginCommands)
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(callbackName) })
+	started := make(chan error, 1)
+	go func() { started <- ctx.StartPluginCommands(context.Background(), settings) }()
+	select {
+	case <-recoveryBlocked:
+	case <-time.After(time.Second):
+		close(releaseRecovery)
+		t.Fatal("recovery did not reach durable publication barrier")
+	}
+	if _, err := ctx.SubmitPluginCommand(plugin_commands.CommandRequest{}); err == nil || !strings.Contains(err.Error(), "startup recovery completes") {
+		close(releaseRecovery)
+		t.Fatalf("command host was published during recovery: %v", err)
+	}
+	close(releaseRecovery)
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
 
 	run, _, err := ctx.Run("lifecycle-run")
 	if err != nil {
@@ -147,6 +220,15 @@ func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
 	}
 }
 
+type lifecycleBlockingImporter struct{ started chan string }
+
+func (i lifecycleBlockingImporter) ValidateImport(plugin_commands.ImportValidation) error { return nil }
+func (i lifecycleBlockingImporter) ImportResource(ctx context.Context, source plugin_commands.ImportSource, _ plugin_commands.ResourceFields, _ string) (uint, error) {
+	i.started <- source.ImportID
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
 func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("plugin commands are unsupported on Windows")
@@ -160,7 +242,8 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	settings := testPluginCommandSettings{root: t.TempDir(), commandPath: commandDir}
+	stagingRoot := t.TempDir()
+	settings := testPluginCommandSettings{root: stagingRoot, commandPath: commandDir}
 	if err := ctx.StartPluginCommands(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -170,26 +253,68 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 		Declaration: plugin_commands.Declaration{Name: "slow", Argv: []string{"slow-command"}, Timeout: time.Minute},
 	})
 	if err != nil {
-		ctx.StopPluginCommands()
+		_ = ctx.StopPluginCommands()
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		run, _, readErr := ctx.Run(runID)
 		if readErr != nil {
-			ctx.StopPluginCommands()
+			_ = ctx.StopPluginCommands()
 			t.Fatal(readErr)
 		}
 		if run.Status == plugin_commands.RunStatusRunning {
 			break
 		}
 		if time.Now().After(deadline) {
-			ctx.StopPluginCommands()
+			_ = ctx.StopPluginCommands()
 			t.Fatalf("run never started: %+v", run)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ctx.StopPluginCommands()
+
+	// A running import has its own pre-commit cancellation path and must also be
+	// durably classified before Stop returns.
+	importRunID := "lifecycle-import-run"
+	now := time.Now().UTC()
+	if err := ctx.CreateRun(plugin_commands.RunRecord{
+		ID: importRunID, PluginName: "lifecycle", CommandName: "produce", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusQueued, CreatedByUserID: &owner, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: importRunID, ArgvJSON: `[]`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := ctx.MarkRunRunning(importRunID, now); err != nil || !won {
+		t.Fatalf("start import source run: won=%v err=%v", won, err)
+	}
+	if won, err := ctx.FinishRun(importRunID, plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: now}); err != nil || !won {
+		t.Fatalf("finish import source run: won=%v err=%v", won, err)
+	}
+	runDir := filepath.Join(stagingRoot, "plugin_exchange", "lifecycle", importRunID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "result.bin"), []byte("result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	importer := lifecycleBlockingImporter{started: make(chan string, 1)}
+	ctx.pluginCommandDispatcher.SetImporter(importer)
+	claim, err := ctx.pluginCommandDispatcher.SubmitImport(plugin_commands.ImportSubmission{
+		Access: plugin_commands.Access{PluginName: "lifecycle", ActorUserID: &owner},
+		RunID:  importRunID, Name: "result.bin", PluginGeneration: 1, ActorUserID: &owner,
+		Fields: plugin_commands.ResourceFields{Name: "result"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-importer.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("import never started")
+	}
+
+	if err := ctx.StopPluginCommands(); err != nil {
+		t.Fatal(err)
+	}
 	run, _, err := ctx.Run(runID)
 	if err != nil {
 		t.Fatal(err)
@@ -197,12 +322,44 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if run.Status != plugin_commands.RunStatusInterrupted || run.FinishedAt == nil {
 		t.Fatalf("shutdown outcome = %+v", run)
 	}
+	mapped, found, err := ctx.ImportMap(importRunID, "result.bin")
+	if err != nil || !found {
+		t.Fatalf("shutdown import map: found=%v err=%v", found, err)
+	}
+	if mapped.ImportID != claim.ImportID || mapped.Status != plugin_commands.ImportStatusInterrupted {
+		t.Fatalf("shutdown import outcome = %+v, claim=%+v", mapped, claim)
+	}
+}
+
+func TestPluginCommandLifecycleShutdownReturnsPersistenceError(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	if ctx.pluginManager == nil {
+		t.Fatal("plugin manager unavailable")
+	}
+	if err := ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Migrator().DropTable(&models.PluginCommandImport{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.StopPluginCommands(); err == nil {
+		t.Fatal("shutdown persistence failure was swallowed")
+	}
 }
 
 func TestPluginCommandLifecycleDisabledLeavesHostUnavailable(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	ctx.Config.PluginsDisabled = true
-	ctx.pluginManager = nil
+	if ctx.pluginManager == nil {
+		t.Fatal("plugin manager unavailable")
+	}
+	if err := ctx.StartPluginCommandsIfEnabled(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if ctx.pluginCommandDispatcher != nil || ctx.pluginCommandExchange != nil {
 		t.Fatal("disabled context unexpectedly has plugin command host")
 	}

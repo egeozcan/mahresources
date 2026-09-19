@@ -12,16 +12,22 @@ func TestPluginCommandLifecycleMainOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
+	if strings.Contains(text, "log.Fatal") {
+		t.Fatal("main must return through deferred plugin command and staging cleanup, not call log.Fatal/os.Exit")
+	}
 	settings := strings.Index(text, "context.SetSettings(settings)")
-	commands := strings.Index(text, "context.StartPluginCommands(")
+	commands := strings.Index(text, "context.StartPluginCommandsIfEnabled(")
 	plugins := strings.Index(text, "context.ActivateEnabledPlugins()")
 	if settings < 0 || commands < 0 || plugins < 0 || !(settings < commands && commands < plugins) {
 		t.Fatalf("startup order must be settings -> command recovery -> plugin activation: %d %d %d", settings, commands, plugins)
 	}
+	tempCleanup := strings.Index(text, "defer os.RemoveAll(pluginCommandConfig.StagingPath)")
 	downloadStop := strings.Index(text, "defer context.DownloadManager().Shutdown()")
-	commandStop := strings.Index(text, "defer context.StopPluginCommands()")
-	if downloadStop < 0 || commandStop < 0 || downloadStop > commandStop {
-		t.Fatalf("defer registration must be download then commands for LIFO shutdown: %d %d", downloadStop, commandStop)
+	commandStop := strings.Index(text, "context.StopPluginCommands()")
+	workers := strings.Index(text, "hw.Start()")
+	if tempCleanup < 0 || downloadStop < 0 || commandStop < 0 || workers < 0 ||
+		!(tempCleanup < downloadStop && downloadStop < commandStop && commandStop < workers) {
+		t.Fatalf("startup-safe cleanup order must be staging -> download -> commands -> workers: %d %d %d %d", tempCleanup, downloadStop, commandStop, workers)
 	}
 }
 

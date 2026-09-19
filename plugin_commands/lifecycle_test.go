@@ -2,6 +2,7 @@ package plugin_commands
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -16,6 +17,9 @@ type lifecycleStore struct {
 	prunedBefore time.Time
 	pruneCalls   atomic.Int32
 	pruneNotify  chan struct{}
+	pruneBlock   <-chan struct{}
+	pruneStarted chan struct{}
+	blockAfter   int32
 }
 
 func (s *lifecycleStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) {
@@ -26,12 +30,21 @@ func (s *lifecycleStore) HasNonterminalImports(runID string) (bool, error) {
 }
 func (s *lifecycleStore) PruneRunOutputs(before time.Time) (int64, error) {
 	s.prunedBefore = before
-	s.pruneCalls.Add(1)
+	call := s.pruneCalls.Add(1)
 	if s.pruneNotify != nil {
 		select {
 		case s.pruneNotify <- struct{}{}:
 		default:
 		}
+	}
+	if s.pruneBlock != nil && call > s.blockAfter {
+		if s.pruneStarted != nil {
+			select {
+			case s.pruneStarted <- struct{}{}:
+			default:
+			}
+		}
+		<-s.pruneBlock
 	}
 	return 1, nil
 }
@@ -114,6 +127,52 @@ func TestPluginCommandLifecyclePeriodicSweepStopsWithDispatcher(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if got := store.pruneCalls.Load(); got != stoppedAt {
 		t.Fatalf("sweep continued after Stop: before=%d after=%d", stoppedAt, got)
+	}
+}
+
+func TestDispatcherStopHonorsDeadlineWhilePeriodicSweepIsBlocked(t *testing.T) {
+	base := newDispatcherTestStore()
+	block := make(chan struct{})
+	started := make(chan struct{}, 1)
+	store := &lifecycleStore{
+		dispatcherTestStore: base,
+		nonterminal:         map[string]bool{},
+		pruneBlock:          block,
+		pruneStarted:        started,
+		blockAfter:          1, // Start's required initial sweep remains synchronous.
+	}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: &dispatcherTestJobs{}, Executor: dispatcherTestExecutor{store: base},
+		Settings: lifecycleSettings{root: t.TempDir(), exchange: time.Hour, output: time.Hour},
+	})
+	d.sweepInterval = time.Millisecond
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(block)
+		t.Fatal("periodic sweep did not block")
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	err := d.Stop(stopCtx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		close(block)
+		t.Fatalf("Stop error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
+		close(block)
+		t.Fatalf("Stop exceeded its bound: %s", elapsed)
+	}
+	close(block)
+	select {
+	case <-d.done:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not finish after blocked sweep released")
 	}
 }
 

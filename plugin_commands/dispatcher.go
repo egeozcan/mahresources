@@ -214,6 +214,16 @@ func (d *Dispatcher) Stop(ctx context.Context) error {
 		default:
 			return d.shutdownResult()
 		}
+	case <-ctx.Done():
+		// An accepted stop still gets precedence when its reply became ready with
+		// the deadline. Otherwise honor the advertised bound even if a database or
+		// filesystem operation inside terminal persistence is stuck.
+		select {
+		case err := <-reply:
+			return err
+		default:
+			return fmt.Errorf("plugin command dispatcher stop: %w", ctx.Err())
+		}
 	}
 }
 
@@ -413,6 +423,28 @@ func (d *Dispatcher) run(ctx context.Context) {
 	}
 	sweepTicker := time.NewTicker(sweepInterval)
 	defer sweepTicker.Stop()
+	var sweepDone chan error
+	startSweep := func() {
+		if sweepDone != nil {
+			return
+		}
+		sweepDone = make(chan error, 1)
+		go func(result chan<- error, now time.Time) {
+			result <- d.sweep(now)
+		}(sweepDone, d.now())
+	}
+	waitForSweep := func(waitCtx context.Context) error {
+		if sweepDone == nil {
+			return nil
+		}
+		select {
+		case err := <-sweepDone:
+			sweepDone = nil
+			return err
+		case <-waitCtx.Done():
+			return fmt.Errorf("wait for plugin command sweep: %w", waitCtx.Err())
+		}
+	}
 	state := dispatcherState{
 		commands:              make(map[string][]QueuedRun),
 		imports:               make(map[string][]queuedImport),
@@ -432,6 +464,7 @@ func (d *Dispatcher) run(ctx context.Context) {
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), groupDrainTimeout)
 			err := d.shutdown(shutdownCtx, &state)
+			err = errors.Join(err, waitForSweep(shutdownCtx))
 			cancel()
 			d.setShutdownResult(err)
 			if err != nil {
@@ -442,7 +475,10 @@ func (d *Dispatcher) run(ctx context.Context) {
 			d.retryDispatchFailures(&state)
 			d.schedule(&state)
 		case <-sweepTicker.C:
-			if err := d.sweep(d.now()); err != nil {
+			startSweep()
+		case err := <-sweepDone:
+			sweepDone = nil
+			if err != nil {
 				d.deps.Logf("plugin command sweep: %v", err)
 			}
 		case raw := <-d.inbox:
@@ -468,6 +504,7 @@ func (d *Dispatcher) run(ctx context.Context) {
 				}
 			case stopDispatcher:
 				err := d.shutdown(message.ctx, &state)
+				err = errors.Join(err, waitForSweep(message.ctx))
 				d.setShutdownResult(err)
 				message.reply <- err
 				return

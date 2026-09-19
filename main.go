@@ -137,6 +137,10 @@ func main() {
 			os.Exit(exitCode)
 		}
 	}()
+	fail := func(format string, args ...any) {
+		log.Printf("ERROR: "+format, args...)
+		exitCode = 1
+	}
 
 	// Load .env first so environment variables are available as defaults
 	// you may have no .env, it's okay
@@ -272,7 +276,8 @@ func main() {
 	deepSeekTimeoutRaw := getEnvOrDefault("DEEPSEEK_TIMEOUT", application_context.DefaultDeepSeekMRQLGenerationTimeout.String())
 	deepSeekTimeout, err := time.ParseDuration(deepSeekTimeoutRaw)
 	if err != nil {
-		log.Fatalf("invalid DEEPSEEK_TIMEOUT=%q: %v", deepSeekTimeoutRaw, err)
+		fail("invalid DEEPSEEK_TIMEOUT=%q: %v", deepSeekTimeoutRaw, err)
+		return
 	}
 
 	// Build alt file systems map from flags or fall back to env vars
@@ -289,11 +294,13 @@ func main() {
 				// default. The env-var branch below already requires a name;
 				// this one silently did not.
 				if parts[0] == "" {
-					log.Fatalf("Invalid -alt-fs entry %q: the key may not be empty (an empty storage key means the main filesystem)", fs)
+					fail("Invalid -alt-fs entry %q: the key may not be empty (an empty storage key means the main filesystem)", fs)
+					return
 				}
 				altFileSystems[parts[0]] = parts[1]
 			} else {
-				log.Fatalf("Invalid -alt-fs format: %s (expected key:path)", fs)
+				fail("Invalid -alt-fs format: %s (expected key:path)", fs)
+				return
 			}
 		}
 	} else {
@@ -323,14 +330,16 @@ func main() {
 	// call is the validation, and it is the only one that can refuse to boot.
 	allowPrivateFetchEntries := splitCommaList(*allowPrivateFetch)
 	if _, err := plugin_system.HostFetchPolicy(allowPrivateFetchEntries); err != nil {
-		log.Fatalf("invalid %v", err)
+		fail("invalid %v", err)
+		return
 	}
 
 	// Checked at startup for the same reason: a User-Agent net/http refuses
 	// breaks *every* host fetch, and the runtime setting's own validator does
 	// not see a value that arrived by flag or environment.
 	if err := hostfetch.ValidateUserAgent(*remoteUserAgent); err != nil {
-		log.Fatalf("invalid -remote-user-agent: %v", err)
+		fail("invalid -remote-user-agent: %v", err)
+		return
 	}
 
 	pluginCommandConfig, err := application_context.ResolvePluginCommandConfig(application_context.PluginCommandConfigInput{
@@ -344,7 +353,8 @@ func main() {
 		OutputRetention: *pluginCommandOutputRetention, OutputRetentionSet: true,
 	})
 	if err != nil {
-		log.Fatalf("invalid plugin command configuration: %v", err)
+		fail("invalid plugin command configuration: %v", err)
+		return
 	}
 	if pluginCommandConfig.TemporaryStaging {
 		defer os.RemoveAll(pluginCommandConfig.StagingPath)
@@ -459,10 +469,13 @@ func main() {
 		}))
 	}
 
-	// Ensure plugin manager is cleaned up on shutdown
+	// Register process-lifetime teardown before any later startup failure can
+	// return. Commands are registered after recovery below, so LIFO remains:
+	// command dispatcher, download manager, plugin manager.
 	if context.PluginManager() != nil {
 		defer context.PluginManager().Close()
 	}
+	defer context.DownloadManager().Shutdown()
 
 	// Validate or auto-detect ffmpeg
 	if context.Config.FfmpegPath != "" {
@@ -556,7 +569,8 @@ func main() {
 		&models.Session{},            // FK to User
 		&models.ApiToken{},           // FK to User
 	); err != nil {
-		log.Fatalf("failed to migrate: %v", err)
+		fail("failed to migrate: %v", err)
+		return
 	}
 
 	// Refresh planner statistics for the tables that just gained the v2 hash
@@ -604,7 +618,8 @@ func main() {
 		application_context.BuildDefaultsFromConfig(context.Config),
 	)
 	if err := settings.Load(); err != nil {
-		log.Fatalf("failed to load runtime settings: %v", err)
+		fail("failed to load runtime settings: %v", err)
+		return
 	}
 	settings.SetAuditor(application_context.NewContextAuditor(context))
 	context.SetSettings(settings)
@@ -616,12 +631,18 @@ func main() {
 	context.RunStartupExportSweep()
 
 	// Recovery must settle every durable command/import writer before a plugin
-	// VM can load and observe mah.commands or mah.fs.
-	if !context.Config.PluginsDisabled {
-		if err := context.StartPluginCommands(gocontext.Background(), context.PluginCommandSettings()); err != nil {
-			log.Fatalf("failed to start plugin commands: %v", err)
-		}
+	// VM can load and observe mah.commands or mah.fs. The context-owned gate keeps
+	// disabled deployments free of dispatcher goroutines and host publication.
+	if err := context.StartPluginCommandsIfEnabled(gocontext.Background(), context.PluginCommandSettings()); err != nil {
+		fail("failed to start plugin commands: %v", err)
+		return
 	}
+	defer func() {
+		if err := context.StopPluginCommands(); err != nil {
+			log.Printf("ERROR: plugin command shutdown failed: %v", err)
+			exitCode = 1
+		}
+	}()
 
 	seed.AddInitialData(db)
 
@@ -630,10 +651,12 @@ func main() {
 	// credentials before flipping -auth on.
 	if cfg.CreateAdminUser != "" {
 		if cfg.CreateAdminPassword == "" {
-			log.Fatal("-create-admin-user requires -create-admin-password")
+			fail("-create-admin-user requires -create-admin-password")
+			return
 		}
 		if u, err := context.EnsureAdminUser(cfg.CreateAdminUser, cfg.CreateAdminPassword); err != nil {
-			log.Fatalf("failed to bootstrap admin user: %v", err)
+			fail("failed to bootstrap admin user: %v", err)
+			return
 		} else {
 			log.Printf("bootstrapped admin user %q (id=%d)", u.Username, u.ID)
 		}
@@ -644,7 +667,8 @@ func main() {
 	// NewMahresourcesContext) so a fresh context stays at zero users for tests.
 	// EnsureRootAdmin also warms the no-auth default-actor cache.
 	if rootUser, err := context.EnsureRootAdmin(); err != nil {
-		log.Fatalf("failed to ensure root admin: %v", err)
+		fail("failed to ensure root admin: %v", err)
+		return
 	} else if rootUser != nil && rootUser.PasswordAutoGenerated {
 		log.Printf("auto-created root administrator %q (id=%d) with a random password", rootUser.Username, rootUser.ID)
 	}
@@ -673,7 +697,8 @@ func main() {
 	}
 
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
-		log.Fatalf("Error when creating supplemental indexes: %v", err)
+		fail("Error when creating supplemental indexes: %v", err)
+		return
 	}
 
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
@@ -745,8 +770,6 @@ func main() {
 	hw.Start()
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
-	defer context.DownloadManager().Shutdown()
-	defer context.StopPluginCommands()
 
 	// Start thumbnail worker for background video thumbnail pre-generation
 	thumbWorkerConfig := thumbnail_worker.Config{
@@ -793,17 +816,17 @@ func main() {
 
 	// Start share server if configured.
 	//
-	// Finding 51: Start binds synchronously now, so this log.Fatalf is reachable
-	// and the "available at" line below is only printed once something really is
-	// listening. It used to print unconditionally, a moment before the bind error
-	// arrived from a goroutine nobody was watching.
+	// Start binds synchronously, so the "available at" line is printed only
+	// after something is listening. Returning on failure preserves every command,
+	// download and plugin teardown registered above.
 	if cfg.SharePort != "" {
 		shareServer := server.NewShareServer(context)
 		if err := shareServer.Start(cfg.ShareBindAddress, cfg.SharePort); err != nil {
-			log.Fatalf("Failed to start share server: %v\n"+
+			fail("Failed to start share server: %v\n"+
 				"Sharing was requested (-share-port=%s) and the port is not available. "+
 				"Free the port, choose another, or drop -share-port to run without sharing.",
 				err, cfg.SharePort)
+			return
 		}
 		defer shareServer.Stop()
 		log.Printf("Share server available at http://%s:%s", cfg.ShareBindAddress, cfg.SharePort)
@@ -819,16 +842,21 @@ func main() {
 		return serverCtx
 	}
 
+	serveErr := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
-		}
+		serveErr <- srv.ListenAndServe()
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Shutting down server...")
+	select {
+	case <-quit:
+		log.Println("Shutting down server...")
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			fail("Server error: %v", err)
+		}
+	}
 
 	serverCancel()
 
@@ -836,11 +864,8 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		// Not log.Fatalf: that calls os.Exit, which runs no deferred function — so a
-		// handler overrunning the drain deadline would take the download manager's
-		// own shutdown with it, and every in-flight download would end without the
-		// cancellation record the history table exists to keep. The deferred
-		// Shutdown runs here because this returns rather than exits.
+		// Return through the registered teardown stack so every in-flight download
+		// and plugin command gets its durable terminal classification.
 		log.Printf("ERROR: server forced to shutdown: %v", err)
 		exitCode = 1
 		return
