@@ -15,7 +15,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 8: Implement safe exchange-folder operations and leases.
 - [x] Task 9: Dispatch durable, replayable resource imports.
 - [x] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
-- [ ] Task 11: Wire startup recovery, configuration, sweep and shutdown.
+- [x] Task 11: Wire startup recovery, configuration, sweep and shutdown.
 - [ ] Task 12: Add administrator command history and authoritative job UI.
 - [ ] Task 13: Prove the complete host interface and document plugin authorship.
 
@@ -113,6 +113,17 @@ access, closes admission before manager disable, drains only after successful VM
 revocation, and reopens without mutating durable work on refusal. Parent focused
 Lua/host race tests, architecture suites, vet, whitespace and clean-worktree
 checks passed; fresh GPT-5.6-sol final review approved.
+
+Task 11 landed in `6f4c6c33`, with shutdown/lifecycle hardening in `49eff7aa` and
+startup-failure cleanup in `6c6e772e`. Review found relative staging accepted
+before absolute-only execution, fatal paths bypassing temp cleanup and command
+shutdown, unbounded/hidden shutdown failures, blocking sweeps, and weak disabled/
+publication/import lifecycle tests. The final path resolves staging absolutely,
+returns through cleanup defers with nonzero status, bounds and propagates command
+shutdown, sweeps off the owner loop, and proves real process-level TMPDIR cleanup.
+Parent lifecycle/config selections across all packages, context-construction
+regressions, tagged build, vet, whitespace and clean-worktree checks passed;
+fresh GPT-5.6-sol final review approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`

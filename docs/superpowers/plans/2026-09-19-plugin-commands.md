@@ -975,27 +975,27 @@ Add `MahresourcesConfig` fields and flags/env:
 | `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` |
 | `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | `720h` |
 
-- [ ] **Step 1: Add red config/default tests**
+- [x] **Step 1: Add red config/default tests**
 
 Test flags/env precedence, positive quotas/retentions, explicit staging root, persistent default under `file-save-path`, and private temporary root for ephemeral MemoryFS. Snapshot inherited `PATH` only when neither flag nor env is set; refuse empty entries, relative entries and an empty configured value; prove an explicit path overrides a rogue inherited executable. Refuse an unusable/non-directory staging root at startup.
 
-- [ ] **Step 2: Wire production startup in the correct order**
+- [x] **Step 2: Wire production startup in the correct order**
 
 After AutoMigrate and runtime settings load, start the dispatcher and run recovery **before** `ActivateEnabledPlugins`, so no Lua callback/import can observe unresolved writers. Then activate plugins and start schedulers. Because startup occurs before the worker-defer block, register `defer context.StopPluginCommands()` immediately **after** the existing `defer context.DownloadManager().Shutdown()` at the worker block: LIFO then stops job events/scheduler first, the command dispatcher second, the download manager third, and the plugin manager last. This lets terminal managed-job publication drain while both downstream systems still exist.
 
-- [ ] **Step 3: Run periodic sweep**
+- [x] **Step 3: Run periodic sweep**
 
 Give the dispatcher its own five-minute cleanup ticker and stop/drain it in `Dispatcher.Stop`; do not add command-specific callback slots to `download_queue`. Delete exchange folders only for terminal runs completed beyond retention and not pinned by leases/nonterminal imports. Delete only old output rows; never delete run/import/map rows. Clean orphan import temps at startup.
 
-- [ ] **Step 4: Add lifecycle integration tests**
+- [x] **Step 4: Add lifecycle integration tests**
 
 Seed queued/running rows and temp folders, start the host, assert recovery precedes a plugin page call, output pruning leaves durable maps, and shutdown stamps command/import outcomes before returning. Verify plugins-disabled mode creates no dispatcher goroutine and command calls remain unavailable.
 
-- [ ] **Step 5: Document each setting and the merge-peak warning**
+- [x] **Step 5: Document each setting and the merge-peak warning**
 
 Add configuration rows and state that per-run quota must cover temporary merge peak (roughly 2× final output for separate video/audio plus mux), enforcement is sampled, commands have unrestricted process networking, and MemoryFS imports consume RAM. Document inherited `PATH` as a startup trust boundary and recommend pinning `-plugin-command-path`/`PLUGIN_COMMAND_PATH` to the minimal absolute trusted directories containing the declared executables and their helpers.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 go test --tags 'json1 fts5' ./application_context ./... -run 'PluginCommandLifecycle|PluginCommandConfig|RuntimeSettingRegistry' -count=1
