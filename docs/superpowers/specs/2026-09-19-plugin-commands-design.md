@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 6 — revised after five gpt-6-astra design reviews
+Status: draft 7 — revised after six gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -272,13 +272,15 @@ restarts and is independent of the queue's 1-hour terminal retention.
 
 **Crash-safe launch registration.** Launch registration is tracked on the
 row (the persisted pgid field) rather than as a public status, so the
-six-status vocabulary below stays exhaustive: a row is created `queued` with
-no pgid; the pgid is written immediately after spawn and the row becomes
-`running`. A `queued` row with no pgid is simply never launched; a `running`
-row whose pgid never got persisted (crash between fork and persist) is
-distinguished at recovery by that absence. Two crash windows remain, and
-both are handled by the recovery identity check below rather than by
-assuming the pgid exists or is trustworthy:
+six-status vocabulary below stays exhaustive. The ordering is explicit: a
+row is created `queued` with no pgid; **at dispatch, the row is marked
+`running` before the fork** (pgid still null); **after the fork, the pgid is
+persisted**. This makes three row shapes distinguishable with no extra
+status: `queued` (never launched), `running` with a pgid (live dispatch),
+and `running` without a pgid — an **uncertain launch**, the spawn-crash
+shape. Two crash windows remain, and both are handled by the recovery
+identity check below rather than by assuming the pgid exists or is
+trustworthy:
 
 - A crash between fork and pgid persist leaves a nonterminal row with no
   recoverable group identity.
@@ -516,17 +518,36 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   import id, back to `pending`, bindings refreshed). This is the re-drive
   the §6 page reconciliation uses; until then the claim sits in `runs()`,
   visible and re-submittable — documented behaviour, not a silent drop.
-- **Crash-safe destination handling is a prerequisite for replay.**
-  `AddResource` trusts an existing destination file and skips copying it
-  (`resource_upload_context.go:1252-1269`), so replaying a copy that a
-  crash interrupted would publish a truncated file under the original
-  hash. Import jobs therefore never feed the staging file to `AddResource`
-  directly: each import attempt first copies the staging file to a **fresh,
-  uniquely named temp file**, and only the completed temp file goes to
-  `AddResource`. A crash mid-copy leaves a partial temp file that no later
-  attempt trusts (each attempt uses a new name); the staging original is
-  never modified. A mid-copy crash/replay test asserts the replayed import
-  produces a complete resource.
+- **Crash-safe destination handling is a prerequisite for replay, and the
+  fresh-input temp alone does not provide it.** `AddResource` already copies
+  its input into a unique temp (`resource_upload_context.go:1084-1094`), but
+  then copies into a deterministic hash destination (`1251-1269`) and
+  **trusts that destination if it exists** — so a crash during the
+  destination copy leaves a truncated file that a replayed import would
+  reuse as-is. The import path therefore validates the destination before
+  invoking `AddResource`: the worker knows the staging file's exact size; if
+  a destination file for the same content already exists **and its size
+  differs from the source**, the destination is deleted first, so
+  `AddResource` performs a full fresh copy. A size check suffices to catch
+  copy-truncation (a crash mid-copy leaves a strict prefix, which cannot
+  have the source's size); when destination and source sizes match, reuse is
+  the ordinary post-copy-crash case and is correct. Additionally, each
+  attempt still stages through its own uniquely named temp input so a
+  partial *input* temp is never trusted. A **mid-destination-copy
+  crash/replay test** (interrupting `AddResource`'s destination copy, not
+  just the staging-to-temp copy) asserts the replayed import publishes a
+  complete resource.
+- **Import temp files are bounded and reclaimed.** Each attempt's input
+  temp lives in a dedicated area of the staging root
+  (`<staging root>/import_tmp/<import-id>/`), not inside the exchange
+  folder, so it never appears in `mah.fs.list`. Both quotas count it: the
+  per-run exchange quota covers the run's exchange folder **plus** its
+  import temps, and the global staging quota covers the whole staging root
+  including `import_tmp`. Cleanup is immediate on the import's terminal
+  state (success or failure); startup recovery deletes any temps whose
+  claim is terminal or `interrupted` — a partial temp is unusable by design,
+  since re-import always copies fresh. Tests cover quota accounting
+  including temps and orphan-temp cleanup after restart.
 - **Plugin lifecycle binding.** Each claim is bound to the submitting
   plugin's generation. The import worker **revalidates at start**: plugin
   still enabled, `commands`/`db:write` grants still consented, actor's
@@ -539,8 +560,9 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   **finishes its resource commit** — mid-copy cancellation would orphan the
   bytes just as a crash would — and is recorded `succeeded`; the disable
   boundary is at the start of the next job, not mid-stream. After a
-  disable/re-enable cycle, cancelled imports stay cancelled; the plugin's
-  page reconciliation re-submits them if wanted.
+  disable/re-enable cycle, cancelled imports stay cancelled — they are
+  **not** auto-re-submitted; recovery is the explicit operator-controlled
+  retry below (a new claim id, per the lifecycle table).
 - **Server shutdown** marks nonterminal imports `interrupted` (recoverable
   by re-submission, same as restart).
 - **`on_import` contract.** Fired at-most-once when the import job reaches a
@@ -707,6 +729,10 @@ too. The walk over `mah.fs.runs()`:
   command run) → re-queued via a fresh `create_resource` (same claim id);
 - `succeeded`/`failed`/`cancelled` command runs with unimported files and no
   claim → imports queued per the normal flow;
+- imports in `failed`/`cancelled` state (e.g. cancelled by a disable, or
+  failed at admission) → surfaced to the operator with an explicit **retry
+  control** that creates a **new claim** (new import id, per the lifecycle
+  table); nothing automatic, since a disable was a deliberate boundary;
 - `interrupted` command runs with verified output → surfaced to the operator
   (their files may be partial; importing them is an explicit choice, the run
   status says why);
@@ -795,9 +821,11 @@ Core (mahresources):
   **listing truncates with a `truncated` flag instead of refusing**,
   `discard_run` on a truncated run, read cap, **`output_unverified` runs:
   `runs()` exposes the flag, `list`/`read`/`create_resource`/`discard` are
-  refused, `discard_run` is permitted**. A **mid-copy crash/replay test**
-  asserts a replayed import yields a complete resource, never the truncated
-  temp file a crash left behind.
+  refused, `discard_run` is permitted**. A **mid-destination-copy
+  crash/replay test** — interrupting `AddResource`'s hash-destination copy
+  itself, not merely the staging-to-temp input copy — asserts a replayed
+  import yields a complete resource: the size-validated destination is
+  replaced, never a truncated file reused.
 - History: sensitive-parameter redaction in both the parameter view and the
   persisted argv; output HTML-escaped and control-stripped; **command history
   access is administrator-only** in API and UI (a non-admin viewing their own
@@ -829,7 +857,12 @@ Core (mahresources):
   **`discard_run`** refuses while nonterminal imports exist and is the only
   permitted operation on `output_unverified` runs; `on_import` receives the
   documented result table and is not fired by the submission-time
-  short-circuit.
+  short-circuit; **disable → re-enable → page reconciliation** re-drives
+  interrupted claims (same id) and offers failed/cancelled claims for an
+  explicit operator retry that creates a **new** claim id — nothing
+  automatic; **import temp accounting**: per-run and global quotas include
+  `import_tmp`, and startup recovery deletes orphaned temps of terminal or
+  interrupted claims.
 
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
 enable flow shows it and requires the acknowledgement; a changed command set
