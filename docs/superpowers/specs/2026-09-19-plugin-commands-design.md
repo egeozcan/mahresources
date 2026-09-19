@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 5 — revised after four gpt-6-astra design reviews
+Status: draft 6 — revised after five gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -270,11 +270,15 @@ redacted parameter view, actor user id, created/started/finished timestamps,
 status, exit code, error text, **spawned process group id**) survives
 restarts and is independent of the queue's 1-hour terminal retention.
 
-**Crash-safe launch registration.** A run row is created in a `spawning`
-state before the fork; the pgid is written immediately after spawn, before
-the worker proceeds. Two crash windows remain, and both are handled by the
-recovery identity check below rather than by assuming the pgid exists or is
-trustworthy:
+**Crash-safe launch registration.** Launch registration is tracked on the
+row (the persisted pgid field) rather than as a public status, so the
+six-status vocabulary below stays exhaustive: a row is created `queued` with
+no pgid; the pgid is written immediately after spawn and the row becomes
+`running`. A `queued` row with no pgid is simply never launched; a `running`
+row whose pgid never got persisted (crash between fork and persist) is
+distinguished at recovery by that absence. Two crash windows remain, and
+both are handled by the recovery identity check below rather than by
+assuming the pgid exists or is trustworthy:
 
 - A crash between fork and pgid persist leaves a nonterminal row with no
   recoverable group identity.
@@ -476,9 +480,11 @@ Granted with the `commands` capability:
   `create_resource_from_data`.
 - `mah.fs.discard(run_id, name)` → deletes one file.
 - `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
-  status, started_at, finished_at, exit_code, error, imports }` — including
-  `interrupted` runs after restart and each run's import map — so recovery
-  does not depend on a live callback.
+  status, started_at, finished_at, exit_code, error, output_unverified,
+  imports }` — including `interrupted` runs after restart, the
+  `output_unverified` flag for runs whose writer identity could not be
+  verified (§3), and each run's import map — so recovery does not depend on
+  a live callback.
 
 ### Import job lifecycle
 
@@ -489,10 +495,14 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   the import map; if the name already has an import in a **nonterminal**
   state (`pending`, `running`) it returns the **existing import id** —
   idempotency holds at submission, not only at completion, so a page that
-  reconciles while an import is queued does not double-import. A terminal
-  entry follows the short-circuit rule (`succeeded` → existing resource id;
-  `failed`/`cancelled`/`interrupted` → a **new** import may be claimed,
-  replacing the terminal entry).
+  reconciles while an import is queued does not double-import. Terminal
+  entries resolve by state:
+
+  | Existing entry | `create_resource` returns |
+  |---|---|
+  | `succeeded` | the existing resource id (short-circuit) |
+  | `interrupted` | the **same import id**, re-enqueued as `pending` — an interrupted import keeps its identity; its plugin generation and actor binding are **refreshed to the re-submitting caller** (revalidated then, as below) |
+  | `failed` / `cancelled` | a **new** claim with a new import id, replacing the terminal entry |
 - **Import status vocabulary**: `pending`, `running`, `succeeded`, `failed`,
   `cancelled`, `interrupted`. Each claim record carries import id, run id,
   name, submitting plugin generation, actor user id, timestamps, and error
@@ -502,10 +512,21 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   failure) or `interrupted` (crash) — never silently pending.
 - **Restart recovery.** Nonterminal imports (`pending`/`running`) found at
   startup are marked `interrupted`. They are recoverable: a subsequent
-  `create_resource` for the same name re-enqueues the claim (same import
-  id, back to `pending`). This is the re-drive the §6 page reconciliation
-  uses; until then the claim sits in `runs()`, visible and re-submittable —
-  documented behaviour, not a silent drop.
+  `create_resource` for the same name **re-enqueues the same claim** (same
+  import id, back to `pending`, bindings refreshed). This is the re-drive
+  the §6 page reconciliation uses; until then the claim sits in `runs()`,
+  visible and re-submittable — documented behaviour, not a silent drop.
+- **Crash-safe destination handling is a prerequisite for replay.**
+  `AddResource` trusts an existing destination file and skips copying it
+  (`resource_upload_context.go:1252-1269`), so replaying a copy that a
+  crash interrupted would publish a truncated file under the original
+  hash. Import jobs therefore never feed the staging file to `AddResource`
+  directly: each import attempt first copies the staging file to a **fresh,
+  uniquely named temp file**, and only the completed temp file goes to
+  `AddResource`. A crash mid-copy leaves a partial temp file that no later
+  attempt trusts (each attempt uses a new name); the staging original is
+  never modified. A mid-copy crash/replay test asserts the replayed import
+  produces a complete resource.
 - **Plugin lifecycle binding.** Each claim is bound to the submitting
   plugin's generation. The import worker **revalidates at start**: plugin
   still enabled, `commands`/`db:write` grants still consented, actor's
@@ -540,9 +561,11 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
 
 - `mah.fs.runs()`: filtered by plugin and actor (its own runs, per the
   ownership rule below); no run id or name is supplied.
-- `mah.fs.list(run_id)`: run-level checks only — ownership and terminal
-  state; no name is supplied. Entries are reported as `readdir` reports
-  them, but only regular files are addressable by the operations below.
+- `mah.fs.list(run_id)`: run-level checks — ownership, terminal state, and
+  the `output_unverified` refusal (refused with `output unverified`, like
+  every file operation; `discard_run` is the sole exception). No name is
+  supplied. Entries are reported as `readdir` reports them, but only
+  regular files are addressable by the operations below.
 - `mah.fs.read/create_resource/discard(run_id, name, ...)`: the full file
   checks, in order:
   1. **Run ownership**: `run_id` must exist, belong to the calling plugin,
@@ -558,12 +581,13 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
      character set (no `/`, `\`, null bytes, no `.` or `..`, length-capped).
   4. **Import claim short-circuit** (`create_resource` only): if the durable
      import map already records the name — `succeeded` → return the existing
-     resource id; nonterminal (`pending`/`running`) → return the existing
-     import id; terminal-failed/cancelled/interrupted → a new claim replaces
-     it — **before** any file-existence check. This is what makes re-import
-     idempotent after the source file was deleted (failed post-import
-     delete, or swept); `read` and `discard` of an imported-but-deleted name
-     are plain `file not found`.
+     resource id; `pending`/`running` → return the existing import id;
+     `interrupted` → re-enqueue the **same** claim id (bindings refreshed);
+     `failed`/`cancelled` → a new claim replaces it — **before** any
+     file-existence check. This is what makes re-import idempotent after the
+     source file was deleted (failed post-import delete, or swept); `read`
+     and `discard` of an imported-but-deleted name are plain `file not
+     found`.
   5. **File checks**: the entry must be a **regular file** (`lstat`;
      directories, symlinks, devices and other specials are refused), and is
      opened **relative to the run directory with `O_NOFOLLOW`** (and
@@ -674,13 +698,22 @@ the rest. The byte transfer happens in the import jobs, not the callback.
 **Restart re-drive.** Callbacks are at-most-once, and nothing re-drives the
 plugin after a restart unless the plugin itself looks. The plugin **has no
 `schedule` capability** in v1; instead, its page handler **reconciles on
-load** by walking `mah.fs.runs()` state by state: `succeeded`/`failed`
-command runs with pending imports to (re)queue — including claims stranded
-`interrupted` by a restart, which a fresh `create_resource` re-enqueues;
-`interrupted`/`failed` command runs surfaced to the operator; and
-`output_unverified` runs offered for `discard_run`. Until a human opens the
-page after a restart, stranded claims sit in `runs()` — that is the
-documented behaviour, not a silent drop.
+load**, and it reconciles **import states independently of the command
+outcome** — a cancelled or interrupted command run can still have an
+`on_complete` callback that queued imports, and those claims need re-driving
+too. The walk over `mah.fs.runs()`:
+
+- imports in `interrupted` state (stranded by a restart, from any terminal
+  command run) → re-queued via a fresh `create_resource` (same claim id);
+- `succeeded`/`failed`/`cancelled` command runs with unimported files and no
+  claim → imports queued per the normal flow;
+- `interrupted` command runs with verified output → surfaced to the operator
+  (their files may be partial; importing them is an explicit choice, the run
+  status says why);
+- `output_unverified` runs → offered for `discard_run`.
+
+Until a human opens the page after a restart, stranded claims sit in
+`runs()` — that is the documented behaviour, not a silent drop.
 
 Resource creation uses the same field schema as the existing resource
 creators (`mah.db.create_resource_from_url` / `create_resource_from_data`
@@ -743,9 +776,11 @@ Core (mahresources):
   durable run record readable after the 1-hour queue retention expires.
 - Crash recovery: restart with a **surviving orphaned process group** (a
   grandchild writer still alive) — the group is identity-verified and killed
-  before the record is stamped `interrupted`; a half-written file is never
-  importable as terminal output. Two further windows have their own tests:
-  a **spawn/persist crash** (row nonterminal, no pgid persisted →
+  before the record is stamped `interrupted` — the guarantee is that output
+  **cannot be imported while writers remain alive**, not that the killed
+  writers' files are complete: an `interrupted` run's files may be partial,
+  and its status is what tells the plugin that; a **spawn/persist crash**
+  (row `running`, no pgid persisted →
   `interrupted` + `output_unverified`, file operations refused, `discard_run`
   allowed) and **pgid reuse** (the recorded group id belongs to unrelated
   processes after the original group exited → identity check fails, no
@@ -755,10 +790,14 @@ Core (mahresources):
 - `mah.fs`: enforcement tests for name validation, symlink refusal
   (including a swap-after-lstat race), directory/special refusal, cross-plugin
   and cross-run access refusal, actor checks, idempotent re-import after a
-  failed delete **and after the run has been swept** (import-map
+  failed delete **and after the run has been swept** (import-claim
   short-circuit, no source file present), refusal inside transactions,
   **listing truncates with a `truncated` flag instead of refusing**,
-  `discard_run` on a truncated run, read cap.
+  `discard_run` on a truncated run, read cap, **`output_unverified` runs:
+  `runs()` exposes the flag, `list`/`read`/`create_resource`/`discard` are
+  refused, `discard_run` is permitted**. A **mid-copy crash/replay test**
+  asserts a replayed import yields a complete resource, never the truncated
+  temp file a crash left behind.
 - History: sensitive-parameter redaction in both the parameter view and the
   persisted argv; output HTML-escaped and control-stripped; **command history
   access is administrator-only** in API and UI (a non-admin viewing their own
@@ -780,7 +819,8 @@ Core (mahresources):
   submission while `pending`/`running` returns the existing import id, not
   a duplicate; **enqueue failure** marks the claim `failed` (never silently
   pending); **restart** marks nonterminal claims `interrupted` and a fresh
-  `create_resource` re-enqueues the same claim id; **plugin disable**
+  `create_resource` re-enqueues the **same claim id** (bindings refreshed),
+  while `failed`/`cancelled` claims are replaced by a new id on re-submit; **plugin disable**
   cancels queued claims and lets a running import's commit finish (recorded
   `succeeded`); **worker-start revalidation** (disabled plugin, changed
   grants, demoted actor → claim `cancelled` with reason); **sweep
