@@ -319,29 +319,29 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(string, bool, Plugin
 
 Keep `SetPluginEnabled(name, enabled)` as a wrapper passing zero options so existing non-command callers compile; it must refuse command-bearing enables without confirmation.
 
-- [ ] **Step 1: Add consent widening tests before changing production code**
+- [x] **Step 1: Add consent widening tests before changing production code**
 
 Cover positional argv change, added command, timeout/sensitive-set change, removed command as narrowing, legacy consent plus commands as widening, absent record plus commands as refusal, and memory store plus commands as refusal. Assert command comparison runs before the legacy short-circuit.
 
-- [ ] **Step 2: Verify red consent failures**
+- [x] **Step 2: Verify red consent failures**
 
 Run: `go test ./plugin_system -run 'Test.*Command.*Consent|Test.*Commands.*Grant' -count=1`
 
 Expected: FAIL because grants contain no command declarations or acknowledgement.
 
-- [ ] **Step 3: Extend grants and fail closed without durable consent**
+- [x] **Step 3: Extend grants and fail closed without durable consent**
 
 `GrantsFromManifest` records declarations but not acknowledgement. Add `GrantsForEnable(manifest, confirm)` which refuses a command manifest unless `confirm` and sets `CommandsAcknowledged=true`. `memoryConsentStore.Persistent()` returns false; `pluginConsentStore.Persistent()` returns true. In `enforceConsent`, refuse command manifests on nonpersistent stores and never grandfather an absent command consent.
 
-- [ ] **Step 4: Add typed confirmation refusal and two-step enable context**
+- [x] **Step 4: Add typed confirmation refusal and two-step enable context**
 
 Define `ErrCommandConfirmationRequired` plus an error carrying `[]CommandDisplay{Name, DisplayArgv, TimeoutSeconds}`. `SetPluginEnabledWithOptions` validates the explicit confirmation before writing consent/enabled state. For HTML, the first refused POST redirects to `/plugins/manage?confirm_commands=<name>`; the provider validates the name against discovered plugins and renders a separate confirmation form with `confirm_commands=1`. The ordinary plugin-card button never includes that field.
 
-- [ ] **Step 5: Render the warning panel and exact command display**
+- [x] **Step 5: Render the warning panel and exact command display**
 
 Every command-bearing card displays the trusted-execution warning, shell-joined argv and timeout. It says the executable basename is searched only in the operator's configured plugin-command path; the process runs as the server service account, is not sandboxed, has unrestricted networking including private/loopback addresses, can read anything that OS account can read (including sibling plugin exchange folders), and needs separate `db:write` consent to import. The confirmation branch repeats the same fields and submit copy `Confirm and enable`. Escape through Pongo2; never mark argv safe.
 
-- [ ] **Step 6: Return structured JSON and teach the CLI the second step**
+- [x] **Step 6: Return structured JSON and teach the CLI the second step**
 
 On JSON refusal return HTTP 409:
 
@@ -351,11 +351,11 @@ On JSON refusal return HTTP 409:
 
 Make `client.APIError` exported with `StatusCode`, `Message` and raw JSON body while preserving existing `Error()` text. `mr plugin enable NAME` prints the returned command list and `Re-run with --confirm-commands`; with the flag it posts `confirm_commands=1`.
 
-- [ ] **Step 7: Verify browserless and CLI flows**
+- [x] **Step 7: Verify browserless and CLI flows**
 
 Run focused application, handler and Cobra tests. Assert: first request does not change `PluginState.Enabled`/`GrantsJSON`; confirmed request records acknowledgement; CLI without flag exits nonzero after printing every command; CLI with flag posts the acknowledgement.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 go test ./plugin_system ./application_context ./server/api_handlers ./server/template_handlers/template_context_providers ./cmd/mr/... -run 'Command|PluginEnable' -count=1

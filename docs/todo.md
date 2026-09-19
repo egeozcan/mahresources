@@ -7,7 +7,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 
 - [x] Task 1: Make shared resource destinations replay-safe.
 - [x] Task 2: Parse and compare command declarations.
-- [ ] Task 3: Require persistent, explicit command consent.
+- [x] Task 3: Require persistent, explicit command consent.
 - [ ] Task 4: Add durable run, output, import and map records.
 - [ ] Task 5: Add managed live jobs and dedicated dispatch pools.
 - [ ] Task 6: Execute commands with hardened argv, environment, output and quotas.
@@ -33,8 +33,18 @@ focused manifest/capability tests, the new architecture test and affected-packag
 findings. The exact three-package command still reports the confirmed baseline
 `TestBundledPluginLiteralURLsAreDeclared` failure for fal-ai's literal
 `https://.../style.png`; no unrelated plugin/test change was folded into Task 2.
-The initial full Go baseline also has the pre-existing `server/api_tests`
-`TestSidebar_IsWrappedInADisclosure` failure. Frontend unit tests pass (90 files,
+
+Task 3 landed in `3e8cb16a` with consent/warning hardening in `c549fa09` and the
+required generated `public/tailwind.css`. Review caught two real fail-closed and
+operator-disclosure gaps: in-memory databases had been treated as persistent,
+and web/CLI warnings omitted parameter/interpreter and trust-boundary risks.
+Both were corrected, and a fresh GPT-5.6-sol final review approved. Parent
+verification passed all focused Task 3 packages, affected `go vet`, CLI docs
+lint, CSS scan, whitespace and clean-worktree checks.
+
+The initial full Go baseline still has the pre-existing `plugin_system`
+`TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
+`TestSidebar_IsWrappedInADisclosure` failures. Frontend unit tests pass (90 files,
 1409 tests).
 
 ---
