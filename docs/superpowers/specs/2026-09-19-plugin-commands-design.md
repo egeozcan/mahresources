@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 3 — revised after two gpt-6-astra design reviews
+Status: draft 4 — revised after three gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -47,10 +47,11 @@ papered over:
 - The per-plugin **egress policy does not apply** to spawned processes. A
   command may reach private hosts and the loopback. (Process/network
   confinement is a possible future addition; v1 does not attempt it.)
-- Operator-level configuration visible to the command (e.g. a `yt-dlp` config
-  file in the service account's home) can alter program behaviour in ways no
-  manifest consent covers. The environment allowlist (§3) bounds this to
-  deliberate operator configuration.
+- Operator-level configuration visible to the command can alter program
+  behaviour in ways no manifest consent covers. The shipped yt-dlp template
+  passes `--ignore-config` (§6) precisely so the warning panel's verbatim argv
+  remains the whole story for *that* plugin; the environment allowlist (§3)
+  bounds the residual surface to deliberate operator configuration.
 
 The one structural guarantee retained from the shell-free design is that the
 *host* cannot be made to misparse: whatever the program does with its
@@ -65,6 +66,8 @@ arguments, it receives exactly the argv the template and parameters produce.
 - Automatic retries of failed command runs.
 - Process or network confinement of spawned commands.
 - Command stdout as a data channel for the plugin; files are the data channel.
+- Windows support for command runs (§3); command-bearing manifests load but
+  refuse runs on Windows in v1.
 - Plugin distribution/installation (separate roadmap item).
 
 ## 1. Manifest
@@ -103,7 +106,10 @@ Parse-time rules (fail loudly, in the style of the existing manifest parser):
   interpolation inside an element is a load error. Substitution replaces the
   whole element with the parameter string.
 - Every `{{placeholder}}` must be supplied at run time or the run is refused.
-  No empty-string substitution. `{{exchange_dir}}` (§5) is host-filled.
+  No empty-string substitution. `{{exchange_dir}}` (§5) is **host-filled and
+  reserved**: a `params` key named like a host-filled placeholder refuses the
+  run — it is not an override and not silently ignored. The set of
+  host-filled names is part of the API surface and grows only deliberately.
 - `argv[0]` must be a literal, nonempty **basename**: no `/`, no `..`, no
   `-` prefix, no placeholders, no path separators. It is resolved via `PATH`
   at run time from the host's trusted directories. Anything else is a load
@@ -162,12 +168,23 @@ a consent label of the shape:
   - **Grandfathering never grants commands.** The existing
     no-consent-record path (`plugin_system/consent.go:352-370`) records what
     the manifest declares and grants it — acceptable for reductions of a
-    legacy full surface, but not for commands. A command-bearing manifest
-    without a recorded command consent is refused at load until the operator
-    explicitly enables it through the consent flow (which shows the warning
-    panel). Once recorded, later changes are caught widenings. The load-time
-    integrity check between discovery and load also covers commands via
-    `Manifest.Equal`.
+    legacy full surface, but not for commands.
+- **Enable must be a deliberate two-step gesture for command-bearing
+  manifests.** Today, enabling records `GrantsFromManifest` unconditionally —
+  enabling *is* the consent gesture (`plugin_state_context.go:224-230`), and a
+  one-click toggle would silently make "explicit enable" and "rendered a
+  panel" the same act. For a manifest declaring commands, the enable request
+  is therefore **refused unless it carries an explicit acknowledgement field**
+  (`confirm_commands`); a request without it is rejected with the warning data
+  so the UI can render the panel and require a second, deliberate submission.
+  The acknowledgement is recorded with the consent. This makes "explicit
+  enable" a real confirm step, not a checkbox the flow happens to render.
+- **No persistent consent store means no commands.** When the consent store is
+  the in-memory default (`memoryConsentStore`, `consent.go:286-299`), the
+  no-record path is the normal path on every boot, so under the
+  never-grandfather rule command-bearing manifests are **refused at load
+  entirely**. This is intended: consent that evaporates on restart cannot
+  authorize service-account execution. Documented in the plugin docs.
 - **Widening detection**: an added command, a changed argv (positionally), a
   changed timeout, or a changed `sensitive_params` list is a widening; the
   plugin refuses to load until the operator re-enables.
@@ -175,7 +192,7 @@ a consent label of the shape:
   declaring commands: *"⚠ This plugin can run the following commands on the
   server, with the service account's privileges:"* followed by each command
   verbatim (shell-joined argv, timeout). The enable flow surfaces the same
-  panel before consent is recorded.
+  panel before the acknowledgement is recorded.
 
 ## 3. Execution model
 
@@ -195,6 +212,20 @@ mah.commands.run(name, params [, callback]) -> run_id | nil, err
   { ok = bool, exit_code = n|nil, error = string|nil, run_id = "..." }
   ```
 
+- **The completion callback must stay cheap, and the spec says so.** It runs
+  under the async callback budget (`asyncActionTimeout = 5 * time.Minute`,
+  `manager.go:62`) while holding the plugin's **exclusive VM lock**
+  (`action_jobs.go:407-413`) — the same lock pages, hooks and schedules
+  contend for (`pages.go:49`). A callback that synchronously imported a
+  7200-second download's files (multiple full passes over each file's bytes
+  in `AddResource`) would blow the budget and block the plugin's own pages.
+  Therefore the callback's contract is: **list, queue imports, discard —
+  nothing that streams.** File→resource transfer never happens inside the VM
+  (see `mah.fs.create_resource` in §5, which enqueues an *import job* and
+  returns immediately); imports run on the dispatcher outside the VM lock, so
+  a slow import cannot block a page or blow the callback budget. The host
+  enforces the callback budget; exceeding it fails the callback but leaves
+  the durable import results intact.
 - **Callback delivery is at-most-once.** If the VM is unavailable at
   completion (plugin disabled, process restart), the callback is dropped and
   the terminal result remains readable through the durable run record (§3).
@@ -208,30 +239,47 @@ mah.commands.run(name, params [, callback]) -> run_id | nil, err
 
 ### Scheduling
 
-Command runs use a dedicated dispatcher over the download-queue job
+Command runs use a **dedicated dispatcher** over the download-queue job
 machinery — not the generic semaphore-goroutine submission path — with these
 properties made explicit rather than inherited:
 
-- **FIFO per plugin**, at most 2 concurrently running command jobs per plugin
-  and a bounded global cap; queue admission bounded the same way the download
+- **FIFO per plugin**; queue admission bounded the same way the download
   queue is (`MaxQueueSize`).
+- **Named concurrency caps on their own pool, off the download semaphore.**
+  The download queue's `MaxConcurrentDownloads = 3` is not shared: two
+  concurrent yt-dlp runs must not starve ordinary downloads. Command jobs
+  run on their own pool: **at most 2 concurrently running commands per
+  plugin, 4 globally**; **at most 2 concurrent import jobs globally** (also
+  on their own pool — imports are disk-bound, not process-bound).
 - **No pause and no manual retry for command jobs in v1.** Pausing a process
   tree and retrying under the same job ID both conflict with fresh-exchange-dir
   semantics; a rerun is a new `mah.commands.run` call with a new run id.
-- **Timeout vs cancellation are distinct terminal states** (see the status
-  mapping below). Timeout begins at process launch (not submission) and
-  kills the process group.
+- **The dispatcher carries its own terminal classification.** The generic
+  path classifies any `ctx.Err() != nil` as cancelled
+  (`generic_job.go:167-171`), which would conflate timeout with cancellation.
+  The command dispatcher classifies explicitly: timeout → `failed` (error
+  text names it), operator cancel → `cancelled`, dispatch-loss →
+  `interrupted`. Where the generic job record and the durable command record
+  could disagree, **the durable command record is the authority the job UI
+  displays** for command jobs.
 
 ### Durable run records
 
 A new persisted table `plugin_command_runs` (id, plugin name, command name,
 redacted parameter view, actor user id, created/started/finished timestamps,
-status, exit code, error text) survives restarts and is independent of the
-queue's 1-hour terminal retention. On startup, every nonterminal record —
-running **and** queued, since the in-memory queue registry does not survive a
-restart (`download_queue/manager.go:228-230`) — with no live dispatch is
-marked `interrupted` with a finished timestamp; its exchange folders are
-retained until the sweep reaches them.
+status, exit code, error text, **spawned process group id**) survives
+restarts and is independent of the queue's 1-hour terminal retention. On
+startup, every nonterminal record — running **and** queued, since the
+in-memory queue registry does not survive a restart
+(`download_queue/manager.go:228-230`) — with no live dispatch is marked
+`interrupted` with a finished timestamp; its exchange folders are retained
+until the sweep reaches them. Before stamping a previously-running record
+terminal, the host **verifies the recorded process group is actually dead**,
+killing any survivors (`kill(-pgid, 0)` check, then SIGKILL the group): after
+a SIGKILL of the server or a panic, yt-dlp and the ffmpeg it spawned are
+orphaned and may still be writing — a half-written file must never be
+declared ready to import. The persisted pgid is what makes that check
+possible.
 
 The status vocabulary is exactly: `queued`, `running`, `succeeded`, `failed`,
 `cancelled`, `interrupted`. Nothing else. One transition mapping defines
@@ -240,13 +288,18 @@ which terminal state each path produces:
 | Path | Status | Note |
 |---|---|---|
 | Command exits 0 | `succeeded` | exit code recorded |
-| Command exits non-zero / cannot start | `failed` | timeout lands here with error text naming the timeout |
+| Command exits non-zero / cannot start / quota exceeded | `failed` | error text names timeout or quota |
 | Operator cancels via the job UI | `cancelled` | process group killed |
 | Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
-| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; exchange dirs retained until swept |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; pgid verified dead (survivors killed) before stamping |
 
-`failed` (timeout) and `cancelled` (operator/disable) are therefore distinct
-statuses, as required.
+`failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
+distinct statuses, as required.
+
+**Retention:** `plugin_command_runs` rows are retained indefinitely in v1 —
+pruning a row would destroy the import map (§5) that idempotent re-import
+depends on, and run counts are bounded by usage. Future pruning tooling must
+preserve import maps or accept losing idempotency for swept runs.
 
 ### Host hardening
 
@@ -256,26 +309,48 @@ statuses, as required.
   them.
 - Per-parameter cap 8 KB; aggregate argv cap 64 KB; at most 32 parameters.
 - The spawned process runs with its working directory set to the run's
-  exchange folder.
+  exchange folder and **stdin connected to `os.DevNull`** — a tool that
+  prompts blocks only until its timeout, never indefinitely.
 - **Environment is an explicit allowlist**, not inherited:
   `PATH` (operator-configured trusted directories), `HOME`, `TMPDIR` (private
   per-run temp), `LANG`, `TZ`, and run-context variables `MAHR_PLUGIN_NAME`,
   `MAHR_COMMAND_RUN_ID`, `MAHR_EXCHANGE_DIR`. Nothing else. Operator
-  configuration reachable through these variables (e.g. a yt-dlp config file
-  in `HOME`) is deliberate operator action and is documented as such.
+  configuration reachable through these variables is deliberate operator
+  action and is documented as such.
 - Spawned processes have **no egress enforcement**: they do not pass through
   the plugin HTTP egress layer and may reach private hosts. Documented as part
   of the trust model, not hidden.
 
+### Byte quotas
+
+Timeout bounds time; it does not bound bytes. Two operator-configurable
+quotas close that gap:
+
+- **Per-run exchange quota** (default 4 GiB): what one run may write into its
+  exchange folder. The host samples the folder's size periodically; when the
+  sample exceeds the quota, the process group is killed and the run is
+  marked `failed` with error text naming the quota. Enforcement is
+  approximate (sampling, not a syscall-level rlimit) and documented as such;
+  a tool that writes fast between samples can overshoot the quota.
+- **Global staging quota** (default 50 GiB): what all exchange folders may
+  hold combined. While above it, new command runs are refused until the
+  sweep brings the total down.
+
 ### Process-tree termination
 
-- On Unix the child is started with its own process group (`Setpgid`);
-  timeout or cancellation kills the whole group (`kill(-pgid)`). On Windows,
-  a Job Object with kill-on-close.
+- v1 command runs are **Unix-only**. The child is started with its own
+  process group (`Setpgid`); timeout, cancellation, quota-kill and disable
+  kill the whole group (`kill(-pgid)`). Windows is out of scope for v1
+  (see Non-goals): Go's `os.OpenFile` does not expose
+  `FILE_FLAG_OPEN_REPARSE_POINT`, so §5's symlink defence has no Windows
+  equivalent to name, and a Job Object alone would not close that gap. A
+  command-bearing manifest loads on Windows but refuses to run.
 - Output pipes are drained with a size cap; termination waits (bounded) for
   reap and pipe EOF. **Output is final only when the process group is dead
   and pipes are closed** — descendant writers (e.g. an ffmpeg spawned by
   yt-dlp) cannot keep writing into an exchange folder declared finished.
+  The same pgid-verified-dead check the startup recovery performs (§3,
+  durable run records) backs this claim for the crash case.
 - Command workers are registered with the queue's shutdown tracking; on
   server shutdown, process groups are terminated and runs are recorded
   `interrupted` (exchange dirs retained for later inspection until swept).
@@ -310,11 +385,18 @@ needs its own records and its own check.
 
 Exchange directories are **OS-backed directories** — real paths under a
 host-configurable staging root (default under the server's data directory) —
-never an in-process afero view, which an external process cannot see. Import
-copies the file through the configured resource filesystem via the same
-`AddResource` path as uploads. On a MemoryFS deployment, command runs are
-refused at submission with an explanatory error (there is no OS-backed
-resource storage to import into).
+never an in-process afero view, which an external process cannot see.
+
+**MemoryFS deployments are supported.** An earlier draft refused command runs
+on MemoryFS on the premise that there is no OS-backed storage to import into;
+that premise is wrong — `AddResource` writes through an `afero.File`
+(`resource_upload_context.go:1235-1250`), which `MemMapFs` satisfies, and the
+staging root is an OS path by construction, so import works. The real cost is
+**RAM**: every imported byte passes through memory, and the same is already
+true of ordinary uploads on such a deployment. v1 does not add a special
+refusal where uploads have none; the byte quotas (§3) bound the exposure, and
+operators running MemoryFS are already accepting that trade-off for their
+whole library.
 
 Layout: `<staging root>/plugin_exchange/<plugin-name>/<run-id>/`, created
 private (0700) by the host before launch.
@@ -331,26 +413,42 @@ passes flat-output flags so yt-dlp does not create subdirectories.
 
 Granted with the `commands` capability:
 
-- `mah.fs.list(run_id)` → array of `{ name, size, modified }`, capped at
-  10,000 entries (beyond which the call refuses). Names come from the host's
-  `readdir`.
+- `mah.fs.list(run_id)` → `{ entries = { { name, size, modified } ... },
+  truncated = bool }`. The entry list is **capped at 10,000 entries and
+  truncated, never refused** — a run that produced 10,001 files must not
+  leave the plugin unable to even see the excess (per-name operations could
+  not recover it and the run would be stuck until the sweep). The
+  `truncated` flag tells the plugin names exist beyond the window.
+- `mah.fs.discard_run(run_id)` → deletes the entire exchange folder of one
+  finished run — the escape hatch when `truncated` hides uninteresting
+  excess, or when a run is abandoned wholesale.
 - `mah.fs.read(run_id, name, max_bytes)` → content as a string; refuses beyond
   `max_bytes` (hard cap 4 MB).
-- `mah.fs.create_resource(run_id, name, fields)` → resource id. Requires
-  **both** `commands` and `db:write` (creating library content is a write
-  power; see §7). Streams the file from the staging directory into the
-  configured resource filesystem through the `AddResource` path. Refused
-  inside DB transactions, like `create_resource_from_data`. Import consumes
-  the file: on success the file is marked `imported` and deleted; if deletion
-  fails the file is marked `imported-pending-delete` and re-import is
-  idempotent (returns the already-created resource id, recorded in the run's
-  import map). Pending-delete bytes do not survive the sweep; the import
-  map, not the bytes, is what makes re-import idempotent.
+- `mah.fs.create_resource(run_id, name, fields [, on_import])` →
+  `import_id | nil, err` (or the existing resource id, when the import map
+  short-circuits). Requires **both** `commands` and `db:write` (creating
+  library content is a write power; see §7). **This call does not transfer
+  bytes.** It validates, records an `imported`-intent entry, **enqueues an
+  import job** on the import pool (§3) and returns immediately — the same
+  shape as `mah.download.submit`, for the same reason: the transfer runs
+  outside the plugin VM, so the completion callback stays cheap and a slow
+  import cannot hold the VM lock against pages and hooks. The import job
+  streams the file from the staging directory through the `AddResource`
+  path, records the result in the run's import map
+  (`name → { resource_id, status, error }`, idempotent on completion), and
+  then deletes the source file (on delete failure the file is marked
+  `imported-pending-delete`; the import map, not the bytes, is what makes
+  re-import idempotent). `on_import`, if given, is a Lua callback fired
+  at-most-once when the import job reaches a terminal state — same VM-lock
+  and budget rules as the command completion callback, and equally meant to
+  stay cheap (record a note, attach a tag). Import results remain readable
+  through `mah.fs.runs()` after any callback loss. Refused inside DB
+  transactions, like `create_resource_from_data`.
 - `mah.fs.discard(run_id, name)` → deletes one file.
 - `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
-  status, started_at, finished_at, exit_code, error }`, oldest first —
-  including `interrupted` runs after restart — so recovery does not depend on
-  a live callback.
+  status, started_at, finished_at, exit_code, error, imports }` — including
+  `interrupted` runs after restart and each run's import map — so recovery
+  does not depend on a live callback.
 
 ### Enforcement, per operation kind
 
@@ -366,7 +464,9 @@ Granted with the `commands` capability:
      (schedule-submitted) runs are accessible to any principal acting for
      the plugin.
   2. **Finished state**: the run must be terminal; file operations against
-     a running or queued run are refused.
+     a running or queued run are refused. (Startup recovery has already
+     verified the process group of an `interrupted` run is dead — §3 — so
+     terminal means nothing is still writing into the folder.)
   3. **Name validation** (lexical): the name must match the plugin-visible
      character set (no `/`, `\`, null bytes, no `.` or `..`, length-capped).
   4. **Import-map short-circuit** (`create_resource` only): if the durable
@@ -379,9 +479,8 @@ Granted with the `commands` capability:
      directories, symlinks, devices and other specials are refused), and is
      opened **relative to the run directory with `O_NOFOLLOW`** (and
      re-verified after open), so a symlink swapped in after `readdir` cannot
-     escape. On platforms without `O_NOFOLLOW` the open is refused unless
-     the platform provides an equivalent.
-  6. **Size caps**: `read` enforces `max_bytes`; import streams with a total
+     escape.
+  6. **Size caps**: `read` enforces `max_bytes`; imports stream with a total
      quota.
 
 Files are addressed only as `(run_id, name)` pairs inside the calling
@@ -404,18 +503,15 @@ enable `commands` for all of them.
   coordinated under the same per-run lock, so an operation cannot slip
   between the check and the sweep. When retention elapses, **everything** in
   the exchange directory is deleted, including `imported-pending-delete`
-  bytes; what survives is the import map (`run_id, name → resource id`) in
-  the run's import map, which is what makes re-import idempotent after the
-  bytes are gone — via the import-map short-circuit in the operation order
-  above.
+  bytes; what survives is the import map in the durable run record, which is
+  what makes re-import idempotent after the bytes are gone — via the
+  import-map short-circuit in the operation order above.
 - Import, read and discard take a per-file lease for their duration;
   `create_resource` inside a DB transaction is refused (same rule as
   `create_resource_from_data`), so a rollback can never silently lose the
   source file.
 - Errors are explicit: `run not found`, `file not found`, `run swept`,
   `already imported` (which returns the existing resource id).
-- Successful imports are recorded per run (`run_id, name → resource id`);
-  the sweep leaves no live bytes behind; only the import map survives.
 
 ## 6. The yt-dlp plugin (separate repository)
 
@@ -431,6 +527,7 @@ plugin = {
         {
             name = "download",
             argv = { "yt-dlp",
+                     "--ignore-config",
                      "--paths", "{{exchange_dir}}",
                      "-o", "{{output_template}}",
                      "--format", "{{format}}",
@@ -453,17 +550,41 @@ plugin = {
 }
 ```
 
-Notes on the template: variable data always travels as a **value after a
-fixed flag** (`--format {{format}}`), never as a flag-valued element; the URL
-is last, after `--`, so it can never be parsed as an option; `--paths` pins
-the download directory to the exchange folder. A plugin page (capability
-`pages`) where the operator pastes a URL triggers
-`mah.commands.run("download", { url = url, output_template = tpl,
-format = format }, on_complete)`; in the callback: `mah.fs.list(run_id)`,
-filter to importable extensions (skip `.part`/`.ytdl`/thumbnails), create a
-resource per remaining file with the source URL recorded in meta and
-description, `mah.fs.discard` the rest. `yt-dlp` is resolved from the host's
-trusted `PATH`; the operator installs it.
+Notes on the template and its settings:
+
+- `--ignore-config` makes the warning panel's verbatim argv the whole story:
+  no operator config file in the service account's `HOME` can silently alter
+  behaviour the panel showed as consented.
+- The URL is last, after `--`, so it can never be parsed as an option;
+  `--paths` pins the download directory to the exchange folder.
+- **The plugin validates `output_template` before passing it.** yt-dlp's
+  `-o` accepts absolute paths and `../`, which would override `--paths` and
+  escape the exchange folder — and this value comes from a *settings text
+  field* typed by an operator, not from the consented template. The plugin
+  rejects absolute paths, path separators and `..` in `output_template`,
+  refusing the run submission with an explanatory error. (The trust model
+  covers the host-vs-plugin boundary; this is the plugin holding its own
+  operator-supplied input inside the sandbox the host built.)
+- The default format selector `bestvideo*+bestaudio/best` makes yt-dlp
+  **shell out to ffmpeg** for the merge: the operator note must say ffmpeg
+  must be on the trusted `PATH` too (or the setting changed to a
+  pre-merged single format).
+
+Flow: a plugin page (capability `pages`) where the operator pastes a URL
+triggers `mah.commands.run("download", { url = url, output_template = tpl,
+format = format }, on_complete)`. The completion callback stays cheap per
+§3: `mah.fs.list(run_id)`, filter to importable extensions (skip
+`.part`/`.ytdl`/thumbnails), queue `mah.fs.create_resource` per remaining
+file with the source URL recorded in meta and description, `mah.fs.discard`
+the rest. The byte transfer happens in the import jobs, not the callback.
+
+**Restart re-drive.** Callbacks are at-most-once, and nothing re-drives the
+plugin after a restart unless the plugin itself looks. The plugin **has no
+`schedule` capability** in v1; instead, its page handler **reconciles on
+load**: it calls `mah.fs.runs()`, re-queues imports for finished-but-unimported
+files, and surfaces interrupted/failed runs to the operator. Until a human
+opens the page after a restart, interrupted runs sit in `runs()` — that is
+the documented behaviour, not a silent drop.
 
 Resource creation uses the same field schema as the existing resource
 creators (`mah.db.create_resource_from_url` / `create_resource_from_data`
@@ -472,13 +593,13 @@ options: name, description, tags, groups, meta).
 ## 7. Capability interactions
 
 - `commands` alone grants: running commands, and `mah.fs.list/read/discard/
-  runs`.
+  discard_run/runs`.
 - **`mah.fs.create_resource` additionally requires `db:write`.** A plugin
   with `commands` but no `db:write` can download and read files but cannot
   create resources. The consent label for `commands` says so explicitly.
-- Actor propagation: the run record keeps the acting user; the import is
-  attributed to that actor and revalidated against their **current** role and
-  scope at import time (a user demoted between run and import cannot use a
+- Actor propagation: the run record keeps the acting user; the import job is
+  attributed to that actor and **revalidated at import time** against their
+  current role and scope (a user demoted between run and import cannot use a
   stale grant). Actor-less runs (schedules) require the acting principal to
   hold `db:write` and are attributed to the acting user.
 
@@ -493,52 +614,77 @@ Core (mahresources):
   newly declared commands → widening detected despite the legacy short-circuit;
   missing consent record + command-bearing manifest → **load refused until
   explicit enable** (never grandfathered); changed `sensitive_params` or
-  timeout → widening.
-- Substitution: assert the **exec argv** the host builds (whole-element
-  replacement; `{{exchange_dir}}` host-filled; missing parameter refuses the
-  run; aggregate caps). A regression test asserts no shell is constructed
-  anywhere and that argv[0] validation rejects paths and dashes.
+  timeout → widening; **enable of a command-bearing manifest without the
+  `confirm_commands` acknowledgement is refused**, and with it the
+  acknowledgement is recorded; **command manifests on a memory consent store
+  are refused at load**.
+- Substitution: assert the **exec argv vector** the host builds — the process
+  is created from the vector directly (the test asserts `exec.Cmd.Args`
+  equals the built vector and no intermediate shell string exists in the
+  launch path); whole-element replacement; `{{exchange_dir}}` host-filled; a
+  `params` key colliding with a host-filled placeholder name refuses the run;
+  missing parameter refuses the run; aggregate caps. argv[0] validation
+  rejects paths and dashes.
 - Refused in transaction (both `run` and `create_resource`); parameter count
-  and size caps; per-plugin and global concurrency; timeout kills the **whole
-  process group** — a regression test uses a child that spawns a long-lived
-  descendant and asserts the descendant dies too.
+  and size caps; per-plugin and global concurrency **on the command pool
+  (2 per plugin, 4 global), separate from the download pool (3)**; timeout
+  kills the **whole process group** — a regression test uses a child that
+  spawns a long-lived descendant and asserts the descendant dies too.
+- Quotas: a run whose writes exceed the per-run exchange quota is killed and
+  marked `failed` (error names the quota); while above the global staging
+  quota, new runs are refused; sampled accounting documented as approximate.
+- Callback budget: a completion callback that only lists/queues/discards
+  finishes inside `asyncActionTimeout`; an import of a large file runs on
+  the import pool **while the plugin's page remains responsive** (no VM lock
+  held); `on_import` fires at-most-once with the import map durable after
+  callback loss.
 - Terminal-state delivery: callback fires on completion, cancellation and
   timeout; disabled/disabled-then-re-enabled plugin semantics (disable →
   `cancelled` with reason, queued runs refused at dispatch); **status
   mapping test** — timeout → `failed` (named), operator cancel → `cancelled`,
-  disable → `cancelled`, restart → `interrupted` for both running and queued;
+  disable → `cancelled`, restart → `interrupted` for both running and queued
+  (generic `ctx.Err() → cancelled` classification not used for commands);
   durable run record readable after the 1-hour queue retention expires.
+- Crash recovery: restart with a **surviving orphaned process group** (a
+  grandchild writer still alive) — the group is killed before the record is
+  stamped `interrupted`; a half-written file is never importable as terminal
+  output.
+- stdin: the spawned process's stdin is `os.DevNull` (a prompting tool fails
+  on timeout, never blocks forever).
 - `mah.fs`: enforcement tests for name validation, symlink refusal
   (including a swap-after-lstat race), directory/special refusal, cross-plugin
   and cross-run access refusal, actor checks, idempotent re-import after a
   failed delete **and after the run has been swept** (import-map
   short-circuit, no source file present), refusal inside transactions,
-  listing cap, read cap.
+  **listing truncates with a `truncated` flag instead of refusing**,
+  `discard_run` on a truncated run, read cap.
 - History: sensitive-parameter redaction in both the parameter view and the
   persisted argv; output HTML-escaped and control-stripped; **command history
   access is administrator-only** in API and UI (a non-admin viewing their own
   download history cannot see command records).
-- **MemoryFS/staging**: with MemoryFS resource storage, command runs are
-  refused; with OS-backed storage, a **real subprocess** (not a stub)
-  writes a file that `mah.fs.create_resource` imports through the configured
-  afero filesystem.
+- **Staging/import**: a **real subprocess** (not a stub) writes a file that
+  `mah.fs.create_resource` imports through the configured afero filesystem —
+  including a **MemoryFS target** (small files), proving the import path
+  works through `MemMapFs`.
 - Sweep: retention measured from completion; runs with active import, read
   or discard leases skipped (lease/sweep lock coordination); nonterminal runs
   skipped; expired runs' directories fully deleted including
   pending-delete bytes, with the import map surviving; fresh runs kept.
-- Queue integration: FIFO per-plugin dispatch, per-plugin/global caps, no
+- Queue integration: FIFO per-plugin dispatch, command/import pool caps, no
   pause and no retry exposed for command jobs, terminal state reaches the
   callback and the durable record even when the generic queue's event
-  machinery does not fire.
+  machinery does not fire, and the durable record's status — not the generic
+  classification — is what the job UI shows.
 
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
-enable flow shows it; a changed command set forces re-consent; legacy-record
-upgrade paths covered by tests per §2.
+enable flow shows it and requires the acknowledgement; a changed command set
+forces re-consent; legacy-record upgrade paths covered by tests per §2.
 
 Plugin repository: integration tests through the mahresources plugin test
 harness — the command template pointed at a fake `yt-dlp` stub script,
-exercising run → callback → list → import end to end; standalone Lua tests
-for extension filtering.
+exercising run → callback → list → queued import → `on_import` end to end;
+standalone Lua tests for extension filtering and **`output_template`
+validation (absolute paths, separators, `..` refused)**.
 
 ## 9. Explicitly out of scope
 
@@ -546,6 +692,10 @@ for extension filtering.
 - Automatic retry policies.
 - Process/network confinement of spawned commands (the trust model section
   is the honest statement for v1).
+- Windows support for command runs (symlink defence has no Go-expressible
+  equivalent; a Job Object alone does not close the gap).
+- Automatic pruning of `plugin_command_runs` (import maps must survive;
+  future tooling decides otherwise deliberately).
 - Streaming progress from the command into the job progress sink.
 - Command stdout as structured plugin data.
 - Plugin-package distribution format.
