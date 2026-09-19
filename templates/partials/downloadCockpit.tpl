@@ -148,14 +148,14 @@
                                     <!-- Status icon -->
                                     <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-lg"
                                           :class="{
-                                              'bg-stone-100': job.status === 'pending',
-                                              'bg-amber-100': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
-                                              'bg-green-100': job.status === 'completed',
-                                              'bg-red-100': job.status === 'failed' || job.status === 'cancelled',
-                                              'bg-yellow-100': job.status === 'paused'
+                                              'bg-stone-100': jobStatus(job) === 'pending' || jobStatus(job) === 'queued',
+                                              'bg-amber-100': jobStatus(job) === 'downloading' || jobStatus(job) === 'processing' || jobStatus(job) === 'running',
+                                              'bg-green-100': jobStatus(job) === 'completed' || jobStatus(job) === 'succeeded',
+                                              'bg-red-100': jobStatus(job) === 'failed' || jobStatus(job) === 'cancelled' || jobStatus(job) === 'interrupted',
+                                              'bg-yellow-100': jobStatus(job) === 'paused'
                                           }"
-                                          x-text="statusIcons[job.status]"
-                                          :aria-label="statusLabels[job.status]"></span>
+                                          x-text="statusIcons[jobStatus(job)]"
+                                          :aria-label="statusLabels[jobStatus(job)]"></span>
 
                                     <!-- Job details -->
                                     <div class="flex-1 min-w-0">
@@ -163,16 +163,16 @@
                                             <p class="text-sm font-medium text-stone-900 truncate"
                                                data-testid="cockpit-job-title"
                                                x-text="getJobTitle(job)"
-                                               :title="job._isAction ? job.label : (job.source === 'group-export' ? getJobTitle(job) : job.url)"></p>
+                                               :title="getJobTitle(job)"></p>
                                             <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
                                                   :class="{
-                                                      'bg-stone-100 text-stone-600': job.status === 'pending',
-                                                      'bg-amber-100 text-amber-700': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
-                                                      'bg-green-100 text-green-700': job.status === 'completed',
-                                                      'bg-red-100 text-red-700': job.status === 'failed' || job.status === 'cancelled',
-                                                      'bg-yellow-100 text-yellow-700': job.status === 'paused'
+                                                      'bg-stone-100 text-stone-600': jobStatus(job) === 'pending' || jobStatus(job) === 'queued',
+                                                      'bg-amber-100 text-amber-700': jobStatus(job) === 'downloading' || jobStatus(job) === 'processing' || jobStatus(job) === 'running',
+                                                      'bg-green-100 text-green-700': jobStatus(job) === 'completed' || jobStatus(job) === 'succeeded',
+                                                      'bg-red-100 text-red-700': jobStatus(job) === 'failed' || jobStatus(job) === 'cancelled' || jobStatus(job) === 'interrupted',
+                                                      'bg-yellow-100 text-yellow-700': jobStatus(job) === 'paused'
                                                   }"
-                                                  x-text="statusLabels[job.status]"></span>
+                                                  x-text="statusLabels[jobStatus(job)]"></span>
                                         </div>
 
                                         <!-- URL preview / action subtitle -->
@@ -296,6 +296,15 @@
                                                 View result &rarr;
                                             </a>
                                         </template>
+
+                                        {% if not authEnabled or currentUser.Role == "admin" %}
+                                        <template x-if="isPluginCommand(job) && isFinished(job)">
+                                            <a :href="'/admin/plugin-command-runs?id=' + encodeURIComponent(job.id)"
+                                               class="mt-1 inline-block text-xs text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
+                                                View command history
+                                            </a>
+                                        </template>
+                                        {% endif %}
 
                                         <!-- Action buttons (download jobs only) -->
                                         <template x-if="!job._isAction">

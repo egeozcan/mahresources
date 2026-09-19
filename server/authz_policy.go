@@ -134,7 +134,7 @@ func isReadViaPost(path string) bool {
 // `/v1/user` prefix case below.
 func isSystemPath(path string) bool {
 	switch path {
-	case "/admin/overview", "/admin/settings", "/plugins/manage",
+	case "/admin/overview", "/admin/settings", "/plugins/manage", "/admin/plugin-command-runs",
 		"/admin/users", "/admin/users/edit", "/logs", "/log":
 		return true
 	// Exact matches, deliberately not a "/v1/plugin/" prefix rule: /v1/plugin/actions
@@ -147,7 +147,7 @@ func isSystemPath(path string) bool {
 	// registry. The cost of matching exactly is that a new management endpoint must
 	// be added here by hand, which /v1/plugin/schedules was not — see
 	// TestPluginManagementEndpoints_AreAdminOnly.
-	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugin/schedule/run", "/v1/plugin/scheduled-downloads", "/v1/plugin/scheduled-downloads/cancel", "/v1/plugins/manage":
+	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugin/schedule/run", "/v1/plugin/scheduled-downloads", "/v1/plugin/scheduled-downloads/cancel", "/v1/plugin/command-runs", "/v1/plugin/command-run", "/v1/plugin/command-run/cancel", "/v1/plugins/manage":
 		return true
 	}
 	switch {

@@ -16,7 +16,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 9: Dispatch durable, replayable resource imports.
 - [x] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
 - [x] Task 11: Wire startup recovery, configuration, sweep and shutdown.
-- [ ] Task 12: Add administrator command history and authoritative job UI.
+- [x] Task 12: Add administrator command history and authoritative job UI.
 - [ ] Task 13: Prove the complete host interface and document plugin authorship.
 
 ## Review
@@ -124,6 +124,15 @@ shutdown, sweeps off the owner loop, and proves real process-level TMPDIR cleanu
 Parent lifecycle/config selections across all packages, context-construction
 regressions, tagged build, vet, whitespace and clean-worktree checks passed;
 fresh GPT-5.6-sol final review approved.
+
+Task 12 adds admin-only paginated command history/detail/cancel routes, escaped
+operator pages with durable actor/import/output state, and cockpit rendering from
+`authoritativeStatus` with command-safe controls. Focused Go/API/architecture,
+all 90 frontend files (1412 tests), OpenAPI validation, CSS scanning, and the
+new Playwright page/axe suite passed. The first browser attempt exposed the
+inherited host `PATH` containing a nonexistent macOS cryptex directory; with the
+production trust boundary pinned to `PLUGIN_COMMAND_PATH=/usr/bin:/bin`, the
+three focused browser tests passed.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`

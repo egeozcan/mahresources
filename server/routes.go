@@ -145,12 +145,13 @@ var templates = map[string]templateInformation{
 	// Admin-only, like the list page. isSystemPath matches template paths by exact
 	// string, so this one is listed there too — omitted, it would fall through to
 	// capRead and be readable by every authenticated role.
-	"/admin/users/edit": {adaptTemplate(template_context_providers.AdminUserEditContextProvider), "adminUserEdit.tpl", http.MethodGet},
-	"/account":          {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
-	"/admin/export":     {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
-	"/admin/import":     {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
-	"/admin/shares":     {adaptTemplate(template_context_providers.AdminSharesContextProvider), "adminShares.tpl", http.MethodGet}, // BH-035
-	"/admin/settings":   {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
+	"/admin/users/edit":          {adaptTemplate(template_context_providers.AdminUserEditContextProvider), "adminUserEdit.tpl", http.MethodGet},
+	"/account":                   {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
+	"/admin/export":              {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
+	"/admin/import":              {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
+	"/admin/shares":              {adaptTemplate(template_context_providers.AdminSharesContextProvider), "adminShares.tpl", http.MethodGet}, // BH-035
+	"/admin/settings":            {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
+	"/admin/plugin-command-runs": {adaptTemplate(template_context_providers.PluginCommandHistoryContextProvider), "pluginCommandHistory.tpl", http.MethodGet},
 
 	"/mrql": {adaptTemplate(template_context_providers.MRQLContextProvider), "mrql.tpl", http.MethodGet},
 
@@ -960,6 +961,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Plugin management API
 	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/plugin/command-runs").HandlerFunc(api_handlers.GetPluginCommandRunsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/plugin/command-run").HandlerFunc(api_handlers.GetPluginCommandRunHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/command-run/cancel").HandlerFunc(api_handlers.GetPluginCommandRunCancelHandler(appContext))
 	// Request-scoped, because enabling is where the operator's identity is
 	// recorded onto the plugin's schedule rows: it is the only moment both
 	// exist, since init() runs with its Lua context removed and EnablePlugin

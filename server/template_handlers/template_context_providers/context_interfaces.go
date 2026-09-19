@@ -6,6 +6,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/mrql"
+	"mahresources/plugin_commands"
 	"mahresources/plugin_system"
 )
 
@@ -31,27 +32,28 @@ import (
 // The generic adapter in routes.go type-asserts on them at request time; these
 // assertions are what make that assertion unreachable.
 var (
-	_ AccountPageContext          = (*application_context.MahresourcesContext)(nil)
-	_ AdminSettingsPageContext    = (*application_context.MahresourcesContext)(nil)
-	_ AdminSharesPageContext      = (*application_context.MahresourcesContext)(nil)
-	_ CategoryPageContext         = (*application_context.MahresourcesContext)(nil)
-	_ ComparePageContext          = (*application_context.MahresourcesContext)(nil)
-	_ DashboardPageContext        = (*application_context.MahresourcesContext)(nil)
-	_ GroupComparePageContext     = (*application_context.MahresourcesContext)(nil)
-	_ GroupPageContext            = (*application_context.MahresourcesContext)(nil)
-	_ HoverCardPageContext        = (*application_context.MahresourcesContext)(nil)
-	_ MRQLPageContext             = (*application_context.MahresourcesContext)(nil)
-	_ NotePageContext             = (*application_context.MahresourcesContext)(nil)
-	_ PluginManagePageContext     = (*application_context.MahresourcesContext)(nil)
-	_ QueryPageContext            = (*application_context.MahresourcesContext)(nil)
-	_ RelationPageContext         = (*application_context.MahresourcesContext)(nil)
-	_ ResourceCategoryPageContext = (*application_context.MahresourcesContext)(nil)
-	_ ResourcePageContext         = (*application_context.MahresourcesContext)(nil)
-	_ SearchPageContext           = (*application_context.MahresourcesContext)(nil)
-	_ TagPageContext              = (*application_context.MahresourcesContext)(nil)
-	_ TemplatePartialPageContext  = (*application_context.MahresourcesContext)(nil)
-	_ contracts.LogEntryReader    = (*application_context.MahresourcesContext)(nil)
-	_ contracts.SeriesReader      = (*application_context.MahresourcesContext)(nil)
+	_ AccountPageContext              = (*application_context.MahresourcesContext)(nil)
+	_ AdminSettingsPageContext        = (*application_context.MahresourcesContext)(nil)
+	_ AdminSharesPageContext          = (*application_context.MahresourcesContext)(nil)
+	_ CategoryPageContext             = (*application_context.MahresourcesContext)(nil)
+	_ ComparePageContext              = (*application_context.MahresourcesContext)(nil)
+	_ DashboardPageContext            = (*application_context.MahresourcesContext)(nil)
+	_ GroupComparePageContext         = (*application_context.MahresourcesContext)(nil)
+	_ GroupPageContext                = (*application_context.MahresourcesContext)(nil)
+	_ HoverCardPageContext            = (*application_context.MahresourcesContext)(nil)
+	_ MRQLPageContext                 = (*application_context.MahresourcesContext)(nil)
+	_ NotePageContext                 = (*application_context.MahresourcesContext)(nil)
+	_ PluginManagePageContext         = (*application_context.MahresourcesContext)(nil)
+	_ PluginCommandHistoryPageContext = (*application_context.MahresourcesContext)(nil)
+	_ QueryPageContext                = (*application_context.MahresourcesContext)(nil)
+	_ RelationPageContext             = (*application_context.MahresourcesContext)(nil)
+	_ ResourceCategoryPageContext     = (*application_context.MahresourcesContext)(nil)
+	_ ResourcePageContext             = (*application_context.MahresourcesContext)(nil)
+	_ SearchPageContext               = (*application_context.MahresourcesContext)(nil)
+	_ TagPageContext                  = (*application_context.MahresourcesContext)(nil)
+	_ TemplatePartialPageContext      = (*application_context.MahresourcesContext)(nil)
+	_ contracts.LogEntryReader        = (*application_context.MahresourcesContext)(nil)
+	_ contracts.SeriesReader          = (*application_context.MahresourcesContext)(nil)
 )
 
 // AccountPageContext serves /admin/users, /admin/users/edit and /account.
@@ -156,6 +158,14 @@ type NotePageContext interface {
 type PluginManagePageContext interface {
 	GetPluginStates() ([]models.PluginState, error)
 	PluginManager() *plugin_system.PluginManager
+}
+
+// PluginCommandHistoryPageContext serves the administrator-only durable run
+// list and detail page. Output is independently prunable, so detail reports its
+// availability separately from the durable run.
+type PluginCommandHistoryPageContext interface {
+	GetPluginCommandRuns(offset, limit int) ([]plugin_commands.RunRecord, int64, error)
+	GetPluginCommandRun(id string) (plugin_commands.RunView, bool, error)
 }
 
 // QueryPageContext serves the saved-query pages.

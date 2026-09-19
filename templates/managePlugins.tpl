@@ -11,6 +11,9 @@
         <a href="{{ docsURL("features/plugin-system") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Plugin system docs</a>
     </p>
     {% endif %}
+    <p class="mb-4 text-sm">
+        <a href="/admin/plugin-command-runs" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Plugin command history</a>
+    </p>
 
     {# A manual run is asynchronous, so the table below still says "never run" #}
     {# when this page comes back. Without this the button looks inert. #}

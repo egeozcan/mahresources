@@ -2990,6 +2990,40 @@ func registerPluginRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/plugin/command-runs",
+		OperationID:          "listPluginCommandRuns",
+		Summary:              "List durable plugin command runs",
+		Description:          "Administrator-only newest-first paginated summaries. Output is omitted from the list and loaded only by the detail endpoint.",
+		Tags:                 []string{"plugins"},
+		ExtraQueryParams:     []openapi.QueryParam{{Name: "page", Type: "integer", Description: "One-based page"}},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/plugin/command-run",
+		OperationID:          "getPluginCommandRun",
+		Summary:              "Get durable plugin command run detail",
+		Description:          "Administrator-only run detail including imports and the redacted output row when it has not been pruned.",
+		Tags:                 []string{"plugins"},
+		ExtraQueryParams:     []openapi.QueryParam{{Name: "id", Type: "string", Required: true, Description: "Command run id"}},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/plugin/command-run/cancel",
+		OperationID:          "cancelPluginCommandRun",
+		Summary:              "Cancel a queued or running plugin command",
+		Description:          "Administrator-only cancellation through the durable dispatcher latch. Missing runs return 404 and terminal/state conflicts return 409.",
+		Tags:                 []string{"plugins"},
+		ExtraQueryParams:     []openapi.QueryParam{{Name: "id", Type: "string", Required: true, Description: "Command run id"}},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
 		Path:        "/v1/plugin/enable",
 		OperationID: "enablePlugin",

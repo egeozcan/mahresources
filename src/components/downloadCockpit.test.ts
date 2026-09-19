@@ -107,6 +107,29 @@ describe('background job events preserve the panel visibility', () => {
     });
 });
 
+describe('plugin command jobs use durable authority and only expose cancel while running', () => {
+    test('authoritative terminal states replace the generic managed-job status', () => {
+        const failed = job({ source: 'plugin-command', status: 'completed', authoritativeStatus: 'failed' });
+        expect(component.jobStatus(failed)).toBe('failed');
+        expect(component.isFinished(failed)).toBe(true);
+        expect(component.isActive(failed)).toBe(false);
+        expect(component.canCancel(failed)).toBe(false);
+    });
+
+    test('running commands expose cancel but never pause resume or retry', () => {
+        const running = job({ source: 'plugin-command', status: 'running', authoritativeStatus: 'running' });
+        expect(component.canCancel(running)).toBe(true);
+        expect(component.canPause(running)).toBe(false);
+        expect(component.canResume(running)).toBe(false);
+        expect(component.canRetry(running)).toBe(false);
+    });
+
+    test('queued durable rows are not treated as live cockpit work', () => {
+        const queued = job({ source: 'plugin-command', status: 'pending', authoritativeStatus: 'queued' });
+        expect(component.canCancel(queued)).toBe(false);
+    });
+});
+
 describe('finding 2 — a paused job can be cancelled', () => {
     test('canCancel covers paused as well as the active states', () => {
         for (const status of ['pending', 'downloading', 'processing', 'paused']) {

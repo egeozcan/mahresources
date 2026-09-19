@@ -37,7 +37,10 @@ export function downloadCockpit() {
             completed: '\u2705',    // Check mark
             failed: '\u274C',       // X mark
             cancelled: '\u26D4',    // No entry
-            paused: '\u23F8'        // Pause symbol
+            paused: '\u23F8',       // Pause symbol
+            queued: '\u23F3',
+            succeeded: '\u2705',
+            interrupted: '\u274C'
         },
 
         statusLabels: {
@@ -48,7 +51,10 @@ export function downloadCockpit() {
             completed: 'Completed',
             failed: 'Failed',
             cancelled: 'Cancelled',
-            paused: 'Paused'
+            paused: 'Paused',
+            queued: 'Queued',
+            succeeded: 'Succeeded',
+            interrupted: 'Interrupted'
         },
 
         init() {
@@ -271,7 +277,11 @@ export function downloadCockpit() {
                     }
                 }
 
-                if (job.status === 'completed') {
+                const effectiveStatus = this.jobStatus(job);
+                if (this.isPluginCommand(job) && this.isFinished(job)) {
+                    delete this.speedTracking[job.id];
+                    this.announce(`Plugin command ${this.statusLabels[effectiveStatus]?.toLowerCase() || effectiveStatus}: ${job.id}`);
+                } else if (job.status === 'completed') {
                     delete this.speedTracking[job.id];
                     this.announce(`Download completed: ${this.truncateUrl(job.url, 30)}`);
                     // Dispatch global event for resource lists to reload
@@ -612,8 +622,21 @@ export function downloadCockpit() {
             return this.formatProgress(job) || 'Waiting for the first bytes';
         },
 
+        isPluginCommand(job) {
+            return job?.source === 'plugin-command';
+        },
+
+        jobStatus(job) {
+            if (this.isPluginCommand(job) && job.authoritativeStatus) {
+                return job.authoritativeStatus;
+            }
+            return job.status;
+        },
+
         isActive(job) {
-            return ['pending', 'downloading', 'processing', 'running'].includes(job.status);
+            const status = this.jobStatus(job);
+            if (this.isPluginCommand(job)) return status === 'running';
+            return ['pending', 'downloading', 'processing', 'running'].includes(status);
         },
 
         /**
@@ -624,10 +647,11 @@ export function downloadCockpit() {
          * "Clear completed".
          */
         isFinished(job) {
-            return ['completed', 'failed', 'cancelled'].includes(job.status);
+            return ['completed', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(this.jobStatus(job));
         },
 
         canPause(job) {
+            if (this.isPluginCommand(job)) return false;
             return ['pending', 'downloading'].includes(job.status);
         },
 
@@ -638,6 +662,7 @@ export function downloadCockpit() {
          * fixed; this is the UI half.
          */
         canCancel(job) {
+            if (this.isPluginCommand(job)) return this.jobStatus(job) === 'running';
             return this.isActive(job) || job.status === 'paused';
         },
 
@@ -653,11 +678,11 @@ export function downloadCockpit() {
         },
 
         canResume(job) {
-            return job.status === 'paused';
+            return !this.isPluginCommand(job) && job.status === 'paused';
         },
 
         canRetry(job) {
-            return ['failed', 'cancelled'].includes(job.status);
+            return !this.isPluginCommand(job) && ['failed', 'cancelled'].includes(job.status);
         },
 
         get activeCount() {
@@ -747,6 +772,9 @@ export function downloadCockpit() {
         },
 
         getJobTitle(job) {
+            if (this.isPluginCommand(job)) {
+                return `Plugin command ${job.id}`;
+            }
             if (job._isAction) {
                 return job.label || job.actionId;
             }
@@ -758,6 +786,9 @@ export function downloadCockpit() {
         },
 
         getJobSubtitle(job) {
+            if (this.isPluginCommand(job)) {
+                return `Durable status: ${this.statusLabels[this.jobStatus(job)] || this.jobStatus(job)}`;
+            }
             if (job._isAction) {
                 return job.message || '';
             }

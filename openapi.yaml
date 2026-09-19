@@ -6020,6 +6020,62 @@ paths:
             summary: Get available plugin actions
             tags:
                 - plugins
+    /v1/plugin/command-run:
+        get:
+            description: Administrator-only run detail including imports and the redacted output row when it has not been pruned.
+            operationId: getPluginCommandRun
+            parameters:
+                - description: Command run id
+                  in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get durable plugin command run detail
+            tags:
+                - plugins
+    /v1/plugin/command-run/cancel:
+        post:
+            description: Administrator-only cancellation through the durable dispatcher latch. Missing runs return 404 and terminal/state conflicts return 409.
+            operationId: cancelPluginCommandRun
+            parameters:
+                - description: Command run id
+                  in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Cancel a queued or running plugin command
+            tags:
+                - plugins
+    /v1/plugin/command-runs:
+        get:
+            description: Administrator-only newest-first paginated summaries. Output is omitted from the list and loaded only by the detail endpoint.
+            operationId: listPluginCommandRuns
+            parameters:
+                - description: One-based page
+                  in: query
+                  name: page
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List durable plugin command runs
+            tags:
+                - plugins
     /v1/plugin/disable:
         post:
             operationId: disablePlugin

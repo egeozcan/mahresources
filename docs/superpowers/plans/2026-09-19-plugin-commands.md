@@ -1026,27 +1026,27 @@ git commit -m "feat: configure and recover plugin command staging"
 - `POST /v1/plugin/command-run/cancel` — admin-only cancellation by `id`; JSON response or 303 back to history for a browser form.
 - `GET /admin/plugin-command-runs` — admin-only HTML history.
 
-- [ ] **Step 1: Write red authorization tests**
+- [x] **Step 1: Write red authorization tests**
 
 Create an admin-owned and user-owned command row. Assert admin can list/read both; editor/user/guest receive 403 even for their own actor ID; ordinary `/downloads` never includes command records. For a queued row, assert only an admin can POST cancel, the row becomes `cancelled` without ever appearing in `DownloadManager`, and a repeat/terminal cancel returns 409; missing IDs return 404. Add every exact path to `isSystemPath` tests.
 
-- [ ] **Step 2: Implement bounded history queries and cancellation**
+- [x] **Step 2: Implement bounded history queries and cancellation**
 
 Order newest first, paginate with a fixed/default limit, omit output from list, and join output/imports only for detail. If output was pruned, return `outputAvailable=false` with the run intact. Add `CancelPluginCommandRun(id)` to the handler/context seam; it delegates to `Dispatcher.Cancel(id, "operator cancelled")`, maps `ErrRunNotFound` to 404 and `ErrRunNotCancellable`/state conflicts to 409, and returns JSON or a 303 history redirect without duplicating queue-state logic in the HTTP layer.
 
-- [ ] **Step 3: Render escaped output and warning data**
+- [x] **Step 3: Render escaped output and warning data**
 
 The detail page renders redacted params/argv, status, timestamps, exit code, imports and `<pre>` output. Pongo2 escaping stays on; control characters were stripped before storage. Add a prominent note that program output can echo secrets despite parameter redaction. In both a queued list row and queued detail, render a keyboard-operable **Cancel queued run** form carrying the CSRF token and run ID; it submits to the dedicated admin endpoint. If dispatch wins the render/submit race, the same dispatcher latch cancels before fork or kills the verified group.
 
-- [ ] **Step 4: Make live command jobs display durable authority**
+- [x] **Step 4: Make live command jobs display durable authority**
 
 For dispatched `source=plugin-command` jobs, cockpit status/label uses `authoritativeStatus`; offer Cancel only while running, never Pause/Resume/Retry. Pending dispatcher-owned rows do not appear in the live cockpit; they remain visible through `mah.fs.runs()` and cancellable by an administrator from command history. The manager returns 409 for forbidden controls even if a crafted request bypasses the UI. Link terminal command rows to the admin history detail only for admins.
 
-- [ ] **Step 5: Add accessibility/browser assertions**
+- [x] **Step 5: Add accessibility/browser assertions**
 
 Verify warning headings, command table captions, live-region terminal announcement, keyboard-operable running-job cancel, keyboard-operable queued-history cancel, focus/announcement after the 303 result, no dead pause/retry controls and escaped output containing `<script>`/ANSI bytes. Run axe on the new admin page.
 
-- [ ] **Step 6: Rebuild generated surfaces and commit**
+- [x] **Step 6: Rebuild generated surfaces and commit**
 
 ```bash
 npm run build-js

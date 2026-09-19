@@ -97,11 +97,32 @@ func TestAdminUserEditPage_IsAdminOnly(t *testing.T) {
 // which the render seams are built to prevent.
 //
 // The table is the point: it is cheaper to extend than to remember.
+func TestPluginCommandHistoryPage_IsAdminOnly(t *testing.T) {
+	tc := setupAuthEnv(t)
+	for _, role := range []models.Role{models.RoleEditor, models.RoleUser, models.RoleGuest} {
+		bearer := roleBearer(t, tc, role)
+		res := doReq(tc, http.MethodGet, "/admin/plugin-command-runs",
+			map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+		if res.Code != http.StatusForbidden {
+			t.Errorf("%s history page status = %d, want 403", role, res.Code)
+		}
+	}
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	res := doReq(tc, http.MethodGet, "/admin/plugin-command-runs",
+		map[string]string{"Accept": "text/html", "Authorization": admin}, nil, nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("admin history page status = %d: %s", res.Code, res.Body.String())
+	}
+}
+
 func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
 	tc := setupAuthEnv(t)
 
 	endpoints := []struct{ method, path string }{
 		{http.MethodGet, "/v1/plugins/manage"},
+		{http.MethodGet, "/v1/plugin/command-runs"},
+		{http.MethodGet, "/v1/plugin/command-run"},
+		{http.MethodPost, "/v1/plugin/command-run/cancel"},
 		{http.MethodGet, "/v1/plugin/schedules?name=whatever"},
 		{http.MethodGet, "/v1/plugin/scheduled-downloads?name=whatever"},
 		{http.MethodPost, "/v1/plugin/scheduled-downloads/cancel"},
