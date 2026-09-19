@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 8 — revised after seven gpt-6-astra design reviews
+Status: final — approved by gpt-6-astra review (with the two closing clarifications applied)
 Date: 2026-09-19
 
 ## Goal
@@ -546,14 +546,20 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   `1201-1203` short-circuits on an existing row).
 
   The import path instead extends **AddResource's own hash-locked
-  destination handling**: under the hash lock, before the existing
-  skip-if-present short-circuit, the destination file is validated against
-  the **immutable input snapshot** — if it exists and its size differs from
-  that snapshot's, it is replaced with a full copy. A size check suffices
-  to catch copy-truncation (a crash mid-copy leaves a strict prefix, which
-  cannot have the snapshot's size); matching sizes is the ordinary
-  post-copy-crash case and is correctly reused. Each attempt derives hash,
-  MIME and size **freshly from its own snapshot** — the size of the
+  destination handling** — with the committed-row lookup strictly first.
+  Under the hash lock, the existing committed-resource lookup and merge
+  (`1201-1203`) remains the first branch: destination validation/replacement
+  happens **only after that lookup returns not-found**, and before the
+  file-existence reuse branch. There the destination file is validated
+  against the **immutable input snapshot** — if it exists and its size
+  differs from that snapshot's, it is replaced with a full copy. Importing
+  already-committed identical content therefore never touches its backing
+  file: the row lookup short-circuits first (asserted by test). A size
+  check suffices to catch copy-truncation (a crash mid-copy leaves a
+  strict prefix, which cannot have the snapshot's size); matching sizes is
+  the ordinary post-copy-crash case and is correctly reused. Each attempt
+  derives hash, MIME and size **freshly from its own snapshot** — the size
+  of the
   snapshot being imported is compared against the destination that the
   same snapshot resolves to via the mime-detected extension; comparing a
   newly measured source against a cached prior-attempt destination is
@@ -569,8 +575,12 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   (`resource_upload_context.go:1084-1096`) — outside `import_tmp`, and its
   deferred removal does not survive a crash. Import-owned invocations
   route that scratch into the **claim's managed temp directory**
-  (`<staging root>/import_tmp/<import-id>/`) via an explicit scratch-dir
-  option, so every import temp — outer and inner — is inside `import_tmp`,
+  (`<staging root>/import_tmp/<import-id>/`) via an options-aware internal
+  helper — the public three-argument `AddResource` method on
+  `contracts.ResourceCreator` and the download queue's usage
+  (`resource_interfaces.go:19`, `manager.go:103`) stay unchanged, and
+  ordinary uploads keep their `HLSTempDir` behaviour — so every import
+  temp — outer and inner — is inside `import_tmp`,
   never appears in `mah.fs.list`, and is covered by one accounting rule:
   the per-run exchange quota covers the run's exchange folder **plus** its
   import temps, and the global staging quota covers the whole staging root
