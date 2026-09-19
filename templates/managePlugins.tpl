@@ -30,6 +30,8 @@
             Executable basenames are searched only in the operator-configured plugin-command path.
             These processes are not sandboxed, have unrestricted networking including private and
             loopback addresses, and can read anything the OS account can read, including sibling plugin exchange folders.
+            Plugin-supplied parameter values may be interpreted as flags or otherwise alter program behavior,
+            and the executable may itself be an interpreter that executes scripts or code.
             Importing command output additionally requires separate
             <span class="font-mono">db:write</span> consent.
         </p>
@@ -146,6 +148,8 @@
                     Executable basenames are searched only in the operator-configured plugin-command path.
                     The processes are not sandboxed, have unrestricted networking including private and
                     loopback addresses, and can read anything the OS account can read, including sibling plugin exchange folders.
+                    Plugin-supplied parameter values may be interpreted as flags or otherwise alter program behavior,
+                    and the executable may itself be an interpreter that executes scripts or code.
                     Importing command output additionally requires separate
                     <span class="font-mono">db:write</span> consent.
                 </p>

@@ -95,6 +95,19 @@ func pluginWarnings(t *testing.T, ctx *MahresourcesContext) []models.LogEntry {
 	return entries
 }
 
+func TestPluginConsentStorePersistenceFollowsTheDatabaseLifetime(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	store := &pluginConsentStore{ctx: ctx}
+	if !store.Persistent() {
+		t.Fatal("a disk-backed database was reported as ephemeral")
+	}
+
+	ctx.Config.MemoryDB = true
+	if store.Persistent() {
+		t.Fatal("an in-memory database was reported as a persistent consent store")
+	}
+}
+
 func TestPluginConsentStoreRoundTripsARecord(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	if err := ctx.db.Create(&models.PluginState{PluginName: "recorder"}).Error; err != nil {

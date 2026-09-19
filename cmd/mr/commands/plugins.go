@@ -72,6 +72,8 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 						} `json:"commands"`
 					}
 					if json.Unmarshal(apiErr.Body, &refusal) == nil && refusal.RequiresCommandConfirmation {
+						cmd.PrintErrln("WARNING: these commands run as the server service account. They are not sandboxed, have unrestricted networking including private and loopback addresses, and can read anything the OS account can read, including sibling plugin exchange folders.")
+						cmd.PrintErrln("Plugin-supplied parameter values may be interpreted as flags or otherwise alter program behavior. A declared executable may itself be an interpreter and execute scripts or code.")
 						cmd.PrintErrln("This plugin requests permission to run these server commands:")
 						for _, command := range refusal.Commands {
 							cmd.PrintErrf("  %s: %s (timeout %d seconds)\n", command.Name, command.Argv, command.TimeoutSeconds)

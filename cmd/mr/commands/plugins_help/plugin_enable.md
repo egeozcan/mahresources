@@ -21,6 +21,13 @@ with `--confirm-commands` to record durable consent. The flag confirms all
 commands declared by that plugin; command execution is not available with an
 in-memory-only consent store.
 
+Command processes run as the server service account and are not sandboxed. They
+have unrestricted networking, including private and loopback addresses, and can
+read anything the OS account can read, including sibling plugin exchange
+folders. Plugin-supplied parameter values may be interpreted as flags or
+otherwise alter program behavior, and the executable may itself be an
+interpreter that executes scripts or code.
+
 # Example
 
   # Enable a plugin by name

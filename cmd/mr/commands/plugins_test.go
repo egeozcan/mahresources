@@ -81,7 +81,19 @@ func TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag(t *
 	if apiErr.Error() != "HTTP 409: command confirmation required" {
 		t.Fatalf("APIError text changed: %q", apiErr.Error())
 	}
-	for _, want := range []string{"download", "yt-dlp -- '{{url}}'", "7200", "probe", "ffprobe '{{exchange_dir}}'", "3600", "Re-run with --confirm-commands"} {
+	for _, want := range []string{
+		"server service account",
+		"not sandboxed",
+		"unrestricted networking including private and loopback addresses",
+		"anything the OS account can read",
+		"sibling plugin exchange folders",
+		"Plugin-supplied parameter values",
+		"interpreted as flags",
+		"executable may itself be an interpreter",
+		"download", "yt-dlp -- '{{url}}'", "7200",
+		"probe", "ffprobe '{{exchange_dir}}'", "3600",
+		"Re-run with --confirm-commands",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output %q does not contain %q", out, want)
 		}
