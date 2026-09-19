@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 4 — revised after three gpt-6-astra design reviews
+Status: draft 5 — revised after four gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -268,18 +268,46 @@ properties made explicit rather than inherited:
 A new persisted table `plugin_command_runs` (id, plugin name, command name,
 redacted parameter view, actor user id, created/started/finished timestamps,
 status, exit code, error text, **spawned process group id**) survives
-restarts and is independent of the queue's 1-hour terminal retention. On
-startup, every nonterminal record — running **and** queued, since the
+restarts and is independent of the queue's 1-hour terminal retention.
+
+**Crash-safe launch registration.** A run row is created in a `spawning`
+state before the fork; the pgid is written immediately after spawn, before
+the worker proceeds. Two crash windows remain, and both are handled by the
+recovery identity check below rather than by assuming the pgid exists or is
+trustworthy:
+
+- A crash between fork and pgid persist leaves a nonterminal row with no
+  recoverable group identity.
+- A numeric pgid can be **reused**: after the original group exits, recovery's
+  `kill(-pgid, 0)` can succeed against an unrelated group, and a blind
+  SIGKILL would hit processes that never belonged to this run.
+
+On startup, every nonterminal record — running **and** queued, since the
 in-memory queue registry does not survive a restart
-(`download_queue/manager.go:228-230`) — with no live dispatch is marked
-`interrupted` with a finished timestamp; its exchange folders are retained
-until the sweep reaches them. Before stamping a previously-running record
-terminal, the host **verifies the recorded process group is actually dead**,
-killing any survivors (`kill(-pgid, 0)` check, then SIGKILL the group): after
-a SIGKILL of the server or a panic, yt-dlp and the ffmpeg it spawned are
-orphaned and may still be writing — a half-written file must never be
-declared ready to import. The persisted pgid is what makes that check
-possible.
+(`download_queue/manager.go:228-230`) — with no live dispatch is resolved as
+follows:
+
+1. **Identity check.** Every spawned process carries
+   `MAHR_COMMAND_RUN_ID=<run id>` in its environment (§3, host hardening).
+   Recovery enumerates the recorded pgid's group and verifies at least one
+   member's environment carries the matching run id (via `/proc/<pid>/environ`
+   on Linux, the process args interface on macOS).
+2. **Verified dead** (no group, or empty group): the processes are gone;
+   stamp `interrupted` with a finished timestamp. Nothing is writing.
+3. **Verified alive**: descendants survived the crash; SIGKILL the group,
+   wait for exit, then stamp `interrupted`. This closes the orphaned-writer
+   case from the previous draft without touching unrelated groups.
+4. **Unverifiable** (group exists but no member's environment matches —
+   the reuse case — or no pgid was ever persisted, the spawn-crash case):
+   stamp `interrupted` **with `output_unverified = true`**. The exchange
+   folder's contents are **not importable**: `mah.fs` file operations on an
+   `output_unverified` run are refused with an `output unverified` error,
+   because ownership or death of the writers cannot be established. Only
+   `mah.fs.discard_run` may remove such a run (deleting unverified output is
+   safe; importing it is not). The plugin's page surfaces these runs for
+   operator disposal.
+
+Exchange folders of resolved runs are retained until the sweep reaches them.
 
 The status vocabulary is exactly: `queued`, `running`, `succeeded`, `failed`,
 `cancelled`, `interrupted`. Nothing else. One transition mapping defines
@@ -291,7 +319,7 @@ which terminal state each path produces:
 | Command exits non-zero / cannot start / quota exceeded | `failed` | error text names timeout or quota |
 | Operator cancels via the job UI | `cancelled` | process group killed |
 | Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
-| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; pgid verified dead (survivors killed) before stamping |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; pgid identity-verified (survivors killed) before stamping; unverifiable writer identity → `interrupted` + `output_unverified` |
 
 `failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
 distinct statuses, as required.
@@ -421,34 +449,92 @@ Granted with the `commands` capability:
   `truncated` flag tells the plugin names exist beyond the window.
 - `mah.fs.discard_run(run_id)` → deletes the entire exchange folder of one
   finished run — the escape hatch when `truncated` hides uninteresting
-  excess, or when a run is abandoned wholesale.
+  excess, or when a run is abandoned wholesale. Same run-level ownership
+  checks as `list`; refuses while the run has **any nonterminal import**
+  (see the import lifecycle below) and on runs whose output is unverified
+  it is the *only* permitted operation.
 - `mah.fs.read(run_id, name, max_bytes)` → content as a string; refuses beyond
   `max_bytes` (hard cap 4 MB).
 - `mah.fs.create_resource(run_id, name, fields [, on_import])` →
   `import_id | nil, err` (or the existing resource id, when the import map
   short-circuits). Requires **both** `commands` and `db:write` (creating
   library content is a write power; see §7). **This call does not transfer
-  bytes.** It validates, records an `imported`-intent entry, **enqueues an
-  import job** on the import pool (§3) and returns immediately — the same
-  shape as `mah.download.submit`, for the same reason: the transfer runs
-  outside the plugin VM, so the completion callback stays cheap and a slow
-  import cannot hold the VM lock against pages and hooks. The import job
-  streams the file from the staging directory through the `AddResource`
-  path, records the result in the run's import map
-  (`name → { resource_id, status, error }`, idempotent on completion), and
-  then deletes the source file (on delete failure the file is marked
-  `imported-pending-delete`; the import map, not the bytes, is what makes
-  re-import idempotent). `on_import`, if given, is a Lua callback fired
-  at-most-once when the import job reaches a terminal state — same VM-lock
-  and budget rules as the command completion callback, and equally meant to
-  stay cheap (record a note, attach a tag). Import results remain readable
-  through `mah.fs.runs()` after any callback loss. Refused inside DB
-  transactions, like `create_resource_from_data`.
+  bytes.** It validates, **atomically claims the import** (see lifecycle
+  below), **enqueues the import job** on the import pool (§3) and returns
+  the import id immediately — the same shape as `mah.download.submit`, for
+  the same reason: the transfer runs outside the plugin VM, so the completion
+  callback stays cheap and a slow import cannot hold the VM lock against
+  pages and hooks. The import job streams the file from the staging
+  directory through the `AddResource` path, records the result in the run's
+  import map (`name → { import_id, resource_id, status, error }`, idempotent
+  on completion), and then deletes the source file (on delete failure the
+  file is marked `imported-pending-delete`; the import map, not the bytes,
+  is what makes re-import idempotent). `on_import`, if given, fires
+  at-most-once when the import job reaches a terminal state (contract
+  below). Import results remain readable through `mah.fs.runs()` after any
+  callback loss. Refused inside DB transactions, like
+  `create_resource_from_data`.
 - `mah.fs.discard(run_id, name)` → deletes one file.
 - `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
   status, started_at, finished_at, exit_code, error, imports }` — including
   `interrupted` runs after restart and each run's import map — so recovery
   does not depend on a live callback.
+
+### Import job lifecycle
+
+Imports are durable work in their own right, with their own claims, states
+and recovery — an enqueue that vanishes on restart is not acceptable:
+
+- **Claims are atomic per `(run_id, name)`.** `create_resource` first checks
+  the import map; if the name already has an import in a **nonterminal**
+  state (`pending`, `running`) it returns the **existing import id** —
+  idempotency holds at submission, not only at completion, so a page that
+  reconciles while an import is queued does not double-import. A terminal
+  entry follows the short-circuit rule (`succeeded` → existing resource id;
+  `failed`/`cancelled`/`interrupted` → a **new** import may be claimed,
+  replacing the terminal entry).
+- **Import status vocabulary**: `pending`, `running`, `succeeded`, `failed`,
+  `cancelled`, `interrupted`. Each claim record carries import id, run id,
+  name, submitting plugin generation, actor user id, timestamps, and error
+  text.
+- **Enqueue failure is not limbo.** If pool admission fails or the process
+  crashes between claim and enqueue, the claim is marked `failed` (enqueue
+  failure) or `interrupted` (crash) — never silently pending.
+- **Restart recovery.** Nonterminal imports (`pending`/`running`) found at
+  startup are marked `interrupted`. They are recoverable: a subsequent
+  `create_resource` for the same name re-enqueues the claim (same import
+  id, back to `pending`). This is the re-drive the §6 page reconciliation
+  uses; until then the claim sits in `runs()`, visible and re-submittable —
+  documented behaviour, not a silent drop.
+- **Plugin lifecycle binding.** Each claim is bound to the submitting
+  plugin's generation. The import worker **revalidates at start**: plugin
+  still enabled, `commands`/`db:write` grants still consented, actor's
+  current role and scope permit the write. A revalidation failure marks the
+  claim `cancelled` with the reason (the mirror of the Lua download entry
+  point's revoked-VM refusal, `download_api.go:101-108`, for work that has
+  left the VM).
+- **Plugin disable.** Queued imports are cancelled (`cancelled`, reason
+  `plugin disabled`). An import already running when the plugin is disabled
+  **finishes its resource commit** — mid-copy cancellation would orphan the
+  bytes just as a crash would — and is recorded `succeeded`; the disable
+  boundary is at the start of the next job, not mid-stream. After a
+  disable/re-enable cycle, cancelled imports stay cancelled; the plugin's
+  page reconciliation re-submits them if wanted.
+- **Server shutdown** marks nonterminal imports `interrupted` (recoverable
+  by re-submission, same as restart).
+- **`on_import` contract.** Fired at-most-once when the import job reaches a
+  terminal state, in a background VM goroutine under the same exclusive-lock
+  and `asyncActionTimeout` budget rules as the command completion callback,
+  and equally required to stay cheap. Result table:
+
+  ```lua
+  { ok = bool, import_id = "...", run_id = "...", name = "...",
+    resource_id = n|nil, error = string|nil }
+  ```
+
+  The submission-time short-circuit (already-imported) does **not** fire
+  `on_import` — it returns synchronously at submission. Callback loss falls
+  back to the durable map, as with command callbacks.
 
 ### Enforcement, per operation kind
 
@@ -465,16 +551,19 @@ Granted with the `commands` capability:
      the plugin.
   2. **Finished state**: the run must be terminal; file operations against
      a running or queued run are refused. (Startup recovery has already
-     verified the process group of an `interrupted` run is dead — §3 — so
-     terminal means nothing is still writing into the folder.)
+     resolved every `interrupted` run's writer status — §3 — and flagged
+     `output_unverified` runs, whose file operations are refused with an
+     `output unverified` error except `discard_run`.)
   3. **Name validation** (lexical): the name must match the plugin-visible
      character set (no `/`, `\`, null bytes, no `.` or `..`, length-capped).
-  4. **Import-map short-circuit** (`create_resource` only): if the durable
-     import map already records `name → resource id`, return that id —
-     **before** any file-existence check. This is what makes re-import
-     idempotent after the source file was deleted (failed post-import delete,
-     or swept); `read` and `discard` of an imported-but-deleted name are
-     plain `file not found`.
+  4. **Import claim short-circuit** (`create_resource` only): if the durable
+     import map already records the name — `succeeded` → return the existing
+     resource id; nonterminal (`pending`/`running`) → return the existing
+     import id; terminal-failed/cancelled/interrupted → a new claim replaces
+     it — **before** any file-existence check. This is what makes re-import
+     idempotent after the source file was deleted (failed post-import
+     delete, or swept); `read` and `discard` of an imported-but-deleted name
+     are plain `file not found`.
   5. **File checks**: the entry must be a **regular file** (`lstat`;
      directories, symlinks, devices and other specials are refused), and is
      opened **relative to the run directory with `O_NOFOLLOW`** (and
@@ -499,13 +588,17 @@ enable `commands` for all of them.
   configurable retention (default 7 days, measured from **completion**, not
   creation) has elapsed. A run is skipped by the sweep while it has an active
   file operation — import, read and discard each hold their lease — or a
-  nonterminal run record; lease acquisition and the sweep's skip-check are
-  coordinated under the same per-run lock, so an operation cannot slip
-  between the check and the sweep. When retention elapses, **everything** in
-  the exchange directory is deleted, including `imported-pending-delete`
-  bytes; what survives is the import map in the durable run record, which is
-  what makes re-import idempotent after the bytes are gone — via the
-  import-map short-circuit in the operation order above.
+  nonterminal run record **or any nonterminal import** (`pending`/`running`),
+  because the import pin is taken at **claim/admission time**, not at worker
+  start: an import accepted against a run whose retention has already
+  elapsed must not be swept out from under the worker that will eventually
+  run. Lease acquisition and the sweep's skip-check are coordinated under
+  the same per-run lock, so an operation cannot slip between the check and
+  the sweep. When retention elapses, **everything** in the exchange
+  directory is deleted, including `imported-pending-delete` bytes; what
+  survives is the import map in the durable run record, which is what makes
+  re-import idempotent after the bytes are gone — via the import-claim
+  short-circuit in the operation order above.
 - Import, read and discard take a per-file lease for their duration;
   `create_resource` inside a DB transaction is refused (same rule as
   `create_resource_from_data`), so a rollback can never silently lose the
@@ -581,10 +674,13 @@ the rest. The byte transfer happens in the import jobs, not the callback.
 **Restart re-drive.** Callbacks are at-most-once, and nothing re-drives the
 plugin after a restart unless the plugin itself looks. The plugin **has no
 `schedule` capability** in v1; instead, its page handler **reconciles on
-load**: it calls `mah.fs.runs()`, re-queues imports for finished-but-unimported
-files, and surfaces interrupted/failed runs to the operator. Until a human
-opens the page after a restart, interrupted runs sit in `runs()` — that is
-the documented behaviour, not a silent drop.
+load** by walking `mah.fs.runs()` state by state: `succeeded`/`failed`
+command runs with pending imports to (re)queue — including claims stranded
+`interrupted` by a restart, which a fresh `create_resource` re-enqueues;
+`interrupted`/`failed` command runs surfaced to the operator; and
+`output_unverified` runs offered for `discard_run`. Until a human opens the
+page after a restart, stranded claims sit in `runs()` — that is the
+documented behaviour, not a silent drop.
 
 Resource creation uses the same field schema as the existing resource
 creators (`mah.db.create_resource_from_url` / `create_resource_from_data`
@@ -646,9 +742,14 @@ Core (mahresources):
   (generic `ctx.Err() → cancelled` classification not used for commands);
   durable run record readable after the 1-hour queue retention expires.
 - Crash recovery: restart with a **surviving orphaned process group** (a
-  grandchild writer still alive) — the group is killed before the record is
-  stamped `interrupted`; a half-written file is never importable as terminal
-  output.
+  grandchild writer still alive) — the group is identity-verified and killed
+  before the record is stamped `interrupted`; a half-written file is never
+  importable as terminal output. Two further windows have their own tests:
+  a **spawn/persist crash** (row nonterminal, no pgid persisted →
+  `interrupted` + `output_unverified`, file operations refused, `discard_run`
+  allowed) and **pgid reuse** (the recorded group id belongs to unrelated
+  processes after the original group exited → identity check fails, no
+  unrelated process is killed, output marked unverified).
 - stdin: the spawned process's stdin is `os.DevNull` (a prompting tool fails
   on timeout, never blocks forever).
 - `mah.fs`: enforcement tests for name validation, symlink refusal
@@ -675,6 +776,20 @@ Core (mahresources):
   callback and the durable record even when the generic queue's event
   machinery does not fire, and the durable record's status — not the generic
   classification — is what the job UI shows.
+- Import lifecycle: atomic per-`(run_id, name)` claims — a repeated
+  submission while `pending`/`running` returns the existing import id, not
+  a duplicate; **enqueue failure** marks the claim `failed` (never silently
+  pending); **restart** marks nonterminal claims `interrupted` and a fresh
+  `create_resource` re-enqueues the same claim id; **plugin disable**
+  cancels queued claims and lets a running import's commit finish (recorded
+  `succeeded`); **worker-start revalidation** (disabled plugin, changed
+  grants, demoted actor → claim `cancelled` with reason); **sweep
+  protection from admission time** — an import accepted against a
+  retention-expired run is not swept before its worker starts;
+  **`discard_run`** refuses while nonterminal imports exist and is the only
+  permitted operation on `output_unverified` runs; `on_import` receives the
+  documented result table and is not fired by the submission-time
+  short-circuit.
 
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
 enable flow shows it and requires the acknowledgement; a changed command set
