@@ -13,7 +13,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 6: Execute commands with hardened argv, environment, output and quotas.
 - [x] Task 7: Recover crashed runs and coordinate disable/shutdown.
 - [x] Task 8: Implement safe exchange-folder operations and leases.
-- [ ] Task 9: Dispatch durable, replayable resource imports.
+- [x] Task 9: Dispatch durable, replayable resource imports.
 - [ ] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
 - [ ] Task 11: Wire startup recovery, configuration, sweep and shutdown.
 - [ ] Task 12: Add administrator command history and authoritative job UI.
@@ -90,6 +90,18 @@ traversal/deletion/listing, nonblocking validation, shared admission leases and
 ownership/state-first errors. Parent focused and full race suites, vet,
 whitespace and clean-worktree checks passed; fresh GPT-5.6-sol final review
 approved.
+
+Task 9 landed in `9b8b3f67`, with async/quota/replay hardening in `0254ced6` and
+boundary corrections in `196096bc`. Review found synchronous unbounded copying,
+persistence limbo, insecure import-temp/source replacement, disable/start
+misclassification, unsafe source unlink and absent scoped end-to-end coverage.
+The final path snapshots asynchronously into descriptor-safe managed temps,
+retries terminal persistence before publishing, enforces per-run quota, uses an
+atomic pending-cancel/running boundary, leaves successful source bytes for the
+safe descriptor-anchored sweep when atomic unlink-by-fd is unavailable, and
+proves scoped attribution/association through dispatcher→adapter→AddResource.
+Parent focused/full race suites, application import/upload tests, vet, whitespace
+and clean-worktree checks passed; fresh GPT-5.6-sol final review approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`

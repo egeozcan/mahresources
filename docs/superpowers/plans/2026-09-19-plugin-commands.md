@@ -857,35 +857,35 @@ func (d *Dispatcher) SetImporter(Importer)
 func (d *Dispatcher) SubmitImport(ImportSubmission) (ImportSubmitResult, error)
 ```
 
-- [ ] **Step 1: Write red lifecycle tests through the dispatcher**
+- [x] **Step 1: Write red lifecycle tests through the dispatcher**
 
 Cover every state-table row from Task 4 at the public submission seam, pool admission failure→failed (not pending), restart pending/running→interrupted, interrupted resubmission same ID, failed/cancelled new ID, succeeded source-deleted short-circuit and no callback on a synchronous short-circuit.
 
-- [ ] **Step 2: Snapshot the source inside the claim temp**
+- [x] **Step 2: Snapshot the source inside the claim temp**
 
 After map short-circuit and safe file open, atomically claim/pin, create `<root>/import_tmp/<import-id>/`, and copy the source into a unique outer snapshot there. Call `addResourceWithOptions` with the same claim directory so its inner `upload-*` snapshot is also managed/accounted. Always derive hash/MIME/size from the current snapshot.
 
-- [ ] **Step 3: Implement actor/generation validation at worker start**
+- [x] **Step 3: Implement actor/generation validation at worker start**
 
 The application adapter verifies the plugin generation is still active, both `commands` and `db:write` remain granted, the stored actor is non-nil and still resolves to an enabled account with write role, and every requested group is inside scope (tags are global). A nil actor on an import claim — including one nulled by user deletion — cancels the claim fail-closed. An intentional actorless run may be opened by a current plugin principal, but `create_resource` stamps the **current** principal onto the new claim before enqueue. Bind that principal before calling `AddResource`; copy actor pointers before GORM stamping.
 
-- [ ] **Step 4: Implement disable and shutdown boundaries**
+- [x] **Step 4: Implement disable and shutdown boundaries**
 
 Disable cancels pending imports with `plugin disabled`; a worker already marked running completes and records success/failure. Shutdown makes pending imports interrupted and cancels running pre-commit reads so they record interrupted. A disable/re-enable never auto-retries cancelled imports.
 
-- [ ] **Step 5: Delete source only after durable success**
+- [x] **Step 5: Delete source only after durable success**
 
 Record resource ID/status in the map before removing the exchange file. If deletion fails, keep the map succeeded and record/log `imported-pending-delete`; later submission returns the resource ID without requiring the file. Sweep may delete the leftover bytes.
 
-- [ ] **Step 6: Account and recover import temp directories**
+- [x] **Step 6: Account and recover import temp directories**
 
 Per-run usage includes claim temp dirs for that run; global usage includes all `import_tmp`. Terminal cleanup removes claim temp immediately. Startup marks nonterminal claims interrupted and deletes their partial temps; add a fixture representing a crash after the inner `upload-*` file was populated.
 
-- [ ] **Step 7: Prove MemoryFS and same-content concurrency**
+- [x] **Step 7: Prove MemoryFS and same-content concurrency**
 
 Run a real staging file through the adapter into `afero.NewMemMapFs`; assert bytes are readable from the created resource. Run two imports of identical content concurrently and assert one valid backing file remains and both map entries resolve consistently through `AddResource` deduplication.
 
-- [ ] **Step 8: Verify and commit**
+- [x] **Step 8: Verify and commit**
 
 ```bash
 go test -race --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Import|MemoryFS|SameContent' -count=1
