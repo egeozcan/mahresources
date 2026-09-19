@@ -11,7 +11,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 4: Add durable run, output, import and map records.
 - [x] Task 5: Add managed live jobs and dedicated dispatch pools.
 - [x] Task 6: Execute commands with hardened argv, environment, output and quotas.
-- [ ] Task 7: Recover crashed runs and coordinate disable/shutdown.
+- [x] Task 7: Recover crashed runs and coordinate disable/shutdown.
 - [ ] Task 8: Implement safe exchange-folder operations and leases.
 - [ ] Task 9: Dispatch durable, replayable resource imports.
 - [ ] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
@@ -69,6 +69,16 @@ cleanup with unverified-output marking, samples final usage and rejects symlinke
 roots. Parent race, package, vet, whitespace and clean-worktree checks passed;
 final GPT-5.6-sol review approved. Windows cross-compilation remains blocked by
 the repository's pre-existing SQLite dependency rather than Task 6 code.
+
+Task 7 landed in `dd09dde8` with race hardening in `d05bd5dc` and a minimal
+process-lifetime dispatcher seam on `MahresourcesContext` for later Task 11
+wiring. Review found pre-fork cancellation, dead-group recovery precedence,
+all-members ownership checks, disable completion, shutdown drain/error, full
+inbox and failed-dispatch import defects. The follow-up adds a per-run fork
+barrier, completion barriers, at-least-one marked-member ownership, bounded
+error-propagating shutdown and retry-state cancellation. Parent focused and full
+plugin-command race suites, application disable tests, vet, whitespace and
+clean-worktree checks passed; final GPT-5.6-sol review approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`

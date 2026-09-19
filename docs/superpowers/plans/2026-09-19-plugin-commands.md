@@ -717,27 +717,27 @@ func (d *Dispatcher) Recover(context.Context) error
 func (d *Dispatcher) DisablePlugin(string, string) error
 ```
 
-- [ ] **Step 1: Write red recovery matrix tests with a fake inspector**
+- [x] **Step 1: Write red recovery matrix tests with a fake inspector**
 
 Literal cases: queued/cancel requested→cancelled without spawn; queued/no cancellation→interrupted verified; running/cancel requested with owned group→kill then cancelled with persisted reason; running/cancel requested but unverifiable group→interrupted + output_unverified; running/no pgid→interrupted + output_unverified; running/dead pgid→interrupted; running/owned live group→recheck, kill, recheck, interrupted; running/reused pgid→no kill, interrupted + output_unverified. File operations on unverified output are covered in Task 8.
 
-- [ ] **Step 2: Implement Linux and macOS identity inspection**
+- [x] **Step 2: Implement Linux and macOS identity inspection**
 
 Linux enumerates `/proc/*/stat` for matching process group IDs and reads `/proc/<pid>/environ` for `MAHR_COMMAND_RUN_ID`. Darwin uses `sysctl` process listings plus `KERN_PROCARGS2` to inspect each group member's environment. Unsupported Unix inspectors return unverifiable rather than guessing ownership.
 
-- [ ] **Step 3: Close the pre-fork cancellation races**
+- [x] **Step 3: Close the pre-fork cancellation races**
 
 Make `Dispatcher.Cancel` the single per-run cancellation primitive used by both an administrator request and `DisablePlugin`. It persists `RequestRunCancel` and sets the atomic latch before taking the dispatch mutex: while queued it removes/finishes without a spawn; before fork it cancels without `Start`; after fork it waits for pgid persistence, then identity-checks, kills/reaps and publishes `cancelled` with the supplied reason. `DisablePlugin` iterates its runs through that primitive with reason `plugin disabled`. Test direct operator and disable barriers immediately before `Start` and immediately after `Start`/before pgid persistence.
 
-- [ ] **Step 4: Integrate plugin disable**
+- [x] **Step 4: Integrate plugin disable**
 
 After `PluginManager.DisablePlugin` successfully revokes the VM, `SetPluginEnabled(false)` calls `Dispatcher.DisablePlugin`. Queued command runs/imports become cancelled; running command groups are killed; running imports are not cancelled and may finish their commit. If cancellation persistence fails, log to the application log and return the failure rather than report a complete disable while command execution remains active.
 
-- [ ] **Step 5: Implement shutdown classification**
+- [x] **Step 5: Implement shutdown classification**
 
 Stop admission, finish rows with a pre-existing durable cancel request as `cancelled`, mark every other queued command/import interrupted, terminate other running command groups with shutdown reason, and wait boundedly for workers. Import workers use a cancel-aware source reader so pre-commit copies stop; terminal recording is drained before `Stop` returns. Shutdown outcomes are `interrupted`, never operator `cancelled`.
 
-- [ ] **Step 6: Mutation-check identity before kill**
+- [x] **Step 6: Mutation-check identity before kill**
 
 Temporarily remove the run-id environment comparison and verify the pgid-reuse test observes the forbidden kill. Restore it and run:
 
@@ -746,7 +746,7 @@ go test -race ./plugin_commands ./application_context -run 'Recovery|Cancel.*For
 git diff --check
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add plugin_commands application_context/plugin_state_context.go application_context/*disable*test.go
