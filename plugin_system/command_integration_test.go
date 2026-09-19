@@ -10,10 +10,10 @@ import (
 	"mahresources/plugin_commands"
 )
 
-// commandIntegrationHost keeps the byte transfer pending after Lua has queued
-// it. That controlled boundary proves the completion callback releases the VM
-// lock before import work finishes: a page must remain callable while the
-// import callback is still outstanding.
+// commandIntegrationHost records the Lua-to-host contract and withholds the
+// asynchronous import completion. This package-level fixture proves callback
+// table shape and that waiting for a later completion does not retain the VM;
+// server/api_tests covers the production dispatcher and a real blocked import.
 type commandIntegrationHost struct {
 	*commandLuaHost
 	importQueued chan struct{}
@@ -38,7 +38,7 @@ func (h *commandIntegrationHost) DiscardCommandFile(access plugin_commands.Acces
 	return nil
 }
 
-func TestPluginCommandHostIntegrationCallbackQueuesWorkAndReleasesVMLock(t *testing.T) {
+func TestPluginCommandLuaContractQueuesWorkAndReleasesVMLockBeforeCompletion(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "command-integration", `
 plugin = {
@@ -153,8 +153,9 @@ end
 		t.Fatal("completion callback did not discard the unwanted file")
 	}
 
-	// The import completion is deliberately withheld. If create_resource did the
-	// byte transfer while holding the VM lock, this page could not answer.
+	// The asynchronous completion is deliberately withheld. The real host's
+	// byte-transfer boundary is exercised with a blocked AddResource destination
+	// in server/api_tests/plugin_command_integration_test.go.
 	pageDone := make(chan struct {
 		body string
 		err  error
@@ -177,7 +178,7 @@ end
 			}
 		}
 	case <-time.After(time.Second):
-		t.Fatal("plugin page waited for the pending import callback; import work retained the VM lock")
+		t.Fatal("plugin page waited for the pending asynchronous import completion")
 	}
 
 	host.mu.Lock()

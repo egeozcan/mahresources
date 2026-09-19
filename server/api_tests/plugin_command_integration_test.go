@@ -10,12 +10,20 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/spf13/afero"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"mahresources/application_context"
+	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/seed"
 	"mahresources/plugin_commands"
+	"mahresources/server"
 )
 
 const commandIntegrationPluginName = "command-integration"
@@ -50,15 +58,20 @@ func TestPluginCommandFixtureProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(4)
 		}
+	case "restart":
+		if err := os.WriteFile(filepath.Join(exchangeDir, "restart.bin"), []byte("restart callback output"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(5)
+		}
 	case "wait":
 		if err := os.WriteFile(filepath.Join(exchangeDir, "started.marker"), []byte("started"), 0o600); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(5)
+			os.Exit(6)
 		}
 		select {}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown fixture mode %q\n", mode)
-		os.Exit(6)
+		os.Exit(7)
 	}
 }
 
@@ -74,6 +87,135 @@ func (s commandIntegrationSettings) GlobalStagingQuota() int64        { return 5
 func (s commandIntegrationSettings) ExchangeRetention() time.Duration { return 7 * 24 * time.Hour }
 func (s commandIntegrationSettings) OutputRetention() time.Duration   { return 30 * 24 * time.Hour }
 func (s commandIntegrationSettings) CommandPath() string              { return s.commandPath }
+
+// gatedResourceFS blocks only the resource destination Create call. Command
+// staging remains the real descriptor-relative OS path, and the import worker
+// reaches this gate only after it has durably transitioned to running, copied
+// its snapshot, and entered the production AddResource path.
+type gatedResourceFS struct {
+	afero.Fs
+	mu      sync.Mutex
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (f *gatedResourceFS) arm(capacity int) <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gate != nil {
+		panic("resource filesystem gate already armed")
+	}
+	f.gate = make(chan struct{})
+	f.entered = make(chan struct{}, capacity)
+	return f.entered
+}
+
+func (f *gatedResourceFS) release() {
+	f.mu.Lock()
+	gate := f.gate
+	f.gate = nil
+	f.entered = nil
+	f.mu.Unlock()
+	if gate != nil {
+		close(gate)
+	}
+}
+
+func (f *gatedResourceFS) Create(name string) (afero.File, error) {
+	f.mu.Lock()
+	gate, entered := f.gate, f.entered
+	f.mu.Unlock()
+	if gate != nil && strings.HasPrefix(filepath.ToSlash(name), "/resources/") {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-gate
+	}
+	return f.Fs.Create(name)
+}
+
+func waitForResourceCreates(t *testing.T, entered <-chan struct{}, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d real imports reached the resource filesystem", i, count)
+		}
+	}
+}
+
+// openPersistentCommandTestContext mirrors process construction while keeping
+// the database and resource filesystem explicit so the test can close every
+// process-owned object and rebuild them against the same durable state.
+func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, filesystem afero.Fs) (*TestContext, func()) {
+	t.Helper()
+	dsn := dbPath + "?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=on"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&models.Query{}, &models.Series{}, &models.Resource{}, &models.ResourceVersion{},
+		&models.Note{}, &models.NoteBlock{}, &models.Tag{}, &models.Group{},
+		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.Preview{},
+		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
+		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.PluginState{}, &models.PluginKV{},
+		&models.SavedMRQLQuery{}, &models.TemplatePartial{}, &models.RuntimeSetting{}, &models.User{},
+		&models.SavedSearch{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{},
+		&models.DownloadHistoryEntry{}, &models.ScheduledDownload{}, &models.ResourceReduction{},
+		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureSupplementalIndexes(db); err != nil {
+		t.Fatal(err)
+	}
+	seed.AddInitialData(db)
+
+	config := &application_context.MahresourcesConfig{
+		DbType: constants.DbTypeSqlite, PluginPath: pluginDir, AuthEnabled: true,
+		SessionTTL: time.Hour, MaxUploadSize: 2 << 30, MaxImportSize: 10 << 30,
+		MRQLDefaultLimit: 500, MRQLQueryTimeoutBoot: 10 * time.Second,
+		RemoteResourceConnectTimeout: 30 * time.Second, RemoteResourceIdleTimeout: time.Minute,
+		RemoteResourceOverallTimeout: 30 * time.Minute, ExportRetention: 24 * time.Hour,
+		AltFileSystems: map[string]string{},
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+	appCtx := application_context.NewMahresourcesContext(filesystem, db, readOnlyDB, config)
+	settings := application_context.NewRuntimeSettings(
+		db, application_context.NewStdlibSettingsLogger(), application_context.BuildSpecsExported(),
+		application_context.BuildDefaultsFromConfig(config),
+	)
+	if err := settings.Load(); err != nil {
+		t.Fatal(err)
+	}
+	appCtx.SetSettings(settings)
+	defaultRC := &models.ResourceCategory{ID: 1, Name: "Default", Description: "Default resource category."}
+	if err := db.FirstOrCreate(defaultRC, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	appCtx.DefaultResourceCategoryID = defaultRC.ID
+	serverInstance := server.CreateServer(appCtx, filesystem, map[string]string{})
+	closed := false
+	closeContext := func() {
+		if closed {
+			return
+		}
+		closed = true
+		if appCtx.PluginManager() != nil {
+			appCtx.PluginManager().Close()
+		}
+		_ = sqlDB.Close()
+	}
+	return &TestContext{AppCtx: appCtx, Router: serverInstance.Handler, DB: db, Fs: filesystem}, closeContext
+}
 
 func installCommandIntegrationExecutable(t *testing.T, commandDir string) string {
 	t.Helper()
@@ -120,6 +262,7 @@ plugin = {
   capabilities = {"commands", "db:write", "pages"},
   commands = {
     {name = "produce", argv = {%q, "-test.run=TestPluginCommandFixtureProcess", "--", "produce", "{{exchange_dir}}"}, timeout = 60},
+    {name = "restart", argv = {%q, "-test.run=TestPluginCommandFixtureProcess", "--", "restart", "{{exchange_dir}}"}, timeout = 60},
     {name = "wait", argv = {%q, "-test.run=TestPluginCommandFixtureProcess", "--", "wait", "{{exchange_dir}}"}, timeout = 60},
   },
 }
@@ -129,6 +272,7 @@ local listing_result = nil
 local import_result = nil
 local redrive_before = nil
 local redrive_id = nil
+local restart_queued = false
 
 local function queue_output(result)
   completion_result = result
@@ -164,40 +308,75 @@ function init()
       completion = completion_result,
       listing = listing_result,
       imported = import_result,
+      restart_queued = restart_queued,
       redrive_before = redrive_before,
       redrive_id = redrive_id,
     })
   end)
 
+  mah.page("start-restart", function()
+    local run_id, err = mah.commands.run("restart", {}, function(result)
+      completion_result = result
+      local listing, list_err = mah.fs.list(result.run_id)
+      assert(listing, list_err)
+      listing_result = listing
+      local import_id, import_err = mah.fs.create_resource(result.run_id, "restart.bin", {
+        name = "restart redrive resource",
+      }, function(imported)
+        import_result = imported
+      end)
+      assert(import_id, import_err)
+      restart_queued = true
+    end)
+    assert(run_id, err)
+    return "started:" .. run_id
+  end)
+
   mah.page("redrive", function()
     local runs, runs_err = mah.fs.runs()
     assert(runs, runs_err)
+    local restart_run_id = nil
     for _, run in ipairs(runs) do
-      if run.id == "restart-run" then
+      if run.command == "restart" and run.imports["restart.bin"] ~= nil then
+        restart_run_id = run.id
         redrive_before = run.imports["restart.bin"].status
+        redrive_id = run.imports["restart.bin"].import_id
+        break
       end
     end
-    local import_id, import_err = mah.fs.create_resource("restart-run", "restart.bin", {
+    assert(restart_run_id, "restart run is absent from durable runs")
+    local import_id, import_err = mah.fs.create_resource(restart_run_id, "restart.bin", {
       name = "restart redrive resource",
     }, function(imported)
       import_result = imported
     end)
     assert(import_id, import_err)
-    redrive_id = import_id
-    return redrive_before .. ":" .. import_id
+    return redrive_before .. ":" .. redrive_id .. ":" .. import_id
   end)
 
   mah.page("start-loss", function()
     local run_id, err = mah.commands.run("wait", {}, function(result)
-      -- If this callback runs after disable it removes the evidence. The test
-      -- verifies the marker remains while the durable cancelled row survives.
-      mah.fs.discard(result.run_id, "started.marker")
+      -- mah.log is independent of command/exchange admission. A persisted row
+      -- therefore proves the callback body ran; unlike mah.fs.discard, it
+      -- cannot be rejected merely because the old generation was revoked.
+      mah.log("warning", "forbidden-command-callback:" .. result.run_id)
     end)
     assert(run_id, err)
     return "started:" .. run_id
   end)
+
+  mah.page("loss-status", function()
+    local runs, runs_err = mah.fs.runs()
+    assert(runs, runs_err)
+    for _, run in ipairs(runs) do
+      if run.command == "wait" then
+        return run.id .. ":" .. run.status
+      end
+    end
+    return "missing"
+  end)
 end
-`, commandIntegrationPluginName, executable, executable)
+`, commandIntegrationPluginName, executable, executable, executable)
 	if err := os.WriteFile(filepath.Join(dir, "plugin.lua"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +443,39 @@ func waitForImport(t *testing.T, ctx *application_context.MahresourcesContext, r
 	return plugin_commands.ImportMapEntry{}
 }
 
+func createImportBlocker(t *testing.T, ctx *application_context.MahresourcesContext, stagingRoot, id string, actorID uint, generation uint64) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := ctx.CreateRun(plugin_commands.RunRecord{
+		ID: id, PluginName: commandIntegrationPluginName, CommandName: "produce",
+		ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedByUserID: &actorID, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: id, ArgvJSON: `[]`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := ctx.MarkRunRunning(id, now); err != nil || !won {
+		t.Fatalf("mark blocker running: won=%v err=%v", won, err)
+	}
+	if won, err := ctx.FinishRun(id, plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: now}); err != nil || !won {
+		t.Fatalf("finish blocker: won=%v err=%v", won, err)
+	}
+	dir := filepath.Join(stagingRoot, "plugin_exchange", commandIntegrationPluginName, id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := id + ".bin"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("unique "+id), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	actor := actorID
+	if _, err := ctx.SubmitCommandImport(plugin_commands.ImportSubmission{
+		Access: plugin_commands.Access{PluginName: commandIntegrationPluginName, ActorUserID: &actor},
+		RunID:  id, Name: name, Fields: plugin_commands.ResourceFields{Name: id},
+		PluginGeneration: generation, ActorUserID: &actor,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func waitForPageContains(t *testing.T, tc *TestContext, bearer, path string, values ...string) string {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -294,50 +506,67 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 	pluginDir := t.TempDir()
 	commandDir := t.TempDir()
 	stagingRoot := t.TempDir()
+	databasePath := filepath.Join(t.TempDir(), "command-integration.db")
+	resourceRoot := t.TempDir()
+	resourceFS := &gatedResourceFS{Fs: afero.NewBasePathFs(afero.NewOsFs(), resourceRoot)}
 	executable := installCommandIntegrationExecutable(t, commandDir)
 	writeCommandIntegrationPlugin(t, pluginDir, executable)
+	settings := commandIntegrationSettings{root: stagingRoot, commandPath: commandDir}
 
-	tc := setupTestEnvWithConfig(t, func(config *application_context.MahresourcesConfig) {
-		config.AuthEnabled = true
-		config.SessionTTL = time.Hour
-		config.PluginPath = pluginDir
+	tc, closeCurrent := openPersistentCommandTestContext(t, databasePath, pluginDir, resourceFS)
+	commandsStarted := false
+	t.Cleanup(func() {
+		resourceFS.release()
+		if commandsStarted {
+			_ = tc.AppCtx.StopPluginCommands()
+		}
+		closeCurrent()
 	})
-	if sqlDB, err := tc.DB.DB(); err == nil {
-		sqlDB.SetMaxOpenConns(1)
-	}
 	if tc.AppCtx.PluginManager() == nil {
 		t.Fatal("plugin manager is unavailable")
 	}
-	t.Cleanup(tc.AppCtx.PluginManager().Close)
-	settings := commandIntegrationSettings{root: stagingRoot, commandPath: commandDir}
 	if err := tc.AppCtx.StartPluginCommands(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := tc.AppCtx.StopPluginCommands(); err != nil {
-			t.Errorf("stop plugin commands: %v", err)
-		}
-	})
+	commandsStarted = true
 	if _, err := tc.AppCtx.EnsurePluginStates(); err != nil {
 		t.Fatal(err)
 	}
 	actor, bearer := commandIntegrationBearer(t, tc)
-	bound := tc.AppCtx.WithPrincipal(nil)
-	if err := bound.SetPluginEnabledWithOptions(commandIntegrationPluginName, true, application_context.PluginEnableOptions{ConfirmCommands: true}); err != nil {
+	if err := tc.AppCtx.WithPrincipal(nil).SetPluginEnabledWithOptions(
+		commandIntegrationPluginName, true, application_context.PluginEnableOptions{ConfirmCommands: true},
+	); err != nil {
 		t.Fatal(err)
 	}
 
+	// Block the production AddResource destination. The completion callback has
+	// already listed and discarded files and SubmitCommandImport has returned;
+	// meanwhile the real import worker is durably running inside byte transfer.
+	// A status page must still acquire the plugin VM immediately.
+	entered := resourceFS.arm(1)
 	start := doReq(tc, http.MethodGet, "/plugins/command-integration/start", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
 	if start.Code != http.StatusOK || !strings.Contains(start.Body.String(), "started:") {
 		t.Fatalf("start page = %d %s", start.Code, start.Body.String())
 	}
 	produce := waitForCommandRun(t, tc.AppCtx, "produce", plugin_commands.RunStatusSucceeded)
-	mapped := waitForImport(t, tc.AppCtx, produce.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
+	waitForResourceCreates(t, entered, 1)
+	mapped := waitForImport(t, tc.AppCtx, produce.ID, "import.bin", plugin_commands.ImportStatusRunning)
+	pageStarted := time.Now()
+	status := doReq(tc, http.MethodGet, "/plugins/command-integration/status", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	if status.Code != http.StatusOK || time.Since(pageStarted) > time.Second {
+		t.Fatalf("status page waited for real import work: code=%d elapsed=%s body=%s", status.Code, time.Since(pageStarted), status.Body.String())
+	}
+	for _, want := range []string{`"ok":true`, produce.ID, `"name":"import.bin"`, `"truncated":false`} {
+		if !strings.Contains(status.Body.String(), want) {
+			t.Fatalf("status page %q does not contain %q", status.Body.String(), want)
+		}
+	}
+	resourceFS.release()
+	mapped = waitForImport(t, tc.AppCtx, produce.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
 	if mapped.ResourceID == nil {
 		t.Fatal("successful import has no resource id")
 	}
-	waitForPageContains(t, tc, bearer, "/plugins/command-integration/status",
-		`"ok":true`, produce.ID, mapped.ImportID, `"resource_id":`)
+	waitForPageContains(t, tc, bearer, "/plugins/command-integration/status", mapped.ImportID, `"resource_id":`)
 
 	var resource models.Resource
 	if err := tc.DB.First(&resource, *mapped.ResourceID).Error; err != nil {
@@ -354,10 +583,6 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatalf("discarded source remains: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); err == nil {
-		// Darwin has no unlink-by-open-descriptor primitive. The import remains
-		// safely mapped and is marked for the retention sweep rather than deleting
-		// a path that may have been replaced after validation.
-		mapped = waitForImport(t, tc.AppCtx, produce.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
 		if !strings.Contains(mapped.Error, "imported-pending-delete") {
 			t.Fatalf("retained imported source was not marked pending delete: %+v", mapped)
 		}
@@ -365,70 +590,64 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatalf("inspect imported source: %v", err)
 	}
 
-	// Create the exact crash boundary: a terminal producer and durable pending
-	// import whose queue admission has not happened. Stop interrupts the claim;
-	// the rebuilt dispatcher uses the same database and staging root.
-	now := time.Now().UTC()
-	if err := tc.AppCtx.CreateRun(plugin_commands.RunRecord{
-		ID: "restart-run", PluginName: commandIntegrationPluginName, CommandName: "produce",
-		ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedByUserID: &actor.ID, CreatedAt: now,
-	}, plugin_commands.RunOutput{RunID: "restart-run", ArgvJSON: `[]`, CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	if won, err := tc.AppCtx.MarkRunRunning("restart-run", now); err != nil || !won {
-		t.Fatalf("mark restart run running: won=%v err=%v", won, err)
-	}
-	if won, err := tc.AppCtx.FinishRun("restart-run", plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: now}); err != nil || !won {
-		t.Fatalf("finish restart run: won=%v err=%v", won, err)
-	}
-	restartDir := filepath.Join(stagingRoot, "plugin_exchange", commandIntegrationPluginName, "restart-run")
-	if err := os.MkdirAll(restartDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(restartDir, "restart.bin"), []byte("restart output"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Occupy both real import workers, then use the real command completion Lua
+	// callback to admit restart.bin to the dispatcher's private queue. Shutdown
+	// interrupts that already-admitted pending claim before it can start.
 	plugins := tc.AppCtx.PluginManager().Plugins()
 	if len(plugins) != 1 {
 		t.Fatalf("enabled plugins = %+v", plugins)
 	}
-	claim, err := tc.AppCtx.ClaimImport(plugin_commands.ImportClaimRequest{
-		ImportID: "restart-import", RunID: "restart-run", FileName: "restart.bin",
-		PluginGeneration: plugins[0].Generation, CreatedByUserID: &actor.ID, CreatedAt: now,
-	})
-	if err != nil || !claim.Enqueue {
-		t.Fatalf("claim restart import = %+v err=%v", claim, err)
+	entered = resourceFS.arm(2)
+	createImportBlocker(t, tc.AppCtx, stagingRoot, "blocker-one", actor.ID, plugins[0].Generation)
+	createImportBlocker(t, tc.AppCtx, stagingRoot, "blocker-two", actor.ID, plugins[0].Generation)
+	waitForResourceCreates(t, entered, 2)
+	restartStart := doReq(tc, http.MethodGet, "/plugins/command-integration/start-restart", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	if restartStart.Code != http.StatusOK {
+		t.Fatalf("restart start = %d %s", restartStart.Code, restartStart.Body.String())
 	}
-	if err := tc.AppCtx.StopPluginCommands(); err != nil {
+	restartRun := waitForCommandRun(t, tc.AppCtx, "restart", plugin_commands.RunStatusSucceeded)
+	interrupted := waitForImport(t, tc.AppCtx, restartRun.ID, "restart.bin", plugin_commands.ImportStatusPending)
+	waitForPageContains(t, tc, bearer, "/plugins/command-integration/status", `"restart_queued":true`)
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- tc.AppCtx.StopPluginCommands() }()
+	interrupted = waitForImport(t, tc.AppCtx, restartRun.ID, "restart.bin", plugin_commands.ImportStatusInterrupted)
+	resourceFS.release()
+	if err := <-stopped; err != nil {
 		t.Fatal(err)
 	}
-	interrupted := waitForImport(t, tc.AppCtx, "restart-run", "restart.bin", plugin_commands.ImportStatusInterrupted)
-	if interrupted.ImportID != "restart-import" {
-		t.Fatalf("interrupted claim id = %q", interrupted.ImportID)
-	}
+	commandsStarted = false
+	oldImportID := interrupted.ImportID
+	closeCurrent()
+
+	// Reopen the SQLite file and resource filesystem with a newly constructed
+	// context, download manager, dispatcher, plugin manager, and Lua VM. Startup
+	// recovery is published before the persisted enabled plugin is activated.
+	tc, closeCurrent = openPersistentCommandTestContext(t, databasePath, pluginDir, resourceFS)
 	if err := tc.AppCtx.StartPluginCommands(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
-	redrive := doReq(tc, http.MethodGet, "/plugins/command-integration/redrive", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
-	if redrive.Code != http.StatusOK || !strings.Contains(redrive.Body.String(), "interrupted:restart-import") {
-		t.Fatalf("redrive page = %d %s", redrive.Code, redrive.Body.String())
+	commandsStarted = true
+	if _, err := tc.AppCtx.EnsurePluginStates(); err != nil {
+		t.Fatal(err)
 	}
-	redriven := waitForImport(t, tc.AppCtx, "restart-run", "restart.bin", plugin_commands.ImportStatusSucceeded)
-	if redriven.ImportID != "restart-import" || redriven.ResourceID == nil {
+	tc.AppCtx.ActivateEnabledPlugins()
+	if tc.AppCtx.PluginManager() == nil || !tc.AppCtx.PluginManager().IsEnabled(commandIntegrationPluginName) {
+		t.Fatal("persisted plugin did not reload after process reconstruction")
+	}
+	redrive := doReq(tc, http.MethodGet, "/plugins/command-integration/redrive", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	wantRedrive := "interrupted:" + oldImportID + ":" + oldImportID
+	if redrive.Code != http.StatusOK || !strings.Contains(redrive.Body.String(), wantRedrive) {
+		t.Fatalf("redrive page = %d %s, want %q", redrive.Code, redrive.Body.String(), wantRedrive)
+	}
+	redriven := waitForImport(t, tc.AppCtx, restartRun.ID, "restart.bin", plugin_commands.ImportStatusSucceeded)
+	if redriven.ImportID != oldImportID || redriven.ResourceID == nil {
 		t.Fatalf("redriven map = %+v", redriven)
 	}
-	if _, err := os.Stat(filepath.Join(restartDir, "restart.bin")); err == nil {
-		redriven = waitForImport(t, tc.AppCtx, "restart-run", "restart.bin", plugin_commands.ImportStatusSucceeded)
-		if !strings.Contains(redriven.Error, "imported-pending-delete") {
-			t.Fatalf("retained redriven source was not marked pending delete: %+v", redriven)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("inspect redriven source: %v", err)
-	}
 
-	// A helper blocks behind a marker so disable lands before terminal delivery.
-	// Disable revokes the VM first, then cancels the verified process group. If
-	// the at-most-once callback were replayed, it would delete this marker.
+	// Disable revokes the VM before the verified process group is cancelled.
+	// The callback's independent mah.log side effect is the oracle: unlike an
+	// exchange call, it cannot fail merely because command admission is closed.
 	lossStart := doReq(tc, http.MethodGet, "/plugins/command-integration/start-loss", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
 	if lossStart.Code != http.StatusOK {
 		t.Fatalf("callback-loss start = %d %s", lossStart.Code, lossStart.Body.String())
@@ -449,8 +668,16 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatal(err)
 	}
 	lossRun = waitForCommandRun(t, tc.AppCtx, "wait", plugin_commands.RunStatusCancelled)
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("disabled VM callback ran or output disappeared: %v", err)
+	// Dispatcher cancellation returns only after terminal publication has queued
+	// the completion. Give that goroutine a scheduling window; if the revoked
+	// callback body is entered, mah.log is an immediate durable write.
+	time.Sleep(250 * time.Millisecond)
+	var callbackLogs int64
+	if err := tc.DB.Model(&models.LogEntry{}).Where("message = ?", "forbidden-command-callback:"+lossRun.ID).Count(&callbackLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callbackLogs != 0 {
+		t.Fatalf("revoked command callback executed %d time(s)", callbackLogs)
 	}
 
 	history := doReq(tc, http.MethodGet, "/v1/plugin/command-runs", map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
@@ -460,5 +687,15 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 	detail := doReq(tc, http.MethodGet, "/v1/plugin/command-run?id="+lossRun.ID, map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), lossRun.ID) || !strings.Contains(detail.Body.String(), plugin_commands.RunStatusCancelled) {
 		t.Fatalf("durable admin detail = %d %s", detail.Code, detail.Body.String())
+	}
+	if err := tc.AppCtx.WithPrincipal(nil).SetPluginEnabledWithOptions(
+		commandIntegrationPluginName, true, application_context.PluginEnableOptions{ConfirmCommands: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+	lossStatus := doReq(tc, http.MethodGet, "/plugins/command-integration/loss-status", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	wantLoss := lossRun.ID + ":" + plugin_commands.RunStatusCancelled
+	if lossStatus.Code != http.StatusOK || !strings.Contains(lossStatus.Body.String(), wantLoss) {
+		t.Fatalf("mah.fs.runs after re-enable = %d %s, want %q", lossStatus.Code, lossStatus.Body.String(), wantLoss)
 	}
 }
