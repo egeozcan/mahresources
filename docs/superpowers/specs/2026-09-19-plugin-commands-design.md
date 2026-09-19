@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 2 — revised after gpt-6-astra design review
+Status: draft 3 — revised after two gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -218,9 +218,9 @@ properties made explicit rather than inherited:
 - **No pause and no manual retry for command jobs in v1.** Pausing a process
   tree and retrying under the same job ID both conflict with fresh-exchange-dir
   semantics; a rerun is a new `mah.commands.run` call with a new run id.
-- **Timeout vs cancellation are distinct terminal states.** Timeout begins at
-  process launch (not submission) and kills the process group; cancellation is
-  operator-initiated.
+- **Timeout vs cancellation are distinct terminal states** (see the status
+  mapping below). Timeout begins at process launch (not submission) and
+  kills the process group.
 
 ### Durable run records
 
@@ -234,11 +234,19 @@ marked `interrupted` with a finished timestamp; its exchange folders are
 retained until the sweep reaches them.
 
 The status vocabulary is exactly: `queued`, `running`, `succeeded`, `failed`,
-`cancelled` (operator), `interrupted` (crash/shutdown/disabled). Nothing
-else.
+`cancelled`, `interrupted`. Nothing else. One transition mapping defines
+which terminal state each path produces:
 
-Plugin disable semantics: a disabled plugin's queued runs are refused at
-dispatch; running processes are killed (process group) and marked cancelled.
+| Path | Status | Note |
+|---|---|---|
+| Command exits 0 | `succeeded` | exit code recorded |
+| Command exits non-zero / cannot start | `failed` | timeout lands here with error text naming the timeout |
+| Operator cancels via the job UI | `cancelled` | process group killed |
+| Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; exchange dirs retained until swept |
+
+`failed` (timeout) and `cancelled` (operator/disable) are therefore distinct
+statuses, as required.
 
 ### Host hardening
 
@@ -283,10 +291,18 @@ so no path circumvents `sensitive_params`), plus exit code, duration and a
 
 Two disclosures redaction cannot cover are documented rather than hidden:
 captured program output (stdout/stderr) can itself contain secrets (a URL
-the tool echoes, for example); it is shown only to administrators in the
-job-history UI, HTML-escaped with terminal control characters stripped.
-History access follows the existing job-history authorization (administrative
-UI).
+the tool echoes, for example); it is HTML-escaped with terminal control
+characters stripped.
+
+**Authorization is administrator-only**, enforced by the dedicated
+command-record path in both API and UI. It does **not** inherit the existing
+download-history visibility (which permits non-admin users to view their own
+history — `download_history_handlers.go:35-45`,
+`download_template_context.go:140-153`), because command output is not a
+per-user artifact: the process ran under the service account, whoever
+submitted it. Generic jobs are excluded from the existing history by
+deconstruction (`download_queue/history.go:95-101`), so command history
+needs its own records and its own check.
 
 ## 5. Exchange folders and `mah.fs`
 
@@ -351,14 +367,21 @@ Granted with the `commands` capability:
      the plugin.
   2. **Finished state**: the run must be terminal; file operations against
      a running or queued run are refused.
-  3. **Name validation**: the name must match the plugin-visible character
-     set (no `/`, `\`, null bytes, no `.` or `..`, length-capped), must be
-     a **regular file** (`lstat`; directories, symlinks, devices and other
-     specials are refused), and is opened **relative to the run directory
-     with `O_NOFOLLOW`** (and re-verified after open), so a symlink swapped
-     in after `readdir` cannot escape. On platforms without `O_NOFOLLOW`
-     the open is refused unless the platform provides an equivalent.
-  4. **Size caps**: `read` enforces `max_bytes`; import streams with a total
+  3. **Name validation** (lexical): the name must match the plugin-visible
+     character set (no `/`, `\`, null bytes, no `.` or `..`, length-capped).
+  4. **Import-map short-circuit** (`create_resource` only): if the durable
+     import map already records `name → resource id`, return that id —
+     **before** any file-existence check. This is what makes re-import
+     idempotent after the source file was deleted (failed post-import delete,
+     or swept); `read` and `discard` of an imported-but-deleted name are
+     plain `file not found`.
+  5. **File checks**: the entry must be a **regular file** (`lstat`;
+     directories, symlinks, devices and other specials are refused), and is
+     opened **relative to the run directory with `O_NOFOLLOW`** (and
+     re-verified after open), so a symlink swapped in after `readdir` cannot
+     escape. On platforms without `O_NOFOLLOW` the open is refused unless
+     the platform provides an equivalent.
+  6. **Size caps**: `read` enforces `max_bytes`; import streams with a total
      quota.
 
 Files are addressed only as `(run_id, name)` pairs inside the calling
@@ -382,8 +405,9 @@ enable `commands` for all of them.
   between the check and the sweep. When retention elapses, **everything** in
   the exchange directory is deleted, including `imported-pending-delete`
   bytes; what survives is the import map (`run_id, name → resource id`) in
-  the durable run record, which is what makes re-import idempotent after the
-  bytes are gone.
+  the run's import map, which is what makes re-import idempotent after the
+  bytes are gone — via the import-map short-circuit in the operation order
+  above.
 - Import, read and discard take a per-file lease for their duration;
   `create_resource` inside a DB transaction is refused (same rule as
   `create_resource_from_data`), so a rollback can never silently lose the
@@ -479,13 +503,21 @@ Core (mahresources):
   process group** — a regression test uses a child that spawns a long-lived
   descendant and asserts the descendant dies too.
 - Terminal-state delivery: callback fires on completion, cancellation and
-  timeout; disabled/disabled-then-re-enabled plugin semantics; restart marks
-  both running **and** queued runs `interrupted`; durable run record readable
-  after the 1-hour queue retention expires.
+  timeout; disabled/disabled-then-re-enabled plugin semantics (disable →
+  `cancelled` with reason, queued runs refused at dispatch); **status
+  mapping test** — timeout → `failed` (named), operator cancel → `cancelled`,
+  disable → `cancelled`, restart → `interrupted` for both running and queued;
+  durable run record readable after the 1-hour queue retention expires.
 - `mah.fs`: enforcement tests for name validation, symlink refusal
   (including a swap-after-lstat race), directory/special refusal, cross-plugin
   and cross-run access refusal, actor checks, idempotent re-import after a
-  failed delete, refusal inside transactions, listing cap, read cap.
+  failed delete **and after the run has been swept** (import-map
+  short-circuit, no source file present), refusal inside transactions,
+  listing cap, read cap.
+- History: sensitive-parameter redaction in both the parameter view and the
+  persisted argv; output HTML-escaped and control-stripped; **command history
+  access is administrator-only** in API and UI (a non-admin viewing their own
+  download history cannot see command records).
 - **MemoryFS/staging**: with MemoryFS resource storage, command runs are
   refused; with OS-backed storage, a **real subprocess** (not a stub)
   writes a file that `mah.fs.create_resource` imports through the configured
