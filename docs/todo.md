@@ -159,15 +159,18 @@ manager/database, rebuilds all three plus a new Lua VM against the SQLite file
 and staging root, and redrives the same import id. Callback-loss uses an
 independent `mah.log` side effect as its false-positive-free oracle; re-enable
 then verifies the cancelled row through durable `mah.fs.runs()` as well as
-administrator history. The final follow-up replaced its scheduling delay with a
-per-plugin command lifecycle registered at durable admission, before execution
-can publish a terminal row. Disable now waits across the terminal-to-delivery
-gap until each host completion has settled or deterministically no-op'd; early
-worker refusal, executor panic, dispatch failure and an already-revoked generation all balance the lifecycle exactly once. The final
-shutdown follow-up also settles queued, cancellation-pending, dispatch-refused
-and managed-but-never-started ownership when terminal persistence fails; it
-returns the durable error, emits no unpersisted callback, drains future lifecycle
-waits and tolerates a late managed invocation through the one-shot settlement.
+administrator history. The final follow-ups replaced their scheduling delay with
+a per-plugin command lifecycle registered at durable admission, before execution
+can publish a terminal row. A managed run atomically claims that lifecycle before
+execution; shutdown may settle only an unclaimed job, while the worker retains
+claimed ownership across durable terminal verification and callback delivery.
+Disable therefore waits across the terminal-to-delivery gap, and a bounded Stop
+cannot forge drain for a worker or callback that remains active. Early worker
+refusal, executor panic, dispatch failure, queued cancellation, an already-revoked
+generation and managed-but-never-started cleanup all balance exactly once. A live
+outcome is never callback authority: a successful store read must prove a durable
+terminal row, so terminal persistence failure suppresses the callback, propagates
+the cancellation/shutdown error and leaves the nonterminal row for recovery.
 
 Documentation now records the exact manifest/Lua/status contracts, persistent
 command acknowledgement, trusted-path and no-sandbox boundary, actor/generation
@@ -193,7 +196,10 @@ Final verification evidence:
   adjacent dispatcher lifecycle selections pass 100 race-detector repetitions,
   callback/reentrancy selections pass 50 race-detector repetitions, API host
   integration passes 10 ordinary and 3 race-detector repetitions, and focused
-  package race/vet checks pass. `internal/arch` plugin/layer/
+  package race/vet checks pass. The final claimed-worker lifecycle tests pass
+  100 race-detector repetitions and callback/reentrancy selections pass 50;
+  mutations that let shutdown settle a claimed worker or deliver from a
+  nonterminal row fail their named regressions. `internal/arch` plugin/layer/
   command checks, tagged build and tagged vet pass. Focused command-history
   Playwright passes 3/3 on both SQLite and PostgreSQL after the follow-up.
 - Generated/docs: `npm run docs-gen`, `npm run skills-gen`, `npm run build-js`,

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -330,6 +331,269 @@ func TestShutdownPersistenceFailureSettlesEveryAdmittedCommandWithoutCallback(t 
 	case result := <-callbacks:
 		t.Fatalf("late worker refusal delivered completion: %+v", result)
 	default:
+	}
+}
+
+func TestActiveWorkerPersistenceFailureSuppressesCallbackAndJoinsDisable(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("terminal write unavailable")
+	store.finishRunErr = injected
+	jobs := &dispatcherTestJobs{}
+	executorEntered := make(chan struct{})
+	persistenceFailed := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Settings: dispatcherTestSettings{pending: 10},
+		Executor: dispatcherExecutorFunc(func(ctx context.Context, run QueuedRun) Outcome {
+			if won, err := store.MarkRunRunning(run.RunID, time.Now().UTC()); err != nil || !won {
+				t.Fatalf("MarkRunRunning() = %v, %v", won, err)
+			}
+			close(executorEntered)
+			<-ctx.Done()
+			_, err := store.FinishRun(run.RunID, RunFinish{
+				Status: RunStatusCancelled, Error: "plugin disabled", FinishedAt: time.Now().UTC(),
+			})
+			if !errors.Is(err, injected) {
+				t.Errorf("FinishRun() error = %v, want %v", err, injected)
+			}
+			close(persistenceFailed)
+			<-releaseWorker
+			return Outcome{Status: RunStatusFailed, Error: "persist terminal command: " + err.Error()}
+		}),
+	})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	callbacks := make(chan Result, 1)
+	runID, err := d.Submit(commandRequest("p", func(result Result) { callbacks <- result }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	workerDone := make(chan Outcome, 1)
+	go func() { workerDone <- jobs.commandSnapshot()[0].run(context.Background(), nopProgress{}) }()
+	select {
+	case <-executorEntered:
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not claim completion ownership")
+	}
+
+	disabled := make(chan error, 1)
+	go func() { disabled <- d.DisablePlugin("p", "plugin disabled") }()
+	select {
+	case <-persistenceFailed:
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not reach terminal persistence failure")
+	}
+	if active := completionDispatchActive(d, "p"); active != 1 {
+		t.Fatalf("completion lifecycles after persistence failure = %d, want 1", active)
+	}
+
+	close(releaseWorker)
+	select {
+	case outcome := <-workerDone:
+		if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, injected.Error()) {
+			t.Fatalf("worker outcome = %+v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not settle")
+	}
+	select {
+	case err := <-disabled:
+		if err == nil || !strings.Contains(err.Error(), injected.Error()) {
+			t.Fatalf("DisablePlugin() error = %v, want persistence failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("disable did not return after the worker settled")
+	}
+	select {
+	case result := <-callbacks:
+		t.Fatalf("callback received synthetic completion: %+v", result)
+	default:
+	}
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("completion lifecycles after worker settlement = %d", active)
+	}
+	record, _, err := store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if RunStatusTerminal(record.Status) {
+		t.Fatalf("failed terminal persistence was presented as durable: %+v", record)
+	}
+	if err := d.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShutdownTimeoutLeavesClaimedWorkerLifecycleOwnedUntilWorkerSettles(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("terminal write unavailable")
+	store.finishRunErr = injected
+	jobs := &dispatcherTestJobs{}
+	workerEntered := make(chan struct{})
+	persistenceFailed := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	shutdownStarted := make(chan struct{})
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Settings: dispatcherTestSettings{pending: 10},
+		Executor: dispatcherExecutorFunc(func(ctx context.Context, run QueuedRun) Outcome {
+			if won, err := store.MarkRunRunning(run.RunID, time.Now().UTC()); err != nil || !won {
+				t.Fatalf("MarkRunRunning() = %v, %v", won, err)
+			}
+			close(workerEntered)
+			<-ctx.Done()
+			_, err := store.FinishRun(run.RunID, RunFinish{
+				Status: RunStatusInterrupted, Error: "server interrupted", FinishedAt: time.Now().UTC(),
+			})
+			if !errors.Is(err, injected) {
+				t.Errorf("FinishRun() error = %v, want %v", err, injected)
+			}
+			close(persistenceFailed)
+			<-releaseWorker
+			return Outcome{Status: RunStatusFailed, Error: err.Error()}
+		}),
+	})
+	d.shutdownStarted = func() { close(shutdownStarted) }
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	callbacks := make(chan Result, 1)
+	if _, err := d.Submit(commandRequest("p", func(result Result) { callbacks <- result })); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	workerDone := make(chan Outcome, 1)
+	go func() { workerDone <- jobs.commandSnapshot()[0].run(context.Background(), nopProgress{}) }()
+	select {
+	case <-workerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not claim completion ownership")
+	}
+
+	stopCtx, cancelStop := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() { stopped <- d.Stop(stopCtx) }()
+	select {
+	case <-shutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher shutdown did not start")
+	}
+	select {
+	case <-persistenceFailed:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not report terminal persistence failure")
+	}
+	cancelStop()
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Stop() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bounded shutdown did not return")
+	}
+	select {
+	case <-d.done:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher owner did not finish bounded shutdown")
+	}
+	if active := completionDispatchActive(d, "p"); active != 1 {
+		t.Fatalf("shutdown forged claimed lifecycle drain: active=%d", active)
+	}
+	select {
+	case result := <-callbacks:
+		t.Fatalf("callback received synthetic completion: %+v", result)
+	default:
+	}
+
+	close(releaseWorker)
+	select {
+	case <-workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not return after release")
+	}
+	d.completionDispatch.wait("p")
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("worker did not settle claimed lifecycle: active=%d", active)
+	}
+}
+
+func TestShutdownDoesNotSettleClaimedCallbackBeforeDeliveryReturns(t *testing.T) {
+	store := newDispatcherTestStore()
+	jobs := &dispatcherTestJobs{}
+	terminalReadStarted := make(chan struct{})
+	allowTerminalRead := make(chan struct{})
+	store.terminalRunReadStarted = terminalReadStarted
+	store.terminalRunReadRelease = allowTerminalRead
+	callbackEntered := make(chan struct{})
+	allowCallback := make(chan struct{})
+	shutdownStarted := make(chan struct{})
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{store: store},
+		Settings: dispatcherTestSettings{pending: 10},
+	})
+	d.shutdownStarted = func() { close(shutdownStarted) }
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := d.Submit(commandRequest("p", func(Result) {
+		close(callbackEntered)
+		<-allowCallback
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	liveCtx, cancelLive := context.WithCancel(context.Background())
+	workerDone := make(chan Outcome, 1)
+	go func() { workerDone <- jobs.commandSnapshot()[0].run(liveCtx, nopProgress{}) }()
+	waitFor(t, func() bool {
+		record, _, readErr := store.Run(runID)
+		return readErr == nil && record.Status == RunStatusRunning
+	})
+	cancelLive()
+	select {
+	case <-terminalReadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not reach terminal-read delivery barrier")
+	}
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- d.Stop(context.Background()) }()
+	select {
+	case <-shutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher shutdown did not start")
+	}
+	close(allowTerminalRead)
+	select {
+	case <-callbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("completion callback did not start")
+	}
+	select {
+	case <-workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("managed worker did not return")
+	}
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not return")
+	}
+	if active := completionDispatchActive(d, "p"); active != 1 {
+		t.Fatalf("shutdown settled claimed callback early: active=%d", active)
+	}
+
+	close(allowCallback)
+	d.completionDispatch.wait("p")
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("callback did not settle completion lifecycle: active=%d", active)
 	}
 }
 

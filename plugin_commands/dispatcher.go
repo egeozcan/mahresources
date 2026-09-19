@@ -83,6 +83,42 @@ type completionDispatchTracker struct {
 	byPlugin map[string]*completionDispatchState
 }
 
+const (
+	completionUnclaimed uint32 = iota
+	completionClaimed
+	completionSettled
+)
+
+// commandCompletionLifecycle gives exactly one execution path ownership of an
+// admitted command's completion. A managed run claims before executing; owner
+// cleanup may settle only a run which never started. Once claimed, the worker
+// retains ownership across terminal persistence and callback delivery, including
+// when dispatcher shutdown times out.
+type commandCompletionLifecycle struct {
+	state  atomic.Uint32
+	settle func()
+}
+
+func newCommandCompletionLifecycle(settle func()) *commandCompletionLifecycle {
+	return &commandCompletionLifecycle{settle: settle}
+}
+
+func (l *commandCompletionLifecycle) claim() bool {
+	return l == nil || l.state.CompareAndSwap(completionUnclaimed, completionClaimed)
+}
+
+func (l *commandCompletionLifecycle) settleClaimed() {
+	if l != nil && l.state.CompareAndSwap(completionClaimed, completionSettled) {
+		l.settle()
+	}
+}
+
+func (l *commandCompletionLifecycle) settleUnclaimed() {
+	if l != nil && l.state.CompareAndSwap(completionUnclaimed, completionSettled) {
+		l.settle()
+	}
+}
+
 func (t *completionDispatchTracker) begin(plugin string) func() {
 	t.mu.Lock()
 	if t.byPlugin == nil {
@@ -712,8 +748,8 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 				}
 				// The dispatcher is discarding this private queue. Without a
 				// durable terminal row there is no result it may publish, so the
-				// completion lifecycle must end without invoking the callback.
-				settleCommandCompletion(run)
+				// unclaimed completion lifecycle ends without invoking a callback.
+				settleUnclaimedCommandCompletion(run)
 				continue
 			}
 			d.controls.Delete(run.RunID)
@@ -726,7 +762,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if firstErr == nil {
 				firstErr = err
 			}
-			settleCommandCompletion(cancellation.run)
+			settleUnclaimedCommandCompletion(cancellation.run)
 		}
 		delete(state.queuedCancellations, id)
 	}
@@ -736,7 +772,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if firstErr == nil {
 				firstErr = err
 			}
-			settleCommandCompletion(failure.run)
+			settleUnclaimedCommandCompletion(failure.run)
 			continue
 		}
 		d.releaseCommandDispatchFailure(state, failure, result)
@@ -823,9 +859,9 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 		}
 		delete(state.cancelWaiters, id)
 		// A managed job which never entered its run function has nobody else
-		// to settle admission. A worker or callback which already owns it may
-		// race this cleanup safely because the settlement closure is one-shot.
-		settleCommandCompletion(active.run)
+		// to settle admission. A claimed worker retains ownership until it has
+		// decided whether durable terminal callback delivery is possible.
+		settleUnclaimedCommandCompletion(active.run)
 	}
 	return firstErr
 }
@@ -895,7 +931,7 @@ func (d *Dispatcher) acceptCommand(state *dispatcherState, run QueuedRun) error 
 	// can execute the command and publish a terminal row. Disable closes external
 	// admission before waiting on this tracker, so no lifecycle can appear behind
 	// its wait.
-	run.completionSettled = d.completionDispatch.begin(plugin)
+	run.completionLifecycle = newCommandCompletionLifecycle(d.completionDispatch.begin(plugin))
 	state.commands[plugin] = append(state.commands[plugin], run)
 	if !state.commandSeen[plugin] {
 		state.commandSeen[plugin] = true
@@ -1069,10 +1105,16 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 	}, func(reason string) error {
 		return d.Cancel(run.RunID, reason)
 	}, func(liveCtx context.Context, progress Progress) Outcome {
+		// Claim before any execution or terminal write. Shutdown may settle only
+		// an unclaimed managed registration; once this succeeds, this worker owns
+		// the lifecycle through its callback or no-delivery decision.
+		if !claimCommandCompletion(run) {
+			return Outcome{Status: RunStatusInterrupted, Error: "server interrupted"}
+		}
 		completionHandedOff := false
 		defer func() {
 			if !completionHandedOff {
-				settleCommandCompletion(run)
+				settleClaimedCommandCompletion(run)
 			}
 		}()
 		if !d.beginWorker() {
@@ -1088,12 +1130,15 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		run.progress = progress
 		outcome := d.deps.Executor.Execute(execCtx, run)
 		stop()
-		result := Result{OK: outcome.Status == RunStatusSucceeded, Error: outcome.Error, RunID: run.RunID}
-		if record, _, err := d.deps.Store.Run(run.RunID); err == nil && RunStatusTerminal(record.Status) {
-			result = resultFromRun(record)
+
+		// An executor outcome describes the live job, not durable command
+		// authority. Completion callbacks are permitted only after a successful
+		// read proves that a terminal row actually persisted.
+		record, _, readErr := d.deps.Store.Run(run.RunID)
+		if readErr == nil && RunStatusTerminal(record.Status) {
+			d.deliverClaimedCompletion(run, resultFromRun(record))
+			completionHandedOff = true
 		}
-		d.deliverCompletion(run, result)
-		completionHandedOff = true
 		d.workers.Done()
 		workerDone = true
 		d.post(commandCompleted{runID: run.RunID, outcome: outcome})
@@ -1307,20 +1352,41 @@ func resultFromRun(record RunRecord) Result {
 	}
 }
 
+// deliverCompletion claims an admitted command which never entered its managed
+// run function, then hands its proven durable terminal result to the callback.
 func (d *Dispatcher) deliverCompletion(run QueuedRun, result Result) {
+	if !claimCommandCompletion(run) {
+		return
+	}
+	d.deliverClaimedCompletion(run, result)
+}
+
+// deliverClaimedCompletion transfers an executing worker's lifecycle ownership
+// to the callback goroutine. The caller must not settle after this handoff.
+func (d *Dispatcher) deliverClaimedCompletion(run QueuedRun, result Result) {
 	if run.Request.Completion == nil {
-		settleCommandCompletion(run)
+		settleClaimedCommandCompletion(run)
 		return
 	}
 	go func() {
-		defer settleCommandCompletion(run)
+		defer settleClaimedCommandCompletion(run)
 		run.Request.Completion(result)
 	}()
 }
 
-func settleCommandCompletion(run QueuedRun) {
-	if run.completionSettled != nil {
-		run.completionSettled()
+func claimCommandCompletion(run QueuedRun) bool {
+	return run.completionLifecycle == nil || run.completionLifecycle.claim()
+}
+
+func settleClaimedCommandCompletion(run QueuedRun) {
+	if run.completionLifecycle != nil {
+		run.completionLifecycle.settleClaimed()
+	}
+}
+
+func settleUnclaimedCommandCompletion(run QueuedRun) {
+	if run.completionLifecycle != nil {
+		run.completionLifecycle.settleUnclaimed()
 	}
 }
 
