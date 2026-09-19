@@ -289,7 +289,16 @@ func TestCommandCallbackDropsAfterGenerationRevocation(t *testing.T) {
 	}
 	pm.mu.Unlock()
 	req.Completion(plugin_commands.Result{OK: true, RunID: "run-123"})
-	time.Sleep(30 * time.Millisecond)
+	settled := make(chan struct{})
+	go func() {
+		pm.actionWaitGroup("commander").Wait()
+		close(settled)
+	}()
+	select {
+	case <-settled:
+	case <-time.After(time.Second):
+		t.Fatal("revoked command completion did not settle")
+	}
 	if L.GetGlobal("__revoked_callback") != lua.LNil {
 		t.Fatal("revoked generation callback executed")
 	}

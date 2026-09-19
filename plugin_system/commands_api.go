@@ -252,6 +252,14 @@ func (pm *PluginManager) commandCompletion(pluginName string, generation uint64,
 	release := func() { settle.Do(waitGroup.Done) }
 	completion := func(result plugin_commands.Result) {
 		settle.Do(func() {
+			// Disable revokes the generation before cancelling its durable command
+			// work. Settle that known-revoked completion synchronously: the
+			// dispatcher's per-plugin barrier can then prove there is no callback
+			// goroutine left to enter Lua after disable returns.
+			if !pm.GenerationActive(pluginName, generation) {
+				waitGroup.Done()
+				return
+			}
 			go runProtectedDurableCallback("command", waitGroup.Done, func() {
 				pm.runDurableCallback(pluginName, generation, L, callback, actor, map[string]any{
 					"ok":        result.OK,

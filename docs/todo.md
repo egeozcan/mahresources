@@ -143,21 +143,26 @@ The initial full Go baseline still has the pre-existing `plugin_system`
 `TestSidebar_IsWrappedInADisclosure` failures. Frontend unit tests pass (90 files,
 1409 tests).
 
-Task 13 adds two host-integration fixtures without changing production shape.
+Task 13 adds host-integration fixtures without changing a public interface.
 `plugin_system/command_integration_test.go` proves the documented callback tables
-and list/import/discard contract. The production fixture in
-`server/api_tests/plugin_command_integration_test.go` executes the test binary
-through the configured trusted path (never a shell), then blocks the real
-AddResource destination while a durable import is running and proves a plugin
-page still answers. It reaches the restart boundary through command completion →
-Lua callback → create_resource → dispatcher admission behind two occupied import
-workers, closes the dispatcher/plugin manager/database, rebuilds all three plus a
-new Lua VM against the SQLite file and staging root, and redrives the same import
-id. Callback-loss uses an independent `mah.log` side effect as its false-positive-
-free oracle; re-enable then verifies the cancelled row through durable
-`mah.fs.runs()` as well as administrator history. Acting-user attribution and
-descriptor-safe discard/import behavior remain covered. The follow-up closes all
-three independent review findings without changing a production file.
+and list/import/discard contract. The production fixtures in
+`server/api_tests/plugin_command_integration_test.go` execute the test binary
+through the configured trusted path (never a shell). One runs the full
+subprocess→staging→adapter→AddResource path into `afero.NewMemMapFs`, verifies the
+stored bytes and acting creator, then removes retained source bytes through the
+production descriptor-anchored run cleanup. The restart fixture separately
+blocks the real OS-backed AddResource destination while a durable import is
+running and proves a plugin page still answers. It reaches the restart boundary
+through command completion → Lua callback → create_resource → dispatcher
+admission behind two occupied import workers, closes the dispatcher/plugin
+manager/database, rebuilds all three plus a new Lua VM against the SQLite file
+and staging root, and redrives the same import id. Callback-loss uses an
+independent `mah.log` side effect as its false-positive-free oracle; re-enable
+then verifies the cancelled row through durable `mah.fs.runs()` as well as
+administrator history. The final follow-up replaced its scheduling delay with a
+per-plugin command-completion dispatch barrier: disable now returns only after
+every cancellation-published host completion has settled, and an already-revoked
+generation releases its callback lifecycle synchronously.
 
 Documentation now records the exact manifest/Lua/status contracts, persistent
 command acknowledgement, trusted-path and no-sandbox boundary, actor/generation
@@ -171,9 +176,11 @@ critical), not introduced by these Markdown changes.
 
 Final verification evidence:
 
-- Focused/race: the two Task 13 focused commands pass, including real blocked
-  import, process reconstruction/redrive and callback-loss coverage (5 repeated
-  SQLite passes plus race, and the tagged PostgreSQL selection); the tagged race
+- Focused/race: the Task 13 focused commands pass, including real MemoryFS
+  import, blocked OS-backed import, process reconstruction/redrive and
+  deterministically drained callback-loss coverage (5 repeated SQLite passes,
+  repeated dispatcher barrier tests plus race, and the tagged PostgreSQL
+  selection); the tagged race
   selection across `plugin_commands`, `plugin_system`, `application_context`,
   `download_queue` and `server/api_tests` passes. `internal/arch` plugin/layer/
   command checks, tagged build and tagged vet pass. Focused command-history

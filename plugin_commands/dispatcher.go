@@ -41,7 +41,8 @@ type Dispatcher struct {
 	inbox   chan any
 	done    chan struct{}
 
-	controls sync.Map // run id -> *runControl
+	controls           sync.Map // run id -> *runControl
+	completionDispatch completionDispatchTracker
 
 	workerMu      sync.Mutex
 	workerClosing bool
@@ -64,6 +65,59 @@ type Dispatcher struct {
 type runControl struct {
 	forkMu    sync.Mutex
 	cancelled atomic.Bool
+}
+
+type completionDispatchState struct {
+	active int
+	zero   chan struct{}
+}
+
+// completionDispatchTracker gives lifecycle operations a point at which every
+// already-published command completion has at least reached its host callback.
+// It tracks only that small dispatch call, not the plugin's asynchronous Lua
+// execution, so a busy VM cannot hold the dispatcher owner loop.
+type completionDispatchTracker struct {
+	mu       sync.Mutex
+	byPlugin map[string]*completionDispatchState
+}
+
+func (t *completionDispatchTracker) begin(plugin string) func() {
+	t.mu.Lock()
+	if t.byPlugin == nil {
+		t.byPlugin = make(map[string]*completionDispatchState)
+	}
+	state := t.byPlugin[plugin]
+	if state == nil {
+		state = &completionDispatchState{zero: make(chan struct{})}
+		t.byPlugin[plugin] = state
+	}
+	state.active++
+	t.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mu.Lock()
+			state.active--
+			if state.active == 0 {
+				delete(t.byPlugin, plugin)
+				close(state.zero)
+			}
+			t.mu.Unlock()
+		})
+	}
+}
+
+func (t *completionDispatchTracker) wait(plugin string) {
+	t.mu.Lock()
+	state := t.byPlugin[plugin]
+	if state == nil {
+		t.mu.Unlock()
+		return
+	}
+	zero := state.zero
+	t.mu.Unlock()
+	<-zero
 }
 
 type commandSubmission struct {
@@ -328,7 +382,17 @@ func (d *Dispatcher) DisablePlugin(plugin, reason string) error {
 	if err := d.send(context.Background(), request); err != nil {
 		return err
 	}
-	return awaitDispatcherReply(request.reply, d.done)
+	if err := awaitDispatcherReply(request.reply, d.done); err != nil {
+		return err
+	}
+	// Command admission is already closed by the application layer, every
+	// cancellation above has reached its durable reply, and the owner has now
+	// removed the plugin's remaining private queue. No later command completion
+	// for this disabled generation can begin, so waiting here has no Add/Wait
+	// race. The host callback itself is deliberately tiny and schedules Lua
+	// work separately.
+	d.completionDispatch.wait(plugin)
+	return nil
 }
 
 // submitImport is the Task 5 queue seam. Task 9 places validated durable import
@@ -646,7 +710,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 				continue
 			}
 			d.controls.Delete(run.RunID)
-			deliverCompletion(run.Request.Completion, result)
+			d.deliverCompletion(run.Request.PluginName, run.Request.Completion, result)
 		}
 		delete(state.commands, plugin)
 	}
@@ -1002,7 +1066,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		if record, _, err := d.deps.Store.Run(run.RunID); err == nil && RunStatusTerminal(record.Status) {
 			result = resultFromRun(record)
 		}
-		deliverCompletion(run.Request.Completion, result)
+		d.deliverCompletion(run.Request.PluginName, run.Request.Completion, result)
 		d.workers.Done()
 		workerDone = true
 		d.post(commandCompleted{runID: run.RunID, outcome: outcome})
@@ -1093,7 +1157,7 @@ func (d *Dispatcher) persistQueuedCancellation(state *dispatcherState, cancellat
 	}
 	delete(state.queuedCancellations, cancellation.run.RunID)
 	d.controls.Delete(cancellation.run.RunID)
-	deliverCompletion(cancellation.run.Request.Completion, result)
+	d.deliverCompletion(cancellation.plugin, cancellation.run.Request.Completion, result)
 	return true, nil
 }
 
@@ -1155,7 +1219,7 @@ func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failu
 		delete(state.activeCommands, failure.run.RunID)
 		state.activeByPlugin[active.plugin]--
 	}
-	deliverCompletion(failure.run.Request.Completion, result)
+	d.deliverCompletion(failure.run.Request.PluginName, failure.run.Request.Completion, result)
 }
 
 func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failure *importDispatchFailure) (bool, error) {
@@ -1216,10 +1280,15 @@ func resultFromRun(record RunRecord) Result {
 	}
 }
 
-func deliverCompletion(completion func(Result), result Result) {
-	if completion != nil {
-		go completion(result)
+func (d *Dispatcher) deliverCompletion(plugin string, completion func(Result), result Result) {
+	if completion == nil {
+		return
 	}
+	settled := d.completionDispatch.begin(plugin)
+	go func() {
+		defer settled()
+		completion(result)
+	}()
 }
 
 func (d *Dispatcher) beginWorker() bool {

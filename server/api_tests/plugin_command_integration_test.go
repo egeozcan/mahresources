@@ -443,6 +443,29 @@ func waitForImport(t *testing.T, ctx *application_context.MahresourcesContext, r
 	return plugin_commands.ImportMapEntry{}
 }
 
+func waitForImportErrorContains(t *testing.T, ctx *application_context.MahresourcesContext, runID, name, fragment string) plugin_commands.ImportMapEntry {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var last plugin_commands.ImportMapEntry
+	for time.Now().Before(deadline) {
+		view, _, err := ctx.GetPluginCommandRun(runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range view.Imports {
+			if item.FileName == name {
+				last = item
+				if strings.Contains(item.Error, fragment) {
+					return item
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("import %s/%s error never contained %q; last=%+v", runID, name, fragment, last)
+	return plugin_commands.ImportMapEntry{}
+}
+
 func createImportBlocker(t *testing.T, ctx *application_context.MahresourcesContext, stagingRoot, id string, actorID uint, generation uint64) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -500,6 +523,82 @@ func waitForPageContains(t *testing.T, tc *TestContext, bearer, path string, val
 	}
 	t.Fatalf("GET %s never contained %q; body=%s", path, values, body)
 	return ""
+}
+
+func TestPluginCommandRealProcessImportsIntoMemoryFS(t *testing.T) {
+	pluginDir := t.TempDir()
+	commandDir := t.TempDir()
+	stagingRoot := t.TempDir()
+	databasePath := filepath.Join(t.TempDir(), "command-memoryfs.db")
+	resourceFS := afero.NewMemMapFs()
+	executable := installCommandIntegrationExecutable(t, commandDir)
+	writeCommandIntegrationPlugin(t, pluginDir, executable)
+	settings := commandIntegrationSettings{root: stagingRoot, commandPath: commandDir}
+
+	tc, closeContext := openPersistentCommandTestContext(t, databasePath, pluginDir, resourceFS)
+	commandsStarted := false
+	t.Cleanup(func() {
+		if commandsStarted {
+			_ = tc.AppCtx.StopPluginCommands()
+		}
+		closeContext()
+	})
+	if err := tc.AppCtx.StartPluginCommands(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	commandsStarted = true
+	if _, err := tc.AppCtx.EnsurePluginStates(); err != nil {
+		t.Fatal(err)
+	}
+	actor, bearer := commandIntegrationBearer(t, tc)
+	if err := tc.AppCtx.WithPrincipal(nil).SetPluginEnabledWithOptions(
+		commandIntegrationPluginName, true, application_context.PluginEnableOptions{ConfirmCommands: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	start := doReq(tc, http.MethodGet, "/plugins/command-integration/start", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+	if start.Code != http.StatusOK || !strings.Contains(start.Body.String(), "started:") {
+		t.Fatalf("start page = %d %s", start.Code, start.Body.String())
+	}
+	run := waitForCommandRun(t, tc.AppCtx, "produce", plugin_commands.RunStatusSucceeded)
+	mapped := waitForImport(t, tc.AppCtx, run.ID, "import.bin", plugin_commands.ImportStatusSucceeded)
+	if mapped.ResourceID == nil {
+		t.Fatal("successful MemoryFS import has no resource id")
+	}
+
+	var resource models.Resource
+	if err := tc.DB.First(&resource, *mapped.ResourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resource.CreatedByUserId == nil || *resource.CreatedByUserId != actor.ID {
+		t.Fatalf("MemoryFS resource creator = %v, want actor %d", resource.CreatedByUserId, actor.ID)
+	}
+	stored, err := afero.ReadFile(resourceFS, resource.Location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(stored), "real plugin command output"; got != want {
+		t.Fatalf("MemoryFS resource bytes = %q, want %q", got, want)
+	}
+
+	runDir := filepath.Join(stagingRoot, "plugin_exchange", commandIntegrationPluginName, run.ID)
+	if _, err := os.Stat(filepath.Join(runDir, "discard.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("discard callback did not remove source: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); err != nil {
+		t.Fatalf("identity-bound cleanup should retain imported source for run sweep: %v", err)
+	}
+	mapped = waitForImportErrorContains(t, tc.AppCtx, run.ID, "import.bin", "imported-pending-delete")
+	actorID := actor.ID
+	if err := tc.AppCtx.DiscardCommandRun(plugin_commands.Access{
+		PluginName: commandIntegrationPluginName, ActorUserID: &actorID,
+	}, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("descriptor-anchored run cleanup left source directory: %v", err)
+	}
 }
 
 func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T) {
@@ -583,9 +682,7 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatalf("discarded source remains: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); err == nil {
-		if !strings.Contains(mapped.Error, "imported-pending-delete") {
-			t.Fatalf("retained imported source was not marked pending delete: %+v", mapped)
-		}
+		mapped = waitForImportErrorContains(t, tc.AppCtx, produce.ID, "import.bin", "imported-pending-delete")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("inspect imported source: %v", err)
 	}
@@ -668,10 +765,10 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatal(err)
 	}
 	lossRun = waitForCommandRun(t, tc.AppCtx, "wait", plugin_commands.RunStatusCancelled)
-	// Dispatcher cancellation returns only after terminal publication has queued
-	// the completion. Give that goroutine a scheduling window; if the revoked
-	// callback body is entered, mah.log is an immediate durable write.
-	time.Sleep(250 * time.Millisecond)
+	// SetPluginEnabled returns only after the dispatcher has invoked every
+	// command completion published by cancellation. Since the generation was
+	// revoked before cancellation, commandCompletion settles synchronously at
+	// that dispatch point; no callback goroutine can enter Lua after this query.
 	var callbackLogs int64
 	if err := tc.DB.Model(&models.LogEntry{}).Where("message = ?", "forbidden-command-callback:"+lossRun.ID).Count(&callbackLogs).Error; err != nil {
 		t.Fatal(err)

@@ -126,8 +126,18 @@ func (s *dispatcherTestStore) Run(id string) (RunRecord, RunOutput, error) {
 	}
 	return record, RunOutput{}, nil
 }
-func (s *dispatcherTestStore) Runs(Access) ([]RunView, error)                     { return nil, nil }
-func (s *dispatcherTestStore) NonterminalRuns() ([]RunRecord, error)              { return nil, nil }
+func (s *dispatcherTestStore) Runs(Access) ([]RunView, error) { return nil, nil }
+func (s *dispatcherTestStore) NonterminalRuns() ([]RunRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var result []RunRecord
+	for _, run := range s.runs {
+		if !RunStatusTerminal(run.Status) {
+			result = append(result, run)
+		}
+	}
+	return result, nil
+}
 func (s *dispatcherTestStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) { return nil, nil }
 func (s *dispatcherTestStore) PruneRunOutputs(time.Time) (int64, error)           { return 0, nil }
 func (s *dispatcherTestStore) ImportMap(string, string) (ImportMapEntry, bool, error) {
@@ -356,6 +366,57 @@ func TestDispatcherPendingCapDoesNotRegisterOrLeakRun(t *testing.T) {
 		t.Fatalf("other plugin refused: %v", err)
 	}
 	waitFor(t, func() bool { return jobs.commandCount() == 3 })
+}
+
+func TestDisablePluginWaitsForCommandCompletionDispatch(t *testing.T) {
+	d, _, jobs := startTestDispatcher(t, 100)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	runID, err := d.Submit(commandRequest("a", func(Result) {
+		close(entered)
+		<-release
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	command := jobs.commandSnapshot()[0]
+	finished := make(chan Outcome, 1)
+	go func() { finished <- command.run(context.Background(), nopProgress{}) }()
+	waitFor(t, func() bool {
+		record, _, err := d.deps.Store.Run(runID)
+		return err == nil && record.Status == RunStatusRunning
+	})
+
+	disabled := make(chan error, 1)
+	go func() { disabled <- d.DisablePlugin("a", "plugin disabled") }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("command completion was not dispatched")
+	}
+	select {
+	case err := <-disabled:
+		t.Fatalf("disable returned before its command completion dispatch settled: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-disabled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("disable did not return after command completion dispatch settled")
+	}
+	select {
+	case outcome := <-finished:
+		if outcome.Status != RunStatusCancelled {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled command worker did not finish")
+	}
 }
 
 func TestDispatcherManagedLaneRefusalReleasesCommandSlot(t *testing.T) {
