@@ -122,6 +122,8 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.ScheduledDownload{},
 		&models.ResourceReduction{},
 		&models.PluginSchedule{},
+		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

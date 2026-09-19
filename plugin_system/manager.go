@@ -88,6 +88,7 @@ type PluginInfo struct {
 	Description string
 	Dir         string
 	Manifest    Manifest
+	Generation  uint64
 }
 
 // DiscoveredPlugin holds metadata about a discovered (but not necessarily loaded) plugin.
@@ -149,23 +150,25 @@ type MenuRegistration struct {
 
 // PluginManager loads and manages Lua plugins.
 type PluginManager struct {
-	plugins      []PluginInfo
-	states       []*lua.LState
-	hooks        map[string][]hookEntry
-	injections   map[string][]injectionEntry
-	pages        map[string]map[string]pageEntry // pluginName -> path -> handler
-	menuItems    []MenuRegistration
-	actions      map[string][]ActionRegistration    // pluginName -> actions
-	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
-	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
-	displayTypes map[string][]*PluginDisplayType    // pluginName -> display types
-	shortcodes   map[string][]*PluginShortcode      // pluginName -> shortcodes
-	docs         map[string][]*PluginDoc            // pluginName -> general doc entries
-	schedules    map[string][]ScheduleRegistration  // pluginName -> recurring work
-	mu           sync.RWMutex
-	vmLocks      map[*lua.LState]*vmMutex
-	dbProvider   atomic.Value
-	dbWriter     atomic.Value
+	plugins        []PluginInfo
+	states         []*lua.LState
+	hooks          map[string][]hookEntry
+	injections     map[string][]injectionEntry
+	pages          map[string]map[string]pageEntry // pluginName -> path -> handler
+	menuItems      []MenuRegistration
+	actions        map[string][]ActionRegistration    // pluginName -> actions
+	apiEndpoints   map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
+	blockTypes     map[string][]*PluginBlockType      // pluginName -> block types
+	displayTypes   map[string][]*PluginDisplayType    // pluginName -> display types
+	shortcodes     map[string][]*PluginShortcode      // pluginName -> shortcodes
+	docs           map[string][]*PluginDoc            // pluginName -> general doc entries
+	schedules      map[string][]ScheduleRegistration  // pluginName -> recurring work
+	mu             sync.RWMutex
+	vmLocks        map[*lua.LState]*vmMutex
+	generations    map[*lua.LState]uint64
+	nextGeneration atomic.Uint64
+	dbProvider     atomic.Value
+	dbWriter       atomic.Value
 	// principalBinder binds dbProvider/dbWriter to the principal that triggered
 	// a call. Optional; nil falls back to the unbound provider.
 	principalBinder atomic.Value
@@ -265,6 +268,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		docs:            make(map[string][]*PluginDoc),
 		schedules:       make(map[string][]ScheduleRegistration),
 		vmLocks:         make(map[*lua.LState]*vmMutex),
+		generations:     make(map[*lua.LState]uint64),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
 		actionSemaphore: make(chan struct{}, maxConcurrentActions),
@@ -803,6 +807,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	// that worker finds the lock free and runs concurrently with init() —
 	// two goroutines inside one gopher-lua state, which corrupts its stack.
 	vmLock := newVMMutex()
+	generation := pm.nextGeneration.Add(1)
 	pm.mu.Lock()
 	if pm.closed.Load() {
 		// Registering under pm.mu, with the closed check inside it, is what
@@ -813,6 +818,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 		return fmt.Errorf("plugin manager is shutting down")
 	}
 	pm.vmLocks[L] = vmLock
+	pm.generations[L] = generation
 	pm.loadWg.Add(1)
 	loadDone := make(chan struct{})
 	pm.loading[header.Name] = loadDone
@@ -925,6 +931,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 		Description: header.Description,
 		Dir:         pluginDir,
 		Manifest:    header.Manifest,
+		Generation:  generation,
 	}
 
 	// Call init() if it exists.
@@ -2152,6 +2159,7 @@ func (pm *PluginManager) stateMayRegisterLocked(L *lua.LState) bool {
 func (pm *PluginManager) revokeLocked(state *lua.LState) (*vmMutex, bool) {
 	mu, owned := pm.vmLocks[state]
 	delete(pm.vmLocks, state)
+	delete(pm.generations, state)
 	return mu, owned
 }
 
@@ -2261,6 +2269,35 @@ func closeState(pm *PluginManager, state *lua.LState) {
 		return
 	}
 	state.Close()
+}
+
+// GenerationForState returns the generation assigned to the VM's root state.
+// The entry is installed before init runs and removed at revocation, so a stale
+// callback cannot use a generation after disable.
+func (pm *PluginManager) GenerationForState(L *lua.LState) (uint64, bool) {
+	if L == nil {
+		return 0, false
+	}
+	pm.mu.RLock()
+	generation, ok := pm.generations[mainState(L)]
+	pm.mu.RUnlock()
+	return generation, ok
+}
+
+// GenerationActive reports whether plugin's currently published VM has exactly
+// generation. A merely-loading or already-revoked VM is not active.
+func (pm *PluginManager) GenerationActive(plugin string, generation uint64) bool {
+	if generation == 0 {
+		return false
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, info := range pm.plugins {
+		if info.Name == plugin {
+			return info.Generation == generation
+		}
+	}
+	return false
 }
 
 // IsEnabled returns whether a plugin is currently active.

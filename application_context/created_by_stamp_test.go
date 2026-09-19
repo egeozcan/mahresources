@@ -51,6 +51,7 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		&models.ScheduledDownload{},
 		&models.PluginSchedule{},
 		&models.ResourceReduction{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

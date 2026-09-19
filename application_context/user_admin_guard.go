@@ -49,6 +49,16 @@ func stampedModels() []any {
 		// nobody's — which is the fail-closed arm of the visibility predicate, so
 		// the sweep is load-bearing here rather than tidy.
 		&models.ResourceReduction{},
+		// A command run keeps intentional actorlessness in a separate immutable
+		// flag. Nulling a deleted submitter therefore leaves that flag false and
+		// makes the run inaccessible; it never promotes the row into a schedule-
+		// originated actorless run.
+		&models.PluginCommandRun{},
+		// Import claims have no actorless mode. A NULL owner cannot pass the
+		// worker-start check and the inaccessible parent run cannot re-drive it,
+		// so deleting the submitter stops pending work rather than running it as
+		// root or another plugin caller.
+		&models.PluginCommandImport{},
 	}
 }
 

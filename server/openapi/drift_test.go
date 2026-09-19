@@ -157,6 +157,8 @@ func newDriftTestContext(t *testing.T) *application_context.MahresourcesContext 
 		&models.Preview{}, &models.GroupRelation{}, &models.GroupRelationType{},
 		&models.ImageHash{}, &models.ResourceSimilarity{}, &models.LogEntry{},
 		&models.PluginState{}, &models.PluginKV{}, &models.SavedMRQLQuery{},
+		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

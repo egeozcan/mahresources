@@ -52,6 +52,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.ScheduledDownload{},
 		&models.PluginSchedule{},
 		&models.ResourceReduction{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

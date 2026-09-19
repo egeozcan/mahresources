@@ -474,6 +474,13 @@ func main() {
 		// No FK association either; plugin_name/schedule_id is its own key and
 		// created_by_user_id is a scalar.
 		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar
+		// Durable command rows are associationless too. The actor columns are
+		// scalar provenance; run/output and import/map lifetimes are coordinated
+		// transactionally by the command store rather than by foreign keys.
+		&models.PluginCommandRun{},
+		&models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{},
+		&models.PluginCommandImportMap{},
 		// Likewise associationless: the Extent and the plan are JSON documents of
 		// ids, deliberately not foreign keys — a Cluster naming a Resource that has
 		// since been deleted is a staleness the apply revalidation must detect and
