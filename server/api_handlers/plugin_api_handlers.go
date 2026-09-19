@@ -3,8 +3,10 @@ package api_handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
@@ -119,7 +121,7 @@ func GetPluginsManageHandler(ctx PluginAPIContext) func(http.ResponseWriter, *ht
 	}
 }
 
-func GetPluginEnableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginEnableHandler(ctx PluginEnableContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))
 		if name == "" {
@@ -130,7 +132,25 @@ func GetPluginEnableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *htt
 			return
 		}
 
-		if err := ctx.SetPluginEnabled(name, true); err != nil {
+		opts := application_context.PluginEnableOptions{
+			ConfirmCommands: isTruthyFormValue(r.FormValue("confirm_commands")),
+		}
+		if err := ctx.SetPluginEnabledWithOptions(name, true, opts); err != nil {
+			var confirmation *plugin_system.CommandConfirmationError
+			if errors.As(err, &confirmation) {
+				if http_utils.RequestAcceptsHTML(r) {
+					http.Redirect(w, r, "/plugins/manage?confirm_commands="+url.QueryEscape(name), http.StatusSeeOther)
+					return
+				}
+				w.Header().Set("Content-Type", constants.JSON)
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":                       plugin_system.ErrCommandConfirmationRequired.Error(),
+					"requiresCommandConfirmation": true,
+					"commands":                    confirmation.Commands,
+				})
+				return
+			}
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}

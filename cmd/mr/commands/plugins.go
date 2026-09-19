@@ -3,6 +3,8 @@ package commands
 import (
 	"embed"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
@@ -41,7 +43,8 @@ func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin_enable.md")
-	return &cobra.Command{
+	var confirmCommands bool
+	cmd := &cobra.Command{
 		Use:         "enable <name>",
 		Short:       "Enable a plugin",
 		Long:        help.Long,
@@ -52,9 +55,30 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// Server reads name from r.FormValue("name")
 			formData := url.Values{}
 			formData.Set("name", args[0])
+			if confirmCommands {
+				formData.Set("confirm_commands", "1")
+			}
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/plugin/enable", nil, formData, &raw); err != nil {
+				var apiErr *client.APIError
+				if !confirmCommands && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+					var refusal struct {
+						RequiresCommandConfirmation bool `json:"requiresCommandConfirmation"`
+						Commands                    []struct {
+							Name           string `json:"name"`
+							Argv           string `json:"argv"`
+							TimeoutSeconds int64  `json:"timeoutSeconds"`
+						} `json:"commands"`
+					}
+					if json.Unmarshal(apiErr.Body, &refusal) == nil && refusal.RequiresCommandConfirmation {
+						cmd.PrintErrln("This plugin requests permission to run these server commands:")
+						for _, command := range refusal.Commands {
+							cmd.PrintErrf("  %s: %s (timeout %d seconds)\n", command.Name, command.Argv, command.TimeoutSeconds)
+						}
+						cmd.PrintErrf("Re-run with --confirm-commands: mr plugin enable %s --confirm-commands\n", args[0])
+					}
+				}
 				return err
 			}
 
@@ -66,6 +90,8 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&confirmCommands, "confirm-commands", false, "Acknowledge and enable every command declared by this plugin")
+	return cmd
 }
 
 func newPluginDisableCmd(c *client.Client, opts *output.Options) *cobra.Command {

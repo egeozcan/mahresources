@@ -200,7 +200,15 @@ func (ctx *MahresourcesContext) reconcileEnabledState(pluginName string) {
 		})
 }
 
+type PluginEnableOptions struct {
+	ConfirmCommands bool
+}
+
 func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool) error {
+	return ctx.SetPluginEnabledWithOptions(pluginName, enabled, PluginEnableOptions{})
+}
+
+func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, enabled bool, opts PluginEnableOptions) error {
 	if ctx.pluginManager == nil {
 		return fmt.Errorf("plugin manager not initialized")
 	}
@@ -225,7 +233,10 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 		//
 		// Before the enabled column too, so a consent write that fails leaves
 		// the row exactly as it was and there is nothing to revert.
-		consent := plugin_system.GrantsFromManifest(dp.Manifest)
+		consent, err := plugin_system.GrantsForEnable(dp.Manifest, opts.ConfirmCommands)
+		if err != nil {
+			return err
+		}
 		if err := (&pluginConsentStore{ctx: ctx}).RecordConsent(pluginName, consent); err != nil {
 			return err
 		}

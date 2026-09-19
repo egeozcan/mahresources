@@ -33,6 +33,8 @@ func (s *sharedConsentStore) ConsentFor(name string) (Grants, bool, error) {
 	return g, ok, nil
 }
 
+func (s *sharedConsentStore) Persistent() bool { return true }
+
 func (s *sharedConsentStore) RecordConsent(name string, g Grants) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,6 +92,45 @@ func loadWith(t *testing.T, dir, name string, store ConsentStore) (*PluginManage
 	t.Cleanup(pm.Close)
 	pm.SetConsentStore(store)
 	return pm, pm.EnablePlugin(name)
+}
+
+func TestACommandPluginWithNoConsentOnRecordIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	store := newSharedConsentStore()
+	writePlugin(t, dir, "fresh-command", `
+plugin = { name = "fresh-command", version = "1.0", api_version = 1,
+           capabilities = { "commands" },
+           commands = { { name = "run", argv = { "tool" } } } }
+function init() end
+`)
+
+	pm, err := loadWith(t, dir, "fresh-command", store)
+	if err == nil {
+		pm.Close()
+		t.Fatal("a command plugin with no durable acknowledgement was grandfathered")
+	}
+	if _, ok := store.get("fresh-command"); ok {
+		t.Fatal("the refusal silently recorded command consent")
+	}
+}
+
+func TestACommandPluginRefusesTheMemoryConsentStore(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "memory-command", `
+plugin = { name = "memory-command", version = "1.0", api_version = 1,
+           capabilities = { "commands" },
+           commands = { { name = "run", argv = { "tool" } } } }
+function init() end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pm.Close)
+	if err := pm.EnablePlugin("memory-command"); err == nil {
+		t.Fatal("an in-memory consent store authorized service-account execution")
+	}
 }
 
 func TestAPluginWithNoConsentOnRecordIsGrandfathered(t *testing.T) {

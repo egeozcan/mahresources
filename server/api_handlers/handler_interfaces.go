@@ -29,6 +29,7 @@ var (
 	_ MRQLAPIContext            = (*application_context.MahresourcesContext)(nil)
 	_ MRQLExportContext         = (*application_context.MahresourcesContext)(nil)
 	_ PluginAPIContext          = (*application_context.MahresourcesContext)(nil)
+	_ PluginEnableContext       = (*application_context.MahresourcesContext)(nil)
 	_ TimelineContext           = (*application_context.MahresourcesContext)(nil)
 	_ UserAdminContext          = (*application_context.MahresourcesContext)(nil)
 	_ AccountContext            = (*application_context.MahresourcesContext)(nil)
@@ -140,6 +141,11 @@ type MRQLExportContext interface {
 	ExecuteMRQLGroupedExport(reqCtx context.Context, parsed *mrql.Query) (*application_context.MRQLGroupedResult, error)
 	ValidateMRQLFlatExportBounds(q *mrql.Query, limit, page int) error
 	ValidateMRQLGroupedExportBounds(q *mrql.Query) error
+}
+
+// PluginEnableContext is the narrow seam for the two-step enable endpoint.
+type PluginEnableContext interface {
+	SetPluginEnabledWithOptions(pluginName string, enabled bool, opts application_context.PluginEnableOptions) error
 }
 
 // PluginAPIContext serves the plugin admin and host-function endpoints.

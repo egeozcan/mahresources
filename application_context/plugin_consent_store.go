@@ -26,6 +26,8 @@ type pluginConsentStore struct {
 // predates the GrantsJSON column reads that way. A failed read is *not*: an
 // error here refuses the load, because reporting a transient database failure as
 // an absence would grandfather whatever the file now asks for, once per failure.
+func (s *pluginConsentStore) Persistent() bool { return true }
+
 func (s *pluginConsentStore) ConsentFor(pluginName string) (plugin_system.Grants, bool, error) {
 	var state models.PluginState
 	if err := s.ctx.db.Where("plugin_name = ?", pluginName).First(&state).Error; err != nil {

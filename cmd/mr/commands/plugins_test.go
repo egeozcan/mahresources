@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,7 +24,8 @@ func runPluginCmd(t *testing.T, serverURL string, args ...string) (string, error
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs(args)
-	return out.String(), cmd.Execute()
+	err := cmd.Execute()
+	return out.String(), err
 }
 
 // requirePluginSubcommand fails unless `mr plugin` carries the named child.
@@ -52,6 +54,60 @@ func serverReadsAsAllowed(v string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag(t *testing.T) {
+	var gotForm url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotForm = r.Form
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"command confirmation required","requiresCommandConfirmation":true,"commands":[{"name":"download","argv":"yt-dlp -- '{{url}}'","timeoutSeconds":7200},{"name":"probe","argv":"ffprobe '{{exchange_dir}}'","timeoutSeconds":3600}]}`))
+	}))
+	defer server.Close()
+
+	out, err := runPluginCmd(t, server.URL, "enable", "media")
+	if err == nil {
+		t.Fatalf("unconfirmed enable succeeded: %s", out)
+	}
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict || apiErr.Message != "command confirmation required" {
+		t.Fatalf("error = %#v, want exported APIError with 409 refusal", err)
+	}
+	if apiErr.Error() != "HTTP 409: command confirmation required" {
+		t.Fatalf("APIError text changed: %q", apiErr.Error())
+	}
+	for _, want := range []string{"download", "yt-dlp -- '{{url}}'", "7200", "probe", "ffprobe '{{exchange_dir}}'", "3600", "Re-run with --confirm-commands"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q does not contain %q", out, want)
+		}
+	}
+	if gotForm.Get("confirm_commands") != "" {
+		t.Fatalf("bare enable smuggled confirmation: %v", gotForm)
+	}
+}
+
+func TestPluginEnableConfirmCommandsPostsAcknowledgement(t *testing.T) {
+	var gotForm url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotForm = r.Form
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"name":"media","enabled":true}`))
+	}))
+	defer server.Close()
+
+	if out, err := runPluginCmd(t, server.URL, "enable", "media", "--confirm-commands"); err != nil {
+		t.Fatalf("confirmed enable: %v (output %s)", err, out)
+	}
+	if gotForm.Get("name") != "media" || gotForm.Get("confirm_commands") != "1" {
+		t.Fatalf("confirmed form = %v", gotForm)
 	}
 }
 

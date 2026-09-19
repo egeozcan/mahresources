@@ -51,6 +51,10 @@ type pluginDisplay struct {
 	// enforced.
 	MinAppVersion string
 
+	// Commands is the exact command review data derived from the manifest. It is
+	// display-only; execution always uses the declaration's argv vector.
+	Commands []plugin_system.CommandDisplay
+
 	// Schedules is what this plugin has recorded as recurring work. Rendered
 	// from the stored rows rather than from the live registry, because the two
 	// differ in exactly the cases an operator needs to see: a row whose plugin
@@ -196,6 +200,19 @@ func capabilityLabels(caps []string) map[string]string {
 	return labels
 }
 
+func commandConfirmationPlugin(plugins []pluginDisplay, requested string) *pluginDisplay {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return nil
+	}
+	for i := range plugins {
+		if plugins[i].Name == requested && len(plugins[i].Commands) > 0 {
+			return &plugins[i]
+		}
+	}
+	return nil
+}
+
 func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		ctx := StaticTemplateCtx(request)
@@ -258,6 +275,7 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 				AllowPrivateHosts:  dp.Manifest.AllowPrivateHosts,
 				Dependencies:       dp.Manifest.Dependencies,
 				MinAppVersion:      dp.Manifest.MinAppVersion,
+				Commands:           plugin_system.CommandDisplays(dp.Manifest),
 				Schedules:          buildScheduleDisplays(appCtx, pm, dp.Name),
 				ScheduledDownloads: buildScheduledDownloadDisplays(appCtx, dp.Name),
 			}
@@ -272,6 +290,9 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 		}
 
 		ctx["plugins"] = plugins
+		if confirmation := commandConfirmationPlugin(plugins, request.URL.Query().Get("confirm_commands")); confirmation != nil {
+			ctx["commandConfirmation"] = confirmation
+		}
 		return ctx
 	}
 }

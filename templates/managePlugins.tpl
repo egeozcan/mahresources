@@ -21,6 +21,38 @@
     </p>
     {% endif %}
 
+    {% if commandConfirmation %}
+    <section class="mb-4 rounded-md border-2 border-red-400 bg-red-50 p-4 text-red-950"
+             role="alert" data-testid="plugin-command-confirmation-{{ commandConfirmation.Name }}">
+        <h2 class="text-lg font-semibold">Confirm command execution for {{ commandConfirmation.Name }}</h2>
+        <p class="mt-2 text-sm">
+            This plugin can run the following commands on the server as the server service account.
+            Executable basenames are searched only in the operator-configured plugin-command path.
+            These processes are not sandboxed, have unrestricted networking including private and
+            loopback addresses, and can read anything the OS account can read, including sibling plugin exchange folders.
+            Importing command output additionally requires separate
+            <span class="font-mono">db:write</span> consent.
+        </p>
+        <ul class="mt-3 list-disc space-y-2 pl-5" data-testid="plugin-command-confirmation-list-{{ commandConfirmation.Name }}">
+            {% for command in commandConfirmation.Commands %}
+            <li>
+                <span class="font-semibold">{{ command.Name }}</span>
+                <code class="block break-all font-mono text-xs">{{ command.DisplayArgv }}</code>
+                <span class="text-xs">Timeout: {{ command.TimeoutSeconds }} seconds</span>
+            </li>
+            {% endfor %}
+        </ul>
+        <form method="POST" action="/v1/plugin/enable" class="mt-4">
+            <input type="hidden" name="name" value="{{ commandConfirmation.Name }}">
+            <input type="hidden" name="confirm_commands" value="1">
+            <button type="submit"
+                    class="inline-flex justify-center rounded-md border border-transparent bg-red-700 px-4 py-2 font-mono text-sm font-medium text-white shadow-sm hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2">
+                Confirm and enable
+            </button>
+        </form>
+    </section>
+    {% endif %}
+
     {% if not plugins %}
     <p class="text-stone-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
     {% endif %}
@@ -103,6 +135,30 @@
                 the full plugin surface &mdash; every capability listed below &mdash; and it may
                 make outbound requests to any public host.
             </p>
+            {% endif %}
+
+            {% if plugin.Commands %}
+            <div class="mb-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900"
+                 data-testid="plugin-command-warning-{{ plugin.Name }}">
+                <p>
+                    <span aria-hidden="true">&#9888;</span>
+                    <strong class="font-semibold">This plugin can run commands on the server as the server service account.</strong>
+                    Executable basenames are searched only in the operator-configured plugin-command path.
+                    The processes are not sandboxed, have unrestricted networking including private and
+                    loopback addresses, and can read anything the OS account can read, including sibling plugin exchange folders.
+                    Importing command output additionally requires separate
+                    <span class="font-mono">db:write</span> consent.
+                </p>
+                <ul class="mt-2 list-disc space-y-2 pl-5" data-testid="plugin-command-list-{{ plugin.Name }}">
+                    {% for command in plugin.Commands %}
+                    <li>
+                        <span class="font-semibold">{{ command.Name }}</span>
+                        <code class="block break-all font-mono text-xs">{{ command.DisplayArgv }}</code>
+                        <span class="text-xs">Timeout: {{ command.TimeoutSeconds }} seconds</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
             {% endif %}
 
             <dl class="text-sm text-stone-700 space-y-3">

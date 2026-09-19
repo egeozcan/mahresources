@@ -8,12 +8,53 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"mahresources/plugin_commands"
 )
 
 // ErrGrantsChanged is returned when a plugin declares more than the operator
 // consented to. It is a refusal to load, not a warning: the whole point of
 // storing consent is that editing plugin.lua must not widen a grant.
 var ErrGrantsChanged = errors.New("plugin declares more than was consented to")
+
+// ErrCommandConfirmationRequired is returned when enabling a command-bearing
+// plugin without the separate acknowledgement required for service-account
+// process execution.
+var ErrCommandConfirmationRequired = errors.New("command confirmation required")
+
+// CommandDisplay is the exact operator-facing command record returned by the
+// enable API and rendered by the management page.
+type CommandDisplay struct {
+	Name           string `json:"name"`
+	DisplayArgv    string `json:"argv"`
+	TimeoutSeconds int64  `json:"timeoutSeconds"`
+}
+
+// CommandConfirmationError carries the commands the operator must review.
+type CommandConfirmationError struct {
+	Commands []CommandDisplay
+}
+
+func (e *CommandConfirmationError) Error() string { return ErrCommandConfirmationRequired.Error() }
+func (e *CommandConfirmationError) Unwrap() error { return ErrCommandConfirmationRequired }
+
+// CommandDisplays derives display-only shell quoting from validated argv. The
+// result is never execution data.
+func CommandDisplays(m Manifest) []CommandDisplay {
+	if len(m.Commands) == 0 {
+		return nil
+	}
+	out := make([]CommandDisplay, 0, len(m.Commands))
+	for _, command := range m.Commands {
+		out = append(out, CommandDisplay{
+			Name:           command.Name,
+			DisplayArgv:    plugin_commands.ShellJoin(command.Argv),
+			TimeoutSeconds: int64(command.Timeout / time.Second),
+		})
+	}
+	return out
+}
 
 // Grants is what an operator consented to when they enabled a plugin, stored in
 // PluginState.GrantsJSON.
@@ -22,6 +63,13 @@ var ErrGrantsChanged = errors.New("plugin declares more than was consented to")
 // this is a record of a decision, and it has to survive the file changing
 // underneath it. Storing the manifest here would make the two drift into each
 // other and lose exactly the distinction that makes consent mean anything.
+type CommandGrant struct {
+	Name            string   `json:"name"`
+	Argv            []string `json:"argv"`
+	TimeoutSeconds  int64    `json:"timeout_seconds"`
+	SensitiveParams []string `json:"sensitive_params,omitempty"`
+}
+
 type Grants struct {
 	// Legacy records that what was consented to was a plugin with no manifest
 	// at all — the full mah surface. It is the maximum grant, so nothing a
@@ -42,6 +90,9 @@ type Grants struct {
 	Network []string `json:"network,omitempty"`
 
 	AllowPrivateHosts bool `json:"allow_private_hosts,omitempty"`
+
+	Commands             []CommandGrant `json:"commands,omitempty"`
+	CommandsAcknowledged bool           `json:"commands_acknowledged,omitempty"`
 }
 
 // GrantsFromManifest builds the record written when a plugin is enabled.
@@ -49,12 +100,36 @@ func GrantsFromManifest(m Manifest) Grants {
 	if !m.Declared {
 		return Grants{Legacy: true}
 	}
-	return Grants{
+	grants := Grants{
 		APIVersion:        m.APIVersion,
 		Capabilities:      m.Capabilities().Sorted(),
 		Network:           m.NetworkDisplay(),
 		AllowPrivateHosts: m.AllowPrivateHosts,
 	}
+	for _, command := range m.Commands {
+		grants.Commands = append(grants.Commands, CommandGrant{
+			Name:            command.Name,
+			Argv:            append([]string(nil), command.Argv...),
+			TimeoutSeconds:  int64(command.Timeout / time.Second),
+			SensitiveParams: append([]string(nil), command.SensitiveParams...),
+		})
+	}
+	return grants
+}
+
+// GrantsForEnable records an explicit command acknowledgement. Merely deriving
+// grants from a manifest never acknowledges commands, so discovery and startup
+// code cannot manufacture the operator's gesture.
+func GrantsForEnable(m Manifest, confirmCommands bool) (Grants, error) {
+	grants := GrantsFromManifest(m)
+	if len(m.Commands) == 0 {
+		return grants, nil
+	}
+	if !confirmCommands {
+		return Grants{}, &CommandConfirmationError{Commands: CommandDisplays(m)}
+	}
+	grants.CommandsAcknowledged = true
+	return grants, nil
 }
 
 // NetworkDisplay renders the declared allowlist in canonical form, so a rule
@@ -99,8 +174,9 @@ func (g Grants) Marshal() (string, error) {
 // ParseGrants reads a stored consent record.
 //
 // The second return distinguishes "no record" from "a record granting nothing",
-// and the distinction decides an upgrade: absent is grandfathered (§2), while an
-// empty record is a real decision and is enforced. A record that is present but
+// and the distinction decides an upgrade: absent is grandfathered for ordinary
+// capabilities but never for commands, while an empty record is a real decision
+// and is enforced. A record that is present but
 // unreadable is an error rather than an absence — grandfathering corruption
 // would re-grant whatever the file now asks for, which is what anyone able to
 // corrupt the column would want.
@@ -138,6 +214,9 @@ type GrantDelta struct {
 	// LostManifest is a plugin that deleted its api_version, jumping back to the
 	// full mah surface.
 	LostManifest bool
+	// ChangedCommands names declarations that were added or changed relative to
+	// the explicit command acknowledgement. Removing a command is a narrowing.
+	ChangedCommands []string
 }
 
 // Empty reports whether the declaration is covered by the consent.
@@ -147,7 +226,8 @@ func (d GrantDelta) Empty() bool {
 		!d.NetworkWidened &&
 		!d.PrivateHosts &&
 		!d.APIVersionRaised &&
-		!d.LostManifest
+		!d.LostManifest &&
+		len(d.ChangedCommands) == 0
 }
 
 // Describe renders the delta for an operator, as the manage UI's
@@ -180,6 +260,9 @@ func (d GrantDelta) Describe() string {
 	if d.APIVersionRaised {
 		parts = append(parts, "it raised its api_version")
 	}
+	if len(d.ChangedCommands) > 0 {
+		parts = append(parts, "new or changed commands: "+strings.Join(d.ChangedCommands, ", "))
+	}
 	if len(parts) == 0 {
 		return "no change"
 	}
@@ -207,6 +290,21 @@ func CompareGrants(consented Grants, declared Manifest) GrantDelta {
 		d.LostManifest = true
 		return d
 	}
+
+	// Command declarations are compared before the legacy short-circuit. Legacy
+	// mah access never included service-account process execution, and an old
+	// record cannot acknowledge a command merely by being broad elsewhere.
+	consentedCommands := make(map[string]CommandGrant, len(consented.Commands))
+	for _, command := range consented.Commands {
+		consentedCommands[command.Name] = command
+	}
+	for _, command := range declaredGrants.Commands {
+		stored, ok := consentedCommands[command.Name]
+		if !consented.CommandsAcknowledged || !ok || !sameCommandGrant(stored, command) {
+			d.ChangedCommands = append(d.ChangedCommands, command.Name)
+		}
+	}
+	sort.Strings(d.ChangedCommands)
 
 	// Checked before the legacy short-circuit below, because it is the one
 	// widening that legacy consent does not already cover.
@@ -275,11 +373,14 @@ func CompareGrants(consented Grants, declared Manifest) GrantDelta {
 // application_context implementation reads and writes PluginState.GrantsJSON.
 type ConsentStore interface {
 	// ConsentFor returns the stored record. The bool distinguishes "no record"
-	// — which is grandfathered on first load — from "a record granting
-	// nothing", which is enforced.
+	// — grandfathered for ordinary capabilities but refused for commands — from
+	// "a record granting nothing", which is enforced.
 	ConsentFor(pluginName string) (Grants, bool, error)
 	// RecordConsent persists what the operator agreed to.
 	RecordConsent(pluginName string, granted Grants) error
+	// Persistent reports whether consent survives process restart. Command
+	// execution is refused when this is false.
+	Persistent() bool
 }
 
 // memoryConsentStore is the default, so a manager built without a database
@@ -305,6 +406,8 @@ func (s *memoryConsentStore) ConsentFor(pluginName string) (Grants, bool, error)
 	g, ok := s.records[pluginName]
 	return g, ok, nil
 }
+
+func (s *memoryConsentStore) Persistent() bool { return false }
 
 func (s *memoryConsentStore) RecordConsent(pluginName string, granted Grants) error {
 	s.mu.Lock()
@@ -347,6 +450,15 @@ func (pm *PluginManager) enforceConsent(name string, loadTime Manifest) error {
 	consented, present, err := store.ConsentFor(name)
 	if err != nil {
 		return err
+	}
+
+	if len(loadTime.Commands) > 0 {
+		if !store.Persistent() {
+			return fmt.Errorf("%w: command execution requires a persistent consent store", ErrGrantsChanged)
+		}
+		if !present {
+			return fmt.Errorf("%w: commands require explicit acknowledgement; re-enable %s to review them", ErrGrantsChanged, name)
+		}
 	}
 
 	if !present {
@@ -396,6 +508,30 @@ func describeGrants(g Grants) string {
 // canonicalNetworkKey renders one stored entry in the same normalized,
 // kind-tagged form the policy fingerprint uses, so two spellings of one rule
 // compare equal and a hostname never compares equal to an address.
+func sameCommandGrant(a, b CommandGrant) bool {
+	if a.Name != b.Name || a.TimeoutSeconds != b.TimeoutSeconds || len(a.Argv) != len(b.Argv) {
+		return false
+	}
+	for i := range a.Argv {
+		if a.Argv[i] != b.Argv[i] {
+			return false
+		}
+	}
+	if len(a.SensitiveParams) != len(b.SensitiveParams) {
+		return false
+	}
+	x := append([]string(nil), a.SensitiveParams...)
+	y := append([]string(nil), b.SensitiveParams...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func canonicalNetworkKey(entry string) (string, error) {
 	rule, err := parseNetworkRule(entry)
 	if err != nil {

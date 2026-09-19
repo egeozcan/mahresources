@@ -14,6 +14,13 @@ have been written via `plugin settings`. Enabling an already-enabled
 or unknown plugin name returns a non-zero exit code and an error
 message from the server.
 
+A plugin that declares server commands requires a separate acknowledgement.
+The first invocation without `--confirm-commands` exits non-zero and prints every
+command, its exact argument display, and timeout. Review that list, then re-run
+with `--confirm-commands` to record durable consent. The flag confirms all
+commands declared by that plugin; command execution is not available with an
+in-memory-only consent store.
+
 # Example
 
   # Enable a plugin by name
@@ -21,6 +28,9 @@ message from the server.
 
   # Enable and confirm via the JSON response
   mr plugin enable my-plugin --json | jq -e '.enabled == true'
+
+  # After reviewing a command plugin's refusal output, acknowledge its commands
+  mr plugin enable media-tools --confirm-commands
 
   # mr-doctest: disable first to guarantee a clean slate, then enable and assert the response shape
   mr plugin disable test-actions --json >/dev/null

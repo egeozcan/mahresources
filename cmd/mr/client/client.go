@@ -146,8 +146,20 @@ func ClearToken(baseURL string) error {
 	return writeTokenMap(m)
 }
 
-// apiError represents an error response from the API.
-type apiError struct {
+// APIError is an error response from the server. Body retains the raw JSON so
+// commands can handle structured refusals without changing the historical
+// human-readable Error text.
+type APIError struct {
+	StatusCode int
+	Message    string
+	Body       json.RawMessage
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+}
+
+type apiErrorBody struct {
 	Error string `json:"error"`
 }
 
@@ -165,17 +177,22 @@ func decodeError(resp *http.Response) error {
 		return fmt.Errorf("HTTP %d (failed to read body: %v)", resp.StatusCode, err)
 	}
 
-	var apiErr apiError
-	if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, apiErr.Error)
+	message := ""
+	var decoded apiErrorBody
+	if json.Unmarshal(body, &decoded) == nil {
+		message = decoded.Error
 	}
-
-	// Truncate body for display
-	s := string(body)
-	if len(s) > 200 {
-		s = s[:200] + "..."
+	if message == "" {
+		message = string(body)
+		if len(message) > 200 {
+			message = message[:200] + "..."
+		}
 	}
-	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, s)
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		Message:    message,
+		Body:       append(json.RawMessage(nil), body...),
+	}
 }
 
 func decodeResponse(resp *http.Response, result any) error {

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -203,6 +204,59 @@ func TestPluginConsentStoreLeavesSettingsAlone(t *testing.T) {
 	}
 	if state.GrantsJSON == "" {
 		t.Fatal("the consent was not stored")
+	}
+}
+
+func TestCommandPluginEnableRequiresASeparateConfirmationWithoutSideEffects(t *testing.T) {
+	dir := t.TempDir()
+	writeConsentTestPlugin(t, dir, "commander", `plugin = { name = "commander", version = "1.0", api_version = 1,
+    capabilities = {"commands"}, commands = {{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7200}} }
+function init() end
+`)
+	ctx := createTestContextWithPlugins(t, dir)
+	t.Cleanup(ctx.PluginManager().Close)
+	if _, err := ctx.EnsurePluginStates(); err != nil {
+		t.Fatal(err)
+	}
+	before := consentTestState(t, ctx, "commander")
+
+	err := ctx.SetPluginEnabled("commander", true)
+	if !errors.Is(err, plugin_system.ErrCommandConfirmationRequired) {
+		t.Fatalf("ordinary enable err = %v, want command confirmation refusal", err)
+	}
+	after := consentTestState(t, ctx, "commander")
+	if after.Enabled != before.Enabled || after.GrantsJSON != before.GrantsJSON {
+		t.Fatalf("refused first step changed durable state: before=%+v after=%+v", before, after)
+	}
+	if ctx.PluginManager().IsEnabled("commander") {
+		t.Fatal("refused first step loaded the plugin")
+	}
+}
+
+func TestConfirmedCommandPluginEnableStoresAcknowledgement(t *testing.T) {
+	dir := t.TempDir()
+	writeConsentTestPlugin(t, dir, "commander", `plugin = { name = "commander", version = "1.0", api_version = 1,
+    capabilities = {"commands"}, commands = {{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7200}} }
+function init() end
+`)
+	ctx := createTestContextWithPlugins(t, dir)
+	t.Cleanup(ctx.PluginManager().Close)
+	if _, err := ctx.EnsurePluginStates(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ctx.SetPluginEnabledWithOptions("commander", true, PluginEnableOptions{ConfirmCommands: true}); err != nil {
+		t.Fatalf("confirmed enable: %v", err)
+	}
+	stored, present, err := (&pluginConsentStore{ctx: ctx}).ConsentFor("commander")
+	if err != nil || !present {
+		t.Fatalf("stored consent: present=%v err=%v", present, err)
+	}
+	if !stored.CommandsAcknowledged || len(stored.Commands) != 1 {
+		t.Fatalf("confirmed command consent was not recorded: %+v", stored)
+	}
+	if !consentTestState(t, ctx, "commander").Enabled || !ctx.PluginManager().IsEnabled("commander") {
+		t.Fatal("confirmed plugin was not enabled durably and in memory")
 	}
 }
 

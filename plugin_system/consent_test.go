@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -310,6 +311,108 @@ func TestLosingAManifestAlwaysReConsents(t *testing.T) {
 func TestLegacyToLegacyNeedsNoReConsent(t *testing.T) {
 	if delta := CompareGrants(grantsFor(t, legacyPlugin), manifestFor(t, legacyPlugin)); !delta.Empty() {
 		t.Fatalf("an unchanged legacy plugin asked for re-consent: %s", delta.Describe())
+	}
+}
+
+func TestCommandGrantsRequireAcknowledgementAndRoundTripDeclarations(t *testing.T) {
+	manifest := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7200, sensitive_params = {"url"}}
+	}`))
+
+	unacknowledged := GrantsFromManifest(manifest)
+	if unacknowledged.CommandsAcknowledged {
+		t.Fatal("GrantsFromManifest silently acknowledged service-account command execution")
+	}
+	if len(unacknowledged.Commands) != 1 || unacknowledged.Commands[0].Name != "download" {
+		t.Fatalf("command declaration was not recorded in grants: %+v", unacknowledged.Commands)
+	}
+
+	if _, err := GrantsForEnable(manifest, false); !errors.Is(err, ErrCommandConfirmationRequired) {
+		t.Fatalf("unconfirmed command enable err = %v, want ErrCommandConfirmationRequired", err)
+	}
+	confirmed, err := GrantsForEnable(manifest, true)
+	if err != nil {
+		t.Fatalf("confirmed command grants: %v", err)
+	}
+	if !confirmed.CommandsAcknowledged {
+		t.Fatal("confirmed command grants did not record the acknowledgement")
+	}
+	if delta := CompareGrants(confirmed, manifest); !delta.Empty() {
+		t.Fatalf("confirmed declaration no longer matches its grant: %s", delta.Describe())
+	}
+}
+
+func TestCommandConsentComparisonDetectsEveryWideningBeforeLegacy(t *testing.T) {
+	baseManifest := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7200, sensitive_params = {"url"}}
+	}`))
+	base, err := GrantsForEnable(baseManifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name     string
+		manifest Manifest
+	}{
+		{
+			name: "positional argv change",
+			manifest: manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+				{name = "download", argv = {"tool", "{{url}}", "--"}, timeout = 7200, sensitive_params = {"url"}}
+			}`)),
+		},
+		{
+			name: "added command",
+			manifest: manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+				{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7200, sensitive_params = {"url"}},
+				{name = "probe", argv = {"probe"}}
+			}`)),
+		},
+		{
+			name: "timeout change",
+			manifest: manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+				{name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 7201, sensitive_params = {"url"}}
+			}`)),
+		},
+		{
+			name: "sensitive set change",
+			manifest: manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+				{name = "download", argv = {"tool", "--", "{{url}}", "{{token}}"}, timeout = 7200, sensitive_params = {"url", "token"}}
+			}`)),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			delta := CompareGrants(base, tc.manifest)
+			if delta.Empty() {
+				t.Fatal("changed command declaration loaded on the old consent")
+			}
+			if !strings.Contains(delta.Describe(), "command") {
+				t.Fatalf("delta does not identify command consent: %q", delta.Describe())
+			}
+		})
+	}
+
+	legacy := Grants{Legacy: true}
+	if delta := CompareGrants(legacy, baseManifest); delta.Empty() {
+		t.Fatal("legacy consent short-circuited before a newly declared command was compared")
+	}
+}
+
+func TestRemovingACommandIsANarrowing(t *testing.T) {
+	consentedManifest := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool", "{{url}}"}},
+		{name = "probe", argv = {"probe"}}
+	}`))
+	consented, err := GrantsForEnable(consentedManifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool", "{{url}}"}}
+	}`))
+	if delta := CompareGrants(consented, declared); !delta.Empty() {
+		t.Fatalf("removing a command asked for re-consent: %s", delta.Describe())
 	}
 }
 
