@@ -163,8 +163,11 @@ administrator history. The final follow-up replaced its scheduling delay with a
 per-plugin command lifecycle registered at durable admission, before execution
 can publish a terminal row. Disable now waits across the terminal-to-delivery
 gap until each host completion has settled or deterministically no-op'd; early
-worker refusal, executor panic, dispatch failure and an already-revoked generation
-all balance the lifecycle exactly once.
+worker refusal, executor panic, dispatch failure and an already-revoked generation all balance the lifecycle exactly once. The final
+shutdown follow-up also settles queued, cancellation-pending, dispatch-refused
+and managed-but-never-started ownership when terminal persistence fails; it
+returns the durable error, emits no unpersisted callback, drains future lifecycle
+waits and tolerates a late managed invocation through the one-shot settlement.
 
 Documentation now records the exact manifest/Lua/status contracts, persistent
 command acknowledgement, trusted-path and no-sandbox boundary, actor/generation
@@ -186,7 +189,11 @@ Final verification evidence:
   runs, API integration passes 10 race-detector repetitions, and the focused
   tagged PostgreSQL selection passes; the tagged race
   selection across `plugin_commands`, `plugin_system`, `application_context`,
-  `download_queue` and `server/api_tests` passes. `internal/arch` plugin/layer/
+  `download_queue` and `server/api_tests` passes. The shutdown-persistence and
+  adjacent dispatcher lifecycle selections pass 100 race-detector repetitions,
+  callback/reentrancy selections pass 50 race-detector repetitions, API host
+  integration passes 10 ordinary and 3 race-detector repetitions, and focused
+  package race/vet checks pass. `internal/arch` plugin/layer/
   command checks, tagged build and tagged vet pass. Focused command-history
   Playwright passes 3/3 on both SQLite and PostgreSQL after the follow-up.
 - Generated/docs: `npm run docs-gen`, `npm run skills-gen`, `npm run build-js`,

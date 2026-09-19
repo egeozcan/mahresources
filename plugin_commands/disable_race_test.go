@@ -260,6 +260,126 @@ func TestContextDrivenShutdownPreservesPersistenceErrorForStop(t *testing.T) {
 	}
 }
 
+func TestShutdownPersistenceFailureSettlesEveryAdmittedCommandWithoutCallback(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("terminal write unavailable")
+	store.finishRunErr = injected
+	jobs := &dispatcherTestJobs{}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{},
+		Settings: dispatcherTestSettings{pending: 10},
+	})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	callbacks := make(chan Result, 3)
+	ids := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		id, err := d.Submit(commandRequest("p", func(result Result) { callbacks <- result }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	// Two commands occupy the per-plugin managed slots; the third remains in
+	// the dispatcher's private queue. Shutdown must settle both ownership paths.
+	waitFor(t, func() bool { return jobs.commandCount() == 2 })
+
+	if err := d.Stop(context.Background()); !errors.Is(err, injected) {
+		t.Fatalf("Stop error = %v, want %v", err, injected)
+	}
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("shutdown persistence failure leaked %d completion lifecycles", active)
+	}
+	waited := make(chan struct{})
+	go func() {
+		d.completionDispatch.wait("p")
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		t.Fatal("a future plugin lifecycle wait hung after failed shutdown persistence")
+	}
+	select {
+	case result := <-callbacks:
+		t.Fatalf("completion without a durable terminal row: %+v", result)
+	default:
+	}
+	for _, id := range ids {
+		record, _, err := store.Run(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if RunStatusTerminal(record.Status) {
+			t.Fatalf("run %s unexpectedly became durable terminal: %+v", id, record)
+		}
+	}
+
+	// The managed registry can race a late invocation with shutdown. Its refusal
+	// settles the same lifecycle again; the one-shot owner makes that harmless
+	// and must never resurrect a callback.
+	for _, command := range jobs.commandSnapshot() {
+		outcome := command.run(context.Background(), nopProgress{})
+		if outcome.Status != RunStatusInterrupted {
+			t.Fatalf("late managed invocation outcome = %+v", outcome)
+		}
+	}
+	select {
+	case result := <-callbacks:
+		t.Fatalf("late worker refusal delivered completion: %+v", result)
+	default:
+	}
+}
+
+func TestShutdownPersistenceFailureSettlesQueuedCancellationWithoutCallback(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("terminal write unavailable")
+	store.finishRunErr = injected
+	jobs := &dispatcherTestJobs{}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{},
+		Settings: dispatcherTestSettings{pending: 10},
+	})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	callbacks := make(chan Result, 1)
+	for i := 0; i < 2; i++ {
+		if _, err := d.Submit(commandRequest("p", nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued, err := d.Submit(commandRequest("p", func(result Result) { callbacks <- result }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 2 })
+	if err := d.Cancel(queued, "operator cancelled"); !errors.Is(err, injected) {
+		t.Fatalf("Cancel error = %v, want %v", err, injected)
+	}
+	if err := d.Stop(context.Background()); !errors.Is(err, injected) {
+		t.Fatalf("Stop error = %v, want %v", err, injected)
+	}
+	if active := completionDispatchActive(d, "p"); active != 0 {
+		t.Fatalf("failed queued cancellation leaked %d completion lifecycles", active)
+	}
+	select {
+	case result := <-callbacks:
+		t.Fatalf("queued cancellation callback without durable terminal row: %+v", result)
+	default:
+	}
+	record, _, err := store.Run(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if RunStatusTerminal(record.Status) {
+		t.Fatalf("queued cancellation unexpectedly became terminal: %+v", record)
+	}
+}
+
 func TestShutdownDoesNotDeadlockWhenWorkerCompletionInboxIsFull(t *testing.T) {
 	store := newDispatcherTestStore()
 	jobs := &dispatcherTestJobs{}

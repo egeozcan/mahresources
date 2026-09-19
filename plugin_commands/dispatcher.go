@@ -165,6 +165,7 @@ type queuedImport struct {
 type activeCommand struct {
 	plugin string
 	cancel context.CancelCauseFunc
+	run    QueuedRun
 }
 
 type activeImport struct {
@@ -709,6 +710,10 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 				if firstErr == nil {
 					firstErr = err
 				}
+				// The dispatcher is discarding this private queue. Without a
+				// durable terminal row there is no result it may publish, so the
+				// completion lifecycle must end without invoking the callback.
+				settleCommandCompletion(run)
 				continue
 			}
 			d.controls.Delete(run.RunID)
@@ -717,8 +722,11 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 		delete(state.commands, plugin)
 	}
 	for id, cancellation := range state.queuedCancellations {
-		if _, err := d.persistQueuedCancellation(state, cancellation); err != nil && firstErr == nil {
-			firstErr = err
+		if _, err := d.persistQueuedCancellation(state, cancellation); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			settleCommandCompletion(cancellation.run)
 		}
 		delete(state.queuedCancellations, id)
 	}
@@ -728,6 +736,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if firstErr == nil {
 				firstErr = err
 			}
+			settleCommandCompletion(failure.run)
 			continue
 		}
 		d.releaseCommandDispatchFailure(state, failure, result)
@@ -813,6 +822,10 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			waiter <- err
 		}
 		delete(state.cancelWaiters, id)
+		// A managed job which never entered its run function has nobody else
+		// to settle admission. A worker or callback which already owns it may
+		// race this cleanup safely because the settlement closure is one-shot.
+		settleCommandCompletion(active.run)
 	}
 	return firstErr
 }
@@ -1048,7 +1061,7 @@ func (s *dispatcherState) nextImport() (queuedImport, bool) {
 
 func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 	execCtx, cancel := context.WithCancelCause(context.Background())
-	state.activeCommands[run.RunID] = activeCommand{plugin: run.Request.PluginName, cancel: cancel}
+	state.activeCommands[run.RunID] = activeCommand{plugin: run.Request.PluginName, cancel: cancel, run: run}
 	state.activeByPlugin[run.Request.PluginName]++
 
 	_, err := d.deps.Jobs.SubmitCommandJob(RunJobSpec{
