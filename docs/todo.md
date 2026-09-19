@@ -160,9 +160,11 @@ and staging root, and redrives the same import id. Callback-loss uses an
 independent `mah.log` side effect as its false-positive-free oracle; re-enable
 then verifies the cancelled row through durable `mah.fs.runs()` as well as
 administrator history. The final follow-up replaced its scheduling delay with a
-per-plugin command-completion dispatch barrier: disable now returns only after
-every cancellation-published host completion has settled, and an already-revoked
-generation releases its callback lifecycle synchronously.
+per-plugin command lifecycle registered at durable admission, before execution
+can publish a terminal row. Disable now waits across the terminal-to-delivery
+gap until each host completion has settled or deterministically no-op'd; early
+worker refusal, executor panic, dispatch failure and an already-revoked generation
+all balance the lifecycle exactly once.
 
 Documentation now records the exact manifest/Lua/status contracts, persistent
 command acknowledgement, trusted-path and no-sandbox boundary, actor/generation
@@ -178,9 +180,11 @@ Final verification evidence:
 
 - Focused/race: the Task 13 focused commands pass, including real MemoryFS
   import, blocked OS-backed import, process reconstruction/redrive and
-  deterministically drained callback-loss coverage (5 repeated SQLite passes,
-  repeated dispatcher barrier tests plus race, and the tagged PostgreSQL
-  selection); the tagged race
+  deterministically drained callback-loss coverage. The terminal-persisted/
+  delivery-paused disable interleaving passes, dispatcher lifecycle selections
+  pass 100 consecutive runs, plugin callback selections pass 50 consecutive
+  runs, API integration passes 10 race-detector repetitions, and the focused
+  tagged PostgreSQL selection passes; the tagged race
   selection across `plugin_commands`, `plugin_system`, `application_context`,
   `download_queue` and `server/api_tests` passes. `internal/arch` plugin/layer/
   command checks, tagged build and tagged vet pass. Focused command-history

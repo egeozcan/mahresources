@@ -73,9 +73,11 @@ type completionDispatchState struct {
 }
 
 // completionDispatchTracker gives lifecycle operations a point at which every
-// already-published command completion has at least reached its host callback.
-// It tracks only that small dispatch call, not the plugin's asynchronous Lua
-// execution, so a busy VM cannot hold the dispatcher owner loop.
+// admitted command has either delivered its host completion callback or settled
+// the path on which no callback can run. Registration happens before execution
+// can publish a durable terminal state, closing the terminal-to-delivery gap.
+// The host callback is deliberately small and schedules Lua work separately, so
+// a busy VM cannot hold plugin disable.
 type completionDispatchTracker struct {
 	mu       sync.Mutex
 	byPlugin map[string]*completionDispatchState
@@ -710,7 +712,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 				continue
 			}
 			d.controls.Delete(run.RunID)
-			d.deliverCompletion(run.Request.PluginName, run.Request.Completion, result)
+			d.deliverCompletion(run, result)
 		}
 		delete(state.commands, plugin)
 	}
@@ -876,6 +878,11 @@ func (d *Dispatcher) acceptCommand(state *dispatcherState, run QueuedRun) error 
 		return err
 	}
 
+	// Register the completion lifecycle at durable admission, before scheduling
+	// can execute the command and publish a terminal row. Disable closes external
+	// admission before waiting on this tracker, so no lifecycle can appear behind
+	// its wait.
+	run.completionSettled = d.completionDispatch.begin(plugin)
 	state.commands[plugin] = append(state.commands[plugin], run)
 	if !state.commandSeen[plugin] {
 		state.commandSeen[plugin] = true
@@ -1049,6 +1056,12 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 	}, func(reason string) error {
 		return d.Cancel(run.RunID, reason)
 	}, func(liveCtx context.Context, progress Progress) Outcome {
+		completionHandedOff := false
+		defer func() {
+			if !completionHandedOff {
+				settleCommandCompletion(run)
+			}
+		}()
 		if !d.beginWorker() {
 			return Outcome{Status: RunStatusInterrupted, Error: "server interrupted"}
 		}
@@ -1066,7 +1079,8 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		if record, _, err := d.deps.Store.Run(run.RunID); err == nil && RunStatusTerminal(record.Status) {
 			result = resultFromRun(record)
 		}
-		d.deliverCompletion(run.Request.PluginName, run.Request.Completion, result)
+		d.deliverCompletion(run, result)
+		completionHandedOff = true
 		d.workers.Done()
 		workerDone = true
 		d.post(commandCompleted{runID: run.RunID, outcome: outcome})
@@ -1157,7 +1171,7 @@ func (d *Dispatcher) persistQueuedCancellation(state *dispatcherState, cancellat
 	}
 	delete(state.queuedCancellations, cancellation.run.RunID)
 	d.controls.Delete(cancellation.run.RunID)
-	d.deliverCompletion(cancellation.plugin, cancellation.run.Request.Completion, result)
+	d.deliverCompletion(cancellation.run, result)
 	return true, nil
 }
 
@@ -1219,7 +1233,7 @@ func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failu
 		delete(state.activeCommands, failure.run.RunID)
 		state.activeByPlugin[active.plugin]--
 	}
-	d.deliverCompletion(failure.run.Request.PluginName, failure.run.Request.Completion, result)
+	d.deliverCompletion(failure.run, result)
 }
 
 func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failure *importDispatchFailure) (bool, error) {
@@ -1280,15 +1294,21 @@ func resultFromRun(record RunRecord) Result {
 	}
 }
 
-func (d *Dispatcher) deliverCompletion(plugin string, completion func(Result), result Result) {
-	if completion == nil {
+func (d *Dispatcher) deliverCompletion(run QueuedRun, result Result) {
+	if run.Request.Completion == nil {
+		settleCommandCompletion(run)
 		return
 	}
-	settled := d.completionDispatch.begin(plugin)
 	go func() {
-		defer settled()
-		completion(result)
+		defer settleCommandCompletion(run)
+		run.Request.Completion(result)
 	}()
+}
+
+func settleCommandCompletion(run QueuedRun) {
+	if run.completionSettled != nil {
+		run.completionSettled()
+	}
 }
 
 func (d *Dispatcher) beginWorker() bool {

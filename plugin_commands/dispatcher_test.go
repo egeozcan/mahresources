@@ -19,18 +19,21 @@ func (s dispatcherTestSettings) OutputRetention() time.Duration   { return time.
 func (s dispatcherTestSettings) CommandPath() string              { return "/bin" }
 
 type dispatcherTestStore struct {
-	mu                  sync.Mutex
-	runs                map[string]RunRecord
-	finishes            map[string]RunFinish
-	importFinishes      map[string]ImportFinish
-	cancelled           []string
-	markRunErr          error
-	finishRunErr        error
-	finishRunStarted    chan struct{}
-	finishRunRelease    <-chan struct{}
-	finishImportErr     error
-	finishImportCalls   int
-	interruptImportsErr error
+	mu                     sync.Mutex
+	runs                   map[string]RunRecord
+	finishes               map[string]RunFinish
+	importFinishes         map[string]ImportFinish
+	cancelled              []string
+	markRunErr             error
+	finishRunErr           error
+	finishRunStarted       chan struct{}
+	finishRunRelease       <-chan struct{}
+	terminalRunReadStarted chan struct{}
+	terminalRunReadRelease <-chan struct{}
+	terminalRunReadOnce    sync.Once
+	finishImportErr        error
+	finishImportCalls      int
+	interruptImportsErr    error
 }
 
 func newDispatcherTestStore() *dispatcherTestStore {
@@ -119,10 +122,16 @@ func (s *dispatcherTestStore) FinishRun(id string, f RunFinish) (bool, error) {
 }
 func (s *dispatcherTestStore) Run(id string) (RunRecord, RunOutput, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	record, ok := s.runs[id]
+	s.mu.Unlock()
 	if !ok {
 		return RunRecord{}, RunOutput{}, ErrRunNotFound
+	}
+	if RunStatusTerminal(record.Status) && s.terminalRunReadStarted != nil {
+		s.terminalRunReadOnce.Do(func() { close(s.terminalRunReadStarted) })
+		if s.terminalRunReadRelease != nil {
+			<-s.terminalRunReadRelease
+		}
 	}
 	return record, RunOutput{}, nil
 }
@@ -233,6 +242,12 @@ func (nopProgress) SetAuthoritativeStatus(string) {}
 
 type dispatcherTestExecutor struct{ store Store }
 
+type dispatcherExecutorFunc func(context.Context, QueuedRun) Outcome
+
+func (f dispatcherExecutorFunc) Execute(ctx context.Context, run QueuedRun) Outcome {
+	return f(ctx, run)
+}
+
 func (e dispatcherTestExecutor) Execute(ctx context.Context, q QueuedRun) Outcome {
 	if e.store != nil {
 		_, _ = e.store.MarkRunRunning(q.RunID, time.Now().UTC())
@@ -268,6 +283,15 @@ func startTestDispatcher(t *testing.T, pending int) (*Dispatcher, *dispatcherTes
 		_ = d.Stop(ctx)
 	})
 	return d, store, jobs
+}
+
+func completionDispatchActive(d *Dispatcher, plugin string) int {
+	d.completionDispatch.mu.Lock()
+	defer d.completionDispatch.mu.Unlock()
+	if state := d.completionDispatch.byPlugin[plugin]; state != nil {
+		return state.active
+	}
+	return 0
 }
 
 func waitFor(t *testing.T, fn func() bool) {
@@ -419,6 +443,143 @@ func TestDisablePluginWaitsForCommandCompletionDispatch(t *testing.T) {
 	}
 }
 
+func TestDisablePluginWaitsAcrossTerminalPersistenceBeforeCompletionDelivery(t *testing.T) {
+	d, store, jobs := startTestDispatcher(t, 100)
+	terminalReadStarted := make(chan struct{})
+	allowTerminalRead := make(chan struct{})
+	store.terminalRunReadStarted = terminalReadStarted
+	store.terminalRunReadRelease = allowTerminalRead
+	callbackEntered := make(chan struct{})
+	allowCallback := make(chan struct{})
+
+	runID, err := d.Submit(commandRequest("a", func(Result) {
+		close(callbackEntered)
+		<-allowCallback
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	command := jobs.commandSnapshot()[0]
+	liveCtx, cancelLive := context.WithCancel(context.Background())
+	finished := make(chan Outcome, 1)
+	go func() { finished <- command.run(liveCtx, nopProgress{}) }()
+	waitFor(t, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return store.runs[runID].Status == RunStatusRunning
+	})
+
+	cancelLive()
+	select {
+	case <-terminalReadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("command did not persist terminal state before completion delivery")
+	}
+	store.mu.Lock()
+	status := store.runs[runID].Status
+	store.mu.Unlock()
+	if !RunStatusTerminal(status) {
+		t.Fatalf("run status at delivery barrier = %q, want terminal", status)
+	}
+
+	disabled := make(chan error, 1)
+	go func() { disabled <- d.DisablePlugin("a", "plugin disabled") }()
+	select {
+	case err := <-disabled:
+		t.Fatalf("disable returned in the terminal-persisted delivery gap: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(allowTerminalRead)
+	select {
+	case <-callbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("completion callback was not entered")
+	}
+	select {
+	case err := <-disabled:
+		t.Fatalf("disable returned before completion callback settled: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(allowCallback)
+	select {
+	case err := <-disabled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("disable did not return after completion delivery settled")
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("command worker did not return")
+	}
+}
+
+func TestCommandCompletionLifecycleSettlesOnEarlyWorkerRefusalAndExecutorPanic(t *testing.T) {
+	t.Run("worker refusal", func(t *testing.T) {
+		d, _, jobs := startTestDispatcher(t, 100)
+		if _, err := d.Submit(commandRequest("a", func(Result) {
+			t.Error("worker refusal delivered a completion callback")
+		})); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool { return jobs.commandCount() == 1 })
+		d.workerMu.Lock()
+		d.workerClosing = true
+		d.workerMu.Unlock()
+		outcome := jobs.commandSnapshot()[0].run(context.Background(), nopProgress{})
+		d.workerMu.Lock()
+		d.workerClosing = false
+		d.workerMu.Unlock()
+		if outcome.Status != RunStatusInterrupted {
+			t.Fatalf("worker refusal outcome = %+v", outcome)
+		}
+		if active := completionDispatchActive(d, "a"); active != 0 {
+			t.Fatalf("worker refusal leaked %d completion lifecycles", active)
+		}
+	})
+
+	t.Run("executor panic", func(t *testing.T) {
+		store := newDispatcherTestStore()
+		jobs := &dispatcherTestJobs{}
+		d := NewDispatcher(Dependencies{
+			Store: store, Jobs: jobs, Settings: dispatcherTestSettings{pending: 100},
+			Executor: dispatcherExecutorFunc(func(context.Context, QueuedRun) Outcome {
+				panic("executor panic")
+			}),
+		})
+		if err := d.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = d.Stop(ctx)
+		})
+		if _, err := d.Submit(commandRequest("a", func(Result) {
+			t.Error("panicking executor delivered a completion callback")
+		})); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool { return jobs.commandCount() == 1 })
+		func() {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Error("executor panic was not observed")
+				}
+			}()
+			jobs.commandSnapshot()[0].run(context.Background(), nopProgress{})
+		}()
+		if active := completionDispatchActive(d, "a"); active != 0 {
+			t.Fatalf("executor panic leaked %d completion lifecycles", active)
+		}
+	})
+}
+
 func TestDispatcherManagedLaneRefusalReleasesCommandSlot(t *testing.T) {
 	d, store, jobs := startTestDispatcher(t, 100)
 	jobs.mu.Lock()
@@ -437,6 +598,7 @@ func TestDispatcherManagedLaneRefusalReleasesCommandSlot(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("dispatch failure was not reported")
 	}
+	waitFor(t, func() bool { return completionDispatchActive(d, "a") == 0 })
 	store.mu.Lock()
 	finish := store.finishes[failedID]
 	store.mu.Unlock()

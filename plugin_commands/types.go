@@ -216,12 +216,13 @@ type CommandRequest struct {
 }
 
 type QueuedRun struct {
-	RunID       string
-	Request     CommandRequest
-	ExchangeDir string
-	Invocation  Invocation
-	control     *runControl
-	progress    Progress
+	RunID             string
+	Request           CommandRequest
+	ExchangeDir       string
+	Invocation        Invocation
+	control           *runControl
+	progress          Progress
+	completionSettled func()
 }
 
 type Executor interface {
