@@ -6,7 +6,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 ## Plan
 
 - [x] Task 1: Make shared resource destinations replay-safe.
-- [ ] Task 2: Parse and compare command declarations.
+- [x] Task 2: Parse and compare command declarations.
 - [ ] Task 3: Require persistent, explicit command consent.
 - [ ] Task 4: Add durable run, output, import and map records.
 - [ ] Task 5: Add managed live jobs and dedicated dispatch pools.
@@ -25,9 +25,16 @@ Task 1 landed in `bb768950` with test hardening in `44ac48df`. Parent
 verification passed the focused replay/precedence/concurrency cases and the
 broader `TestAddResource|TestUpload` selection. Independent GPT-5.6-sol spec and
 quality review approved after the precedence test began intercepting read-only
-`Open` and asserting the duplicate error's resource ID. The initial full Go
-baseline still has the pre-existing `server/api_tests`
-`TestSidebar_IsWrappedInADisclosure` failure; frontend unit tests pass (90 files,
+`Open` and asserting the duplicate error's resource ID.
+
+Task 2 landed in `99c2f4e1`. Parent verification passed the declaration package,
+focused manifest/capability tests, the new architecture test and affected-package
+`go vet`; independent GPT-5.6-sol spec and quality reviews approved without
+findings. The exact three-package command still reports the confirmed baseline
+`TestBundledPluginLiteralURLsAreDeclared` failure for fal-ai's literal
+`https://.../style.png`; no unrelated plugin/test change was folded into Task 2.
+The initial full Go baseline also has the pre-existing `server/api_tests`
+`TestSidebar_IsWrappedInADisclosure` failure. Frontend unit tests pass (90 files,
 1409 tests).
 
 ---

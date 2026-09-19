@@ -236,7 +236,7 @@ func ShellJoin([]string) string
 
 The manifest commands field is `plugin_system.Manifest.Commands []plugin_commands.Declaration`. `SameDeclarations` supplies its identity comparison. `CapCommands = "commands"` joins all capability catalogues with surfaces `mah.commands, mah.fs`; its consent label explicitly says commands run as the server service account, have unrestricted process networking, can read anything that OS account can read (including sibling plugin exchange folders), and require `db:write` to import output.
 
-- [ ] **Step 1: Add red table tests for declaration parsing**
+- [x] **Step 1: Add red table tests for declaration parsing**
 
 Cover valid defaults, duplicate command names, partial placeholders, empty argv, placeholder/literal/path/leading-dash argv[0], timeout cap, a missing `commands` capability and a legacy table that names `commands` without `api_version`.
 
@@ -247,29 +247,29 @@ func TestManifestCommands(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the manifest tests and verify `commands` is unknown**
+- [x] **Step 2: Run the manifest tests and verify `commands` is unknown**
 
 Run: `go test ./plugin_system -run 'TestManifestCommands|TestCommandManifest' -count=1`
 
 Expected: FAIL because `commands` is not a manifest key/capability and no declaration parser exists.
 
-- [ ] **Step 3: Implement declaration validation and substitution**
+- [x] **Step 3: Implement declaration validation and substitution**
 
 Use one anchored placeholder regexp (`^\{\{([a-z][a-z0-9_]*)\}\}$`) and separately reject any literal element containing `{{` or `}}`. Reserve `exchange_dir`; reject a caller param with that key. Preserve element boundaries exactly and never construct a shell string for execution. `ShellJoin` is display-only and single-quotes every non-safe element.
 
-- [ ] **Step 4: Parse Lua command tables into declarations**
+- [x] **Step 4: Parse Lua command tables into declarations**
 
 Add `commands` to `manifestKeys`. Require command `name` slug uniqueness, argv list shape, numeric whole-second timeout, string-list `sensitive_params`, and `commands` capability presence. Default timeout before validation. Include commands in `Manifest.Equal`; argv compares positionally, declarations by command name, sensitive names as a set.
 
-- [ ] **Step 5: Add substitution and identity red tests**
+- [x] **Step 5: Add substitution and identity red tests**
 
 Assert the literal built vector, redaction of exactly the parameter-derived elements, host-filled exchange path, missing/empty/reserved params, 32/33 keys, 8 KiB/8 KiB+1 values and aggregate boundaries. Assert no `/bin/sh`, `sh -c`, `cmd.exe` or shell-joined value appears in the launch-facing type.
 
-- [ ] **Step 6: Pin the new package's layer**
+- [x] **Step 6: Pin the new package's layer**
 
 Extend `internal/arch/layering_test.go` with `TestPluginCommandsStaysBelowItsConsumers`: `plugin_commands/` may import standard/third-party packages plus `models/`, `models/query_models/`, `contracts/` and `constants/`; it may not import `application_context/`, `server/` or `plugin_system/`.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 go test ./plugin_commands ./plugin_system ./internal/arch -count=1
