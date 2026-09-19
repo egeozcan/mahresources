@@ -118,15 +118,17 @@ Parse-time rules (fail loudly, in the style of the existing manifest parser):
 - `timeout` is optional, in seconds; default 3600, host-capped at 86400.
   The clock starts when the process is spawned, after the run leaves the queue.
 - `sensitive_params` is an optional list of parameter names whose values are
-  replaced with `[redacted]` in the job history (§6).
+  replaced with `[redacted]` in the job history (§4). It participates in
+  consent comparison and manifest identity as a set (order-insensitive).
 - At most 32 parameters per run and 64 KB of aggregate parameter bytes;
   exceeding either refuses the run.
 - A manifest with `commands` but without the `commands` capability is a load
   error. (Note: unlike this spec's first draft claimed, `network` carries no
   such dependency on `http` today, and none is added here.)
-- `name`, `argv` and `timeout` participate in manifest identity
-  (`Manifest.Equal` and the discovery/load integrity check), so an edited
-  template is detected the same way a changed `network` rule is.
+- `name`, `argv`, `timeout` and `sensitive_params` participate in manifest
+  identity (`Manifest.Equal` and the discovery/load integrity check; argv is
+  compared positionally, `sensitive_params` as a set), so an edited template
+  is detected the same way a changed `network` rule is.
 
 The manifest never stores a shell-joined string; the manage UI derives a
 human display by shell-quoting and joining argv at render time.
@@ -139,7 +141,8 @@ a consent label of the shape:
 > Run the commands this plugin declares on the server machine with the
 > service account's full privileges (filesystem and network, without
 > sandboxing), and read the files those commands write into its private
-> exchange folders.
+> exchange folders. Importing those files into the library additionally
+> requires the db:write capability.
 
 ## 2. Consent and the warning
 
@@ -148,17 +151,23 @@ a consent label of the shape:
 - **Consent covers command declarations explicitly on every code path.** The
   persisted consent record gains a command list — for each command its `name`,
   `argv` (compared **positionally**, element by element, not via the
-  order-insensitive `sameStrings`) and `timeout`.
+  order-insensitive `sameStrings`), `timeout`, and `sensitive_params`
+  (compared as a set).
   - The legacy-consent short-circuit in `CompareGrants` runs **after** command
     comparison: a legacy consent record paired with a manifest that declares
     any command is a widening requiring re-consent.
   - A legacy manifest (`Declared == false`) cannot declare commands, so no
     upgrade path can introduce commands without a manifest change, which is
     itself caught.
-  - Grandfathering (no consent record): the recorded grant is taken from the
-    manifest **including** its command list, so a later added or changed
-    command is a caught widening. The load-time integrity check between
-    discovery and load also covers commands via `Manifest.Equal`.
+  - **Grandfathering never grants commands.** The existing
+    no-consent-record path (`plugin_system/consent.go:352-370`) records what
+    the manifest declares and grants it — acceptable for reductions of a
+    legacy full surface, but not for commands. A command-bearing manifest
+    without a recorded command consent is refused at load until the operator
+    explicitly enables it through the consent flow (which shows the warning
+    panel). Once recorded, later changes are caught widenings. The load-time
+    integrity check between discovery and load also covers commands via
+    `Manifest.Equal`.
 - **Widening detection**: an added command, a changed argv (positionally), a
   changed timeout, or a changed `sensitive_params` list is a widening; the
   plugin refuses to load until the operator re-enables.
@@ -188,8 +197,9 @@ mah.commands.run(name, params [, callback]) -> run_id | nil, err
 
 - **Callback delivery is at-most-once.** If the VM is unavailable at
   completion (plugin disabled, process restart), the callback is dropped and
-  the terminal result remains readable through the durable run record (§4).
-  A restart marks interrupted runs failed; callbacks are not replayed.
+  the terminal result remains readable through the durable run record (§3).
+  A restart marks all unrecoverable nonterminal runs — running *and* queued —
+  `interrupted`; callbacks are not replayed.
 - Refused inside DB transactions, like `mah.download.submit`. Also refused
   when the invoking VM is revoked mid-flight, and when the plugin has been
   disabled since submission.
@@ -217,9 +227,15 @@ properties made explicit rather than inherited:
 A new persisted table `plugin_command_runs` (id, plugin name, command name,
 redacted parameter view, actor user id, created/started/finished timestamps,
 status, exit code, error text) survives restarts and is independent of the
-queue's 1-hour terminal retention. On startup, runs recorded as running with
-no live process are marked `interrupted` and their exchange folders are
+queue's 1-hour terminal retention. On startup, every nonterminal record —
+running **and** queued, since the in-memory queue registry does not survive a
+restart (`download_queue/manager.go:228-230`) — with no live dispatch is
+marked `interrupted` with a finished timestamp; its exchange folders are
 retained until the sweep reaches them.
+
+The status vocabulary is exactly: `queued`, `running`, `succeeded`, `failed`,
+`cancelled` (operator), `interrupted` (crash/shutdown/disabled). Nothing
+else.
 
 Plugin disable semantics: a disabled plugin's queued runs are refused at
 dispatch; running processes are killed (process group) and marked cancelled.
@@ -260,10 +276,17 @@ dispatch; running processes are killed (process group) and marked cancelled.
 
 Job history for command runs records: the command name, the **redacted
 parameter view** (`sensitive_params` values replaced by `[redacted]`, all
-other values shown), the argv as actually executed, exit code, duration and a
-64 KB tail of combined stdout/stderr. Rendering HTML-escapes output (terminal
-control characters stripped). History access follows the existing job-history
-authorization (administrative UI).
+other values shown), and the argv as actually executed with sensitive
+parameter elements also redacted in the persisted record (the same elements,
+so no path circumvents `sensitive_params`), plus exit code, duration and a
+64 KB tail of combined stdout/stderr.
+
+Two disclosures redaction cannot cover are documented rather than hidden:
+captured program output (stdout/stderr) can itself contain secrets (a URL
+the tool echoes, for example); it is shown only to administrators in the
+job-history UI, HTML-escaped with terminal control characters stripped.
+History access follows the existing job-history authorization (administrative
+UI).
 
 ## 5. Exchange folders and `mah.fs`
 
@@ -299,41 +322,47 @@ Granted with the `commands` capability:
   `max_bytes` (hard cap 4 MB).
 - `mah.fs.create_resource(run_id, name, fields)` → resource id. Requires
   **both** `commands` and `db:write` (creating library content is a write
-  power; see §6). Streams the file from the staging directory into the
+  power; see §7). Streams the file from the staging directory into the
   configured resource filesystem through the `AddResource` path. Refused
   inside DB transactions, like `create_resource_from_data`. Import consumes
   the file: on success the file is marked `imported` and deleted; if deletion
   fails the file is marked `imported-pending-delete` and re-import is
   idempotent (returns the already-created resource id, recorded in the run's
-  import map).
+  import map). Pending-delete bytes do not survive the sweep; the import
+  map, not the bytes, is what makes re-import idempotent.
 - `mah.fs.discard(run_id, name)` → deletes one file.
 - `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
   status, started_at, finished_at, exit_code, error }`, oldest first —
   including `interrupted` runs after restart — so recovery does not depend on
   a live callback.
 
-### Enforcement on every operation
+### Enforcement, per operation kind
 
-Every `mah.fs` operation performs, in order, before touching the filesystem:
+- `mah.fs.runs()`: filtered by plugin and actor (its own runs, per the
+  ownership rule below); no run id or name is supplied.
+- `mah.fs.list(run_id)`: run-level checks only — ownership and terminal
+  state; no name is supplied. Entries are reported as `readdir` reports
+  them, but only regular files are addressable by the operations below.
+- `mah.fs.read/create_resource/discard(run_id, name, ...)`: the full file
+  checks, in order:
+  1. **Run ownership**: `run_id` must exist, belong to the calling plugin,
+     and (for runs with a submitter) belong to the acting user; actor-less
+     (schedule-submitted) runs are accessible to any principal acting for
+     the plugin.
+  2. **Finished state**: the run must be terminal; file operations against
+     a running or queued run are refused.
+  3. **Name validation**: the name must match the plugin-visible character
+     set (no `/`, `\`, null bytes, no `.` or `..`, length-capped), must be
+     a **regular file** (`lstat`; directories, symlinks, devices and other
+     specials are refused), and is opened **relative to the run directory
+     with `O_NOFOLLOW`** (and re-verified after open), so a symlink swapped
+     in after `readdir` cannot escape. On platforms without `O_NOFOLLOW`
+     the open is refused unless the platform provides an equivalent.
+  4. **Size caps**: `read` enforces `max_bytes`; import streams with a total
+     quota.
 
-1. **Run ownership**: `run_id` must exist, belong to the calling plugin, and
-   (for runs with a submitter) belong to the acting user; actor-less
-   (schedule-submitted) runs are accessible to any principal acting for the
-   plugin.
-2. **Finished state**: the run must be terminal; `list/read/create_resource/
-   discard` against a running or queued run are refused.
-3. **Name validation**: the name must match the plugin-visible character set
-   (no `/`, `\`, null bytes, no `.` or `..`, length-capped), must be a
-   **regular file** (`lstat`; directories, symlinks, devices and other
-   specials are refused), and is opened **relative to the run directory with
-   `O_NOFOLLOW`** (and re-verified after open), so a symlink swapped in after
-   `readdir` cannot escape. On platforms without `O_NOFOLLOW` the open is
-   refused unless the platform provides an equivalent.
-4. **Size caps**: `read` enforces `max_bytes`; import streams with a total
-   quota.
-
-`runs` and files are addressed only as `(run_id, name)` pairs inside the
-calling plugin's own exchange tree; any other resolution is refused.
+Files are addressed only as `(run_id, name)` pairs inside the calling
+plugin's own exchange tree; any other resolution is refused.
 
 **Honest isolation statement.** This is *Lua-level* isolation: the plugin's
 VM code can only reach its own runs. It is **not** process-level isolation —
@@ -347,7 +376,14 @@ enable `commands` for all of them.
 - A sweep pass removes finished runs' exchange directories once a
   configurable retention (default 7 days, measured from **completion**, not
   creation) has elapsed. A run is skipped by the sweep while it has an active
-  import lease or an unfinished run record.
+  file operation — import, read and discard each hold their lease — or a
+  nonterminal run record; lease acquisition and the sweep's skip-check are
+  coordinated under the same per-run lock, so an operation cannot slip
+  between the check and the sweep. When retention elapses, **everything** in
+  the exchange directory is deleted, including `imported-pending-delete`
+  bytes; what survives is the import map (`run_id, name → resource id`) in
+  the durable run record, which is what makes re-import idempotent after the
+  bytes are gone.
 - Import, read and discard take a per-file lease for their duration;
   `create_resource` inside a DB transaction is refused (same rule as
   `create_resource_from_data`), so a rollback can never silently lose the
@@ -355,7 +391,7 @@ enable `commands` for all of them.
 - Errors are explicit: `run not found`, `file not found`, `run swept`,
   `already imported` (which returns the existing resource id).
 - Successful imports are recorded per run (`run_id, name → resource id`);
-  the sweep leaves marked-imported names alone even if deletion failed.
+  the sweep leaves no live bytes behind; only the import map survives.
 
 ## 6. The yt-dlp plugin (separate repository)
 
@@ -375,6 +411,7 @@ plugin = {
                      "-o", "{{output_template}}",
                      "--format", "{{format}}",
                      "--no-playlist",
+                     "--no-directories",
                      "--", "{{url}}" },
             timeout = 7200,
             sensitive_params = { "url" },
@@ -430,8 +467,9 @@ Core (mahresources):
 - Consent: positional argv comparison; **upgrade-path tests** — legacy
   manifest + commands → refused until re-consent; legacy consent record +
   newly declared commands → widening detected despite the legacy short-circuit;
-  missing consent record → declared commands recorded at first load and any
-  later change refused; changed `sensitive_params` or timeout → widening.
+  missing consent record + command-bearing manifest → **load refused until
+  explicit enable** (never grandfathered); changed `sensitive_params` or
+  timeout → widening.
 - Substitution: assert the **exec argv** the host builds (whole-element
   replacement; `{{exchange_dir}}` host-filled; missing parameter refuses the
   run; aggregate caps). A regression test asserts no shell is constructed
@@ -442,8 +480,8 @@ Core (mahresources):
   descendant and asserts the descendant dies too.
 - Terminal-state delivery: callback fires on completion, cancellation and
   timeout; disabled/disabled-then-re-enabled plugin semantics; restart marks
-  interrupted runs; durable run record readable after the 1-hour queue
-  retention expires.
+  both running **and** queued runs `interrupted`; durable run record readable
+  after the 1-hour queue retention expires.
 - `mah.fs`: enforcement tests for name validation, symlink refusal
   (including a swap-after-lstat race), directory/special refusal, cross-plugin
   and cross-run access refusal, actor checks, idempotent re-import after a
@@ -452,8 +490,10 @@ Core (mahresources):
   refused; with OS-backed storage, a **real subprocess** (not a stub)
   writes a file that `mah.fs.create_resource` imports through the configured
   afero filesystem.
-- Sweep: retention measured from completion; active-lease runs skipped;
-  imported marks survive; fresh runs kept.
+- Sweep: retention measured from completion; runs with active import, read
+  or discard leases skipped (lease/sweep lock coordination); nonterminal runs
+  skipped; expired runs' directories fully deleted including
+  pending-delete bytes, with the import map surviving; fresh runs kept.
 - Queue integration: FIFO per-plugin dispatch, per-plugin/global caps, no
   pause and no retry exposed for command jobs, terminal state reaches the
   callback and the durable record even when the generic queue's event
@@ -472,8 +512,8 @@ for extension filtering.
 
 - Operator-initiated command runs from the UI.
 - Automatic retry policies.
-- Process/network confinement of spawned commands (the trust model in §Trust
-  model is the honest statement for v1).
+- Process/network confinement of spawned commands (the trust model section
+  is the honest statement for v1).
 - Streaming progress from the command into the job progress sink.
 - Command stdout as structured plugin data.
 - Plugin-package distribution format.
