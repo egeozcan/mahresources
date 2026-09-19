@@ -198,7 +198,8 @@ func TestPluginCommandStoreDeletedActorFailsClosedButActorlessProvenanceSurvives
 	require.Equal(t, "actorless-run", visible[0].ID)
 	visible, err = ctx.Runs(plugin_commands.Access{PluginName: "worker"})
 	require.NoError(t, err)
-	require.Empty(t, visible, "actorless access still requires a current principal")
+	require.Len(t, visible, 1, "auth-off access must retain intentional actorless provenance")
+	require.Equal(t, "actorless-run", visible[0].ID)
 
 	won, err := ctx.MarkImportRunning("owned-import", now.Add(time.Second))
 	require.NoError(t, err)

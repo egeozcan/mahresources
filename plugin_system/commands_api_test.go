@@ -372,6 +372,55 @@ assert(ok, err)
 	t.Fatal("coroutine command callback did not run on the root VM")
 }
 
+func TestCommandAdmissionClosedBeforeEnableBlocksThePublishedGeneration(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "commander", commandPluginSource(`"commands"`))
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pm.Close)
+	host := &commandLuaHost{}
+	pm.SetCommandSubmitter(host)
+	store := newSharedConsentStore()
+	discovered := pm.GetDiscoveredPlugin("commander")
+	grants, err := GrantsForEnable(discovered.Manifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.records["commander"] = grants
+	pm.SetConsentStore(store)
+
+	generation, _ := pm.ClosePluginCommandAdmission("commander")
+	if generation != 0 {
+		t.Fatalf("generation before enable = %d, want 0", generation)
+	}
+	if err := pm.EnablePlugin("commander"); err != nil {
+		t.Fatal(err)
+	}
+	L := stateForPlugin(t, pm, "commander")
+	if err := L.DoString(`__blocked_id, __blocked_err = mah.commands.run("download", {url="blocked"})`); err != nil {
+		t.Fatal(err)
+	}
+	if L.GetGlobal("__blocked_id") != lua.LNil || L.GetGlobal("__blocked_err") == lua.LNil {
+		t.Fatalf("future generation was admitted through a pre-existing close: %v/%v", L.GetGlobal("__blocked_id"), L.GetGlobal("__blocked_err"))
+	}
+	host.mu.Lock()
+	if len(host.requests) != 0 {
+		host.mu.Unlock()
+		t.Fatal("closed future generation reached the host")
+	}
+	host.mu.Unlock()
+
+	pm.ReopenPluginCommandAdmission("commander", generation)
+	if err := L.DoString(`__reopened_id, __reopened_err = mah.commands.run("download", {url="allowed"})`); err != nil {
+		t.Fatal(err)
+	}
+	if L.GetGlobal("__reopened_id").String() != "run-123" || L.GetGlobal("__reopened_err") != lua.LNil {
+		t.Fatalf("reopened generation = %v/%v", L.GetGlobal("__reopened_id"), L.GetGlobal("__reopened_err"))
+	}
+}
+
 func TestCommandAdmissionCloseWaitsForSubmissionAndRefusesLaterCalls(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})

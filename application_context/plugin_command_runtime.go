@@ -160,6 +160,22 @@ func (ctx *MahresourcesContext) SubmitCommandImport(submission plugin_commands.I
 	if ctx.pluginCommandDispatcher == nil || ctx.pluginCommandExchange == nil {
 		return plugin_commands.ImportSubmitResult{}, fmt.Errorf("plugin command imports are not available until startup recovery completes")
 	}
+	if submission.ActorUserID == nil || *submission.ActorUserID == 0 {
+		if ctx.AuthEnabled() {
+			return plugin_commands.ImportSubmitResult{}, fmt.Errorf("plugin command import requires an acting user")
+		}
+		root, err := ctx.RootAdminPrincipal()
+		if err != nil {
+			return plugin_commands.ImportSubmitResult{}, fmt.Errorf("resolve no-auth plugin command import actor: %w", err)
+		}
+		if root == nil || root.UserID == 0 {
+			return plugin_commands.ImportSubmitResult{}, fmt.Errorf("resolve no-auth plugin command import actor: root administrator is unavailable")
+		}
+		actor := root.UserID
+		submission.ActorUserID = &actor
+		accessActor := actor
+		submission.Access.ActorUserID = &accessActor
+	}
 	return ctx.pluginCommandDispatcher.SubmitImport(submission)
 }
 

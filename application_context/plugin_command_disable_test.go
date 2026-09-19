@@ -3,13 +3,13 @@ package application_context
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"mahresources/models"
 	"mahresources/plugin_commands"
+	"mahresources/plugin_system"
 )
 
 type commandDisableSettings struct{ root string }
@@ -117,7 +117,7 @@ func TestSetPluginDisabledRevokesDurableCommandAfterVMRemoval(t *testing.T) {
 	}
 }
 
-func TestSetPluginDisabledClosesAdmissionBeforeDurableDrain(t *testing.T) {
+func TestSetPluginDisabledRevokesVMBeforeDurableDrainReturns(t *testing.T) {
 	pluginDir := t.TempDir()
 	const pluginName = "command-race"
 	writeConsentTestPlugin(t, pluginDir, pluginName, `plugin = {
@@ -173,10 +173,10 @@ end
 	}
 
 	got := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
-	if !strings.Contains(got, "generation is no longer active") {
+	if got != "" {
 		close(store.release)
 		<-disabled
-		t.Fatalf("command admission remained open during disable drain: %q", got)
+		t.Fatalf("plugin VM remained reachable during durable drain: %q", got)
 	}
 	var count int64
 	if err := ctx.db.Model(&models.PluginCommandRun{}).Count(&count).Error; err != nil {
@@ -190,6 +190,61 @@ end
 	close(store.release)
 	if err := <-disabled; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDependencyRefusedDisableLeavesDurableCommandUntouched(t *testing.T) {
+	pluginDir := t.TempDir()
+	writeConsentTestPlugin(t, pluginDir, "command-base", `plugin = { name = "command-base", version = "1.0", api_version = 1, capabilities = {} }
+function init() end
+`)
+	writeConsentTestPlugin(t, pluginDir, "command-dependent", `plugin = { name = "command-dependent", version = "1.0", api_version = 1, capabilities = {}, dependencies = {"command-base"} }
+function init() end
+`)
+	ctx := createTestContextWithPlugins(t, pluginDir)
+	t.Cleanup(ctx.PluginManager().Close)
+	requireNoError := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireNoError(ctx.db.AutoMigrate(
+		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+	))
+	_, err := ctx.EnsurePluginStates()
+	requireNoError(err)
+	requireNoError(ctx.SetPluginEnabled("command-base", true))
+	requireNoError(ctx.SetPluginEnabled("command-dependent", true))
+	now := time.Now().UTC()
+	requireNoError(ctx.CreateRun(plugin_commands.RunRecord{
+		ID: "dependency-run", PluginName: "command-base", CommandName: "tool", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusQueued, ActorlessAtSubmission: true, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: "dependency-run", ArgvJSON: `[]`, CreatedAt: now}))
+	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+		Store: ctx, Jobs: commandDisableJobs{}, Executor: commandDisableExecutor{},
+		Settings: commandDisableSettings{root: t.TempDir()},
+	})
+	requireNoError(dispatcher.Start(context.Background()))
+	ctx.SetPluginCommandDispatcher(dispatcher)
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = dispatcher.Stop(stopCtx)
+	})
+
+	err = ctx.SetPluginEnabled("command-base", false)
+	if !errors.Is(err, plugin_system.ErrDependencyInUse) {
+		t.Fatalf("disable error = %v, want dependency refusal", err)
+	}
+	if !ctx.PluginManager().IsEnabled("command-base") || !ctx.PluginManager().IsEnabled("command-dependent") {
+		t.Fatal("dependency-refused disable changed the loaded plugin set")
+	}
+	run, _, readErr := ctx.Run("dependency-run")
+	requireNoError(readErr)
+	if run.Status != plugin_commands.RunStatusQueued || run.CancelRequested || run.Error != "" {
+		t.Fatalf("dependency-refused disable mutated durable command: %+v", run)
 	}
 }
 

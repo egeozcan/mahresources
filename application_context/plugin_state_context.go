@@ -294,49 +294,37 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, e
 		}
 		defer ctx.reconcileEnabledState(pluginName)
 
-		wasEnabled := ctx.pluginManager.IsEnabled(pluginName)
-		var commandRevocationErr error
-		var closedCommandGeneration uint64
-		if wasEnabled {
-			closedCommandGeneration, _ = ctx.pluginManager.ClosePluginCommandAdmission(pluginName)
-		}
-		reopenCommandAdmission := func() {
-			ctx.pluginManager.ReopenPluginCommandAdmission(pluginName, closedCommandGeneration)
-		}
-		// Close admission before taking the dispatcher's durable snapshot. Calls
-		// already inside a host submission finish before the close returns, so the
-		// drain sees them; calls after it are refused. A loaded VM's teardown waits
-		// for callbacks, therefore the drain still precedes VM revocation.
-		if wasEnabled && ctx.pluginCommandDispatcher != nil {
-			commandRevocationErr = ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled")
-			if commandRevocationErr != nil {
-				ctx.Logger().Error("system", "plugin", nil, pluginName,
-					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": commandRevocationErr.Error()})
-			}
-		}
+		// Close admission for the plugin name, not only for a generation visible
+		// at this instant. An overlapping enable can have claimed the name while
+		// IsEnabled still reports false and publish while DisablePlugin waits.
+		// Calls already inside a host submission finish before this returns, so a
+		// later durable drain includes them. Always release our counted barrier:
+		// after success the old VM is revoked and a later generation must be able
+		// to submit; after refusal the still-live generation must remain usable.
+		closedCommandGeneration, _ := ctx.pluginManager.ClosePluginCommandAdmission(pluginName)
+		defer ctx.pluginManager.ReopenPluginCommandAdmission(pluginName, closedCommandGeneration)
+
+		// Revoke the VM first. In particular, a dependency refusal must leave
+		// queued/running durable work untouched. Once the manager succeeds, no Lua
+		// call can create more work and the closed admission gate covers any
+		// replacement generation until the drain has completed.
 		if err := ctx.pluginManager.DisablePlugin(pluginName); err != nil {
-			// What the caller is told, only — the row is the reconcile's. If the
-			// generation remains active, restore only the gate we closed above.
-			if errors.Is(err, plugin_system.ErrLoadInProgress) {
-				reopenCommandAdmission()
+			// What the caller is told, only — the row is the reconcile's. A load in
+			// progress is never idempotent, and any still-enabled plugin means the
+			// manager refused rather than acted (including ErrDependencyInUse).
+			if errors.Is(err, plugin_system.ErrLoadInProgress) || ctx.pluginManager.IsEnabled(pluginName) {
 				return err
 			}
-			if ctx.pluginManager.IsEnabled(pluginName) {
-				reopenCommandAdmission()
-				return err
-			}
+			// A plugin already absent is the idempotent disable path. Its durable
+			// work can still survive the VM and must be revoked below.
 		}
-		// No VM was loaded, but durable work can survive its submitter. Revoke
-		// that work after the manager has proved no enable is in flight.
-		if !wasEnabled && ctx.pluginCommandDispatcher != nil {
-			commandRevocationErr = ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled")
-			if commandRevocationErr != nil {
+
+		if ctx.pluginCommandDispatcher != nil {
+			if err := ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
 				ctx.Logger().Error("system", "plugin", nil, pluginName,
-					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": commandRevocationErr.Error()})
+					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": err.Error()})
+				return err
 			}
-		}
-		if commandRevocationErr != nil {
-			return commandRevocationErr
 		}
 	}
 

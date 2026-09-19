@@ -209,9 +209,14 @@ func (ctx *MahresourcesContext) Runs(access plugin_commands.Access) ([]plugin_co
 	var rows []models.PluginCommandRun
 	query := ctx.db.Order("created_at desc, id desc")
 	if !access.Administrator {
-		if access.PluginName == "" || access.ActorUserID == nil || *access.ActorUserID == 0 {
+		if access.PluginName == "" {
 			return []plugin_commands.RunView{}, nil
 		}
+		// Do not reject a nil actor here. Access.AllowsRun distinguishes the
+		// intentional actorless provenance used by auth-off from an owned run
+		// whose creator was nulled by deletion. Applying that predicate after the
+		// plugin-name query keeps deleted-user rows fail-closed while preserving
+		// auth-off reconciliation.
 		query = query.Where("plugin_name = ?", access.PluginName)
 	}
 	if err := query.Find(&rows).Error; err != nil {

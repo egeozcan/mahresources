@@ -32,38 +32,39 @@ type commandAdmission struct {
 }
 
 // ClosePluginCommandAdmission linearizes plugin disable with command/import
-// submission. It waits for host submissions already in progress and refuses any
-// later call from the generation being disabled. A re-enabled plugin receives a
-// new generation, so it does not inherit this closed gate.
+// submission. It waits for host submissions already in progress and installs a
+// plugin-wide barrier before reading the current generation. The wide barrier
+// is load-bearing: an overlapping enable may have claimed the plugin name while
+// no generation is visible yet, then publish while disable waits.
 func (pm *PluginManager) ClosePluginCommandAdmission(pluginName string) (uint64, bool) {
+	pm.commandAdmissionMu.Lock()
+	defer pm.commandAdmissionMu.Unlock()
+
+	key := commandAdmissionKey{plugin: pluginName}
+	pm.closedCommandAdmission[key]++
+
 	pm.mu.RLock()
-	var generation uint64
+	defer pm.mu.RUnlock()
 	for _, info := range pm.plugins {
 		if info.Name == pluginName {
-			generation = info.Generation
-			break
+			return info.Generation, true
 		}
 	}
-	pm.mu.RUnlock()
-	if generation == 0 {
-		return 0, false
-	}
-
-	pm.commandAdmissionMu.Lock()
-	pm.closedCommandAdmission[commandAdmissionKey{plugin: pluginName, generation: generation}] = struct{}{}
-	pm.commandAdmissionMu.Unlock()
-	return generation, true
+	return 0, true
 }
 
-// ReopenPluginCommandAdmission is used only when disable was refused while the
-// same generation remains active. It never opens a replacement generation.
-func (pm *PluginManager) ReopenPluginCommandAdmission(pluginName string, generation uint64) {
-	if generation == 0 {
-		return
-	}
+// ReopenPluginCommandAdmission releases the caller's plugin-wide disable
+// barrier. The count prevents one of two overlapping disables from reopening
+// admission while the other still owns its close.
+func (pm *PluginManager) ReopenPluginCommandAdmission(pluginName string, _ uint64) {
 	pm.commandAdmissionMu.Lock()
-	delete(pm.closedCommandAdmission, commandAdmissionKey{plugin: pluginName, generation: generation})
-	pm.commandAdmissionMu.Unlock()
+	defer pm.commandAdmissionMu.Unlock()
+	key := commandAdmissionKey{plugin: pluginName}
+	if count := pm.closedCommandAdmission[key]; count > 1 {
+		pm.closedCommandAdmission[key] = count - 1
+	} else {
+		delete(pm.closedCommandAdmission, key)
+	}
 }
 
 // SetCommandSubmitter publishes the process-lifetime command host. Until it is
@@ -174,7 +175,8 @@ func (pm *PluginManager) beginCommandCall(L *lua.LState) (commandAdmission, erro
 		pm.commandAdmissionMu.RUnlock()
 		return commandAdmission{}, fmt.Errorf("plugin command generation is no longer active")
 	}
-	if _, closed := pm.closedCommandAdmission[commandAdmissionKey{plugin: pluginName, generation: generation}]; closed {
+	if pm.closedCommandAdmission[commandAdmissionKey{plugin: pluginName}] > 0 ||
+		pm.closedCommandAdmission[commandAdmissionKey{plugin: pluginName, generation: generation}] > 0 {
 		pm.commandAdmissionMu.RUnlock()
 		return commandAdmission{}, fmt.Errorf("plugin command generation is no longer active")
 	}

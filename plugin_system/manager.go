@@ -183,11 +183,12 @@ type PluginManager struct {
 	exchangeMediator  atomic.Value
 
 	// commandAdmissionMu linearizes command/import admission against plugin
-	// disable. A generation is closed before durable work is drained, and callers
-	// hold the read side until their host submission returns. A later generation
-	// uses a different key and is therefore open without an error-prone reset.
+	// disable. Callers hold the read side until their host submission returns.
+	// The generation-zero key is a plugin-wide barrier: it also covers a
+	// generation which an overlapping enable has claimed but not yet published.
+	// Counts let concurrent disables release only their own barrier.
 	commandAdmissionMu     sync.RWMutex
-	closedCommandAdmission map[commandAdmissionKey]struct{}
+	closedCommandAdmission map[commandAdmissionKey]uint
 	commandRuntimeGOOS     string
 	durableCallbackTimeout time.Duration
 	// consent holds the persistent ConsentStore. Unset until wiring, which is
@@ -288,7 +289,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionInFlight:         make(map[string]*sync.WaitGroup),
 		loading:                make(map[string]chan struct{}),
 		fallbackConsent:        newMemoryConsentStore(),
-		closedCommandAdmission: make(map[commandAdmissionKey]struct{}),
+		closedCommandAdmission: make(map[commandAdmissionKey]uint),
 		httpPending:            make(map[*lua.LState][]httpCallback),
 		httpDraining:           make(map[*lua.LState]bool),
 		httpNotify:             make(chan struct{}, 1),
