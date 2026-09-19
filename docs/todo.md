@@ -125,14 +125,18 @@ Parent lifecycle/config selections across all packages, context-construction
 regressions, tagged build, vet, whitespace and clean-worktree checks passed;
 fresh GPT-5.6-sol final review approved.
 
-Task 12 adds admin-only paginated command history/detail/cancel routes, escaped
-operator pages with durable actor/import/output state, and cockpit rendering from
-`authoritativeStatus` with command-safe controls. Focused Go/API/architecture,
-all 90 frontend files (1412 tests), OpenAPI validation, CSS scanning, and the
-new Playwright page/axe suite passed. The first browser attempt exposed the
-inherited host `PATH` containing a nonexistent macOS cryptex directory; with the
-production trust boundary pinned to `PLUGIN_COMMAND_PATH=/usr/bin:/bin`, the
-three focused browser tests passed.
+Task 12 landed in `edcc9cde`, with live-history hardening in `61bc7ce1`,
+`e16358ae` and `0e63ab75`. It adds admin-only bounded command history/detail/
+cancel routes, escaped operator pages with actor/import/output state, keyboard
+cancellation and cockpit rendering from proven durable `authoritativeStatus`.
+Review corrected generated live job ids, premature running/terminal publication,
+overflowing pagination, exit-code-zero rendering and the browser fixture's
+Postgres backend selection. Parent race suites, all 90 frontend files (1412
+tests), SQLite and PostgreSQL Playwright/axe suites (3 tests each), OpenAPI
+freshness, CSS scanning, vet, whitespace and clean-worktree checks passed; fresh
+GPT-5.6-sol final review approved. The inherited macOS `PATH` contains a missing
+cryptex directory, so the deterministic test fixture pins the production trust
+boundary to `PLUGIN_COMMAND_PATH=/usr/bin:/bin`.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
