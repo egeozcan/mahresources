@@ -8,7 +8,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 1: Make shared resource destinations replay-safe.
 - [x] Task 2: Parse and compare command declarations.
 - [x] Task 3: Require persistent, explicit command consent.
-- [ ] Task 4: Add durable run, output, import and map records.
+- [x] Task 4: Add durable run, output, import and map records.
 - [ ] Task 5: Add managed live jobs and dedicated dispatch pools.
 - [ ] Task 6: Execute commands with hardened argv, environment, output and quotas.
 - [ ] Task 7: Recover crashed runs and coordinate disable/shutdown.
@@ -41,6 +41,15 @@ and web/CLI warnings omitted parameter/interpreter and trust-boundary risks.
 Both were corrected, and a fresh GPT-5.6-sol final review approved. Parent
 verification passed all focused Task 3 packages, affected `go vet`, CLI docs
 lint, CSS scan, whitespace and clean-worktree checks.
+
+Task 4 landed in `5fbd76fa` with import-transition hardening in `8f12abb7`.
+Review caught three load-bearing store defects: recovery could overwrite a
+concurrent terminal import map, the PostgreSQL claim race did not exercise
+replacement of an existing terminal row, and success accepted a nil resource
+ID. The fixes serialize recovery/replacement correctly and validate terminal
+payloads; mutation-sensitive PostgreSQL coverage proves the row lock matters.
+Parent verification passed focused SQLite, PostgreSQL, race-detector, vet,
+whitespace and clean-worktree checks, and the final GPT-5.6-sol review approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`

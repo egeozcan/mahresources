@@ -459,31 +459,31 @@ type Store interface {
 
 `plugin_commands/types.go` defines the plain domain records used by this interface: `RunRecord`, `RunOutput`, `RunFinish`, `RunView`, `Access`, `ImportRecord`, `ImportMapEntry`, `ImportClaimRequest`, `ImportClaimResult` and `ImportFinish`. They contain the fields of the GORM models above but no `gorm` tags or database handle.
 
-- [ ] **Step 1: Add the plugin generation primitive before its consumers**
+- [x] **Step 1: Add the plugin generation primitive before its consumers**
 
 Add a monotonically increasing generation to each loaded `PluginInfo` and VM registration now, before run/import types store it. Expose `GenerationForState(L)` internally and `GenerationActive(plugin,generation)` for the application adapter. A disable/re-enable receives a different generation even when the manifest is unchanged. Test two consecutive loads, a revoked state, and active/mismatched lookups.
 
-- [ ] **Step 2: Write red transition and deleted-actor tests**
+- [x] **Step 2: Write red transition and deleted-actor tests**
 
 Test atomic run creation/queued→running→terminal transitions, cancellation latch, stale terminal writer refusal, nonterminal recovery query and output pruning without run deletion. Create both an ordinary actor-owned run and an intentional `ActorlessAtSubmission=true` run; delete the actor and assert `stampedModels` nulls the ordinary run/import columns, the ordinary run is inaccessible to every plugin principal, its pending import cannot start, and the intentional actorless run alone retains the documented plugin-wide access.
 
-- [ ] **Step 3: Write red import-claim state-table tests**
+- [x] **Step 3: Write red import-claim state-table tests**
 
 Use literal cases: absent→new pending; pending/running→same import ID; succeeded→resource ID; interrupted→same ID reset pending with refreshed generation/actor; failed/cancelled→new ID replacing the map. Race eight claimers on one `(run,name)` and assert one active claim.
 
-- [ ] **Step 4: Implement the store with conditional updates and transactions**
+- [x] **Step 4: Implement the store with conditional updates and transactions**
 
 Every transition includes its expected prior status in `WHERE`. `RequestRunCancel` atomically stores `cancel_requested=true` plus the reason in `Error` only on `queued`/`running` rows with `cancel_requested = false`, and returns typed `ErrRunNotFound` versus `ErrRunNotCancellable`; it never reports a terminal row as successfully cancelled. `FinishRun` updates output tail and terminal row in one transaction. Claim logic locks/creates the map row in a transaction and uses the composite unique index as the final race guard. Keep old claim rows when a failed/cancelled map entry is replaced.
 
-- [ ] **Step 5: Add PostgreSQL race coverage**
+- [x] **Step 5: Add PostgreSQL race coverage**
 
 Under the existing `postgres` tag, run concurrent run-start, terminal and import-claim cases. Assert exactly one winner rather than relying on SQLite writer serialization.
 
-- [ ] **Step 6: Wire migration and fail-closed ownership inventories**
+- [x] **Step 6: Wire migration and fail-closed ownership inventories**
 
 Add all four models to production and test AutoMigrate lists. Add run/import claim models (the two with `CreatedByUserId`) to `stampedModels`; map/output rows are not actor-owned. In `user_admin_guard.go`, document the invariant beside the existing fail-closed models: nulling a run creator never flips `ActorlessAtSubmission`, so deleted-user runs become inaccessible; a null import actor cannot pass worker-start revalidation or be re-driven through that inaccessible run.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 go test --tags 'json1 fts5' ./models ./plugin_system ./application_context ./server/openapi ./server/api_tests -run 'PluginCommand|PluginGeneration|StampedModels' -count=1
