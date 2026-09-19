@@ -48,6 +48,9 @@ type Dispatcher struct {
 	shutdownMu  sync.Mutex
 	shutdownErr error
 
+	importerMu sync.RWMutex
+	importer   Importer
+
 	shutdownStarted func() // test barrier; nil in production
 }
 
@@ -62,10 +65,8 @@ type commandSubmission struct {
 }
 
 type importSubmission struct {
-	spec    ImportJobSpec
-	run     func(context.Context, Progress) Outcome
-	release func()
-	reply   chan error
+	item  queuedImport
+	reply chan error
 }
 
 type cancelSubmission struct {
@@ -90,9 +91,11 @@ type commandCompleted struct {
 type importCompleted struct{ importID string }
 
 type queuedImport struct {
-	spec    ImportJobSpec
-	run     func(context.Context, Progress) Outcome
-	release func()
+	spec       ImportJobSpec
+	run        func(context.Context, Progress) Outcome
+	release    func()
+	cleanup    func()
+	completion func(ImportResult)
 }
 
 type activeCommand struct {
@@ -317,13 +320,33 @@ func (d *Dispatcher) submitImport(spec ImportJobSpec, run func(context.Context, 
 	if err != nil {
 		return err
 	}
-	request := importSubmission{spec: spec, run: run, release: release, reply: make(chan error, 1)}
+	return d.submitClaimedImport(queuedImport{spec: spec, run: run, release: release})
+}
+
+func (d *Dispatcher) submitClaimedImport(item queuedImport) error {
+	if item.run == nil {
+		if item.release != nil {
+			item.release()
+		}
+		return fmt.Errorf("plugin_commands: import run function is required")
+	}
+	if item.spec.RunID == "" {
+		if item.release != nil {
+			item.release()
+		}
+		return fmt.Errorf("plugin_commands: import requires run id")
+	}
+	request := importSubmission{item: item, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), request); err != nil {
-		release()
+		if item.release != nil {
+			item.release()
+		}
 		return err
 	}
 	if err := awaitDispatcherReply(request.reply, d.done); err != nil {
-		release()
+		if item.release != nil {
+			item.release()
+		}
 		return err
 	}
 	return nil
@@ -454,7 +477,7 @@ func (d *Dispatcher) disableQueuedImports(state *dispatcherState, plugin, reason
 		if !won {
 			d.deps.Logf("plugin command import %s was no longer pending during plugin disable", item.spec.ImportID)
 		}
-		item.release()
+		releaseImportItem(item, ImportResult{ImportID: item.spec.ImportID, Error: reason})
 	}
 	state.imports[plugin] = kept
 	for _, failure := range state.failedImportDispatch {
@@ -518,7 +541,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
-			item.release()
+			releaseImportItem(item, ImportResult{ImportID: item.spec.ImportID, Error: shutdownReason})
 		}
 		delete(state.imports, plugin)
 	}
@@ -530,7 +553,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			firstErr = err
 		}
 		delete(state.failedImportDispatch, id)
-		failure.item.release()
+		releaseImportItem(failure.item, ImportResult{ImportID: id, Error: shutdownReason})
 		if active, ok := state.activeImports[failure.item.spec.ImportID]; ok {
 			active.cancel(errDispatcherShutdown)
 			active.release()
@@ -663,8 +686,9 @@ func (s *dispatcherState) cancellationCount(plugin string) int {
 }
 
 func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmission) error {
-	plugin := request.spec.PluginName
-	if plugin == "" || request.spec.ImportID == "" {
+	item := request.item
+	plugin := item.spec.PluginName
+	if plugin == "" || item.spec.ImportID == "" {
 		return fmt.Errorf("plugin import requires plugin name and import id")
 	}
 	limit := d.deps.Settings.PendingPerPluginLimit()
@@ -674,7 +698,7 @@ func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmissi
 	if len(state.imports[plugin]) >= limit {
 		return fmt.Errorf("plugin %q import queue is full (max %d pending)", plugin, limit)
 	}
-	state.imports[plugin] = append(state.imports[plugin], queuedImport{spec: request.spec, run: request.run, release: request.release})
+	state.imports[plugin] = append(state.imports[plugin], item)
 	if !state.importSeen[plugin] {
 		state.importSeen[plugin] = true
 		state.importPlugins = append(state.importPlugins, plugin)
@@ -854,7 +878,14 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeImports[item.spec.ImportID] = activeImport{cancel: cancel, release: item.release}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
-		defer item.release()
+		defer func() {
+			if item.cleanup != nil {
+				item.cleanup()
+			}
+			if item.release != nil {
+				item.release()
+			}
+		}()
 		if !d.beginWorker() {
 			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
 		}
@@ -982,6 +1013,11 @@ func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failu
 }
 
 func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failure *importDispatchFailure) (bool, error) {
+	// Remove host-managed bytes before publishing the terminal state. A caller
+	// which observes failed must not race a later cleanup of its claim directory.
+	if failure.item.cleanup != nil {
+		failure.item.cleanup()
+	}
 	won, err := d.deps.Store.FinishImport(failure.item.spec.ImportID, ImportFinish{
 		Status: failure.status, Error: failure.reason, FinishedAt: time.Now().UTC(),
 	})
@@ -990,7 +1026,7 @@ func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failur
 		return false, err
 	}
 	delete(state.failedImportDispatch, failure.item.spec.ImportID)
-	failure.item.release()
+	releaseImportItem(failure.item, ImportResult{ImportID: failure.item.spec.ImportID, Error: failure.reason})
 	if active, ok := state.activeImports[failure.item.spec.ImportID]; ok {
 		active.cancel(nil)
 		active.release()
@@ -1000,6 +1036,16 @@ func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failur
 		d.deps.Logf("plugin command import %s dispatch failure was already terminal", failure.item.spec.ImportID)
 	}
 	return true, nil
+}
+
+func releaseImportItem(item queuedImport, result ImportResult) {
+	if item.cleanup != nil {
+		item.cleanup()
+	}
+	if item.release != nil {
+		item.release()
+	}
+	deliverImportCompletion(item.completion, result)
 }
 
 func resultFromRun(record RunRecord) Result {

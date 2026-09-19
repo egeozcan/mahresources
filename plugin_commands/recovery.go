@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -14,6 +16,32 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 	if d == nil || d.deps.Store == nil || d.deps.Inspector == nil {
 		return fmt.Errorf("plugin_commands: recovery dependencies are incomplete")
 	}
+	imports, err := d.deps.Store.NonterminalImports()
+	if err != nil {
+		return fmt.Errorf("list nonterminal plugin command imports: %w", err)
+	}
+	if err := d.deps.Store.InterruptNonterminalImports(time.Now().UTC()); err != nil {
+		return fmt.Errorf("interrupt plugin command imports: %w", err)
+	}
+	for _, record := range imports {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validExchangeComponent(record.ID) {
+			return fmt.Errorf("invalid plugin command import id %q during recovery", record.ID)
+		}
+	}
+	// No import worker exists yet while startup recovery runs. Every directory
+	// under import_tmp is therefore orphaned, including the narrow crash window
+	// after durable success but before the worker's deferred cleanup.
+	if d.deps.Settings != nil {
+		if err := cleanupImportTemps(d.deps.Settings.StagingRoot()); err != nil {
+			return err
+		}
+	} else if len(imports) != 0 {
+		return fmt.Errorf("plugin_commands: import recovery settings are unavailable")
+	}
+
 	runs, err := d.deps.Store.NonterminalRuns()
 	if err != nil {
 		return err
@@ -41,6 +69,33 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 		}
 		if !won {
 			d.deps.Logf("plugin command %s changed state during recovery", run.ID)
+		}
+	}
+	return nil
+}
+
+func cleanupImportTemps(stagingRoot string) error {
+	rootInfo, err := os.Lstat(stagingRoot)
+	if err == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("staging root is a symlink")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect staging root: %w", err)
+	}
+	tempRoot := filepath.Join(stagingRoot, "import_tmp")
+	entries, err := os.ReadDir(tempRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read plugin command import temp root: %w", err)
+	}
+	for _, entry := range entries {
+		if !validExchangeComponent(entry.Name()) {
+			return fmt.Errorf("invalid plugin command import temp name %q", entry.Name())
+		}
+		if err := os.RemoveAll(filepath.Join(tempRoot, entry.Name())); err != nil {
+			return fmt.Errorf("remove plugin command import temp %s: %w", entry.Name(), err)
 		}
 	}
 	return nil
