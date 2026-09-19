@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"io/fs"
 	"log"
 	"mahresources/contracts"
 	"mahresources/hash_worker"
@@ -1048,7 +1049,19 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 	return &refreshed, nil
 }
 
+// addResourceOptions carries optional overrides for the internal resource
+// upload path. The public AddResource passes a zero value; later callers
+// (e.g. managed command import) supply a ScratchDir so the temporary copy
+// lives on the same volume as the final destination.
+type addResourceOptions struct {
+	ScratchDir string
+}
+
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	return ctx.addResourceWithOptions(file, fileName, resourceQuery, addResourceOptions{})
+}
+
+func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator, opts addResourceOptions) (*models.Resource, error) {
 	if err := ValidateEntityName(resourceQuery.Name, "resource"); err != nil {
 		return nil, err
 	}
@@ -1081,7 +1094,11 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	// anyway -- which is exactly the outage -hls-temp-dir exists to prevent,
 	// arriving one step later. Empty keeps the system default, so a deployment
 	// that sets nothing is unchanged.
-	tempFile, err := os.CreateTemp(ctx.Config.HLSTempDir, "upload-")
+	scratch := opts.ScratchDir
+	if scratch == "" {
+		scratch = ctx.Config.HLSTempDir
+	}
+	tempFile, err := os.CreateTemp(scratch, "upload-")
 	if err != nil {
 		return nil, err
 	}
@@ -1251,12 +1268,30 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	filePath := path.Join(folder, hash+fileMime.Extension())
 	stat, statError := targetFs.Stat(filePath)
 
-	if statError == nil && stat != nil {
+	switch {
+	case statError == nil && stat.Size() == preFileSize:
+		// A previous upload of the same content already wrote the complete
+		// file. Reuse it.
 		savedFile, err = targetFs.Open(filePath)
 		log.Printf("Reusing stale file at %s", filePath)
 		fileExists = true
-	} else {
+	case statError == nil:
+		// A file exists but its size does not match, which means a previous
+		// upload was interrupted mid-copy (the "replay" case). Remove the
+		// truncated prefix and write a fresh copy from the snapshot.
+		log.Printf("Replacing mismatched stale file at %s (size %d, expected %d)", filePath, stat.Size(), preFileSize)
+		if err = targetFs.Remove(filePath); err != nil {
+			return nil, fmt.Errorf("remove truncated resource destination: %w", err)
+		}
 		savedFile, err = targetFs.Create(filePath)
+	case errors.Is(statError, fs.ErrNotExist):
+		// No file at the destination: the ordinary first-upload path.
+		savedFile, err = targetFs.Create(filePath)
+	default:
+		// Any other Stat error — permission denied, I/O error, etc. — is not
+		// an answer to "does this file exist". Falling through to Create
+		// would silently overwrite a file we cannot even read the metadata of.
+		return nil, fmt.Errorf("stat resource destination: %w", statError)
 	}
 
 	if err != nil {
@@ -1266,6 +1301,12 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 	defer func(savedFile afero.File) { _ = savedFile.Close() }(savedFile)
 
 	if !fileExists {
+		// Rewind the snapshot before every copy so retries and the
+		// mismatched-replacement branch both start from byte zero.
+		if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+
 		_, err = io.Copy(savedFile, tempFile)
 		if err != nil {
 			return nil, err
