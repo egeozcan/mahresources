@@ -48,6 +48,7 @@ type runnerTestStore struct {
 	beforeFinish           func(string, RunFinish)
 	markRunErr             error
 	finishErr              error
+	runErr                 error
 }
 
 func newRunnerTestStore() *runnerTestStore {
@@ -140,6 +141,9 @@ func (s *runnerTestStore) FinishRun(id string, finish RunFinish) (bool, error) {
 	return true, nil
 }
 func (s *runnerTestStore) Run(id string) (RunRecord, RunOutput, error) {
+	if s.runErr != nil {
+		return RunRecord{}, RunOutput{}, s.runErr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, ok := s.runs[id]
@@ -211,6 +215,9 @@ func TestRunnerPublishesRunningOnlyAfterTheDurableTransition(t *testing.T) {
 		if !strings.Contains(outcome.Error, "mark command running") {
 			t.Fatalf("outcome = %+v", outcome)
 		}
+		if outcome.AuthoritativeStatus != "" {
+			t.Fatalf("authoritative status = %q, want none", outcome.AuthoritativeStatus)
+		}
 		if len(progress.statuses) != 0 {
 			t.Fatalf("published statuses = %v, want none", progress.statuses)
 		}
@@ -221,8 +228,8 @@ func TestRunnerPublishesRunningOnlyAfterTheDurableTransition(t *testing.T) {
 		progress := &recordingCommandProgress{}
 		executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 		outcome := executor.Execute(context.Background(), newRun("mark-succeeded", store, progress))
-		if outcome.Status != RunStatusFailed {
-			t.Fatalf("outcome = %+v", outcome)
+		if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != RunStatusFailed {
+			t.Fatalf("outcome = %+v, want confirmed durable failure", outcome)
 		}
 		if len(progress.statuses) != 1 || progress.statuses[0] != RunStatusRunning {
 			t.Fatalf("published statuses = %v, want [running]", progress.statuses)
@@ -234,22 +241,61 @@ func TestRunnerPublishesRunningOnlyAfterTheDurableTransition(t *testing.T) {
 	})
 }
 
-func TestRunnerPersistenceFailurePublishesTheStatusThatActuallyPersisted(t *testing.T) {
-	store := newRunnerTestStore()
-	store.runs["run-1"] = RunRecord{ID: "run-1", Status: RunStatusRunning}
-	store.outputs["run-1"] = RunOutput{RunID: "run-1"}
-	store.finishErr = errors.New("database unavailable")
-	executor := &commandExecutor{deps: RunnerDependencies{Store: store}}
+func TestRunnerPersistenceFailurePublishesOnlyConfirmedDurableStatus(t *testing.T) {
+	t.Run("successful reread publishes persisted running", func(t *testing.T) {
+		store := newRunnerTestStore()
+		store.runs["run-1"] = RunRecord{ID: "run-1", Status: RunStatusRunning}
+		store.outputs["run-1"] = RunOutput{RunID: "run-1"}
+		store.finishErr = errors.New("database unavailable")
+		executor := &commandExecutor{deps: RunnerDependencies{Store: store}}
 
-	outcome := executor.finish(QueuedRun{RunID: "run-1"}, RunFinish{
-		Status: RunStatusSucceeded, FinishedAt: time.Now().UTC(),
+		outcome := executor.finish(QueuedRun{RunID: "run-1"}, RunFinish{
+			Status: RunStatusSucceeded, FinishedAt: time.Now().UTC(),
+		})
+		if outcome.Status != RunStatusRunning || outcome.AuthoritativeStatus != RunStatusRunning {
+			t.Fatalf("outcome = %+v, want confirmed durable running", outcome)
+		}
+		if !strings.Contains(outcome.Error, "persist terminal command: database unavailable") {
+			t.Fatalf("error = %q", outcome.Error)
+		}
 	})
-	if outcome.Status != RunStatusRunning {
-		t.Fatalf("authoritative status = %q, want durable running", outcome.Status)
-	}
-	if !strings.Contains(outcome.Error, "persist terminal command: database unavailable") {
-		t.Fatalf("error = %q", outcome.Error)
-	}
+
+	t.Run("failed reread leaves durable status unknown", func(t *testing.T) {
+		store := newRunnerTestStore()
+		store.runs["run-2"] = RunRecord{ID: "run-2", Status: RunStatusRunning}
+		store.outputs["run-2"] = RunOutput{RunID: "run-2"}
+		store.finishErr = errors.New("database unavailable")
+		store.runErr = errors.New("read unavailable")
+		executor := &commandExecutor{deps: RunnerDependencies{Store: store}}
+
+		outcome := executor.finish(QueuedRun{RunID: "run-2"}, RunFinish{
+			Status: RunStatusSucceeded, FinishedAt: time.Now().UTC(),
+		})
+		if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != "" {
+			t.Fatalf("outcome = %+v, want generic failure without durable authority", outcome)
+		}
+		if !strings.Contains(outcome.Error, "read durable command status: read unavailable") {
+			t.Fatalf("error = %q", outcome.Error)
+		}
+	})
+
+	t.Run("lost terminal transition and failed reread is a generic failure", func(t *testing.T) {
+		store := newRunnerTestStore()
+		store.runs["run-3"] = RunRecord{ID: "run-3", Status: RunStatusInterrupted}
+		store.outputs["run-3"] = RunOutput{RunID: "run-3"}
+		store.runErr = errors.New("read unavailable")
+		executor := &commandExecutor{deps: RunnerDependencies{Store: store}}
+
+		outcome := executor.finish(QueuedRun{RunID: "run-3"}, RunFinish{
+			Status: RunStatusSucceeded, FinishedAt: time.Now().UTC(),
+		})
+		if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != "" {
+			t.Fatalf("outcome = %+v, want generic failure without durable authority", outcome)
+		}
+		if !strings.Contains(outcome.Error, "read terminal command: read unavailable") {
+			t.Fatalf("error = %q", outcome.Error)
+		}
+	})
 }
 
 func TestRunnerAdmissionPersistsRedactedInvocationAndCleansRejectedFolder(t *testing.T) {

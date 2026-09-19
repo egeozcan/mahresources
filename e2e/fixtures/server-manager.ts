@@ -17,11 +17,19 @@ import * as path from 'path';
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVER_BINARY = path.join(PROJECT_ROOT, 'mahresources');
 
+export interface ServerDatabase {
+  type: 'sqlite' | 'postgres';
+  /** Empty only for the default server-managed ephemeral SQLite database. */
+  dsn: string;
+}
+
 export interface ServerInfo {
   port: number;
   sharePort: number;
   /** null when using an external server (BASE_URL env var) */
   proc: ChildProcess | null;
+  /** Present for servers started by this harness; absent for external BASE_URL servers. */
+  database?: ServerDatabase;
 }
 
 /**
@@ -137,8 +145,9 @@ export interface StartServerOptions {
  * Spawn a mahresources server on the given ports.
  * Uses Postgres if PG_DSN env var is set, otherwise ephemeral SQLite.
  */
-export function startServerProcess(port: number, sharePort: number, opts: StartServerOptions = {}): ChildProcess {
+function startServerProcessWithDatabase(port: number, sharePort: number, opts: StartServerOptions = {}): { proc: ChildProcess; database: ServerDatabase } {
   const pgDsn = process.env.PG_DSN;
+  let database: ServerDatabase;
 
   // Auth-enabled servers bootstrap an admin so the per-role specs can log in and
   // create the other roles. A no-op for the default (auth-off) suites.
@@ -163,6 +172,7 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
   if (pgDsn) {
     // Postgres mode: create a per-worker database
     const workerDsn = createWorkerDatabase(pgDsn);
+    database = { type: 'postgres', dsn: workerDsn };
     args = [
       '-db-type=POSTGRES',
       `-db-dsn=${workerDsn}`,
@@ -182,6 +192,7 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
   } else {
     // SQLite ephemeral mode (default). Command-lifecycle specs opt into a
     // temporary persistent database because executable consent must survive.
+    database = { type: 'sqlite', dsn: opts.sqliteDsn || '' };
     args = [
       ...(opts.sqliteDsn
         ? ['-db-type=SQLITE', `-db-dsn=${opts.sqliteDsn}`, '-memory-fs']
@@ -258,7 +269,11 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
     console.error(`[worker server :${port}] spawn error:`, err.message);
   });
 
-  return proc;
+  return { proc, database };
+}
+
+export function startServerProcess(port: number, sharePort: number, opts: StartServerOptions = {}): ChildProcess {
+  return startServerProcessWithDatabase(port, sharePort, opts).proc;
 }
 
 /**
@@ -269,13 +284,13 @@ export async function startServer(maxAttempts = 3, opts: StartServerOptions = {}
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const port = await findAvailablePort();
     const sharePort = await findAvailablePort();
-    const proc = startServerProcess(port, sharePort, opts);
+    const { proc, database } = startServerProcessWithDatabase(port, sharePort, opts);
 
     try {
       // Postgres migration takes longer on first boot
       const timeout = process.env.PG_DSN ? 60000 : 20000;
       await waitForServer(port, timeout);
-      return { port, sharePort, proc };
+      return { port, sharePort, proc, database };
     } catch (err) {
       // Server failed to start (port conflict or other issue) — kill and retry
       proc.kill('SIGKILL');

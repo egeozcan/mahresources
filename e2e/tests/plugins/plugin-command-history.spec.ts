@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  ServerDatabase,
   ServerInfo,
   startServer,
   stopServer,
@@ -13,7 +14,7 @@ import {
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const COMMAND_PATH = path.join(PROJECT_ROOT, 'e2e/test-plugins/test-commands/bin');
 
-type CommandServer = ServerInfo & { baseURL: string; tempDir: string; sqliteDsn: string };
+type CommandServer = ServerInfo & { baseURL: string; tempDir: string; database: ServerDatabase };
 
 const test = base.extend<{}, { commandServer: CommandServer }>({
   commandServer: [async ({}, use) => {
@@ -23,11 +24,14 @@ const test = base.extend<{}, { commandServer: CommandServer }>({
       sqliteDsn,
       pluginCommandPath: COMMAND_PATH,
     });
+    if (!server.database) {
+      throw new Error('managed command server did not expose its database target');
+    }
     const commandServer = {
       ...server,
+      database: server.database,
       baseURL: `http://127.0.0.1:${server.port}`,
       tempDir,
-      sqliteDsn,
     };
     await use(commandServer);
     await stopServer(server.proc);
@@ -60,12 +64,16 @@ async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile
   return payload.run_id;
 }
 
-function pruneOutput(sqliteDsn: string, runID: string) {
+function pruneOutput(database: CommandServer['database'], runID: string) {
+  if (!database.dsn) {
+    throw new Error(`plugin command output pruning needs an addressable ${database.type} database`);
+  }
   execFileSync('go', [
     'run',
-    '-tags=json1,fts5',
+    '-tags=json1,fts5,postgres',
     './e2e/helpers/prune-plugin-command-output',
-    sqliteDsn,
+    database.type,
+    database.dsn,
     runID,
   ], { cwd: PROJECT_ROOT, stdio: 'pipe' });
 }
@@ -151,7 +159,7 @@ test.describe('administrator plugin command history', () => {
     await expect(output).not.toContainText('\u001b[');
     expect(await page.evaluate(() => (window as any).commandFixtureSecret)).toBeUndefined();
 
-    pruneOutput(commandServer.sqliteDsn, runID);
+    pruneOutput(commandServer.database, runID);
     await page.reload();
     await expect(page.getByTestId('command-run-output-pruned')).toHaveText('Output is no longer available.');
     await expect(page.getByText('The retained command/output row has expired; durable run and import history remains.')).toBeVisible();

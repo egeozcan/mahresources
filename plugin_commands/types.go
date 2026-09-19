@@ -185,8 +185,13 @@ type Progress interface {
 }
 
 type Outcome struct {
+	// Status classifies the in-memory managed job outcome.
 	Status string
-	Error  string
+	// AuthoritativeStatus is set only when Status (or another returned status)
+	// was successfully persisted or successfully reread from the durable store.
+	// An empty value means the durable state is unknown.
+	AuthoritativeStatus string
+	Error               string
 }
 
 type LiveJobs interface {

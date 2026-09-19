@@ -79,7 +79,7 @@ func managedCommandOutcome(outcome plugin_commands.Outcome) download_queue.Manag
 	case plugin_commands.RunStatusCancelled:
 		status = download_queue.JobStatusCancelled
 	}
-	return download_queue.ManagedJobOutcome{Status: status, AuthoritativeStatus: outcome.Status, Error: outcome.Error}
+	return download_queue.ManagedJobOutcome{Status: status, AuthoritativeStatus: outcome.AuthoritativeStatus, Error: outcome.Error}
 }
 
 func clonePluginCommandActor(actor *uint) *uint {

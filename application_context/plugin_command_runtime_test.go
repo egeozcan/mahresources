@@ -13,6 +13,23 @@ import (
 	"mahresources/plugin_commands"
 )
 
+func TestManagedCommandOutcomeSeparatesGenericAndDurableStatus(t *testing.T) {
+	unknown := managedCommandOutcome(plugin_commands.Outcome{
+		Status: plugin_commands.RunStatusFailed,
+		Error:  "durable write and reread failed",
+	})
+	require.Equal(t, "failed", string(unknown.Status))
+	require.Empty(t, unknown.AuthoritativeStatus)
+
+	confirmed := managedCommandOutcome(plugin_commands.Outcome{
+		Status:              plugin_commands.RunStatusFailed,
+		AuthoritativeStatus: plugin_commands.RunStatusRunning,
+		Error:               "terminal write failed",
+	})
+	require.Equal(t, "failed", string(confirmed.Status))
+	require.Equal(t, plugin_commands.RunStatusRunning, confirmed.AuthoritativeStatus)
+}
+
 func TestPluginCommandHostResolvesAuthOffRootBeforeImportClaim(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	ctx.Config.AuthEnabled = false

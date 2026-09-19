@@ -476,7 +476,7 @@ func (e *commandExecutor) finishWithoutStart(run QueuedRun, fallback string) Out
 		return Outcome{Status: RunStatusFailed, Error: fallback + ": " + err.Error()}
 	}
 	if RunStatusTerminal(record.Status) {
-		return Outcome{Status: record.Status, Error: record.Error}
+		return durableOutcome(record.Status, record.Error)
 	}
 	status, reason := RunStatusInterrupted, fallback
 	if record.CancelRequested {
@@ -491,11 +491,11 @@ func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 		return e.outcomeAfterPersistenceError(run.RunID, finish.Error, err)
 	}
 	if won {
-		return Outcome{Status: finish.Status, Error: finish.Error}
+		return durableOutcome(finish.Status, finish.Error)
 	}
 	record, _, err := e.deps.Store.Run(run.RunID)
 	if err != nil {
-		return Outcome{Status: finish.Status, Error: finish.Error + "; read terminal command: " + err.Error()}
+		return Outcome{Status: RunStatusFailed, Error: finish.Error + "; read terminal command: " + err.Error()}
 	}
 	if !RunStatusTerminal(record.Status) && record.CancelRequested && finish.Status != RunStatusCancelled {
 		cancelled := finish
@@ -507,14 +507,14 @@ func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 			return e.outcomeAfterPersistenceError(run.RunID, cancelled.Error, err)
 		}
 		if won {
-			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error}
+			return durableOutcome(RunStatusCancelled, cancelled.Error)
 		}
 		record, _, err = e.deps.Store.Run(run.RunID)
 		if err != nil {
-			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error + "; read terminal command: " + err.Error()}
+			return Outcome{Status: RunStatusFailed, Error: cancelled.Error + "; read terminal command: " + err.Error()}
 		}
 	}
-	return Outcome{Status: record.Status, Error: record.Error}
+	return durableOutcome(record.Status, record.Error)
 }
 
 // outcomeAfterPersistenceError never publishes the intended terminal status as
@@ -528,9 +528,13 @@ func (e *commandExecutor) outcomeAfterPersistenceError(runID, reason string, per
 	}
 	record, _, readErr := e.deps.Store.Run(runID)
 	if readErr != nil {
-		return Outcome{Error: message + "; read durable command status: " + readErr.Error()}
+		return Outcome{Status: RunStatusFailed, Error: message + "; read durable command status: " + readErr.Error()}
 	}
-	return Outcome{Status: record.Status, Error: message}
+	return durableOutcome(record.Status, message)
+}
+
+func durableOutcome(status, message string) Outcome {
+	return Outcome{Status: status, AuthoritativeStatus: status, Error: message}
 }
 
 func (e *commandExecutor) cancelReason(runID string) string {
