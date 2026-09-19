@@ -995,6 +995,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 			}
 		}()
 		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
+		run.progress = progress
 		outcome := d.deps.Executor.Execute(execCtx, run)
 		stop()
 		result := Result{OK: outcome.Status == RunStatusSucceeded, Error: outcome.Error, RunID: run.RunID}

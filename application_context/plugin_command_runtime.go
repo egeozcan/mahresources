@@ -22,11 +22,16 @@ type commandLiveJobs struct {
 	manager *download_queue.DownloadManager
 }
 
-type commandProgress struct{ sink download_queue.ProgressSink }
+type commandProgress struct {
+	sink download_queue.ManagedProgressSink
+}
 
 func (p commandProgress) SetPhase(phase string) { p.sink.SetPhase(phase) }
 func (p commandProgress) SetPhaseProgress(current, total int64) {
 	p.sink.SetPhaseProgress(current, total)
+}
+func (p commandProgress) SetAuthoritativeStatus(status string) {
+	p.sink.SetAuthoritativeStatus(status)
 }
 
 func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cancel func(string) error, run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
@@ -35,14 +40,13 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 	}
 	job, err := j.manager.SubmitManagedJob(download_queue.ManagedJobOptions{
 		JobOptions: download_queue.JobOptions{
-			Source: pluginCommandJobSource, InitialPhase: plugin_commands.RunStatusRunning,
+			Source: pluginCommandJobSource, InitialPhase: "starting command",
 			OwnerUserID: clonePluginCommandActor(spec.OwnerUserID),
 		},
-		Controls:            download_queue.JobControls{Cancel: true},
-		Cancel:              cancel,
-		AuthoritativeID:     spec.RunID,
-		AuthoritativeStatus: plugin_commands.RunStatusRunning,
-	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ProgressSink) download_queue.ManagedJobOutcome {
+		Controls:        download_queue.JobControls{Cancel: true},
+		Cancel:          cancel,
+		AuthoritativeID: spec.RunID,
+	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
 		return managedCommandOutcome(run(ctx, commandProgress{sink: progress}))
 	})
 	if err != nil {
@@ -58,7 +62,7 @@ func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run
 	job, err := j.manager.SubmitManagedJob(download_queue.ManagedJobOptions{JobOptions: download_queue.JobOptions{
 		Source: pluginImportJobSource, InitialPhase: plugin_commands.ImportStatusRunning,
 		OwnerUserID: clonePluginCommandActor(spec.OwnerUserID),
-	}}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ProgressSink) download_queue.ManagedJobOutcome {
+	}}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
 		return managedCommandOutcome(run(ctx, commandProgress{sink: progress}))
 	})
 	if err != nil {

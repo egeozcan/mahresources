@@ -41,14 +41,21 @@ type ManagedJobOutcome struct {
 	Error               string
 }
 
-type ManagedJobRunFn func(context.Context, *DownloadJob, ProgressSink) ManagedJobOutcome
+// ManagedProgressSink is the live-update surface available only to managed
+// jobs. Durable operations publish AuthoritativeStatus through it after their
+// corresponding store transition succeeds.
+type ManagedProgressSink interface {
+	ProgressSink
+	SetAuthoritativeStatus(status string)
+}
+
+type ManagedJobRunFn func(context.Context, *DownloadJob, ManagedProgressSink) ManagedJobOutcome
 
 type ManagedJobOptions struct {
 	JobOptions
-	Controls            JobControls
-	Cancel              func(reason string) error
-	AuthoritativeID     string
-	AuthoritativeStatus string
+	Controls        JobControls
+	Cancel          func(reason string) error
+	AuthoritativeID string
 }
 
 // managedSink is the concrete ProgressSink. Holds a reference to the manager
@@ -80,6 +87,11 @@ func (s *managedSink) AppendWarning(msg string) {
 
 func (s *managedSink) SetResultPath(path string) {
 	s.j.SetResultPath(path)
+	s.m.notifyJob("updated", s.j)
+}
+
+func (s *managedSink) SetAuthoritativeStatus(status string) {
+	s.j.setAuthoritativeStatus(status)
 	s.m.notifyJob("updated", s.j)
 }
 
@@ -174,25 +186,24 @@ func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn Managed
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &DownloadJob{
-		ID:                  generateShortID(),
-		URL:                 opts.URL,
-		Status:              JobStatusPending,
-		Progress:            0,
-		TotalSize:           -1,
-		ProgressPercent:     -1,
-		CreatedAt:           time.Now(),
-		Source:              opts.Source,
-		Phase:               opts.InitialPhase,
-		initialPhase:        opts.InitialPhase,
-		ctx:                 ctx,
-		cancel:              cancel,
-		ownerUserID:         opts.OwnerUserID,
-		AuthoritativeID:     opts.AuthoritativeID,
-		AuthoritativeStatus: opts.AuthoritativeStatus,
-		managed:             true,
-		managedControls:     opts.Controls,
-		managedCancel:       opts.Cancel,
-		managedRunFn:        runFn,
+		ID:              generateShortID(),
+		URL:             opts.URL,
+		Status:          JobStatusPending,
+		Progress:        0,
+		TotalSize:       -1,
+		ProgressPercent: -1,
+		CreatedAt:       time.Now(),
+		Source:          opts.Source,
+		Phase:           opts.InitialPhase,
+		initialPhase:    opts.InitialPhase,
+		ctx:             ctx,
+		cancel:          cancel,
+		ownerUserID:     opts.OwnerUserID,
+		AuthoritativeID: opts.AuthoritativeID,
+		managed:         true,
+		managedControls: opts.Controls,
+		managedCancel:   opts.Cancel,
+		managedRunFn:    runFn,
 	}
 	m.jobs[job.ID] = job
 	m.jobOrder = append(m.jobOrder, job.ID)

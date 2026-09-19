@@ -181,6 +181,7 @@ type ImportJobSpec struct {
 type Progress interface {
 	SetPhase(string)
 	SetPhaseProgress(int64, int64)
+	SetAuthoritativeStatus(string)
 }
 
 type Outcome struct {
@@ -215,6 +216,7 @@ type QueuedRun struct {
 	ExchangeDir string
 	Invocation  Invocation
 	control     *runControl
+	progress    Progress
 }
 
 type Executor interface {

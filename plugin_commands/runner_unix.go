@@ -128,6 +128,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if !won {
 		return e.finishWithoutStart(run, "command was no longer queued")
 	}
+	if run.progress != nil {
+		run.progress.SetAuthoritativeStatus(RunStatusRunning)
+	}
 	if outcome, stop := e.stopBeforeStart(ctx, run); stop {
 		return outcome
 	}

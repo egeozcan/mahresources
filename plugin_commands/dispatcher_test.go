@@ -219,6 +219,7 @@ type nopProgress struct{}
 
 func (nopProgress) SetPhase(string)               {}
 func (nopProgress) SetPhaseProgress(int64, int64) {}
+func (nopProgress) SetAuthoritativeStatus(string) {}
 
 type dispatcherTestExecutor struct{ store Store }
 

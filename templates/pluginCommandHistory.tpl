@@ -27,7 +27,7 @@
             <div><dt class="font-semibold">Submitted</dt><dd>{{ commandRun.CreatedAt }}</dd></div>
             <div><dt class="font-semibold">Started</dt><dd>{% if commandRun.StartedAt %}{{ commandRun.StartedAt }}{% else %}Not started{% endif %}</dd></div>
             <div><dt class="font-semibold">Finished</dt><dd>{% if commandRun.FinishedAt %}{{ commandRun.FinishedAt }}{% else %}Not finished{% endif %}</dd></div>
-            <div><dt class="font-semibold">Exit code</dt><dd>{% if commandRun.ExitCode %}{{ commandRun.ExitCode }}{% else %}&mdash;{% endif %}</dd></div>
+            <div><dt class="font-semibold">Exit code</dt><dd>{% if exitCodeAvailable %}{{ commandRun.ExitCode }}{% else %}&mdash;{% endif %}</dd></div>
             <div><dt class="font-semibold">Actor provenance</dt><dd>{% if commandRun.ActorlessAtSubmission %}System (actorless at submission){% elif commandRun.CreatedByUserID %}User ID {{ commandRun.CreatedByUserID }}{% else %}Submitting user was deleted{% endif %}</dd></div>
             <div><dt class="font-semibold">Cancellation requested</dt><dd>{% if commandRun.CancelRequested %}Yes{% else %}No{% endif %}</dd></div>
             <div class="sm:col-span-2"><dt class="font-semibold">Terminal reason</dt><dd>{% if commandRun.Error %}{{ commandRun.Error }}{% else %}&mdash;{% endif %}</dd></div>

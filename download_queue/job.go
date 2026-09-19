@@ -677,6 +677,12 @@ func (j *DownloadJob) PluginName() string {
 	return j.pluginName
 }
 
+func (j *DownloadJob) setAuthoritativeStatus(status string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.AuthoritativeStatus = status
+}
+
 // SetPhase safely sets the job's current phase name.
 func (j *DownloadJob) SetPhase(phase string) {
 	j.mu.Lock()

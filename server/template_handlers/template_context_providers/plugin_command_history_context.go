@@ -45,6 +45,7 @@ func PluginCommandHistoryContextProvider(context PluginCommandHistoryPageContext
 		}
 		ctx["commandRun"] = detail
 		ctx["outputAvailable"] = available
+		ctx["exitCodeAvailable"] = detail.ExitCode != nil
 		return ctx
 	}
 }

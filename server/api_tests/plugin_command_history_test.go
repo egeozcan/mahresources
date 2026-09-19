@@ -14,8 +14,9 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	tc := setupAuthEnv(t)
 	now := time.Now().UTC()
 	owner := uint(999)
+	exitCode := 0
 	rows := []models.PluginCommandRun{
-		{ID: "admin-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedAt: now},
+		{ID: "admin-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, ExitCode: &exitCode, CreatedAt: now},
 		{ID: "user-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedByUserId: &owner, CreatedAt: now.Add(-time.Second)},
 	}
 	for i := range rows {
@@ -39,7 +40,7 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	page := doReq(tc, http.MethodGet, "/admin/plugin-command-runs?id=admin-owned-command",
 		map[string]string{"Accept": "text/html", "Authorization": admin}, nil, nil)
 	body := page.Body.String()
-	if page.Code != http.StatusOK || !strings.Contains(body, "Program output can echo secrets") || !strings.Contains(body, "Cancel queued run") {
+	if page.Code != http.StatusOK || !strings.Contains(body, "Program output can echo secrets") || !strings.Contains(body, "Cancel queued run") || !strings.Contains(body, "<dd>0</dd>") {
 		t.Fatalf("detail page = %d %s", page.Code, body)
 	}
 	if strings.Contains(body, `<script>alert`) || !strings.Contains(body, "&lt;script&gt;") {

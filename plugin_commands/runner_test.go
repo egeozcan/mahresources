@@ -46,6 +46,7 @@ type runnerTestStore struct {
 	setProcessGroupStarted chan struct{}
 	setProcessGroupRelease <-chan struct{}
 	beforeFinish           func(string, RunFinish)
+	markRunErr             error
 	finishErr              error
 }
 
@@ -64,6 +65,9 @@ func (s *runnerTestStore) CreateRun(run RunRecord, output RunOutput) error {
 	return nil
 }
 func (s *runnerTestStore) MarkRunRunning(id string, started time.Time) (bool, error) {
+	if s.markRunErr != nil {
+		return false, s.markRunErr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, ok := s.runs[id]
@@ -173,6 +177,62 @@ func (s *runnerTestStore) NonterminalImports() ([]ImportRecord, error) {
 	return append([]ImportRecord(nil), s.imports...), nil
 }
 func (s *runnerTestStore) HasNonterminalImports(string) (bool, error) { return false, nil }
+
+type recordingCommandProgress struct {
+	statuses []string
+}
+
+func (*recordingCommandProgress) SetPhase(string)               {}
+func (*recordingCommandProgress) SetPhaseProgress(int64, int64) {}
+func (p *recordingCommandProgress) SetAuthoritativeStatus(status string) {
+	p.statuses = append(p.statuses, status)
+}
+
+func TestRunnerPublishesRunningOnlyAfterTheDurableTransition(t *testing.T) {
+	settings := runnerTestSettings{root: t.TempDir(), commandDir: t.TempDir()}
+	newRun := func(id string, store *runnerTestStore, progress Progress) QueuedRun {
+		store.runs[id] = RunRecord{ID: id, Status: RunStatusQueued}
+		store.outputs[id] = RunOutput{RunID: id}
+		return QueuedRun{
+			RunID:       id,
+			Request:     CommandRequest{PluginName: "plug", Declaration: Declaration{Timeout: time.Second}},
+			ExchangeDir: filepath.Join(settings.root, "plugin_exchange", "plug", id),
+			Invocation:  Invocation{Argv: []string{"missing-command"}},
+			progress:    progress,
+		}
+	}
+
+	t.Run("failed durable start stays unpublished", func(t *testing.T) {
+		store := newRunnerTestStore()
+		store.markRunErr = errors.New("database unavailable")
+		progress := &recordingCommandProgress{}
+		executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+		outcome := executor.Execute(context.Background(), newRun("mark-failed", store, progress))
+		if !strings.Contains(outcome.Error, "mark command running") {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		if len(progress.statuses) != 0 {
+			t.Fatalf("published statuses = %v, want none", progress.statuses)
+		}
+	})
+
+	t.Run("successful durable start publishes running", func(t *testing.T) {
+		store := newRunnerTestStore()
+		progress := &recordingCommandProgress{}
+		executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+		outcome := executor.Execute(context.Background(), newRun("mark-succeeded", store, progress))
+		if outcome.Status != RunStatusFailed {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		if len(progress.statuses) != 1 || progress.statuses[0] != RunStatusRunning {
+			t.Fatalf("published statuses = %v, want [running]", progress.statuses)
+		}
+		record, _, err := store.Run("mark-succeeded")
+		if err != nil || record.Status != RunStatusFailed {
+			t.Fatalf("durable run = %+v, %v", record, err)
+		}
+	})
+}
 
 func TestRunnerPersistenceFailurePublishesTheStatusThatActuallyPersisted(t *testing.T) {
 	store := newRunnerTestStore()

@@ -92,8 +92,9 @@ func TestPluginCommandHistoryClampsPageBeforeOffsetMultiplication(t *testing.T) 
 	}
 }
 
-func TestPluginCommandHistoryDetailReportsPrunedOutput(t *testing.T) {
-	stub := &pluginCommandHistoryStub{detail: plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: "run-1", Status: plugin_commands.RunStatusSucceeded}}, available: false}
+func TestPluginCommandHistoryDetailReportsPrunedOutputAndZeroExitCode(t *testing.T) {
+	exitCode := 0
+	stub := &pluginCommandHistoryStub{detail: plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: "run-1", Status: plugin_commands.RunStatusSucceeded, ExitCode: &exitCode}}, available: false}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/plugin/command-run?id=run-1", nil)
 	GetPluginCommandRunHandler(stub)(recorder, request)
@@ -103,13 +104,14 @@ func TestPluginCommandHistoryDetailReportsPrunedOutput(t *testing.T) {
 	var payload struct {
 		OutputAvailable bool `json:"outputAvailable"`
 		Run             struct {
-			ID string `json:"ID"`
+			ID       string `json:"ID"`
+			ExitCode *int   `json:"ExitCode"`
 		} `json:"run"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.OutputAvailable || payload.Run.ID != "run-1" {
+	if payload.OutputAvailable || payload.Run.ID != "run-1" || payload.Run.ExitCode == nil || *payload.Run.ExitCode != 0 {
 		t.Fatalf("payload = %+v", payload)
 	}
 }

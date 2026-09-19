@@ -126,8 +126,11 @@ describe('plugin command jobs use durable authority and only expose cancel while
         expect(component.getJobTitle(running)).toBe('Plugin command durable-run-1');
     });
 
-    test('queued durable rows are not treated as live cockpit work', () => {
+    test('registration and queued shapes stay non-cancellable until durable running is published', () => {
+        const registered = job({ source: 'plugin-command', status: 'processing', authoritativeId: 'durable-run-1' });
         const queued = job({ source: 'plugin-command', status: 'pending', authoritativeStatus: 'queued' });
+        expect(component.jobStatus(registered)).toBe('processing');
+        expect(component.canCancel(registered)).toBe(false);
         expect(component.canCancel(queued)).toBe(false);
     });
 });

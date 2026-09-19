@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { test as base, expect, type APIRequestContext } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,19 +13,21 @@ import {
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const COMMAND_PATH = path.join(PROJECT_ROOT, 'e2e/test-plugins/test-commands/bin');
 
-type CommandServer = ServerInfo & { baseURL: string; tempDir: string };
+type CommandServer = ServerInfo & { baseURL: string; tempDir: string; sqliteDsn: string };
 
 const test = base.extend<{}, { commandServer: CommandServer }>({
   commandServer: [async ({}, use) => {
     const tempDir = mkdtempSync(path.join(tmpdir(), 'mahresources-command-e2e-'));
+    const sqliteDsn = path.join(tempDir, 'commands.db');
     const server = await startServer(3, {
-      sqliteDsn: path.join(tempDir, 'commands.db'),
+      sqliteDsn,
       pluginCommandPath: COMMAND_PATH,
     });
     const commandServer = {
       ...server,
       baseURL: `http://127.0.0.1:${server.port}`,
       tempDir,
+      sqliteDsn,
     };
     await use(commandServer);
     await stopServer(server.proc);
@@ -55,6 +58,16 @@ async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile
   const payload = await response.json();
   expect(payload.run_id).toEqual(expect.any(String));
   return payload.run_id;
+}
+
+function pruneOutput(sqliteDsn: string, runID: string) {
+  execFileSync('go', [
+    'run',
+    '-tags=json1,fts5',
+    './e2e/helpers/prune-plugin-command-output',
+    sqliteDsn,
+    runID,
+  ], { cwd: PROJECT_ROOT, stdio: 'pipe' });
 }
 
 async function commandRuns(request: APIRequestContext): Promise<any[]> {
@@ -101,7 +114,7 @@ test.describe('administrator plugin command history', () => {
     await liveCancel.focus();
     await expect(liveCancel).toBeFocused();
     const cancelResponsePromise = page.waitForResponse(response => response.url().includes('/v1/jobs/cancel'), { timeout: 30_000 });
-    await liveCancel.click();
+    await page.keyboard.press('Enter');
     const cancelResponse = await cancelResponsePromise;
     expect(cancelResponse.ok(), await cancelResponse.text()).toBe(true);
     await expect.poll(async () => {
@@ -125,7 +138,7 @@ test.describe('administrator plugin command history', () => {
     expect(secondCancel.ok(), await secondCancel.text()).toBe(true);
   });
 
-  test('terminal output is escaped, stripped of ANSI controls, linked, and accessible', async ({ page, request }) => {
+  test('terminal and pruned output use the real escaped detail page', async ({ page, request, commandServer }) => {
     const runID = await submitFixture(request, 'hostile-output');
     await expect.poll(async () => {
       const runs = await commandRuns(request);
@@ -137,6 +150,11 @@ test.describe('administrator plugin command history', () => {
     await expect(output).toContainText('<script>window.commandFixtureSecret = true</script>');
     await expect(output).not.toContainText('\u001b[');
     expect(await page.evaluate(() => (window as any).commandFixtureSecret)).toBeUndefined();
+
+    pruneOutput(commandServer.sqliteDsn, runID);
+    await page.reload();
+    await expect(page.getByTestId('command-run-output-pruned')).toHaveText('Output is no longer available.');
+    await expect(page.getByText('The retained command/output row has expired; durable run and import history remains.')).toBeVisible();
 
     const scan = await new AxeBuilder({ page }).analyze();
     expect(scan.violations).toEqual([]);

@@ -18,7 +18,7 @@ func TestManagedJobLaneIsIndependentFromOrdinaryAdmission(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, MaxManagedLiveJobs)
 	for i := 0; i < MaxManagedLiveJobs; i++ {
-		_, err := dm.SubmitManagedJob(ManagedJobOptions{JobOptions: JobOptions{Source: "managed"}}, func(ctx context.Context, _ *DownloadJob, _ ProgressSink) ManagedJobOutcome {
+		_, err := dm.SubmitManagedJob(ManagedJobOptions{JobOptions: JobOptions{Source: "managed"}}, func(ctx context.Context, _ *DownloadJob, _ ManagedProgressSink) ManagedJobOutcome {
 			started <- struct{}{}
 			select {
 			case <-release:
@@ -41,7 +41,7 @@ func TestManagedJobLaneIsIndependentFromOrdinaryAdmission(t *testing.T) {
 	if got := len(dm.GetJobs()); got != MaxQueueSize+MaxManagedLiveJobs {
 		t.Fatalf("registry size = %d, want %d", got, MaxQueueSize+MaxManagedLiveJobs)
 	}
-	if _, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ProgressSink) ManagedJobOutcome { return ManagedJobOutcome{} }); err == nil {
+	if _, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ManagedProgressSink) ManagedJobOutcome { return ManagedJobOutcome{} }); err == nil {
 		t.Fatal("seventh managed job was admitted")
 	}
 	close(release)
@@ -76,7 +76,7 @@ func TestManagedAdmissionEvictsTerminalManagedEntry(t *testing.T) {
 	}
 
 	release := make(chan struct{})
-	_, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ProgressSink) ManagedJobOutcome {
+	_, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ManagedProgressSink) ManagedJobOutcome {
 		<-release
 		return ManagedJobOutcome{Status: JobStatusCompleted}
 	})
@@ -108,7 +108,7 @@ func TestCleanupDirectDeletionReleasesManagedCapacity(t *testing.T) {
 		t.Fatal("cleanup did not directly remove expired managed job")
 	}
 	release := make(chan struct{})
-	_, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ProgressSink) ManagedJobOutcome {
+	_, err := dm.SubmitManagedJob(ManagedJobOptions{}, func(context.Context, *DownloadJob, ManagedProgressSink) ManagedJobOutcome {
 		<-release
 		return ManagedJobOutcome{Status: JobStatusCompleted}
 	})
@@ -126,24 +126,31 @@ func TestManagedJobControlsAndAuthoritativeStatus(t *testing.T) {
 	var job *DownloadJob
 	var once sync.Once
 	cancelled := make(chan struct{})
+	started := make(chan struct{})
 	cancelFn := func(string) error {
 		_ = job.Snapshot() // deadlocks if manager or job lock is held by Cancel.
 		once.Do(func() { close(cancelled) })
 		return nil
 	}
 	job, _ = dm.SubmitManagedJob(ManagedJobOptions{
-		Controls:            JobControls{Cancel: true},
-		Cancel:              cancelFn,
-		AuthoritativeID:     "durable-run-1",
-		AuthoritativeStatus: "running",
-	}, func(ctx context.Context, _ *DownloadJob, _ ProgressSink) ManagedJobOutcome {
+		Controls:        JobControls{Cancel: true},
+		Cancel:          cancelFn,
+		AuthoritativeID: "durable-run-1",
+	}, func(ctx context.Context, _ *DownloadJob, progress ManagedProgressSink) ManagedJobOutcome {
+		progress.SetAuthoritativeStatus("running")
+		close(started)
 		<-cancelled
 		return ManagedJobOutcome{Status: JobStatusCancelled, AuthoritativeStatus: "cancelled", Error: "operator stopped it"}
 	})
 
+	added := <-events
+	if added.Type != "added" || added.Job.ID != job.ID || added.Job.AuthoritativeStatus != "" {
+		t.Fatalf("added event = %#v; it must not claim a durable running transition", added)
+	}
+	<-started
 	initial := job.Snapshot()
 	if initial.AuthoritativeID != "durable-run-1" || initial.AuthoritativeStatus != "running" {
-		t.Fatalf("initial durable authority = id %q status %q", initial.AuthoritativeID, initial.AuthoritativeStatus)
+		t.Fatalf("post-transition durable authority = id %q status %q", initial.AuthoritativeID, initial.AuthoritativeStatus)
 	}
 
 	for _, call := range []struct {
