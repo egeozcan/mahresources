@@ -106,6 +106,44 @@ func TestQuotaPerRunIncludesExchangeAndImportTemps(t *testing.T) {
 	}
 }
 
+func TestQuotaFinalSampleRejectsAFastSuccessfulWriter(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 32, global: 1 << 20}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	executor.(*commandExecutor).quotaInterval = time.Hour
+	run := seedRunnerRun(t, executor, store, settings, "fast-quota", []string{"mah-helper", helperProcessFlag, "write-exit", "{{exchange_dir}}", "64"}, 5*time.Second)
+
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "per-run quota") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestUsageRejectsASymlinkedRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	link := filepath.Join(t.TempDir(), "staging")
+	if err := os.Symlink(realRoot, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pathUsageNoSymlinks(link); err == nil || !strings.Contains(err.Error(), "root is a symlink") {
+		t.Fatalf("pathUsageNoSymlinks error = %v", err)
+	}
+
+	settings := runnerTestSettings{root: link, commandDir: t.TempDir(), perRun: 1024, global: 1024}
+	executor := NewExecutor(RunnerDependencies{Store: newRunnerTestStore(), Settings: settings})
+	runID := strings.Repeat("a", 32)
+	run := QueuedRun{
+		RunID:       runID,
+		ExchangeDir: filepath.Join(link, "plugin_exchange", "plug", runID),
+		Request:     CommandRequest{PluginName: "plug"},
+	}
+	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err == nil || !strings.Contains(err.Error(), "root is a symlink") {
+		t.Fatalf("Prepare error = %v", err)
+	}
+}
+
 func TestUsageDoesNotFollowSymlinks(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside")

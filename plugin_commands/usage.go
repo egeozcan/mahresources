@@ -49,7 +49,8 @@ func effectiveQuota(configured, fallback int64) int64 {
 // charging symlinks. Missing paths have zero usage.
 func pathUsageNoSymlinks(path string) (int64, error) {
 	var total int64
-	err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+	root := filepath.Clean(path)
+	err := filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
 				return nil
@@ -57,6 +58,9 @@ func pathUsageNoSymlinks(path string) (int64, error) {
 			return walkErr
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
+			if current == root {
+				return fmt.Errorf("usage root is a symlink: %s", root)
+			}
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

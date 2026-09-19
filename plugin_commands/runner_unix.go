@@ -23,7 +23,9 @@ const (
 )
 
 type commandExecutor struct {
-	deps RunnerDependencies
+	deps           RunnerDependencies
+	cleanupTimeout time.Duration
+	quotaInterval  time.Duration
 }
 
 func NewExecutor(deps RunnerDependencies) Executor {
@@ -33,7 +35,7 @@ func NewExecutor(deps RunnerDependencies) Executor {
 	if deps.Inspector == nil {
 		deps.Inspector = nativeProcessInspector{}
 	}
-	return &commandExecutor{deps: deps}
+	return &commandExecutor{deps: deps, cleanupTimeout: groupDrainTimeout, quotaInterval: quotaSampleInterval}
 }
 
 func (e *commandExecutor) Prepare(run QueuedRun) error {
@@ -178,79 +180,172 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		<-drainDone
 		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
 	}
+
+	// The timeout belongs to the spawned process, not to the bookkeeping that
+	// follows it. In particular, SetRunProcessGroup may wait on a busy database.
+	timer := time.NewTimer(run.Request.Declaration.Timeout)
+	defer timer.Stop()
 	stdoutW.Close()
 	stderrW.Close()
 	pgid := cmd.Process.Pid
-	if err := e.deps.Store.SetRunProcessGroup(run.RunID, pgid); err != nil {
-		_ = e.deps.Inspector.KillGroup(pgid)
-		_ = cmd.Wait()
-		<-drainDone
-		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("persist command process group: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
-	}
 
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- cmd.Wait() }()
-	timer := time.NewTimer(run.Request.Declaration.Timeout)
-	defer timer.Stop()
-	quotaTicker := time.NewTicker(quotaSampleInterval)
+	pgidDone := make(chan error, 1)
+	go func() { pgidDone <- e.deps.Store.SetRunProcessGroup(run.RunID, pgid) }()
+	quotaInterval := e.quotaInterval
+	if quotaInterval <= 0 {
+		quotaInterval = quotaSampleInterval
+	}
+	quotaTicker := time.NewTicker(quotaInterval)
 	defer quotaTicker.Stop()
 	groupTicker := time.NewTicker(groupPollInterval)
 	defer groupTicker.Stop()
 
+	cleanupTimeout := e.cleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = groupDrainTimeout
+	}
 	var waitErr error
-	parentDone, pipesDone := false, false
+	parentDone, pipesDone, processGroupRecorded := false, false, false
 	status, reason := "", ""
 	ctxDone := ctx.Done()
-	var killedAt time.Time
+	timerDone := timer.C
 	outputUnverified := false
-	forcedPipeClose := false
-	kill := func(nextStatus, nextReason string) {
-		if status != "" {
+	forcedCleanup := false
+	var cleanupDeadline time.Time
+	appendReason := func(message string) {
+		if message == "" || strings.Contains(reason, message) {
 			return
 		}
-		status, reason, killedAt = nextStatus, nextReason, time.Now()
-		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
-			reason += fmt.Sprintf("; kill process group: %v", err)
+		if reason == "" {
+			reason = message
+		} else {
+			reason += "; " + message
 		}
+	}
+	killGroup := func() {
+		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
+			appendReason(fmt.Sprintf("kill process group: %v", err))
+			// The inspector is replaceable and may itself be unavailable. Killing
+			// the child directly still guarantees cmd.Wait can reap the process;
+			// any unverified descendants make the output unusable below.
+			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
+				appendReason(fmt.Sprintf("kill command process: %v", processErr))
+			}
+		}
+	}
+	terminate := func(nextStatus, nextReason string, cancellationWins bool) {
+		if status == "" || cancellationWins {
+			status, reason = nextStatus, nextReason
+		}
+		if cleanupDeadline.IsZero() {
+			cleanupDeadline = time.Now().Add(cleanupTimeout)
+		}
+		killGroup()
 	}
 
 	for {
 		select {
 		case <-ctxDone:
 			ctxDone = nil
-			kill(RunStatusCancelled, e.cancelReason(run.RunID))
-		case <-timer.C:
-			kill(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout))
+			terminate(RunStatusCancelled, e.cancelReason(run.RunID), true)
+		case <-timerDone:
+			timerDone = nil
+			terminate(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout), false)
 		case <-quotaTicker.C:
 			usage, usageErr := runUsage(e.deps.Store, e.deps.Settings.StagingRoot(), run.RunID, run.ExchangeDir)
 			if usageErr != nil {
-				kill(RunStatusFailed, usageErr.Error())
+				terminate(RunStatusFailed, usageErr.Error(), false)
 			} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
-				kill(RunStatusFailed, fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit))
+				terminate(RunStatusFailed, fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit), false)
 			}
 		case waitErr = <-waitDone:
 			parentDone = true
 			waitDone = nil
+			if cleanupDeadline.IsZero() {
+				cleanupDeadline = time.Now().Add(cleanupTimeout)
+			}
 		case <-drainDone:
 			pipesDone = true
 			drainDone = nil
+		case persistErr := <-pgidDone:
+			processGroupRecorded = true
+			pgidDone = nil
+			if persistErr != nil {
+				terminate(RunStatusFailed, fmt.Sprintf("persist command process group: %v", persistErr), false)
+			}
 		case <-groupTicker.C:
 		}
 
 		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
 		groupDead := inspectErr == nil && identity.State == GroupDead
-		if parentDone && pipesDone && groupDead {
+		if inspectErr != nil {
+			outputUnverified = true
+			terminate(RunStatusFailed, fmt.Sprintf("inspect process group: %v", inspectErr), false)
+		}
+		if parentDone && pipesDone && groupDead && processGroupRecorded {
 			break
 		}
-		if !killedAt.IsZero() && groupDead && !pipesDone && !forcedPipeClose && time.Since(killedAt) > groupDrainTimeout {
-			// No group member can write after verified death. Closing only the
-			// readers bounds a wedged pipe drain without publishing while a
-			// descendant could still mutate output or the exchange directory.
-			forcedPipeClose = true
+		if cleanupDeadline.IsZero() || time.Now().Before(cleanupDeadline) {
+			continue
+		}
+
+		if status == "" && !groupDead {
+			// A parent may exit while descendants continue. Give the group one
+			// bounded grace period, then terminate it and allow one bounded reap.
+			terminate(RunStatusFailed, "process group remained alive after command exit", false)
+			cleanupDeadline = time.Now().Add(cleanupTimeout)
+			continue
+		}
+
+		forcedCleanup = true
+		if !groupDead {
 			outputUnverified = true
+			appendReason("process group did not exit before cleanup deadline")
+			killGroup()
+		}
+		if !pipesDone {
+			outputUnverified = true
+			if status == "" {
+				status = RunStatusFailed
+			}
+			appendReason("output pipes did not close before cleanup deadline")
 			_ = stdoutR.Close()
 			_ = stderrR.Close()
 		}
+		if !processGroupRecorded {
+			outputUnverified = true
+			if status == "" {
+				status = RunStatusFailed
+			}
+			appendReason("process-group persistence did not finish before cleanup deadline")
+		}
+		if parentDone && pipesDone {
+			break
+		}
+		// Closing our pipe readers and killing the direct child make these
+		// channels ready in normal Unix operation. Keep the loop bounded even
+		// if an injected inspector failed both operations.
+		cleanupDeadline = time.Now().Add(cleanupTimeout)
+	}
+
+	// A final sample closes the sub-second successful-writer hole. Sampling is
+	// still approximate while a command runs, but an over-limit run can never
+	// be published as succeeded merely because it exited before the first tick.
+	if status == "" {
+		usage, usageErr := runUsage(e.deps.Store, e.deps.Settings.StagingRoot(), run.RunID, run.ExchangeDir)
+		if usageErr != nil {
+			status, reason = RunStatusFailed, usageErr.Error()
+		} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
+			status = RunStatusFailed
+			reason = fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit)
+		}
+	}
+	if record, _, readErr := e.deps.Store.Run(run.RunID); readErr == nil && record.CancelRequested {
+		status, reason = RunStatusCancelled, record.Error
+	} else if readErr != nil && status == "" {
+		status, reason = RunStatusFailed, fmt.Sprintf("read cancellation latch: %v", readErr)
 	}
 
 	finish := RunFinish{OutputTail: tail.String(), OutputUnverified: outputUnverified, FinishedAt: time.Now().UTC()}
@@ -264,6 +359,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			finish.Status = RunStatusFailed
 			finish.Error = commandExitError(waitErr, finish.ExitCode)
 		}
+	}
+	if forcedCleanup && finish.Error == "" {
+		finish.Error = "command cleanup exceeded its deadline"
 	}
 	return e.finish(run, finish)
 }
@@ -294,6 +392,23 @@ func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 	record, _, err := e.deps.Store.Run(run.RunID)
 	if err != nil {
 		return Outcome{Status: finish.Status, Error: finish.Error + "; read terminal command: " + err.Error()}
+	}
+	if !RunStatusTerminal(record.Status) && record.CancelRequested && finish.Status != RunStatusCancelled {
+		cancelled := finish
+		cancelled.Status = RunStatusCancelled
+		cancelled.Error = record.Error
+		cancelled.ExitCode = nil
+		won, err = e.deps.Store.FinishRun(run.RunID, cancelled)
+		if err != nil {
+			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error + "; persist terminal command: " + err.Error()}
+		}
+		if won {
+			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error}
+		}
+		record, _, err = e.deps.Store.Run(run.RunID)
+		if err != nil {
+			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error + "; read terminal command: " + err.Error()}
+		}
 	}
 	return Outcome{Status: record.Status, Error: record.Error}
 }

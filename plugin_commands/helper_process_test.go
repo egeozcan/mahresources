@@ -89,6 +89,22 @@ func runPluginCommandHelper(args []string) int {
 		for {
 			time.Sleep(time.Second)
 		}
+	case "spawn-detached-descendant":
+		if len(args) != 2 {
+			return 2
+		}
+		child := exec.Command(os.Args[0], helperProcessFlag, "descendant", args[1])
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		configureDetachedProcess(child)
+		if err := child.Start(); err != nil {
+			return 3
+		}
+		if err := os.WriteFile(filepath.Join(args[1], "descendant.pid"), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			return 4
+		}
+		fmt.Fprintln(os.Stdout, "parent-left-detached-descendant")
+		return 0
 	case "descendant":
 		if len(args) != 2 {
 			return 2
@@ -108,7 +124,7 @@ func runPluginCommandHelper(args []string) int {
 			return 3
 		}
 		return code
-	case "write":
+	case "write", "write-exit":
 		if len(args) != 3 {
 			return 2
 		}
@@ -120,6 +136,13 @@ func runPluginCommandHelper(args []string) int {
 			return 4
 		}
 		fmt.Fprintln(os.Stdout, "wrote payload")
+		if args[0] == "write-exit" {
+			return 0
+		}
+		for {
+			time.Sleep(time.Second)
+		}
+	case "sleep":
 		for {
 			time.Sleep(time.Second)
 		}

@@ -38,10 +38,13 @@ func (s runnerTestSettings) OutputRetention() time.Duration   { return time.Hour
 func (s runnerTestSettings) CommandPath() string              { return s.commandDir }
 
 type runnerTestStore struct {
-	mu      sync.Mutex
-	runs    map[string]RunRecord
-	outputs map[string]RunOutput
-	imports []ImportRecord
+	mu                     sync.Mutex
+	runs                   map[string]RunRecord
+	outputs                map[string]RunOutput
+	imports                []ImportRecord
+	setProcessGroupStarted chan struct{}
+	setProcessGroupRelease <-chan struct{}
+	beforeFinish           func(string, RunFinish)
 }
 
 func newRunnerTestStore() *runnerTestStore {
@@ -70,6 +73,15 @@ func (s *runnerTestStore) MarkRunRunning(id string, started time.Time) (bool, er
 	return true, nil
 }
 func (s *runnerTestStore) SetRunProcessGroup(id string, pgid int) error {
+	if s.setProcessGroupStarted != nil {
+		select {
+		case s.setProcessGroupStarted <- struct{}{}:
+		default:
+		}
+	}
+	if s.setProcessGroupRelease != nil {
+		<-s.setProcessGroupRelease
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, ok := s.runs[id]
@@ -95,6 +107,9 @@ func (s *runnerTestStore) RequestRunCancel(id, reason string) error {
 	return nil
 }
 func (s *runnerTestStore) FinishRun(id string, finish RunFinish) (bool, error) {
+	if s.beforeFinish != nil {
+		s.beforeFinish(id, finish)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, ok := s.runs[id]
@@ -102,6 +117,9 @@ func (s *runnerTestStore) FinishRun(id string, finish RunFinish) (bool, error) {
 		return false, nil
 	}
 	if run.Status != RunStatusRunning && finish.Status != RunStatusCancelled && finish.Status != RunStatusInterrupted {
+		return false, nil
+	}
+	if (finish.Status == RunStatusSucceeded || finish.Status == RunStatusFailed) && run.CancelRequested {
 		return false, nil
 	}
 	run.Status, run.Error, run.ExitCode = finish.Status, finish.Error, finish.ExitCode
@@ -427,6 +445,151 @@ func TestRunnerCancellationKillsProcessGroup(t *testing.T) {
 	if outcome.Status != RunStatusCancelled {
 		t.Fatalf("outcome = %+v", outcome)
 	}
+}
+
+func TestRunnerTimeoutStartsWhenTheProcessSpawns(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	release := make(chan struct{})
+	defer close(release)
+	store := newRunnerTestStore()
+	store.setProcessGroupStarted = make(chan struct{}, 1)
+	store.setProcessGroupRelease = release
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "persist-delay", []string{"mah-helper", helperProcessFlag, "sleep"}, 75*time.Millisecond)
+
+	result := make(chan Outcome, 1)
+	go func() { result <- executor.Execute(context.Background(), run) }()
+	select {
+	case <-store.setProcessGroupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("process group persistence did not start")
+	}
+	select {
+	case outcome := <-result:
+		if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waited for process-group persistence")
+	}
+}
+
+func TestRunnerDurableCancellationWinsALateTerminalRace(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	var once sync.Once
+	store.beforeFinish = func(id string, finish RunFinish) {
+		if finish.Status == RunStatusSucceeded || finish.Status == RunStatusFailed {
+			once.Do(func() {
+				if err := store.RequestRunCancel(id, "operator cancelled"); err != nil {
+					t.Errorf("RequestRunCancel: %v", err)
+				}
+			})
+		}
+	}
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "late-cancel", []string{"mah-helper", helperProcessFlag, "exit", "0"}, 5*time.Second)
+
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusCancelled || outcome.Error != "operator cancelled" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	record, _, err := store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusCancelled || record.FinishedAt == nil {
+		t.Fatalf("record = %+v", record)
+	}
+}
+
+func TestRunnerBoundsDetachedPipeDrain(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "detached-pipe", []string{"mah-helper", helperProcessFlag, "spawn-detached-descendant", "{{exchange_dir}}"}, 5*time.Second)
+
+	result := make(chan Outcome, 1)
+	go func() { result <- executor.Execute(context.Background(), run) }()
+	pid := waitForHelperPID(t, filepath.Join(run.ExchangeDir, "descendant.pid"))
+	defer syscall.Kill(pid, syscall.SIGKILL)
+	select {
+	case outcome := <-result:
+		if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "output pipes") {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner waited indefinitely for detached pipe writer")
+	}
+	record, _, err := store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.OutputUnverified {
+		t.Fatalf("record = %+v; want output_unverified", record)
+	}
+}
+
+type failingProcessInspector struct{}
+
+func (failingProcessInspector) InspectGroup(int, string) (GroupIdentity, error) {
+	return GroupIdentity{}, errors.New("inspection unavailable")
+}
+func (failingProcessInspector) KillGroup(int) error { return errors.New("kill unavailable") }
+
+func TestRunnerBoundsInspectionAndKillFailures(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: failingProcessInspector{}})
+	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "inspect-fail", []string{"mah-helper", helperProcessFlag, "sleep"}, 5*time.Second)
+
+	started := time.Now()
+	outcome := executor.Execute(context.Background(), run)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("runner cleanup took %s", elapsed)
+	}
+	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "inspect process group") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	record, _, err := store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.OutputUnverified {
+		t.Fatalf("record = %+v; want output_unverified", record)
+	}
+}
+
+func waitForHelperPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(string(data))
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			return pid
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("helper pid was not written to %s", path)
+	return 0
 }
 
 func processAlive(pid int) bool {
