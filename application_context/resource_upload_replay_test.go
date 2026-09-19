@@ -35,8 +35,8 @@ type faultFs struct {
 	// file that fails after writing this many bytes.
 	failAfter int64
 
-	// guardedPath, when non-empty, makes any Create/Remove/OpenFile that would
-	// touch it record the violation.
+	// guardedPath, when non-empty, makes any Create/Remove/Open/OpenFile that
+	// would touch it record the violation.
 	guardedPath string
 	violated    bool
 }
@@ -53,8 +53,8 @@ func (f *faultFs) FailNextResourceCopyAfter(n int64) {
 	f.failAfter = n
 }
 
-// FailIfDestinationIsTouched makes any Create, Remove or OpenFile for the
-// given path record a violation.
+// FailIfDestinationIsTouched makes any Create, Remove, Open or OpenFile for
+// the given path record a violation.
 func (f *faultFs) FailIfDestinationIsTouched(path string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -102,6 +102,15 @@ func (f *faultFs) Remove(name string) error {
 	}
 	f.mu.Unlock()
 	return f.Fs.Remove(name)
+}
+
+func (f *faultFs) Open(name string) (afero.File, error) {
+	f.mu.Lock()
+	if f.isGuarded(name) {
+		f.violated = true
+	}
+	f.mu.Unlock()
+	return f.Fs.Open(name)
 }
 
 func (f *faultFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
@@ -204,11 +213,11 @@ func TestAddResource_CommittedHashLookupPrecedesDestinationRepair(t *testing.T) 
 	second, err := ctx.AddResource(newBytesFile(payload), "second.bin", &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{Name: "second"},
 	})
-	// The second upload of the same content hits the hash-merge path, which returns
-	// a ResourceExistsError. Either that, or it silently merges (depending on owner).
-	// In both cases, the destination must not be touched.
-	_ = second
-	_ = err
+
+	require.Nil(t, second)
+	var existsErr *ResourceExistsError
+	require.ErrorAs(t, err, &existsErr)
+	require.Equal(t, first.ID, existsErr.ResourceID)
 	ff.AssertDestinationWasNotTouched(t)
 }
 
