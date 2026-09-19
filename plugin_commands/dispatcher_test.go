@@ -137,6 +137,11 @@ func (s *dispatcherTestStore) ClaimImport(ImportClaimRequest) (ImportClaimResult
 	return ImportClaimResult{}, nil
 }
 func (s *dispatcherTestStore) MarkImportRunning(string, time.Time) (bool, error) { return true, nil }
+func (s *dispatcherTestStore) CancelPendingImport(string, string, time.Time) (bool, error) {
+	// Dispatcher-only tests treat jobs accepted by the fake live registry as
+	// already running. Task 9's lifecycle store exercises the pending winner.
+	return false, nil
+}
 func (s *dispatcherTestStore) FinishImport(id string, finish ImportFinish) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

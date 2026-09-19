@@ -119,11 +119,18 @@ func unlinkExchangeRegularAt(dir *os.File, name string, afterLstat func(string))
 	return nil
 }
 
-// unlinkExchangeOpenedRegularAt removes name only when it still identifies the
-// exact file descriptor admitted for import. A command replacing the pathname
-// while the import runs keeps the replacement and turns cleanup into a
-// retryable imported-pending-delete condition.
+// unlinkExchangeOpenedRegularAt refuses automatic cleanup unless deletion can
+// be bound atomically to the descriptor admitted for import. Unix unlinkat is
+// pathname-bound, not descriptor-bound: even after an identity check, another
+// process using the same service account can replace name before Unlinkat and
+// make us delete unrelated bytes. No supported Unix target provides a portable
+// unlink-by-fd primitive, so success remains durable as imported-pending-delete
+// and descriptor-anchored run sweep removes the leftover later.
 func unlinkExchangeOpenedRegularAt(dir *os.File, name string, admitted *os.File) error {
+	return unlinkExchangeOpenedRegularAtWithHook(dir, name, admitted, nil)
+}
+
+func unlinkExchangeOpenedRegularAtWithHook(dir *os.File, name string, admitted *os.File, afterIdentityCheck func()) error {
 	if admitted == nil {
 		return errExchangePathChanged
 	}
@@ -145,7 +152,10 @@ func unlinkExchangeOpenedRegularAt(dir *os.File, name string, admitted *os.File)
 	if !os.SameFile(admittedInfo, currentInfo) {
 		return errExchangePathChanged
 	}
-	return unix.Unlinkat(int(dir.Fd()), name, 0)
+	if afterIdentityCheck != nil {
+		afterIdentityCheck()
+	}
+	return errExchangeAtomicUnlinkUnavailable
 }
 
 func exchangeRegularAt(dir *os.File, name string) error {

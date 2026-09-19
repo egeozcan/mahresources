@@ -17,6 +17,7 @@ import (
 var errPluginCommandTransitionLost = errors.New("plugin command transition lost")
 
 var _ plugin_commands.Store = (*MahresourcesContext)(nil)
+var _ plugin_commands.PendingImportCanceller = (*MahresourcesContext)(nil)
 
 func copyCommandUint(value *uint) *uint {
 	if value == nil {
@@ -437,6 +438,41 @@ func (ctx *MahresourcesContext) MarkImportRunning(importID string, started time.
 		}
 		if mapped.RowsAffected != 1 {
 			return fmt.Errorf("plugin command import %q has no active map entry", importID)
+		}
+		return nil
+	})
+	if errors.Is(err, errPluginCommandTransitionLost) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CancelPendingImport is plugin disable's half of the pending/running race.
+// Its status predicate must remain narrower than FinishImport's: a worker whose
+// MarkImportRunning committed first owns the import and is allowed to finish.
+func (ctx *MahresourcesContext) CancelPendingImport(importID, reason string, finished time.Time) (bool, error) {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		claim := tx.Model(&models.PluginCommandImport{}).
+			Where("id = ? AND status = ?", importID, plugin_commands.ImportStatusPending).
+			Updates(map[string]any{
+				"status": plugin_commands.ImportStatusCancelled, "error": reason, "finished_at": finished,
+			})
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected != 1 {
+			return errPluginCommandTransitionLost
+		}
+		mapped := tx.Model(&models.PluginCommandImportMap{}).
+			Where("import_id = ? AND status = ?", importID, plugin_commands.ImportStatusPending).
+			Updates(map[string]any{
+				"status": plugin_commands.ImportStatusCancelled, "error": reason,
+			})
+		if mapped.Error != nil {
+			return mapped.Error
+		}
+		if mapped.RowsAffected != 1 {
+			return fmt.Errorf("plugin command import %q has no pending map entry", importID)
 		}
 		return nil
 	})

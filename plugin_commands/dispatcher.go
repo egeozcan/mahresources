@@ -108,6 +108,7 @@ type activeCommand struct {
 }
 
 type activeImport struct {
+	plugin  string
 	cancel  context.CancelCauseFunc
 	release func()
 }
@@ -487,6 +488,38 @@ func (d *Dispatcher) disableQueuedImports(state *dispatcherState, plugin, reason
 		releaseImportItem(item, ImportResult{ImportID: item.spec.ImportID, Error: reason})
 	}
 	state.imports[plugin] = kept
+
+	// Registration with the live-job adapter moves an item out of the private
+	// queue before its worker wins pending -> running. Disable must include that
+	// gap. The store CAS is the boundary: if cancellation wins, stop the worker;
+	// if MarkImportRunning won first, leave the running commit lane alone.
+	var canceller PendingImportCanceller
+	for importID, active := range state.activeImports {
+		if active.plugin != plugin {
+			continue
+		}
+		if canceller == nil {
+			var ok bool
+			canceller, ok = d.deps.Store.(PendingImportCanceller)
+			if !ok {
+				if firstErr == nil {
+					firstErr = errors.New("plugin command store cannot cancel pending imports")
+				}
+				break
+			}
+		}
+		won, err := canceller.CancelPendingImport(importID, reason, time.Now().UTC())
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if won {
+			active.cancel(errors.New(reason))
+		}
+	}
+
 	for _, failure := range state.failedImportDispatch {
 		if failure.item.spec.PluginName != plugin {
 			continue
@@ -895,7 +928,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 
 func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	runCtx, cancel := context.WithCancelCause(context.Background())
-	state.activeImports[item.spec.ImportID] = activeImport{cancel: cancel, release: item.release}
+	state.activeImports[item.spec.ImportID] = activeImport{plugin: item.spec.PluginName, cancel: cancel, release: item.release}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
 		defer func() {
 			if item.cleanup != nil {

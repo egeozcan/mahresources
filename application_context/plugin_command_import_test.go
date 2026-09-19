@@ -216,12 +216,8 @@ func (commandImportTestExecutor) Execute(context.Context, plugin_commands.Queued
 	return plugin_commands.Outcome{Status: plugin_commands.RunStatusFailed, Error: "unexpected command execution"}
 }
 
-func TestPluginCommandImportDispatcherPersistsMapAndResource(t *testing.T) {
-	ctx, _, _, generation := commandImportContext(t)
-	actor, err := ctx.CreateUser(&UserInput{Username: "dispatcher-importer", Password: "password1", Role: models.RoleEditor})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestPluginCommandImportDispatcherPersistsMapAndScopedGroupAssociation(t *testing.T) {
+	ctx, actor, scopeRoot, generation := commandImportContext(t)
 	root := t.TempDir()
 	runID := "composed-import-run"
 	finished := time.Now().UTC()
@@ -262,7 +258,9 @@ func TestPluginCommandImportDispatcherPersistsMapAndResource(t *testing.T) {
 	})
 	got, err := dispatcher.SubmitImport(plugin_commands.ImportSubmission{
 		Access: plugin_commands.Access{PluginName: "commanded", ActorUserID: &actor.ID},
-		RunID:  runID, Name: "result.bin", Fields: plugin_commands.ResourceFields{Name: "composed"},
+		RunID:  runID, Name: "result.bin", Fields: plugin_commands.ResourceFields{
+			Name: "composed", GroupIDs: []uint{scopeRoot.ID},
+		},
 		PluginGeneration: generation, ActorUserID: &actor.ID,
 	})
 	if err != nil {
@@ -282,8 +280,14 @@ func TestPluginCommandImportDispatcherPersistsMapAndResource(t *testing.T) {
 		t.Fatalf("map = %+v found=%v err=%v", mapped, found, err)
 	}
 	var resource models.Resource
-	if err := ctx.db.First(&resource, *mapped.ResourceID).Error; err != nil {
+	if err := ctx.db.Preload("Groups").First(&resource, *mapped.ResourceID).Error; err != nil {
 		t.Fatal(err)
+	}
+	if resource.CreatedByUserId == nil || *resource.CreatedByUserId != actor.ID {
+		t.Fatalf("creator = %v, want scoped actor %d", resource.CreatedByUserId, actor.ID)
+	}
+	if len(resource.Groups) != 1 || resource.Groups[0].ID != scopeRoot.ID {
+		t.Fatalf("groups = %+v, want scoped group %d", resource.Groups, scopeRoot.ID)
 	}
 	stored, err := afero.ReadFile(ctx.fs, resource.Location)
 	if err != nil {

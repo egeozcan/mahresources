@@ -17,14 +17,15 @@ const (
 )
 
 var (
-	ErrExchangeUnsupported      = errors.New("plugin command exchange folders are unsupported on this platform")
-	ErrExchangeRunNotFound      = errors.New("run not found")
-	ErrExchangeFileNotFound     = errors.New("file not found")
-	ErrExchangeRunSwept         = errors.New("run swept")
-	ErrExchangeOutputUnverified = errors.New("output unverified")
-	ErrExchangeRunNotFinished   = errors.New("run not finished")
-	ErrExchangeFileNotRegular   = errors.New("file is not a regular file")
-	errExchangePathChanged      = errors.New("exchange path changed during operation")
+	ErrExchangeUnsupported             = errors.New("plugin command exchange folders are unsupported on this platform")
+	ErrExchangeRunNotFound             = errors.New("run not found")
+	ErrExchangeFileNotFound            = errors.New("file not found")
+	ErrExchangeRunSwept                = errors.New("run swept")
+	ErrExchangeOutputUnverified        = errors.New("output unverified")
+	ErrExchangeRunNotFinished          = errors.New("run not finished")
+	ErrExchangeFileNotRegular          = errors.New("file is not a regular file")
+	errExchangePathChanged             = errors.New("exchange path changed during operation")
+	errExchangeAtomicUnlinkUnavailable = errors.New("identity-bound exchange unlink is unavailable")
 )
 
 type Entry struct {

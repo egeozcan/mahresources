@@ -106,9 +106,18 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 	if name == "" {
 		name = source.FileName
 	}
+	// The command-import schema intentionally exposes no arbitrary owner_id.
+	// A scoped actor's resource therefore belongs to that actor's scope root;
+	// otherwise an ownerless insert is rejected by the scope create callback
+	// and, worse, would be invisible to the actor immediately after success.
+	var ownerID uint
+	if principal != nil && principal.ScopeGroupID != nil {
+		ownerID = *principal.ScopeGroupID
+	}
 	query := &query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{
-		Name: name, Description: fields.Description, Groups: append([]uint(nil), fields.GroupIDs...),
-		Tags: append([]uint(nil), fields.TagIDs...), Meta: meta, OriginalName: source.FileName,
+		Name: name, Description: fields.Description, OwnerId: ownerID,
+		Groups: append([]uint(nil), fields.GroupIDs...), Tags: append([]uint(nil), fields.TagIDs...),
+		Meta: meta, OriginalName: source.FileName,
 	}}
 	resource, err := bound.addResourceWithOptions(
 		&contextImportFile{File: file, ctx: callCtx}, source.FileName, query,

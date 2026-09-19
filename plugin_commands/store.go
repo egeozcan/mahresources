@@ -10,6 +10,14 @@ var (
 	ErrRunNotCancellable = errors.New("command run is not cancellable")
 )
 
+// PendingImportCanceller is the narrow compare-and-set used by plugin disable.
+// It deliberately competes only with pending -> running so whichever durable
+// transition wins defines the disable boundary: pending work is cancelled,
+// while an import already marked running is allowed to finish.
+type PendingImportCanceller interface {
+	CancelPendingImport(importID, reason string, finished time.Time) (bool, error)
+}
+
 type Store interface {
 	CreateRun(RunRecord, RunOutput) error
 	MarkRunRunning(id string, started time.Time) (bool, error)

@@ -369,6 +369,40 @@ func TestPluginCommandStoreImportTransitionsAndRecovery(t *testing.T) {
 	require.Equal(t, resourceID, *entry.ResourceID)
 }
 
+func TestPluginCommandStoreCancelPendingImportLosesToRunningTransition(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC()
+	owner := uint(81)
+	require.NoError(t, ctx.CreateRun(testRun("disable-boundary", &owner, false, now), testOutput("disable-boundary", now)))
+	for _, item := range []struct{ id, name string }{{"still-pending", "a"}, {"already-running", "b"}} {
+		_, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
+			ImportID: item.id, RunID: "disable-boundary", FileName: item.name,
+			PluginGeneration: 1, CreatedByUserID: &owner, CreatedAt: now,
+		})
+		require.NoError(t, err)
+	}
+	won, err := ctx.MarkImportRunning("already-running", now.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+
+	won, err = ctx.CancelPendingImport("still-pending", "plugin disabled", now.Add(2*time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = ctx.CancelPendingImport("already-running", "plugin disabled", now.Add(2*time.Second))
+	require.NoError(t, err)
+	require.False(t, won)
+
+	pendingMap, found, err := ctx.ImportMap("disable-boundary", "a")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, plugin_commands.ImportStatusCancelled, pendingMap.Status)
+	require.Equal(t, "plugin disabled", pendingMap.Error)
+	runningMap, found, err := ctx.ImportMap("disable-boundary", "b")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, plugin_commands.ImportStatusRunning, runningMap.Status)
+}
+
 func TestPluginCommandStampedModelsInventoryIncludesOnlyActorOwnedRows(t *testing.T) {
 	seen := map[string]bool{}
 	for _, model := range stampedModels() {
