@@ -1,0 +1,455 @@
+//go:build !windows
+
+package plugin_commands
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+)
+
+type runnerTestSettings struct {
+	root       string
+	commandDir string
+	pending    int
+	perRun     int64
+	global     int64
+}
+
+func (s runnerTestSettings) StagingRoot() string { return s.root }
+func (s runnerTestSettings) PendingPerPluginLimit() int {
+	if s.pending <= 0 {
+		return 100
+	}
+	return s.pending
+}
+func (s runnerTestSettings) PerRunQuota() int64               { return s.perRun }
+func (s runnerTestSettings) GlobalStagingQuota() int64        { return s.global }
+func (s runnerTestSettings) ExchangeRetention() time.Duration { return time.Hour }
+func (s runnerTestSettings) OutputRetention() time.Duration   { return time.Hour }
+func (s runnerTestSettings) CommandPath() string              { return s.commandDir }
+
+type runnerTestStore struct {
+	mu      sync.Mutex
+	runs    map[string]RunRecord
+	outputs map[string]RunOutput
+	imports []ImportRecord
+}
+
+func newRunnerTestStore() *runnerTestStore {
+	return &runnerTestStore{runs: make(map[string]RunRecord), outputs: make(map[string]RunOutput)}
+}
+
+func (s *runnerTestStore) CreateRun(run RunRecord, output RunOutput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.runs[run.ID]; exists {
+		return errors.New("duplicate run")
+	}
+	s.runs[run.ID] = run
+	s.outputs[run.ID] = output
+	return nil
+}
+func (s *runnerTestStore) MarkRunRunning(id string, started time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[id]
+	if !ok || run.Status != RunStatusQueued {
+		return false, nil
+	}
+	run.Status, run.StartedAt = RunStatusRunning, &started
+	s.runs[id] = run
+	return true, nil
+}
+func (s *runnerTestStore) SetRunProcessGroup(id string, pgid int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[id]
+	if !ok || run.Status != RunStatusRunning || run.ProcessGroupID != nil {
+		return errors.New("invalid process group transition")
+	}
+	run.ProcessGroupID = &pgid
+	s.runs[id] = run
+	return nil
+}
+func (s *runnerTestStore) RequestRunCancel(id, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[id]
+	if !ok {
+		return ErrRunNotFound
+	}
+	if RunStatusTerminal(run.Status) || run.CancelRequested {
+		return ErrRunNotCancellable
+	}
+	run.CancelRequested, run.Error = true, reason
+	s.runs[id] = run
+	return nil
+}
+func (s *runnerTestStore) FinishRun(id string, finish RunFinish) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[id]
+	if !ok || RunStatusTerminal(run.Status) {
+		return false, nil
+	}
+	if run.Status != RunStatusRunning && finish.Status != RunStatusCancelled && finish.Status != RunStatusInterrupted {
+		return false, nil
+	}
+	run.Status, run.Error, run.ExitCode = finish.Status, finish.Error, finish.ExitCode
+	run.OutputUnverified, run.FinishedAt = finish.OutputUnverified, &finish.FinishedAt
+	s.runs[id] = run
+	output := s.outputs[id]
+	output.OutputTail = finish.OutputTail
+	s.outputs[id] = output
+	return true, nil
+}
+func (s *runnerTestStore) Run(id string) (RunRecord, RunOutput, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[id]
+	if !ok {
+		return RunRecord{}, RunOutput{}, ErrRunNotFound
+	}
+	return run, s.outputs[id], nil
+}
+func (s *runnerTestStore) Runs(Access) ([]RunView, error)                     { return nil, nil }
+func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error)              { return nil, nil }
+func (s *runnerTestStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) { return nil, nil }
+func (s *runnerTestStore) PruneRunOutputs(time.Time) (int64, error)           { return 0, nil }
+func (s *runnerTestStore) ImportMap(string, string) (ImportMapEntry, bool, error) {
+	return ImportMapEntry{}, false, nil
+}
+func (s *runnerTestStore) ClaimImport(ImportClaimRequest) (ImportClaimResult, error) {
+	return ImportClaimResult{}, nil
+}
+func (s *runnerTestStore) MarkImportRunning(string, time.Time) (bool, error) { return true, nil }
+func (s *runnerTestStore) FinishImport(string, ImportFinish) (bool, error)   { return true, nil }
+func (s *runnerTestStore) InterruptNonterminalImports(time.Time) error       { return nil }
+func (s *runnerTestStore) NonterminalImports() ([]ImportRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ImportRecord(nil), s.imports...), nil
+}
+func (s *runnerTestStore) HasNonterminalImports(string) (bool, error) { return false, nil }
+
+func TestRunnerAdmissionPersistsRedactedInvocationAndCleansRejectedFolder(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, pending: 1, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	jobs := &dispatcherTestJobs{}
+	dispatcher := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: executor, Settings: settings})
+	if err := dispatcher.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = dispatcher.Stop(ctx)
+	})
+	declaration := Declaration{
+		Name: "record", Timeout: time.Minute, SensitiveParams: []string{"token"},
+		Argv: []string{"mah-helper", helperProcessFlag, "record", "{{exchange_dir}}", "{{token}}"},
+	}
+	firstID, err := dispatcher.Submit(CommandRequest{PluginName: "plug", Declaration: declaration, Params: map[string]string{"token": "top-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, output, err := store.Run(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(record.ParamsJSON, "top-secret") || strings.Contains(output.ArgvJSON, "top-secret") {
+		t.Fatalf("sensitive parameter persisted: run=%+v output=%+v", record, output)
+	}
+	if !strings.Contains(record.ParamsJSON, redactedValue) || !strings.Contains(output.ArgvJSON, redactedValue) {
+		t.Fatalf("redacted value missing: run=%+v output=%+v", record, output)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := dispatcher.Submit(CommandRequest{PluginName: "plug", Declaration: declaration, Params: map[string]string{"token": "another"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = dispatcher.Submit(CommandRequest{PluginName: "plug", Declaration: declaration, Params: map[string]string{"token": "rejected"}})
+	if err == nil || !strings.Contains(err.Error(), "queue is full") {
+		t.Fatalf("fourth Submit error = %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "plugin_exchange", "plug"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("run directories = %d; want 3 (rejected admission cleaned)", len(entries))
+	}
+}
+
+func TestRunnerEnvironmentArgvPathAndRedaction(t *testing.T) {
+	root := t.TempDir()
+	trusted := t.TempDir()
+	rogue := t.TempDir()
+	helperExecutable(t, trusted, "mah-helper")
+	rogueMarker := filepath.Join(root, "rogue-ran")
+	roguePath := filepath.Join(rogue, "mah-helper")
+	if err := os.WriteFile(roguePath, []byte("#!/bin/sh\ntouch "+rogueMarker+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", rogue+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", "/operator/home")
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("TZ", "UTC")
+	t.Setenv("SHOULD_NOT_LEAK", "secret")
+
+	settings := runnerTestSettings{root: root, commandDir: trusted, perRun: 1 << 20, global: 1 << 21}
+	store := newRunnerTestStore()
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	runID := "0123456789abcdef0123456789abcdef"
+	exchange := filepath.Join(root, "plugin_exchange", "plug", runID)
+	declaration := Declaration{
+		Name: "record", Timeout: 5 * time.Second, SensitiveParams: []string{"token"},
+		Argv: []string{"mah-helper", helperProcessFlag, "record", "{{exchange_dir}}", "{{token}}", "literal with spaces", "$(not-shell)"},
+	}
+	invocation, err := BuildInvocation(declaration, map[string]string{"token": "top-secret"}, exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := QueuedRun{RunID: runID, ExchangeDir: exchange, Invocation: invocation, Request: CommandRequest{PluginName: "plug", Declaration: declaration}}
+	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
+		t.Fatal(err)
+	}
+	params, _ := json.Marshal(invocation.ParamView)
+	argv, _ := json.Marshal(invocation.RedactedArgv)
+	if err := store.CreateRun(RunRecord{ID: runID, PluginName: "plug", Status: RunStatusQueued, ParamsJSON: string(params)}, RunOutput{RunID: runID, ArgvJSON: string(argv)}); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	encoded, err := os.ReadFile(filepath.Join(exchange, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record helperRecord
+	if err := json.Unmarshal(encoded, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Arg0 != "mah-helper" {
+		t.Fatalf("argv[0] = %q; want manifest basename", record.Arg0)
+	}
+	wantArgs := []string{"top-secret", "literal with spaces", "$(not-shell)"}
+	if strings.Join(record.Args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("argv = %#v; want %#v", record.Args, wantArgs)
+	}
+	gotCWD, err := os.Stat(record.Cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCWD, err := os.Stat(exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(gotCWD, wantCWD) {
+		t.Fatalf("cwd = %q; want same directory as %q", record.Cwd, exchange)
+	}
+	if record.Stdin != "" {
+		t.Fatalf("stdin = %q; want EOF", record.Stdin)
+	}
+	wantEnv := map[string]string{
+		"PATH": trusted, "HOME": "/operator/home", "TMPDIR": filepath.Join(exchange, ".tmp"),
+		"LANG": "en_US.UTF-8", "TZ": "UTC", "MAHR_PLUGIN_NAME": "plug",
+		"MAHR_COMMAND_RUN_ID": runID, "MAHR_EXCHANGE_DIR": exchange,
+	}
+	gotEnv := make(map[string]string)
+	for _, item := range record.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			gotEnv[key] = value
+		}
+	}
+	if len(gotEnv) != len(wantEnv) {
+		t.Fatalf("environment = %#v; want only %#v", gotEnv, wantEnv)
+	}
+	for key, want := range wantEnv {
+		if gotEnv[key] != want {
+			t.Fatalf("environment %s = %q; want %q", key, gotEnv[key], want)
+		}
+	}
+	if _, err := os.Stat(rogueMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ambient PATH executable ran: %v", err)
+	}
+	persisted, output, err := store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(persisted.ParamsJSON, "top-secret") || strings.Contains(output.ArgvJSON, "top-secret") {
+		t.Fatalf("sensitive parameter persisted: run=%+v output=%+v", persisted, output)
+	}
+	if !strings.Contains(output.OutputTail, "stdout-record") || !strings.Contains(output.OutputTail, "stderr-record") {
+		t.Fatalf("combined output = %q", output.OutputTail)
+	}
+	for _, path := range []string{exchange, filepath.Join(exchange, ".tmp")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Fatalf("%s mode = %o; want 700", path, info.Mode().Perm())
+		}
+	}
+}
+
+func TestRunnerRejectsInvalidCommandPath(t *testing.T) {
+	for _, commandPath := range []string{"", "relative", string(os.PathListSeparator) + "/bin"} {
+		if _, err := resolveExecutable("tool", commandPath); err == nil {
+			t.Fatalf("resolveExecutable accepted command path %q", commandPath)
+		}
+	}
+}
+
+func TestRunnerExitStatusMappingAndCannotStart(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "nonzero", []string{"mah-helper", helperProcessFlag, "exit", "7"}, 5*time.Second)
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "status 7") {
+		t.Fatalf("nonzero outcome = %+v", outcome)
+	}
+	record, _, _ := store.Run(run.RunID)
+	if record.ExitCode == nil || *record.ExitCode != 7 {
+		t.Fatalf("exit code = %v; want 7", record.ExitCode)
+	}
+
+	badPath := filepath.Join(commandDir, "bad-executable")
+	if err := os.WriteFile(badPath, []byte("not an executable format"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bad := seedRunnerRun(t, executor, store, settings, "bad", []string{"bad-executable"}, 5*time.Second)
+	outcome = executor.Execute(context.Background(), bad)
+	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "start command") {
+		t.Fatalf("cannot-start outcome = %+v", outcome)
+	}
+}
+
+func TestOutputTailStripsSplitTerminalSequence(t *testing.T) {
+	tail := newOutputTail()
+	_, _ = tail.Write([]byte("before\x1b[3"))
+	_, _ = tail.Write([]byte("1mafter\x00\n"))
+	if got, want := tail.String(), "beforeafter\n"; got != want {
+		t.Fatalf("tail = %q; want %q", got, want)
+	}
+}
+
+func TestOutputTailIsBoundedAndStripsTerminalControls(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "tail", []string{"mah-helper", helperProcessFlag, "tail", strconv.Itoa(outputTailBytes + 4096)}, 5*time.Second)
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	_, output, _ := store.Run(run.RunID)
+	if len(output.OutputTail) != outputTailBytes {
+		t.Fatalf("tail length = %d; want %d", len(output.OutputTail), outputTailBytes)
+	}
+	if strings.ContainsAny(output.OutputTail, "\x00\x1b") {
+		t.Fatalf("terminal controls survived: %q", output.OutputTail[:32])
+	}
+	if !strings.HasSuffix(output.OutputTail, "\n") {
+		t.Fatal("ordinary newline was not preserved")
+	}
+}
+
+func TestRunnerTimeoutKillsProcessGroupBeforePublishingFinalOutput(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "descendant", []string{"mah-helper", helperProcessFlag, "spawn-descendant", "{{exchange_dir}}"}, 250*time.Millisecond)
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	pidBytes, err := os.ReadFile(filepath.Join(run.ExchangeDir, "descendant.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(string(pidBytes))
+	if processAlive(pid) {
+		t.Fatalf("descendant %d remains alive after terminal publication", pid)
+	}
+	time.Sleep(800 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(run.ExchangeDir, "late-write")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("descendant wrote after terminal publication: %v", err)
+	}
+	_, output, _ := store.Run(run.RunID)
+	if strings.Contains(output.OutputTail, "late-descendant-output") {
+		t.Fatal("output arrived after terminal publication")
+	}
+}
+
+func TestRunnerCancellationKillsProcessGroup(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	run := seedRunnerRun(t, executor, store, settings, "cancel", []string{"mah-helper", helperProcessFlag, "spawn-descendant", "{{exchange_dir}}"}, 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for i := 0; i < 200; i++ {
+			if _, err := os.Stat(filepath.Join(run.ExchangeDir, "descendant.pid")); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+	}()
+	outcome := executor.Execute(ctx, run)
+	if outcome.Status != RunStatusCancelled {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func seedRunnerRun(t *testing.T, executor Executor, store *runnerTestStore, settings runnerTestSettings, suffix string, argv []string, timeout time.Duration) QueuedRun {
+	t.Helper()
+	runID := strings.Repeat(string("abcdef0123456789"[len(suffix)%16]), 32)
+	exchange := filepath.Join(settings.root, "plugin_exchange", "plug", runID)
+	declaration := Declaration{Name: "run-" + suffix, Argv: argv, Timeout: timeout}
+	invocation, err := BuildInvocation(declaration, nil, exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := QueuedRun{RunID: runID, ExchangeDir: exchange, Invocation: invocation, Request: CommandRequest{PluginName: "plug", Declaration: declaration}}
+	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
+		t.Fatal(err)
+	}
+	argvJSON, _ := json.Marshal(invocation.RedactedArgv)
+	if err := store.CreateRun(RunRecord{ID: runID, PluginName: "plug", Status: RunStatusQueued}, RunOutput{RunID: runID, ArgvJSON: string(argvJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}

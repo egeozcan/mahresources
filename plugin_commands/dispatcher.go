@@ -21,6 +21,11 @@ const (
 
 var errDispatcherStopped = errors.New("plugin command dispatcher is stopped")
 
+type commandAdmission interface {
+	Prepare(QueuedRun) error
+	Cleanup(QueuedRun)
+}
+
 type Dispatcher struct {
 	deps Dependencies
 
@@ -149,14 +154,25 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	submission := commandSubmission{
-		run:   QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation},
-		reply: make(chan error, 1),
+	run := QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation}
+	admission, prepared := d.deps.Executor.(commandAdmission)
+	if prepared {
+		if err := admission.Prepare(run); err != nil {
+			return "", err
+		}
 	}
+	cleanup := func() {
+		if prepared {
+			admission.Cleanup(run)
+		}
+	}
+	submission := commandSubmission{run: run, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), submission); err != nil {
+		cleanup()
 		return "", err
 	}
 	if err := awaitDispatcherReply(submission.reply, d.done); err != nil {
+		cleanup()
 		return "", err
 	}
 	return runID, nil
@@ -446,7 +462,11 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		stop := context.AfterFunc(liveCtx, cancel)
 		outcome := d.deps.Executor.Execute(execCtx, run)
 		stop()
-		deliverCompletion(run.Request.Completion, Result{OK: outcome.Status == RunStatusSucceeded, Error: outcome.Error, RunID: run.RunID})
+		result := Result{OK: outcome.Status == RunStatusSucceeded, Error: outcome.Error, RunID: run.RunID}
+		if record, _, err := d.deps.Store.Run(run.RunID); err == nil && RunStatusTerminal(record.Status) {
+			result = resultFromRun(record)
+		}
+		deliverCompletion(run.Request.Completion, result)
 		d.post(commandCompleted{runID: run.RunID})
 		return outcome
 	})

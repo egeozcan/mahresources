@@ -1,0 +1,373 @@
+//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+
+package plugin_commands
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+const (
+	quotaSampleInterval = time.Second
+	groupPollInterval   = 20 * time.Millisecond
+	groupDrainTimeout   = 10 * time.Second
+)
+
+type commandExecutor struct {
+	deps RunnerDependencies
+}
+
+func NewExecutor(deps RunnerDependencies) Executor {
+	if deps.Logf == nil {
+		deps.Logf = func(string, ...any) {}
+	}
+	if deps.Inspector == nil {
+		deps.Inspector = nativeProcessInspector{}
+	}
+	return &commandExecutor{deps: deps}
+}
+
+func (e *commandExecutor) Prepare(run QueuedRun) error {
+	if e.deps.Store == nil || e.deps.Settings == nil {
+		return fmt.Errorf("plugin_commands: runner dependencies are incomplete")
+	}
+	root := filepath.Clean(e.deps.Settings.StagingRoot())
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("plugin command staging root must be absolute")
+	}
+	if err := ensureRunPath(root, run); err != nil {
+		return err
+	}
+	usage, err := pathUsageNoSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("measure global staging quota: %w", err)
+	}
+	limit := effectiveQuota(e.deps.Settings.GlobalStagingQuota(), defaultGlobalStagingQuota)
+	if usage > limit {
+		return fmt.Errorf("global staging quota exceeded: %d bytes used, limit %d", usage, limit)
+	}
+
+	pluginDir := filepath.Dir(run.ExchangeDir)
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		return fmt.Errorf("create plugin exchange parent: %w", err)
+	}
+	if err := os.Chmod(pluginDir, 0o700); err != nil {
+		return fmt.Errorf("secure plugin exchange parent: %w", err)
+	}
+	if err := os.Mkdir(run.ExchangeDir, 0o700); err != nil {
+		return fmt.Errorf("create private exchange directory: %w", err)
+	}
+	if err := os.Chmod(run.ExchangeDir, 0o700); err != nil {
+		e.Cleanup(run)
+		return fmt.Errorf("secure exchange directory: %w", err)
+	}
+	tmpDir := filepath.Join(run.ExchangeDir, ".tmp")
+	if err := os.Mkdir(tmpDir, 0o700); err != nil {
+		e.Cleanup(run)
+		return fmt.Errorf("create private command temp directory: %w", err)
+	}
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		e.Cleanup(run)
+		return fmt.Errorf("secure command temp directory: %w", err)
+	}
+	return nil
+}
+
+func ensureRunPath(root string, run QueuedRun) error {
+	if run.RunID == "" || run.Request.PluginName == "" {
+		return fmt.Errorf("plugin command run requires id and plugin name")
+	}
+	want := filepath.Join(root, "plugin_exchange", run.Request.PluginName, run.RunID)
+	if filepath.Clean(run.ExchangeDir) != want {
+		return fmt.Errorf("plugin command exchange directory is outside its managed run path")
+	}
+	for _, value := range []string{run.Request.PluginName, run.RunID} {
+		if value == "." || value == ".." || strings.ContainsAny(value, `/\\`) {
+			return fmt.Errorf("plugin command managed path component is invalid")
+		}
+	}
+	return nil
+}
+
+func (e *commandExecutor) Cleanup(run QueuedRun) {
+	root := filepath.Clean(e.deps.Settings.StagingRoot())
+	if ensureRunPath(root, run) != nil {
+		return
+	}
+	if err := os.RemoveAll(run.ExchangeDir); err != nil {
+		e.deps.Logf("remove rejected plugin command exchange %s: %v", run.RunID, err)
+	}
+}
+
+func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
+	if e.deps.Store == nil || e.deps.Settings == nil {
+		return Outcome{Status: RunStatusFailed, Error: "plugin command runner dependencies are incomplete"}
+	}
+	started := time.Now().UTC()
+	won, err := e.deps.Store.MarkRunRunning(run.RunID, started)
+	if err != nil {
+		return Outcome{Status: RunStatusFailed, Error: fmt.Sprintf("mark command running: %v", err)}
+	}
+	if !won {
+		return e.finishWithoutStart(run, "command was no longer queued")
+	}
+	if err := ctx.Err(); err != nil {
+		return e.finish(run, RunFinish{Status: RunStatusCancelled, Error: e.cancelReason(run.RunID), FinishedAt: time.Now().UTC()})
+	}
+
+	path, err := resolveExecutable(run.Invocation.Argv[0], e.deps.Settings.CommandPath())
+	if err != nil {
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: err.Error(), FinishedAt: time.Now().UTC()})
+	}
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("open null stdin: %v", err), FinishedAt: time.Now().UTC()})
+	}
+	defer stdin.Close()
+
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("create stdout pipe: %v", err), FinishedAt: time.Now().UTC()})
+	}
+	defer stdoutR.Close()
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("create stderr pipe: %v", err), FinishedAt: time.Now().UTC()})
+	}
+	defer stderrR.Close()
+
+	tail := newOutputTail()
+	var drains sync.WaitGroup
+	drains.Add(2)
+	drainDone := make(chan struct{})
+	go func() { defer drains.Done(); _, _ = io.Copy(tail, stdoutR) }()
+	go func() { defer drains.Done(); _, _ = io.Copy(tail, stderrR) }()
+	go func() { drains.Wait(); close(drainDone) }()
+
+	cmd := &exec.Cmd{
+		Path: path,
+		Args: append([]string(nil), run.Invocation.Argv...),
+		Dir:  run.ExchangeDir,
+		Env: []string{
+			"PATH=" + e.deps.Settings.CommandPath(),
+			"HOME=" + os.Getenv("HOME"),
+			"TMPDIR=" + filepath.Join(run.ExchangeDir, ".tmp"),
+			"LANG=" + os.Getenv("LANG"),
+			"TZ=" + os.Getenv("TZ"),
+			"MAHR_PLUGIN_NAME=" + run.Request.PluginName,
+			"MAHR_COMMAND_RUN_ID=" + run.RunID,
+			"MAHR_EXCHANGE_DIR=" + run.ExchangeDir,
+		},
+		Stdin: stdin, Stdout: stdoutW, Stderr: stderrW,
+		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
+	}
+	if err := cmd.Start(); err != nil {
+		stdoutW.Close()
+		stderrW.Close()
+		<-drainDone
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
+	}
+	stdoutW.Close()
+	stderrW.Close()
+	pgid := cmd.Process.Pid
+	if err := e.deps.Store.SetRunProcessGroup(run.RunID, pgid); err != nil {
+		_ = e.deps.Inspector.KillGroup(pgid)
+		_ = cmd.Wait()
+		<-drainDone
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("persist command process group: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
+	}
+
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+	timer := time.NewTimer(run.Request.Declaration.Timeout)
+	defer timer.Stop()
+	quotaTicker := time.NewTicker(quotaSampleInterval)
+	defer quotaTicker.Stop()
+	groupTicker := time.NewTicker(groupPollInterval)
+	defer groupTicker.Stop()
+
+	var waitErr error
+	parentDone, pipesDone := false, false
+	status, reason := "", ""
+	ctxDone := ctx.Done()
+	var killedAt time.Time
+	outputUnverified := false
+	forcedPipeClose := false
+	kill := func(nextStatus, nextReason string) {
+		if status != "" {
+			return
+		}
+		status, reason, killedAt = nextStatus, nextReason, time.Now()
+		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
+			reason += fmt.Sprintf("; kill process group: %v", err)
+		}
+	}
+
+	for {
+		select {
+		case <-ctxDone:
+			ctxDone = nil
+			kill(RunStatusCancelled, e.cancelReason(run.RunID))
+		case <-timer.C:
+			kill(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout))
+		case <-quotaTicker.C:
+			usage, usageErr := runUsage(e.deps.Store, e.deps.Settings.StagingRoot(), run.RunID, run.ExchangeDir)
+			if usageErr != nil {
+				kill(RunStatusFailed, usageErr.Error())
+			} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
+				kill(RunStatusFailed, fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit))
+			}
+		case waitErr = <-waitDone:
+			parentDone = true
+			waitDone = nil
+		case <-drainDone:
+			pipesDone = true
+			drainDone = nil
+		case <-groupTicker.C:
+		}
+
+		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
+		groupDead := inspectErr == nil && identity.State == GroupDead
+		if parentDone && pipesDone && groupDead {
+			break
+		}
+		if !killedAt.IsZero() && groupDead && !pipesDone && !forcedPipeClose && time.Since(killedAt) > groupDrainTimeout {
+			// No group member can write after verified death. Closing only the
+			// readers bounds a wedged pipe drain without publishing while a
+			// descendant could still mutate output or the exchange directory.
+			forcedPipeClose = true
+			outputUnverified = true
+			_ = stdoutR.Close()
+			_ = stderrR.Close()
+		}
+	}
+
+	finish := RunFinish{OutputTail: tail.String(), OutputUnverified: outputUnverified, FinishedAt: time.Now().UTC()}
+	if status != "" {
+		finish.Status, finish.Error = status, reason
+	} else {
+		finish.ExitCode = exitCode(cmd)
+		if waitErr == nil && finish.ExitCode != nil && *finish.ExitCode == 0 {
+			finish.Status = RunStatusSucceeded
+		} else {
+			finish.Status = RunStatusFailed
+			finish.Error = commandExitError(waitErr, finish.ExitCode)
+		}
+	}
+	return e.finish(run, finish)
+}
+
+func (e *commandExecutor) finishWithoutStart(run QueuedRun, fallback string) Outcome {
+	record, _, err := e.deps.Store.Run(run.RunID)
+	if err != nil {
+		return Outcome{Status: RunStatusFailed, Error: fallback + ": " + err.Error()}
+	}
+	if RunStatusTerminal(record.Status) {
+		return Outcome{Status: record.Status, Error: record.Error}
+	}
+	status, reason := RunStatusInterrupted, fallback
+	if record.CancelRequested {
+		status, reason = RunStatusCancelled, record.Error
+	}
+	return e.finish(run, RunFinish{Status: status, Error: reason, FinishedAt: time.Now().UTC()})
+}
+
+func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
+	won, err := e.deps.Store.FinishRun(run.RunID, finish)
+	if err != nil {
+		return Outcome{Status: finish.Status, Error: finish.Error + "; persist terminal command: " + err.Error()}
+	}
+	if won {
+		return Outcome{Status: finish.Status, Error: finish.Error}
+	}
+	record, _, err := e.deps.Store.Run(run.RunID)
+	if err != nil {
+		return Outcome{Status: finish.Status, Error: finish.Error + "; read terminal command: " + err.Error()}
+	}
+	return Outcome{Status: record.Status, Error: record.Error}
+}
+
+func (e *commandExecutor) cancelReason(runID string) string {
+	record, _, err := e.deps.Store.Run(runID)
+	if err == nil && record.CancelRequested && record.Error != "" {
+		return record.Error
+	}
+	return "command cancelled"
+}
+
+func resolveExecutable(base, commandPath string) (string, error) {
+	if err := validateExecutable("run", base); err != nil {
+		return "", err
+	}
+	if commandPath == "" {
+		return "", fmt.Errorf("plugin command path is empty")
+	}
+	for _, directory := range filepath.SplitList(commandPath) {
+		if directory == "" || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+			return "", fmt.Errorf("plugin command path contains invalid directory %q", directory)
+		}
+		candidate := filepath.Join(directory, base)
+		info, err := os.Stat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect executable %q: %w", candidate, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("executable %q was not found in the configured plugin command path", base)
+}
+
+func exitCode(cmd *exec.Cmd) *int {
+	if cmd.ProcessState == nil {
+		return nil
+	}
+	code := cmd.ProcessState.ExitCode()
+	if code < 0 {
+		return nil
+	}
+	return &code
+}
+
+func commandExitError(waitErr error, code *int) string {
+	if code != nil {
+		return fmt.Sprintf("command exited with status %d", *code)
+	}
+	if waitErr != nil {
+		return fmt.Sprintf("wait for command: %v", waitErr)
+	}
+	return "command exited without a status"
+}
+
+type nativeProcessInspector struct{}
+
+func (nativeProcessInspector) InspectGroup(pgid int, _ string) (GroupIdentity, error) {
+	err := syscall.Kill(-pgid, 0)
+	switch {
+	case err == nil || errors.Is(err, syscall.EPERM):
+		return GroupIdentity{State: GroupAliveUnverified}, nil
+	case errors.Is(err, syscall.ESRCH):
+		return GroupIdentity{State: GroupDead}, nil
+	default:
+		return GroupIdentity{}, err
+	}
+}
+
+func (nativeProcessInspector) KillGroup(pgid int) error {
+	return syscall.Kill(-pgid, syscall.SIGKILL)
+}
