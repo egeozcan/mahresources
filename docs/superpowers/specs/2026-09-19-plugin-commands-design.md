@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: final — approved by gpt-6-astra review; operator findings 1-7 applied
+Status: final — approved by gpt-6-astra review; operator findings 1-16 applied
 Date: 2026-09-19
 
 ## Goal
@@ -26,8 +26,11 @@ its credentials. The host guarantees:
 - The host never spawns a shell. The process is created from an argv vector,
   and argument boundaries established by the manifest are preserved.
 - argv[0] is a literal, nonempty executable **basename** — no path separators,
-  no leading dash, no placeholders — resolved via a trusted PATH. A plugin
-  cannot point the command at an arbitrary executable.
+  no leading dash, no placeholders — resolved through the host's explicit
+  `-plugin-command-path`. A plugin cannot point the command at an arbitrary
+  executable. The setting defaults to the server process's startup `PATH`, so
+  that inherited value is a documented trust boundary until the operator pins
+  it; empty and relative entries are refused.
 - A parameter replaces an entire argv element. The host never re-parses,
   re-quotes or splits a parameter.
 
@@ -113,7 +116,9 @@ Parse-time rules (fail loudly, in the style of the existing manifest parser):
 - `argv[0]` must be a literal, nonempty **basename**: no `/`, no `..`, no
   `-` prefix, no placeholders, no path separators. It is resolved via `PATH`
   at run time from the host's trusted directories. Anything else is a load
-  error, so a template can never name an arbitrary executable or path.
+  error, so a template can never name an arbitrary executable or path. The
+  search uses `-plugin-command-path` (default: the server process's startup
+  `PATH`), whose entries must be nonempty absolute directories.
 - Placeholders must **not** occupy a flag position. By convention and by
   review guidance, variable data follows a fixed flag (`"--format",
   "{{format}}"`), never forms one. The parser cannot understand each program's
@@ -144,10 +149,11 @@ human display by shell-quoting and joining argv at render time.
 `commands` joins `AllCapabilities` (surfaces note `mah.commands, mah.fs`) with
 a consent label of the shape:
 
-> Run the commands this plugin declares on the server machine with the
-> service account's full privileges (filesystem and network, without
-> sandboxing), and read the files those commands write into its private
-> exchange folders. Importing those files into the library additionally
+> Run the commands this plugin declares from the operator-configured command
+> path on the server machine with the service account's full privileges
+> (filesystem and network, without sandboxing), and read the files those
+> commands write into its private exchange folders. Importing those files into
+> the library additionally
 > requires the db:write capability.
 
 ## 2. Consent and the warning
@@ -190,9 +196,10 @@ a consent label of the shape:
   plugin refuses to load until the operator re-enables.
 - **Manage UI.** The plugin list shows a warning panel for any plugin
   declaring commands: *"⚠ This plugin can run the following commands on the
-  server, with the service account's privileges:"* followed by each command
-  verbatim (shell-joined argv, timeout). The enable flow surfaces the same
-  panel before the acknowledgement is recorded.
+  server, with the service account's privileges; executable basenames are
+  resolved only from the operator-configured plugin-command path:"* followed
+  by each command verbatim (shell-joined argv, timeout). The enable flow
+  surfaces the same panel before the acknowledgement is recorded.
 - **The CLI enable path carries the acknowledgement explicitly.**
   `mr plugin enable` POSTs `/v1/plugin/enable` with only the name today
   (`cmd/mr/commands/plugins.go:52-58`; the handler reads only the name,
@@ -248,6 +255,12 @@ mah.commands.run(name, params [, callback]) -> run_id | nil, err
   disabled since submission.
 - Requires the `commands` capability. Ungranted, `mah.commands` is never
   installed.
+- **Every VM load receives a monotonically increasing plugin generation before
+  command submission is registered.** Runs/import claims capture it; disable
+  revokes it, and re-enable produces a different generation even for an
+  unchanged manifest. Worker-start revalidation therefore has an identity to
+  compare from the first durable claim onward, not a primitive introduced by
+  the later Lua adapter.
 
 ### Scheduling
 
@@ -255,8 +268,28 @@ Command runs use a **dedicated dispatcher** over the download-queue job
 machinery — not the generic semaphore-goroutine submission path — with these
 properties made explicit rather than inherited:
 
-- **FIFO per plugin**; queue admission bounded the same way the download
-  queue is (`MaxQueueSize`).
+- **FIFO per plugin**; the dispatcher's own pending command queue is capped at
+  `MaxQueueSize` **per plugin**, so one plugin can fill only its own admission
+  budget. Pending imports use the same per-plugin cap on their separate queue.
+  A queued durable row is visible through `mah.fs.runs()` and command history,
+  but does not enter `download_queue`'s live-job registry until dispatch.
+- **The live registry has a bounded managed lane.** `download_queue` retains
+  its 100-job ordinary admission budget; dispatched commands/imports use a
+  separate managed-live allowance capped at the six workers below and are not
+  counted by `makeRoomForNewJob`. Managed occupancy is **derived under
+  `dm.mu` by scanning `m.jobs` for the managed marker at admission**. `m.jobs`
+  is the sole owner/source of truth, not mirrored in a counter, so both
+  independent removal implementations free capacity automatically:
+  managed-lane admission evicts a terminal entry through `evictJob`, while the
+  existing `cleanupOldJobs` retention sweep directly `delete`s from `dm.jobs`
+  and rebuilds `jobOrder` without calling `evictJob`. Terminal managed entries
+  are evicted from that lane before another dispatch. Thus 100 queued commands consume no
+  download registry slots, and the maximum live command/import footprint is
+  four plus two rather than an unbounded share of ordinary downloads. A live
+  command job's managed Cancel callback delegates to the same dispatcher
+  cancellation primitive the history endpoint uses; `DownloadManager.Cancel`
+  invokes it outside manager/job locks, so both controls share the durable
+  request latch rather than implementing two cancellation paths.
 - **Named concurrency caps on their own pool, off the download semaphore.**
   The download queue's `MaxConcurrentDownloads = 3` is not shared: two
   concurrent yt-dlp runs must not starve ordinary downloads. Command jobs
@@ -281,8 +314,11 @@ The persistence model is **three tables plus one managed map**, named here
 because later sections reference their contents:
 
 - **`plugin_command_runs`** — the run row: id, plugin name, command name,
-  redacted parameter view, actor user id, created/started/finished
-  timestamps, status, exit code, error text, spawned process group id.
+  redacted parameter view, actor user id, `actorless_at_submission`,
+  created/started/finished timestamps, status, exit code, error text, spawned
+  process group id. The boolean distinguishes a run intentionally submitted
+  without an actor from one whose actor was later deleted; `NULL` alone never
+  grants actorless access.
   Small; survives restarts; independent of the queue's 1-hour terminal
   retention.
 - **`plugin_command_run_output`** — one row per run holding the **argv as
@@ -320,9 +356,13 @@ trustworthy:
   SIGKILL would hit processes that never belonged to this run.
 
 On startup, every nonterminal record — running **and** queued, since the
-in-memory queue registry does not survive a restart
-(`download_queue/manager.go:228-230`) — with no live dispatch is resolved as
-follows:
+in-memory dispatcher queue does not survive a restart — with no live dispatch
+is resolved as follows. A durable `cancel_requested` takes precedence over
+crash classification: a queued row is stamped `cancelled` with its stored
+reason; a running row still performs the identity checks below, kills a verified
+surviving group, and then stamps `cancelled`. If ownership is unverifiable it
+still takes the fail-closed `interrupted + output_unverified` arm. Rows without
+that latch use the other `interrupted` outcomes below.
 
 1. **Identity check.** Every spawned process carries
    `MAHR_COMMAND_RUN_ID=<run id>` in its environment (§3, host hardening).
@@ -365,9 +405,9 @@ which terminal state each path produces:
 |---|---|---|
 | Command exits 0 | `succeeded` | exit code recorded |
 | Command exits non-zero / cannot start / quota exceeded | `failed` | error text names timeout or quota |
-| Operator cancels via the job UI | `cancelled` | process group killed |
+| Operator cancels via the live job UI or admin command history | `cancelled` | queued run: removed from the dispatcher and no process exists; dispatched/running run: cancellation latch wins before fork or the process group is killed |
 | Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
-| Server crash / restart / shutdown / dispatch lost | `interrupted` | both running and queued records; pgid identity-verified (survivors killed) before stamping; unverifiable writer identity → `interrupted` + `output_unverified` |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | running and queued records **without a prior durable cancel request**; pgid identity-verified (survivors killed) before stamping; unverifiable writer identity → `interrupted` + `output_unverified` |
 
 `failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
 distinct statuses, as required.
@@ -395,8 +435,11 @@ fair game.
 
 ### Host hardening
 
-- argv[0] resolved via `PATH` over operator-controlled directories at run
-  time; no plugin-configurable binary path.
+- argv[0] resolved by walking `-plugin-command-path` at run time; no
+  plugin-configurable binary path. The setting defaults once at startup to the
+  inherited process `PATH`, which is explicitly documented as a trust boundary,
+  and every entry must be a nonempty absolute directory. Operators pin the flag
+  or `PLUGIN_COMMAND_PATH` to trusted directories in production.
 - Parameters are passed as exec arguments directly. The host never re-parses
   them.
 - Per-parameter cap 8 KB; aggregate argv cap 64 KB; at most 32 parameters.
@@ -404,7 +447,7 @@ fair game.
   exchange folder and **stdin connected to `os.DevNull`** — a tool that
   prompts blocks only until its timeout, never indefinitely.
 - **Environment is an explicit allowlist**, not inherited:
-  `PATH` (operator-configured trusted directories), `HOME`, `TMPDIR` (private
+  `PATH` (the validated `-plugin-command-path` value), `HOME`, `TMPDIR` (private
   per-run temp), `LANG`, `TZ`, and run-context variables `MAHR_PLUGIN_NAME`,
   `MAHR_COMMAND_RUN_ID`, `MAHR_EXCHANGE_DIR`. Nothing else. Operator
   configuration reachable through these variables is deliberate operator
@@ -481,6 +524,18 @@ per-user artifact: the process ran under the service account, whoever
 submitted it. Generic jobs are excluded from the existing history by
 deconstruction (`download_queue/history.go:95-101`), so command history
 needs its own records and its own check.
+
+Because dispatcher-queued rows deliberately do not occupy the live job
+registry, the administrator history is also their control surface: queued list
+and detail rows have a **Cancel** action backed by `Store.RequestRunCancel` and
+the dispatcher's per-run cancellation latch. The store atomically persists the
+request and reason; recovery honors that durable request as `cancelled` if the
+process dies before in-memory removal completes. The dispatcher removes it from
+its private queue, stamps `cancelled`, and delivers the terminal callback
+without ever registering a live job. The same endpoint is race-safe if dispatch begins between render
+and submit: it latches cancellation before fork or kills the verified running
+process group. Thus moving admission out of the cockpit does not make a
+100-deep queue cancellable only by disabling its whole plugin.
 
 ## 5. Exchange folders and `mah.fs`
 
@@ -701,9 +756,11 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
 - `mah.fs.read/create_resource/discard(run_id, name, ...)`: the full file
   checks, in order:
   1. **Run ownership**: `run_id` must exist, belong to the calling plugin,
-     and (for runs with a submitter) belong to the acting user; actor-less
-     (schedule-submitted) runs are accessible to any principal acting for
-     the plugin.
+     and (for runs with a submitter) belong to the acting user. Only a row
+     created with `actorless_at_submission = true` is accessible to any
+     principal acting for the plugin. When deletion nulls an ordinary run's
+     actor, that flag remains false and Lua access fails closed; it does not
+     turn the row into an intentionally actor-less schedule run.
   2. **Finished state**: the run must be terminal; file operations against
      a running or queued run are refused. (Startup recovery has already
      resolved every `interrupted` run's writer status — §3 — and flagged
@@ -876,8 +933,14 @@ options: name, description, tags, groups, meta).
 - Actor propagation: the run record keeps the acting user; the import job is
   attributed to that actor and **revalidated at import time** against their
   current role and scope (a user demoted between run and import cannot use a
-  stale grant). Actor-less runs (schedules) require the acting principal to
-  hold `db:write` and are attributed to the acting user.
+  stale grant). Intentionally actor-less runs (`actorless_at_submission=true`)
+  require the current acting principal to hold `db:write`, and a claim is
+  attributed to that principal. User deletion nulls ordinary run/import actor
+  columns through `stampedModels`, but ordinary runs retain
+  `actorless_at_submission=false`: Lua access fails closed and pending claims
+  cannot start or be re-driven through that run. The invariant and its reason
+  are documented beside the other fail-closed models in
+  `application_context/user_admin_guard.go`.
 
 ## 8. Testing
 
@@ -900,7 +963,9 @@ Core (mahresources):
   launch path); whole-element replacement; `{{exchange_dir}}` host-filled; a
   `params` key colliding with a host-filled placeholder name refuses the run;
   missing parameter refuses the run; aggregate caps. argv[0] validation
-  rejects paths and dashes.
+  rejects paths and dashes. Command-path tests put a rogue same-named binary
+  earlier in the ambient process `PATH` and prove an explicit
+  `-plugin-command-path` wins; empty/relative configured entries fail startup.
 - Refused in transaction (both `run` and `create_resource`); parameter count
   and size caps; per-plugin and global concurrency **on the command pool
   (2 per plugin, 4 global), separate from the download pool (3)**; timeout
@@ -939,8 +1004,12 @@ Core (mahresources):
   on timeout, never blocks forever).
 - `mah.fs`: enforcement tests for name validation, symlink refusal
   (including a swap-after-lstat race), directory/special refusal, cross-plugin
-  and cross-run access refusal, actor checks, idempotent re-import after a
-  failed delete **and after the run has been swept** (import-claim
+  and cross-run access refusal, actor checks, and **deleted-actor
+  fail-closed behavior**: nulling an ordinary submitter leaves
+  `actorless_at_submission=false`, hides the run from every plugin principal
+  and prevents its pending claim from starting, while a run born actorless
+  remains plugin-accessible; idempotent re-import after a failed delete **and
+  after the run has been swept** (import-claim
   short-circuit, no source file present), refusal inside transactions,
   **listing truncates with a `truncated` flag instead of refusing**,
   `discard_run` on a truncated run, read cap, **`output_unverified` runs:
@@ -969,8 +1038,17 @@ Core (mahresources):
   or discard leases skipped (lease/sweep lock coordination); nonterminal runs
   skipped; expired runs' directories fully deleted including
   pending-delete bytes, with the import map surviving; fresh runs kept.
-- Queue integration: FIFO per-plugin dispatch, command/import pool caps, no
-  pause and no retry exposed for command jobs, terminal state reaches the
+- Queue integration: FIFO per-plugin dispatch, independent per-plugin pending
+  caps, and command/import pool caps; 100 queued commands create zero entries in
+  the ordinary download registry and an ordinary download still admits; only
+  dispatched work enters the six-entry managed-live lane; its occupancy is
+  derived from `m.jobs`. Tests independently remove terminal managed entries
+  through managed admission's `evictJob` path and through `cleanupOldJobs`'
+  direct map deletion, and each immediately restores a slot without counter
+  maintenance. An administrator can cancel a queued run
+  from command history (no process group exists), while a dispatch race reaches
+  the same latch/group-kill path; no pause and no retry are exposed for command
+  jobs; terminal state reaches the
   callback and the durable record even when the generic queue's event
   machinery does not fire, and the durable record's status — not the generic
   classification — is what the job UI shows.

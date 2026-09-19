@@ -1,3 +1,43 @@
+# Plugin-declared server commands implementation planning (2026-09-19)
+
+**Goal:** Turn the approved command/exchange-folder design into a test-first,
+file-specific execution plan without beginning implementation on `master`.
+
+## Plan
+
+- [x] Confirm the referenced document is the final design spec, not an implementation plan.
+- [x] Map manifest/consent, plugin lifecycle, download jobs, resource uploads, runtime settings, HTTP/UI and CLI seams against the current tree.
+- [x] Separate the standing `AddResource` replay-integrity prerequisite from the command feature while keeping one ordered core plan.
+- [x] Write red/green tasks with interfaces, exact files, commands, commit boundaries and full SQLite/PostgreSQL/E2E gates.
+- [x] Check spec coverage, placeholder language, type/interface consistency and whitespace.
+
+## Review
+
+Created `docs/superpowers/plans/2026-09-19-plugin-commands.md` with 13 ordered
+implementation tasks, 90 execution steps and a 9-item final coverage checklist.
+Task 1 is the independently revertible shared upload-integrity fix required for
+safe import replay. Tasks
+2–12 cover declaration/consent, durable records, dedicated pools, Unix process
+groups, crash recovery, safe exchange operations, durable imports, Lua surfaces,
+startup/sweep/shutdown and administrator history. Task 13 supplies the host-side
+integration fixture and full verification gates; the actual yt-dlp plugin remains
+a separate-repository handoff as required by the spec.
+
+Planning baseline: `283c2afa`. No production code was changed. Follow-up review
+findings 1–6 are incorporated in both spec and plan: intentional actorless
+provenance is distinct from deletion, managed jobs have a separately counted
+live lane and dispatcher-owned per-plugin queues, command PATH is explicit,
+plugin generation precedes its consumers, the replay snippet fails closed on
+`Stat` errors, and `stampedModels` points to `user_admin_guard.go`. Follow-up
+findings 7–8 add administrator cancellation for dispatcher-queued runs and make
+the managed-live lane derive occupancy from `m.jobs`, so managed admission via
+`evictJob` and retention cleanup via direct map deletion both release capacity
+without counter synchronization. The latest
+`git diff --check` is clean; the plan contains no TBD/TODO/“implement later”
+placeholders.
+
+---
+
 # Master CI repair at cc913daa (2026-08-23)
 
 **Goal:** Restore the `test` and `cli-docs-fresh` jobs without changing runtime behavior or masking test intent.

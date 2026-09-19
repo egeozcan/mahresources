@@ -2,6 +2,65 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Moving work out of a live registry also moves its controls
+
+When queued work leaves a shared registry to protect capacity, enumerate every
+behavior that registry supplied — visibility, cancellation, progress, retention
+and SSE — rather than carrying over only execution. Durable history is not a
+replacement for a control unless that history surface grows the corresponding
+mutation. Test the longest-lived hidden state directly: an administrator can
+cancel a queued record before it ever becomes a live job.
+
+## Derive tiny registry counts instead of synchronizing another counter
+
+If all mutations already happen under one registry mutex and the bounded subset
+is tiny, derive its occupancy by scanning the registry at admission. A mirrored
+counter creates an invariant across every removal implementation, including
+cleanup sweeps written before the new lane existed. Inspect the call sites rather
+than assuming those implementations share a helper, and test each independently:
+an admission helper and a sweep's direct map deletion can have the same effect
+without sharing code. Six comparisons are free; a leaked capacity slot that
+silently stops dispatch is not.
+
+## A nullable actor cannot encode both intentional actorlessness and deletion
+
+If `NULL` grants special access for records intentionally created without an
+actor, the user-deletion sweep must not create that same state by nulling an
+ordinary submitter. Persist provenance separately (`ActorlessAtSubmission`, an
+origin enum, or a sentinel) and test both transitions: intentionally actorless
+keeps its documented policy; deleted-actor records take the fail-closed arm.
+Read the comments on the central ownership sweep before adding another model —
+that is where this repository records the cross-model invariant.
+
+## Pool isolation includes admission registries, not only worker semaphores
+
+A dedicated semaphore does not isolate workloads when queued work occupies the
+same bounded job registry. Trace the entire lifetime from admission through
+queueing, live visibility, terminal retention and eviction. A private queue
+should not register long-waiting work in a shared live registry; if dispatched
+work still shares the registry, give it an explicit bounded lane and prove the
+ordinary workload retains its own capacity.
+
+## An implementation plan must compile in task order, literally
+
+Review every task as if a worker stopped after that commit: every primitive it
+names must already exist, every code snippet must implement the surrounding
+prose (especially error branches), and every staged path must name the file that
+actually owns the symbol. Aggregate end-state completeness is not enough; a
+primitive introduced three tasks after its first consumer, a fail-open snippet
+under fail-closed prose, or a wrong `git add` path makes the ordered plan
+non-executable.
+
+## A final design spec is an input to planning, not an implementation plan
+
+When a user points at `docs/superpowers/specs/...-design.md` and says “continue,”
+inspect the document status and neighboring `plans/` directory before choosing an
+execution skill. A design spec records approved behavior and constraints; it does
+not provide the task ordering, file ownership, red/green steps, or checkpoints an
+implementation plan requires. If the spec is final and no matching plan exists,
+the next action is to use the writing-plans workflow and create that plan—not to
+announce that implementation has begun.
+
 ## Execution checkpoints are progress reports, not implicit approval gates
 
 When a user authorizes an implementation plan, report completed slices without
