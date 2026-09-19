@@ -483,6 +483,22 @@ A scheduled download insert is principal-bound before `Create`, because the stam
 - **Started in `main`, not in the context**, for the same reason the scheduler is: it owns a goroutine, so the place that can defer its `Stop` is the place that starts it. A deployment that never installs a sink makes every emit a nil check, which is what the CLI's and the tests' bare managers get.
 - **`plugin_system`'s own `ActionJob` feed is deliberately not unified into this.** It has no single terminal transition to hang a sink on — Lua writes the status through the reporters — and a handler for `after_job_completed` calling `mah.start_job` would fire the same event recursively. Scoped to the download queue, no Lua surface enqueues one of its jobs, so that cycle cannot form.
 
+### Plugin command staging
+
+Plugin-declared commands are trusted host processes, not a sandbox: they run as
+the server service account with unrestricted process networking and the OS
+account's filesystem reach. `PLUGIN_COMMAND_PATH` is therefore a startup trust
+boundary. Pin it to the smallest set of absolute directories containing the
+declared executables and helpers instead of inheriting a broad service `PATH`.
+
+Command and import bytes live in an OS staging root even when resources use
+MemoryFS; in that mode staging and imported resource copies consume RAM. Quotas
+are sampled, so brief overshoot is possible, and the per-run quota must cover
+merge peak (roughly twice final size while separate audio/video and mux output
+coexist). Recovery completes before plugin VMs load; the dispatcher's own sweep
+removes only expired, terminal, unleased exchange folders and prunes output
+rows without deleting durable run/import history.
+
 ### Plugin static assets
 
 A plugin's own `public/` directory is served at `/plugins/<name>/public/*` while that plugin is enabled (`server/plugin_assets.go`). It closes the largest gap between what a plugin could do and what it looked like it could do: a plugin could render HTML into six slots and could not ship a line of its own JavaScript, so browser code lived in Lua long-strings and was re-sent through the VM lock on every render.
@@ -557,6 +573,12 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | How long a **completed** download stays in the persisted download history (default: `24h`). The resource it created is unaffected. Runtime-editable. |
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many **finished downloads** the jobs panel renders, newest first (default: 10); older ones stay reachable at `/downloads`. Active work and every non-download job (exports, imports, plugin actions) are never capped — `/downloads` cannot show them, so hiding them would leave their cancel and result controls unreachable. Runtime-editable. |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work (default: `30s`). It bounds the resolution of every plugin schedule: a plugin may not declare an interval shorter than `plugin_system.MinScheduleInterval` (30s), and a tick slower than a schedule's interval simply runs it at the tick's resolution. |
+| `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | Trusted executable search path for plugin commands. Defaults to one startup snapshot of the server `PATH`; every entry must be a nonempty absolute directory. Pin the minimal trusted directories in production. |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | Private command exchange/import root. Defaults to `<file-save-path>/_plugin_commands`, or a private process temp root with MemoryFS. |
+| `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | Sampled per-run staging limit (default: `8589934592`, 8 GiB). Size for merge peak, roughly 2× final output when separate audio/video and mux coexist. |
+| `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | Sampled deployment-wide staging limit (default: `53687091200`, 50 GiB). |
+| `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | Retention for terminal, unleased command exchange folders (default: `168h`). |
+| `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | Retention for command output tails (default: `720h`); durable run/import/map rows remain. |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | Maximum import tar upload size in bytes (default: 10 GB) |
 | `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB). Bounds one **request**: a native multi-file form post is capped as a whole, while the client-side bulk upload widget sends one file per request and is therefore capped per file. Runtime-editable. |
 | (runtime only) | (runtime only) | `upload_concurrency` (default `3`), `upload_widget_file_threshold` (default `10`) and `upload_widget_size_threshold` (default 1 GiB) govern the client-side bulk upload widget on `/resource/new`. Editable only at runtime, via `/admin/settings`, `mr admin settings` or `/v1/admin/settings` — they change browser behaviour on one page, so there is no boot flag. |

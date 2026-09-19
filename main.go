@@ -54,6 +54,16 @@ func splitCommaList(raw string) []string {
 	return out
 }
 
+func pluginCommandPathValue(flagValue string, flagSet bool, envValue string, envSet bool, inherited string) (string, bool) {
+	if flagSet {
+		return flagValue, true
+	}
+	if envSet {
+		return envValue, true
+	}
+	return inherited, false
+}
+
 // parseDurationEnv parses a duration from an environment variable, returning the default if not set or invalid
 func parseDurationEnv(envVar string, defaultVal time.Duration) time.Duration {
 	val := os.Getenv(envVar)
@@ -225,6 +235,18 @@ func main() {
 	// Plugin options
 	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
 	pluginsDisabled := flag.Bool("plugins-disabled", os.Getenv("PLUGINS_DISABLED") == "1", "Disable all plugins (env: PLUGINS_DISABLED=1)")
+	pluginCommandPathEnv, pluginCommandPathEnvSet := os.LookupEnv("PLUGIN_COMMAND_PATH")
+	pluginCommandPathDefault := os.Getenv("PATH")
+	if pluginCommandPathEnvSet {
+		pluginCommandPathDefault = pluginCommandPathEnv
+	}
+	pluginCommandPath := flag.String("plugin-command-path", pluginCommandPathDefault, "Trusted absolute directories searched for plugin command executables (env: PLUGIN_COMMAND_PATH)")
+	pluginCommandStagingEnv, pluginCommandStagingEnvSet := os.LookupEnv("PLUGIN_COMMAND_STAGING_PATH")
+	pluginCommandStagingPath := flag.String("plugin-command-staging-path", pluginCommandStagingEnv, "Private OS staging root for plugin command exchange files (env: PLUGIN_COMMAND_STAGING_PATH)")
+	pluginCommandRunQuota := flag.Int64("plugin-command-run-quota", parseInt64Env("PLUGIN_COMMAND_RUN_QUOTA", application_context.DefaultPluginCommandRunQuota), "Maximum sampled bytes for one plugin command run (env: PLUGIN_COMMAND_RUN_QUOTA)")
+	pluginCommandStagingQuota := flag.Int64("plugin-command-staging-quota", parseInt64Env("PLUGIN_COMMAND_STAGING_QUOTA", application_context.DefaultPluginCommandStagingQuota), "Maximum sampled bytes for all plugin command staging (env: PLUGIN_COMMAND_STAGING_QUOTA)")
+	pluginCommandExchangeRetention := flag.Duration("plugin-command-exchange-retention", parseDurationEnv("PLUGIN_COMMAND_EXCHANGE_RETENTION", application_context.DefaultPluginCommandExchangeRetention), "Retention for terminal plugin command exchange folders (env: PLUGIN_COMMAND_EXCHANGE_RETENTION)")
+	pluginCommandOutputRetention := flag.Duration("plugin-command-output-retention", parseDurationEnv("PLUGIN_COMMAND_OUTPUT_RETENTION", application_context.DefaultPluginCommandOutputRetention), "Retention for plugin command output tails (env: PLUGIN_COMMAND_OUTPUT_RETENTION)")
 
 	// Authentication options (opt-in). When disabled (default) every request runs
 	// as an implicit administrator, matching the historical no-auth deployment.
@@ -238,6 +260,12 @@ func main() {
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", os.Getenv("TRUST_PROXY_HEADERS") == "1", "Trust X-Forwarded-For for the client IP in login rate-limiting; enable only behind a trusted reverse proxy (env: TRUST_PROXY_HEADERS=1)")
 
 	flag.Parse()
+	setFlags := make(map[string]bool)
+	flag.CommandLine.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	resolvedPluginCommandPath, pluginCommandPathExplicit := pluginCommandPathValue(
+		*pluginCommandPath, setFlags["plugin-command-path"], pluginCommandPathEnv, pluginCommandPathEnvSet, os.Getenv("PATH"),
+	)
+	pluginCommandStagingExplicit := pluginCommandStagingEnvSet || setFlags["plugin-command-staging-path"]
 
 	deepSeekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
 	deepSeekModel := getEnvOrDefault("DEEPSEEK_MODEL", application_context.DefaultDeepSeekMRQLGenerationModel)
@@ -303,6 +331,23 @@ func main() {
 	// not see a value that arrived by flag or environment.
 	if err := hostfetch.ValidateUserAgent(*remoteUserAgent); err != nil {
 		log.Fatalf("invalid -remote-user-agent: %v", err)
+	}
+
+	pluginCommandConfig, err := application_context.ResolvePluginCommandConfig(application_context.PluginCommandConfigInput{
+		CommandPath: resolvedPluginCommandPath, CommandPathExplicit: pluginCommandPathExplicit,
+		InheritedPath: os.Getenv("PATH"),
+		StagingPath:   *pluginCommandStagingPath, StagingPathExplicit: pluginCommandStagingExplicit,
+		FileSavePath: *fileSavePath, MemoryFS: useMemoryFS,
+		RunQuota: *pluginCommandRunQuota, RunQuotaSet: true,
+		StagingQuota: *pluginCommandStagingQuota, StagingQuotaSet: true,
+		ExchangeRetention: *pluginCommandExchangeRetention, ExchangeRetentionSet: true,
+		OutputRetention: *pluginCommandOutputRetention, OutputRetentionSet: true,
+	})
+	if err != nil {
+		log.Fatalf("invalid plugin command configuration: %v", err)
+	}
+	if pluginCommandConfig.TemporaryStaging {
+		defer os.RemoveAll(pluginCommandConfig.StagingPath)
 	}
 
 	// Create configuration
@@ -378,6 +423,13 @@ func main() {
 		CreateAdminUser:              *createAdminUser,
 		CreateAdminPassword:          *createAdminPassword,
 	}
+	cfg.PluginCommandPath = pluginCommandConfig.CommandPath
+	cfg.PluginCommandStagingPath = pluginCommandConfig.StagingPath
+	cfg.PluginCommandRunQuota = pluginCommandConfig.RunQuota
+	cfg.PluginCommandStagingQuota = pluginCommandConfig.StagingQuota
+	cfg.PluginCommandExchangeRetention = pluginCommandConfig.ExchangeRetention
+	cfg.PluginCommandOutputRetention = pluginCommandConfig.OutputRetention
+	cfg.PluginCommandStagingTemporary = pluginCommandConfig.TemporaryStaging
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
 	if context.Config.DeepSeekAPIKey != "" {
@@ -563,6 +615,14 @@ func main() {
 	// startup sweep so the first-pass cleanup honors any persisted override.
 	context.RunStartupExportSweep()
 
+	// Recovery must settle every durable command/import writer before a plugin
+	// VM can load and observe mah.commands or mah.fs.
+	if !context.Config.PluginsDisabled {
+		if err := context.StartPluginCommands(gocontext.Background(), context.PluginCommandSettings()); err != nil {
+			log.Fatalf("failed to start plugin commands: %v", err)
+		}
+	}
+
 	seed.AddInitialData(db)
 
 	// Bootstrap an admin account from flags/env when requested. Idempotent and
@@ -686,6 +746,7 @@ func main() {
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
 	defer context.DownloadManager().Shutdown()
+	defer context.StopPluginCommands()
 
 	// Start thumbnail worker for background video thumbnail pre-generation
 	thumbWorkerConfig := thumbnail_worker.Config{

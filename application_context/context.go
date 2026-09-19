@@ -49,6 +49,14 @@ type MahresourcesConfig struct {
 	BindAddress      string
 	SharePort        string
 	ShareBindAddress string
+
+	PluginCommandPath              string
+	PluginCommandStagingPath       string
+	PluginCommandRunQuota          int64
+	PluginCommandStagingQuota      int64
+	PluginCommandExchangeRetention time.Duration
+	PluginCommandOutputRetention   time.Duration
+	PluginCommandStagingTemporary  bool
 	// SharePublicURL is the externally-routable base URL for shared notes
 	// (e.g., "https://share.example.com"). When set, the note sidebar and
 	// the /admin/shares dashboard use it to build {SharePublicURL}/s/<token>.
@@ -231,6 +239,14 @@ type MahresourcesInputConfig struct {
 	DbDsn         string
 	DbReadOnlyDsn string
 	DbLogFile     string
+
+	PluginCommandPath              string
+	PluginCommandStagingPath       string
+	PluginCommandRunQuota          int64
+	PluginCommandStagingQuota      int64
+	PluginCommandExchangeRetention time.Duration
+	PluginCommandOutputRetention   time.Duration
+	PluginCommandStagingTemporary  bool
 	// DbSlowQueryThreshold logs SQL queries slower than this duration to the
 	// DB log and the application log; 0 disables (default)
 	DbSlowQueryThreshold time.Duration
@@ -1478,7 +1494,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		sessionTTL = 30 * 24 * time.Hour
 	}
 
-	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
+	resolvedConfig := &MahresourcesConfig{
 		DbType:                       dbType,
 		DbDsn:                        dbDsn,
 		DbReadOnlyDsn:                readOnlyDsn,
@@ -1544,7 +1560,15 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		LoginRateLimit:               cfg.LoginRateLimit,
 		LoginRateWindow:              cfg.LoginRateWindow,
 		TrustProxyHeaders:            cfg.TrustProxyHeaders,
-	})
+	}
+	resolvedConfig.PluginCommandPath = cfg.PluginCommandPath
+	resolvedConfig.PluginCommandStagingPath = cfg.PluginCommandStagingPath
+	resolvedConfig.PluginCommandRunQuota = cfg.PluginCommandRunQuota
+	resolvedConfig.PluginCommandStagingQuota = cfg.PluginCommandStagingQuota
+	resolvedConfig.PluginCommandExchangeRetention = cfg.PluginCommandExchangeRetention
+	resolvedConfig.PluginCommandOutputRetention = cfg.PluginCommandOutputRetention
+	resolvedConfig.PluginCommandStagingTemporary = cfg.PluginCommandStagingTemporary
+	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, resolvedConfig)
 
 	// The slow-query logger exists before the context does, so its
 	// application-log sink can only be attached now.

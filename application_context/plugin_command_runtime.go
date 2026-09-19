@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"mahresources/download_queue"
 	"mahresources/plugin_commands"
@@ -122,6 +123,20 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 	ctx.pluginManager.SetCommandSubmitter(ctx)
 	ctx.pluginManager.SetExchangeMediator(ctx)
 	return nil
+}
+
+// StopPluginCommands drains terminal persistence before the download manager
+// and plugin manager are stopped. It is deliberately bounded so shutdown cannot
+// wait forever on a command that ignores cancellation.
+func (ctx *MahresourcesContext) StopPluginCommands() {
+	if ctx == nil || ctx.pluginCommandDispatcher == nil {
+		return
+	}
+	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ctx.pluginCommandDispatcher.Stop(stopCtx); err != nil {
+		log.Printf("[plugin] command dispatcher shutdown failed: %v", err)
+	}
 }
 
 // SubmitPluginCommand implements plugin_system.CommandSubmitter.

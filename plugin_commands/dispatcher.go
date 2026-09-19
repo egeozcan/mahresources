@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,7 @@ const (
 	maxActiveCommandsPerPlugin = 2
 	maxActiveImports           = 2
 	dispatchFailureRetryDelay  = 100 * time.Millisecond
+	pluginCommandSweepInterval = 5 * time.Minute
 )
 
 var (
@@ -55,6 +57,8 @@ type Dispatcher struct {
 	importQuotaReserved map[string]int64
 
 	shutdownStarted func() // test barrier; nil in production
+	sweepInterval   time.Duration
+	now             func() time.Time
 }
 
 type runControl struct {
@@ -167,12 +171,17 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 	return &Dispatcher{
 		deps: deps, inbox: make(chan any, 256), done: make(chan struct{}),
 		importQuotaReserved: make(map[string]int64),
+		sweepInterval:       pluginCommandSweepInterval,
+		now:                 func() time.Time { return time.Now().UTC() },
 	}
 }
 
 func (d *Dispatcher) Start(ctx context.Context) error {
 	if d.deps.Store == nil || d.deps.Jobs == nil || d.deps.Executor == nil || d.deps.Settings == nil {
 		return fmt.Errorf("plugin_commands: dispatcher dependencies are incomplete")
+	}
+	if err := d.sweep(d.now()); err != nil {
+		return fmt.Errorf("initial plugin command sweep: %w", err)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -398,6 +407,12 @@ func (d *Dispatcher) run(ctx context.Context) {
 	defer close(d.done)
 	retryTicker := time.NewTicker(dispatchFailureRetryDelay)
 	defer retryTicker.Stop()
+	sweepInterval := d.sweepInterval
+	if sweepInterval <= 0 {
+		sweepInterval = pluginCommandSweepInterval
+	}
+	sweepTicker := time.NewTicker(sweepInterval)
+	defer sweepTicker.Stop()
 	state := dispatcherState{
 		commands:              make(map[string][]QueuedRun),
 		imports:               make(map[string][]queuedImport),
@@ -426,6 +441,10 @@ func (d *Dispatcher) run(ctx context.Context) {
 		case <-retryTicker.C:
 			d.retryDispatchFailures(&state)
 			d.schedule(&state)
+		case <-sweepTicker.C:
+			if err := d.sweep(d.now()); err != nil {
+				d.deps.Logf("plugin command sweep: %v", err)
+			}
 		case raw := <-d.inbox:
 			switch message := raw.(type) {
 			case commandSubmission:
@@ -456,6 +475,43 @@ func (d *Dispatcher) run(ctx context.Context) {
 			d.schedule(&state)
 		}
 	}
+}
+
+func (d *Dispatcher) sweep(now time.Time) error {
+	if d == nil || d.deps.Store == nil || d.deps.Settings == nil || d.deps.Leases == nil {
+		return fmt.Errorf("plugin_commands: sweep dependencies are incomplete")
+	}
+	var sweepErr error
+	expired, err := d.deps.Store.ExpiredTerminalRuns(now.Add(-d.deps.Settings.ExchangeRetention()))
+	if err != nil {
+		sweepErr = errors.Join(sweepErr, fmt.Errorf("list expired plugin command runs: %w", err))
+	} else {
+		for _, run := range expired {
+			endSweep, ok := d.deps.Leases.BeginSweep(run.ID)
+			if !ok {
+				continue
+			}
+			activeImports, importErr := d.deps.Store.HasNonterminalImports(run.ID)
+			if importErr != nil {
+				endSweep()
+				sweepErr = errors.Join(sweepErr, fmt.Errorf("check plugin command run %s imports: %w", run.ID, importErr))
+				continue
+			}
+			if activeImports {
+				endSweep()
+				continue
+			}
+			removeErr := removeExchangeRunDir(d.deps.Settings.StagingRoot(), run.PluginName, run.ID, nil)
+			endSweep()
+			if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				sweepErr = errors.Join(sweepErr, fmt.Errorf("remove expired plugin command run %s: %w", run.ID, removeErr))
+			}
+		}
+	}
+	if _, err := d.deps.Store.PruneRunOutputs(now.Add(-d.deps.Settings.OutputRetention())); err != nil {
+		sweepErr = errors.Join(sweepErr, fmt.Errorf("prune plugin command output: %w", err))
+	}
+	return sweepErr
 }
 
 func (s *dispatcherState) cancelActive(cause error) {
