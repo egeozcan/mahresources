@@ -2,6 +2,15 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Honor an explicit model constraint before launching delegated work
+
+When the operator names a model constraint for subagents, treat it as part of the
+execution contract rather than choosing a stronger or more familiar reviewer
+model. Confirm the exact registry identifier before launch, use it for every
+implementer and reviewer, and stop immediately if a workflow was started with a
+disallowed model. Preserve and inspect any partial work before restarting with
+the permitted model.
+
 ## Moving work out of a live registry also moves its controls
 
 When queued work leaves a shared registry to protect capacity, enumerate every
