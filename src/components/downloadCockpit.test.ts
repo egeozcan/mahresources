@@ -116,12 +116,14 @@ describe('plugin command jobs use durable authority and only expose cancel while
         expect(component.canCancel(failed)).toBe(false);
     });
 
-    test('running commands expose cancel but never pause resume or retry', () => {
-        const running = job({ source: 'plugin-command', status: 'running', authoritativeStatus: 'running' });
+    test('a real managed running shape exposes cancel but never pause resume or retry', () => {
+        const running = job({ source: 'plugin-command', status: 'processing', authoritativeStatus: 'running', authoritativeId: 'durable-run-1' });
         expect(component.canCancel(running)).toBe(true);
         expect(component.canPause(running)).toBe(false);
         expect(component.canResume(running)).toBe(false);
         expect(component.canRetry(running)).toBe(false);
+        expect(component.isActive(running)).toBe(true);
+        expect(component.getJobTitle(running)).toBe('Plugin command durable-run-1');
     });
 
     test('queued durable rows are not treated as live cockpit work', () => {

@@ -45,8 +45,10 @@ type ManagedJobRunFn func(context.Context, *DownloadJob, ProgressSink) ManagedJo
 
 type ManagedJobOptions struct {
 	JobOptions
-	Controls JobControls
-	Cancel   func(reason string) error
+	Controls            JobControls
+	Cancel              func(reason string) error
+	AuthoritativeID     string
+	AuthoritativeStatus string
 }
 
 // managedSink is the concrete ProgressSink. Holds a reference to the manager
@@ -172,23 +174,25 @@ func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn Managed
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &DownloadJob{
-		ID:              generateShortID(),
-		URL:             opts.URL,
-		Status:          JobStatusPending,
-		Progress:        0,
-		TotalSize:       -1,
-		ProgressPercent: -1,
-		CreatedAt:       time.Now(),
-		Source:          opts.Source,
-		Phase:           opts.InitialPhase,
-		initialPhase:    opts.InitialPhase,
-		ctx:             ctx,
-		cancel:          cancel,
-		ownerUserID:     opts.OwnerUserID,
-		managed:         true,
-		managedControls: opts.Controls,
-		managedCancel:   opts.Cancel,
-		managedRunFn:    runFn,
+		ID:                  generateShortID(),
+		URL:                 opts.URL,
+		Status:              JobStatusPending,
+		Progress:            0,
+		TotalSize:           -1,
+		ProgressPercent:     -1,
+		CreatedAt:           time.Now(),
+		Source:              opts.Source,
+		Phase:               opts.InitialPhase,
+		initialPhase:        opts.InitialPhase,
+		ctx:                 ctx,
+		cancel:              cancel,
+		ownerUserID:         opts.OwnerUserID,
+		AuthoritativeID:     opts.AuthoritativeID,
+		AuthoritativeStatus: opts.AuthoritativeStatus,
+		managed:             true,
+		managedControls:     opts.Controls,
+		managedCancel:       opts.Cancel,
+		managedRunFn:        runFn,
 	}
 	m.jobs[job.ID] = job
 	m.jobOrder = append(m.jobOrder, job.ID)

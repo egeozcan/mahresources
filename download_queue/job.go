@@ -54,6 +54,7 @@ type DownloadJob struct {
 	PhaseTotal          int64    `json:"phaseTotal,omitempty"`
 	ResultPath          string   `json:"resultPath,omitempty"`
 	Warnings            []string `json:"warnings,omitempty"`
+	AuthoritativeID     string   `json:"authoritativeId,omitempty"`
 	AuthoritativeStatus string   `json:"authoritativeStatus,omitempty"`
 
 	// Internal fields (not serialized to JSON)
@@ -819,6 +820,7 @@ func (j *DownloadJob) snapshotLocked() *DownloadJob {
 		PhaseCount:          j.PhaseCount,
 		PhaseTotal:          j.PhaseTotal,
 		ResultPath:          j.ResultPath,
+		AuthoritativeID:     j.AuthoritativeID,
 		AuthoritativeStatus: j.AuthoritativeStatus,
 		ownerUserID:         j.ownerUserID,
 		pluginName:          j.pluginName,

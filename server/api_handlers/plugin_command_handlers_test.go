@@ -68,6 +68,30 @@ func TestPluginCommandHistoryListIsBoundedAndOmitsOutput(t *testing.T) {
 	}
 }
 
+func TestPluginCommandHistoryClampsPageBeforeOffsetMultiplication(t *testing.T) {
+	stub := &pluginCommandHistoryStub{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/plugin/command-runs?page=9223372036854775807", nil)
+	GetPluginCommandRunsHandler(stub)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	const maxPage = int64(1_000_000_000)
+	wantOffset := int((maxPage - 1) * int64(pluginCommandHistoryPageSize))
+	if stub.listOffset != wantOffset {
+		t.Fatalf("list offset = %d, want clamped %d", stub.listOffset, wantOffset)
+	}
+	var payload struct {
+		Page int64 `json:"page"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Page != maxPage {
+		t.Fatalf("page = %d, want %d", payload.Page, maxPage)
+	}
+}
+
 func TestPluginCommandHistoryDetailReportsPrunedOutput(t *testing.T) {
 	stub := &pluginCommandHistoryStub{detail: plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: "run-1", Status: plugin_commands.RunStatusSucceeded}}, available: false}
 	recorder := httptest.NewRecorder()

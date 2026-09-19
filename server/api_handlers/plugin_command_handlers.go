@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"mahresources/constants"
 	"mahresources/download_queue"
@@ -23,18 +22,15 @@ type PluginCommandHistoryContext interface {
 	CancelPluginCommandRun(id string) error
 }
 
-func pluginCommandPage(request *http.Request) int {
-	page, _ := strconv.Atoi(request.URL.Query().Get("page"))
-	if page < 1 {
-		return 1
-	}
-	return page
+func pluginCommandPage(request *http.Request) int64 {
+	return http_utils.GetPageParameter(request)
 }
 
 func GetPluginCommandRunsHandler(ctx PluginCommandHistoryContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := pluginCommandPage(request)
-		runs, count, err := ctx.GetPluginCommandRuns((page-1)*pluginCommandHistoryPageSize, pluginCommandHistoryPageSize)
+		offset := int((page - 1) * int64(pluginCommandHistoryPageSize))
+		runs, count, err := ctx.GetPluginCommandRuns(offset, pluginCommandHistoryPageSize)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

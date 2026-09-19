@@ -210,7 +210,7 @@
                                         </template>
 
                                         <!-- Processing indicator with progress bar -->
-                                        <template x-if="job.status === 'processing'">
+                                        <template x-if="job.status === 'processing' && !isPluginCommand(job)">
                                             <div class="mt-2">
                                                 <div class="flex justify-between text-xs text-stone-500 mb-1">
                                                     <span>Creating resource...</span>
@@ -298,8 +298,8 @@
                                         </template>
 
                                         {% if not authEnabled or currentUser.Role == "admin" %}
-                                        <template x-if="isPluginCommand(job) && isFinished(job)">
-                                            <a :href="'/admin/plugin-command-runs?id=' + encodeURIComponent(job.id)"
+                                        <template x-if="isPluginCommand(job) && isFinished(job) && job.authoritativeId">
+                                            <a :href="'/admin/plugin-command-runs?id=' + encodeURIComponent(job.authoritativeId)"
                                                class="mt-1 inline-block text-xs text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
                                                 View command history
                                             </a>

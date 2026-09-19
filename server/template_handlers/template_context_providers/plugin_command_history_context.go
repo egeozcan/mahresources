@@ -18,7 +18,8 @@ func PluginCommandHistoryContextProvider(context PluginCommandHistoryPageContext
 		ctx["pageTitle"] = "Plugin command history"
 		ctx["notice"] = request.URL.Query().Get("notice")
 		page := http_utils.GetPageParameter(request)
-		runs, count, err := context.GetPluginCommandRuns((int(page)-1)*pluginCommandHistoryPageSize, pluginCommandHistoryPageSize)
+		offset := int((page - 1) * int64(pluginCommandHistoryPageSize))
+		runs, count, err := context.GetPluginCommandRuns(offset, pluginCommandHistoryPageSize)
 		if err != nil {
 			return addErrContext(err, ctx)
 		}

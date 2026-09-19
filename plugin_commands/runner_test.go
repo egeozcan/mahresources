@@ -46,6 +46,7 @@ type runnerTestStore struct {
 	setProcessGroupStarted chan struct{}
 	setProcessGroupRelease <-chan struct{}
 	beforeFinish           func(string, RunFinish)
+	finishErr              error
 }
 
 func newRunnerTestStore() *runnerTestStore {
@@ -111,6 +112,9 @@ func (s *runnerTestStore) FinishRun(id string, finish RunFinish) (bool, error) {
 	if s.beforeFinish != nil {
 		s.beforeFinish(id, finish)
 	}
+	if s.finishErr != nil {
+		return false, s.finishErr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, ok := s.runs[id]
@@ -169,6 +173,24 @@ func (s *runnerTestStore) NonterminalImports() ([]ImportRecord, error) {
 	return append([]ImportRecord(nil), s.imports...), nil
 }
 func (s *runnerTestStore) HasNonterminalImports(string) (bool, error) { return false, nil }
+
+func TestRunnerPersistenceFailurePublishesTheStatusThatActuallyPersisted(t *testing.T) {
+	store := newRunnerTestStore()
+	store.runs["run-1"] = RunRecord{ID: "run-1", Status: RunStatusRunning}
+	store.outputs["run-1"] = RunOutput{RunID: "run-1"}
+	store.finishErr = errors.New("database unavailable")
+	executor := &commandExecutor{deps: RunnerDependencies{Store: store}}
+
+	outcome := executor.finish(QueuedRun{RunID: "run-1"}, RunFinish{
+		Status: RunStatusSucceeded, FinishedAt: time.Now().UTC(),
+	})
+	if outcome.Status != RunStatusRunning {
+		t.Fatalf("authoritative status = %q, want durable running", outcome.Status)
+	}
+	if !strings.Contains(outcome.Error, "persist terminal command: database unavailable") {
+		t.Fatalf("error = %q", outcome.Error)
+	}
+}
 
 func TestRunnerAdmissionPersistsRedactedInvocationAndCleansRejectedFolder(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()

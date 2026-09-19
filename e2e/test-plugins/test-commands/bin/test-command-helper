@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+mode="${1:-}"
+case "$mode" in
+  wait)
+    /bin/sleep 30
+    ;;
+  hostile-output)
+    printf '\033[31m<script>window.commandFixtureSecret = true</script>\033[0m\n'
+    ;;
+  *)
+    printf 'unknown fixture mode: %s\n' "$mode" >&2
+    exit 2
+    ;;
+esac

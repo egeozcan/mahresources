@@ -127,6 +127,10 @@ export const AUTH_ADMIN_PASSWORD = 'adminpw1';
 export interface StartServerOptions {
   /** Enable user accounts + RBAC and bootstrap an admin (admin/adminpw1). */
   auth?: boolean;
+  /** Use a persistent SQLite database so command consent can be recorded. */
+  sqliteDsn?: string;
+  /** Trusted executable path for deterministic plugin-command fixtures. */
+  pluginCommandPath?: string;
 }
 
 /**
@@ -176,9 +180,12 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
       ...authArgs,
     ];
   } else {
-    // SQLite ephemeral mode (default)
+    // SQLite ephemeral mode (default). Command-lifecycle specs opt into a
+    // temporary persistent database because executable consent must survive.
     args = [
-      '-ephemeral',
+      ...(opts.sqliteDsn
+        ? ['-db-type=SQLITE', `-db-dsn=${opts.sqliteDsn}`, '-memory-fs']
+        : ['-ephemeral']),
       `-bind-address=:${port}`,
       `-share-port=${sharePort}`,
       '-share-bind-address=127.0.0.1',
@@ -206,6 +213,9 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
       allowPrivateFetch,
       ...authArgs,
     ];
+  }
+  if (opts.pluginCommandPath) {
+    args.push(`-plugin-command-path=${opts.pluginCommandPath}`);
   }
 
   // Isolate the spawned server from developer-specific .env config.

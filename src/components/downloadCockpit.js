@@ -280,7 +280,7 @@ export function downloadCockpit() {
                 const effectiveStatus = this.jobStatus(job);
                 if (this.isPluginCommand(job) && this.isFinished(job)) {
                     delete this.speedTracking[job.id];
-                    this.announce(`Plugin command ${this.statusLabels[effectiveStatus]?.toLowerCase() || effectiveStatus}: ${job.id}`);
+                    this.announce(`Plugin command ${this.statusLabels[effectiveStatus]?.toLowerCase() || effectiveStatus}: ${job.authoritativeId || job.id}`);
                 } else if (job.status === 'completed') {
                     delete this.speedTracking[job.id];
                     this.announce(`Download completed: ${this.truncateUrl(job.url, 30)}`);
@@ -773,7 +773,7 @@ export function downloadCockpit() {
 
         getJobTitle(job) {
             if (this.isPluginCommand(job)) {
-                return `Plugin command ${job.id}`;
+                return `Plugin command ${job.authoritativeId || job.id}`;
             }
             if (job._isAction) {
                 return job.label || job.actionId;

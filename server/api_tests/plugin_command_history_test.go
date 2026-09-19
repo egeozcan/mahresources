@@ -45,4 +45,13 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	if strings.Contains(body, `<script>alert`) || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("output was not escaped: %s", body)
 	}
+
+	if err := tc.DB.Where("run_id = ?", "admin-owned-command").Delete(&models.PluginCommandRunOutput{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	pruned := doReq(tc, http.MethodGet, "/admin/plugin-command-runs?id=admin-owned-command",
+		map[string]string{"Accept": "text/html", "Authorization": admin}, nil, nil)
+	if pruned.Code != http.StatusOK || !strings.Contains(pruned.Body.String(), "Output is no longer available") || !strings.Contains(pruned.Body.String(), `data-testid="command-run-output-pruned"`) {
+		t.Fatalf("pruned output detail = %d %s", pruned.Code, pruned.Body.String())
+	}
 }

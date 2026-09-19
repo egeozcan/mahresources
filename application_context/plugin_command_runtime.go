@@ -38,8 +38,10 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 			Source: pluginCommandJobSource, InitialPhase: plugin_commands.RunStatusRunning,
 			OwnerUserID: clonePluginCommandActor(spec.OwnerUserID),
 		},
-		Controls: download_queue.JobControls{Cancel: true},
-		Cancel:   cancel,
+		Controls:            download_queue.JobControls{Cancel: true},
+		Cancel:              cancel,
+		AuthoritativeID:     spec.RunID,
+		AuthoritativeStatus: plugin_commands.RunStatusRunning,
 	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ProgressSink) download_queue.ManagedJobOutcome {
 		return managedCommandOutcome(run(ctx, commandProgress{sink: progress}))
 	})

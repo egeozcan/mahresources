@@ -132,12 +132,19 @@ func TestManagedJobControlsAndAuthoritativeStatus(t *testing.T) {
 		return nil
 	}
 	job, _ = dm.SubmitManagedJob(ManagedJobOptions{
-		Controls: JobControls{Cancel: true},
-		Cancel:   cancelFn,
+		Controls:            JobControls{Cancel: true},
+		Cancel:              cancelFn,
+		AuthoritativeID:     "durable-run-1",
+		AuthoritativeStatus: "running",
 	}, func(ctx context.Context, _ *DownloadJob, _ ProgressSink) ManagedJobOutcome {
 		<-cancelled
 		return ManagedJobOutcome{Status: JobStatusCancelled, AuthoritativeStatus: "cancelled", Error: "operator stopped it"}
 	})
+
+	initial := job.Snapshot()
+	if initial.AuthoritativeID != "durable-run-1" || initial.AuthoritativeStatus != "running" {
+		t.Fatalf("initial durable authority = id %q status %q", initial.AuthoritativeID, initial.AuthoritativeStatus)
+	}
 
 	for _, call := range []struct {
 		name string

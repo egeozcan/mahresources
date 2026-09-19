@@ -485,7 +485,7 @@ func (e *commandExecutor) finishWithoutStart(run QueuedRun, fallback string) Out
 func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 	won, err := e.deps.Store.FinishRun(run.RunID, finish)
 	if err != nil {
-		return Outcome{Status: finish.Status, Error: finish.Error + "; persist terminal command: " + err.Error()}
+		return e.outcomeAfterPersistenceError(run.RunID, finish.Error, err)
 	}
 	if won {
 		return Outcome{Status: finish.Status, Error: finish.Error}
@@ -501,7 +501,7 @@ func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 		cancelled.ExitCode = nil
 		won, err = e.deps.Store.FinishRun(run.RunID, cancelled)
 		if err != nil {
-			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error + "; persist terminal command: " + err.Error()}
+			return e.outcomeAfterPersistenceError(run.RunID, cancelled.Error, err)
 		}
 		if won {
 			return Outcome{Status: RunStatusCancelled, Error: cancelled.Error}
@@ -512,6 +512,22 @@ func (e *commandExecutor) finish(run QueuedRun, finish RunFinish) Outcome {
 		}
 	}
 	return Outcome{Status: record.Status, Error: record.Error}
+}
+
+// outcomeAfterPersistenceError never publishes the intended terminal status as
+// durable authority. If the store can still be read, the live cockpit mirrors
+// the status that actually persisted (normally running); if it cannot, the
+// managed job falls back to its generic failure rather than inventing authority.
+func (e *commandExecutor) outcomeAfterPersistenceError(runID, reason string, persistErr error) Outcome {
+	message := "persist terminal command: " + persistErr.Error()
+	if reason != "" {
+		message = reason + "; " + message
+	}
+	record, _, readErr := e.deps.Store.Run(runID)
+	if readErr != nil {
+		return Outcome{Error: message + "; read durable command status: " + readErr.Error()}
+	}
+	return Outcome{Status: record.Status, Error: message}
 }
 
 func (e *commandExecutor) cancelReason(runID string) string {
