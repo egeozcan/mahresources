@@ -26,11 +26,12 @@ type commandExecutor struct {
 	deps           RunnerDependencies
 	cleanupTimeout time.Duration
 	quotaInterval  time.Duration
-	// Test barriers sit on the two cancellation boundaries which must remain
-	// closed: the last check before fork and the interval after Start before pgid
-	// persistence. Nil in production.
-	beforeStart func()
-	afterStart  func()
+	// Test barriers sit on the cancellation boundaries which must remain closed:
+	// before the per-run fork lock, after the durable check while that lock is
+	// held, and after Start before pgid persistence. Nil in production.
+	beforeStart            func()
+	afterCancellationCheck func()
+	afterStart             func()
 }
 
 func NewExecutor(deps RunnerDependencies) Executor {
@@ -179,23 +180,45 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		Stdin: stdin, Stdout: stdoutW, Stderr: stderrW,
 		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
 	}
-	// Re-read both cancellation channels at the last safe point. Cancel first
-	// persists its latch and only then asks the dispatcher to cancel this context,
-	// so either observation closes the pre-fork race.
+	// Order the final durable-latch read and Start against Dispatcher.Cancel.
+	// Cancel takes this same per-run lock before persisting its latch. Therefore a
+	// cancellation is either visible here and no process starts, or Start wins
+	// first and cancellation follows the post-fork kill/reap path.
 	if e.beforeStart != nil {
 		e.beforeStart()
 	}
+	control := run.control
+	if control == nil {
+		control = &runControl{}
+	}
+	control.forkMu.Lock()
 	if outcome, stop := e.stopBeforeStart(ctx, run); stop {
+		control.forkMu.Unlock()
 		stdoutW.Close()
 		stderrW.Close()
 		<-drainDone
 		return outcome
 	}
-	if err := cmd.Start(); err != nil {
+	if e.afterCancellationCheck != nil {
+		e.afterCancellationCheck()
+	}
+	if control.cancelled.Load() {
+		control.forkMu.Unlock()
 		stdoutW.Close()
 		stderrW.Close()
 		<-drainDone
-		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", err), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
+		if outcome, stop := e.stopBeforeStart(ctx, run); stop {
+			return outcome
+		}
+		return e.finish(run, RunFinish{Status: RunStatusCancelled, Error: e.cancelReason(run.RunID), FinishedAt: time.Now().UTC()})
+	}
+	startErr := cmd.Start()
+	control.forkMu.Unlock()
+	if startErr != nil {
+		stdoutW.Close()
+		stderrW.Close()
+		<-drainDone
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", startErr), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
 	}
 	if e.afterStart != nil {
 		e.afterStart()
@@ -246,13 +269,10 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	}
 	killGroup := func() {
 		if !processGroupRecorded {
-			// The direct os.Process is still the child returned by Start and cannot
-			// be a reused pid until Wait reaps it. Stop that exact process to keep
-			// timeout/shutdown bounded, but do not signal its group until pgid
-			// persistence and ownership verification have both completed.
-			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
-				appendReason(fmt.Sprintf("kill command process: %v", processErr))
-			}
+			// Cancellation after fork waits for the pgid durability barrier. Killing
+			// only the parent here would orphan descendants and make final output
+			// unverifiable. The bounded forced-cleanup branch below is the sole
+			// exception when persistence itself never returns.
 			return
 		}
 		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
@@ -369,6 +389,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 				status = RunStatusFailed
 			}
 			appendReason("process-group persistence did not finish before cleanup deadline")
+			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
+				appendReason(fmt.Sprintf("kill command process: %v", processErr))
+			}
 		}
 		if parentDone && pipesDone {
 			break

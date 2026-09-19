@@ -72,13 +72,16 @@ func runPluginCommandHelper(args []string) int {
 		_, _ = io.WriteString(os.Stdout, strings.Repeat("x", n))
 		_, _ = io.WriteString(os.Stdout, "\x1b[0m\n")
 		return 0
-	case "spawn-descendant":
+	case "spawn-descendant", "spawn-scrubbed-descendant":
 		if len(args) != 2 {
 			return 2
 		}
 		child := exec.Command(os.Args[0], helperProcessFlag, "descendant", args[1])
 		child.Stdout = os.Stdout
 		child.Stderr = os.Stderr
+		if args[0] == "spawn-scrubbed-descendant" {
+			child.Env = []string{"PATH=" + os.Getenv("PATH")}
+		}
 		if err := child.Start(); err != nil {
 			return 3
 		}

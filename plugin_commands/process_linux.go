@@ -48,23 +48,18 @@ func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentit
 	for _, pid := range pids {
 		environ, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
-			}
-			return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
+			continue
 		}
-		owned := false
 		for _, item := range bytes.Split(environ, []byte{0}) {
 			if bytes.Equal(item, want) {
-				owned = true
-				break
+				// One marked member binds the process group to this run. Descendants
+				// may deliberately scrub their environments without becoming a new
+				// process group or invalidating that ownership proof.
+				return GroupIdentity{State: GroupAliveOwned, PIDs: pids}, nil
 			}
 		}
-		if !owned {
-			return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
-		}
 	}
-	return GroupIdentity{State: GroupAliveOwned, PIDs: pids}, nil
+	return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
 }
 
 func linuxStatProcessGroup(data []byte) (int, error) {

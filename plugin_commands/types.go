@@ -207,6 +207,7 @@ type QueuedRun struct {
 	Request     CommandRequest
 	ExchangeDir string
 	Invocation  Invocation
+	control     *runControl
 }
 
 type Executor interface {

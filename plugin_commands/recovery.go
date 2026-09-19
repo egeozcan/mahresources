@@ -9,7 +9,7 @@ import (
 
 // Recover classifies command rows left nonterminal by a previous process. It
 // never trusts a persisted process-group id by itself: a group is signalled only
-// after every current member proves the run id through its environment.
+// after at least one current member proves the run id through its environment.
 func (d *Dispatcher) Recover(ctx context.Context) error {
 	if d == nil || d.deps.Store == nil || d.deps.Inspector == nil {
 		return fmt.Errorf("plugin_commands: recovery dependencies are incomplete")
@@ -66,6 +66,9 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RunRecord) RunFinis
 	}
 	switch identity.State {
 	case GroupDead:
+		if run.CancelRequested {
+			finish.Status, finish.Error = RunStatusCancelled, run.Error
+		}
 		return finish
 	case GroupAliveUnverified:
 		finish.OutputUnverified = true
@@ -118,7 +121,8 @@ func (d *Dispatcher) terminateRecoveredGroup(ctx context.Context, pgid int, runI
 			return nil
 		}
 		if identity.State != GroupAliveOwned {
-			return errors.New("process group ownership became unverifiable after termination")
+			d.deps.Logf("plugin command process group %d ownership became unverifiable after termination", pgid)
+			return fmt.Errorf("process group %d ownership became unverifiable after termination", pgid)
 		}
 		select {
 		case <-ctx.Done():

@@ -19,14 +19,18 @@ func (s dispatcherTestSettings) OutputRetention() time.Duration   { return time.
 func (s dispatcherTestSettings) CommandPath() string              { return "/bin" }
 
 type dispatcherTestStore struct {
-	mu              sync.Mutex
-	runs            map[string]RunRecord
-	finishes        map[string]RunFinish
-	importFinishes  map[string]ImportFinish
-	cancelled       []string
-	markRunErr      error
-	finishRunErr    error
-	finishImportErr error
+	mu                  sync.Mutex
+	runs                map[string]RunRecord
+	finishes            map[string]RunFinish
+	importFinishes      map[string]ImportFinish
+	cancelled           []string
+	markRunErr          error
+	finishRunErr        error
+	finishRunStarted    chan struct{}
+	finishRunRelease    <-chan struct{}
+	finishImportErr     error
+	finishImportCalls   int
+	interruptImportsErr error
 }
 
 func newDispatcherTestStore() *dispatcherTestStore {
@@ -86,6 +90,15 @@ func (s *dispatcherTestStore) RequestRunCancel(id, reason string) error {
 	return nil
 }
 func (s *dispatcherTestStore) FinishRun(id string, f RunFinish) (bool, error) {
+	if s.finishRunStarted != nil {
+		select {
+		case s.finishRunStarted <- struct{}{}:
+		default:
+		}
+	}
+	if s.finishRunRelease != nil {
+		<-s.finishRunRelease
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.finishRunErr != nil {
@@ -127,13 +140,16 @@ func (s *dispatcherTestStore) MarkImportRunning(string, time.Time) (bool, error)
 func (s *dispatcherTestStore) FinishImport(id string, finish ImportFinish) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.finishImportCalls++
 	if s.finishImportErr != nil {
 		return false, s.finishImportErr
 	}
 	s.importFinishes[id] = finish
 	return true, nil
 }
-func (s *dispatcherTestStore) InterruptNonterminalImports(time.Time) error { return nil }
+func (s *dispatcherTestStore) InterruptNonterminalImports(time.Time) error {
+	return s.interruptImportsErr
+}
 func (s *dispatcherTestStore) NonterminalImports() ([]ImportRecord, error) { return nil, nil }
 func (s *dispatcherTestStore) HasNonterminalImports(string) (bool, error)  { return false, nil }
 
@@ -199,11 +215,23 @@ type nopProgress struct{}
 func (nopProgress) SetPhase(string)               {}
 func (nopProgress) SetPhaseProgress(int64, int64) {}
 
-type dispatcherTestExecutor struct{}
+type dispatcherTestExecutor struct{ store Store }
 
-func (dispatcherTestExecutor) Execute(ctx context.Context, q QueuedRun) Outcome {
+func (e dispatcherTestExecutor) Execute(ctx context.Context, q QueuedRun) Outcome {
+	if e.store != nil {
+		_, _ = e.store.MarkRunRunning(q.RunID, time.Now().UTC())
+	}
 	<-ctx.Done()
-	return Outcome{Status: RunStatusCancelled, Error: ctx.Err().Error()}
+	outcome := Outcome{Status: RunStatusCancelled, Error: context.Cause(ctx).Error()}
+	if e.store != nil {
+		_, err := e.store.FinishRun(q.RunID, RunFinish{
+			Status: outcome.Status, Error: outcome.Error, FinishedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			outcome.Error += "; persist terminal command: " + err.Error()
+		}
+	}
+	return outcome
 }
 
 func commandRequest(plugin string, callback func(Result)) CommandRequest {
@@ -214,7 +242,7 @@ func startTestDispatcher(t *testing.T, pending int) (*Dispatcher, *dispatcherTes
 	t.Helper()
 	store := newDispatcherTestStore()
 	jobs := &dispatcherTestJobs{}
-	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{}, Settings: dispatcherTestSettings{pending: pending}})
+	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{store: store}, Settings: dispatcherTestSettings{pending: pending}})
 	if err := d.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -31,24 +31,21 @@ func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentit
 	for _, pid := range pids {
 		raw, err := unix.SysctlRaw("kern.procargs2", pid)
 		if err != nil {
-			return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
+			continue
 		}
 		environment, err := darwinProcessEnvironment(raw)
 		if err != nil {
-			return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
+			continue
 		}
-		owned := false
 		for _, value := range environment {
 			if value == want {
-				owned = true
-				break
+				// One marked member binds the process group to this run. A child may
+				// scrub its own environment while remaining in that owned group.
+				return GroupIdentity{State: GroupAliveOwned, PIDs: pids}, nil
 			}
 		}
-		if !owned {
-			return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
-		}
 	}
-	return GroupIdentity{State: GroupAliveOwned, PIDs: pids}, nil
+	return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
 }
 
 func darwinProcessEnvironment(raw []byte) ([]string, error) {

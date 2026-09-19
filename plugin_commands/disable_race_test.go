@@ -1,15 +1,16 @@
-//go:build !windows
+//go:build linux || darwin
 
 package plugin_commands
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
-func runCancellationBarrierCase(t *testing.T, afterStart bool, disable bool) {
+func runCancellationBarrierCase(t *testing.T, afterStart, afterCancellationCheck, disable bool) {
 	t.Helper()
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
@@ -20,6 +21,8 @@ func runCancellationBarrierCase(t *testing.T, afterStart bool, disable bool) {
 	barrier := func() { close(reached); <-release }
 	if afterStart {
 		executor.afterStart = barrier
+	} else if afterCancellationCheck {
+		executor.afterCancellationCheck = barrier
 	} else {
 		executor.beforeStart = barrier
 	}
@@ -43,15 +46,23 @@ func runCancellationBarrierCase(t *testing.T, afterStart bool, disable bool) {
 		t.Fatal("runner did not reach cancellation barrier")
 	}
 
-	if disable {
-		err = d.DisablePlugin("p", "plugin disabled")
-	} else {
-		err = d.Cancel(runID, "operator cancelled")
-	}
-	if err != nil {
-		t.Fatal(err)
+	cancelResult := make(chan error, 1)
+	go func() {
+		if disable {
+			cancelResult <- d.DisablePlugin("p", "plugin disabled")
+		} else {
+			cancelResult <- d.Cancel(runID, "operator cancelled")
+		}
+	}()
+	select {
+	case err := <-cancelResult:
+		t.Fatalf("cancellation returned before the fork barrier was released: %v", err)
+	case <-time.After(30 * time.Millisecond):
 	}
 	close(release)
+	if err := <-cancelResult; err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case got := <-outcome:
 		if got.Status != RunStatusCancelled {
@@ -71,13 +82,14 @@ func runCancellationBarrierCase(t *testing.T, afterStart bool, disable bool) {
 	if record.Status != RunStatusCancelled || record.Error != wantReason {
 		t.Fatalf("record = %+v", record)
 	}
-	if !afterStart && record.ProcessGroupID != nil {
+	spawnWon := afterStart || afterCancellationCheck
+	if !spawnWon && record.ProcessGroupID != nil {
 		t.Fatalf("pre-fork cancellation spawned process group %d", *record.ProcessGroupID)
 	}
-	if afterStart && record.ProcessGroupID == nil {
+	if spawnWon && record.ProcessGroupID == nil {
 		t.Fatal("post-fork cancellation finished before pgid persistence")
 	}
-	if afterStart && record.OutputUnverified {
+	if spawnWon && record.OutputUnverified {
 		t.Fatalf("owned post-fork process group was not verified: %+v", record)
 	}
 
@@ -89,19 +101,27 @@ func runCancellationBarrierCase(t *testing.T, afterStart bool, disable bool) {
 }
 
 func TestCancelImmediatelyBeforeForkPreventsSpawn(t *testing.T) {
-	runCancellationBarrierCase(t, false, false)
+	runCancellationBarrierCase(t, false, false, false)
 }
 
 func TestDisableImmediatelyBeforeForkPreventsSpawn(t *testing.T) {
-	runCancellationBarrierCase(t, false, true)
+	runCancellationBarrierCase(t, false, false, true)
+}
+
+func TestCancelCannotCommitInsideTheForkCriticalSection(t *testing.T) {
+	runCancellationBarrierCase(t, false, true, false)
+}
+
+func TestDisableCannotCommitInsideTheForkCriticalSection(t *testing.T) {
+	runCancellationBarrierCase(t, false, true, true)
 }
 
 func TestCancelAfterForkWaitsForProcessGroupPersistence(t *testing.T) {
-	runCancellationBarrierCase(t, true, false)
+	runCancellationBarrierCase(t, true, false, false)
 }
 
 func TestDisableAfterForkWaitsForProcessGroupPersistence(t *testing.T) {
-	runCancellationBarrierCase(t, true, true)
+	runCancellationBarrierCase(t, true, false, true)
 }
 
 func TestDisableCancelsQueuedImportsButLetsRunningImportsFinish(t *testing.T) {
@@ -142,6 +162,146 @@ func TestDisableCancelsQueuedImportsButLetsRunningImportsFinish(t *testing.T) {
 	defer cancel()
 	if err := d.Stop(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDisableCancelsImportWaitingInDispatchFailureRetry(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("finish unavailable")
+	store.finishImportErr = injected
+	jobs := &dispatcherTestJobs{importErr: errors.New("managed lane full")}
+	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{}, Settings: dispatcherTestSettings{pending: 10}})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.submitImport(ImportJobSpec{ImportID: "retry-import", PluginName: "p"}, func(context.Context, Progress) Outcome {
+		return Outcome{Status: ImportStatusSucceeded}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return store.finishImportCalls > 0
+	})
+	store.mu.Lock()
+	store.finishImportErr = nil
+	store.mu.Unlock()
+	if err := d.DisablePlugin("p", "plugin disabled"); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	finish := store.importFinishes["retry-import"]
+	store.mu.Unlock()
+	if finish.Status != ImportStatusCancelled || finish.Error != "plugin disabled" {
+		t.Fatalf("retrying import finish = %+v", finish)
+	}
+	if err := d.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStopWaitsForAcceptedTerminalPersistenceAfterDeadline(t *testing.T) {
+	store := newDispatcherTestStore()
+	release := make(chan struct{})
+	store.finishRunStarted = make(chan struct{}, 1)
+	store.finishRunRelease = release
+	jobs := &dispatcherTestJobs{}
+	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{}, Settings: dispatcherTestSettings{pending: 10}})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Submit(commandRequest("p", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- d.Stop(ctx) }()
+	select {
+	case <-store.finishRunStarted:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not begin terminal persistence")
+	}
+	<-ctx.Done()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop returned before accepted terminal persistence drained: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestContextDrivenShutdownPreservesPersistenceErrorForStop(t *testing.T) {
+	store := newDispatcherTestStore()
+	injected := errors.New("terminal write unavailable")
+	store.finishRunErr = injected
+	jobs := &dispatcherTestJobs{}
+	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{}, Settings: dispatcherTestSettings{pending: 10}})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := d.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Submit(commandRequest("p", nil)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-d.done:
+	case <-time.After(time.Second):
+		t.Fatal("context-driven shutdown did not finish")
+	}
+	if err := d.Stop(context.Background()); !errors.Is(err, injected) {
+		t.Fatalf("Stop error = %v, want %v", err, injected)
+	}
+}
+
+func TestShutdownDoesNotDeadlockWhenWorkerCompletionInboxIsFull(t *testing.T) {
+	store := newDispatcherTestStore()
+	jobs := &dispatcherTestJobs{}
+	d := NewDispatcher(Dependencies{Store: store, Jobs: jobs, Executor: dispatcherTestExecutor{store: store}, Settings: dispatcherTestSettings{pending: 10}})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := d.Submit(commandRequest("p", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	workerOutcome := make(chan Outcome, 1)
+	go func() { workerOutcome <- jobs.commandSnapshot()[0].run(context.Background(), nopProgress{}) }()
+	waitFor(t, func() bool {
+		record, _, err := store.Run(runID)
+		return err == nil && record.Status == RunStatusRunning
+	})
+	reached, release := make(chan struct{}), make(chan struct{})
+	d.shutdownStarted = func() { close(reached); <-release }
+	stopped := make(chan error, 1)
+	go func() { stopped <- d.Stop(context.Background()) }()
+	select {
+	case <-reached:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not reach barrier")
+	}
+	for i := 0; len(d.inbox) < cap(d.inbox); i++ {
+		d.inbox <- importCompleted{importID: fmt.Sprintf("filler-%d", i)}
+	}
+	close(release)
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown deadlocked behind a full completion inbox")
+	}
+	select {
+	case <-workerOutcome:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not return after dispatcher shutdown")
 	}
 }
 

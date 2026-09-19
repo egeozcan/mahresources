@@ -3,6 +3,8 @@ package plugin_commands
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -59,22 +61,24 @@ func (i *recoveryInspector) KillGroup(pgid int) error {
 }
 
 func TestRecoveryClassifiesNonterminalRuns(t *testing.T) {
-	pgidDead, pgidOwned, pgidCancelled, pgidUnverified := 11, 12, 13, 14
+	pgidDead, pgidOwned, pgidCancelled, pgidUnverified, pgidDeadCancelled := 11, 12, 13, 14, 15
 	store := &recoveryStore{newDispatcherTestStore()}
 	store.runs = map[string]RunRecord{
 		"queued-cancel": {ID: "queued-cancel", Status: RunStatusQueued, CancelRequested: true, Error: "operator cancelled"},
 		"queued":        {ID: "queued", Status: RunStatusQueued},
 		"no-pgid":       {ID: "no-pgid", Status: RunStatusRunning},
 		"dead":          {ID: "dead", Status: RunStatusRunning, ProcessGroupID: &pgidDead},
+		"dead-cancel":   {ID: "dead-cancel", Status: RunStatusRunning, ProcessGroupID: &pgidDeadCancelled, CancelRequested: true, Error: "operator cancelled"},
 		"owned":         {ID: "owned", Status: RunStatusRunning, ProcessGroupID: &pgidOwned},
 		"owned-cancel":  {ID: "owned-cancel", Status: RunStatusRunning, ProcessGroupID: &pgidCancelled, CancelRequested: true, Error: "disable"},
 		"reused":        {ID: "reused", Status: RunStatusRunning, ProcessGroupID: &pgidUnverified},
 	}
 	inspector := &recoveryInspector{killDead: true, states: map[int][]GroupIdentity{
-		pgidDead:       {{State: GroupDead}},
-		pgidOwned:      {{State: GroupAliveOwned}, {State: GroupAliveOwned}},
-		pgidCancelled:  {{State: GroupAliveOwned}, {State: GroupAliveOwned}},
-		pgidUnverified: {{State: GroupAliveUnverified}},
+		pgidDead:          {{State: GroupDead}},
+		pgidDeadCancelled: {{State: GroupDead}},
+		pgidOwned:         {{State: GroupAliveOwned}, {State: GroupAliveOwned}},
+		pgidCancelled:     {{State: GroupAliveOwned}, {State: GroupAliveOwned}},
+		pgidUnverified:    {{State: GroupAliveUnverified}},
 	}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
 	if err := d.Recover(context.Background()); err != nil {
@@ -89,6 +93,7 @@ func TestRecoveryClassifiesNonterminalRuns(t *testing.T) {
 		"queued":        {RunStatusInterrupted, false},
 		"no-pgid":       {RunStatusInterrupted, true},
 		"dead":          {RunStatusInterrupted, false},
+		"dead-cancel":   {RunStatusCancelled, false},
 		"owned":         {RunStatusInterrupted, false},
 		"owned-cancel":  {RunStatusCancelled, false},
 		"reused":        {RunStatusInterrupted, true},
@@ -134,6 +139,33 @@ func TestRecoveryRechecksOwnershipImmediatelyBeforeKill(t *testing.T) {
 	}
 	if len(inspector.kills) != 0 {
 		t.Fatalf("ownership changed but group was killed: %v", inspector.kills)
+	}
+}
+
+func TestRecoveryWarnsWhenOwnershipIsLostAfterSignal(t *testing.T) {
+	pgid := 32
+	store := &recoveryStore{newDispatcherTestStore()}
+	store.runs["lost-after-signal"] = RunRecord{ID: "lost-after-signal", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	inspector := &recoveryInspector{states: map[int][]GroupIdentity{
+		pgid: {{State: GroupAliveOwned}, {State: GroupAliveOwned}, {State: GroupAliveUnverified}},
+	}}
+	var logs []string
+	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector, Logf: func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}})
+	if err := d.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, _, err := store.Run("lost-after-signal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusInterrupted || !record.OutputUnverified {
+		t.Fatalf("record = %+v", record)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "32") || !strings.Contains(joined, "unverifiable after termination") {
+		t.Fatalf("warning did not name lost pgid: %q", joined)
 	}
 }
 

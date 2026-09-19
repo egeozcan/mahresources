@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,9 +39,21 @@ type Dispatcher struct {
 	inbox   chan any
 	done    chan struct{}
 
+	controls sync.Map // run id -> *runControl
+
 	workerMu      sync.Mutex
 	workerClosing bool
 	workers       sync.WaitGroup
+
+	shutdownMu  sync.Mutex
+	shutdownErr error
+
+	shutdownStarted func() // test barrier; nil in production
+}
+
+type runControl struct {
+	forkMu    sync.Mutex
+	cancelled atomic.Bool
 }
 
 type commandSubmission struct {
@@ -69,7 +82,10 @@ type disablePluginSubmission struct {
 	reason string
 	reply  chan error
 }
-type commandCompleted struct{ runID string }
+type commandCompleted struct {
+	runID   string
+	outcome Outcome
+}
 type importCompleted struct{ importID string }
 
 type queuedImport struct {
@@ -93,6 +109,8 @@ type commandDispatchFailure struct {
 type importDispatchFailure struct {
 	item        queuedImport
 	dispatchErr error
+	status      string
+	reason      string
 }
 
 type queuedCancellation struct {
@@ -118,6 +136,7 @@ type dispatcherState struct {
 	failedCommandDispatch map[string]*commandDispatchFailure
 	failedImportDispatch  map[string]*importDispatchFailure
 	queuedCancellations   map[string]*queuedCancellation
+	cancelWaiters         map[string][]chan error
 }
 
 func NewDispatcher(deps Dependencies) *Dispatcher {
@@ -148,23 +167,36 @@ func (d *Dispatcher) Stop(ctx context.Context) error {
 	reply := make(chan error, 1)
 	if err := d.send(ctx, stopDispatcher{ctx: ctx, reply: reply}); err != nil {
 		if errors.Is(err, errDispatcherStopped) {
-			return nil
+			return d.shutdownResult()
 		}
 		return err
 	}
+	// Once shutdown is accepted, the owner uses ctx only to bound worker drain.
+	// Stop waits for the owner's reply so terminal classification and persistence
+	// have completed before the caller is told shutdown is done.
 	select {
 	case err := <-reply:
 		return err
-	case <-ctx.Done():
-		return ctx.Err()
 	case <-d.done:
 		select {
 		case err := <-reply:
 			return err
 		default:
-			return nil
+			return d.shutdownResult()
 		}
 	}
+}
+
+func (d *Dispatcher) setShutdownResult(err error) {
+	d.shutdownMu.Lock()
+	d.shutdownErr = err
+	d.shutdownMu.Unlock()
+}
+
+func (d *Dispatcher) shutdownResult() error {
+	d.shutdownMu.Lock()
+	defer d.shutdownMu.Unlock()
+	return d.shutdownErr
 }
 
 func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
@@ -178,7 +210,7 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	run := QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation}
+	run := QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation, control: &runControl{}}
 	admission, prepared := d.deps.Executor.(commandAdmission)
 	if prepared {
 		if err := admission.Prepare(run); err != nil {
@@ -190,12 +222,15 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 			admission.Cleanup(run)
 		}
 	}
+	d.controls.Store(runID, run.control)
 	submission := commandSubmission{run: run, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), submission); err != nil {
+		d.controls.Delete(runID)
 		cleanup()
 		return "", err
 	}
 	if err := awaitDispatcherReply(submission.reply, d.done); err != nil {
+		d.controls.Delete(runID)
 		cleanup()
 		return "", err
 	}
@@ -203,11 +238,26 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 }
 
 func (d *Dispatcher) Cancel(runID, reason string) error {
-	// The durable latch is taken before the owner goroutine can move the run
-	// across its queue/fork boundary. The runner reads the same latch immediately
-	// before Start, so a cancellation cannot be acknowledged while a process is
-	// still able to appear afterwards.
-	if err := d.deps.Store.RequestRunCancel(runID, reason); err != nil {
+	// The per-run fork barrier orders durable cancellation against Start. If the
+	// runner owns it, Start happens first and this is a post-fork cancellation;
+	// otherwise the durable latch and in-memory latch are both visible before the
+	// runner performs its final check. The dispatcher owner is contacted only
+	// after that boundary has been settled.
+	var control *runControl
+	if value, ok := d.controls.Load(runID); ok {
+		control, _ = value.(*runControl)
+	}
+	if control != nil {
+		control.forkMu.Lock()
+	}
+	err := d.deps.Store.RequestRunCancel(runID, reason)
+	if err == nil && control != nil {
+		control.cancelled.Store(true)
+	}
+	if control != nil {
+		control.forkMu.Unlock()
+	}
+	if err != nil {
 		return err
 	}
 	request := cancelSubmission{runID: runID, reason: reason, reply: make(chan error, 1)}
@@ -303,14 +353,19 @@ func (d *Dispatcher) run(ctx context.Context) {
 		failedCommandDispatch: make(map[string]*commandDispatchFailure),
 		failedImportDispatch:  make(map[string]*importDispatchFailure),
 		queuedCancellations:   make(map[string]*queuedCancellation),
+		cancelWaiters:         make(map[string][]chan error),
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), groupDrainTimeout)
-			_ = d.shutdown(shutdownCtx, &state)
+			err := d.shutdown(shutdownCtx, &state)
 			cancel()
+			d.setShutdownResult(err)
+			if err != nil {
+				d.deps.Logf("plugin command dispatcher shutdown: %v", err)
+			}
 			return
 		case <-retryTicker.C:
 			d.retryDispatchFailures(&state)
@@ -322,22 +377,23 @@ func (d *Dispatcher) run(ctx context.Context) {
 			case importSubmission:
 				message.reply <- d.acceptImport(&state, message)
 			case cancelSubmission:
-				message.reply <- d.cancel(&state, message.runID, message.reason)
+				deferred, err := d.cancel(&state, message.runID, message.reason, message.reply)
+				if !deferred {
+					message.reply <- err
+				}
 			case disablePluginSubmission:
 				message.reply <- d.disableQueuedImports(&state, message.plugin, message.reason)
 			case commandCompleted:
-				if active, ok := state.activeCommands[message.runID]; ok {
-					active.cancel(nil)
-					delete(state.activeCommands, message.runID)
-					state.activeByPlugin[active.plugin]--
-				}
+				d.completeCommand(&state, message)
 			case importCompleted:
 				if cancel, ok := state.activeImports[message.importID]; ok {
 					cancel(nil)
 					delete(state.activeImports, message.importID)
 				}
 			case stopDispatcher:
-				message.reply <- d.shutdown(message.ctx, &state)
+				err := d.shutdown(message.ctx, &state)
+				d.setShutdownResult(err)
+				message.reply <- err
 				return
 			}
 			d.schedule(&state)
@@ -374,6 +430,16 @@ func (d *Dispatcher) disableQueuedImports(state *dispatcherState, plugin, reason
 		}
 	}
 	state.imports[plugin] = kept
+	for _, failure := range state.failedImportDispatch {
+		if failure.item.spec.PluginName != plugin {
+			continue
+		}
+		failure.status = ImportStatusCancelled
+		failure.reason = reason
+		if _, err := d.persistImportDispatchFailure(state, failure); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -382,6 +448,9 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 	d.workerMu.Lock()
 	d.workerClosing = true
 	d.workerMu.Unlock()
+	if d.shutdownStarted != nil {
+		d.shutdownStarted()
+	}
 	var firstErr error
 
 	for plugin, queue := range state.commands {
@@ -393,6 +462,7 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 				}
 				continue
 			}
+			d.controls.Delete(run.RunID)
 			deliverCompletion(run.Request.Completion, result)
 		}
 		delete(state.commands, plugin)
@@ -463,12 +533,17 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
+		} else {
+			_ = result
 		}
 		active.cancel(errDispatcherShutdown)
 		delete(state.activeCommands, id)
 		state.activeByPlugin[active.plugin]--
-		_ = result
+		d.controls.Delete(id)
+		for _, waiter := range state.cancelWaiters[id] {
+			waiter <- err
+		}
+		delete(state.cancelWaiters, id)
 	}
 	return firstErr
 }
@@ -572,16 +647,17 @@ func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmissi
 	return nil
 }
 
-func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error {
+func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string, reply chan error) (bool, error) {
 	if failure, ok := state.failedCommandDispatch[runID]; ok {
 		failure.status = RunStatusCancelled
 		failure.reason = reason
 		_, err := d.persistCommandDispatchFailure(state, failure)
-		return err
+		return false, err
 	}
 	if active, ok := state.activeCommands[runID]; ok {
+		state.cancelWaiters[runID] = append(state.cancelWaiters[runID], reply)
 		active.cancel(errOperatorCancelled)
-		return nil
+		return true, nil
 	}
 	for plugin, queue := range state.commands {
 		for i := range queue {
@@ -592,7 +668,7 @@ func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error 
 			state.commands[plugin] = append(queue[:i], queue[i+1:]...)
 			state.queuedCancellations[runID] = cancellation
 			_, err := d.persistQueuedCancellation(state, cancellation)
-			return err
+			return false, err
 		}
 	}
 	// A durable queued row can outlive the process which owned its private
@@ -601,15 +677,43 @@ func (d *Dispatcher) cancel(state *dispatcherState, runID, reason string) error 
 	// cancellation in the current process.
 	record, output, err := d.deps.Store.Run(runID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !RunStatusTerminal(record.Status) && record.CancelRequested {
 		_, err = d.deps.Store.FinishRun(runID, RunFinish{
 			Status: RunStatusCancelled, Error: reason, OutputTail: output.OutputTail, FinishedAt: time.Now().UTC(),
 		})
-		return err
+		return false, err
 	}
-	return ErrRunNotCancellable
+	if record.Status == RunStatusCancelled && record.CancelRequested {
+		return false, nil
+	}
+	return false, ErrRunNotCancellable
+}
+
+func (d *Dispatcher) completeCommand(state *dispatcherState, message commandCompleted) {
+	if active, ok := state.activeCommands[message.runID]; ok {
+		active.cancel(nil)
+		delete(state.activeCommands, message.runID)
+		state.activeByPlugin[active.plugin]--
+	}
+	d.controls.Delete(message.runID)
+	waiters := state.cancelWaiters[message.runID]
+	delete(state.cancelWaiters, message.runID)
+	if len(waiters) == 0 {
+		return
+	}
+	var resultErr error
+	record, _, err := d.deps.Store.Run(message.runID)
+	switch {
+	case err != nil:
+		resultErr = fmt.Errorf("read cancelled plugin command %s: %w", message.runID, err)
+	case record.Status != RunStatusCancelled:
+		resultErr = fmt.Errorf("plugin command %s cancellation did not reach cancelled state (status %s): %s", message.runID, record.Status, message.outcome.Error)
+	}
+	for _, waiter := range waiters {
+		waiter <- resultErr
+	}
 }
 
 func (d *Dispatcher) schedule(state *dispatcherState) {
@@ -680,7 +784,12 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		if !d.beginWorker() {
 			return Outcome{Status: RunStatusInterrupted, Error: "server interrupted"}
 		}
-		defer d.workers.Done()
+		workerDone := false
+		defer func() {
+			if !workerDone {
+				d.workers.Done()
+			}
+		}()
 		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
 		outcome := d.deps.Executor.Execute(execCtx, run)
 		stop()
@@ -689,7 +798,9 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 			result = resultFromRun(record)
 		}
 		deliverCompletion(run.Request.Completion, result)
-		d.post(commandCompleted{runID: run.RunID})
+		d.workers.Done()
+		workerDone = true
+		d.post(commandCompleted{runID: run.RunID, outcome: outcome})
 		return outcome
 	})
 	if err == nil {
@@ -711,10 +822,17 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 		if !d.beginWorker() {
 			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
 		}
-		defer d.workers.Done()
+		workerDone := false
+		defer func() {
+			if !workerDone {
+				d.workers.Done()
+			}
+		}()
 		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
 		outcome := item.run(runCtx, progress)
 		stop()
+		d.workers.Done()
+		workerDone = true
 		d.post(importCompleted{importID: item.spec.ImportID})
 		return outcome
 	})
@@ -722,7 +840,9 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 		return
 	}
 	cancel(err)
-	failure := &importDispatchFailure{item: item, dispatchErr: err}
+	failure := &importDispatchFailure{
+		item: item, dispatchErr: err, status: ImportStatusFailed, reason: err.Error(),
+	}
 	state.failedImportDispatch[item.spec.ImportID] = failure
 	_, _ = d.persistImportDispatchFailure(state, failure)
 }
@@ -759,6 +879,7 @@ func (d *Dispatcher) persistQueuedCancellation(state *dispatcherState, cancellat
 		result = resultFromRun(record)
 	}
 	delete(state.queuedCancellations, cancellation.run.RunID)
+	d.controls.Delete(cancellation.run.RunID)
 	deliverCompletion(cancellation.run.Request.Completion, result)
 	return true, nil
 }
@@ -815,6 +936,7 @@ func (d *Dispatcher) persistCommandDispatchFailure(state *dispatcherState, failu
 
 func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failure *commandDispatchFailure, result Result) {
 	delete(state.failedCommandDispatch, failure.run.RunID)
+	d.controls.Delete(failure.run.RunID)
 	if active, ok := state.activeCommands[failure.run.RunID]; ok {
 		active.cancel(nil)
 		delete(state.activeCommands, failure.run.RunID)
@@ -825,7 +947,7 @@ func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failu
 
 func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failure *importDispatchFailure) (bool, error) {
 	won, err := d.deps.Store.FinishImport(failure.item.spec.ImportID, ImportFinish{
-		Status: ImportStatusFailed, Error: failure.dispatchErr.Error(), FinishedAt: time.Now().UTC(),
+		Status: failure.status, Error: failure.reason, FinishedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		d.deps.Logf("finish plugin command import %s dispatch failure: %v", failure.item.spec.ImportID, err)

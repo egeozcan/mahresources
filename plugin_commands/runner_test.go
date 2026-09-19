@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -404,13 +405,21 @@ func TestOutputTailIsBoundedAndStripsTerminalControls(t *testing.T) {
 	}
 }
 
-func TestRunnerTimeoutKillsProcessGroupBeforePublishingFinalOutput(t *testing.T) {
+func requireNativeProcessOwnership(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("native process-group ownership inspection is unavailable on this Unix target")
+	}
+}
+
+func TestRunnerTimeoutKillsProcessGroupWithScrubbedDescendantBeforePublishingFinalOutput(t *testing.T) {
+	requireNativeProcessOwnership(t)
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
-	run := seedRunnerRun(t, executor, store, settings, "descendant", []string{"mah-helper", helperProcessFlag, "spawn-descendant", "{{exchange_dir}}"}, 250*time.Millisecond)
+	run := seedRunnerRun(t, executor, store, settings, "descendant", []string{"mah-helper", helperProcessFlag, "spawn-scrubbed-descendant", "{{exchange_dir}}"}, 250*time.Millisecond)
 	outcome := executor.Execute(context.Background(), run)
 	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
 		t.Fatalf("outcome = %+v", outcome)
@@ -434,6 +443,7 @@ func TestRunnerTimeoutKillsProcessGroupBeforePublishingFinalOutput(t *testing.T)
 }
 
 func TestRunnerCancellationKillsProcessGroup(t *testing.T) {
+	requireNativeProcessOwnership(t)
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
@@ -458,6 +468,7 @@ func TestRunnerCancellationKillsProcessGroup(t *testing.T) {
 }
 
 func TestRunnerTimeoutStartsWhenTheProcessSpawns(t *testing.T) {
+	requireNativeProcessOwnership(t)
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	release := make(chan struct{})
