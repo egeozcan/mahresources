@@ -119,6 +119,35 @@ func unlinkExchangeRegularAt(dir *os.File, name string, afterLstat func(string))
 	return nil
 }
 
+// unlinkExchangeOpenedRegularAt removes name only when it still identifies the
+// exact file descriptor admitted for import. A command replacing the pathname
+// while the import runs keeps the replacement and turns cleanup into a
+// retryable imported-pending-delete condition.
+func unlinkExchangeOpenedRegularAt(dir *os.File, name string, admitted *os.File) error {
+	if admitted == nil {
+		return errExchangePathChanged
+	}
+	admittedInfo, err := admitted.Stat()
+	if err != nil {
+		return err
+	}
+	current, err := openExchangeRegularAt(dir, name, nil)
+	if err != nil {
+		return err
+	}
+	currentInfo, err := current.Stat()
+	if closeErr := current.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(admittedInfo, currentInfo) {
+		return errExchangePathChanged
+	}
+	return unix.Unlinkat(int(dir.Fd()), name, 0)
+}
+
 func exchangeRegularAt(dir *os.File, name string) error {
 	var stat unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {

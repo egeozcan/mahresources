@@ -79,17 +79,19 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 		return 0, fmt.Errorf("validate plugin command import groups: %w", err)
 	}
 
-	file, err := os.Open(source.Path)
-	if err != nil {
-		return 0, fmt.Errorf("open plugin command import snapshot: %w", err)
+	file := source.File
+	if file == nil || source.CreateScratch == nil {
+		return 0, fmt.Errorf("plugin command import snapshot capability is unavailable")
 	}
-	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat plugin command import snapshot: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return 0, fmt.Errorf("plugin command import snapshot is not a regular file")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("rewind plugin command import snapshot: %w", err)
 	}
 
 	meta := ""
@@ -108,7 +110,10 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 		Name: name, Description: fields.Description, Groups: append([]uint(nil), fields.GroupIDs...),
 		Tags: append([]uint(nil), fields.TagIDs...), Meta: meta, OriginalName: source.FileName,
 	}}
-	resource, err := bound.addResourceWithOptions(&contextImportFile{File: file, ctx: callCtx}, source.FileName, query, addResourceOptions{ScratchDir: scratchDir})
+	resource, err := bound.addResourceWithOptions(
+		&contextImportFile{File: file, ctx: callCtx}, source.FileName, query,
+		addResourceOptions{ScratchDir: scratchDir, CreateScratch: source.CreateScratch},
+	)
 	if err != nil {
 		var duplicate *ResourceExistsError
 		if errors.As(err, &duplicate) && duplicate.ResourceID != 0 {

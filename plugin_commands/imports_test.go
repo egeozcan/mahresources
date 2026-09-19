@@ -3,18 +3,28 @@ package plugin_commands
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-type importTestSettings struct{ root string }
+type importTestSettings struct {
+	root  string
+	quota int64
+}
 
-func (s importTestSettings) StagingRoot() string              { return s.root }
-func (s importTestSettings) PendingPerPluginLimit() int       { return 100 }
-func (s importTestSettings) PerRunQuota() int64               { return 8 << 30 }
+func (s importTestSettings) StagingRoot() string        { return s.root }
+func (s importTestSettings) PendingPerPluginLimit() int { return 100 }
+func (s importTestSettings) PerRunQuota() int64 {
+	if s.quota > 0 {
+		return s.quota
+	}
+	return 8 << 30
+}
 func (s importTestSettings) GlobalStagingQuota() int64        { return 50 << 30 }
 func (s importTestSettings) ExchangeRetention() time.Duration { return time.Hour }
 func (s importTestSettings) OutputRetention() time.Duration   { return time.Hour }
@@ -22,9 +32,11 @@ func (s importTestSettings) CommandPath() string              { return "/bin" }
 
 type importLifecycleStore struct {
 	*exchangeTestStore
-	claimMu sync.Mutex
-	maps    map[string]ImportMapEntry
-	claims  map[string]ImportRecord
+	claimMu        sync.Mutex
+	maps           map[string]ImportMapEntry
+	claims         map[string]ImportRecord
+	finishFailures int
+	finishAttempt  chan struct{}
 }
 
 func newImportLifecycleStore() *importLifecycleStore {
@@ -89,6 +101,16 @@ func (s *importLifecycleStore) MarkImportRunning(id string, started time.Time) (
 func (s *importLifecycleStore) FinishImport(id string, finish ImportFinish) (bool, error) {
 	s.claimMu.Lock()
 	defer s.claimMu.Unlock()
+	if s.finishFailures > 0 {
+		s.finishFailures--
+		if s.finishAttempt != nil {
+			select {
+			case s.finishAttempt <- struct{}{}:
+			default:
+			}
+		}
+		return false, errors.New("finish unavailable")
+	}
 	record, ok := s.claims[id]
 	if !ok || ImportStatusTerminal(record.Status) {
 		return false, nil
@@ -182,7 +204,13 @@ func (i *importTestImporter) ImportResource(ctx context.Context, source ImportSo
 			return 0, context.Cause(ctx)
 		}
 	}
-	body, err := os.ReadFile(source.Path)
+	if source.File == nil {
+		return 0, errors.New("snapshot file is unavailable")
+	}
+	if _, err := source.File.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	body, err := io.ReadAll(source.File)
 	if err != nil {
 		return 0, err
 	}
@@ -298,8 +326,8 @@ func TestSubmitImportSnapshotsRunsAndDeletesOnlyAfterDurableSuccess(t *testing.T
 	requireNoError(t, err)
 	registered := waitForImportJobs(t, jobs, 1)
 	claimDir := filepath.Join(root, "import_tmp", got.ImportID)
-	if entries, err := os.ReadDir(claimDir); err != nil || len(entries) != 1 {
-		t.Fatalf("claim snapshot = %v, %v", entries, err)
+	if _, err := os.Stat(claimDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("submission copied bytes synchronously: %v", err)
 	}
 	outcome := registered[0].run(context.Background(), nopProgress{})
 	if outcome.Status != ImportStatusSucceeded {
@@ -323,6 +351,94 @@ func TestSubmitImportSnapshotsRunsAndDeletesOnlyAfterDurableSuccess(t *testing.T
 	defer importer.mu.Unlock()
 	if string(importer.bodies[0]) != "complete-output" {
 		t.Fatalf("snapshot body = %q", importer.bodies[0])
+	}
+}
+
+func TestSubmitImportEnforcesQuotaBeforeCopying(t *testing.T) {
+	d, store, jobs, importer, root, sub := importHarness(t)
+	d.deps.Settings = importTestSettings{root: root, quota: 20}
+	got, err := d.SubmitImport(sub)
+	requireNoError(t, err)
+	registered := waitForImportJobs(t, jobs, 1)
+	outcome := registered[0].run(context.Background(), nopProgress{})
+	if outcome.Status != ImportStatusFailed || !strings.Contains(outcome.Error, "quota") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
+	if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusFailed {
+		t.Fatalf("map = %+v", mapped)
+	}
+	importer.mu.Lock()
+	defer importer.mu.Unlock()
+	if len(importer.bodies) != 0 {
+		t.Fatal("quota-refused import copied bytes into the application adapter")
+	}
+}
+
+func TestImportCompletionWaitsForDurableTerminalWrite(t *testing.T) {
+	d, store, jobs, _, _, sub := importHarness(t)
+	completed := make(chan ImportResult, 1)
+	sub.Completion = func(result ImportResult) { completed <- result }
+	store.claimMu.Lock()
+	store.finishFailures = 2
+	store.finishAttempt = make(chan struct{}, 2)
+	store.claimMu.Unlock()
+	got, err := d.SubmitImport(sub)
+	requireNoError(t, err)
+	registered := waitForImportJobs(t, jobs, 1)
+	outcomes := make(chan Outcome, 1)
+	go func() { outcomes <- registered[0].run(context.Background(), nopProgress{}) }()
+	select {
+	case <-store.finishAttempt:
+	case <-time.After(time.Second):
+		t.Fatal("terminal persistence was not attempted")
+	}
+	select {
+	case result := <-completed:
+		t.Fatalf("completion published before durable terminal state: %+v", result)
+	default:
+	}
+	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
+	if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusRunning {
+		t.Fatalf("map before durable finish = %+v", mapped)
+	}
+	select {
+	case outcome := <-outcomes:
+		if outcome.Status != ImportStatusSucceeded {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("import did not retry terminal persistence")
+	}
+	result := <-completed
+	if !result.OK {
+		t.Fatalf("completion = %+v", result)
+	}
+	mapped, _, _ = store.ImportMap(sub.RunID, sub.Name)
+	if mapped.Status != ImportStatusSucceeded {
+		t.Fatalf("map after retry = %+v", mapped)
+	}
+}
+
+func TestImportTempRootSymlinkIsRefused(t *testing.T) {
+	d, store, jobs, _, root, sub := importHarness(t)
+	outside := t.TempDir()
+	requireNoError(t, os.Symlink(outside, filepath.Join(root, "import_tmp")))
+	got, err := d.SubmitImport(sub)
+	requireNoError(t, err)
+	registered := waitForImportJobs(t, jobs, 1)
+	outcome := registered[0].run(context.Background(), nopProgress{})
+	if outcome.Status != ImportStatusFailed {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
+	if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusFailed {
+		t.Fatalf("map = %+v", mapped)
+	}
+	entries, err := os.ReadDir(outside)
+	requireNoError(t, err)
+	if len(entries) != 0 {
+		t.Fatalf("wrote through import_tmp symlink: %+v", entries)
 	}
 }
 

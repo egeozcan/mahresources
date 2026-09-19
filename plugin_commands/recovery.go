@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -69,33 +67,6 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 		}
 		if !won {
 			d.deps.Logf("plugin command %s changed state during recovery", run.ID)
-		}
-	}
-	return nil
-}
-
-func cleanupImportTemps(stagingRoot string) error {
-	rootInfo, err := os.Lstat(stagingRoot)
-	if err == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("staging root is a symlink")
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect staging root: %w", err)
-	}
-	tempRoot := filepath.Join(stagingRoot, "import_tmp")
-	entries, err := os.ReadDir(tempRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read plugin command import temp root: %w", err)
-	}
-	for _, entry := range entries {
-		if !validExchangeComponent(entry.Name()) {
-			return fmt.Errorf("invalid plugin command import temp name %q", entry.Name())
-		}
-		if err := os.RemoveAll(filepath.Join(tempRoot, entry.Name())); err != nil {
-			return fmt.Errorf("remove plugin command import temp %s: %w", entry.Name(), err)
 		}
 	}
 	return nil

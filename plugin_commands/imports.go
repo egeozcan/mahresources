@@ -32,11 +32,14 @@ type ImportValidation struct {
 
 // ImportSource names the host-managed snapshot consumed by the application
 // adapter. Path is never supplied by Lua or by a plugin.
+type ScratchFileFactory func() (*os.File, func() error, error)
+
 type ImportSource struct {
-	Path     string
-	FileName string
-	RunID    string
-	ImportID string
+	File          *os.File
+	CreateScratch ScratchFileFactory
+	FileName      string
+	RunID         string
+	ImportID      string
 }
 
 type Importer interface {
@@ -155,7 +158,16 @@ func (d *Dispatcher) SubmitImport(submission ImportSubmission) (ImportSubmitResu
 	if err != nil {
 		return ImportSubmitResult{}, classifyFileError(err)
 	}
-	defer source.Close()
+	sourceOwned := false
+	defer func() {
+		if !sourceOwned {
+			_ = source.Close()
+		}
+	}()
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return ImportSubmitResult{}, classifyFileError(err)
+	}
 
 	requestedID, err := newRunID()
 	if err != nil {
@@ -174,44 +186,25 @@ func (d *Dispatcher) SubmitImport(submission ImportSubmission) (ImportSubmitResu
 		return importClaimShortCircuit(claim)
 	}
 
-	claimDir := filepath.Join(d.deps.Settings.StagingRoot(), "import_tmp", claim.ImportID)
-	if err := resetPrivateImportDir(claimDir); err != nil {
-		d.finishImportAdmissionFailure(claim.ImportID, err)
-		return ImportSubmitResult{}, err
-	}
-	cleanupOnce := sync.OnceFunc(func() {
-		if err := os.RemoveAll(claimDir); err != nil {
-			d.deps.Logf("remove plugin command import temp %s: %v", claim.ImportID, err)
-		}
-	})
-	snapshot, err := os.CreateTemp(claimDir, "source-")
-	if err == nil {
-		_ = snapshot.Chmod(0o600)
-		_, err = io.Copy(snapshot, source)
-		if closeErr := snapshot.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
-		cleanupOnce()
-		d.finishImportAdmissionFailure(claim.ImportID, err)
-		return ImportSubmitResult{}, fmt.Errorf("snapshot plugin command import: %w", err)
-	}
-
 	request := cloneImportSubmission(submission)
+	cleanupOnce := sync.OnceFunc(func() { _ = source.Close() })
 	spec := ImportJobSpec{ImportID: claim.ImportID, RunID: run.ID, PluginName: run.PluginName, OwnerUserID: actor}
 	queued := queuedImport{
 		spec: spec, release: releaseOnce, cleanup: cleanupOnce,
-		completion: request.Completion,
+		completion: request.Completion, retainOnReject: true,
 	}
 	queued.run = func(ctx context.Context, progress Progress) Outcome {
-		return d.runImport(ctx, progress, run, request, claim.ImportID, snapshot.Name(), claimDir)
+		return d.runImport(ctx, progress, run, request, claim.ImportID, source, sourceInfo.Size())
 	}
 	if err := d.submitClaimedImport(queued); err != nil {
+		if finishErr := d.finishImportAdmissionFailure(claim.ImportID, run.ID, submission.Name, err); finishErr != nil {
+			cleanupOnce()
+			return ImportSubmitResult{}, errors.Join(err, finishErr)
+		}
 		cleanupOnce()
-		d.finishImportAdmissionFailure(claim.ImportID, err)
 		return ImportSubmitResult{}, err
 	}
+	sourceOwned = true
 	owned = true
 	return ImportSubmitResult{ImportID: claim.ImportID}, nil
 }
@@ -240,63 +233,70 @@ func importClaimShortCircuit(claim ImportClaimResult) (ImportSubmitResult, error
 	return ImportSubmitResult{ImportID: claim.ImportID}, nil
 }
 
-func resetPrivateImportDir(path string) error {
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("remove stale import temp: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create import temp root: %w", err)
-	}
-	if err := os.Mkdir(path, 0o700); err != nil {
-		return fmt.Errorf("create import temp: %w", err)
-	}
-	return nil
-}
-
-func (d *Dispatcher) finishImportAdmissionFailure(importID string, cause error) {
-	_, finishErr := d.deps.Store.FinishImport(importID, ImportFinish{
+func (d *Dispatcher) finishImportAdmissionFailure(importID, runID, name string, cause error) error {
+	_, err := d.persistImportTerminal(importID, runID, name, ImportFinish{
 		Status: ImportStatusFailed, Error: cause.Error(), FinishedAt: time.Now().UTC(),
 	})
-	if finishErr != nil {
-		d.deps.Logf("finish plugin command import %s admission failure: %v", importID, finishErr)
+	return err
+}
+
+// persistImportTerminal does not publish a live terminal result until the
+// durable transition exists. Transient store failures retain the worker, its
+// lease and its source descriptor, so a later submission can never observe a
+// pending/running row whose replay state was already discarded.
+func (d *Dispatcher) persistImportTerminal(importID, runID, name string, finish ImportFinish) (ImportFinish, error) {
+	for {
+		won, err := d.deps.Store.FinishImport(importID, finish)
+		if err == nil && won {
+			return finish, nil
+		}
+		if err == nil && runID != "" {
+			mapped, found, readErr := d.deps.Store.ImportMap(runID, name)
+			if readErr == nil && found && mapped.ImportID == importID && ImportStatusTerminal(mapped.Status) {
+				return ImportFinish{
+					Status: mapped.Status, Error: mapped.Error,
+					ResourceID: copyUint(mapped.ResourceID), FinishedAt: finish.FinishedAt,
+				}, nil
+			}
+			if readErr != nil {
+				err = readErr
+			} else {
+				err = errors.New("plugin command import terminal transition was lost")
+			}
+		}
+		if err == nil {
+			err = errors.New("plugin command import terminal transition was refused")
+		}
+		d.deps.Logf("persist plugin command import %s terminal state: %v", importID, err)
+		time.Sleep(dispatchFailureRetryDelay)
 	}
 }
 
-func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRecord, submission ImportSubmission, importID, snapshotPath, claimDir string) Outcome {
+func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRecord, submission ImportSubmission, importID string, source *os.File, sourceSize int64) Outcome {
 	result := ImportResult{ImportID: importID}
-	durableSuccess := false
+	var temp *importTempDir
 	finish := func(status, message string, resourceID *uint) Outcome {
-		won, err := d.deps.Store.FinishImport(importID, ImportFinish{
+		if temp != nil {
+			if err := temp.Cleanup(); err != nil {
+				d.deps.Logf("remove plugin command import temp %s: %v", importID, err)
+			}
+			temp = nil
+		}
+		persisted, err := d.persistImportTerminal(importID, run.ID, submission.Name, ImportFinish{
 			Status: status, Error: message, ResourceID: resourceID, FinishedAt: time.Now().UTC(),
 		})
 		if err != nil {
-			message = appendImportError(message, "persist terminal import", err)
-		} else if !won {
-			mapped, found, readErr := d.deps.Store.ImportMap(run.ID, submission.Name)
-			switch {
-			case readErr != nil:
-				err = readErr
-				message = appendImportError(message, "read terminal import", readErr)
-			case !found || mapped.ImportID != importID || !ImportStatusTerminal(mapped.Status):
-				err = fmt.Errorf("plugin command import terminal transition was lost")
-				message = appendImportError(message, "persist terminal import", err)
-			default:
-				status, message, resourceID = mapped.Status, mapped.Error, copyUint(mapped.ResourceID)
-			}
+			// persistImportTerminal currently retries until it has an authoritative
+			// result; keep the branch explicit if that contract ever changes.
+			return Outcome{Status: ImportStatusRunning, Error: err.Error()}
 		}
-		durableSuccess = status == ImportStatusSucceeded && err == nil
-		result.OK = durableSuccess
-		result.Error = message
-		result.ResourceID = copyUint(resourceID)
+		result.OK = persisted.Status == ImportStatusSucceeded
+		result.Error = persisted.Error
+		result.ResourceID = copyUint(persisted.ResourceID)
 		deliverImportCompletion(submission.Completion, result)
-		return Outcome{Status: status, Error: message}
+		return Outcome{Status: persisted.Status, Error: persisted.Error}
 	}
 
-	if won, err := d.deps.Store.MarkImportRunning(importID, time.Now().UTC()); err != nil {
-		return finish(ImportStatusFailed, err.Error(), nil)
-	} else if !won {
-		return finish(ImportStatusCancelled, "import is no longer pending", nil)
-	}
 	if err := ctx.Err(); err != nil {
 		return finish(ImportStatusInterrupted, "server interrupted", nil)
 	}
@@ -308,15 +308,52 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 		PluginName: run.PluginName, PluginGeneration: submission.PluginGeneration,
 		ActorUserID: copyUint(submission.ActorUserID), Fields: cloneResourceFields(submission.Fields),
 	}
+	// Permission and generation validation belongs while the claim is pending.
+	// Once MarkImportRunning wins, disable deliberately leaves this commit lane
+	// alone so it can finish atomically.
 	if err := importer.ValidateImport(validation); err != nil {
 		return finish(ImportStatusCancelled, err.Error(), nil)
+	}
+	quotaRelease, err := d.reserveImportQuota(run, sourceSize)
+	if err != nil {
+		return finish(ImportStatusFailed, err.Error(), nil)
+	}
+	defer quotaRelease()
+	if won, err := d.deps.Store.MarkImportRunning(importID, time.Now().UTC()); err != nil {
+		return finish(ImportStatusFailed, err.Error(), nil)
+	} else if !won {
+		return finish(ImportStatusCancelled, "import is no longer pending", nil)
+	}
+	if err := ctx.Err(); err != nil {
+		return finish(ImportStatusInterrupted, "server interrupted", nil)
+	}
+
+	temp, err = createImportTempDir(d.deps.Settings.StagingRoot(), importID)
+	if err != nil {
+		return finish(ImportStatusFailed, err.Error(), nil)
+	}
+	snapshot, snapshotCleanup, err := temp.Create("source-")
+	if err != nil {
+		return finish(ImportStatusFailed, fmt.Sprintf("create plugin command import snapshot: %v", err), nil)
+	}
+	if err := copyImportSnapshot(ctx, snapshot, source, sourceSize); err != nil {
+		_ = snapshotCleanup()
+		status := ImportStatusFailed
+		if errors.Is(context.Cause(ctx), errDispatcherShutdown) || errors.Is(err, context.Canceled) {
+			status = ImportStatusInterrupted
+		}
+		return finish(status, fmt.Sprintf("snapshot plugin command import: %v", err), nil)
 	}
 	if progress != nil {
 		progress.SetPhase("importing resource")
 	}
 	resourceID, err := importer.ImportResource(ctx, ImportSource{
-		Path: snapshotPath, FileName: submission.Name, RunID: run.ID, ImportID: importID,
-	}, cloneResourceFields(submission.Fields), claimDir)
+		File: snapshot, CreateScratch: func() (*os.File, func() error, error) {
+			return temp.Create("upload-")
+		},
+		FileName: submission.Name, RunID: run.ID, ImportID: importID,
+	}, cloneResourceFields(submission.Fields), "")
+	_ = snapshotCleanup()
 	if err != nil {
 		status := ImportStatusFailed
 		if errors.Is(context.Cause(ctx), errDispatcherShutdown) || errors.Is(err, context.Canceled) {
@@ -327,10 +364,10 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 
 	resource := resourceID
 	outcome := finish(ImportStatusSucceeded, "", &resource)
-	// Durable success is authoritative. Source cleanup is best-effort bookkeeping
-	// and can be retried/swept without creating another resource.
-	if durableSuccess {
-		if err := d.deleteImportedSource(run, submission.Name); err != nil {
+	// Durable success is authoritative. Source cleanup is best-effort and is
+	// tied to the admitted descriptor, never merely to the current pathname.
+	if outcome.Status == ImportStatusSucceeded {
+		if err := d.deleteImportedSource(run, submission.Name, source); err != nil {
 			message := "imported-pending-delete: " + err.Error()
 			if recorder, ok := d.deps.Store.(importDeleteFailureRecorder); ok {
 				if recordErr := recorder.RecordImportDeleteFailure(importID, message); recordErr != nil {
@@ -343,13 +380,77 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 	return outcome
 }
 
-func (d *Dispatcher) deleteImportedSource(run RunRecord, name string) error {
+func copyImportSnapshot(ctx context.Context, destination, source *os.File, expected int64) error {
+	if expected < 0 {
+		return errors.New("plugin command import source has invalid size")
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	reader := &contextImportReader{ctx: ctx, reader: io.LimitReader(source, expected+1)}
+	written, err := io.Copy(destination, reader)
+	if err != nil {
+		return err
+	}
+	if written != expected {
+		return fmt.Errorf("plugin command import source changed during snapshot (expected %d bytes, copied %d)", expected, written)
+	}
+	_, err = destination.Seek(0, io.SeekStart)
+	return err
+}
+
+type contextImportReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextImportReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func (d *Dispatcher) reserveImportQuota(run RunRecord, sourceSize int64) (func(), error) {
+	if sourceSize < 0 || sourceSize >= (1<<62) {
+		return nil, errors.New("plugin command import source has invalid size")
+	}
+	reservation := sourceSize * 2 // outer snapshot plus AddResource scratch copy
+	limit := effectiveQuota(d.deps.Settings.PerRunQuota(), defaultPerRunQuota)
+	d.importQuotaMu.Lock()
+	defer d.importQuotaMu.Unlock()
+	exchangeDir := filepath.Join(d.deps.Settings.StagingRoot(), "plugin_exchange", run.PluginName, run.ID)
+	usage, err := pathUsageNoSymlinks(exchangeDir)
+	if err != nil {
+		return nil, fmt.Errorf("measure plugin command import quota: %w", err)
+	}
+	reserved := d.importQuotaReserved[run.ID]
+	if usage > limit || reservation > limit-usage || reserved > limit-usage-reservation {
+		return nil, fmt.Errorf("plugin command per-run quota exceeded (%d bytes)", limit)
+	}
+	d.importQuotaReserved[run.ID] = reserved + reservation
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			d.importQuotaMu.Lock()
+			remaining := d.importQuotaReserved[run.ID] - reservation
+			if remaining <= 0 {
+				delete(d.importQuotaReserved, run.ID)
+			} else {
+				d.importQuotaReserved[run.ID] = remaining
+			}
+			d.importQuotaMu.Unlock()
+		})
+	}, nil
+}
+
+func (d *Dispatcher) deleteImportedSource(run RunRecord, name string, source *os.File) error {
 	dir, err := openExchangeRunDir(d.deps.Settings.StagingRoot(), run.PluginName, run.ID)
 	if err != nil {
 		return classifyRunDirError(err)
 	}
 	defer dir.Close()
-	if err := unlinkExchangeRegularAt(dir, name, nil); err != nil {
+	if err := unlinkExchangeOpenedRegularAt(dir, name, source); err != nil {
 		return classifyFileError(err)
 	}
 	return nil

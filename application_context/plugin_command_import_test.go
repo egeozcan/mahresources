@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -84,6 +85,27 @@ func TestPluginCommandImportValidatesActorGenerationCapabilitiesAndScope(t *test
 	if err := ctx.ValidateImport(validation); err == nil {
 		t.Fatal("missing actor accepted")
 	}
+	guest, err := ctx.CreateUser(&UserInput{Username: "import-guest", Password: "password1", Role: models.RoleGuest, ScopeGroupId: &root.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation.ActorUserID = &guest.ID
+	validation.Fields.GroupIDs = []uint{root.ID}
+	if err := ctx.ValidateImport(validation); err == nil {
+		t.Fatal("guest actor accepted")
+	}
+	disabled, err := ctx.CreateUser(&UserInput{Username: "import-disabled", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Model(&models.User{}).Where("id = ?", disabled.ID).Update("disabled", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	validation.ActorUserID = &disabled.ID
+	validation.Fields.GroupIDs = nil
+	if err := ctx.ValidateImport(validation); err == nil {
+		t.Fatal("disabled actor accepted")
+	}
 
 	createImportClaimForTest(t, ctx, actor, "claim-deleted", "run-deleted", "result.bin", generation)
 	if err := ctx.db.Model(&models.PluginCommandImport{}).Where("id = ?", "claim-deleted").Update("status", plugin_commands.ImportStatusPending).Error; err != nil {
@@ -109,6 +131,24 @@ func TestPluginCommandImportValidatesActorGenerationCapabilitiesAndScope(t *test
 	}
 }
 
+func testImportSource(t *testing.T, path, scratch, name, runID, importID string) (plugin_commands.ImportSource, func()) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory := func() (*os.File, func() error, error) {
+		temp, err := os.CreateTemp(scratch, "upload-")
+		if err != nil {
+			return nil, nil, err
+		}
+		return temp, func() error { return os.Remove(temp.Name()) }, nil
+	}
+	return plugin_commands.ImportSource{
+		File: file, CreateScratch: factory, FileName: name, RunID: runID, ImportID: importID,
+	}, func() { _ = file.Close() }
+}
+
 func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 	ctx, _, _, generation := commandImportContext(t)
 	actor, err := ctx.CreateUser(&UserInput{Username: "memory-importer", Password: "password1", Role: models.RoleEditor})
@@ -126,7 +166,9 @@ func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 	if err := ctx.ValidateImport(plugin_commands.ImportValidation{PluginName: "commanded", PluginGeneration: generation, ActorUserID: &actor.ID, Fields: fields}); err != nil {
 		t.Fatal(err)
 	}
-	id, err := ctx.ImportResource(context.Background(), plugin_commands.ImportSource{Path: sourcePath, FileName: "result.bin", RunID: "run-memory", ImportID: "claim-memory"}, fields, scratch)
+	source, closeSource := testImportSource(t, sourcePath, scratch, "result.bin", "run-memory", "claim-memory")
+	defer closeSource()
+	id, err := ctx.ImportResource(context.Background(), source, fields, scratch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +185,112 @@ func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 	}
 	if resource.CreatedByUserId == nil || *resource.CreatedByUserId != actor.ID {
 		t.Fatalf("creator = %v", resource.CreatedByUserId)
+	}
+}
+
+type commandImportTestSettings struct{ root string }
+
+func (s commandImportTestSettings) StagingRoot() string              { return s.root }
+func (s commandImportTestSettings) PendingPerPluginLimit() int       { return 100 }
+func (s commandImportTestSettings) PerRunQuota() int64               { return 8 << 30 }
+func (s commandImportTestSettings) GlobalStagingQuota() int64        { return 50 << 30 }
+func (s commandImportTestSettings) ExchangeRetention() time.Duration { return time.Hour }
+func (s commandImportTestSettings) OutputRetention() time.Duration   { return time.Hour }
+func (s commandImportTestSettings) CommandPath() string              { return "/bin" }
+
+type commandImportTestJobs struct {
+	imports chan func(context.Context, plugin_commands.Progress) plugin_commands.Outcome
+}
+
+func (j *commandImportTestJobs) SubmitCommandJob(plugin_commands.RunJobSpec, func(string) error, func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
+	return "", errors.New("unexpected command job")
+}
+func (j *commandImportTestJobs) SubmitImportJob(_ plugin_commands.ImportJobSpec, run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
+	j.imports <- run
+	return "import-job", nil
+}
+
+type commandImportTestExecutor struct{}
+
+func (commandImportTestExecutor) Execute(context.Context, plugin_commands.QueuedRun) plugin_commands.Outcome {
+	return plugin_commands.Outcome{Status: plugin_commands.RunStatusFailed, Error: "unexpected command execution"}
+}
+
+func TestPluginCommandImportDispatcherPersistsMapAndResource(t *testing.T) {
+	ctx, _, _, generation := commandImportContext(t)
+	actor, err := ctx.CreateUser(&UserInput{Username: "dispatcher-importer", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	runID := "composed-import-run"
+	finished := time.Now().UTC()
+	bound := ctx.WithPrincipal(auth.FromUser(actor))
+	if err := bound.CreateRun(plugin_commands.RunRecord{
+		ID: runID, PluginName: "commanded", CommandName: "convert", ParamsJSON: "{}",
+		Status: plugin_commands.RunStatusQueued, CreatedByUserID: &actor.ID,
+		CreatedAt: finished.Add(-time.Second),
+	}, plugin_commands.RunOutput{RunID: runID, ArgvJSON: "[]", CreatedAt: finished.Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := bound.MarkRunRunning(runID, finished.Add(-500*time.Millisecond)); err != nil || !won {
+		t.Fatalf("start run: won=%v err=%v", won, err)
+	}
+	if won, err := bound.FinishRun(runID, plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: finished}); err != nil || !won {
+		t.Fatalf("finish run: won=%v err=%v", won, err)
+	}
+	runDir := filepath.Join(root, "plugin_exchange", "commanded", runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("dispatcher-to-add-resource")
+	if err := os.WriteFile(filepath.Join(runDir, "result.bin"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jobs := &commandImportTestJobs{imports: make(chan func(context.Context, plugin_commands.Progress) plugin_commands.Outcome, 1)}
+	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+		Store: ctx, Jobs: jobs, Executor: commandImportTestExecutor{}, Settings: commandImportTestSettings{root: root},
+	})
+	dispatcher.SetImporter(ctx)
+	if err := dispatcher.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = dispatcher.Stop(stopCtx)
+	})
+	got, err := dispatcher.SubmitImport(plugin_commands.ImportSubmission{
+		Access: plugin_commands.Access{PluginName: "commanded", ActorUserID: &actor.ID},
+		RunID:  runID, Name: "result.bin", Fields: plugin_commands.ResourceFields{Name: "composed"},
+		PluginGeneration: generation, ActorUserID: &actor.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome
+	select {
+	case run = <-jobs.imports:
+	case <-time.After(time.Second):
+		t.Fatal("import was not dispatched")
+	}
+	if outcome := run(context.Background(), nil); outcome.Status != plugin_commands.ImportStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	mapped, found, err := ctx.ImportMap(runID, "result.bin")
+	if err != nil || !found || mapped.ImportID != got.ImportID || mapped.ResourceID == nil || mapped.Status != plugin_commands.ImportStatusSucceeded {
+		t.Fatalf("map = %+v found=%v err=%v", mapped, found, err)
+	}
+	var resource models.Resource
+	if err := ctx.db.First(&resource, *mapped.ResourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	stored, err := afero.ReadFile(ctx.fs, resource.Location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(payload) {
+		t.Fatalf("stored = %q", stored)
 	}
 }
 
@@ -173,7 +321,22 @@ func TestPluginCommandImportSameContentConcurrencyUsesOneValidBackingFile(t *tes
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			ids[i], errs[i] = ctx.ImportResource(context.Background(), plugin_commands.ImportSource{Path: paths[i], FileName: "result.bin", RunID: "run", ImportID: []string{"claim-one", "claim-two"}[i]}, plugin_commands.ResourceFields{Name: "same"}, root)
+			file, err := os.Open(paths[i])
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer file.Close()
+			factory := func() (*os.File, func() error, error) {
+				temp, err := os.CreateTemp(root, "upload-")
+				if err != nil {
+					return nil, nil, err
+				}
+				return temp, func() error { return os.Remove(temp.Name()) }, nil
+			}
+			ids[i], errs[i] = ctx.ImportResource(context.Background(), plugin_commands.ImportSource{
+				File: file, CreateScratch: factory, FileName: "result.bin", RunID: "run", ImportID: []string{"claim-one", "claim-two"}[i],
+			}, plugin_commands.ResourceFields{Name: "same"}, root)
 		}(i)
 	}
 	close(start)

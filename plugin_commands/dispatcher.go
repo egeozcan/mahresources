@@ -51,6 +51,9 @@ type Dispatcher struct {
 	importerMu sync.RWMutex
 	importer   Importer
 
+	importQuotaMu       sync.Mutex
+	importQuotaReserved map[string]int64
+
 	shutdownStarted func() // test barrier; nil in production
 }
 
@@ -91,11 +94,12 @@ type commandCompleted struct {
 type importCompleted struct{ importID string }
 
 type queuedImport struct {
-	spec       ImportJobSpec
-	run        func(context.Context, Progress) Outcome
-	release    func()
-	cleanup    func()
-	completion func(ImportResult)
+	spec           ImportJobSpec
+	run            func(context.Context, Progress) Outcome
+	release        func()
+	cleanup        func()
+	completion     func(ImportResult)
+	retainOnReject bool
 }
 
 type activeCommand struct {
@@ -159,7 +163,10 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 	if deps.Leases == nil {
 		deps.Leases = NewLeaseManager()
 	}
-	return &Dispatcher{deps: deps, inbox: make(chan any, 256), done: make(chan struct{})}
+	return &Dispatcher{
+		deps: deps, inbox: make(chan any, 256), done: make(chan struct{}),
+		importQuotaReserved: make(map[string]int64),
+	}
 }
 
 func (d *Dispatcher) Start(ctx context.Context) error {
@@ -338,13 +345,13 @@ func (d *Dispatcher) submitClaimedImport(item queuedImport) error {
 	}
 	request := importSubmission{item: item, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), request); err != nil {
-		if item.release != nil {
+		if item.release != nil && !item.retainOnReject {
 			item.release()
 		}
 		return err
 	}
 	if err := awaitDispatcherReply(request.reply, d.done); err != nil {
-		if item.release != nil {
+		if item.release != nil && !item.retainOnReject {
 			item.release()
 		}
 		return err
@@ -534,23 +541,35 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 		d.releaseCommandDispatchFailure(state, failure, result)
 	}
 	for plugin, queue := range state.imports {
+		kept := queue[:0]
 		for _, item := range queue {
-			_, err := d.deps.Store.FinishImport(item.spec.ImportID, ImportFinish{
+			_, err := d.finishImportUntil(ctx, item.spec.ImportID, ImportFinish{
 				Status: ImportStatusInterrupted, Error: shutdownReason, FinishedAt: time.Now().UTC(),
 			})
-			if err != nil && firstErr == nil {
-				firstErr = err
+			if err != nil {
+				kept = append(kept, item)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
 			releaseImportItem(item, ImportResult{ImportID: item.spec.ImportID, Error: shutdownReason})
 		}
-		delete(state.imports, plugin)
+		if len(kept) == 0 {
+			delete(state.imports, plugin)
+		} else {
+			state.imports[plugin] = kept
+		}
 	}
 	for id, failure := range state.failedImportDispatch {
-		_, err := d.deps.Store.FinishImport(id, ImportFinish{
+		_, err := d.finishImportUntil(ctx, id, ImportFinish{
 			Status: ImportStatusInterrupted, Error: shutdownReason, FinishedAt: time.Now().UTC(),
 		})
-		if err != nil && firstErr == nil {
-			firstErr = err
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		delete(state.failedImportDispatch, id)
 		releaseImportItem(failure.item, ImportResult{ImportID: id, Error: shutdownReason})
@@ -1013,11 +1032,9 @@ func (d *Dispatcher) releaseCommandDispatchFailure(state *dispatcherState, failu
 }
 
 func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failure *importDispatchFailure) (bool, error) {
-	// Remove host-managed bytes before publishing the terminal state. A caller
-	// which observes failed must not race a later cleanup of its claim directory.
-	if failure.item.cleanup != nil {
-		failure.item.cleanup()
-	}
+	// Keep the admitted source descriptor and lease until the durable terminal
+	// transition succeeds. Retrying a failed store write must never discard the
+	// only replay state while the claim still says pending.
 	won, err := d.deps.Store.FinishImport(failure.item.spec.ImportID, ImportFinish{
 		Status: failure.status, Error: failure.reason, FinishedAt: time.Now().UTC(),
 	})
@@ -1036,6 +1053,23 @@ func (d *Dispatcher) persistImportDispatchFailure(state *dispatcherState, failur
 		d.deps.Logf("plugin command import %s dispatch failure was already terminal", failure.item.spec.ImportID)
 	}
 	return true, nil
+}
+
+func (d *Dispatcher) finishImportUntil(ctx context.Context, importID string, finish ImportFinish) (bool, error) {
+	for {
+		won, err := d.deps.Store.FinishImport(importID, finish)
+		if err == nil {
+			return won, nil
+		}
+		d.deps.Logf("finish plugin command import %s during shutdown: %v", importID, err)
+		timer := time.NewTimer(dispatchFailureRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, errors.Join(ctx.Err(), err)
+		case <-timer.C:
+		}
+	}
 }
 
 func releaseImportItem(item queuedImport, result ImportResult) {

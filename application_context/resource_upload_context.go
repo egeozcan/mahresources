@@ -1054,7 +1054,8 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 // (e.g. managed command import) supply a ScratchDir so the temporary copy
 // lives on the same volume as the final destination.
 type addResourceOptions struct {
-	ScratchDir string
+	ScratchDir    string
+	CreateScratch func() (*os.File, func() error, error)
 }
 
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
@@ -1098,22 +1099,37 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	if scratch == "" {
 		scratch = ctx.Config.HLSTempDir
 	}
-	tempFile, err := os.CreateTemp(scratch, "upload-")
+	var tempFile *os.File
+	var cleanupScratch func() error
+	var err error
+	if opts.CreateScratch != nil {
+		tempFile, cleanupScratch, err = opts.CreateScratch()
+	} else {
+		tempFile, err = os.CreateTemp(scratch, "upload-")
+		if err == nil {
+			cleanupScratch = func() error { return os.Remove(tempFile.Name()) }
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		tempFile.Close()
-		os.Remove(tempFile.Name())
+		if cleanupScratch != nil {
+			_ = cleanupScratch()
+		}
 	}()
 
-	// Copy the contents of the uploaded file to the temporary file
+	// Copy the contents of the uploaded file to the temporary file.
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
 		return nil, err
 	}
 
-	fileMime, err := mimetype.DetectFile(tempFile.Name())
+	if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	fileMime, err := mimetype.DetectReader(tempFile)
 	if err != nil {
 		return nil, err
 	}

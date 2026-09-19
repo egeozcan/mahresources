@@ -20,6 +20,10 @@ func unlinkExchangeRegularAt(*os.File, string, func(string)) error {
 	return ErrExchangeUnsupported
 }
 
+func unlinkExchangeOpenedRegularAt(*os.File, string, *os.File) error {
+	return ErrExchangeUnsupported
+}
+
 func removeExchangeRunDir(string, string, string, func()) error {
 	return ErrExchangeUnsupported
 }

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -319,10 +320,16 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 	if req.CreatedByUserID == nil || *req.CreatedByUserID == 0 {
 		return plugin_commands.ImportClaimResult{}, fmt.Errorf("plugin command import claim requires an acting user")
 	}
+	// The dispatcher is process-lifetime and intentionally unscoped, but the
+	// global create callback must stamp the current claim actor rather than the
+	// singleton/default actor. Scope and role are revalidated separately when
+	// the worker starts.
+	claimContext := context.WithValue(ctx.db.Statement.Context, actingUserCtxKey{}, *req.CreatedByUserID)
+	claimDB := ctx.db.WithContext(claimContext)
 	const attempts = 20
 	for attempt := 0; attempt < attempts; attempt++ {
 		var result plugin_commands.ImportClaimResult
-		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		err := claimDB.Transaction(func(tx *gorm.DB) error {
 			var run models.PluginCommandRun
 			if err := tx.Where("id = ?", req.RunID).First(&run).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
