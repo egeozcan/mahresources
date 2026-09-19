@@ -652,35 +652,35 @@ type RunnerDependencies struct {
 func NewExecutor(RunnerDependencies) Executor
 ```
 
-- [ ] **Step 1: Build a real helper-process harness and red argv/env/stdin tests**
+- [x] **Step 1: Build a real helper-process harness and red argv/env/stdin tests**
 
 Use `os.Executable()` plus a temporary basename symlink in the configured command path; a helper mode in `TestMain` records argv/env/stdin/cwd, can emit interleaved stdout/stderr, write bytes, spawn a same-group descendant and sleep. Put a same-named rogue executable earlier in the process's inherited `PATH` and assert it is ignored when absent from `Settings.CommandPath()`. Assert `exec.Cmd.Args` equals the literal substituted vector and no shell process appears.
 
-- [ ] **Step 2: Implement private run directories and invocation records**
+- [x] **Step 2: Implement private run directories and invocation records**
 
 Create `<root>/plugin_exchange/<plugin>/<run-id>` and a private `<exchange-dir>/.tmp` with `0700`. Build/redact argv once, insert the queued run/output rows, and persist only redacted values. Reject global-quota admission before the row/folder becomes visible; clean up both if later queue admission fails.
 
-- [ ] **Step 3: Implement Unix spawning**
+- [x] **Step 3: Implement Unix spawning**
 
 Resolve `argv[0]` with a private `resolveExecutable(base, Settings.CommandPath())` that walks only the validated configured directories, requires an executable regular file, and never consults the ambient process `PATH`. Copy the configured value into the child `PATH`. Set `cmd.Path` to the resolved path while keeping `cmd.Args[0]` as the manifest basename. Set `cmd.Dir`, explicit environment, `os.DevNull`, stdout/stderr pipes and `SysProcAttr=&syscall.SysProcAttr{Setpgid:true}`. Mark the row running before `Start`; persist pgid immediately after `Start`.
 
-- [ ] **Step 4: Add the bounded combined tail**
+- [x] **Step 4: Add the bounded combined tail**
 
 Drain both pipes concurrently into one mutex-protected 64 KiB ring. Strip terminal control characters before persistence, but preserve ordinary newlines/text. Do not HTML-escape in storage; escape at render time so JSON clients receive text rather than HTML entities.
 
-- [ ] **Step 5: Implement timeout, cancellation and group-death finalization**
+- [x] **Step 5: Implement timeout, cancellation and group-death finalization**
 
 Use a timer starting after spawn. Operator/plugin cancellation kills `-pgid` and records `cancelled`; timeout kills it and records `failed` with timeout named. Wait for group death and both pipe drains before final output. Exit 0→`succeeded`; nonzero/cannot-start→`failed`. `runner_windows.go` returns the documented unsupported error without spawning.
 
-- [ ] **Step 6: Enforce sampled quotas**
+- [x] **Step 6: Enforce sampled quotas**
 
 Every second, compute run exchange plus that run's import-temp usage without following symlinks. Above 8 GiB/configured per-run quota, kill group and fail naming the quota. Before each new run, measure the full staging root; above global quota refuse command admission but do not refuse imports. Include import temps in both counters.
 
-- [ ] **Step 7: Test descendants and final output**
+- [x] **Step 7: Test descendants and final output**
 
 Have the helper spawn a long-lived descendant that retains stdout and writes after the parent exits. Assert timeout/cancel kills the descendant, no bytes arrive after terminal publication, and output tail remains exactly the last 64 KiB. Assert fast writes can overshoot the sampled quota but are killed at the next sample.
 
-- [ ] **Step 8: Verify and commit**
+- [x] **Step 8: Verify and commit**
 
 ```bash
 go test -race ./plugin_commands -run 'Runner|ProcessGroup|Quota|OutputTail|Environment' -count=1

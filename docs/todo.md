@@ -10,7 +10,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 3: Require persistent, explicit command consent.
 - [x] Task 4: Add durable run, output, import and map records.
 - [x] Task 5: Add managed live jobs and dedicated dispatch pools.
-- [ ] Task 6: Execute commands with hardened argv, environment, output and quotas.
+- [x] Task 6: Execute commands with hardened argv, environment, output and quotas.
 - [ ] Task 7: Recover crashed runs and coordinate disable/shutdown.
 - [ ] Task 8: Implement safe exchange-folder operations and leases.
 - [ ] Task 9: Dispatch durable, replayable resource imports.
@@ -59,6 +59,16 @@ state until persistence succeeds, gives accepted replies precedence, runs
 callbacks outside the owner goroutine, and adds mutation-sensitive lifecycle
 coverage. Parent race, package, vet, architecture, whitespace and clean-worktree
 checks passed; final GPT-5.6-sol review approved.
+
+Task 6 landed in `37d1b828` with lifecycle hardening in `cd3aa2c9`. Security
+review found timeout started after persistence, fast commands skipped final quota
+sampling, late cancellation could strand a running row, inspection/kill/drain
+could wait forever, and a symlinked staging root disabled accounting. The
+follow-up starts the clock at spawn, makes cancellation authoritative, bounds
+cleanup with unverified-output marking, samples final usage and rejects symlinked
+roots. Parent race, package, vet, whitespace and clean-worktree checks passed;
+final GPT-5.6-sol review approved. Windows cross-compilation remains blocked by
+the repository's pre-existing SQLite dependency rather than Task 6 code.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
