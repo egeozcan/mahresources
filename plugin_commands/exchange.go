@@ -1,0 +1,295 @@
+package plugin_commands
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+)
+
+const (
+	MaxListEntries   = 10_000
+	MaxReadBytes     = 4 << 20
+	MaxFileNameBytes = 255
+)
+
+var (
+	ErrExchangeUnsupported      = errors.New("plugin command exchange folders are unsupported on this platform")
+	ErrExchangeRunNotFound      = errors.New("run not found")
+	ErrExchangeFileNotFound     = errors.New("file not found")
+	ErrExchangeRunSwept         = errors.New("run swept")
+	ErrExchangeOutputUnverified = errors.New("output unverified")
+	ErrExchangeRunNotFinished   = errors.New("run not finished")
+	ErrExchangeFileNotRegular   = errors.New("file is not a regular file")
+)
+
+type Entry struct {
+	Name     string
+	Size     int64
+	Modified time.Time
+}
+
+type Listing struct {
+	Entries   []Entry
+	Truncated bool
+}
+
+type Exchange interface {
+	List(Access, string) (Listing, error)
+	Read(Access, string, string, int64) ([]byte, error)
+	Discard(Access, string, string) error
+	DiscardRun(Access, string) error
+}
+
+type exchangeService struct {
+	store      Store
+	settings   Settings
+	leases     *LeaseManager
+	afterLstat func(string) // test barrier; nil in production
+}
+
+func NewExchange(store Store, settings Settings) Exchange {
+	return NewExchangeWithLeases(store, settings, NewLeaseManager())
+}
+
+// NewExchangeWithLeases lets imports and the retention sweep share the same
+// per-run coordination object as plugin-visible file operations.
+func NewExchangeWithLeases(store Store, settings Settings, leases *LeaseManager) Exchange {
+	if leases == nil {
+		leases = NewLeaseManager()
+	}
+	return &exchangeService{store: store, settings: settings, leases: leases}
+}
+
+func (e *exchangeService) List(access Access, runID string) (Listing, error) {
+	if err := exchangePlatformSupported(); err != nil {
+		return Listing{}, err
+	}
+	release, err := e.leases.Acquire(runID)
+	if err != nil {
+		return Listing{}, err
+	}
+	defer release()
+
+	run, err := e.authorizeRun(access, runID, false)
+	if err != nil {
+		return Listing{}, err
+	}
+	dir, err := openExchangeRunDir(e.runDir(run))
+	if err != nil {
+		return Listing{}, classifyRunDirError(err)
+	}
+	defer dir.Close()
+
+	entries := make([]Entry, 0, min(MaxListEntries, 64))
+	for {
+		batch, readErr := dir.ReadDir(256)
+		for _, item := range batch {
+			info, infoErr := item.Info()
+			if infoErr != nil {
+				if errors.Is(infoErr, os.ErrNotExist) {
+					continue
+				}
+				return Listing{}, fmt.Errorf("list exchange file %q: %w", item.Name(), infoErr)
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			if len(entries) == MaxListEntries {
+				return Listing{Entries: entries, Truncated: true}, nil
+			}
+			entries = append(entries, Entry{Name: item.Name(), Size: info.Size(), Modified: info.ModTime()})
+		}
+		if errors.Is(readErr, io.EOF) {
+			return Listing{Entries: entries}, nil
+		}
+		if readErr != nil {
+			return Listing{}, fmt.Errorf("list exchange folder: %w", readErr)
+		}
+	}
+}
+
+func (e *exchangeService) Read(access Access, runID, name string, maxBytes int64) ([]byte, error) {
+	if err := exchangePlatformSupported(); err != nil {
+		return nil, err
+	}
+	if err := validateExchangeName(name); err != nil {
+		return nil, err
+	}
+	if maxBytes < 1 || maxBytes > MaxReadBytes {
+		return nil, fmt.Errorf("max_bytes must be between 1 and %d", MaxReadBytes)
+	}
+	release, err := e.leases.Acquire(runID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	run, err := e.authorizeRun(access, runID, false)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := openExchangeRunDir(e.runDir(run))
+	if err != nil {
+		return nil, classifyRunDirError(err)
+	}
+	defer dir.Close()
+	file, err := openExchangeRegularAt(dir, name, e.afterLstat)
+	if err != nil {
+		return nil, classifyFileError(err)
+	}
+	defer file.Close()
+
+	body, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read exchange file: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds max_bytes")
+	}
+	return body, nil
+}
+
+func (e *exchangeService) Discard(access Access, runID, name string) error {
+	if err := exchangePlatformSupported(); err != nil {
+		return err
+	}
+	if err := validateExchangeName(name); err != nil {
+		return err
+	}
+	release, err := e.leases.Acquire(runID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	run, err := e.authorizeRun(access, runID, false)
+	if err != nil {
+		return err
+	}
+	dir, err := openExchangeRunDir(e.runDir(run))
+	if err != nil {
+		return classifyRunDirError(err)
+	}
+	defer dir.Close()
+	if err := unlinkExchangeRegularAt(dir, name, e.afterLstat); err != nil {
+		return classifyFileError(err)
+	}
+	return nil
+}
+
+func (e *exchangeService) DiscardRun(access Access, runID string) error {
+	if err := exchangePlatformSupported(); err != nil {
+		return err
+	}
+	endSweep, ok := e.leases.BeginSweep(runID)
+	if !ok {
+		return fmt.Errorf("active file operation prevents discard_run")
+	}
+	defer endSweep()
+
+	run, err := e.authorizeRun(access, runID, true)
+	if err != nil {
+		return err
+	}
+	active, err := e.store.HasNonterminalImports(runID)
+	if err != nil {
+		return fmt.Errorf("check nonterminal imports: %w", err)
+	}
+	if active {
+		return fmt.Errorf("nonterminal import prevents discard_run")
+	}
+
+	dirPath := e.runDir(run)
+	dir, err := openExchangeRunDir(dirPath)
+	if err != nil {
+		return classifyRunDirError(err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close exchange folder: %w", err)
+	}
+	if err := os.RemoveAll(dirPath); err != nil {
+		return fmt.Errorf("discard run exchange folder: %w", err)
+	}
+	return nil
+}
+
+func (e *exchangeService) authorizeRun(access Access, runID string, allowUnverified bool) (RunRecord, error) {
+	if e.store == nil || e.settings == nil {
+		return RunRecord{}, fmt.Errorf("run not found: exchange service is unavailable")
+	}
+	run, _, err := e.store.Run(runID)
+	if err != nil {
+		if errors.Is(err, ErrRunNotFound) {
+			return RunRecord{}, ErrExchangeRunNotFound
+		}
+		return RunRecord{}, fmt.Errorf("read command run: %w", err)
+	}
+	if !access.AllowsRun(run) || !validExchangeComponent(run.ID) || !validExchangeComponent(run.PluginName) {
+		return RunRecord{}, ErrExchangeRunNotFound
+	}
+	rootInfo, rootErr := os.Lstat(e.settings.StagingRoot())
+	if rootErr == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
+		return RunRecord{}, fmt.Errorf("staging root is a symlink")
+	}
+	if rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {
+		return RunRecord{}, fmt.Errorf("inspect staging root: %w", rootErr)
+	}
+	if !RunStatusTerminal(run.Status) {
+		return RunRecord{}, ErrExchangeRunNotFinished
+	}
+	if run.OutputUnverified && !allowUnverified {
+		return RunRecord{}, ErrExchangeOutputUnverified
+	}
+	return run, nil
+}
+
+func (e *exchangeService) runDir(run RunRecord) string {
+	return filepath.Join(e.settings.StagingRoot(), "plugin_exchange", run.PluginName, run.ID)
+}
+
+func validateExchangeName(name string) error {
+	if !validExchangeComponent(name) || len(name) > MaxFileNameBytes {
+		return fmt.Errorf("invalid file name")
+	}
+	return nil
+}
+
+func validExchangeComponent(value string) bool {
+	return value != "" && value != "." && value != ".." &&
+		!strings.ContainsAny(value, "/\\\x00")
+}
+
+func classifyRunDirError(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrExchangeRunSwept
+	}
+	if errors.Is(err, ErrExchangeUnsupported) {
+		return err
+	}
+	return fmt.Errorf("open exchange folder: %w", err)
+}
+
+func classifyFileError(err error) error {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return ErrExchangeFileNotFound
+	case errors.Is(err, ErrExchangeFileNotRegular):
+		return ErrExchangeFileNotRegular
+	case errors.Is(err, ErrExchangeUnsupported):
+		return err
+	default:
+		return fmt.Errorf("access exchange file: %w", err)
+	}
+}
+
+func exchangePlatformSupported() error {
+	if runtime.GOOS == "windows" {
+		return ErrExchangeUnsupported
+	}
+	return nil
+}
