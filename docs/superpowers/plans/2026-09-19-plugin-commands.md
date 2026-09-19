@@ -923,27 +923,27 @@ type ExchangeMediator interface {
 }
 ```
 
-- [ ] **Step 1: Write red Lua contract tests**
+- [x] **Step 1: Write red Lua contract tests**
 
 Assert `commands` installs both `mah.commands` and `mah.fs`; without it neither exists. `mah.fs.create_resource` exists only when `db:write` is also granted. Test argument/table types, literal return arity, transaction refusals, revoked VM refusal and Windows runtime refusal. Use the generation primitive already delivered by Task 4; this task must not introduce a second generation counter.
 
-- [ ] **Step 2: Implement `mah.commands.run`**
+- [x] **Step 2: Implement `mah.commands.run`**
 
 Look up the declaration captured from the load-time manifest, parse string→string params without coercion, enforce counts before submission, capture actor/generation and wrap an optional callback. Return `run_id` or `(nil,error)`. The completion wrapper starts a tracked background callback, takes the original VM's exclusive lock, installs the captured actor invocation, applies `MaxAsyncJobDuration`, and passes exactly `{ok,exit_code,error,run_id}`.
 
-- [ ] **Step 3: Implement `mah.fs` operations**
+- [x] **Step 3: Implement `mah.fs` operations**
 
 Build `Access{PluginName, ActorUserID}` from the live invocation. Convert `runs()` and listing/import maps to complete Lua tables. `create_resource` accepts exactly the existing resource-import fields `name`, `description`, `tags`, `groups` and `meta`; validates ID-shaped fields using `checkEntityIDOpts`; rejects unknown keys; requires no open transaction; captures generation/actor and optional `on_import`; and passes the documented result table. The already-succeeded synchronous short-circuit returns resource ID and does not call `on_import`.
 
-- [ ] **Step 4: Track and drop callbacks safely**
+- [x] **Step 4: Track and drop callbacks safely**
 
 Reuse the per-plugin in-flight wait group and VM-lock machinery, but not the action semaphore: callbacks are terminal notifications, not user jobs. `LockVM` returning nil drops the callback. Protect every callback with panic recovery and log timeout/error without altering the durable command/import outcome.
 
-- [ ] **Step 5: Wire the application host**
+- [x] **Step 5: Wire the application host**
 
 Construct the dispatcher after context dependencies exist, provide `PendingPerPluginLimit()` from `download_queue.MaxQueueSize`, set command/exchange adapters on `PluginManager`, and leave calls unavailable until `StartPluginCommands` completes recovery. `WithPrincipal`/`WithTransaction` clones share the process-lifetime dispatcher pointer; the host rebuilds scoped DB handles per import, never captures a request DB.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 go test -race --tags 'json1 fts5' ./plugin_system ./application_context ./internal/arch -run 'Command|Exchange|CapabilityGate|Generation' -count=1

@@ -14,7 +14,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 7: Recover crashed runs and coordinate disable/shutdown.
 - [x] Task 8: Implement safe exchange-folder operations and leases.
 - [x] Task 9: Dispatch durable, replayable resource imports.
-- [ ] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
+- [x] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
 - [ ] Task 11: Wire startup recovery, configuration, sweep and shutdown.
 - [ ] Task 12: Add administrator command history and authoritative job UI.
 - [ ] Task 13: Prove the complete host interface and document plugin authorship.
@@ -102,6 +102,17 @@ safe descriptor-anchored sweep when atomic unlink-by-fd is unavailable, and
 proves scoped attribution/association through dispatcher→adapter→AddResource.
 Parent focused/full race suites, application import/upload tests, vet, whitespace
 and clean-worktree checks passed; fresh GPT-5.6-sol final review approved.
+
+Task 10 landed in `7d8dba12` with host-boundary corrections in `78638afe`.
+Review removed an undocumented preview API and unbounded filesystem work, fixed
+strict Lua signatures/maps and coroutine root-VM locking, completed callback and
+architecture coverage, then found auth-off actorless recovery/import gaps plus
+enable/disable admission and dependency-refusal ordering races. The final host
+resolves no-auth root attribution, lists only intentional actorless runs for nil
+access, closes admission before manager disable, drains only after successful VM
+revocation, and reopens without mutating durable work on refusal. Parent focused
+Lua/host race tests, architecture suites, vet, whitespace and clean-worktree
+checks passed; fresh GPT-5.6-sol final review approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
