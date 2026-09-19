@@ -294,31 +294,49 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, e
 		}
 		defer ctx.reconcileEnabledState(pluginName)
 
+		wasEnabled := ctx.pluginManager.IsEnabled(pluginName)
+		var commandRevocationErr error
+		var closedCommandGeneration uint64
+		if wasEnabled {
+			closedCommandGeneration, _ = ctx.pluginManager.ClosePluginCommandAdmission(pluginName)
+		}
+		reopenCommandAdmission := func() {
+			ctx.pluginManager.ReopenPluginCommandAdmission(pluginName, closedCommandGeneration)
+		}
+		// Close admission before taking the dispatcher's durable snapshot. Calls
+		// already inside a host submission finish before the close returns, so the
+		// drain sees them; calls after it are refused. A loaded VM's teardown waits
+		// for callbacks, therefore the drain still precedes VM revocation.
+		if wasEnabled && ctx.pluginCommandDispatcher != nil {
+			commandRevocationErr = ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled")
+			if commandRevocationErr != nil {
+				ctx.Logger().Error("system", "plugin", nil, pluginName,
+					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": commandRevocationErr.Error()})
+			}
+		}
 		if err := ctx.pluginManager.DisablePlugin(pluginName); err != nil {
-			// What the caller is told, only — the row is the reconcile's.
-			//
-			// "I could not act" must not be reported as success, and it is the
-			// one refusal the loaded state cannot identify: an enable is in
-			// flight, so the plugin is not in the manager's map yet, which is
-			// indistinguishable from a plugin that was never loaded. Answering
-			// it with the idempotent branch below reported {"ok":true} while the
-			// load went on to publish.
+			// What the caller is told, only — the row is the reconcile's. If the
+			// generation remains active, restore only the gate we closed above.
 			if errors.Is(err, plugin_system.ErrLoadInProgress) {
+				reopenCommandAdmission()
 				return err
 			}
-			// Not loaded and no load in flight: the caller asked for a state the
-			// process is already in. Still continue through command revocation:
-			// durable work can survive the VM which submitted it.
 			if ctx.pluginManager.IsEnabled(pluginName) {
+				reopenCommandAdmission()
 				return err
 			}
 		}
-		if ctx.pluginCommandDispatcher != nil {
-			if err := ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
+		// No VM was loaded, but durable work can survive its submitter. Revoke
+		// that work after the manager has proved no enable is in flight.
+		if !wasEnabled && ctx.pluginCommandDispatcher != nil {
+			commandRevocationErr = ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled")
+			if commandRevocationErr != nil {
 				ctx.Logger().Error("system", "plugin", nil, pluginName,
-					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": err.Error()})
-				return err
+					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": commandRevocationErr.Error()})
 			}
+		}
+		if commandRevocationErr != nil {
+			return commandRevocationErr
 		}
 	}
 

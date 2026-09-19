@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mahresources/models/block_types"
+	"mahresources/plugin_commands"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -175,9 +176,20 @@ type PluginManager struct {
 	logger          atomic.Value
 	kvStore         atomic.Value
 	mrqlExecutor    atomic.Value
-	// downloadSubmitter is the queue mah.download.submit enqueues onto. Unset
-	// until wiring, like kvStore.
+	// These process-lifetime host seams are wired after the context has finished
+	// assembling. atomic.Value makes reads safe while startup publishes them.
 	downloadSubmitter atomic.Value
+	commandSubmitter  atomic.Value
+	exchangeMediator  atomic.Value
+
+	// commandAdmissionMu linearizes command/import admission against plugin
+	// disable. A generation is closed before durable work is drained, and callers
+	// hold the read side until their host submission returns. A later generation
+	// uses a different key and is therefore open without an error-prone reset.
+	commandAdmissionMu     sync.RWMutex
+	closedCommandAdmission map[commandAdmissionKey]struct{}
+	commandRuntimeGOOS     string
+	durableCallbackTimeout time.Duration
 	// consent holds the persistent ConsentStore. Unset until wiring, which is
 	// why fallbackConsent exists: an unwired manager must still enforce, not
 	// silently skip the check.
@@ -257,30 +269,31 @@ type PluginManager struct {
 // If dir does not exist, an empty manager is returned.
 func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
-		hooks:           make(map[string][]hookEntry),
-		injections:      make(map[string][]injectionEntry),
-		pages:           make(map[string]map[string]pageEntry),
-		actions:         make(map[string][]ActionRegistration),
-		apiEndpoints:    make(map[string]map[string]*APIEndpoint),
-		blockTypes:      make(map[string][]*PluginBlockType),
-		displayTypes:    make(map[string][]*PluginDisplayType),
-		shortcodes:      make(map[string][]*PluginShortcode),
-		docs:            make(map[string][]*PluginDoc),
-		schedules:       make(map[string][]ScheduleRegistration),
-		vmLocks:         make(map[*lua.LState]*vmMutex),
-		generations:     make(map[*lua.LState]uint64),
-		pluginSettings:  make(map[string]map[string]any),
-		actionJobs:      make(map[string]*ActionJob),
-		actionSemaphore: make(chan struct{}, maxConcurrentActions),
-		actionSubs:      make(map[chan ActionJobEvent]struct{}),
-		actionInFlight:  make(map[string]*sync.WaitGroup),
-		loading:         make(map[string]chan struct{}),
-		fallbackConsent: newMemoryConsentStore(),
-		httpPending:     make(map[*lua.LState][]httpCallback),
-		httpDraining:    make(map[*lua.LState]bool),
-		httpNotify:      make(chan struct{}, 1),
-		done:            make(chan struct{}),
-		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
+		hooks:                  make(map[string][]hookEntry),
+		injections:             make(map[string][]injectionEntry),
+		pages:                  make(map[string]map[string]pageEntry),
+		actions:                make(map[string][]ActionRegistration),
+		apiEndpoints:           make(map[string]map[string]*APIEndpoint),
+		blockTypes:             make(map[string][]*PluginBlockType),
+		displayTypes:           make(map[string][]*PluginDisplayType),
+		shortcodes:             make(map[string][]*PluginShortcode),
+		docs:                   make(map[string][]*PluginDoc),
+		schedules:              make(map[string][]ScheduleRegistration),
+		vmLocks:                make(map[*lua.LState]*vmMutex),
+		generations:            make(map[*lua.LState]uint64),
+		pluginSettings:         make(map[string]map[string]any),
+		actionJobs:             make(map[string]*ActionJob),
+		actionSemaphore:        make(chan struct{}, maxConcurrentActions),
+		actionSubs:             make(map[chan ActionJobEvent]struct{}),
+		actionInFlight:         make(map[string]*sync.WaitGroup),
+		loading:                make(map[string]chan struct{}),
+		fallbackConsent:        newMemoryConsentStore(),
+		closedCommandAdmission: make(map[commandAdmissionKey]struct{}),
+		httpPending:            make(map[*lua.LState][]httpCallback),
+		httpDraining:           make(map[*lua.LState]bool),
+		httpNotify:             make(chan struct{}, 1),
+		done:                   make(chan struct{}),
+		httpSem:                make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
 	go pm.drainHttpCallbacks()
@@ -923,7 +936,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	// Only now does the plugin get its host functions, and only the granted
 	// ones. Closures in registerMahModule capture the name pointer.
 	pluginName := header.Name
-	pm.registerMahModule(L, &pluginName, grants, header.Manifest.NetworkPolicy())
+	pm.registerMahModule(L, &pluginName, grants, header.Manifest.NetworkPolicy(), header.Manifest.Commands)
 
 	info := PluginInfo{
 		Name:        header.Name,
@@ -1039,7 +1052,7 @@ func logGrants(name string, manifest Manifest, grants CapabilitySet) {
 // every capability decision in this function (and registerDbModule's read/write
 // split) — internal/arch/plugin_capability_gate_test.go fails the build when a
 // registration appears without one.
-func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string, grants CapabilitySet, egress NetworkPolicy) {
+func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string, grants CapabilitySet, egress NetworkPolicy, commands []plugin_commands.Declaration) {
 	mahMod := L.NewTable()
 
 	// setIf installs a root-level mah function only when its capability is
@@ -1769,6 +1782,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	}
 	if grants.Has(CapMedia) {
 		pm.registerMediaModule(L, mahMod)
+	}
+	if grants.Has(CapCommands) {
+		pm.registerCommandsAPI(L, mahMod, commands)
+		pm.registerFSAPI(L, mahMod, grants.Has(CapDBWrite))
 	}
 	// Gated on db:write for the reason registerDownloadModule gives: the power
 	// is create_resource_from_url's, without the wait.

@@ -149,6 +149,51 @@ func testImportSource(t *testing.T, path, scratch, name, runID, importID string)
 	}, func() { _ = file.Close() }
 }
 
+func TestPluginCommandImportAcceptsImplicitRootInAuthOffMode(t *testing.T) {
+	ctx, _, _, generation := commandImportContext(t)
+	ctx.Config.AuthEnabled = false
+	root, err := ctx.EnsureRootAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.ValidateImport(plugin_commands.ImportValidation{
+		PluginName: "commanded", PluginGeneration: generation, ActorUserID: nil,
+	}); err != nil {
+		t.Fatalf("auth-off import refused: %v", err)
+	}
+
+	const importID = "claim-auth-off"
+	claim := &models.PluginCommandImport{
+		ID: importID, RunID: "run-auth-off", FileName: "result.bin",
+		PluginGeneration: generation, Status: plugin_commands.ImportStatusRunning,
+	}
+	if err := ctx.db.Create(claim).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claim.CreatedByUserId == nil || *claim.CreatedByUserId != root.ID {
+		t.Fatalf("claim creator = %v, want root %d", claim.CreatedByUserId, root.ID)
+	}
+
+	scratch := t.TempDir()
+	sourcePath := filepath.Join(scratch, "outer-snapshot")
+	if err := os.WriteFile(sourcePath, []byte("auth-off output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, closeSource := testImportSource(t, sourcePath, scratch, "result.bin", "run-auth-off", importID)
+	defer closeSource()
+	resourceID, err := ctx.ImportResource(context.Background(), source, plugin_commands.ResourceFields{Name: "auth-off import"}, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resource.CreatedByUserId == nil || *resource.CreatedByUserId != root.ID {
+		t.Fatalf("resource creator = %v, want root %d", resource.CreatedByUserId, root.ID)
+	}
+}
+
 func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 	ctx, _, _, generation := commandImportContext(t)
 	actor, err := ctx.CreateUser(&UserInput{Username: "memory-importer", Password: "password1", Role: models.RoleEditor})

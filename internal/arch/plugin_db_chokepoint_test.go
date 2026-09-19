@@ -4,8 +4,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +86,35 @@ func TestPluginDbAccessGoesThroughTheBinder(t *testing.T) {
 	if allowed == 0 {
 		t.Fatal("no getDbProvider/getDbWriter call found inside querierFor/writerFor: " +
 			"this test has stopped checking anything")
+	}
+}
+
+// TestPluginCommandImportsUseTheApplicationChokepoint keeps mah.fs from growing
+// a second, unbound route to AddResource. Lua only submits actor and generation
+// provenance; the application adapter owns durable replay and principal binding.
+func TestPluginCommandImportsUseTheApplicationChokepoint(t *testing.T) {
+	root := moduleRoot(t)
+	luaSource, err := os.ReadFile(filepath.Join(root, "plugin_system", "fs_api.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(luaSource)
+	for _, forbidden := range []string{"getDbProvider(", "getDbWriter(", "querierFor(", "writerFor(", "AddResource("} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("plugin_system/fs_api.go reaches %s; command imports must cross ExchangeMediator", forbidden)
+		}
+	}
+	for _, required := range []string{"host.SubmitCommandImport", "Access:", "PluginGeneration:", "ActorUserID:"} {
+		if !strings.Contains(text, required) {
+			t.Errorf("plugin_system/fs_api.go is missing %q from the actor-bound import submission", required)
+		}
+	}
+
+	adapterSource, err := os.ReadFile(filepath.Join(root, "application_context", "plugin_command_runtime.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(adapterSource), "ctx.pluginCommandDispatcher.SubmitImport(submission)") {
+		t.Error("application command adapter no longer routes mah.fs imports through the durable dispatcher")
 	}
 }

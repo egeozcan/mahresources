@@ -75,11 +75,17 @@ func (a Access) AllowsRun(run RunRecord) bool {
 	if a.Administrator {
 		return true
 	}
-	if a.PluginName == "" || a.PluginName != run.PluginName || a.ActorUserID == nil || *a.ActorUserID == 0 {
+	if a.PluginName == "" || a.PluginName != run.PluginName {
 		return false
 	}
+	// Actorless-at-submission is explicit provenance, not an accidental NULL.
+	// It is how auth-off command runs remain available to their own plugin while
+	// an ordinary actor-owned run nulled by user deletion stays fail-closed.
 	if run.ActorlessAtSubmission {
 		return true
+	}
+	if a.ActorUserID == nil || *a.ActorUserID == 0 {
+		return false
 	}
 	return run.CreatedByUserID != nil && *run.CreatedByUserID == *a.ActorUserID
 }

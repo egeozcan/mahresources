@@ -22,8 +22,22 @@ var _ plugin_commands.Importer = (*MahresourcesContext)(nil)
 // claim records what was requested; it is not a standing grant after a plugin,
 // role, user, generation, or subtree changes.
 func (ctx *MahresourcesContext) ValidateImport(validation plugin_commands.ImportValidation) error {
+	var actorID uint
 	if validation.ActorUserID == nil || *validation.ActorUserID == 0 {
-		return fmt.Errorf("plugin command import actor is no longer available")
+		if ctx.AuthEnabled() {
+			return fmt.Errorf("plugin command import actor is no longer available")
+		}
+		// Auth-off invocations deliberately carry no human actor. Resolve the
+		// process's root principal just as the create-stamp callback does; the
+		// durable claim is stamped with this same id, so deletion between this
+		// check and import still nulls the claim and fails closed below.
+		root, err := ctx.RootAdminPrincipal()
+		if err != nil || root == nil || root.UserID == 0 {
+			return fmt.Errorf("plugin command import actor is no longer available")
+		}
+		actorID = root.UserID
+	} else {
+		actorID = *validation.ActorUserID
 	}
 	pm := ctx.PluginManager()
 	if pm == nil || !pm.GenerationActive(validation.PluginName, validation.PluginGeneration) {
@@ -40,7 +54,6 @@ func (ctx *MahresourcesContext) ValidateImport(validation plugin_commands.Import
 		return fmt.Errorf("plugin command import requires commands and db:write capabilities")
 	}
 
-	actorID := *validation.ActorUserID
 	principal := ctx.principalForPluginActor(actorID)
 	bound := ctx.WithPrincipal(principal)
 	if err := bound.requireWriteRole("import plugin command output"); err != nil {

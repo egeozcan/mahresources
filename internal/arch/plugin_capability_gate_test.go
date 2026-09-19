@@ -42,6 +42,8 @@ var moduleCapabilities = map[string]string{
 	"registerKvModule":    "CapKV",
 	"registerImageModule": "CapImage",
 	"registerMediaModule": "CapMedia",
+	"registerCommandsAPI": "CapCommands",
+	"registerFSAPI":       "CapCommands",
 	// mah.download is gated on db:write rather than a name of its own: it
 	// fetches a URL into the library exactly as mah.db.create_resource_from_url
 	// does, and that capability's label already says so. Only the waiting
@@ -115,6 +117,8 @@ var subModuleKeys = map[string]string{
 	"registerKvModule":    "kv",
 	"registerImageModule": "image",
 	"registerUtilModule":  "util",
+	"registerCommandsAPI": "commands",
+	"registerFSAPI":       "fs",
 }
 
 // TestSubModulesWriteOnlyTheirOwnKey holds the mahMod rule over the registrars
