@@ -20,6 +20,35 @@ type ProgressSink interface {
 // JobRunFn is the signature of a generic job worker.
 type JobRunFn func(ctx context.Context, j *DownloadJob, p ProgressSink) error
 
+const MaxManagedLiveJobs = 6
+
+// JobControls describes the controls a managed live job exposes. Managed jobs
+// are authoritative durable operations, so controls are opt-in rather than
+// inherited from downloads.
+type JobControls struct {
+	Cancel bool
+	Pause  bool
+	Resume bool
+	Retry  bool
+}
+
+// ManagedJobOutcome is the terminal classification supplied by a managed
+// operation. AuthoritativeStatus is the durable status the cockpit must render
+// when it is more specific than the generic job vocabulary.
+type ManagedJobOutcome struct {
+	Status              JobStatus
+	AuthoritativeStatus string
+	Error               string
+}
+
+type ManagedJobRunFn func(context.Context, *DownloadJob, ProgressSink) ManagedJobOutcome
+
+type ManagedJobOptions struct {
+	JobOptions
+	Controls JobControls
+	Cancel   func(reason string) error
+}
+
 // managedSink is the concrete ProgressSink. Holds a reference to the manager
 // so every mutation triggers notifySubscribers.
 type managedSink struct {
@@ -123,6 +152,97 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 	go m.processGenericJob(job)
 
 	return job, nil
+}
+
+// SubmitManagedJob registers work only after its caller owns a dedicated
+// execution slot. Managed work bypasses the download semaphore and occupies a
+// separately bounded six-entry live lane.
+func (m *DownloadManager) SubmitManagedJob(opts ManagedJobOptions, runFn ManagedJobRunFn) (*DownloadJob, error) {
+	if runFn == nil {
+		return nil, fmt.Errorf("download_queue: SubmitManagedJob requires non-nil runFn")
+	}
+	if opts.Controls.Cancel && opts.Cancel == nil {
+		return nil, fmt.Errorf("download_queue: cancel-enabled managed job requires callback")
+	}
+
+	m.mu.Lock()
+	if !m.makeRoomForManagedJob() {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("managed job lane is full (max %d jobs)", MaxManagedLiveJobs)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &DownloadJob{
+		ID:              generateShortID(),
+		URL:             opts.URL,
+		Status:          JobStatusPending,
+		Progress:        0,
+		TotalSize:       -1,
+		ProgressPercent: -1,
+		CreatedAt:       time.Now(),
+		Source:          opts.Source,
+		Phase:           opts.InitialPhase,
+		initialPhase:    opts.InitialPhase,
+		ctx:             ctx,
+		cancel:          cancel,
+		ownerUserID:     opts.OwnerUserID,
+		managed:         true,
+		managedControls: opts.Controls,
+		managedCancel:   opts.Cancel,
+		managedRunFn:    runFn,
+	}
+	m.jobs[job.ID] = job
+	m.jobOrder = append(m.jobOrder, job.ID)
+	m.notifyJob("added", job)
+	m.mu.Unlock()
+
+	go m.processManagedJob(job)
+	return job, nil
+}
+
+func (m *DownloadManager) makeRoomForManagedJob() bool {
+	count := 0
+	var terminalID string
+	var terminal *DownloadJob
+	for _, id := range m.jobOrder {
+		job := m.jobs[id]
+		if job == nil || !job.isManaged() {
+			continue
+		}
+		count++
+		if terminal == nil {
+			status := job.GetStatus()
+			if status == JobStatusCompleted || status == JobStatusFailed || status == JobStatusCancelled {
+				terminalID, terminal = id, job
+			}
+		}
+	}
+	if count < MaxManagedLiveJobs {
+		return true
+	}
+	if terminal != nil {
+		m.evictJob(terminalID, terminal)
+		return true
+	}
+	return false
+}
+
+func (m *DownloadManager) processManagedJob(j *DownloadJob) {
+	runID, ctx := j.attempt()
+	if !j.claimStart(runID, JobStatusProcessing, time.Now()) {
+		return
+	}
+	m.notifyJob("updated", j)
+
+	outcome := j.managedRunFn(ctx, j, &managedSink{m: m, j: j})
+	if outcome.Status != JobStatusCompleted && outcome.Status != JobStatusFailed && outcome.Status != JobStatusCancelled {
+		outcome.Status = JobStatusFailed
+		if outcome.Error == "" {
+			outcome.Error = "managed job returned a nonterminal status"
+		}
+	}
+	if j.finishManaged(runID, outcome, time.Now()) {
+		m.notifyJob("updated", j)
+	}
 }
 
 // processGenericJob runs runFn under the shared semaphore and broadcasts

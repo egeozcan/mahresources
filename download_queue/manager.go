@@ -340,22 +340,32 @@ func trimStringBytes(value string, limit int) string {
 // Never evicts active (pending/downloading/processing) or paused jobs.
 // Must be called with dm.mu held.
 func (dm *DownloadManager) makeRoomForNewJob() bool {
-	if len(dm.jobs) < MaxQueueSize {
-		return true // Already have room
+	ordinary := 0
+	for _, job := range dm.jobs {
+		if job != nil && !job.isManaged() {
+			ordinary++
+		}
+	}
+	if ordinary < MaxQueueSize {
+		return true
 	}
 
-	// First pass: find oldest completed job
+	// First pass: find oldest completed ordinary job. Managed entries have their
+	// own lane and must never steal or release ordinary capacity.
 	for _, id := range dm.jobOrder {
 		job := dm.jobs[id]
-		if job.GetStatus() == JobStatusCompleted {
+		if job != nil && !job.isManaged() && job.GetStatus() == JobStatusCompleted {
 			dm.evictJob(id, job)
 			return true
 		}
 	}
 
-	// Second pass: find oldest failed/cancelled job
+	// Second pass: find oldest failed/cancelled ordinary job.
 	for _, id := range dm.jobOrder {
 		job := dm.jobs[id]
+		if job == nil || job.isManaged() {
+			continue
+		}
 		status := job.GetStatus()
 		if status == JobStatusFailed || status == JobStatusCancelled {
 			dm.evictJob(id, job)
@@ -363,7 +373,6 @@ func (dm *DownloadManager) makeRoomForNewJob() bool {
 		}
 	}
 
-	// No evictable jobs found (all are active or paused)
 	return false
 }
 
@@ -1125,6 +1134,20 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 		return err
 	}
 
+	if job.isManaged() {
+		status, cancel, ok := job.claimManagedCancel()
+		if !ok {
+			return &StateConflictError{JobID: jobID, Action: "cancelled", Status: status}
+		}
+		// The callback reaches the durable dispatcher and may re-enter this job.
+		// Invoke it only after every manager/job lock has been released.
+		if err := cancel("Cancelled"); err != nil {
+			job.rollbackManagedCancel()
+			return err
+		}
+		return nil
+	}
+
 	// One atomic step: whether the job may be cancelled, whether it was paused, and
 	// the terminal write the paused case needs are all decided under the job's own
 	// lock. Deciding from a second status read is what let a concurrent Pause land in
@@ -1158,6 +1181,9 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	if err != nil {
 		return err
 	}
+	if job.isManaged() {
+		return &StateConflictError{JobID: jobID, Action: "paused", Status: job.GetStatus()}
+	}
 
 	// The status is written before the context is cancelled, and both the check and
 	// that write are one step, so the goroutine cannot see the cancellation before
@@ -1185,6 +1211,9 @@ func (dm *DownloadManager) Resume(jobID string) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		return &NotFoundError{JobID: jobID}
+	}
+	if job.isManaged() {
+		return &StateConflictError{JobID: jobID, Action: "resumed", Status: job.GetStatus()}
 	}
 
 	// The context is built before the claim and discarded if the claim loses, so the
@@ -1215,6 +1244,9 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		return &NotFoundError{JobID: jobID}
+	}
+	if job.isManaged() {
+		return &StateConflictError{JobID: jobID, Action: "retried", Status: job.GetStatus()}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

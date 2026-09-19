@@ -49,11 +49,12 @@ type DownloadJob struct {
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
 	Source          string     `json:"source"` // "download", "plugin", or "group-export"
 
-	Phase      string   `json:"phase,omitempty"`
-	PhaseCount int64    `json:"phaseCount,omitempty"`
-	PhaseTotal int64    `json:"phaseTotal,omitempty"`
-	ResultPath string   `json:"resultPath,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
+	Phase               string   `json:"phase,omitempty"`
+	PhaseCount          int64    `json:"phaseCount,omitempty"`
+	PhaseTotal          int64    `json:"phaseTotal,omitempty"`
+	ResultPath          string   `json:"resultPath,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
+	AuthoritativeStatus string   `json:"authoritativeStatus,omitempty"`
 
 	// Internal fields (not serialized to JSON)
 	creator *query_models.ResourceFromRemoteCreator
@@ -90,6 +91,11 @@ type DownloadJob struct {
 	// this job. A retry that forgot the origin would silently become a host
 	// fetch.
 	pluginName string
+
+	managed         bool
+	managedControls JobControls
+	managedCancel   func(string) error
+	managedRunFn    ManagedJobRunFn
 }
 
 // Status transitions
@@ -163,6 +169,45 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, *DownloadJo
 //
 // Safe under j.mu: a context.CancelFunc closes a channel and cancels children. It
 // does not call back into the job, and any goroutine it wakes runs elsewhere.
+func (j *DownloadJob) isManaged() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.managed
+}
+
+// claimManagedCancel records the in-memory half of a managed cancellation and
+// returns the durable callback without invoking it under the job lock.
+func (j *DownloadJob) claimManagedCancel() (JobStatus, func(string) error, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.managed || !j.managedControls.Cancel || j.managedCancel == nil || j.cancelRequested || !j.activeLocked() {
+		return j.Status, nil, false
+	}
+	j.cancelRequested = true
+	return j.Status, j.managedCancel, true
+}
+
+func (j *DownloadJob) rollbackManagedCancel() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.managed && j.activeLocked() {
+		j.cancelRequested = false
+	}
+}
+
+func (j *DownloadJob) finishManaged(runID uint64, outcome ManagedJobOutcome, completedAt time.Time) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.ownedByRunLocked(runID) {
+		return false
+	}
+	j.Status = outcome.Status
+	j.AuthoritativeStatus = outcome.AuthoritativeStatus
+	j.Error = outcome.Error
+	j.CompletedAt = &completedAt
+	return true
+}
+
 func (j *DownloadJob) cancelLocked() {
 	if j.cancel != nil {
 		j.cancel()
@@ -758,24 +803,27 @@ func (j *DownloadJob) Snapshot() *DownloadJob {
 // wrote.
 func (j *DownloadJob) snapshotLocked() *DownloadJob {
 	snap := &DownloadJob{
-		ID:              j.ID,
-		URL:             j.URL,
-		Status:          j.Status,
-		Progress:        j.Progress,
-		TotalSize:       j.TotalSize,
-		ProgressPercent: j.ProgressPercent,
-		Error:           j.Error,
-		ResourceID:      j.ResourceID,
-		CreatedAt:       j.CreatedAt,
-		StartedAt:       j.StartedAt,
-		CompletedAt:     j.CompletedAt,
-		Source:          j.Source,
-		Phase:           j.Phase,
-		PhaseCount:      j.PhaseCount,
-		PhaseTotal:      j.PhaseTotal,
-		ResultPath:      j.ResultPath,
-		ownerUserID:     j.ownerUserID,
-		pluginName:      j.pluginName,
+		ID:                  j.ID,
+		URL:                 j.URL,
+		Status:              j.Status,
+		Progress:            j.Progress,
+		TotalSize:           j.TotalSize,
+		ProgressPercent:     j.ProgressPercent,
+		Error:               j.Error,
+		ResourceID:          j.ResourceID,
+		CreatedAt:           j.CreatedAt,
+		StartedAt:           j.StartedAt,
+		CompletedAt:         j.CompletedAt,
+		Source:              j.Source,
+		Phase:               j.Phase,
+		PhaseCount:          j.PhaseCount,
+		PhaseTotal:          j.PhaseTotal,
+		ResultPath:          j.ResultPath,
+		AuthoritativeStatus: j.AuthoritativeStatus,
+		ownerUserID:         j.ownerUserID,
+		pluginName:          j.pluginName,
+		managed:             j.managed,
+		managedControls:     j.managedControls,
 	}
 	// Deep-copy the Warnings slice so subscribers can't observe a torn append.
 	if j.Warnings != nil {

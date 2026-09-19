@@ -1,6 +1,7 @@
 package plugin_commands
 
 import (
+	"context"
 	"time"
 
 	"mahresources/models"
@@ -145,4 +146,77 @@ func ImportStatusTerminal(status string) bool {
 	default:
 		return false
 	}
+}
+
+// Settings is the live runtime surface used by command dispatch and execution.
+type Settings interface {
+	StagingRoot() string
+	PendingPerPluginLimit() int
+	PerRunQuota() int64
+	GlobalStagingQuota() int64
+	ExchangeRetention() time.Duration
+	OutputRetention() time.Duration
+	CommandPath() string
+}
+
+type RunJobSpec struct {
+	RunID       string
+	PluginName  string
+	OwnerUserID *uint
+}
+
+type ImportJobSpec struct {
+	ImportID    string
+	PluginName  string
+	OwnerUserID *uint
+}
+
+type Progress interface {
+	SetPhase(string)
+	SetPhaseProgress(int64, int64)
+}
+
+type Outcome struct {
+	Status string
+	Error  string
+}
+
+type LiveJobs interface {
+	SubmitCommandJob(RunJobSpec, func(string) error, func(context.Context, Progress) Outcome) (string, error)
+	SubmitImportJob(ImportJobSpec, func(context.Context, Progress) Outcome) (string, error)
+}
+
+type Result struct {
+	OK       bool
+	ExitCode *int
+	Error    string
+	RunID    string
+}
+
+type CommandRequest struct {
+	PluginName       string
+	PluginGeneration uint64
+	ActorUserID      *uint
+	Declaration      Declaration
+	Params           map[string]string
+	Completion       func(Result)
+}
+
+type QueuedRun struct {
+	RunID       string
+	Request     CommandRequest
+	ExchangeDir string
+	Invocation  Invocation
+}
+
+type Executor interface {
+	Execute(context.Context, QueuedRun) Outcome
+}
+
+type Dependencies struct {
+	Store    Store
+	Jobs     LiveJobs
+	Executor Executor
+	Settings Settings
+	Logf     func(string, ...any)
 }
