@@ -783,27 +783,27 @@ type Exchange interface {
 func NewExchange(Store, Settings) Exchange
 ```
 
-- [ ] **Step 1: Write red ownership/state/name tests**
+- [x] **Step 1: Write red ownership/state/name tests**
 
 Test wrong plugin, wrong actor, an intentional `ActorlessAtSubmission=true` run (allowed to any current principal acting for that plugin), and a deleted-actor run (`CreatedByUserId=nil`, flag false) that remains inaccessible. Also cover queued/running run, swept run, `output_unverified`, empty/`.`/`..`/slashes/backslashes/NUL/overlong names, and cross-run IDs. Assert errors use the spec's explicit phrases.
 
-- [ ] **Step 2: Write red filesystem attack tests**
+- [x] **Step 2: Write red filesystem attack tests**
 
 Create top-level regular files, directory, FIFO/device where supported and a symlink to an outside secret. Add a barrier after `lstat`, swap a regular file for the symlink, and assert read/discard/import open refuses it and never reads/removes the target.
 
-- [ ] **Step 3: Implement lexical and relative-open enforcement**
+- [x] **Step 3: Implement lexical and relative-open enforcement**
 
 Open the run directory fd, call `unix.Openat` with `O_NOFOLLOW|O_CLOEXEC`, then `Fstat` and require regular mode. For delete, verify with relative no-follow open before `Unlinkat`. Windows implementations return unsupported because v1 cannot express the same reparse-point guarantee.
 
-- [ ] **Step 4: Implement list/read/discard/discard_run**
+- [x] **Step 4: Implement list/read/discard/discard_run**
 
 List only top-level entries and return the first 10,000 regular-file records plus `Truncated`; do not follow or expose symlink targets. Read requires caller `max_bytes` in `1..4MiB` and reads `max_bytes+1` to refuse overflow. `discard_run` refuses nonterminal runs/imports and active leases; it alone permits `output_unverified`.
 
-- [ ] **Step 5: Coordinate leases and sweep locks**
+- [x] **Step 5: Coordinate leases and sweep locks**
 
 A per-run lock owns lease acquisition and sweep's check/delete decision. File operations take a file lease; import claims pin at admission before waiting for the pool. Prove a sweep cannot delete after its skip-check but before an operation acquires its lease.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 go test -race ./plugin_commands -run 'Exchange|Symlink|Lease|ListTruncates|DiscardRun' -count=1

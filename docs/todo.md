@@ -12,7 +12,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 5: Add managed live jobs and dedicated dispatch pools.
 - [x] Task 6: Execute commands with hardened argv, environment, output and quotas.
 - [x] Task 7: Recover crashed runs and coordinate disable/shutdown.
-- [ ] Task 8: Implement safe exchange-folder operations and leases.
+- [x] Task 8: Implement safe exchange-folder operations and leases.
 - [ ] Task 9: Dispatch durable, replayable resource imports.
 - [ ] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
 - [ ] Task 11: Wire startup recovery, configuration, sweep and shutdown.
@@ -79,6 +79,17 @@ barrier, completion barriers, at-least-one marked-member ownership, bounded
 error-propagating shutdown and retry-state cancellation. Parent focused and full
 plugin-command race suites, application disable tests, vet, whitespace and
 clean-worktree checks passed; final GPT-5.6-sol review approved.
+
+Task 8 landed in `742839a8`, with filesystem/lease hardening in `d5b6bb89` and
+final authorization-ordering correction in `759fd16c`. Review found missing
+import admission leases, attacker-observable authorization ordering,
+intermediate symlink and path-based recursive deletion escapes, blocking
+special-file swaps, pathname metadata races and a remaining staging-root-before-
+state check. The final implementation uses descriptor-relative no-follow
+traversal/deletion/listing, nonblocking validation, shared admission leases and
+ownership/state-first errors. Parent focused and full race suites, vet,
+whitespace and clean-worktree checks passed; fresh GPT-5.6-sol final review
+approved.
 
 The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
