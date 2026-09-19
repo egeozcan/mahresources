@@ -1,6 +1,6 @@
 # Plugin-declared server commands and exchange folders
 
-Status: draft 7 — revised after six gpt-6-astra design reviews
+Status: draft 8 — revised after seven gpt-6-astra design reviews
 Date: 2026-09-19
 
 ## Goal
@@ -330,6 +330,18 @@ which terminal state each path produces:
 `failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
 distinct statuses, as required.
 
+**Disable coordinates with the pre-fork `running` window.** The row can be
+`running` with no process group yet (§3, launch ordering), and the disable
+rule above only names queued rejection and group kills. Disable therefore
+takes the per-run dispatch lock: a disable arriving before the fork
+prevents the fork (the row is cancelled without a spawn); a disable
+arriving after the fork but before pgid persistence leaves cancellation
+**latched** on the row, so the just-spawned group — whose pgid the worker
+writes next — is killed and reaped before any terminal status is
+published. No window exists in which a run is both disabled and spawning
+unobserved. Tests cover disable before the fork and disable between fork
+and pgid persistence.
+
 **Retention:** `plugin_command_runs` rows are retained indefinitely in v1 —
 pruning a row would destroy the import map (§5) that idempotent re-import
 depends on, and run counts are bounded by usage. Future pruning tooling must
@@ -518,36 +530,56 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   import id, back to `pending`, bindings refreshed). This is the re-drive
   the §6 page reconciliation uses; until then the claim sits in `runs()`,
   visible and re-submittable — documented behaviour, not a silent drop.
-- **Crash-safe destination handling is a prerequisite for replay, and the
-  fresh-input temp alone does not provide it.** `AddResource` already copies
-  its input into a unique temp (`resource_upload_context.go:1084-1094`), but
-  then copies into a deterministic hash destination (`1251-1269`) and
-  **trusts that destination if it exists** — so a crash during the
-  destination copy leaves a truncated file that a replayed import would
-  reuse as-is. The import path therefore validates the destination before
-  invoking `AddResource`: the worker knows the staging file's exact size; if
-  a destination file for the same content already exists **and its size
-  differs from the source**, the destination is deleted first, so
-  `AddResource` performs a full fresh copy. A size check suffices to catch
-  copy-truncation (a crash mid-copy leaves a strict prefix, which cannot
-  have the source's size); when destination and source sizes match, reuse is
-  the ordinary post-copy-crash case and is correct. Additionally, each
-  attempt still stages through its own uniquely named temp input so a
-  partial *input* temp is never trusted. A **mid-destination-copy
-  crash/replay test** (interrupting `AddResource`'s destination copy, not
-  just the staging-to-temp copy) asserts the replayed import publishes a
-  complete resource.
-- **Import temp files are bounded and reclaimed.** Each attempt's input
-  temp lives in a dedicated area of the staging root
-  (`<staging root>/import_tmp/<import-id>/`), not inside the exchange
-  folder, so it never appears in `mah.fs.list`. Both quotas count it: the
-  per-run exchange quota covers the run's exchange folder **plus** its
+- **Crash-safe destination handling is a prerequisite for replay, and it
+  must live inside the hash lock — not in an external preflight.**
+  `AddResource` copies its input into a unique temp
+  (`resource_upload_context.go:1084-1094`), resolves the destination from
+  `mimetype.DetectFile` + `hash + extension` (`1099`, `1251`), and trusts
+  the destination if it exists (`1251-1269`) — so a crash during the
+  destination copy leaves a truncated file a replay would reuse. An
+  external "delete the destination before calling AddResource" preflight is
+  **rejected as the mechanism**: two runs may contain identical content,
+  per-file claims do not serialize them, and worker B's preflight could
+  delete worker A's destination mid-copy (A then commits a resource whose
+  backing file was unlinked; B deduplicates on A's row and never restores
+  the bytes — `1178-1179` acquires the hash lock inside `AddResource`,
+  `1201-1203` short-circuits on an existing row).
+
+  The import path instead extends **AddResource's own hash-locked
+  destination handling**: under the hash lock, before the existing
+  skip-if-present short-circuit, the destination file is validated against
+  the **immutable input snapshot** — if it exists and its size differs from
+  that snapshot's, it is replaced with a full copy. A size check suffices
+  to catch copy-truncation (a crash mid-copy leaves a strict prefix, which
+  cannot have the snapshot's size); matching sizes is the ordinary
+  post-copy-crash case and is correctly reused. Each attempt derives hash,
+  MIME and size **freshly from its own snapshot** — the size of the
+  snapshot being imported is compared against the destination that the
+  same snapshot resolves to via the mime-detected extension; comparing a
+  newly measured source against a cached prior-attempt destination is
+  prohibited (changed content selects a different destination, so a
+  changed source can never be mistaken for a truncated copy). A
+  **mid-destination-copy crash/replay test** (interrupting the copy under
+  the hash lock) and a **concurrent same-content import test** (two workers,
+  identical content) assert replay publishes complete resources and
+  no worker loses its backing file.
+- **Import temp files are bounded and reclaimed, including AddResource's
+  inner temp.** AddResource itself creates a further full copy via
+  `os.CreateTemp(ctx.Config.HLSTempDir, "upload-")`
+  (`resource_upload_context.go:1084-1096`) — outside `import_tmp`, and its
+  deferred removal does not survive a crash. Import-owned invocations
+  route that scratch into the **claim's managed temp directory**
+  (`<staging root>/import_tmp/<import-id>/`) via an explicit scratch-dir
+  option, so every import temp — outer and inner — is inside `import_tmp`,
+  never appears in `mah.fs.list`, and is covered by one accounting rule:
+  the per-run exchange quota covers the run's exchange folder **plus** its
   import temps, and the global staging quota covers the whole staging root
   including `import_tmp`. Cleanup is immediate on the import's terminal
   state (success or failure); startup recovery deletes any temps whose
-  claim is terminal or `interrupted` — a partial temp is unusable by design,
-  since re-import always copies fresh. Tests cover quota accounting
-  including temps and orphan-temp cleanup after restart.
+  claim is terminal or `interrupted` — partial temps are unusable by
+  design, since re-import always copies fresh. Tests cover quota accounting
+  including temps, **orphan-temp cleanup after a crash following the inner
+  upload temp having been populated**, and reclamation after restart.
 - **Plugin lifecycle binding.** Each claim is bound to the submitting
   plugin's generation. The import worker **revalidates at start**: plugin
   still enabled, `commands`/`db:write` grants still consented, actor's
@@ -799,7 +831,10 @@ Core (mahresources):
   mapping test** — timeout → `failed` (named), operator cancel → `cancelled`,
   disable → `cancelled`, restart → `interrupted` for both running and queued
   (generic `ctx.Err() → cancelled` classification not used for commands);
-  durable run record readable after the 1-hour queue retention expires.
+  durable run record readable after the 1-hour queue retention expires;
+  **disable in the pre-fork window** — disable before the fork prevents the
+  spawn, disable between fork and pgid persistence latches cancellation so
+  the just-spawned group is killed and reaped before terminal publication.
 - Crash recovery: restart with a **surviving orphaned process group** (a
   grandchild writer still alive) — the group is identity-verified and killed
   before the record is stamped `interrupted` — the guarantee is that output
@@ -861,8 +896,13 @@ Core (mahresources):
   interrupted claims (same id) and offers failed/cancelled claims for an
   explicit operator retry that creates a **new** claim id — nothing
   automatic; **import temp accounting**: per-run and global quotas include
-  `import_tmp`, and startup recovery deletes orphaned temps of terminal or
-  interrupted claims.
+  `import_tmp` (which also holds `AddResource`'s inner upload scratch via
+  the scratch-dir option), and startup recovery deletes orphaned temps of
+  terminal or interrupted claims — including a crash after the inner
+  upload temp was populated; **concurrent same-content import**: two
+  workers importing identical content never lose a backing file (the
+  destination validation runs under `AddResource`'s hash lock, not as an
+  external preflight).
 
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
 enable flow shows it and requires the acknowledgement; a changed command set
