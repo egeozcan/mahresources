@@ -441,7 +441,11 @@ func main() {
 	cfg.PluginCommandOutputRetention = pluginCommandConfig.OutputRetention
 	cfg.PluginCommandStagingTemporary = pluginCommandConfig.TemporaryStaging
 
-	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
+	context, db, mainFs, err := application_context.OpenContextWithConfig(cfg)
+	if err != nil {
+		fail("failed to create application context: %v", err)
+		return
+	}
 	if context.Config.DeepSeekAPIKey != "" {
 		provider := application_context.NewDeepSeekMRQLDraftProvider(
 			application_context.DefaultDeepSeekChatCompletionsURL,

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"flag"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +32,85 @@ func TestPluginCommandLifecycleMainOrdering(t *testing.T) {
 		!(tempCleanup < downloadStop && downloadStop < commandStop && commandStop < workers) {
 		t.Fatalf("startup-safe cleanup order must be staging -> download -> commands -> workers: %d %d %d %d", tempCleanup, downloadStop, commandStop, workers)
 	}
+}
+
+func TestPluginCommandTemporaryStagingIsRemovedWhenContextCreationFails(t *testing.T) {
+	const (
+		helperEnv     = "MAHRESOURCES_CONTEXT_FAILURE_HELPER"
+		commandDirEnv = "MAHRESOURCES_CONTEXT_FAILURE_COMMAND_DIR"
+	)
+	if os.Getenv(helperEnv) == "1" {
+		flag.CommandLine = flag.NewFlagSet("mahresources", flag.ExitOnError)
+		os.Args = []string{
+			"mahresources",
+			"-ephemeral",
+			"-plugin-command-path", os.Getenv(commandDirEnv),
+			"-seed-db", filepath.Join(os.TempDir(), "missing-seed.db"),
+		}
+		main()
+		t.Fatal("main returned success for a missing seed database")
+	}
+
+	tmp := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPluginCommandTemporaryStagingIsRemovedWhenContextCreationFails$")
+	cmd.Env = append(environmentWithout("TMPDIR", helperEnv, commandDirEnv),
+		"TMPDIR="+tmp,
+		helperEnv+"=1",
+		commandDirEnv+"="+t.TempDir(),
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("helper process succeeded, output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "-seed-db file does not exist") || !strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("helper process error = %v, output:\n%s", err, output)
+	}
+	if _, ok := err.(*exec.ExitError); !ok {
+		t.Fatalf("helper process error type = %T, want *exec.ExitError", err)
+	}
+
+	matches, globErr := filepath.Glob(filepath.Join(tmp, "mahresources-plugin-commands-*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary plugin command staging roots leaked after context failure: %v", matches)
+	}
+}
+
+func TestContextConstructionPathContainsNoFatalExit(t *testing.T) {
+	source, err := os.ReadFile("application_context/context.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "log.Fatal") {
+		t.Fatal("context construction must return errors instead of bypassing main's deferred cleanup")
+	}
+
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainText := string(mainSource)
+	if !strings.Contains(mainText, "application_context.OpenContextWithConfig(cfg)") {
+		t.Fatal("main must use the error-returning context constructor")
+	}
+}
+
+func environmentWithout(keys ...string) []string {
+	blocked := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		blocked[key] = struct{}{}
+	}
+	out := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, skip := blocked[key]; !skip {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func TestPluginCommandConfigPathPrecedence(t *testing.T) {

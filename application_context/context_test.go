@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -140,39 +141,40 @@ func TestCopySeedDatabase_InvalidDestination(t *testing.T) {
 	}
 }
 
-func TestCreateContextWithConfig_SeedDBRequiresMemoryDB(t *testing.T) {
-	// This test verifies the validation logic by checking that the config
-	// is properly validated. We can't easily test log.Fatal, so we test
-	// the conditions that would trigger it.
-
-	cfg := &MahresourcesInputConfig{
-		SeedDB:   "/some/path.db",
-		MemoryDB: false,
+func TestOpenContextWithConfigReturnsSeedDBValidationErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.db")
+	cases := []struct {
+		name string
+		cfg  MahresourcesInputConfig
+		want string
+	}{
+		{
+			name: "requires memory database",
+			cfg:  MahresourcesInputConfig{SeedDB: missing},
+			want: "-seed-db requires -memory-db or -ephemeral flag",
+		},
+		{
+			name: "refuses postgres",
+			cfg:  MahresourcesInputConfig{SeedDB: missing, MemoryDB: true, DbType: "POSTGRES"},
+			want: "-seed-db is only supported with SQLite, not Postgres",
+		},
+		{
+			name: "reports missing file",
+			cfg:  MahresourcesInputConfig{SeedDB: missing, MemoryDB: true, DbType: "SQLITE"},
+			want: "-seed-db file does not exist",
+		},
 	}
 
-	// The validation check: SeedDB requires MemoryDB
-	if cfg.SeedDB != "" && !cfg.MemoryDB {
-		// This is the expected condition that would trigger log.Fatal
-		// in CreateContextWithConfig
-		t.Log("Correctly identified that SeedDB requires MemoryDB")
-	} else {
-		t.Error("Validation logic incorrect: SeedDB should require MemoryDB")
-	}
-}
-
-func TestCreateContextWithConfig_SeedDBNotAllowedWithPostgres(t *testing.T) {
-	cfg := &MahresourcesInputConfig{
-		SeedDB:   "/some/path.db",
-		MemoryDB: true,
-		DbType:   "POSTGRES",
-	}
-
-	// The validation check: SeedDB not allowed with Postgres
-	if cfg.SeedDB != "" && cfg.DbType == "POSTGRES" {
-		// This is the expected condition that would trigger log.Fatal
-		t.Log("Correctly identified that SeedDB is not allowed with Postgres")
-	} else {
-		t.Error("Validation logic incorrect: SeedDB should not be allowed with Postgres")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, db, fs, err := OpenContextWithConfig(&tc.cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("OpenContextWithConfig() error = %v, want %q", err, tc.want)
+			}
+			if ctx != nil || db != nil || fs != nil {
+				t.Fatalf("failed construction returned partial values: ctx=%v db=%v fs=%v", ctx, db, fs)
+			}
+		})
 	}
 }
 

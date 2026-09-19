@@ -1337,9 +1337,9 @@ func copySeedDatabase(src, dst string) error {
 	return dstFile.Sync()
 }
 
-// CreateContextWithConfig creates a context using the provided configuration.
-// This is the preferred way to create a context when using command-line flags.
-func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, *gorm.DB, afero.Fs) {
+// OpenContextWithConfig creates a context using the provided configuration and
+// returns startup failures so callers can run their deferred cleanup.
+func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, *gorm.DB, afero.Fs, error) {
 	var db *gorm.DB
 	var mainFs afero.Fs
 
@@ -1351,19 +1351,19 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 	// Validate seed-db usage
 	if cfg.SeedDB != "" {
 		if !cfg.MemoryDB {
-			log.Fatal("-seed-db requires -memory-db or -ephemeral flag")
+			return nil, nil, nil, fmt.Errorf("-seed-db requires -memory-db or -ephemeral flag")
 		}
 		if strings.ToUpper(cfg.DbType) == "POSTGRES" {
-			log.Fatal("-seed-db is only supported with SQLite, not Postgres")
+			return nil, nil, nil, fmt.Errorf("-seed-db is only supported with SQLite, not Postgres")
 		}
 		// Check seed-db file exists
 		if info, err := os.Stat(cfg.SeedDB); err != nil {
 			if os.IsNotExist(err) {
-				log.Fatalf("-seed-db file does not exist: %s", cfg.SeedDB)
+				return nil, nil, nil, fmt.Errorf("-seed-db file does not exist: %s", cfg.SeedDB)
 			}
-			log.Fatalf("-seed-db file error: %v", err)
+			return nil, nil, nil, fmt.Errorf("-seed-db file error: %w", err)
 		} else if info.IsDir() {
-			log.Fatalf("-seed-db path is a directory, not a file: %s", cfg.SeedDB)
+			return nil, nil, nil, fmt.Errorf("-seed-db path is a directory, not a file: %s", cfg.SeedDB)
 		}
 	}
 
@@ -1383,7 +1383,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		if cfg.SeedDB != "" {
 			// Copy seed database to temp location
 			if err := copySeedDatabase(cfg.SeedDB, ephemeralPath); err != nil {
-				log.Fatalf("Failed to copy seed database: %v", err)
+				return nil, nil, nil, fmt.Errorf("copy seed database: %w", err)
 			}
 			log.Printf("Using ephemeral SQLite database seeded from %s", cfg.SeedDB)
 		} else {
@@ -1393,18 +1393,18 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	// Validate seed-fs usage: needs either memory-fs or file-save-path for the overlay
 	if cfg.SeedFS != "" && !cfg.MemoryFS && cfg.FileSavePath == "" {
-		log.Fatal("-seed-fs requires either -memory-fs or -file-save-path for the writable overlay")
+		return nil, nil, nil, fmt.Errorf("-seed-fs requires either -memory-fs or -file-save-path for the writable overlay")
 	}
 
 	// Validate seed-fs directory exists
 	if cfg.SeedFS != "" {
 		if info, err := os.Stat(cfg.SeedFS); err != nil {
 			if os.IsNotExist(err) {
-				log.Fatalf("-seed-fs directory does not exist: %s", cfg.SeedFS)
+				return nil, nil, nil, fmt.Errorf("-seed-fs directory does not exist: %s", cfg.SeedFS)
 			}
-			log.Fatalf("-seed-fs directory error: %v", err)
+			return nil, nil, nil, fmt.Errorf("-seed-fs directory error: %w", err)
 		} else if !info.IsDir() {
-			log.Fatalf("-seed-fs path is not a directory: %s", cfg.SeedFS)
+			return nil, nil, nil, fmt.Errorf("-seed-fs path is not a directory: %s", cfg.SeedFS)
 		}
 	}
 
@@ -1425,7 +1425,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		log.Println("Using in-memory filesystem (ephemeral mode)")
 	} else {
 		if cfg.FileSavePath == "" {
-			log.Fatal("File save path is empty (use -memory-fs for ephemeral mode)")
+			return nil, nil, nil, fmt.Errorf("file save path is empty (use -memory-fs for ephemeral mode)")
 		}
 		mainFs = storage.CreateStorage(cfg.FileSavePath)
 	}
@@ -1434,7 +1434,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	var slowQueryLogger *models.SlowQueryLogger
 	if connectedDB, slowLogger, err := models.CreateDatabaseConnection(dbType, dbDsn, cfg.DbLogFile, cfg.DbSlowQueryThreshold); err != nil {
-		log.Fatal(err)
+		return nil, nil, nil, fmt.Errorf("create database connection: %w", err)
 	} else {
 		db = connectedDB
 		slowQueryLogger = slowLogger
@@ -1455,7 +1455,10 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 	readOnlyDb, err := models.CreateReadOnlyDatabaseConnection(strings.ToLower(dbType), readOnlyDsn)
 
 	if err != nil {
-		log.Fatal(err.Error())
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, nil, nil, fmt.Errorf("create read-only database connection: %w", err)
 	}
 
 	// Apply connection pool limits to read-only connection as well
@@ -1576,7 +1579,17 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		mahContext.StartSlowQueryLogSink(slowQueryLogger)
 	}
 
-	return mahContext, db, mainFs
+	return mahContext, db, mainFs, nil
+}
+
+// CreateContextWithConfig preserves the historical must-create API. Startup
+// code should use OpenContextWithConfig so construction errors unwind defers.
+func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, *gorm.DB, afero.Fs) {
+	ctx, db, fs, err := OpenContextWithConfig(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return ctx, db, fs
 }
 
 // CreateContext creates a context using environment variables.
