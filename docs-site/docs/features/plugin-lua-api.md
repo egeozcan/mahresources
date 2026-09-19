@@ -19,6 +19,194 @@ Each plugin runs in an isolated Lua VM.
 
 Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) acquire this mutex, ensuring single-threaded execution within a single plugin. Different plugins run in separate VMs and can execute concurrently.
 
+## mah.commands and mah.fs -- Declared server commands
+
+These modules exist only with the `commands` capability. The plugin manifest must
+also declare every runnable command; see [Declared server commands](./plugin-system.md#declared-server-commands).
+`mah.fs.create_resource` is installed only when the plugin also has `db:write`.
+All command and filesystem calls are refused inside `mah.db.transaction`.
+
+### Start a command
+
+```lua
+local run_id, err = mah.commands.run("download", {
+    url = "https://example.com/watch?v=123",
+    output_template = "%(title)s [%(id)s].%(ext)s",
+    format = "bestvideo*+bestaudio/best",
+}, function(result)
+    -- Keep this callback cheap: list, queue imports, and discard only.
+end)
+```
+
+```
+mah.commands.run(name, params [, callback]) -> run_id | nil, error
+```
+
+`name` must be a command slug declared by this plugin. `params` is a string-to-
+string table: at most 32 entries, at most 8 KiB each and 64 KiB in aggregate.
+A value replaces one complete argv element; it is never split, quoted or parsed
+by Mahresources. Every placeholder must be supplied and nonempty, and the
+host-filled `exchange_dir` key cannot be overridden.
+
+The optional completion callback runs at most once and receives:
+
+```lua
+{
+    ok = true | false,
+    exit_code = 0 | nil,
+    error = "message" | nil,
+    run_id = "durable-run-id",
+}
+```
+
+Delivery is at-most-once. A disabled plugin or process restart can drop the
+callback; the durable result remains in `mah.fs.runs()` and administrator
+command history. The callback holds the plugin's exclusive VM lock and shares
+the five-minute async callback budget. It should only call `mah.fs.list`, queue
+`mah.fs.create_resource` work and discard files. `create_resource` returns after
+queueing; the byte transfer runs on the host import pool outside the VM lock, so
+plugin pages remain responsive.
+
+Command run statuses are exactly `queued`, `running`, `succeeded`, `failed`,
+`cancelled` and `interrupted`. Timeout, a nonzero exit, spawn failure and quota
+failure are `failed`; operator or plugin-disable cancellation is `cancelled`;
+restart, shutdown and lost dispatch are `interrupted`. There is no command pause
+or retry operation: submit a new run for a new attempt.
+
+### Inspect exchange files
+
+A command writes into one private exchange folder. Lua identifies a file only by
+`(run_id, name)`; it never receives an OS path. Addressable files are top-level
+regular files with a simple name (not `.`, `..`, a path, a symlink, directory or
+special file).
+
+```
+mah.fs.runs() -> runs | nil, error
+mah.fs.list(run_id) -> listing | nil, error
+mah.fs.read(run_id, name, max_bytes) -> string | nil, error
+mah.fs.discard(run_id, name) -> true | nil, error
+mah.fs.discard_run(run_id) -> true | nil, error
+```
+
+`max_bytes` is required, positive, and at most 4 MiB. `list` returns at most
+10,000 entries and reports excess instead of refusing:
+
+```lua
+{
+    entries = {
+        { name = "video.mp4", size = 123456, modified = "2026-09-19T12:00:00Z" },
+    },
+    truncated = false,
+}
+```
+
+`runs()` returns only this plugin's runs visible to the acting user:
+
+```lua
+{
+    {
+        id = "...",
+        command = "download",
+        status = "succeeded",
+        started_at = "RFC3339 timestamp" | nil,
+        finished_at = "RFC3339 timestamp" | nil,
+        exit_code = 0 | nil,
+        error = "message" | nil,
+        output_unverified = false,
+        imports = {
+            ["video.mp4"] = {
+                import_id = "...",
+                resource_id = 42 | nil,
+                status = "succeeded",
+                error = nil,
+            },
+        },
+    },
+}
+```
+
+An `output_unverified` run may have surviving or unowned writers after recovery.
+Every per-file operation is refused; only `discard_run` is allowed. `discard_run`
+also refuses while any import is `pending` or `running`. Listings are flat; when
+`truncated` is true, use `discard_run` if unseen output should be abandoned.
+
+### Import a file as a resource
+
+```
+mah.fs.create_resource(run_id, name, fields [, on_import])
+    -> import_id | existing_resource_id | nil, error
+```
+
+`fields` accepts `name`, `description`, `tags` (numeric ID array), `groups`
+(numeric ID array), and `meta` (table). It does not accept an owner or a path.
+The import is attributed to the user who submitted it and that user's current
+role and subtree scope are checked again when a worker starts. If that user was
+deleted, access and pending work fail closed. A run deliberately submitted with
+no actor is distinct: the current caller supplies and is checked as the import
+actor.
+
+A queued import returns its string import id immediately. Repeating the call
+while it is `pending` or `running` returns that same id. A `succeeded` mapping
+returns the existing numeric resource id synchronously and does not call
+`on_import`. An `interrupted` import is re-queued with the same id and refreshed
+actor/generation binding. Retrying `failed` or `cancelled` work creates a new id;
+make that an explicit operator action rather than an automatic loop.
+
+Import statuses are exactly `pending`, `running`, `succeeded`, `failed`,
+`cancelled` and `interrupted`. The optional callback runs at most once with:
+
+```lua
+{
+    ok = true | false,
+    import_id = "...",
+    run_id = "...",
+    name = "video.mp4",
+    resource_id = 42 | nil,
+    error = "message" | nil,
+}
+```
+
+The durable import map is authoritative when callback delivery is lost. On a
+restart, nonterminal claims become `interrupted`; a later `create_resource` call
+re-drives the same claim. A command callback is not replayed. Reconcile from a
+page or another deliberate entry point by reading `mah.fs.runs()`, independently
+of command status: a cancelled or interrupted command can still have an
+interrupted import that needs re-driving. Verified output from an interrupted
+command may be partial, so require an operator decision before importing it.
+
+A typical cheap completion callback is:
+
+```lua
+local function completed(result)
+    if not result.ok then return end
+    local listing, err = mah.fs.list(result.run_id)
+    if not listing then
+        mah.log("warning", err)
+        return
+    end
+    for _, entry in ipairs(listing.entries) do
+        if entry.name:match("%.mp4$") then
+            local import_id, import_err = mah.fs.create_resource(
+                result.run_id,
+                entry.name,
+                { name = entry.name, meta = { source = "declared-command" } },
+                function(imported)
+                    if not imported.ok then mah.log("warning", imported.error) end
+                end
+            )
+            if not import_id then mah.log("warning", import_err) end
+        else
+            mah.fs.discard(result.run_id, entry.name)
+        end
+    end
+end
+```
+
+Exchange access is Lua-level isolation, not process isolation. The spawned
+service-account process can reach sibling folders if OS permissions allow it.
+The host uses descriptor-relative no-follow opens and regular-file checks for
+Lua operations; those checks do not sandbox the external program itself.
+
 ## mah.db -- Database API
 
 Full CRUD access to all entity types, plus relationship management and resource file operations.

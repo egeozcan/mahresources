@@ -17,7 +17,7 @@ test-first in the isolated `feature/plugin-commands` worktree.
 - [x] Task 10: Expose `mah.commands` and `mah.fs` with generation-bound callbacks.
 - [x] Task 11: Wire startup recovery, configuration, sweep and shutdown.
 - [x] Task 12: Add administrator command history and authoritative job UI.
-- [ ] Task 13: Prove the complete host interface and document plugin authorship.
+- [x] Task 13: Prove the complete host interface and document plugin authorship.
 
 ## Review
 
@@ -142,6 +142,70 @@ The initial full Go baseline still has the pre-existing `plugin_system`
 `TestBundledPluginLiteralURLsAreDeclared` and `server/api_tests`
 `TestSidebar_IsWrappedInADisclosure` failures. Frontend unit tests pass (90 files,
 1409 tests).
+
+Task 13 adds two host-integration fixtures without changing production shape.
+`plugin_system/command_integration_test.go` proves the documented callback tables,
+list/import/discard sequence and that queued byte work does not retain the Lua VM
+lock. `server/api_tests/plugin_command_integration_test.go` executes the test
+binary through the configured trusted path (never a shell), verifies acting-user
+attribution, descriptor-safe discard/import behavior, restart interruption and
+same-import-id redrive, and proves disabling a VM drops its callback while the
+cancelled row remains in administrator history. RED was the absence of both
+files and no matching focused tests; both focused commands are now GREEN.
+
+Documentation now records the exact manifest/Lua/status contracts, persistent
+command acknowledgement, trusted-path and no-sandbox boundary, actor/generation
+revalidation, flat no-follow exchange mediation, quotas, retention and recovery.
+It includes a safe host-side yt-dlp declaration but ships no external plugin.
+`npm run docs-gen` intentionally refreshed previously stale generated category,
+note-type and resource-category CLI pages as well as plugin enable; a second
+generation is stable. Docusaurus builds successfully and reports the existing npm
+audit inventory of 51 dependency findings (2 low, 31 moderate, 16 high, 2
+critical), not introduced by these Markdown changes.
+
+Final verification evidence:
+
+- Focused/race: the two Task 13 focused commands pass; the tagged race selection
+  across `plugin_commands`, `plugin_system`, `application_context`,
+  `download_queue` and `server/api_tests` passes. `internal/arch` plugin/layer/
+  command checks, tagged build and tagged vet pass.
+- Generated/docs: `npm run docs-gen`, `npm run skills-gen`, `npm run build-js`,
+  OpenAPI generation, `./mr docs lint` (0 warnings), CSS scan and Docusaurus
+  build pass. Server-backed CLI doctests pass 3/3 on both SQLite and PostgreSQL.
+- Frontend: 90 files / 1412 Vitest tests pass.
+- SQLite Playwright was run as bounded one-worker producers with
+  `PLUGIN_COMMAND_PATH=/usr/bin:/bin`: root 325/325, admin/block/entity 146 pass
+  + 1 intentional skip, lightbox/MRQL/plugin/schema/selector/shortcode 600/600
+  after updating the legacy inventory from 15 to 16 capabilities, accessibility
+  214/214, auth 23/23, CLI 350/350 and CLI-doctest 3/3. The regression producer
+  has 567 pass, 3 skip and the two unrelated stable failures below; the 13 tests
+  stopped by Playwright's serial fail-fast were covered by a 21-test remainder
+  rerun, which passes.
+- PostgreSQL Playwright: root 325/325, admin/block/entity 146 pass + 1 skip,
+  lightbox/MRQL/plugin/schema/selector/shortcode 600/600, accessibility 214/214,
+  auth 23/23, CLI 350/350 and CLI-doctest 3/3. Its regression producer reproduces
+  the same two unrelated failures; the same 21-test serial remainder passes, with
+  no plugin-command-specific failure.
+- Full SQLite and PostgreSQL Go selections reproduce only the two known baseline
+  failures named above. The PostgreSQL application/server gate otherwise passes.
+- Mutation checks were killed for shell invocation, ambient `exec.LookPath`,
+  legacy-consent short-circuit, deleted-actor/actorless collapse, replacement of
+  the durable import id, pathname unlink after descriptor identity validation,
+  destination repair before committed-hash lookup, stale managed-lane occupancy,
+  and starting work after queued cancellation. Earlier task reviews separately
+  killed the pgid-ownership and no-follow mutations at their defining seams.
+
+Additional full-browser baseline failures, identical on SQLite and PostgreSQL,
+are `compare-page-teardown.spec.ts` expecting an immediate `v1`/`v2` redirect
+and `ws10-global-chrome.spec.ts` hit-testing the `/logs` After input below the
+720px viewport. Task 13 changes no runtime/template/frontend file at either seam;
+they are recorded, not masked or folded into command integration.
+
+Linux and Windows cross-compilation checks are blocked before command-specific
+code by the repository's existing CGO-disabled SQLite surface:
+`models/database.go` calls `sqlite3.SQLiteConn.Exec`, which is absent in the stub.
+The remaining accepted process risk is the narrow OS race between verified
+process-group inspection and signaling; unverifiable groups still fail closed.
 
 ---
 

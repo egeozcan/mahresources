@@ -12,7 +12,10 @@ metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
 pages. There is a `--custom-*` flag for every note type template slot --
 the detail page header, sidebar and footer, the list card summary, avatar
-and hover card, the list page header and footer, and MRQL result cards.
+and hover card, the list page header and footer, MRQL result cards, and entity
+picker results. `--custom-entity-picker-result` sets picker content and
+`--custom-entity-picker-result-css` sets its stylesheet; selection controls
+remain host-owned.
 Each accepts raw HTML or a template string that the server injects into
 note pages and MRQL result cards; `--custom-css` is injected as a
 `<style>` block on detail and list pages. Run
@@ -21,6 +24,10 @@ description of where each renders.
 
 On success prints a confirmation line with the new ID; pass the global
 `--json` flag to emit the full created record for scripting.
+
+Use `--custom-entity-picker-result-file` and
+`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
+exclusive with its corresponding inline flag.
 
 ## Usage
 
@@ -76,6 +83,10 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--custom-list-footer-css` | string | `` | Global CSS for CustomListFooter |
 | `--custom-mrql-result` | string | `` | Template for rendering notes of this note type in MRQL results |
 | `--custom-mrql-result-css` | string | `` | Global CSS for CustomMRQLResult |
+| `--custom-entity-picker-result` | string | `` | Template for note content inside an entity picker result |
+| `--custom-entity-picker-result-file` | string | `` | Read --custom-entity-picker-result from a UTF-8 file (mutually exclusive with the inline flag) |
+| `--custom-entity-picker-result-css` | string | `` | Global CSS for CustomEntityPickerResult |
+| `--custom-entity-picker-result-css-file` | string | `` | Read --custom-entity-picker-result-css from a UTF-8 file (mutually exclusive with the inline flag) |
 | `--custom-css` | string | `` | CSS injected as a &lt;style&gt; block on the note detail page and its list pages |
 ### Inherited global flags
 
@@ -88,7 +99,7 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

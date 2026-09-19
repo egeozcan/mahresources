@@ -499,6 +499,15 @@ coexist). Recovery completes before plugin VMs load; the dispatcher's own sweep
 removes only expired, terminal, unleased exchange folders and prunes output
 rows without deleting durable run/import history.
 
+Pending commands/imports stay in dispatcher-owned per-plugin queues; only active
+work enters the bounded managed live lane, whose occupancy is derived from the
+job registry. Lua callbacks are at-most-once and only list, enqueue or discard;
+resource bytes move outside the VM lock. The durable import map is the recovery
+source of truth: interrupted claims re-drive with the same id, while actor and
+plugin generation are revalidated before work starts. Exchange access stays
+flat, descriptor-relative and no-follow; intentional actorlessness is stored
+separately from an actor nulled by deletion.
+
 ### Plugin static assets
 
 A plugin's own `public/` directory is served at `/plugins/<name>/public/*` while that plugin is enabled (`server/plugin_assets.go`). It closes the largest gap between what a plugin could do and what it looked like it could do: a plugin could render HTML into six slots and could not ship a line of its own JavaScript, so browser code lived in Lua long-strings and was re-sent through the VM lock on every render.

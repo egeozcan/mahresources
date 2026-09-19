@@ -1,62 +1,38 @@
 ---
-title: mr category create
-description: Create a new category
-sidebar_label: create
+title: mr category edit
+description: Edit a category
+sidebar_label: edit
 ---
 
-# mr category create
+# mr category edit
 
-Create a new Category. `--name` is required; `--description` is optional
-free-form text. A `--custom-*` flag exists for every category template
-slot -- the detail page header, sidebar and footer, the list card summary,
-avatar and hover card, the list page header and footer, the Own Entities
-section body, MRQL result cards, entity picker results, and the CSS that styles them.
-`--custom-entity-picker-result` sets picker result content and
-`--custom-entity-picker-result-css` sets its companion stylesheet; the host keeps
-ownership of selection controls. Each takes
-an HTML or template string applied to Groups in this category, except
-`--custom-css`, which is injected as a `<style>` block on detail and list
-pages. Run `mr category create --help` for the full list with a one-line
-description of where each renders. `--meta-schema` and
-`--section-config` take JSON strings
-controlling structured metadata and which sections render on group
-detail pages. On success prints a confirmation line with the new ID;
-pass the global `--json` flag to emit the full record for scripting.
+Partially edit a Category. `--id` is required and must be positive. Only
+explicit flags change stored values; an explicit empty string clears a field.
+Supports `--name`, `--description`, `--meta-schema`, `--section-config` and
+all category `--custom-*` template flags, including
+`--custom-entity-picker-result` and `--custom-entity-picker-result-css`.
+The picker template supplies content, not selection controls.
 
-Use `--custom-entity-picker-result-file` and
-`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
-exclusive with its corresponding inline flag. Use `category edit --id` to
-update or clear slots later without changing the carrier's identity.
+Use `--custom-entity-picker-result-file` or
+`--custom-entity-picker-result-css-file` to read UTF-8 HTML or CSS from a file.
+Each file flag is mutually exclusive with its corresponding inline flag;
+an empty file clears the slot. Files are read before any HTTP request.
 
 ## Usage
 
 ```bash
-mr category create
+mr category edit
 ```
-
-## Examples
-
-**Create a category with just a name**
-
-```bash
-mr category create --name "Project"
-```
-
-**Create with a description and capture the ID via jq**
-
-```bash
-ID=$(mr category create --name "Location" --description "Places you know about" --json | jq -r .ID)
-```
-
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--name` | string | `` | Category name (required) **(required)** |
-| `--description` | string | `` | Category description |
-| `--meta-schema` | string | `` | Meta schema JSON |
-| `--section-config` | string | `` | JSON controlling which sections are visible on group detail pages for this category |
+| `--id` | uint | `0` | Carrier ID (required) **(required)** |
+| `--name` | string | `` | Carrier name |
+| `--description` | string | `` | Carrier description |
+| `--meta-schema` | string | `` | JSON Schema defining member metadata |
+| `--section-config` | string | `` | JSON controlling member detail-page sections |
 | `--custom-header` | string | `` | Rendered at the top of the group detail page |
 | `--custom-header-css` | string | `` | Global CSS for CustomHeader |
 | `--custom-detail-footer` | string | `` | Rendered at the bottom of the group detail page, below every built-in section |
@@ -93,7 +69,7 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+Updated Category object with ID and template fields under --json; confirmation otherwise
 
 ## Exit Codes
 
@@ -101,6 +77,7 @@ Created Category object with ID (uint), Name (string), Description (string), Met
 
 ## See Also
 
+- [`mr category create`](./create.md)
 - [`mr category get`](./get.md)
 - [`mr category edit-name`](./edit-name.md)
-- [`mr categories list`](../categories/list.md)
+- [`mr category edit-description`](./edit-description.md)

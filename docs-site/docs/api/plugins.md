@@ -62,6 +62,7 @@ Content-Type: application/x-www-form-urlencoded
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | string | Plugin name to enable |
+| `confirm_commands` | boolean-like form value | Required acknowledgement when the plugin declares server commands |
 
 ```bash
 curl -X POST http://localhost:8181/v1/plugin/enable \
@@ -69,6 +70,12 @@ curl -X POST http://localhost:8181/v1/plugin/enable \
 ```
 
 Required settings must be saved before enabling. Returns an error if required settings are missing. Enabling also records the plugin's declared capabilities as consent, so a plugin that later widens its manifest will not load until an operator enables it again. See [Plugin Permissions](../features/plugin-permissions.md).
+
+A command-bearing plugin uses a deliberate two-step flow. A request without
+`confirm_commands=true` is refused with structured warning data containing the
+exact declared argv and timeout. Render that warning, then submit the same name
+with acknowledgement only after the operator confirms it. Persistent consent is
+required; an in-memory-only consent store never authorizes server commands.
 
 ### Disable Plugin
 
@@ -312,6 +319,71 @@ curl -X POST http://localhost:8181/v1/plugin/scheduled-downloads/cancel \
 
 Only pending rows can be cancelled. A row that has already been submitted,
 failed or cancelled answers `409 Conflict`.
+
+## Command Run History
+
+Declared commands have durable administrator-only history separate from ordinary
+download history. A process runs with service-account authority, so even its
+submitter cannot read this output unless they are an administrator. Output tails
+can be pruned independently; the run and import map remain.
+
+### List Command Runs
+
+```http
+GET /v1/plugin/command-runs?page=1
+```
+
+Returns newest-first run summaries in a fixed page of 50:
+
+```json
+{
+  "runs": [
+    {
+      "ID": "run-id",
+      "PluginName": "media-fetcher",
+      "CommandName": "download",
+      "Status": "succeeded",
+      "ExitCode": 0,
+      "CreatedAt": "2026-09-19T12:00:00Z",
+      "StartedAt": "2026-09-19T12:00:01Z",
+      "FinishedAt": "2026-09-19T12:05:00Z"
+    }
+  ],
+  "count": 1,
+  "page": 1,
+  "pageSize": 50
+}
+```
+
+The list omits the output tail and import rows.
+
+### Get Command Run Detail
+
+```http
+GET /v1/plugin/command-run?id={runId}
+```
+
+Returns `{"run": <durable run with output and imports>,
+"outputAvailable": true}`. `outputAvailable` is false when retention has pruned
+the separate output row; that is not a missing run. The stored parameter view
+and argv redact `sensitive_params`, while captured stdout/stderr can still echo
+secrets. HTML renders escaped output after terminal control characters are stripped.
+
+### Cancel a Command Run
+
+```http
+POST /v1/plugin/command-run/cancel
+Content-Type: application/x-www-form-urlencoded
+
+id={runId}
+```
+
+Returns `{"status":"cancelled","id":"..."}`. A queued run is removed from
+the dispatcher's private queue without entering the live jobs registry. A
+running run uses the same durable cancellation latch and verified process-group
+termination as the jobs cockpit. Missing IDs return `404`; terminal or otherwise
+non-cancellable runs return `409`. An HTML form receives a `303` redirect to
+`/admin/plugin-command-runs?notice=cancelled`.
 
 ## Plugin Actions
 

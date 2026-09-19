@@ -14,6 +14,24 @@ have been written via `plugin settings`. Enabling an already-enabled
 or unknown plugin name returns a non-zero exit code and an error
 message from the server.
 
+A plugin that declares server commands requires a separate acknowledgement.
+The first invocation without `--confirm-commands` exits non-zero and prints every
+command, its exact argument display, and timeout. Review that list, then re-run
+with `--confirm-commands` to record durable consent. The flag confirms all
+commands declared by that plugin; command execution is not available with an
+in-memory-only consent store. Adding a command or changing its positional argv,
+timeout, or sensitive-parameter set requires this acknowledgement again.
+
+Command processes run as the server service account and are not sandboxed. They
+have unrestricted networking, including private and loopback addresses, and can
+read anything the OS account can read, including sibling plugin exchange
+folders. Plugin-supplied parameter values may be interpreted as flags or
+otherwise alter program behavior, and the executable may itself be an
+interpreter that executes scripts or code. The host launches argv without a
+shell, but that does not make the invoked program safe. Executable basenames and
+their helpers resolve only through the server's `PLUGIN_COMMAND_PATH`; pin that
+path to minimal trusted absolute directories before enabling command plugins.
+
 ## Usage
 
 ```bash
@@ -39,10 +57,18 @@ mr plugin enable my-plugin
 mr plugin enable my-plugin --json | jq -e '.enabled == true'
 ```
 
+**After reviewing a command plugin's refusal output**
+
+```bash
+mr plugin enable media-tools --confirm-commands
+```
+
 
 ## Flags
 
-This command has no local flags.
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--confirm-commands` | bool | `false` | Acknowledge and enable every command declared by this plugin |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

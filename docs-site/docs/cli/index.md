@@ -28,6 +28,7 @@ sidebar_label: CLI
 | `mr category` | Get, create, edit, or delete a group category | [Details](./category/index.md) |
 | `mr category create` | Create a new category | [Details](./category/create.md) |
 | `mr category delete` | Delete a category by ID | [Details](./category/delete.md) |
+| `mr category edit` | Edit a category | [Details](./category/edit.md) |
 | `mr category edit-description` | Edit a category's description | [Details](./category/edit-description.md) |
 | `mr category edit-name` | Edit a category's name | [Details](./category/edit-name.md) |
 | `mr category get` | Get a category by ID | [Details](./category/get.md) |
@@ -177,6 +178,7 @@ sidebar_label: CLI
 | `mr resource-category` | Get, create, edit, or delete a resource category | [Details](./resource-category/index.md) |
 | `mr resource-category create` | Create a new resource category | [Details](./resource-category/create.md) |
 | `mr resource-category delete` | Delete a resource category by ID | [Details](./resource-category/delete.md) |
+| `mr resource-category edit` | Edit a resource category | [Details](./resource-category/edit.md) |
 | `mr resource-category edit-description` | Edit a resource category's description | [Details](./resource-category/edit-description.md) |
 | `mr resource-category edit-name` | Edit a resource category's name | [Details](./resource-category/edit-name.md) |
 | `mr resource-category get` | Get a resource category by ID | [Details](./resource-category/get.md) |

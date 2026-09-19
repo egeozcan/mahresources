@@ -19,14 +19,18 @@ The first invocation without `--confirm-commands` exits non-zero and prints ever
 command, its exact argument display, and timeout. Review that list, then re-run
 with `--confirm-commands` to record durable consent. The flag confirms all
 commands declared by that plugin; command execution is not available with an
-in-memory-only consent store.
+in-memory-only consent store. Adding a command or changing its positional argv,
+timeout, or sensitive-parameter set requires this acknowledgement again.
 
 Command processes run as the server service account and are not sandboxed. They
 have unrestricted networking, including private and loopback addresses, and can
 read anything the OS account can read, including sibling plugin exchange
 folders. Plugin-supplied parameter values may be interpreted as flags or
 otherwise alter program behavior, and the executable may itself be an
-interpreter that executes scripts or code.
+interpreter that executes scripts or code. The host launches argv without a
+shell, but that does not make the invoked program safe. Executable basenames and
+their helpers resolve only through the server's `PLUGIN_COMMAND_PATH`; pin that
+path to minimal trusted absolute directories before enabling command plugins.
 
 # Example
 

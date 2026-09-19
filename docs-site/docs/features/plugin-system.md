@@ -14,6 +14,12 @@ Lua-based plugins extend Mahresources with custom actions, hooks, pages, JSON AP
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Directory to scan for plugin subdirectories |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable the plugin system entirely |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | `30s` | How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule |
+| `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | startup `PATH` snapshot | Trusted absolute directories searched for declared command executables |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | data directory or private temporary root | OS-backed command exchange and import staging root |
+| `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | `8589934592` (8 GiB) | Sampled per-run exchange and import-temp quota |
+| `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | `53687091200` (50 GiB) | Sampled deployment-wide staging quota |
+| `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` | Retention for terminal, unleased exchange folders |
+| `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | `720h` | Retention for output tails; durable runs and import maps remain |
 
 ## Plugin Discovery
 
@@ -50,6 +56,7 @@ plugin = {
 | `api_version` | No | Declares a permission manifest. See [Plugin Permissions](./plugin-permissions.md) |
 | `capabilities` | No | The `mah` modules to install. Requires `api_version` |
 | `network` | No | Outbound host allowlist. Requires `api_version` |
+| `commands` | No | Fixed server-command declarations. Requires `api_version` and the `commands` capability |
 | `download_limits` | No | Per-domain pacing for this plugin's own `mah.download.submit` jobs. Requires `api_version` |
 | `allow_private_hosts` | No | Permission to reach private addresses. Requires `api_version` |
 | `dependencies` | No | Plugin names that must be enabled first. Requires `api_version` |
@@ -58,6 +65,68 @@ plugin = {
 The name is validated at discovery: lower case, starting with a letter, up to 50 characters of `a-z`, `0-9`, `-` and `_`. It is a URL segment in every menu href and the prefix of every shortcode the plugin registers, so a name outside that grammar is skipped with a warning rather than loaded. Two directories declaring the same name are both skipped, because the name is what a plugin's enabled state, settings and KV namespace belong to.
 
 A plugin that declares `api_version` receives only the capabilities it lists -- plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. It may also declare `download_limits` to throttle only its own `mah.download.submit` jobs by domain; those limits grant no new capability and do not affect other users or plugins. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
+
+## Declared server commands
+
+A command-bearing plugin declares a fixed argv template. This is an argv list,
+not a command-line string: Mahresources launches the executable directly and
+never invokes a shell.
+
+```lua
+plugin = {
+    name = "media-fetcher",
+    version = "1.0.0",
+    api_version = 1,
+    capabilities = { "commands", "db:write" },
+    commands = {
+        {
+            name = "download",
+            argv = {
+                "yt-dlp",
+                "--ignore-config",
+                "--paths", "{{exchange_dir}}",
+                "-o", "{{output_template}}",
+                "--format", "{{format}}",
+                "--no-playlist",
+                "--no-directories",
+                "--", "{{url}}",
+            },
+            timeout = 7200,
+            sensitive_params = { "url" },
+        },
+    },
+}
+```
+
+Each declaration has these fields:
+
+| Field | Required | Contract |
+|---|---|---|
+| `name` | Yes | Unique command slug within the plugin |
+| `argv` | Yes | Nonempty list of literal arguments and whole-element placeholders |
+| `timeout` | No | Seconds after spawn; defaults to 3600 and is capped at 86400 |
+| `sensitive_params` | No | Parameter names redacted from stored params and argv; order does not affect identity |
+
+The first `argv` element (the executable) must be a literal basename: no slash, backslash,
+`..`, leading dash or placeholder. It is resolved only from the operator's
+`PLUGIN_COMMAND_PATH`. A placeholder must occupy its whole argv element;
+`"--output={{name}}"` is invalid. Every plugin-filled placeholder must have a
+nonempty string value at submission. `{{exchange_dir}}` is host-filled and
+reserved, so supplying that key is an error. A run accepts at most 32 parameters,
+8 KiB per value and 64 KiB in aggregate.
+
+Changing a command's name, positional argv, timeout or sensitive parameter set
+changes manifest identity and requires fresh operator consent. Put variable data
+after a fixed option, and terminate option parsing with a literal `--` where the
+program supports it. The yt-dlp example also uses `--ignore-config` so an
+operator config file cannot silently add behavior, pins output with `--paths`,
+and forbids playlists and directories. The separate plugin must still reject
+absolute paths, separators and `..` in its operator-supplied output template.
+
+Commands are trusted service-account processes, not extensions of the Lua
+sandbox. Read [Plugin Permissions](./plugin-permissions.md#trusted-server-commands)
+before enabling one and [`mah.commands` / `mah.fs`](./plugin-lua-api.md#mahcommands-and-mahfs----declared-server-commands)
+before authoring one.
 
 ## Plugin Lifecycle
 

@@ -338,9 +338,45 @@ Automatically delete old log entries on startup:
 ./mahresources -cleanup-logs-days=90 ...
 ```
 
+## Plugin Command Configuration
+
+Declared plugin commands are trusted host processes, not sandboxed Lua. They run
+as the Mahresources service account with unrestricted process networking and the
+OS account's filesystem reach. Pin the executable path to the smallest trusted
+set of absolute directories; the inherited startup `PATH` default is a trust
+boundary, not convenience isolation.
+
+| Flag | Environment | Default | Description |
+|---|---|---|---|
+| `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | startup `PATH` snapshot | Path-list of nonempty absolute trusted executable directories |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | `<file-save-path>/_plugin_commands`, or private process temp with MemoryFS | OS-backed exchange and import root; relative values resolve once at startup |
+| `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | `8589934592` (8 GiB) | Sampled bytes for one run's exchange folder plus import temps |
+| `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | `53687091200` (50 GiB) | Sampled bytes across the complete staging root |
+| `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` | Age from terminal completion before an unleased exchange folder is swept |
+| `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | `720h` | Age before output-tail rows are pruned; run, claim and import-map rows survive |
+
+The path is used both to resolve a declaration's executable basename and as the
+child's `PATH`, so include required helpers too. A yt-dlp command using a
+separate-video/audio format needs trusted `ffmpeg` on that path. Child processes
+receive an allowlisted environment (`PATH`, `HOME`, private `TMPDIR`, `LANG`,
+`TZ`, and `MAHR_*` run context), have stdin connected to the null device, and do
+not inherit the server's proxy or plugin egress policy as confinement.
+
+Quotas are sampled, so a fast writer can briefly overshoot. Size the per-run
+quota for **merge peak**, not final output: separate video and audio plus muxed
+output can consume roughly twice the final file. Import temporary snapshots,
+including the upload scratch copy, count toward both limits. The global quota
+refuses new commands but permits imports that drain existing staging bytes.
+MemoryFS still uses an OS staging root and imported resource copies consume RAM.
+
+On startup, recovery resolves every queued/running run and pending/running
+import before plugin VMs load. Sweeps skip nonterminal work and active leases.
+Only output tails and expired exchange bytes are pruned; durable run/import/map
+rows remain for replay idempotency and administrator history.
+
 ## Plugin Configuration
 
-Plugins extend Mahresources through sandboxed Lua scripts. See [Plugin System](../features/plugin-system.md) for full details.
+Plugins extend Mahresources through sandboxed Lua scripts. A declared external command is outside that sandbox; see [Plugin System](../features/plugin-system.md) for the distinction.
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
@@ -395,3 +431,9 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Plugin directory |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable plugin system |
+| `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | startup `PATH` | Trusted command executable directories |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | data/temp derived | Command staging root |
+| `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | 8 GiB | Sampled per-run staging quota |
+| `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | 50 GiB | Sampled global staging quota |
+| `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` | Terminal exchange retention |
+| `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | `720h` | Output-tail retention |

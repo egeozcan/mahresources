@@ -1073,19 +1073,19 @@ git commit -m "feat: show administrator plugin command history"
 
 **Interfaces:** This task changes no public shape. It proves the interfaces from Tasks 1–12 and records the contract the separate yt-dlp plugin repository will use.
 
-- [ ] **Step 1: Add a real end-to-end plugin fixture**
+- [x] **Step 1: Add a real end-to-end plugin fixture**
 
 A test plugin declares `commands` + `db:write`; its helper command writes one importable file and one discardable file. Drive `mah.commands.run` → completion callback → `mah.fs.list` → two queued operations → import callback. Assert the resource exists with the acting creator, the discarded file is gone, callbacks receive documented tables and the import ran while a plugin page answered without waiting for the VM lock.
 
-- [ ] **Step 2: Add restart and callback-loss end-to-end cases**
+- [x] **Step 2: Add restart and callback-loss end-to-end cases**
 
 Stop between command completion/import start, reconstruct dispatcher against the same DB/staging root, assert runs show interrupted claims, and call `create_resource` again to re-drive the same import ID. Disable the VM before terminal delivery and assert callback is absent while durable `runs()`/admin history remains correct.
 
-- [ ] **Step 3: Document the author/operator contract**
+- [x] **Step 3: Document the author/operator contract**
 
 Document manifest schema, capability interactions, exact Lua signatures/result tables, status vocabularies, callback cheapness, restart reconciliation, actor ownership, flat-file rules, limits, consent flow and no-sandbox/no-egress guarantees. Include the safe yt-dlp declaration (`--ignore-config`, `--paths`, `--no-playlist`, `--no-directories`, `--`, URL) as an example but do not ship the external plugin here.
 
-- [ ] **Step 4: Regenerate docs and run freshness checks**
+- [x] **Step 4: Regenerate docs and run freshness checks**
 
 ```bash
 npm run docs-gen
@@ -1097,7 +1097,7 @@ npm run build-js
 go run ./cmd/openapi-gen
 ```
 
-- [ ] **Step 5: Run focused race, SQLite and PostgreSQL gates**
+- [x] **Step 5: Run focused race, SQLite and PostgreSQL gates**
 
 ```bash
 go test -race ./plugin_commands ./plugin_system ./download_queue
@@ -1105,7 +1105,7 @@ go test --tags 'json1 fts5' ./...
 go test --tags 'json1 fts5 postgres' ./application_context/... ./server/api_tests/... -count=1
 ```
 
-- [ ] **Step 6: Run complete browser and CLI E2E gates**
+- [x] **Step 6: Run complete browser and CLI E2E gates**
 
 ```bash
 cd e2e && npm run test:with-server:all
@@ -1114,11 +1114,11 @@ cd e2e && npm run test:with-server:postgres
 
 Read full outputs and `e2e/test-results/.last-run.json`; do not pipe test commands through `tail`/`tee` without preserving the producer's status.
 
-- [ ] **Step 7: Review spec coverage and mutation-check load-bearing tests**
+- [x] **Step 7: Review spec coverage and mutation-check load-bearing tests**
 
 Re-read each spec section. Mutate, one at a time: shell-free argv; configured-path resolution (fall back to ambient `PATH`); legacy short-circuit order; intentional-actorless versus deleted-actor access; import claim idempotency; pgid identity check; `O_NOFOLLOW`; committed-row-before-repair; dispatcher/live-registry/download-capacity separation; replace derived managed occupancy with a counter and omit cleanup bookkeeping; and remove queued-history cancellation. Confirm the named test fails for each mutation, then restore and rerun it.
 
-- [ ] **Step 8: Record final evidence and commit docs/tests**
+- [x] **Step 8: Record final evidence and commit docs/tests**
 
 Add a `docs/todo.md` review naming commands, counts, platform-specific gaps and any residual accepted pgid signal race. Commit only after fresh verification:
 
@@ -1137,12 +1137,12 @@ After all core gates pass, create a separate design/plan in `yt-dlp-plugin-for-m
 
 ## Final self-review checklist
 
-- [ ] Every spec §1 manifest rule maps to Tasks 2–3.
-- [ ] Every spec §2 consent/UI/CLI rule maps to Task 3.
-- [ ] Every spec §3 dispatch/process/recovery/quota rule maps to Tasks 5–7 and 11.
-- [ ] Every spec §4 history/redaction/authorization rule maps to Tasks 4, 6 and 12.
-- [ ] Every spec §5 exchange/import/sweep rule maps to Tasks 1, 4 and 8–11.
-- [ ] Spec §6 is explicitly handed to the separate repository, with the host fixture in Task 13.
-- [ ] Spec §7 capability/actor rules map to Tasks 9–10.
-- [ ] Every core test named in spec §8 appears in a task above.
-- [ ] Spec §9 non-goals remain absent.
+- [x] Every spec §1 manifest rule maps to Tasks 2–3.
+- [x] Every spec §2 consent/UI/CLI rule maps to Task 3.
+- [x] Every spec §3 dispatch/process/recovery/quota rule maps to Tasks 5–7 and 11.
+- [x] Every spec §4 history/redaction/authorization rule maps to Tasks 4, 6 and 12.
+- [x] Every spec §5 exchange/import/sweep rule maps to Tasks 1, 4 and 8–11.
+- [x] Spec §6 is explicitly handed to the separate repository, with the host fixture in Task 13.
+- [x] Spec §7 capability/actor rules map to Tasks 9–10.
+- [x] Every core test named in spec §8 appears in a task above.
+- [x] Spec §9 non-goals remain absent.

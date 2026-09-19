@@ -14,13 +14,19 @@ semantics). Use this command when you need to change the `MetaSchema`,
 description of where it renders under `mr note-type edit --help`. The
 dedicated `edit-name` / `edit-description` commands only touch those two
 scoped fields. `--custom-css` is injected as a `<style>` block on detail
-and list pages.
+and list pages. Use `--custom-entity-picker-result` and
+`--custom-entity-picker-result-css` to edit the picker result content and styles.
 
 Because only explicitly-passed flags are sent, passing a `--custom-*`
 flag with an empty string is how a slot is cleared; omitting it leaves
 the stored value alone. `--section-config ""` is the exception: an empty
 section config is ignored rather than stored, so a section config cannot
 be cleared from the CLI.
+
+Use `--custom-entity-picker-result-file` and
+`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
+exclusive with its corresponding inline flag; an empty file clears the slot.
+Files are read before any HTTP request.
 
 ## Usage
 
@@ -72,6 +78,10 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--custom-list-footer-css` | string | `` | Global CSS for CustomListFooter |
 | `--custom-mrql-result` | string | `` | Template for rendering notes of this note type in MRQL results |
 | `--custom-mrql-result-css` | string | `` | Global CSS for CustomMRQLResult |
+| `--custom-entity-picker-result` | string | `` | Template for note content inside an entity picker result |
+| `--custom-entity-picker-result-file` | string | `` | Read --custom-entity-picker-result from a UTF-8 file (mutually exclusive with the inline flag) |
+| `--custom-entity-picker-result-css` | string | `` | Global CSS for CustomEntityPickerResult |
+| `--custom-entity-picker-result-css-file` | string | `` | Read --custom-entity-picker-result-css from a UTF-8 file (mutually exclusive with the inline flag) |
 | `--custom-css` | string | `` | CSS injected as a &lt;style&gt; block on the note detail page and its list pages |
 ### Inherited global flags
 
@@ -84,7 +94,7 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

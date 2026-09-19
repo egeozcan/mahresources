@@ -169,9 +169,9 @@ test.describe('Plugin Management - Access panel', () => {
   // make visible. Last moved for `media`, which a manifest-less plugin now also
   // holds — it can read and cut the video and audio in the library without ever
   // having declared anything, which is the legacy bargain working as written
-  // rather than a hole this opened. (`job_events` moved it before that, for the
-  // same reason: observing every background job in the deployment.)
-  const ALL_CAPABILITY_COUNT = 15;
+  // rather than a hole this opened. `commands` still appears in that inventory,
+  // even though execution additionally requires explicit persistent acknowledgement.
+  const ALL_CAPABILITY_COUNT = 16;
 
   test('legacy plugin is flagged and holds every capability', async ({ page }) => {
     await page.goto('/plugins/manage');

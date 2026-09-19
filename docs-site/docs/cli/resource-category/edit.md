@@ -1,61 +1,38 @@
 ---
-title: mr resource-category create
-description: Create a new resource category
-sidebar_label: create
+title: mr resource-category edit
+description: Edit a resource category
+sidebar_label: edit
 ---
 
-# mr resource-category create
+# mr resource-category edit
 
-Create a new resource category. `--name` is required; all other flags
-are optional, including a plain `--description`, a `--custom-*` flag for
-every template slot, and structural fields (`--meta-schema`,
-`--section-config`). Resource categories carry three slots the other
-carriers do not: `--custom-preview` (above the built-in preview image),
-`--custom-lightbox` (the lightbox details panel), and `--custom-cell`
-(an extra column in the resources details table).
-`--custom-entity-picker-result` sets picker result content, and
-`--custom-entity-picker-result-css` sets its companion stylesheet. Selection
-controls remain host-owned. Run
-`mr resource-category create --help` for the full list with a one-line
-description of where each renders. `--custom-css`
-is injected as a `<style>` block on detail and list pages. On success
-prints a confirmation line with the new ID; pass the global `--json`
-flag to emit the full record for scripting.
+Partially edit a Resource Category. `--id` is required and must be positive.
+Only explicit flags change stored values; an explicit empty string clears a
+field. Supports `--name`, `--description`, `--meta-schema`, `--section-config`
+and all resource-category `--custom-*` template flags, including
+`--custom-entity-picker-result` and `--custom-entity-picker-result-css`.
+The picker template supplies content, not selection controls.
 
-Use `--custom-entity-picker-result-file` and
-`--custom-entity-picker-result-css-file` for UTF-8 file input. Each is mutually
-exclusive with its corresponding inline flag. Use `resource-category edit --id`
-to update or clear slots later without changing the carrier's identity.
+Use `--custom-entity-picker-result-file` or
+`--custom-entity-picker-result-css-file` to read UTF-8 HTML or CSS from a file.
+Each file flag is mutually exclusive with its corresponding inline flag;
+an empty file clears the slot. Files are read before any HTTP request.
 
 ## Usage
 
 ```bash
-mr resource-category create
+mr resource-category edit
 ```
-
-## Examples
-
-**Create a resource category with just a name**
-
-```bash
-mr resource-category create --name "Photos"
-```
-
-**Create with a description and capture the ID via jq**
-
-```bash
-ID=$(mr resource-category create --name "Scans" --description "scanned documents" --json | jq -r .ID)
-```
-
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--name` | string | `` | Resource category name (required) **(required)** |
-| `--description` | string | `` | Resource category description |
-| `--meta-schema` | string | `` | Meta schema JSON |
-| `--section-config` | string | `` | JSON controlling which sections are visible on resource detail pages for this category |
+| `--id` | uint | `0` | Carrier ID (required) **(required)** |
+| `--name` | string | `` | Carrier name |
+| `--description` | string | `` | Carrier description |
+| `--meta-schema` | string | `` | JSON Schema defining member metadata |
+| `--section-config` | string | `` | JSON controlling member detail-page sections |
 | `--custom-header` | string | `` | Rendered at the top of the resource detail page |
 | `--custom-header-css` | string | `` | Global CSS for CustomHeader |
 | `--custom-detail-footer` | string | `` | Rendered at the bottom of the resource detail page, below every built-in section |
@@ -96,7 +73,7 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+Updated ResourceCategory object with ID and template fields under --json; confirmation otherwise
 
 ## Exit Codes
 
@@ -104,6 +81,7 @@ Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDete
 
 ## See Also
 
+- [`mr resource-category create`](./create.md)
 - [`mr resource-category get`](./get.md)
 - [`mr resource-category edit-name`](./edit-name.md)
-- [`mr resource-categories list`](../resource-categories/list.md)
+- [`mr resource-category edit-description`](./edit-description.md)

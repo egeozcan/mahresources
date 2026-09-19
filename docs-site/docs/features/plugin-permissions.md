@@ -35,6 +35,7 @@ plugin = {
 |---|---|---|
 | `api_version` | Yes, for a manifest to exist | Compared against the host's `PluginAPIVersion`. A higher value is refused at load. |
 | `capabilities` | No | The `mah` modules to install. Unknown names are an error. |
+| `commands` | No | Fixed argv declarations; requires the `commands` capability and explicit persistent acknowledgement. |
 | `network` | No | Host allowlist for outbound requests. **Absent means any public host.** |
 | `download_limits` | No | Per-domain pacing for this plugin's own `mah.download.submit` jobs. Requires `api_version`; grants no new capability. |
 | `allow_private_hosts` | No | Permission to reach private addresses named in `network`. Defaults to false. |
@@ -76,6 +77,7 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 | `jobs` | `mah.start_job`, and the `job_*` reporters |
 | `schedule` | `mah.schedule` |
 | `job_events` | `mah.on` for the `after_job_*` events |
+| `commands` | declared `mah.commands` execution and mediated `mah.fs` exchange access; importing additionally needs `db:write` |
 
 Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc`, `mah.get_setting`. None reads or writes anything outside the plugin itself.
 
@@ -90,6 +92,45 @@ Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `ma
 **`schedule` is separate from `jobs`** for the same kind of reason. `jobs` runs work a user just asked for; `schedule` runs work nobody asked for, on a timer, including while nobody is logged in. Folding it into `jobs` would have silently widened every plugin an operator had already consented to. Because it is its own name, a plugin adding `mah.schedule` refuses to load until the operator re-enables it and sees the new line.
 
 **`inject` is separate from `render`** because it is not author-invoked. Six injection slots live in the base layout, so an injection runs on every page, while a shortcode or block runs only where a template author placed it. Consenting to "may render blocks" is not consenting to "emits HTML and `<script>` on every page".
+
+### Trusted server commands
+
+`commands` is a high-trust capability. It permits every fixed command template
+in the manifest to run as the Mahresources service account. This is **not a
+sandbox**: the process has that account's filesystem reach, credentials and
+unrestricted process networking, including private and loopback addresses. The
+plugin `network` allowlist and the host's remote-fetch policy do not apply to a
+spawned process. Mutually distrusting command plugins should run under separate
+OS accounts or hosts.
+
+The host's guarantee is narrower and structural: it resolves a literal
+executable basename only through the operator's `PLUGIN_COMMAND_PATH`, launches
+an argv vector without a shell, and substitutes one parameter for one complete
+argv element. It does not understand the program's option grammar. A value can
+still be interpreted as a flag, and a declared executable can itself be an
+interpreter. Review the complete displayed argv and trust the plugin author.
+
+`commands` alone installs `mah.commands` and the read/list/discard parts of
+`mah.fs`. `mah.fs.create_resource` additionally requires `db:write`. Imports
+retain the submitting actor and re-check the current plugin generation,
+capabilities, user role and subtree scope when work starts. User deletion does
+not turn an ordinary run into an actorless one. Details and exact return tables
+are in the [Lua API reference](./plugin-lua-api.md#mahcommands-and-mahfs----declared-server-commands).
+
+A command-bearing plugin requires durable, explicit consent:
+
+- a manifest with `commands` but no `commands` capability is invalid;
+- an in-memory-only consent store refuses command-bearing plugins;
+- no-consent grandfathering never grants commands;
+- adding or changing a command, positional argv, timeout or sensitive parameter
+  set is a widening;
+- enable requires the separate `confirm_commands` acknowledgement. The web UI
+  shows a warning panel and the CLI first prints the exact declarations, then
+  requires `mr plugin enable NAME --confirm-commands`.
+
+Redaction applies to the stored parameter view and argv. It cannot remove a
+secret the child writes to stdout or stderr, so captured output remains
+administrator-only and carries that warning.
 
 ### `inject`, `render` and `pages` are browser-side code execution
 
@@ -134,7 +175,7 @@ The manifest alone cannot be the grant. If the live `plugin.lua` were the source
 
 ### Upgrading
 
-Plugins enabled before this release have no consent on record. On the first load after upgrade each one is **grandfathered**: whatever it currently declares is recorded, and it loads. This happens once per plugin; every later widening prompts normally.
+Plugins enabled before this release have no consent on record. On the first load after upgrade each one is **grandfathered**: whatever it currently declares is recorded, and it loads. This happens once per plugin; every later widening prompts normally. Command declarations are the exception: they are never grandfathered and require persistent consent plus explicit command acknowledgement.
 
 One consequence worth knowing when a bundled plugin's manifest changes in a release: a deployment that already has consent on record does **not** silently pick up the new declaration. If an upgrade widens what a plugin needs -- a new host, say -- it stays refused until an operator re-enables it. That is the mechanism working as designed, but it means such a fix does not fully land on upgrade without that step.
 
