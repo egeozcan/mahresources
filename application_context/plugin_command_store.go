@@ -443,6 +443,13 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 	if !plugin_commands.ImportStatusTerminal(finish.Status) {
 		return false, fmt.Errorf("invalid terminal plugin command import status %q", finish.Status)
 	}
+	if finish.Status == plugin_commands.ImportStatusSucceeded {
+		if finish.ResourceID == nil || *finish.ResourceID == 0 {
+			return false, fmt.Errorf("a successful plugin command import requires a resource id")
+		}
+	} else if finish.ResourceID != nil {
+		return false, fmt.Errorf("plugin command import status %q cannot carry a resource id", finish.Status)
+	}
 	priorStatuses := []string{plugin_commands.ImportStatusRunning}
 	if finish.Status != plugin_commands.ImportStatusSucceeded {
 		priorStatuses = append(priorStatuses, plugin_commands.ImportStatusPending)
@@ -475,8 +482,16 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 
 func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		nonterminal := []string{plugin_commands.ImportStatusPending, plugin_commands.ImportStatusRunning}
 		var rows []models.PluginCommandImport
-		if err := tx.Where("status IN ?", []string{plugin_commands.ImportStatusPending, plugin_commands.ImportStatusRunning}).Find(&rows).Error; err != nil {
+		query := tx.Where("status IN ?", nonterminal)
+		if ctx.Config != nil && ctx.Config.DbType == constants.DbTypePosgres {
+			// FinishImport updates the claim before its map row. Locking the claims
+			// keeps recovery from observing the old status and later overwriting the
+			// map entry committed by a concurrent successful finish.
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.Find(&rows).Error; err != nil {
 			return err
 		}
 		if len(rows) == 0 {
@@ -486,13 +501,23 @@ func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) 
 		for i := range rows {
 			ids[i] = rows[i].ID
 		}
-		if err := tx.Model(&models.PluginCommandImport{}).Where("id IN ? AND status IN ?", ids,
-			[]string{plugin_commands.ImportStatusPending, plugin_commands.ImportStatusRunning}).
-			Updates(map[string]any{"status": plugin_commands.ImportStatusInterrupted, "error": "server interrupted", "finished_at": finished}).Error; err != nil {
-			return err
+		claims := tx.Model(&models.PluginCommandImport{}).Where("id IN ? AND status IN ?", ids, nonterminal).
+			Updates(map[string]any{"status": plugin_commands.ImportStatusInterrupted, "error": "server interrupted", "finished_at": finished})
+		if claims.Error != nil {
+			return claims.Error
 		}
-		return tx.Model(&models.PluginCommandImportMap{}).Where("import_id IN ?", ids).
-			Updates(map[string]any{"status": plugin_commands.ImportStatusInterrupted, "error": "server interrupted"}).Error
+		if claims.RowsAffected != int64(len(ids)) {
+			return errPluginCommandTransitionLost
+		}
+		maps := tx.Model(&models.PluginCommandImportMap{}).Where("import_id IN ? AND status IN ?", ids, nonterminal).
+			Updates(map[string]any{"status": plugin_commands.ImportStatusInterrupted, "error": "server interrupted"})
+		if maps.Error != nil {
+			return maps.Error
+		}
+		if maps.RowsAffected != int64(len(ids)) {
+			return fmt.Errorf("plugin command import recovery found %d claims but transitioned %d map entries", len(ids), maps.RowsAffected)
+		}
+		return nil
 	})
 }
 

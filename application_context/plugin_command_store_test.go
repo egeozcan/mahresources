@@ -380,6 +380,49 @@ func TestPluginCommandStampedModelsInventoryIncludesOnlyActorOwnedRows(t *testin
 	require.False(t, seen["*models.PluginCommandImportMap"])
 }
 
+func TestPluginCommandStoreFinishImportValidatesResourceID(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC()
+	owner := uint(19)
+	require.NoError(t, ctx.CreateRun(testRun("finish-validation", &owner, false, now), testOutput("finish-validation", now)))
+	_, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
+		ImportID: "validated-import", RunID: "finish-validation", FileName: "out.bin",
+		PluginGeneration: 1, CreatedByUserID: &owner, CreatedAt: now,
+	})
+	require.NoError(t, err)
+	won, err := ctx.MarkImportRunning("validated-import", now.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+
+	won, err = ctx.FinishImport("validated-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusSucceeded, FinishedAt: now.Add(2 * time.Second),
+	})
+	require.Error(t, err)
+	require.False(t, won)
+	zero := uint(0)
+	won, err = ctx.FinishImport("validated-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusSucceeded, ResourceID: &zero, FinishedAt: now.Add(2 * time.Second),
+	})
+	require.Error(t, err)
+	require.False(t, won)
+	resourceID := uint(47)
+	won, err = ctx.FinishImport("validated-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusFailed, ResourceID: &resourceID, FinishedAt: now.Add(2 * time.Second),
+	})
+	require.Error(t, err)
+	require.False(t, won)
+
+	won, err = ctx.FinishImport("validated-import", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID, FinishedAt: now.Add(3 * time.Second),
+	})
+	require.NoError(t, err)
+	require.True(t, won, "invalid finishes must leave the running import available for a valid finish")
+	mapped, ok, err := ctx.ImportMap("finish-validation", "out.bin")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, resourceID, *mapped.ResourceID)
+}
+
 func TestPluginCommandStoreRejectsInvalidTerminalStatuses(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	now := time.Now().UTC()
