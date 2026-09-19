@@ -594,30 +594,30 @@ func (d *Dispatcher) Cancel(runID, reason string) error
 
 `DownloadJob` gains private controls, a private managed-lane marker and serialized `authoritativeStatus,omitempty`. Managed jobs bypass the download semaphore and ordinary 100-job admission count; their lane is independently capped at six. The dispatcher does not call `SubmitManagedJob` until a command/import owns an execution slot, so pending durable rows live only in its per-plugin queues.
 
-- [ ] **Step 1: Write red managed-lane isolation tests**
+- [x] **Step 1: Write red managed-lane isolation tests**
 
 Fill the ordinary registry with 100 parked downloads, then register six dispatched managed jobs and assert all six start without the download semaphore and without evicting/refusing an ordinary entry. Assert a seventh concurrent managed job is refused by the managed-lane cap. In a fresh manager with six managed jobs parked, admit 100 ordinary jobs and assert only the 101st ordinary job is refused, proving the full ordinary budget remains. Exercise the two independent removal implementations as separate cases. First fill the managed lane with one terminal entry and assert the next managed admission removes it through `evictJob` and succeeds. Then use a fresh manager, age a terminal managed entry past retention, invoke `cleanupOldJobs` directly (its in-place `delete(dm.jobs, id)`/`jobOrder` rebuild path), and assert the next managed admission succeeds. Neither case adds counter bookkeeping. Also assert pause/resume/retry return `StateConflictError`, Cancel invokes the managed job's injected callback outside `dm.mu`/`job.mu` (the test callback re-enters `Snapshot` so either held lock deadlocks the test), and terminal `authoritativeStatus` is preserved in snapshots/SSE.
 
-- [ ] **Step 2: Implement a derived managed-live lane**
+- [x] **Step 2: Implement a derived managed-live lane**
 
 Keep `SubmitJobWithOptions` behavior for downloads/exports/imports and make `makeRoomForNewJob` count only ordinary entries. Under `dm.mu`, `SubmitManagedJob` derives managed occupancy by scanning `m.jobs` for the private managed marker; `m.jobs` is the sole owner/source of truth and there is **no managed counter**. At the six-entry cap it removes an oldest terminal managed entry through `evictJob` before recounting/reuse, registers/announces identically, bypasses `m.semaphore`, applies its explicit outcome atomically and notifies once. Because occupancy is derived, both independent removal paths release capacity without bookkeeping: managed admission's `evictJob` call, and `cleanupOldJobs`' existing direct `delete(dm.jobs, id)` plus in-place `jobOrder` rebuild. Existing downloads retain all current controls. A cancel-enabled managed job supplies a callback which `DownloadManager.Cancel` invokes outside manager/job locks instead of cancelling an opaque generic context; the command adapter binds that callback to `Dispatcher.Cancel(runID, reason)`, so live cockpit and admin-history cancellation share `Store.RequestRunCancel` and the pre-fork latch. Imports supply no running cancel control. Total registry growth is bounded at 106 live entries, never at 100 plus an unbounded command queue.
 
-- [ ] **Step 3: Write red dispatcher queue/registration tests**
+- [x] **Step 3: Write red dispatcher queue/registration tests**
 
 Submit interleaved runs for plugins A/B/C. Park workers and assert no plugin exceeds two, global active never exceeds four, each plugin starts in submission order, and a blocked A does not prevent eligible B. Fill plugin A's pending command queue to 100 and assert A's 101st is refused without a DB row/folder leak while plugin B is still admitted. Assert the fake `LiveJobs` adapter receives **zero** registrations for pending work and exactly one only after a dispatcher slot is assigned. Cancel one queued A run through `Dispatcher.Cancel`: assert `Store.RequestRunCancel`, removal from the private queue, terminal `cancelled`, callback delivery, and admission of a replacement — still with zero live-job registration. Mirror the per-plugin 100-pending cap for imports.
 
-- [ ] **Step 4: Implement dispatcher-owned per-plugin queues**
+- [x] **Step 4: Implement dispatcher-owned per-plugin queues**
 
 Use one owner goroutine and a wake channel, not a goroutine per queued item. Keep a bounded FIFO queue per plugin for commands and imports using `Settings.PendingPerPluginLimit()`; the application adapter returns `download_queue.MaxQueueSize`, preserving the shared numerical policy without making leaf package `plugin_commands` import `download_queue`. Track `activeGlobal`, `activeByPlugin`, running cancel functions and run-id queue membership, and schedule round-robin across eligible plugin queue heads without reordering within one plugin. `Cancel` first persists `RequestRunCancel`; for a still-queued entry the owner goroutine removes it, finishes the durable row as `cancelled` and delivers its callback without registering a live job; for active work it invokes the tracked cancel function. Acquire the command/import execution slot first, then call `SubmitManagedJob`; a registry-lane refusal releases the slot and records dispatch failure rather than leaving an invisible running row.
 
-- [ ] **Step 5: Verify concurrency under the race detector**
+- [x] **Step 5: Verify concurrency under the race detector**
 
 ```bash
 go test -race ./download_queue ./plugin_commands -run 'ManagedJob|Dispatcher' -count=1
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add download_queue plugin_commands/types.go plugin_commands/dispatcher.go plugin_commands/dispatcher_test.go
