@@ -397,9 +397,10 @@ command runtime. Command and exchange calls return an unavailable error,
 administrator cancellation is disabled and returns HTTP 503 without setting the
 durable cancellation latch, and recovery continues automatically. Lease
 contention follows the short capped schedule above. A recovery blocker retains
-the staging lease and retries every five minutes. Quarantine warnings and retry
-failures appear in `/logs` with the blocked run ID, PGID, and reason; healing is
-also logged. If an operator has independently decided that the named group is
+the staging lease and retries every five minutes. Recovery-blocker warnings in
+`/logs` enumerate every blocked run ID, PGID, and reason. Lease warnings name
+the staging root. Retry failures record their failure reason. Healing is also
+logged. If an operator has independently decided that the named group is
 abandoned, the immediate recovery action is to terminate it, for example
 `kill -KILL -- -<pgid>`. `-plugins-disabled` is the restart-time escape hatch.
 
