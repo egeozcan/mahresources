@@ -39,6 +39,7 @@ type recoveryInspector struct {
 	mu          sync.Mutex
 	states      map[int][]GroupIdentity
 	errs        map[int]error
+	inspectErrs map[int][]error
 	inspections []int
 	kills       []int
 	killErr     error
@@ -51,6 +52,17 @@ func (i *recoveryInspector) InspectGroup(pgid int, _ string) (GroupIdentity, err
 	i.inspections = append(i.inspections, pgid)
 	if err := i.errs[pgid]; err != nil {
 		return GroupIdentity{}, err
+	}
+	if sequence := i.inspectErrs[pgid]; len(sequence) != 0 {
+		err := sequence[0]
+		if len(sequence) == 1 {
+			delete(i.inspectErrs, pgid)
+		} else {
+			i.inspectErrs[pgid] = sequence[1:]
+		}
+		if err != nil {
+			return GroupIdentity{}, err
+		}
 	}
 	sequence := i.states[pgid]
 	if len(sequence) == 0 {
@@ -71,6 +83,22 @@ func (i *recoveryInspector) KillGroup(pgid int) error {
 		i.states[pgid] = []GroupIdentity{{State: GroupDead}}
 	}
 	return i.killErr
+}
+
+func requireSingleRecoveryBlocker(t *testing.T, err error, runID string, pgid int, reason string) *RecoveryBlockedError {
+	t.Helper()
+	var blocked *RecoveryBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want *RecoveryBlockedError", err)
+	}
+	if len(blocked.Blockers) != 1 {
+		t.Fatalf("blockers = %+v, want one", blocked.Blockers)
+	}
+	blocker := blocked.Blockers[0]
+	if blocker.RunID != runID || blocker.ProcessGroupID != pgid || !strings.Contains(blocker.Reason, reason) {
+		t.Fatalf("blocker = %+v, want run %q pgid %d reason containing %q", blocker, runID, pgid, reason)
+	}
+	return blocked
 }
 
 func TestRecoveryClassifiesNonterminalRuns(t *testing.T) {
@@ -156,9 +184,7 @@ func TestRecoveryRechecksOwnershipImmediatelyBeforeKill(t *testing.T) {
 		pgid: {{State: GroupAliveOwned}, {State: GroupAliveUnverified}},
 	}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
-	if err := d.Recover(context.Background()); err == nil || !strings.Contains(err.Error(), "ownership changed") {
-		t.Fatalf("Recover error = %v", err)
-	}
+	requireSingleRecoveryBlocker(t, d.Recover(context.Background()), "reused-between-checks", pgid, "ownership changed")
 	record, _, err := store.Run("reused-between-checks")
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +194,47 @@ func TestRecoveryRechecksOwnershipImmediatelyBeforeKill(t *testing.T) {
 	}
 	if len(inspector.kills) != 0 {
 		t.Fatalf("ownership changed but group was killed: %v", inspector.kills)
+	}
+}
+
+func TestRecoverySignalFailureIsTypedBlocker(t *testing.T) {
+	pgid := 23
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runs["signal-failed"] = RunRecord{ID: "signal-failed", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	inspector := &recoveryInspector{
+		states:  map[int][]GroupIdentity{pgid: {{State: GroupAliveOwned}}},
+		killErr: errors.New("signal refused"),
+	}
+	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
+	requireSingleRecoveryBlocker(t, d.Recover(context.Background()), "signal-failed", pgid, "signal refused")
+	if len(inspector.kills) != 1 || inspector.kills[0] != pgid {
+		t.Fatalf("kills = %v, want [%d]", inspector.kills, pgid)
+	}
+}
+
+func TestRecoveryPostSignalInspectionFailureIsTypedBlocker(t *testing.T) {
+	pgid := 24
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runs["post-signal-inspection"] = RunRecord{ID: "post-signal-inspection", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	inspector := &recoveryInspector{
+		states:      map[int][]GroupIdentity{pgid: {{State: GroupAliveOwned}}},
+		inspectErrs: map[int][]error{pgid: {nil, nil, errors.New("post-signal scan unavailable")}},
+	}
+	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
+	requireSingleRecoveryBlocker(t, d.Recover(context.Background()), "post-signal-inspection", pgid, "post-signal scan unavailable")
+}
+
+func TestRecoveryUnknownIdentityStateIsOrdinaryError(t *testing.T) {
+	pgid := 25
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runs["unknown-state"] = RunRecord{ID: "unknown-state", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	inspector := &recoveryInspector{states: map[int][]GroupIdentity{
+		pgid: {{State: GroupState(99)}},
+	}}
+	err := NewDispatcher(Dependencies{Store: store, Inspector: inspector}).Recover(context.Background())
+	var blocked *RecoveryBlockedError
+	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "unknown state") {
+		t.Fatalf("Recover error = %v, blocker = %+v; want ordinary unknown-state error", err, blocked)
 	}
 }
 
@@ -374,19 +441,21 @@ func TestRecoverySignalAttemptIsLatchedAcrossHealingScans(t *testing.T) {
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
 	store.runs["stubborn"] = RunRecord{ID: "stubborn", Status: RunStatusRunning, ProcessGroupID: &pgid}
 	inspector := &recoveryInspector{states: map[int][]GroupIdentity{
-		pgid: {{State: GroupAliveOwned}, {State: GroupAliveOwned}, {State: GroupAliveOwned}},
+		pgid: {{State: GroupAliveOwned}},
 	}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
 	d.recoveryPollInterval = time.Millisecond
 	d.recoveryDrainTimeout = 5 * time.Millisecond
-	var blocked *RecoveryBlockedError
-	if err := d.Recover(context.Background()); !errors.As(err, &blocked) {
-		t.Fatalf("first Recover error = %v, want blocker", err)
-	}
+	requireSingleRecoveryBlocker(t, d.Recover(context.Background()), "stubborn", pgid, "recovery deadline")
+	requireSingleRecoveryBlocker(t, d.Recover(context.Background()), "stubborn", pgid, "recovery deadline")
 
 	inspector.mu.Lock()
+	killsBeforeHealing := append([]int(nil), inspector.kills...)
 	inspector.states[pgid] = []GroupIdentity{{State: GroupDead}}
 	inspector.mu.Unlock()
+	if len(killsBeforeHealing) != 1 || killsBeforeHealing[0] != pgid {
+		t.Fatalf("kills before healing = %v, want one signal attempt across two live scans", killsBeforeHealing)
+	}
 	if err := d.Recover(context.Background()); err != nil {
 		t.Fatalf("healing Recover: %v", err)
 	}
