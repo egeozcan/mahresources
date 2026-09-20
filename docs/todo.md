@@ -21,35 +21,162 @@ Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-
 
 ### Task 9 verification evidence (awaiting independent approval)
 
-The documentation assertion was RED because the operator and plugin references
-still promised startup failure/completion and omitted boot-session, zombie,
-automatic-healing and process-group repair invariants. It is GREEN after updating
-`CLAUDE.md` and both published references.
+Task commits:
 
-Verification results:
+- Task 9 report base: `0c05a6b950f8256e2bf0ba561241d247a564fb4f`.
+- Initial Task 9 documentation/verification head: `ec87dd56a64d29ac90379bf22e3c93db187b9205`.
+- Review correction for accurate operator log fields: `b45a275c122b9c01e2f3a02262977aaa8ef82667`.
 
-- `npm run build`, `./scripts/css-scan-test.sh`, and tagged `go vet ./...` pass.
-- The focused five-package race selection passes 10 repetitions.
-- Focused tagged PostgreSQL command tests pass; command-history Playwright passes
-  3/3 on SQLite.
-- Vitest passes 90 files / 1,412 tests. The full browser/auth/CLI/doctest matrix
-  passes 2,242 tests with 5 intentional skips.
-- The aggregate tagged Go run initially exposed
-  `TestReEnableTransfersTheScheduleToTheNewOperator` as a stale bare-runtime
-  fixture: production plugin disable now accurately refuses durable command
-  revocation while the runtime is quarantined. The fixture now starts and stops
-  the production command runtime; its ordinary and race selections each pass 10
-  repetitions. The aggregate rerun reports only the accepted unrelated
-  `plugin_system.TestBundledPluginLiteralURLsAreDeclared` and
-  `server/api_tests.TestSidebar_IsWrappedInADisclosure` baselines.
-- Native Darwin plugin-command tests pass. Linux and FreeBSD `CGO_ENABLED=0`
-  package compilation both reach the repository's known SQLite stub limitation
-  (`sqlite3.SQLiteConn.Exec` unavailable), not command-runtime code.
+The exact documentation invariant RED assertion was run against the report base:
 
-Residual limitation: AIX, DragonFly BSD, FreeBSD, NetBSD, OpenBSD and Solaris use
-probe-only process inspection. They cannot prove that a zombie-only group is
-dead, so quarantine may require the parent to reap it or a server restart.
-Task 9 remains unchecked until independent closure review records approval.
+```bash
+python3 - <<'PY'
+import subprocess
+checks = {
+    'CLAUDE.md': [
+        'host-unique boot-session UUID',
+        'all-zombie group is dead',
+    ],
+    'docs-site/docs/configuration/advanced.md': [
+        'automatic healing scan succeeds',
+        'kill -KILL -- -<pgid>',
+    ],
+    'docs-site/docs/features/plugin-lua-api.md': [
+        'typed unavailable state',
+        '/logs` records the reason and healing',
+    ],
+}
+for path, required in checks.items():
+    text = subprocess.check_output(
+        ['git', 'show', f'0c05a6b950f8256e2bf0ba561241d247a564fb4f:{path}'],
+        text=True,
+    )
+    for item in required:
+        assert item in text, f'MISSING {path}: {item}'
+PY
+```
+
+It exited 1 at `MISSING CLAUDE.md: host-unique boot-session UUID`. The exact
+GREEN assertion after the documentation update was:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+checks = {
+    'CLAUDE.md': [
+        'host-unique boot-session UUID',
+        'all-zombie group is dead',
+    ],
+    'docs-site/docs/configuration/advanced.md': [
+        'automatic healing scan succeeds',
+        'kill -KILL -- -<pgid>',
+    ],
+    'docs-site/docs/features/plugin-lua-api.md': [
+        'typed unavailable state',
+        '/logs` records the reason and healing',
+    ],
+}
+for path, required in checks.items():
+    text = Path(path).read_text()
+    for item in required:
+        assert item in text, f'MISSING {path}: {item}'
+print('documentation invariant assertions passed')
+PY
+```
+
+It printed `documentation invariant assertions passed`.
+
+The first aggregate command was also RED:
+
+```bash
+go test --tags 'json1 fts5' ./... -count=1
+```
+
+In addition to the two accepted unrelated baselines, it exposed the stale
+bare-runtime fixture in `TestReEnableTransfersTheScheduleToTheNewOperator` and
+one non-reproducing `TestShutdownTimeoutLeavesRunningGroupForRecovery` timeout.
+The fixture defect reproduced 10/10 before correction with:
+
+```bash
+go test --tags 'json1 fts5' ./server/api_tests \
+  -run '^TestReEnableTransfersTheScheduleToTheNewOperator$' -count=10
+```
+
+The fixture now starts and stops the production command runtime. Exact GREEN
+commands and outcomes:
+
+```bash
+git diff --name-only -- '*.go' | xargs gofmt -w
+git diff --check
+npm run build
+./scripts/css-scan-test.sh
+go vet --tags 'json1 fts5' ./...
+```
+
+All passed. Vite emitted only its existing chunk-size advisory; generated CSS
+and JavaScript were unchanged.
+
+```bash
+go test -race --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_system ./server/api_handlers ./server/api_tests \
+  -run 'Test.*(PluginCommand|CommandRun|RuntimeLease|Recover|ProcessInspector)' -count=10
+```
+
+All five packages passed; the slowest, `server/api_tests`, completed in
+191.410s.
+
+```bash
+go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests \
+  -run 'Test.*PluginCommand' -count=1
+cd e2e && npm run test:with-server -- --grep 'plugin command history'
+cd ..
+```
+
+The PostgreSQL selections passed and command-history Playwright passed 3/3.
+
+```bash
+npm run test:unit -- --run
+cd e2e && npm run test:with-server:all
+cd ..
+```
+
+Vitest passed 90 files / 1,412 tests. The browser/auth/CLI/doctest matrix passed
+2,242 tests with 5 intentional skips.
+
+```bash
+go test --tags 'json1 fts5' ./server/api_tests \
+  -run '^TestReEnableTransfersTheScheduleToTheNewOperator$' -count=10
+go test -race --tags 'json1 fts5' ./server/api_tests \
+  -run '^TestReEnableTransfersTheScheduleToTheNewOperator$' -count=10
+go test --tags 'json1 fts5' ./plugin_commands -count=1 -timeout=120s
+go test --tags 'json1 fts5' ./... -count=1
+```
+
+The fixture ordinary/race repeats and plugin-command package passed. The final
+aggregate run reported only the accepted unrelated baselines:
+`plugin_system.TestBundledPluginLiteralURLsAreDeclared` and
+`server/api_tests.TestSidebar_IsWrappedInADisclosure`.
+
+```bash
+go test --tags 'json1 fts5' ./plugin_commands -run 'Test.*Darwin' -count=1
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c ./plugin_commands -o /tmp/plugin_commands-linux.test
+GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go test -c ./plugin_commands -o /tmp/plugin_commands-freebsd.test
+```
+
+Native Darwin tests passed. Both cross-compiles reached the repository's known
+SQLite/CGO stub limitation (`sqlite3.SQLiteConn.Exec` unavailable), not
+plugin-command source.
+
+```bash
+git diff --check
+git status --short
+git diff --stat 283c2afab0ec2524840199e858a96156ca053599...HEAD
+```
+
+The Task 9 diff was whitespace-clean and reviewed. The remaining limitation is
+probe-only process inspection on AIX, DragonFly BSD, FreeBSD, NetBSD, OpenBSD
+and Solaris: those targets cannot prove a zombie-only group dead, so quarantine
+may require parent reaping or a server restart. Task 9 remains unchecked until
+independent closure review records approval.
 
 ## Original implementation plan
 
