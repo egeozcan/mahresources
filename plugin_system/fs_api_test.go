@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,32 @@ func TestRunViewToLuaOmitsBootSessionIdentity(t *testing.T) {
 		if got := table.RawGetString(key); got != lua.LNil {
 			t.Fatalf("runViewToLua exposed %q as %v", key, got)
 		}
+	}
+}
+
+func TestFSHostUnavailableExplainsAutomaticRecoveryAndActivatesWithoutReload(t *testing.T) {
+	pm, L := enableCommandPlugin(t, `"commands"`, nil)
+	if err := L.DoString(`__missing_runs, __missing_err = mah.fs.runs()`); err != nil {
+		t.Fatal(err)
+	}
+	message := L.GetGlobal("__missing_err").String()
+	for _, want := range []string{"runtime is unavailable", "quarantined recovery retries automatically", "/logs"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("unavailable filesystem error %q does not contain %q", message, want)
+		}
+	}
+	if strings.Contains(message, "startup recovery completes") {
+		t.Fatalf("unavailable filesystem error retained stale startup-only wording: %q", message)
+	}
+
+	host := &commandLuaHost{runs: []plugin_commands.RunView{{RunRecord: plugin_commands.RunRecord{ID: "healed", PluginName: "commander"}}}}
+	pm.SetExchangeMediator(host)
+	if err := L.DoString(`__healed_runs, __healed_err = mah.fs.runs()`); err != nil {
+		t.Fatal(err)
+	}
+	runs, ok := L.GetGlobal("__healed_runs").(*lua.LTable)
+	if !ok || runs.RawGetInt(1).(*lua.LTable).RawGetString("id").String() != "healed" || L.GetGlobal("__healed_err") != lua.LNil {
+		t.Fatalf("published filesystem host was not resolved by the loaded plugin: %v / %v", L.GetGlobal("__healed_runs"), L.GetGlobal("__healed_err"))
 	}
 }
 

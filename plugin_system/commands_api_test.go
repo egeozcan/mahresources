@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,6 +172,31 @@ function init() end`)
 	L := stateForPlugin(t, pm, "plain")
 	if err := L.DoString(`assert(mah.commands == nil); assert(mah.fs == nil)`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCommandHostUnavailableExplainsAutomaticRecoveryAndActivatesWithoutReload(t *testing.T) {
+	pm, L := enableCommandPlugin(t, `"commands"`, nil)
+	if err := L.DoString(`__missing_id, __missing_err = mah.commands.run("download", {url="literal"})`); err != nil {
+		t.Fatal(err)
+	}
+	message := L.GetGlobal("__missing_err").String()
+	for _, want := range []string{"runtime is unavailable", "quarantined recovery retries automatically", "/logs"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("unavailable command error %q does not contain %q", message, want)
+		}
+	}
+	if strings.Contains(message, "startup recovery completes") {
+		t.Fatalf("unavailable command error retained stale startup-only wording: %q", message)
+	}
+
+	host := &commandLuaHost{}
+	pm.SetCommandSubmitter(host)
+	if err := L.DoString(`__healed_id, __healed_err = mah.commands.run("download", {url="literal"})`); err != nil {
+		t.Fatal(err)
+	}
+	if L.GetGlobal("__healed_id").String() != "run-123" || L.GetGlobal("__healed_err") != lua.LNil {
+		t.Fatalf("published command host was not resolved by the loaded plugin: %v / %v", L.GetGlobal("__healed_id"), L.GetGlobal("__healed_err"))
 	}
 }
 

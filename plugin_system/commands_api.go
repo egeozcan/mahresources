@@ -19,6 +19,8 @@ type CommandSubmitter interface {
 	SubmitPluginCommand(plugin_commands.CommandRequest) (string, error)
 }
 
+const commandRuntimeUnavailableMessage = "plugin command runtime is unavailable; quarantined recovery retries automatically when applicable; see /logs for details"
+
 type commandAdmissionKey struct {
 	plugin     string
 	generation uint64
@@ -125,7 +127,7 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 			host := pm.commandHost()
 			if host == nil {
 				release()
-				return pushLuaHostError(L, fmt.Errorf("plugin commands are not available until startup recovery completes"))
+				return pushLuaHostError(L, fmt.Errorf("%s", commandRuntimeUnavailableMessage))
 			}
 			runID, err := host.SubmitPluginCommand(plugin_commands.CommandRequest{
 				PluginName:       admission.pluginName,

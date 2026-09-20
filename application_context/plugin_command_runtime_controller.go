@@ -194,8 +194,8 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 		lease, err := c.config.acquireLease(c.settings.StagingRoot())
 		if err != nil {
 			if errors.Is(err, plugin_commands.ErrRuntimeLeaseBusy) {
-				message := fmt.Sprintf("plugin command runtime is quarantined because staging root %q is leased by another runtime; automatic retry is active; restart with -plugins-disabled to keep plugin commands offline", c.settings.StagingRoot())
-				if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, c.acquireDelay(attempt)) {
+				message := fmt.Sprintf("plugin command runtime is quarantined because staging root %q is leased by another runtime; automatic retry is active; see /logs for details; restart with -plugins-disabled to keep plugin commands offline", c.settings.StagingRoot())
+				if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
 					return pluginCommandAttemptStopped, nil
 				}
 				return pluginCommandAttemptLeaseBusy, err
@@ -238,8 +238,8 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 	if err := pending.Recover(ctx); err != nil {
 		var blocked *plugin_commands.RecoveryBlockedError
 		if errors.As(err, &blocked) {
-			message := fmt.Sprintf("plugin command runtime recovery is quarantined: %v; automatic retry is active; after deciding a named process group is abandoned an operator may terminate it with kill -KILL -- -<pgid>; restart with -plugins-disabled to keep plugin commands offline", blocked)
-			if !c.enterQuarantine(pluginCommandRuntimeQuarantined, message, c.config.recoveryInterval) {
+			message := fmt.Sprintf("plugin command runtime recovery is quarantined: %v; automatic retry is active; see /logs for details; after deciding a named process group is abandoned an operator may terminate it with kill -KILL -- -<pgid>; restart with -plugins-disabled to keep plugin commands offline", blocked)
+			if !c.enterQuarantine(pluginCommandRuntimeQuarantined, message, recoveryBlockerLogDetails(blocked.Blockers), c.config.recoveryInterval) {
 				return pluginCommandAttemptStopped, nil
 			}
 			return pluginCommandAttemptRecoveryBlocked, err
@@ -323,7 +323,17 @@ func (c *pluginCommandRuntimeController) acquireDelay(attempt int) time.Duration
 	return c.config.acquireBackoff[attempt]
 }
 
-func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRuntimeState, reason string, delay time.Duration) bool {
+func recoveryBlockerLogDetails(blockers []plugin_commands.RecoveryBlocker) map[string]interface{} {
+	details := make([]map[string]interface{}, 0, len(blockers))
+	for _, blocker := range blockers {
+		details = append(details, map[string]interface{}{
+			"run_id": blocker.RunID, "process_group_id": blocker.ProcessGroupID, "reason": blocker.Reason,
+		})
+	}
+	return map[string]interface{}{"blockers": details}
+}
+
+func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRuntimeState, reason string, details map[string]interface{}, delay time.Duration) bool {
 	if c.config.beforeQuarantine != nil {
 		c.config.beforeQuarantine(state)
 	}
@@ -339,7 +349,7 @@ func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRunt
 	c.mu.Unlock()
 	if changed {
 		log.Printf("[plugin-command] WARNING: %s", reason)
-		c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(), reason, nil)
+		c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(), reason, details)
 	}
 	return true
 }
@@ -393,7 +403,7 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 				nextDelay = c.config.recoveryInterval
 			}
 			message := fmt.Sprintf("plugin command runtime automatic recovery failed and remains quarantined: %v", err)
-			if !c.enterQuarantine(nextState, message, nextDelay) {
+			if !c.enterQuarantine(nextState, message, nil, nextDelay) {
 				return
 			}
 			if !hasLease {

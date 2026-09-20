@@ -139,7 +139,7 @@ func (pm *PluginManager) exchangeCall(L *lua.LState) (ExchangeMediator, liveExch
 	host := pm.exchangeHost()
 	if host == nil {
 		admission.release()
-		return nil, liveExchangeAccess{}, fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+		return nil, liveExchangeAccess{}, fmt.Errorf("%s", commandRuntimeUnavailableMessage)
 	}
 	return host, liveExchangeAccess{Access: plugin_commands.Access{
 		PluginName:  admission.pluginName,
