@@ -17,7 +17,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-
 - [x] Task 6: Quarantine blocked recovery, log it, and activate after healing.
 - [x] Task 7: Make administrator cancellation accurate during quarantine.
 - [x] Task 8: Bound live re-signalling, back off polling, and audit pinned capacity.
-- [ ] Task 9: Align invariants, complete verification, and record evidence.
+- [x] Task 9: Align invariants, complete verification, and record evidence.
 
 ### Task 9 verification evidence (awaiting independent approval)
 
