@@ -314,7 +314,7 @@ func pluginCommandRuntimeWarningSink(ctx *MahresourcesContext) func(plugin_comma
 			"plugin command run %q process group %d remains alive after forced cleanup; one global command slot is pinned by this run (1 of %d total slots): %s",
 			warning.RunID, warning.ProcessGroupID, warning.ActiveLimit, warning.Message,
 		)
-		log.Printf("[plugin-command] WARNING: %s", message)
+		fmt.Printf("[plugin-command] WARNING: %s\n", message)
 		ctx.Logger().Warning(models.LogActionSystem, "plugin_command", nil, warning.RunID, message, map[string]interface{}{
 			"event": warning.Event, "run_id": warning.RunID, "process_group_id": warning.ProcessGroupID, "active_limit": warning.ActiveLimit,
 		})

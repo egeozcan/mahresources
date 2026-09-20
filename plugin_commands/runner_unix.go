@@ -352,20 +352,26 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	}
 
 	for {
+		inspectionDue := false
+		groupInspectionDue := false
 		select {
 		case <-ctxDone:
 			ctxDone = nil
 			cancelStatus, cancelReason := e.contextTermination(ctx, run.RunID)
 			terminate(cancelStatus, cancelReason, true)
+			inspectionDue = true
 		case <-timerDone:
 			timerDone = nil
 			terminate(RunStatusFailed, fmt.Sprintf("command timeout exceeded (%s)", run.Request.Declaration.Timeout), false)
+			inspectionDue = true
 		case <-quotaTicker.C:
 			usage, usageErr := runUsage(e.deps.Store, e.deps.Settings.StagingRoot(), run.RunID, run.ExchangeDir)
 			if usageErr != nil {
 				terminate(RunStatusFailed, usageErr.Error(), false)
+				inspectionDue = true
 			} else if limit := effectiveQuota(e.deps.Settings.PerRunQuota(), defaultPerRunQuota); usage > limit {
 				terminate(RunStatusFailed, fmt.Sprintf("per-run quota exceeded: %d bytes used, limit %d", usage, limit), false)
+				inspectionDue = true
 			}
 		case waitErr = <-waitDone:
 			parentDone = true
@@ -374,6 +380,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			if cleanupDeadline.IsZero() {
 				cleanupDeadline = time.Now().Add(cleanupTimeout)
 			}
+			inspectionDue = true
 		case <-drainDone:
 			pipesDone = true
 			drainDone = nil
@@ -382,13 +389,29 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			pgidDone = nil
 			if persistErr != nil {
 				terminate(RunStatusFailed, fmt.Sprintf("persist command process group: %v", persistErr), false)
+				inspectionDue = true
 			} else if status != "" {
 				killGroup()
 			}
 		case <-groupTick:
+			inspectionDue = true
+			groupInspectionDue = true
 		}
 
-		if parentDone || status != "" {
+		// After forced cleanup only the backed-off group ticker may inspect. State
+		// changes remain recorded immediately, but their process-table observation
+		// can safely wait for that ticker.
+		if forcedCleanup {
+			inspectionDue = groupInspectionDue
+		}
+		// An auxiliary event can be the first wakeup at either pre-backoff
+		// cleanup edge. Take the observation needed for the transition there, but
+		// once forced cleanup begins only group ticks may drive inspection. Quota
+		// sampling and warning timing remain independent.
+		if !forcedCleanup && !cleanupDeadline.IsZero() && !time.Now().Before(cleanupDeadline) {
+			inspectionDue = true
+		}
+		if inspectionDue && (parentDone || status != "") {
 			lastInspectionAllowsResignal = false
 			identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
 			groupDead = inspectErr == nil && identity.State == GroupDead

@@ -717,6 +717,7 @@ func startBoundedResignalRun(t *testing.T, inspector *boundedResignalInspector, 
 	configured.pollInterval = 5 * time.Millisecond
 	configured.stuckPollInterval = 40 * time.Millisecond
 	configured.cleanupTimeout = 20 * time.Millisecond
+	configured.quotaInterval = 10 * time.Millisecond
 	configured.stuckWarningAfter = 80 * time.Millisecond
 	run := seedRunnerRun(t, executor, store, settings, "bounded-resignal", []string{"sh", "-c", "exit 0"}, 5*time.Second)
 	result := make(chan Outcome, 1)
@@ -752,6 +753,15 @@ func TestRunnerResignalAliveOwnedGroupOnce(t *testing.T) {
 	requireBoundedResignal(t, GroupAliveOwned)
 }
 
+func requireRunnerStillBlocked(t *testing.T, result <-chan Outcome, reason string) {
+	t.Helper()
+	select {
+	case outcome := <-result:
+		t.Fatalf("runner published while %s: %+v", reason, outcome)
+	default:
+	}
+}
+
 func TestRunnerInspectionErrorDoesNotPermitResignal(t *testing.T) {
 	inspector := &boundedResignalInspector{state: GroupAliveOwned, inspectionErrorAfterKill: true}
 	result, _ := startBoundedResignalRun(t, inspector, nil)
@@ -762,6 +772,7 @@ func TestRunnerInspectionErrorDoesNotPermitResignal(t *testing.T) {
 		<-result
 		t.Fatalf("group kills after an inspection error = %d, want 1", kills)
 	}
+	requireRunnerStillBlocked(t, result, "process-group inspection remains unavailable")
 	inspector.setDead()
 	select {
 	case <-result:
@@ -780,6 +791,7 @@ func TestRunnerResignalNeverSignalsAStuckGroupMoreThanTwice(t *testing.T) {
 		<-result
 		t.Fatalf("group kills across later cleanup deadlines = %d, want 2", kills)
 	}
+	requireRunnerStillBlocked(t, result, "the group remains alive after the bounded second signal")
 	inspector.setDead()
 	select {
 	case <-result:
@@ -848,6 +860,7 @@ func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
 			t.Errorf("warning = %+v", warning)
 		}
 	}
+	requireRunnerStillBlocked(t, result, "the pinned-slot warning has been emitted for a live group")
 	inspector.setDead()
 	select {
 	case <-result:

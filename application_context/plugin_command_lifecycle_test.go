@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,7 +23,29 @@ func TestPluginCommandPinnedSlotWarningIsPersisted(t *testing.T) {
 		Event: plugin_commands.RuntimeWarningEventPinnedSlot, Message: "process group remains alive after forced cleanup",
 		RunID: "pinned-run", ProcessGroupID: 4321, ActiveLimit: 7,
 	}
+	readStdout, writeStdout, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = writeStdout
 	pluginCommandRuntimeWarningSink(ctx)(warning)
+	os.Stdout = originalStdout
+	if err := writeStdout.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := io.ReadAll(readStdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readStdout.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"pinned-run", "4321", "global command slot", "1 of 7"} {
+		if !strings.Contains(string(stdout), fragment) {
+			t.Errorf("stdout warning %q does not contain %q", stdout, fragment)
+		}
+	}
 
 	var logs []models.LogEntry
 	if err := ctx.db.Where("entity_type = ?", "plugin_command").Find(&logs).Error; err != nil {
