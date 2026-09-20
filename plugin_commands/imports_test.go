@@ -393,6 +393,38 @@ func TestSubmitImportDeletesSourceAfterDurableSuccess(t *testing.T) {
 	}
 }
 
+func TestSubmitImportQuotaAllowsOneSourceAndOneScratchCopy(t *testing.T) {
+	const sourceSize = int64(len("complete-output"))
+	for _, tc := range []struct {
+		name       string
+		quota      int64
+		wantStatus string
+	}{
+		{name: "exact two-copy peak", quota: 2 * sourceSize, wantStatus: ImportStatusSucceeded},
+		{name: "one byte below peak", quota: 2*sourceSize - 1, wantStatus: ImportStatusFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _, jobs, importer, _, sub := importHarness(t)
+			d.deps.Settings = importTestSettings{root: d.deps.Settings.StagingRoot(), quota: tc.quota}
+			_, err := d.SubmitImport(sub)
+			requireNoError(t, err)
+			registered := waitForImportJobs(t, jobs, 1)
+			outcome := registered[0].run(context.Background(), nopProgress{})
+			if outcome.Status != tc.wantStatus {
+				t.Fatalf("outcome = %+v, want status %s", outcome, tc.wantStatus)
+			}
+			importer.mu.Lock()
+			defer importer.mu.Unlock()
+			if tc.wantStatus == ImportStatusSucceeded && len(importer.bodies) != 1 {
+				t.Fatalf("imported bodies = %d, want 1", len(importer.bodies))
+			}
+			if tc.wantStatus == ImportStatusFailed && len(importer.bodies) != 0 {
+				t.Fatal("quota-refused import reached importer")
+			}
+		})
+	}
+}
+
 func TestSubmitImportEnforcesQuotaBeforeCopying(t *testing.T) {
 	d, store, jobs, importer, root, sub := importHarness(t)
 	d.deps.Settings = importTestSettings{root: root, quota: 20}

@@ -286,11 +286,11 @@ git commit -m "fix: drain successful command imports"
 - `ImportSource.CreateScratch` remains the sole AddResource snapshot factory.
 - `reserveImportQuota` reserves `sourceSize`, not `2 * sourceSize`; measured exchange usage already includes the source.
 
-- [ ] **Step 1: Write the failing two-copy boundary test**
+- [x] **Step 1: Write the failing two-copy boundary test**
 
 Create a run containing one source of size `S`. Set `PerRunQuota` to `2*S`; assert import succeeds. Set it to `2*S-1`; assert import fails before the importer receives bytes. The first case must fail under the current `usage + 2*S` reservation.
 
-- [ ] **Step 2: Write exact-size reader tests**
+- [x] **Step 2: Write exact-size reader tests**
 
 Add focused tests proving the reader:
 
@@ -299,17 +299,17 @@ Add focused tests proving the reader:
 - returns a named error without admitting extra bytes if the source grows beyond `S`;
 - returns `context.Canceled` when cancelled during the copy.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(Import.*Quota|ExactSize|ImportResource)' -count=1
 ```
 
-- [ ] **Step 4: Remove the outer snapshot**
+- [x] **Step 4: Remove the outer snapshot**
 
 Delete `copyImportSnapshot`. Create only the claim temp directory and pass the admitted source descriptor directly to `Importer.ImportResource`. Wrap it in the exact-size/cancellation reader before `addResourceWithOptions`; keep `CreateScratch` pointing at `temp.Create("upload-")` so AddResource's copy is the one immutable snapshot.
 
-- [ ] **Step 5: Correct reservation arithmetic**
+- [x] **Step 5: Correct reservation arithmetic**
 
 Change:
 
@@ -319,14 +319,14 @@ reservation := sourceSize * 2
 
 to one additional source size, with overflow-safe checks. Measured `usage` already includes every original exchange source and any current import temp; `reserved` covers concurrent scratch files not yet visible or not safely attributable between workers.
 
-- [ ] **Step 6: Run GREEN and race verification**
+- [x] **Step 6: Run GREEN and race verification**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(Import|Quota|ExactSize)' -count=1
 go test -race --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(Import|Quota)' -count=20
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add plugin_commands/imports.go plugin_commands/imports_test.go application_context/plugin_command_import.go application_context/plugin_command_import_test.go

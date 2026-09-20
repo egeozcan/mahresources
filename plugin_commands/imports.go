@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -30,12 +29,14 @@ type ImportValidation struct {
 	Fields           ResourceFields
 }
 
-// ImportSource names the host-managed snapshot consumed by the application
-// adapter. Path is never supplied by Lua or by a plugin.
+// ImportSource carries the descriptor admitted from the exchange directory and
+// the host-owned scratch factory AddResource uses to create its immutable
+// snapshot. Paths are never supplied by Lua or by a plugin.
 type ScratchFileFactory func() (*os.File, func() error, error)
 
 type ImportSource struct {
 	File          *os.File
+	SourceSize    int64
 	CreateScratch ScratchFileFactory
 	FileName      string
 	RunID         string
@@ -340,28 +341,15 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 	if err != nil {
 		return finish(ImportStatusFailed, err.Error(), nil)
 	}
-	snapshot, snapshotCleanup, err := temp.Create("source-")
-	if err != nil {
-		return finish(ImportStatusFailed, fmt.Sprintf("create plugin command import snapshot: %v", err), nil)
-	}
-	if err := copyImportSnapshot(ctx, snapshot, source, sourceSize); err != nil {
-		_ = snapshotCleanup()
-		status := ImportStatusFailed
-		if errors.Is(context.Cause(ctx), errDispatcherShutdown) || errors.Is(err, context.Canceled) {
-			status = ImportStatusInterrupted
-		}
-		return finish(status, fmt.Sprintf("snapshot plugin command import: %v", err), nil)
-	}
 	if progress != nil {
 		progress.SetPhase("importing resource")
 	}
 	resourceID, err := importer.ImportResource(ctx, ImportSource{
-		File: snapshot, CreateScratch: func() (*os.File, func() error, error) {
+		File: source, SourceSize: sourceSize, CreateScratch: func() (*os.File, func() error, error) {
 			return temp.Create("upload-")
 		},
 		FileName: submission.Name, RunID: run.ID, ImportID: importID,
 	}, cloneResourceFields(submission.Fields), "")
-	_ = snapshotCleanup()
 	if err != nil {
 		status := ImportStatusFailed
 		if errors.Is(context.Cause(ctx), errDispatcherShutdown) || errors.Is(err, context.Canceled) {
@@ -388,42 +376,11 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 	return outcome
 }
 
-func copyImportSnapshot(ctx context.Context, destination, source *os.File, expected int64) error {
-	if expected < 0 {
-		return errors.New("plugin command import source has invalid size")
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	reader := &contextImportReader{ctx: ctx, reader: io.LimitReader(source, expected+1)}
-	written, err := io.Copy(destination, reader)
-	if err != nil {
-		return err
-	}
-	if written != expected {
-		return fmt.Errorf("plugin command import source changed during snapshot (expected %d bytes, copied %d)", expected, written)
-	}
-	_, err = destination.Seek(0, io.SeekStart)
-	return err
-}
-
-type contextImportReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r *contextImportReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
-}
-
 func (d *Dispatcher) reserveImportQuota(run RunRecord, sourceSize int64) (func(), error) {
 	if sourceSize < 0 || sourceSize >= (1<<62) {
 		return nil, errors.New("plugin command import source has invalid size")
 	}
-	reservation := sourceSize * 2 // outer snapshot plus AddResource scratch copy
+	reservation := sourceSize // AddResource's single managed snapshot copy
 	limit := effectiveQuota(d.deps.Settings.PerRunQuota(), defaultPerRunQuota)
 	d.importQuotaMu.Lock()
 	defer d.importQuotaMu.Unlock()

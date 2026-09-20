@@ -63,9 +63,10 @@ func (ctx *MahresourcesContext) ValidateImport(validation plugin_commands.Import
 	return nil
 }
 
-// ImportResource consumes only a host-created snapshot. The acting principal is
-// rebound immediately before AddResource so both scope callbacks and the global
-// create stamp use the claim's current, enabled account.
+// ImportResource consumes only a host-admitted exchange descriptor and routes
+// its one immutable copy through the host-owned scratch factory. The acting
+// principal is rebound immediately before AddResource so both scope callbacks
+// and the global create stamp use the claim's current, enabled account.
 func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source plugin_commands.ImportSource, fields plugin_commands.ResourceFields, scratchDir string) (uint, error) {
 	if err := callCtx.Err(); err != nil {
 		return 0, err
@@ -93,6 +94,9 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 	file := source.File
 	if file == nil || source.CreateScratch == nil {
 		return 0, fmt.Errorf("plugin command import snapshot capability is unavailable")
+	}
+	if source.SourceSize < 0 {
+		return 0, fmt.Errorf("plugin command import source has invalid size")
 	}
 	info, err := file.Stat()
 	if err != nil {
@@ -131,7 +135,7 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 		Meta: meta, OriginalName: source.FileName,
 	}}
 	resource, err := bound.addResourceWithOptions(
-		&contextImportFile{File: file, ctx: callCtx}, source.FileName, query,
+		newContextImportFile(file, callCtx, source.SourceSize), source.FileName, query,
 		addResourceOptions{ScratchDir: scratchDir, CreateScratch: source.CreateScratch},
 	)
 	if err != nil {
@@ -145,19 +149,56 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 }
 
 type contextImportFile struct {
-	File *os.File
-	ctx  context.Context
+	file        *os.File
+	ctx         context.Context
+	remaining   int64
+	verifiedEOF bool
+}
+
+func newContextImportFile(file *os.File, ctx context.Context, expected int64) *contextImportFile {
+	return &contextImportFile{file: file, ctx: ctx, remaining: expected}
 }
 
 func (f *contextImportFile) Read(p []byte) (int, error) {
-	select {
-	case <-f.ctx.Done():
-		return 0, f.ctx.Err()
-	default:
-		return f.File.Read(p)
+	if err := f.ctx.Err(); err != nil {
+		return 0, err
 	}
+	if f.verifiedEOF {
+		return 0, io.EOF
+	}
+	if f.remaining > 0 {
+		if int64(len(p)) > f.remaining {
+			p = p[:f.remaining]
+		}
+		n, err := f.file.Read(p)
+		f.remaining -= int64(n)
+		if errors.Is(err, io.EOF) {
+			if f.remaining != 0 {
+				return n, fmt.Errorf("plugin command import source changed during snapshot: ended %d bytes early", f.remaining)
+			}
+			f.verifiedEOF = true
+			if n > 0 {
+				return n, nil
+			}
+		}
+		return n, err
+	}
+
+	var probe [1]byte
+	n, err := f.file.Read(probe[:])
+	if n != 0 {
+		return 0, fmt.Errorf("plugin command import source changed during snapshot: grew beyond admitted size")
+	}
+	if errors.Is(err, io.EOF) {
+		f.verifiedEOF = true
+		return 0, io.EOF
+	}
+	return 0, err
 }
 
-func (f *contextImportFile) Close() error { return f.File.Close() }
+// The dispatcher owns the admitted descriptor through durable success and
+// source cleanup. AddResource currently does not close its input, but keeping
+// Close non-owning preserves that lifecycle if the internal caller changes.
+func (f *contextImportFile) Close() error { return nil }
 
 var _ io.ReadCloser = (*contextImportFile)(nil)

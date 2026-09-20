@@ -3,8 +3,10 @@ package application_context
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,9 +146,58 @@ func testImportSource(t *testing.T, path, scratch, name, runID, importID string)
 		}
 		return temp, func() error { return os.Remove(temp.Name()) }, nil
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
 	return plugin_commands.ImportSource{
-		File: file, CreateScratch: factory, FileName: name, RunID: runID, ImportID: importID,
+		File: file, SourceSize: info.Size(), CreateScratch: factory, FileName: name, RunID: runID, ImportID: importID,
 	}, func() { _ = file.Close() }
+}
+
+func TestContextImportFileRequiresExactSourceSize(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      string
+		expected  int64
+		cancelled bool
+		want      string
+		wantError string
+	}{
+		{name: "exact", body: "payload", expected: 7, want: "payload"},
+		{name: "short", body: "short", expected: 6, wantError: "changed during snapshot"},
+		{name: "long", body: "too-long", expected: 3, wantError: "changed during snapshot"},
+		{name: "cancelled", body: "payload", expected: 7, cancelled: true, wantError: context.Canceled.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "source")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			if tc.cancelled {
+				cancel()
+			} else {
+				defer cancel()
+			}
+			body, err := io.ReadAll(newContextImportFile(file, ctx, tc.expected))
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("ReadAll error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil || string(body) != tc.want {
+				t.Fatalf("ReadAll = %q, %v", body, err)
+			}
+		})
+	}
 }
 
 func TestPluginCommandImportAcceptsImplicitRootInAuthOffMode(t *testing.T) {
@@ -383,8 +434,13 @@ func TestPluginCommandImportSameContentConcurrencyUsesOneValidBackingFile(t *tes
 				}
 				return temp, func() error { return os.Remove(temp.Name()) }, nil
 			}
+			info, err := file.Stat()
+			if err != nil {
+				errs[i] = err
+				return
+			}
 			ids[i], errs[i] = ctx.ImportResource(context.Background(), plugin_commands.ImportSource{
-				File: file, CreateScratch: factory, FileName: "result.bin", RunID: "run", ImportID: []string{"claim-one", "claim-two"}[i],
+				File: file, SourceSize: info.Size(), CreateScratch: factory, FileName: "result.bin", RunID: "run", ImportID: []string{"claim-one", "claim-two"}[i],
 			}, plugin_commands.ResourceFields{Name: "same"}, root)
 		}(i)
 	}
