@@ -10,7 +10,7 @@ Approved design: `docs/superpowers/specs/2026-09-20-plugin-command-recovery-cont
 Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-containment.md`
 
 - [x] Task 1: Pair a private boot-session UUID with PGID persistence.
-- [ ] Task 2: Preserve zombie exclusion in Linux process inspection.
+- [x] Task 2: Preserve zombie exclusion in Linux process inspection.
 - [ ] Task 3: Aggregate recovery blockers and classify prior-boot rows.
 - [ ] Task 4: Preserve the runtime-lease busy sentinel across the public boundary.
 - [ ] Task 5: Introduce the command-runtime controller and heal lease contention.
