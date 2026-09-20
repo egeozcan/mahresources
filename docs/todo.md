@@ -3,7 +3,23 @@
 **Goal:** Execute `docs/superpowers/plans/2026-09-19-plugin-commands.md`
 test-first in the isolated `feature/plugin-commands` worktree.
 
-## Plan
+## Recovery containment follow-up (2026-09-20)
+
+Approved design: `docs/superpowers/specs/2026-09-20-plugin-command-recovery-containment-design.md`
+
+Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-containment.md`
+
+- [ ] Task 1: Pair a private boot-session UUID with PGID persistence.
+- [ ] Task 2: Preserve zombie exclusion in Linux process inspection.
+- [ ] Task 3: Aggregate recovery blockers and classify prior-boot rows.
+- [ ] Task 4: Preserve the runtime-lease busy sentinel across the public boundary.
+- [ ] Task 5: Introduce the command-runtime controller and heal lease contention.
+- [ ] Task 6: Quarantine blocked recovery, log it, and activate after healing.
+- [ ] Task 7: Make administrator cancellation accurate during quarantine.
+- [ ] Task 8: Bound live re-signalling, back off polling, and audit pinned capacity.
+- [ ] Task 9: Align invariants, complete verification, and record evidence.
+
+## Original implementation plan
 
 - [x] Task 1: Make shared resource destinations replay-safe.
 - [x] Task 2: Parse and compare command declarations.
