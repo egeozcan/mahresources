@@ -9780,7 +9780,7 @@ Validation: focused regressions reproduced missing endpoint routing/prices befor
 
 RED evidence reproduced the reviewed defects: a blocked `SetRunProcessGroup` let a descendant survive terminal publication; repeated nonterminal import submission retained the plugin action waitgroup; trailing-separator trusted paths passed startup but failed execution; a second startup could enter recovery against a live owner; and bounded shutdown stamped claimed work terminal. GREEN coverage now includes a real subprocess lease exclusion/release test, a real process-group shutdown→restart recovery test, blocked-PGID descendant coverage, pending/running callback teardown checks, path normalization cases, and claimed import shutdown recovery checks. Focused lifecycle races passed 100 times under `-race`; callback ownership passed 50 times; the complete `plugin_commands` race suite, tagged SQLite/PostgreSQL command selections, build, vet, docs generation/lint, and SQLite/PostgreSQL command-history E2E all pass.
 
-The review suggestion to unlink every successful import was rejected: the approved spec and Task 8 require `imported-pending-delete` when descriptor-atomic unlink is unavailable. The descriptor-anchored retention sweep remains the safe deletion owner.
+That import-cleanup decision was superseded by the final architecture review. Successful imports now unlink the identity-checked descriptor-relative source immediately after durable resource/map success. Cleanup trouble remains separate as `source_delete_pending`; the successful import's `error` stays empty, and retention remains the fallback owner.
 
 A final runtime follow-up closes three review blockers. Shutdown now retains the
 staging-root runtime lease when worker admission has closed but a claimed command
@@ -9806,3 +9806,30 @@ the sweep result just before the sweep released its active count, retaining an
 otherwise quiescent lease. Sweeps now release ownership before sending their
 result, and Stop waits for the owner's done barrier after receiving its reply;
 the channel handoffs establish the release ordering without polling.
+
+### Final architecture review remediation
+
+- [x] Give live workers creation-time authority over their own process groups; defer group polling until parent exit or termination.
+- [x] Keep live unverifiable recovered groups nonterminal and refuse command-runtime startup.
+- [x] Delete successful import sources and expose cleanup separately as `source_delete_pending`.
+- [x] Remove the redundant outer import snapshot and enforce the two-copy quota boundary.
+- [x] Bound retention scans with durable `exchange_removed_at` markers.
+- [x] Cache sampled global staging usage outside admission.
+- [x] Give each history cancellation action a run-specific accessible name.
+
+| Finding | Root cause and RED evidence | Fix |
+|---|---|---|
+| Live descendants survived on Darwin | The live runner required environment-based recovery identity before signaling the group it had just created; the real Darwin child regression stayed alive. | Creation-time authority, deferred polling and death-before-terminal ordering (`cb04c966`). |
+| Recovery could settle a live unverifiable group | Inspection/termination errors fell through to terminal persistence; recovery tests observed mutation instead of startup refusal. | Preserve the nonterminal row and fail runtime startup (`0a7eeb79`). |
+| Successful imports retained source bytes | The Unix unlink helper unconditionally returned an unavailable sentinel; success and cleanup-failure regressions both retained bytes. | Identity-check then `unlinkat`, with transactional `source_delete_pending` kept separate from `error` (`a278ef8c`). |
+| Import quota modeled three copies | Admission reserved source plus two snapshots; an exact `2 × source` boundary failed. | Stream the admitted descriptor through an exact-size reader into AddResource's sole scratch copy (`ed9e8703`). |
+| Retention revisited all history | Every sweep selected every old terminal row; the bounded-order regression had no durable cursor. | Limited unswept batches and `exchange_removed_at` marking after deletion/absence (`12fa4e24`). |
+| Admission walked the staging tree | `Prepare` synchronously called `WalkDir`; a measurement counter advanced during admission. | One shared fail-closed usage cache refreshed at startup and after sweeps (`045d0c3a`). |
+| Cancellation actions shared a name | Detail and list controls all exposed `Cancel queued run`; rendered-page assertions could not distinguish them. | Run- and location-specific accessible names, covered by Go and keyboard E2E tests (`ed20a3cc`). |
+
+Focused GREEN and race verification covers process/recovery ordering,
+transactional cleanup flags, exact-size single-snapshot imports, bounded ordered
+retention, cache refresh/publication, and keyboard-accessible history
+cancellation. The intentional no-PGID crash limitation remains: without a
+persisted process-group id, recovery cannot identify descendants safely, so it
+records `interrupted + output_unverified` and permits only `discard_run`.

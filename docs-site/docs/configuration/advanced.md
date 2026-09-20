@@ -370,15 +370,27 @@ not inherit the server's proxy or plugin egress policy as confinement.
 
 Quotas are sampled, so a fast writer can briefly overshoot. Size the per-run
 quota for **merge peak**, not final output: separate video and audio plus muxed
-output can consume roughly twice the final file. Import temporary snapshots,
-including the upload scratch copy, count toward both limits. The global quota
-refuses new commands but permits imports that drain existing staging bytes.
-MemoryFS still uses an OS staging root and imported resource copies consume RAM.
+output can consume roughly twice the final file. An import streams the admitted
+source into AddResource's one immutable scratch copy, so its staging peak is
+approximately twice the source size. The global sample is refreshed at startup
+and after retention sweeps; command admission reads that cache without walking
+the staging tree. The global quota refuses new commands but permits imports that
+drain existing staging bytes. MemoryFS still uses an OS staging root and imported
+resource copies consume RAM.
+
+A live worker has creation-time authority to terminate the process group it
+started. Restart recovery has only a persisted process-group identity and must
+verify ownership before signaling; a live unverifiable group leaves its run
+nonterminal and refuses command-runtime startup. Successful imports persist the
+resource first, then unlink the source. Cleanup trouble is exposed as
+`source_delete_pending`, not as an import error.
 
 On startup, recovery resolves every queued/running run and pending/running
-import before plugin VMs load. Sweeps skip nonterminal work and active leases.
-Only output tails and expired exchange bytes are pruned; durable run/import/map
-rows remain for replay idempotency and administrator history.
+import before plugin VMs load. Sweeps skip nonterminal work and active leases,
+process bounded batches, and stamp successfully removed or already absent
+exchange directories so historical rows are not rescanned. Only output tails
+and expired exchange bytes are pruned; durable run/import/map rows remain for
+replay idempotency and administrator history.
 
 ## Plugin Configuration
 

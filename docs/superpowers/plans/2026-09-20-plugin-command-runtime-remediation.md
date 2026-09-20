@@ -514,7 +514,7 @@ git commit -m "fix: label command cancellation controls"
 **Interfaces:**
 - Documents local versus recovery process authority, recovery startup refusal, immediate successful-source drain, `source_delete_pending`, two-copy sizing, sampled global quota, bounded sweep markers, and unique cancellation names.
 
-- [ ] **Step 1: Update documentation**
+- [x] **Step 1: Update documentation**
 
 Keep `CLAUDE.md` invariant-focused. In the Lua API reference, document:
 
@@ -524,11 +524,11 @@ imports[name].source_delete_pending -- boolean, not an import error
 
 and state that ordinary success removes source bytes immediately. In advanced configuration, state per-run import staging needs approximately `2 ×` the largest single source (plus other retained files), while global admission uses the most recent startup/sweep sample.
 
-- [ ] **Step 2: Record RED/GREEN evidence and task completion**
+- [x] **Step 2: Record RED/GREEN evidence and task completion**
 
 Add a remediation review section to `docs/todo.md` with each finding, root cause, test, fix commit, and remaining no-pgid limitation. Check off completed plan items only after their corresponding verification command passes.
 
-- [ ] **Step 3: Run documentation and generated-file checks**
+- [x] **Step 3: Run documentation and generated-file checks**
 
 ```bash
 npm run build-js
@@ -541,7 +541,7 @@ git diff --check
 
 Expected: all checks pass and generated committed assets are either unchanged or intentionally staged.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add CLAUDE.md docs-site/docs/features/plugin-lua-api.md docs-site/docs/configuration/advanced.md docs/todo.md docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md public/tailwind.css public/dist

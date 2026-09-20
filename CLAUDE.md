@@ -495,20 +495,28 @@ Command and import bytes live in an OS staging root even when resources use
 MemoryFS; in that mode staging and imported resource copies consume RAM. Quotas
 are sampled, so brief overshoot is possible, and the per-run quota must cover
 merge peak (roughly twice final size while separate audio/video and mux output
-coexist). Exactly one process may own a staging root: a startup-held advisory
-lease refuses a second command runtime before it can recover or sweep live work.
-Recovery completes before plugin VMs load; the dispatcher's own sweep
-removes only expired, terminal, unleased exchange folders and prunes output
-rows without deleting durable run/import history.
+coexist). Import streams the admitted source into AddResource's one scratch copy,
+so staging peaks near twice the source; the global sample is refreshed outside
+admission at startup and after sweeps. Exactly one process may own a staging
+root: a startup-held advisory lease refuses a second command runtime before it
+can recover or sweep live work.
+
+A live worker may terminate the process group it created; recovery may signal a
+persisted group only after identity verification. A surviving unverifiable group
+keeps its row nonterminal and command-runtime startup closed. Sweeps process
+bounded unswept terminal batches and stamp `exchange_removed_at` after deletion
+or confirmed absence, while output pruning retains durable run/import history.
 
 Pending commands/imports stay in dispatcher-owned per-plugin queues; only active
 work enters the bounded managed live lane, whose occupancy is derived from the
 job registry. Lua callbacks are at-most-once and only list, enqueue or discard;
 resource bytes move outside the VM lock. The durable import map is the recovery
 source of truth: interrupted claims re-drive with the same id, while actor and
-plugin generation are revalidated before work starts. Exchange access stays
-flat, descriptor-relative and no-follow; intentional actorlessness is stored
-separately from an actor nulled by deletion.
+plugin generation are revalidated before work starts. Successful imports persist
+the resource before unlinking the source; cleanup trouble sets
+`source_delete_pending` and leaves the successful import's `error` empty.
+Exchange access stays flat, descriptor-relative and no-follow; intentional
+actorlessness is stored separately from an actor nulled by deletion.
 
 ### Plugin static assets
 

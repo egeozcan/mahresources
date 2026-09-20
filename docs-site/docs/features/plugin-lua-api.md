@@ -119,6 +119,7 @@ mah.fs.discard_run(run_id) -> true | nil, error
                 resource_id = 42 | nil,
                 status = "succeeded",
                 error = nil,
+                source_delete_pending = false,
             },
         },
     },
@@ -163,8 +164,14 @@ Import statuses are exactly `pending`, `running`, `succeeded`, `failed`,
     name = "video.mp4",
     resource_id = 42 | nil,
     error = "message" | nil,
+    source_delete_pending = false,
 }
 ```
+
+The resource and successful import map are persisted before the admitted source
+is unlinked. A cleanup problem leaves the import successful with an empty
+`error` and `source_delete_pending = true`; the retention sweep later removes
+those bytes. The flag is cleanup state, not a reason to retry resource creation.
 
 The durable import map is authoritative when callback delivery is lost. On a
 restart, nonterminal claims become `interrupted`; a later `create_resource` call
