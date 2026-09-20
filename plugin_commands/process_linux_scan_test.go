@@ -91,6 +91,46 @@ func TestLinuxInspectorFindsOwnedLiveTargetMember(t *testing.T) {
 	}
 }
 
+func TestLinuxInspectorUsesStatusFallbackForOwnedLiveTargetMember(t *testing.T) {
+	root := fakeProcTree(t, linuxProc{
+		PID: 213, PGID: 210, State: "S", RunID: "run-a", MalformedStat: true,
+	})
+	got, err := inspectLinuxGroup(root, 210, "run-a", func(int) error {
+		t.Fatal("live target found through status must not use the fallback probe")
+		return nil
+	})
+	if err != nil || got.State != GroupAliveOwned || len(got.PIDs) != 1 || got.PIDs[0] != 213 {
+		t.Fatalf("identity=%+v err=%v", got, err)
+	}
+}
+
+func TestLinuxInspectorUsesStatusFallbackForZombieTargetMember(t *testing.T) {
+	root := fakeProcTree(t, linuxProc{
+		PID: 214, PGID: 210, State: "Z", MalformedStat: true,
+	})
+	got, err := inspectLinuxGroup(root, 210, "run-a", func(int) error {
+		t.Fatal("zombie target found through status must not use the fallback probe")
+		return nil
+	})
+	if err != nil || got.State != GroupDead {
+		t.Fatalf("identity=%+v err=%v", got, err)
+	}
+}
+
+func TestLinuxInspectorStatusFallbackLiveTargetWinsOverZombieTarget(t *testing.T) {
+	root := fakeProcTree(t,
+		linuxProc{PID: 215, PGID: 210, State: "Z"},
+		linuxProc{PID: 216, PGID: 210, State: "S", RunID: "run-a", MalformedStat: true},
+	)
+	got, err := inspectLinuxGroup(root, 210, "run-a", func(int) error {
+		t.Fatal("mixed target group must not use the fallback probe")
+		return nil
+	})
+	if err != nil || got.State != GroupAliveOwned || len(got.PIDs) != 1 || got.PIDs[0] != 216 {
+		t.Fatalf("identity=%+v err=%v", got, err)
+	}
+}
+
 func TestLinuxInspectorUsesProbeWhenNoTargetWasObserved(t *testing.T) {
 	root := fakeProcTree(t, linuxProc{PID: 213, PGID: 999, State: "S"})
 	got, err := inspectLinuxGroup(root, 210, "run-a", func(pid int) error {
