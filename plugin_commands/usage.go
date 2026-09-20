@@ -64,7 +64,7 @@ func (c *StagingUsageCache) Current() (int64, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if !c.initialized {
-		return 0, fmt.Errorf("plugin command staging usage has not been sampled")
+		return 0, fmt.Errorf("global staging usage is unavailable: no sample has been published")
 	}
 	return c.bytes, c.err
 }

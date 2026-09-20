@@ -23,16 +23,44 @@ func TestPrepareUsesCachedGlobalUsageWithoutRescanning(t *testing.T) {
 	if err := usage.Refresh(root); err != nil {
 		t.Fatal(err)
 	}
-	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1024, global: 1024}
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 4096, global: 1024}
 	executor := NewExecutor(RunnerDependencies{Store: newRunnerTestStore(), Settings: settings, Usage: usage})
-	runID := strings.Repeat("c", 32)
-	run := QueuedRun{RunID: runID, ExchangeDir: filepath.Join(root, "plugin_exchange", "plug", runID), Request: CommandRequest{PluginName: "plug"}}
+	prepare := executor.(interface{ Prepare(QueuedRun) error })
+	firstID := strings.Repeat("c", 32)
+	first := QueuedRun{RunID: firstID, ExchangeDir: filepath.Join(root, "plugin_exchange", "plug", firstID), Request: CommandRequest{PluginName: "plug"}}
+	if err := os.WriteFile(filepath.Join(root, "new-after-sample"), []byte(strings.Repeat("x", 2048)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
+	if err := prepare.Prepare(first); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("usage measurements = %d, want startup sample only", got)
+	}
+	executor.(interface{ Cleanup(QueuedRun) }).Cleanup(first)
+
+	if err := usage.Refresh(root); err != nil {
+		t.Fatal(err)
+	}
+	secondID := strings.Repeat("d", 32)
+	second := QueuedRun{RunID: secondID, ExchangeDir: filepath.Join(root, "plugin_exchange", "plug", secondID), Request: CommandRequest{PluginName: "plug"}}
+	if err := prepare.Prepare(second); err == nil || !strings.Contains(err.Error(), "global staging quota") {
+		t.Fatalf("Prepare after refresh error = %v, want quota refusal", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("usage measurements = %d, want only explicit refreshes", got)
+	}
+}
+
+func TestPrepareRefusesAnUninitializedGlobalUsageCache(t *testing.T) {
+	root := t.TempDir()
+	settings := runnerTestSettings{root: root, commandDir: t.TempDir(), perRun: 1024, global: 1024}
+	executor := NewExecutor(RunnerDependencies{Store: newRunnerTestStore(), Settings: settings, Usage: NewStagingUsageCache()})
+	runID := strings.Repeat("e", 32)
+	run := QueuedRun{RunID: runID, ExchangeDir: filepath.Join(root, "plugin_exchange", "plug", runID), Request: CommandRequest{PluginName: "plug"}}
+	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err == nil || !strings.Contains(err.Error(), "global staging usage is unavailable") {
+		t.Fatalf("Prepare error = %v, want unavailable sample refusal", err)
 	}
 }
 
