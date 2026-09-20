@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -159,6 +160,83 @@ func createControllerRecoveryRun(t *testing.T, ctx *MahresourcesContext, runID s
 	require.NoError(t, ctx.SetRunProcessGroup(runID, pgid, "same-boot"))
 }
 
+const controllerHealingPluginName = "controller-healing-host"
+
+func newControllerHealingPluginContext(t *testing.T) *MahresourcesContext {
+	t.Helper()
+	pluginDir := t.TempDir()
+	writeConsentTestPlugin(t, pluginDir, controllerHealingPluginName, `plugin = {
+  name = "controller-healing-host", version = "1.0", api_version = 1,
+  capabilities = {"commands", "inject"},
+  commands = {{name="probe", argv={"missing-controller-probe", "{{value}}"}}}
+}
+function init()
+  mah.inject("page_bottom", function()
+    local id, command_err = mah.commands.run("probe", {value="healed"})
+    local runs, fs_err = mah.fs.runs()
+    if command_err ~= nil or fs_err ~= nil then
+      return "command=" .. tostring(command_err) .. "|fs=" .. tostring(fs_err)
+    end
+    return "ok:" .. tostring(id) .. ":" .. tostring(#runs)
+  end)
+end
+`)
+	ctx := createTestContextWithPlugins(t, pluginDir)
+	require.NoError(t, ctx.db.AutoMigrate(
+		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+	))
+	_, err := ctx.EnsurePluginStates()
+	require.NoError(t, err)
+	require.NoError(t, ctx.SetPluginEnabledWithOptions(
+		controllerHealingPluginName, true, PluginEnableOptions{ConfirmCommands: true},
+	))
+	t.Cleanup(ctx.PluginManager().Close)
+	return ctx
+}
+
+func renderControllerHealingPlugin(ctx *MahresourcesContext) string {
+	return ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
+}
+
+func requireControllerHealingPluginQuarantined(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
+	output := renderControllerHealingPlugin(ctx)
+	require.Contains(t, output, "command=plugin command runtime is unavailable")
+	require.Contains(t, output, "fs=plugin command runtime is unavailable")
+}
+
+func TestPluginCommandControllerRecoveryQuarantinePublishesBothHostsToLoadedPlugin(t *testing.T) {
+	ctx := newControllerHealingPluginContext(t)
+	root := t.TempDir()
+	createControllerRecoveryRun(t, ctx, "loaded-plugin-blocker", 4341)
+
+	inspector := &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = inspector
+	cfg.recoveryInterval = 10 * time.Millisecond
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: root, commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	require.True(t, ctx.PluginManager().IsEnabled(controllerHealingPluginName))
+	requireControllerHealingPluginQuarantined(t, ctx)
+
+	inspector.set(plugin_commands.GroupDead)
+	var healedOutput string
+	require.Eventually(t, func() bool {
+		healedOutput = renderControllerHealingPlugin(ctx)
+		return strings.HasPrefix(healedOutput, "ok:")
+	}, time.Second, 5*time.Millisecond)
+	require.True(t, ctx.PluginManager().IsEnabled(controllerHealingPluginName), "healing must not reload the plugin")
+
+	var submitted models.PluginCommandRun
+	require.NoError(t, ctx.db.Where("plugin_name = ?", controllerHealingPluginName).First(&submitted).Error)
+	require.Equal(t, "probe", submitted.CommandName)
+}
+
 func TestPluginCommandControllerRecoveryQuarantineHeals(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	root := t.TempDir()
@@ -308,6 +386,100 @@ func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing
 	require.NoError(t, ctx.db.Model(&models.LogEntry{}).
 		Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelInfo).Count(&infoCount).Error)
 	require.Equal(t, int64(1), infoCount, "healing must emit exactly one information log")
+}
+
+func TestPluginCommandControllerStopDuringHealingRetainsLeaseUntilDispatcherQuiesces(t *testing.T) {
+	ctx := newControllerHealingPluginContext(t)
+	root := t.TempDir()
+	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
+	createControllerRecoveryRun(t, ctx, "stop-healing-blocker", 5351)
+
+	inspector := &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	executor := &lifecycleStubbornExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	publishEntered := make(chan struct{})
+	allowPublish := make(chan struct{})
+	publishErr := make(chan error, 1)
+	var pending *plugin_commands.Dispatcher
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = inspector
+	cfg.recoveryInterval = 10 * time.Millisecond
+	cfg.buildRuntime = func() (*pluginCommandActiveRuntime, error) {
+		leases := plugin_commands.NewLeaseManager()
+		pending = plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+			Store: ctx, BootSessionID: "same-boot", Jobs: lifecycleAsyncJobs{}, Executor: executor,
+			Settings: settings, Inspector: inspector, Leases: leases,
+		})
+		return &pluginCommandActiveRuntime{
+			dispatcher: pending,
+			exchange:   plugin_commands.NewExchangeWithLeases(ctx, settings, leases),
+		}, nil
+	}
+	cfg.beforePublish = func() {
+		owner := uint(19)
+		_, err := pending.Submit(plugin_commands.CommandRequest{
+			PluginName: controllerHealingPluginName, ActorUserID: &owner,
+			Declaration: plugin_commands.Declaration{Name: "held", Argv: []string{"held"}, Timeout: time.Minute},
+		})
+		if err == nil {
+			select {
+			case <-executor.started:
+			case <-time.After(time.Second):
+				err = errors.New("healing dispatcher worker did not start")
+			}
+		}
+		publishErr <- err
+		close(publishEntered)
+		<-allowPublish
+	}
+
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), settings, cfg))
+	requireControllerHealingPluginQuarantined(t, ctx)
+	inspector.set(plugin_commands.GroupDead)
+	select {
+	case <-publishEntered:
+	case <-time.After(time.Second):
+		close(executor.release)
+		t.Fatal("recovery retry did not reach the publication barrier")
+	}
+	require.NoError(t, <-publishErr)
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- ctx.StopPluginCommands() }()
+	require.Eventually(t, func() bool {
+		ctx.pluginCommandController.mu.Lock()
+		defer ctx.pluginCommandController.mu.Unlock()
+		return ctx.pluginCommandController.state == pluginCommandRuntimeStopping
+	}, time.Second, time.Millisecond)
+	second, leaseErr := plugin_commands.AcquireRuntimeLease(root)
+	require.ErrorIs(t, leaseErr, plugin_commands.ErrRuntimeLeaseBusy)
+	require.Nil(t, second)
+	select {
+	case err := <-stopped:
+		close(executor.release)
+		t.Fatalf("stop returned before the healing retry left publication: %v", err)
+	default:
+	}
+
+	close(allowPublish)
+	select {
+	case err := <-stopped:
+		close(executor.release)
+		t.Fatalf("stop returned before the healing dispatcher became quiescent: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	second, leaseErr = plugin_commands.AcquireRuntimeLease(root)
+	require.ErrorIs(t, leaseErr, plugin_commands.ErrRuntimeLeaseBusy)
+	require.Nil(t, second)
+
+	close(executor.release)
+	require.NoError(t, <-stopped)
+	_, activeErr := ctx.pluginCommandActive()
+	requireGenericCommandQuarantineError(t, activeErr)
+	requireControllerHealingPluginQuarantined(t, ctx)
+	second, leaseErr = plugin_commands.AcquireRuntimeLease(root)
+	require.NoError(t, leaseErr)
+	require.NoError(t, second.Close())
 }
 
 func TestPluginCommandControllerStopDuringAcquireCannotPublish(t *testing.T) {
