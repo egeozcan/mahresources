@@ -16,10 +16,13 @@ func (commandHistoryPageStub) GetPluginCommandRun(id string) (plugin_commands.Ru
 	exitCode := 0
 	return plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: id, Status: plugin_commands.RunStatusQueued, ExitCode: &exitCode}, Output: plugin_commands.RunOutput{RunID: id}}, true, nil
 }
+func (commandHistoryPageStub) PluginCommandRuntimeAvailability() (bool, string) {
+	return false, "commands are quarantined until automatic recovery succeeds; see /logs"
+}
 
 func TestPluginCommandHistoryContextProvidesListAndDetail(t *testing.T) {
 	ctx := PluginCommandHistoryContextProvider(commandHistoryPageStub{})(httptest.NewRequest("GET", "/admin/plugin-command-runs?id=run-1", nil))
-	if ctx["commandRunsCount"] != int64(1) || ctx["commandRun"] == nil || ctx["outputAvailable"] != true || ctx["exitCodeAvailable"] != true {
+	if ctx["commandRunsCount"] != int64(1) || ctx["commandRun"] == nil || ctx["outputAvailable"] != true || ctx["exitCodeAvailable"] != true || ctx["commandRuntimeAvailable"] != false || ctx["commandRuntimeUnavailableReason"] == "" {
 		t.Fatalf("context = %#v", ctx)
 	}
 }

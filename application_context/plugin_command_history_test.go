@@ -5,8 +5,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"mahresources/plugin_commands"
 )
+
+func TestPluginCommandHistoryCancelRefusesQuarantineWithoutDurableMutation(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	runID := "queued-during-quarantine"
+	require.NoError(t, ctx.CreateRun(
+		plugin_commands.RunRecord{
+			ID: runID, PluginName: "plug", CommandName: "download", ParamsJSON: `{}`,
+			Status: plugin_commands.RunStatusQueued, CreatedAt: time.Now().UTC(),
+		},
+		plugin_commands.RunOutput{RunID: runID, ArgvJSON: `[]`, CreatedAt: time.Now().UTC()},
+	))
+
+	err := ctx.CancelPluginCommandRun(runID)
+	require.ErrorIs(t, err, plugin_commands.ErrCommandRuntimeQuarantined)
+	record, _, readErr := ctx.Run(runID)
+	require.NoError(t, readErr)
+	require.False(t, record.CancelRequested)
+
+	available, reason := ctx.PluginCommandRuntimeAvailability()
+	require.False(t, available)
+	require.Contains(t, reason, "automatic recovery")
+	require.Contains(t, reason, "/logs")
+}
+
+func TestPluginCommandHistoryCancelMissingRunIsNotFoundOnlyWithActiveDispatcher(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{Store: ctx})
+	installPluginCommandActiveForTest(ctx, dispatcher, nil, nil)
+
+	err := ctx.CancelPluginCommandRun("missing")
+	require.ErrorIs(t, err, plugin_commands.ErrRunNotFound)
+	available, reason := ctx.PluginCommandRuntimeAvailability()
+	require.True(t, available)
+	require.Empty(t, reason)
+}
 
 func TestPluginCommandHistoryIsBoundedNewestFirstAndOutputIsDetailOnly(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)

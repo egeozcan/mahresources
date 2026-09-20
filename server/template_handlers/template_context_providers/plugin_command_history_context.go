@@ -17,6 +17,9 @@ func PluginCommandHistoryContextProvider(context PluginCommandHistoryPageContext
 		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Plugin command history"
 		ctx["notice"] = request.URL.Query().Get("notice")
+		available, reason := context.PluginCommandRuntimeAvailability()
+		ctx["commandRuntimeAvailable"] = available
+		ctx["commandRuntimeUnavailableReason"] = reason
 		page := http_utils.GetPageParameter(request)
 		offset := int((page - 1) * int64(pluginCommandHistoryPageSize))
 		runs, count, err := context.GetPluginCommandRuns(offset, pluginCommandHistoryPageSize)

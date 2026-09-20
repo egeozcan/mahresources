@@ -48,7 +48,20 @@ func (ctx *MahresourcesContext) GetPluginCommandRun(id string) (plugin_commands.
 	return plugin_commands.RunView{RunRecord: record, Output: output, Imports: mapped}, output.RunID != "", nil
 }
 
-// CancelPluginCommandRun is the single administrator seam. It delegates to the
+// PluginCommandRuntimeAvailability reports whether this process can enforce a
+// command mutation. The reason is intentionally the same actionable, generic
+// quarantine explanation returned to command callers; private blocker details
+// remain in /logs.
+func (ctx *MahresourcesContext) PluginCommandRuntimeAvailability() (available bool, reason string) {
+	if _, err := ctx.pluginCommandActive(); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
+// CancelPluginCommandRun is the single administrator seam. It first loads the
+// active controller snapshot, so a quarantined process never writes a durable
+// cancellation label it cannot enforce. Once active it delegates to the
 // dispatcher so history and live-cockpit cancellation share the durable latch
 // and pre-fork/process-group handling.
 func (ctx *MahresourcesContext) CancelPluginCommandRun(id string) error {

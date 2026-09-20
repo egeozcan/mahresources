@@ -166,6 +166,7 @@ type PluginManagePageContext interface {
 type PluginCommandHistoryPageContext interface {
 	GetPluginCommandRuns(offset, limit int) ([]plugin_commands.RunRecord, int64, error)
 	GetPluginCommandRun(id string) (plugin_commands.RunView, bool, error)
+	PluginCommandRuntimeAvailability() (available bool, reason string)
 }
 
 // QueryPageContext serves the saved-query pages.

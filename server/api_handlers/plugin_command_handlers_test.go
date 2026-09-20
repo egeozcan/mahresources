@@ -118,13 +118,23 @@ func TestPluginCommandHistoryDetailReportsPrunedOutputAndZeroExitCode(t *testing
 
 func TestPluginCommandCancelMapsTypedErrorsAndRedirectsHTML(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want int
+		name         string
+		err          error
+		want         int
+		wantRetry    string
+		bodyContains string
 	}{
 		{name: "missing", err: plugin_commands.ErrRunNotFound, want: http.StatusNotFound},
 		{name: "terminal", err: plugin_commands.ErrRunNotCancellable, want: http.StatusConflict},
 		{name: "live state conflict", err: &download_queue.StateConflictError{JobID: "run-1", Action: "cancelled", Status: download_queue.JobStatusCompleted}, want: http.StatusConflict},
+		{
+			name: "runtime quarantine",
+			err: &plugin_commands.RuntimeQuarantinedError{
+				Reason:             "commands are quarantined until automatic recovery succeeds; see /logs",
+				RetryAfterDuration: 1500 * time.Millisecond,
+			},
+			want: http.StatusServiceUnavailable, wantRetry: "2", bodyContains: "automatic recovery",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,6 +146,12 @@ func TestPluginCommandCancelMapsTypedErrorsAndRedirectsHTML(t *testing.T) {
 			GetPluginCommandRunCancelHandler(stub)(recorder, request)
 			if recorder.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", recorder.Code, tc.want, recorder.Body.String())
+			}
+			if got := recorder.Header().Get("Retry-After"); got != tc.wantRetry {
+				t.Fatalf("Retry-After = %q, want %q", got, tc.wantRetry)
+			}
+			if tc.bodyContains != "" && !strings.Contains(recorder.Body.String(), tc.bodyContains) {
+				t.Fatalf("body = %q, want actionable text containing %q", recorder.Body.String(), tc.bodyContains)
 			}
 		})
 	}

@@ -9,6 +9,13 @@
     </p>
     {% endif %}
 
+    {% if not commandRuntimeAvailable %}
+    <p id="command-runtime-quarantine-reason" role="status" data-testid="command-runtime-quarantine-notice"
+       class="border-l-4 border-t-4 border-yellow-700 bg-yellow-50 p-3 text-sm text-yellow-900">
+        Plugin command cancellation is unavailable. {{ commandRuntimeUnavailableReason }}
+    </p>
+    {% endif %}
+
     <div class="flex flex-wrap items-center justify-between gap-3">
         <p class="text-sm text-stone-600">{{ commandRunsCount }} durable plugin command run{% if commandRunsCount != 1 %}s{% endif %}, newest first.</p>
         <a href="/plugins/manage" class="text-sm text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Plugin management</a>
@@ -71,11 +78,15 @@
             {% endif %}
         </div>
         {% if commandRun.Status == "queued" %}
-        <form method="post" action="/v1/plugin/command-run/cancel">
-            <input type="hidden" name="csrf_token" value="{{ csrfToken }}">
-            <input type="hidden" name="id" value="{{ commandRun.ID }}">
-            <button type="submit" aria-label="Cancel queued run {{ commandRun.ID }}" class="rounded border-l-4 border-t-4 border-red-700 bg-red-50 px-3 py-2 text-sm font-semibold text-red-900 focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
-        </form>
+            {% if commandRuntimeAvailable %}
+            <form method="post" action="/v1/plugin/command-run/cancel">
+                <input type="hidden" name="csrf_token" value="{{ csrfToken }}">
+                <input type="hidden" name="id" value="{{ commandRun.ID }}">
+                <button type="submit" aria-label="Cancel queued run {{ commandRun.ID }}" class="rounded border-l-4 border-t-4 border-red-700 bg-red-50 px-3 py-2 text-sm font-semibold text-red-900 focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
+            </form>
+            {% else %}
+            <button type="button" disabled aria-label="Cancel queued run {{ commandRun.ID }}" aria-describedby="command-runtime-quarantine-reason" data-testid="command-cancel-disabled" class="cursor-not-allowed rounded border-l-4 border-t-4 border-stone-400 bg-stone-100 px-3 py-2 text-sm font-semibold text-stone-600">Cancel unavailable</button>
+            {% endif %}
         {% endif %}
     </section>
     {% endif %}
@@ -94,11 +105,13 @@
                     {% if run.Status == "queued" %}
                         {% if commandRun and run.ID == commandRun.ID %}
                         <span class="text-stone-500">Shown above</span>
-                        {% else %}
+                        {% elif commandRuntimeAvailable %}
                         <form method="post" action="/v1/plugin/command-run/cancel" class="inline">
                             <input type="hidden" name="csrf_token" value="{{ csrfToken }}"><input type="hidden" name="id" value="{{ run.ID }}">
                             <button type="submit" aria-label="Cancel queued run {{ run.ID }}" class="text-red-700 underline rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
                         </form>
+                        {% else %}
+                        <button type="button" disabled aria-label="Cancel queued run {{ run.ID }}" aria-describedby="command-runtime-quarantine-reason" data-testid="command-cancel-disabled" class="cursor-not-allowed rounded text-stone-500">Cancel unavailable</button>
                         {% endif %}
                     {% else %}<span class="text-stone-500">&mdash;</span>{% endif %}
                 </td>

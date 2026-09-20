@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"mahresources/constants"
 	"mahresources/download_queue"
@@ -64,6 +66,9 @@ func GetPluginCommandRunHandler(ctx PluginCommandHistoryContext) func(http.Respo
 }
 
 func pluginCommandCancelStatus(err error) int {
+	if errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, plugin_commands.ErrRunNotFound) {
 		return http.StatusNotFound
 	}
@@ -88,6 +93,17 @@ func GetPluginCommandRunCancelHandler(ctx PluginCommandHistoryContext) func(http
 			return
 		}
 		if err := ctx.CancelPluginCommandRun(id); err != nil {
+			var retryable interface{ RetryAfter() time.Duration }
+			if errors.As(err, &retryable) {
+				retryAfter := retryable.RetryAfter()
+				if retryAfter > 0 {
+					seconds := retryAfter / time.Second
+					if retryAfter%time.Second != 0 {
+						seconds++
+					}
+					writer.Header().Set("Retry-After", strconv.FormatInt(int64(seconds), 10))
+				}
+			}
 			http_utils.HandleError(err, writer, request, pluginCommandCancelStatus(err))
 			return
 		}
