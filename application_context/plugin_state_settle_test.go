@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"mahresources/models"
+	"mahresources/plugin_commands"
 )
 
 // awaitEnableInFlight blocks until the manager reports an enable of this plugin
@@ -186,8 +187,8 @@ func TestDisablingAnUnloadedPluginDropsTheScopedAccessSnapshot(t *testing.T) {
 		t.Fatal("the plugin does not read as reachable to begin with, so nothing is being tested")
 	}
 
-	if err := ctx.SetPluginEnabled("reachable", false); err != nil {
-		t.Fatalf("disable: %v", err)
+	if err := ctx.SetPluginEnabled("reachable", false); !errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
+		t.Fatalf("disable error = %v, want command-runtime quarantine", err)
 	}
 
 	if ctx.PluginAllowsScopedPrincipals("reachable") {

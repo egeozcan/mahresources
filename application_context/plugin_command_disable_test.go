@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -265,5 +266,47 @@ func TestSetPluginDisabledReturnsCommandRevocationFailure(t *testing.T) {
 	}
 	if run.Status != plugin_commands.RunStatusQueued {
 		t.Fatalf("failed revocation unexpectedly changed run: %+v", run)
+	}
+}
+
+func TestSetPluginDisabledReturnsQuarantineAfterVMRemovalWithoutDurableMutation(t *testing.T) {
+	ctx, pluginName := commandDisableContext(t, func(ctx *MahresourcesContext) plugin_commands.Store { return ctx })
+	controller := ctx.pluginCommandController
+	controller.mu.Lock()
+	controller.active.Store(nil)
+	controller.state = pluginCommandRuntimeAcquiring
+	controller.reason = "staging root /private/command-staging is leased by another runtime"
+	controller.mu.Unlock()
+
+	err := ctx.SetPluginEnabled(pluginName, false)
+	if !errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
+		t.Fatalf("disable error = %v, want command-runtime quarantine", err)
+	}
+	if !strings.Contains(err.Error(), "/logs") || strings.Contains(err.Error(), "/private/command-staging") {
+		t.Fatalf("disable error exposed internal quarantine state or omitted operator guidance: %v", err)
+	}
+	if ctx.PluginManager().IsEnabled(pluginName) {
+		t.Fatal("plugin VM remained enabled after quarantined durable revocation")
+	}
+	var state models.PluginState
+	if readErr := ctx.db.Where("plugin_name = ?", pluginName).First(&state).Error; readErr != nil {
+		t.Fatal(readErr)
+	}
+	if state.Enabled {
+		t.Fatal("plugin state remained enabled after VM removal")
+	}
+	run, _, readErr := ctx.Run("disable-run")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if run.Status != plugin_commands.RunStatusQueued || run.CancelRequested || run.Error != "" {
+		t.Fatalf("quarantined revocation mutated durable command: %+v", run)
+	}
+	var logs []models.LogEntry
+	if logErr := ctx.db.Where("level = ? AND entity_type = ? AND entity_name = ?", models.LogLevelError, "plugin", pluginName).Find(&logs).Error; logErr != nil {
+		t.Fatal(logErr)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0].Message, "command work could not be revoked") {
+		t.Fatalf("durable revocation failure logs = %+v", logs)
 	}
 }

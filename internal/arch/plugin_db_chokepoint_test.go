@@ -114,7 +114,10 @@ func TestPluginCommandImportsUseTheApplicationChokepoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(adapterSource), "ctx.pluginCommandDispatcher.SubmitImport(submission)") {
-		t.Error("application command adapter no longer routes mah.fs imports through the durable dispatcher")
+	adapterText := string(adapterSource)
+	for _, required := range []string{"active, err := ctx.pluginCommandActive()", "active.dispatcher.SubmitImport(submission)"} {
+		if !strings.Contains(adapterText, required) {
+			t.Errorf("application command adapter is missing %q from the controller-backed durable import route", required)
+		}
 	}
 }

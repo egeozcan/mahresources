@@ -67,30 +67,28 @@ func defaultPluginCommandControllerConfig() pluginCommandControllerConfig {
 	}
 }
 
+const pluginCommandCallerQuarantineReason = "commands are quarantined until automatic recovery succeeds; see /logs"
+
 func newPluginCommandRuntimeController(owner *MahresourcesContext) *pluginCommandRuntimeController {
 	return &pluginCommandRuntimeController{owner: owner}
 }
 
 func (ctx *MahresourcesContext) pluginCommandActive() (*pluginCommandActiveRuntime, error) {
 	if ctx == nil || ctx.pluginCommandController == nil {
-		return nil, &plugin_commands.RuntimeQuarantinedError{Reason: "commands are unavailable until automatic recovery succeeds; see /logs"}
+		return nil, &plugin_commands.RuntimeQuarantinedError{Reason: pluginCommandCallerQuarantineReason}
 	}
 	controller := ctx.pluginCommandController
 	if active := controller.active.Load(); active != nil {
 		return active, nil
 	}
 	controller.mu.Lock()
-	reason := controller.reason
 	retryAt := controller.retryAt
 	controller.mu.Unlock()
-	if reason == "" {
-		reason = "commands are unavailable until automatic recovery succeeds; see /logs"
-	}
 	retryAfter := time.Until(retryAt)
 	if retryAt.IsZero() || retryAfter < 0 {
 		retryAfter = 0
 	}
-	return nil, &plugin_commands.RuntimeQuarantinedError{Reason: reason, RetryAfterDuration: retryAfter}
+	return nil, &plugin_commands.RuntimeQuarantinedError{Reason: pluginCommandCallerQuarantineReason, RetryAfterDuration: retryAfter}
 }
 
 func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Context, settings plugin_commands.Settings, cfg pluginCommandControllerConfig) error {

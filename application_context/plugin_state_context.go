@@ -338,7 +338,13 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, e
 			// work can still survive the VM and must be revoked below.
 		}
 
-		if active, activeErr := ctx.pluginCommandActive(); activeErr == nil && active.dispatcher != nil {
+		active, activeErr := ctx.pluginCommandActive()
+		if activeErr != nil {
+			ctx.Logger().Error("system", "plugin", nil, pluginName,
+				"plugin was disabled but its command work could not be revoked while the command runtime is quarantined", map[string]interface{}{"error": activeErr.Error()})
+			return activeErr
+		}
+		if active.dispatcher != nil {
 			if err := active.dispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
 				ctx.Logger().Error("system", "plugin", nil, pluginName,
 					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": err.Error()})
