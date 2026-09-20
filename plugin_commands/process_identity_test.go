@@ -3,12 +3,46 @@
 package plugin_commands
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func assertNativeZombieOnlyGroupIsDead(t *testing.T) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(executable, "-test.run=TestPluginCommandHelperProcess", "--", helperProcessFlag, "exit", "0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := cmd.Process.Pid
+	defer func() { _, _ = cmd.Process.Wait() }()
+
+	inspector := nativeProcessInspector{}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		identity, inspectErr := inspector.InspectGroup(pgid, "zombie-run")
+		probeErr := syscall.Kill(-pgid, 0)
+		if inspectErr == nil && identity.State == GroupDead && (probeErr == nil || errors.Is(probeErr, syscall.EPERM)) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("zombie-only group was not classified dead while signal zero found it: identity=%+v inspect_err=%v probe_err=%v", identity, inspectErr, probeErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestNativeProcessInspectorTreatsZombieOnlyGroupAsDead(t *testing.T) {
+	assertNativeZombieOnlyGroupIsDead(t)
+}
 
 func TestNativeProcessInspectorRequiresMatchingRunIDBeforeKill(t *testing.T) {
 	executable, err := os.Executable()

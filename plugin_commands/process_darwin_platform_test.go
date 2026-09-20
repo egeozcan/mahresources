@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+func TestDarwinInspectorTreatsZombieOnlyGroupAsDead(t *testing.T) {
+	assertNativeZombieOnlyGroupIsDead(t)
+}
+
 func TestDarwinRunnerKillsApplePlatformDescendantBeforeTerminalPublication(t *testing.T) {
 	root := t.TempDir()
 	store := newRunnerTestStore()
