@@ -126,12 +126,13 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 	}()
 
 	leases := plugin_commands.NewLeaseManager()
+	usage := plugin_commands.NewStagingUsageCache()
 	executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
-		Store: ctx, Settings: wrappedSettings, Logf: log.Printf,
+		Store: ctx, Settings: wrappedSettings, Usage: usage, Logf: log.Printf,
 	})
 	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
 		Store: ctx, Jobs: commandLiveJobs{manager: ctx.downloadManager}, Executor: executor,
-		Settings: wrappedSettings, Leases: leases, Logf: log.Printf,
+		Settings: wrappedSettings, Usage: usage, Leases: leases, Logf: log.Printf,
 	})
 	dispatcher.SetImporter(ctx)
 	if err := dispatcher.Recover(callCtx); err != nil {

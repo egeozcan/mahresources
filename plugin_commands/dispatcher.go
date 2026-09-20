@@ -681,6 +681,11 @@ func (d *Dispatcher) sweep(now time.Time) error {
 	if _, err := d.deps.Store.PruneRunOutputs(now.Add(-d.deps.Settings.OutputRetention())); err != nil {
 		sweepErr = errors.Join(sweepErr, fmt.Errorf("prune plugin command output: %w", err))
 	}
+	if d.deps.Usage != nil {
+		if err := d.deps.Usage.Refresh(d.deps.Settings.StagingRoot()); err != nil {
+			sweepErr = errors.Join(sweepErr, fmt.Errorf("refresh global staging usage: %w", err))
+		}
+	}
 	return sweepErr
 }
 

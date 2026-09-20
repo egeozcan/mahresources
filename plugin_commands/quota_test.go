@@ -8,9 +8,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestPrepareUsesCachedGlobalUsageWithoutRescanning(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	var calls atomic.Int32
+	usage := &StagingUsageCache{measure: func(path string) (int64, error) {
+		calls.Add(1)
+		return pathUsageNoSymlinks(path)
+	}}
+	if err := usage.Refresh(root); err != nil {
+		t.Fatal(err)
+	}
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1024, global: 1024}
+	executor := NewExecutor(RunnerDependencies{Store: newRunnerTestStore(), Settings: settings, Usage: usage})
+	runID := strings.Repeat("c", 32)
+	run := QueuedRun{RunID: runID, ExchangeDir: filepath.Join(root, "plugin_exchange", "plug", runID), Request: CommandRequest{PluginName: "plug"}}
+
+	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("usage measurements = %d, want startup sample only", got)
+	}
+}
 
 func TestQuotaGlobalAdmissionLeavesNoRunOrFolder(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()

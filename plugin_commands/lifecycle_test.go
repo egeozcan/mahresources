@@ -146,6 +146,27 @@ func TestPluginCommandLifecycleSweepUsesOneBoundedBatchAndMarksRemovedRuns(t *te
 	}
 }
 
+func TestPluginCommandLifecycleSweepRefreshesGlobalUsageSample(t *testing.T) {
+	var measurements atomic.Int32
+	usage := &StagingUsageCache{measure: func(string) (int64, error) {
+		measurements.Add(1)
+		return 17, nil
+	}}
+	store := &lifecycleStore{dispatcherTestStore: newDispatcherTestStore(), nonterminal: map[string]bool{}}
+	d := NewDispatcher(Dependencies{
+		Store: store, Settings: lifecycleSettings{root: t.TempDir(), exchange: time.Hour, output: time.Hour}, Usage: usage,
+	})
+	if err := d.sweep(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if got := measurements.Load(); got != 1 {
+		t.Fatalf("usage measurements = %d, want 1", got)
+	}
+	if got, err := usage.Current(); err != nil || got != 17 {
+		t.Fatalf("cached usage = %d, %v; want 17", got, err)
+	}
+}
+
 func TestPluginCommandLifecyclePeriodicSweepStopsWithDispatcher(t *testing.T) {
 	base := newDispatcherTestStore()
 	store := &lifecycleStore{dispatcherTestStore: base, nonterminal: map[string]bool{}, pruneNotify: make(chan struct{}, 8)}

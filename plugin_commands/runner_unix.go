@@ -41,6 +41,12 @@ func NewExecutor(deps RunnerDependencies) Executor {
 	if deps.Inspector == nil {
 		deps.Inspector = nativeProcessInspector{}
 	}
+	if deps.Usage == nil {
+		deps.Usage = NewStagingUsageCache()
+		if deps.Settings != nil {
+			_ = deps.Usage.Refresh(deps.Settings.StagingRoot())
+		}
+	}
 	return &commandExecutor{deps: deps, cleanupTimeout: groupDrainTimeout, quotaInterval: quotaSampleInterval}
 }
 
@@ -55,7 +61,7 @@ func (e *commandExecutor) Prepare(run QueuedRun) error {
 	if err := ensureRunPath(root, run); err != nil {
 		return err
 	}
-	usage, err := pathUsageNoSymlinks(root)
+	usage, err := e.deps.Usage.Current()
 	if err != nil {
 		return fmt.Errorf("measure global staging quota: %w", err)
 	}

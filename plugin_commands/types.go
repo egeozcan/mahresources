@@ -239,6 +239,7 @@ type Dependencies struct {
 	Executor  Executor
 	Settings  Settings
 	Inspector ProcessInspector
+	Usage     *StagingUsageCache
 	Leases    *LeaseManager
 	Logf      func(string, ...any)
 }

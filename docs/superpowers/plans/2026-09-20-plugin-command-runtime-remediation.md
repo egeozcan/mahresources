@@ -415,34 +415,34 @@ type globalUsageRefresher interface {
 - Unix `commandExecutor.Prepare` reads an atomically published sample and never calls `pathUsageNoSymlinks`.
 - `Dispatcher.sweep` refreshes the sample after retention work; initial `Start` fails if its first refresh fails.
 
-- [ ] **Step 1: Write the failing cached-admission test**
+- [x] **Step 1: Write the failing cached-admission test**
 
 Refresh an empty staging root, then add a file larger than the global quota before calling `Prepare`. Assert `Prepare` uses the published sample rather than rescanning. Refresh again and assert the next `Prepare` refuses. Also assert no sample means an explicit `global staging usage is unavailable` refusal.
 
-- [ ] **Step 2: Write failing startup/sweep refresh tests**
+- [x] **Step 2: Write failing startup/sweep refresh tests**
 
 Use a fake executor implementing `RefreshGlobalUsage`. Assert initial start calls it once, each sweep calls it after filesystem cleanup, and a startup refresh error prevents dispatcher start.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands -run 'Test.*(CachedGlobal|RefreshGlobal|GlobalStaging)' -count=1
 ```
 
-- [ ] **Step 4: Implement atomic sample publication**
+- [x] **Step 4: Implement atomic sample publication**
 
 Add `atomic.Int64` plus an atomic readiness flag to `commandExecutor`. `RefreshGlobalUsage` walks the staging root and publishes only after a successful complete scan. `Prepare` reads the sample, checks the current live limit, and proceeds without filesystem traversal.
 
 Invoke refresh at the end of every sweep, including the initial sweep in `Start`. A failed periodic refresh logs/returns the sweep error but leaves the previous complete sample intact; a failed initial refresh prevents admission because readiness was never established.
 
-- [ ] **Step 5: Run GREEN and race verification**
+- [x] **Step 5: Run GREEN and race verification**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands -run 'Test.*(Quota|Global|Sweep|Start)' -count=1
 go test -race --tags 'json1 fts5' ./plugin_commands -run 'Test.*(CachedGlobal|RefreshGlobal|Submit|Sweep)' -count=20
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add plugin_commands/runner_unix.go plugin_commands/runner_windows.go plugin_commands/dispatcher.go plugin_commands/quota_test.go plugin_commands/lifecycle_test.go

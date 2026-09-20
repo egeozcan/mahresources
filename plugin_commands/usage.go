@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const (
@@ -26,6 +27,48 @@ type GroupIdentity struct {
 	PIDs  []int
 }
 
+// StagingUsageCache keeps global quota admission O(1). The runtime refreshes
+// the sample at startup and after each retention sweep; admission never walks
+// the staging tree while a plugin VM or dispatcher lock is held.
+type StagingUsageCache struct {
+	mu          sync.RWMutex
+	bytes       int64
+	err         error
+	initialized bool
+	measure     func(string) (int64, error)
+}
+
+func NewStagingUsageCache() *StagingUsageCache {
+	return &StagingUsageCache{measure: pathUsageNoSymlinks}
+}
+
+func (c *StagingUsageCache) Refresh(root string) error {
+	if c == nil {
+		return fmt.Errorf("plugin command staging usage cache is unavailable")
+	}
+	measure := c.measure
+	if measure == nil {
+		measure = pathUsageNoSymlinks
+	}
+	bytes, err := measure(root)
+	c.mu.Lock()
+	c.bytes, c.err, c.initialized = bytes, err, true
+	c.mu.Unlock()
+	return err
+}
+
+func (c *StagingUsageCache) Current() (int64, error) {
+	if c == nil {
+		return 0, fmt.Errorf("plugin command staging usage cache is unavailable")
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.initialized {
+		return 0, fmt.Errorf("plugin command staging usage has not been sampled")
+	}
+	return c.bytes, c.err
+}
+
 type ProcessInspector interface {
 	InspectGroup(pgid int, runID string) (GroupIdentity, error)
 	KillGroup(pgid int) error
@@ -40,6 +83,7 @@ type RunnerDependencies struct {
 	Store     Store
 	Settings  Settings
 	Inspector ProcessInspector
+	Usage     *StagingUsageCache
 	Logf      func(string, ...any)
 }
 
