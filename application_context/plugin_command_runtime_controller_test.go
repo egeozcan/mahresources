@@ -296,13 +296,18 @@ func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing
 	inspector.setGroup(5251, plugin_commands.GroupDead)
 	inspector.setGroup(5252, plugin_commands.GroupDead)
 	require.Eventually(t, func() bool {
-		_, err := ctx.pluginCommandActive()
-		return err == nil
+		var infoCount int64
+		require.NoError(t, ctx.db.Model(&models.LogEntry{}).
+			Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelInfo).Count(&infoCount).Error)
+		return infoCount == 1
 	}, time.Second, 5*time.Millisecond)
+	_, activeErr = ctx.pluginCommandActive()
+	require.NoError(t, activeErr)
+	time.Sleep(50 * time.Millisecond)
 	var infoCount int64
 	require.NoError(t, ctx.db.Model(&models.LogEntry{}).
 		Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelInfo).Count(&infoCount).Error)
-	require.Equal(t, int64(1), infoCount)
+	require.Equal(t, int64(1), infoCount, "healing must emit exactly one information log")
 }
 
 func TestPluginCommandControllerStopDuringAcquireCannotPublish(t *testing.T) {
