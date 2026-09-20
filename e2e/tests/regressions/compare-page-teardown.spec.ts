@@ -420,17 +420,24 @@ test.describe.serial('compare page teardown fixes', () => {
     expect(width).toBe(0);
   });
 
-  // Trimming the URL to a single resource used to render "Ready to Compare" while
-  // both dropdowns displayed a version, and picking one wrote v1=0.
-  test('a URL naming only a resource resolves to previous versus current', async ({ page }) => {
+  // A resource-details Compare link names only its left resource. It must wait
+  // for the reader to choose the right resource, while priming the left side to
+  // the current version; silently comparing the resource with itself makes the
+  // resource picker look filled when no comparator was chosen.
+  test('a URL naming only a resource waits for a second resource', async ({ page }) => {
     await page.goto(`/resource/compare?r1=${textResourceId}`);
     await page.waitForLoadState('load');
 
     const url = new URL(page.url());
-    expect(url.searchParams.get('v1')).toBe('1');
-    expect(url.searchParams.get('v2')).toBe('2');
-    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Ready to Compare')).toHaveCount(0);
+    expect(url.searchParams.get('v1')).toBeNull();
+    expect(url.searchParams.get('v2')).toBeNull();
+    await expect(page.getByText(`Teardown Config ${runId}`).first()).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Right resource' })).toHaveValue('');
+    await expect(page.getByRole('combobox', { name: 'Left version' })).toBeDisabled();
+    await expect(page.getByRole('combobox', { name: 'Left version' })).toHaveValue('2');
+    await expect(page.getByRole('combobox', { name: 'Right version' })).toBeDisabled();
+    await expect(page.getByText('Ready to Compare')).toBeVisible();
+    await expect(page.locator('summary:has-text("Metadata")')).toHaveCount(0);
   });
 
   // Deciding the comparator from the left-hand version alone sent a JSON versus

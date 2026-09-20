@@ -240,7 +240,18 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
   // renders a phantom "some_key" option and tests that expect no alt-fs
   // (e.g. c7-bh023-alt-fs-select-visible.spec.ts) fail inconsistently
   // depending on whether the developer has a populated .env.
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, FILE_ALT_COUNT: '0' };
+  // Plugin-command startup validates every trusted executable directory.
+  // Developer PATH values commonly contain stale macOS Cryptex entries, and a
+  // test server must not inherit that machine-specific trust boundary. Command
+  // fixtures may still override this with the explicit flag above.
+  const deterministicCommandPath = process.platform === 'win32'
+    ? path.dirname(process.execPath)
+    : '/usr/bin:/bin';
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    FILE_ALT_COUNT: '0',
+    PLUGIN_COMMAND_PATH: deterministicCommandPath,
+  };
   for (const key of Object.keys(childEnv)) {
     if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {
       delete childEnv[key];

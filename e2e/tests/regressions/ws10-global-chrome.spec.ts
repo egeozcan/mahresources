@@ -22,34 +22,44 @@ const MOBILE = { width: 390, height: 844 };
 
 test.describe('finding 120 — the header declares position:sticky and must actually stick', () => {
   test('the header stays at the top of the viewport when a long list is scrolled', async ({ page, apiClient }) => {
-    // The page has to be long enough to scroll: an empty list is not.
-    for (let i = 0; i < 3; i++) {
-      await apiClient.createTag(`ws10-sticky-${Date.now()}-${i}`);
+    // Build the list this test actually opens. Relying on rows left by another
+    // spec makes the geometry assertion depend on worker sharding and order.
+    const prefix = `ws10-sticky-${Date.now()}`;
+    const created: number[] = [];
+    for (let i = 0; i < 51; i++) {
+      created.push((await apiClient.createTag(`${prefix}-${i}`)).ID);
     }
-    await page.setViewportSize(LAPTOP);
-    await page.goto('/resources');
 
-    const declared = await page.evaluate(() => {
-      const cs = getComputedStyle(document.querySelector('header')!);
-      return { position: cs.position, top: cs.top };
-    });
-    expect(declared).toEqual({ position: 'sticky', top: '0px' });
+    try {
+      await page.setViewportSize(LAPTOP);
+      await page.goto('/tags');
 
-    const scrollable = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 400);
-    expect(scrollable, 'the page must be long enough to scroll or this test measures nothing').toBe(true);
+      const declared = await page.evaluate(() => {
+        const cs = getComputedStyle(document.querySelector('header')!);
+        return { position: cs.position, top: cs.top };
+      });
+      expect(declared).toEqual({ position: 'sticky', top: '0px' });
 
-    const measured = await page.evaluate(async () => {
-      window.scrollTo(0, 600);
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const header = document.querySelector('header')!.getBoundingClientRect();
-      return { scrollY: Math.round(window.scrollY), top: Math.round(header.top), height: Math.round(header.height) };
-    });
+      const scrollable = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 400);
+      expect(scrollable, 'the page must be long enough to scroll or this test measures nothing').toBe(true);
 
-    expect(measured.scrollY).toBeGreaterThan(300);
-    // Before the fix this measured top = -600: the header scrolled clean away and
-    // the nav and ⌘K went with it.
-    expect(measured.top).toBe(0);
-    expect(measured.height).toBeGreaterThan(20);
+      const measured = await page.evaluate(async () => {
+        window.scrollTo(0, 600);
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const header = document.querySelector('header')!.getBoundingClientRect();
+        return { scrollY: Math.round(window.scrollY), top: Math.round(header.top), height: Math.round(header.height) };
+      });
+
+      expect(measured.scrollY).toBeGreaterThan(300);
+      // Before the fix this measured top = -600: the header scrolled clean away and
+      // the nav and ⌘K went with it.
+      expect(measured.top).toBe(0);
+      expect(measured.height).toBeGreaterThan(20);
+    } finally {
+      for (const id of created) {
+        await apiClient.deleteTag(id).catch(() => {});
+      }
+    }
   });
 
   test('the footer is not pinned, so it covers no page content', async ({ page }) => {
@@ -137,6 +147,9 @@ test.describe('findings 83 and 102 — the jobs trigger must not cover page cont
   test('the /logs After filter is hit-testable at a 720px-tall viewport', async ({ page }) => {
     await page.setViewportSize(LAPTOP);
     await page.goto('/logs');
+    await page.locator('input[name="CreatedAfter"]').evaluate((input) => {
+      input.scrollIntoView({ block: 'end' });
+    });
 
     const measured = await page.evaluate(() => {
       const input = document.querySelector('input[name="CreatedAfter"]') as HTMLInputElement | null;
