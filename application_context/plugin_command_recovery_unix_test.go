@@ -28,20 +28,23 @@ func TestPluginCommandLifecycleDoesNotPublishHostForLiveUnverifiedRecoveryGroup(
 	if won, err := ctx.MarkRunRunning("live-unverified-recovery", now); err != nil || !won {
 		t.Fatalf("mark running: won=%v err=%v", won, err)
 	}
-	if err := ctx.SetRunProcessGroup("live-unverified-recovery", pgid, "test-boot-session"); err != nil {
+	bootSessionID, err := plugin_commands.CurrentBootSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.SetRunProcessGroup("live-unverified-recovery", pgid, bootSessionID); err != nil {
 		t.Fatal(err)
 	}
 
-	err := ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
+	if err := ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
 		root: root, commandPath: t.TempDir(),
-	})
-	if err == nil {
-		_ = ctx.StopPluginCommands()
-		t.Fatal("startup published a command runtime for a live unverified recovery group")
+	}); err != nil {
+		t.Fatalf("recovery quarantine failed process startup: %v", err)
 	}
-	var blocked *plugin_commands.RecoveryBlockedError
-	if !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0].RunID != "live-unverified-recovery" {
-		t.Fatalf("startup error = %v, blockers = %+v", err, blocked)
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+	_, activeErr := ctx.pluginCommandActive()
+	if !errors.Is(activeErr, plugin_commands.ErrCommandRuntimeQuarantined) {
+		t.Fatalf("runtime availability = %v, want quarantine", activeErr)
 	}
 	run, _, readErr := ctx.Run("live-unverified-recovery")
 	if readErr != nil {
@@ -50,12 +53,14 @@ func TestPluginCommandLifecycleDoesNotPublishHostForLiveUnverifiedRecoveryGroup(
 	if run.Status != plugin_commands.RunStatusRunning || run.FinishedAt != nil {
 		t.Fatalf("recovery settled live unverified run: %+v", run)
 	}
-	if ctx.pluginCommandDispatcher != nil || ctx.pluginCommandExchange != nil {
+	if active, _ := ctx.pluginCommandActive(); active != nil {
 		t.Fatal("command host was published after recovery refusal")
 	}
 	lease, leaseErr := plugin_commands.AcquireRuntimeLease(root)
-	if leaseErr != nil {
-		t.Fatalf("failed startup retained runtime lease: %v", leaseErr)
+	if leaseErr == nil || !errors.Is(leaseErr, plugin_commands.ErrRuntimeLeaseBusy) {
+		if lease != nil {
+			_ = lease.Close()
+		}
+		t.Fatalf("recovery quarantine did not retain runtime lease: %v", leaseErr)
 	}
-	_ = lease.Close()
 }

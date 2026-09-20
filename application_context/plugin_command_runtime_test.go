@@ -13,6 +13,16 @@ import (
 	"mahresources/plugin_commands"
 )
 
+func installPluginCommandActiveForTest(ctx *MahresourcesContext, dispatcher *plugin_commands.Dispatcher, exchange plugin_commands.Exchange, lease *plugin_commands.RuntimeLease) {
+	controller := ctx.pluginCommandController
+	controller.mu.Lock()
+	controller.owner = ctx
+	controller.active.Store(&pluginCommandActiveRuntime{dispatcher: dispatcher, exchange: exchange})
+	controller.lease = lease
+	controller.state = pluginCommandRuntimeActive
+	controller.mu.Unlock()
+}
+
 func TestManagedCommandOutcomeSeparatesGenericAndDurableStatus(t *testing.T) {
 	unknown := managedCommandOutcome(plugin_commands.Outcome{
 		Status: plugin_commands.RunStatusFailed,
@@ -61,8 +71,7 @@ func TestPluginCommandHostResolvesAuthOffRootBeforeImportClaim(t *testing.T) {
 	})
 	dispatcher.SetImporter(ctx)
 	require.NoError(t, dispatcher.Start(context.Background()))
-	ctx.pluginCommandDispatcher = dispatcher
-	ctx.pluginCommandExchange = plugin_commands.NewExchange(ctx, settings)
+	installPluginCommandActiveForTest(ctx, dispatcher, plugin_commands.NewExchange(ctx, settings), nil)
 	t.Cleanup(func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -98,18 +107,18 @@ func TestPluginCommandHostPublishesOnlyAfterRecoveryAndSurvivesContextClone(t *t
 		cancel()
 		t.Fatal(err)
 	}
-	if ctx.pluginCommandDispatcher == nil || ctx.pluginCommandExchange == nil {
+	active, err := ctx.pluginCommandActive()
+	if err != nil || active.dispatcher == nil || active.exchange == nil {
 		cancel()
-		t.Fatal("recovered command host was not published")
+		t.Fatalf("recovered command host was not published: %v", err)
 	}
 	clone := ctx.WithPrincipal(nil)
-	if clone.pluginCommandDispatcher != ctx.pluginCommandDispatcher || clone.pluginCommandExchange != ctx.pluginCommandExchange {
+	cloneActive, err := clone.pluginCommandActive()
+	if err != nil || cloneActive != active {
 		cancel()
-		t.Fatal("request clone did not preserve process-lifetime command host")
+		t.Fatalf("request clone did not preserve process-lifetime command host: %v", err)
 	}
 
 	cancel()
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
-	defer stopCancel()
-	_ = ctx.pluginCommandDispatcher.Stop(stopCtx)
+	require.NoError(t, ctx.StopPluginCommands())
 }

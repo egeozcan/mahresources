@@ -27,7 +27,6 @@ import (
 	"mahresources/groupio"
 	"mahresources/idlock"
 	"mahresources/models"
-	"mahresources/plugin_commands"
 	"mahresources/plugin_system"
 	"mahresources/search"
 	"mahresources/storage"
@@ -488,12 +487,10 @@ type MahresourcesContext struct {
 	icsCache *ICSCache
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
-	// pluginCommandDispatcher and pluginCommandExchange are process-lifetime
-	// services installed only after recovery. Shallow request/transaction clones
-	// intentionally share both pointers.
-	pluginCommandDispatcher *plugin_commands.Dispatcher
-	pluginCommandExchange   plugin_commands.Exchange
-	pluginCommandLease      *plugin_commands.RuntimeLease
+	// pluginCommandController owns runtime activation, quarantine and shutdown.
+	// It is a pointer so every shallow request/transaction clone observes the
+	// same atomic active snapshot and lifecycle state.
+	pluginCommandController *pluginCommandRuntimeController
 	// pluginScheduler owns the clock that fires plugin schedules, and is the only
 	// thing that can run one on demand. It is installed by main after the
 	// scheduler is constructed, the way the two worker queues above are, because
@@ -713,6 +710,8 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
 		shareServerListening:      &atomic.Bool{},
 	}
+
+	ctx.pluginCommandController = newPluginCommandRuntimeController(ctx)
 
 	// Install RBAC group-subtree scoping + CreatedByUserId stamping callbacks.
 	// Registered here (after the ctx struct — including its rootAdmin cache — is

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"mahresources/download_queue"
@@ -97,59 +96,11 @@ type commandSettings struct{ plugin_commands.Settings }
 
 func (s commandSettings) PendingPerPluginLimit() int { return download_queue.MaxQueueSize }
 
-// StartPluginCommands constructs the application-owned host, recovers durable
-// state, starts the dispatcher, and only then publishes mah.commands/mah.fs
-// availability. Task 11 owns calling and stopping this lifecycle from main.
+// StartPluginCommands constructs the application-owned controller. Lease or
+// recovery safety contention enters a self-healing quarantine; deterministic
+// startup failures still fail the process.
 func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, settings plugin_commands.Settings) error {
-	if settings == nil {
-		return fmt.Errorf("plugin command settings are required")
-	}
-	if ctx.pluginManager == nil {
-		return fmt.Errorf("plugin manager is unavailable")
-	}
-	if ctx.pluginCommandLease != nil {
-		return fmt.Errorf("plugin command runtime is already active or draining")
-	}
-	wrappedSettings := commandSettings{Settings: settings}
-	// The staging-root lease must precede every recovery read-modify-write and
-	// filesystem cleanup. Without it, a rolling second process could classify
-	// the first process's live work as interrupted and signal its process group.
-	runtimeLease, err := plugin_commands.AcquireRuntimeLease(wrappedSettings.StagingRoot())
-	if err != nil {
-		return fmt.Errorf("acquire plugin command runtime lease: %w", err)
-	}
-	leaseOwned := true
-	defer func() {
-		if leaseOwned {
-			_ = runtimeLease.Close()
-		}
-	}()
-
-	leases := plugin_commands.NewLeaseManager()
-	usage := plugin_commands.NewStagingUsageCache()
-	executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
-		Store: ctx, Settings: wrappedSettings, Usage: usage, Logf: log.Printf,
-	})
-	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
-		Store: ctx, Jobs: commandLiveJobs{manager: ctx.downloadManager}, Executor: executor,
-		Settings: wrappedSettings, Usage: usage, Leases: leases, Logf: log.Printf,
-	})
-	dispatcher.SetImporter(ctx)
-	if err := dispatcher.Recover(callCtx); err != nil {
-		return fmt.Errorf("recover plugin commands: %w", err)
-	}
-	if err := dispatcher.Start(callCtx); err != nil {
-		return fmt.Errorf("start plugin commands: %w", err)
-	}
-
-	exchange := plugin_commands.NewExchangeWithLeases(ctx, wrappedSettings, leases)
-	ctx.pluginCommandDispatcher = dispatcher
-	ctx.pluginCommandExchange = exchange
-	ctx.pluginCommandLease = runtimeLease
-	leaseOwned = false
-	ctx.pluginManager.SetCommandSubmitter(ctx)
-	ctx.pluginManager.SetExchangeMediator(ctx)
-	return nil
+	return ctx.startPluginCommandsWithConfig(callCtx, settings, defaultPluginCommandControllerConfig())
 }
 
 // StartPluginCommandsIfEnabled is the production admission gate. Keeping the
@@ -173,47 +124,74 @@ func (ctx *MahresourcesContext) StopPluginCommands() error {
 }
 
 func (ctx *MahresourcesContext) stopPluginCommandsWithin(timeout time.Duration) error {
-	if ctx == nil {
+	if ctx == nil || ctx.pluginCommandController == nil {
 		return nil
 	}
-	dispatcher := ctx.pluginCommandDispatcher
-	lease := ctx.pluginCommandLease
-	// Stop publishing the host immediately, even when a claimed worker needs to
-	// retain process-lifetime ownership of the staging root.
-	ctx.pluginCommandExchange = nil
+	controller := ctx.pluginCommandController
+	controller.mu.Lock()
+	if controller.state == pluginCommandRuntimeIdle {
+		controller.mu.Unlock()
+		return nil
+	}
+	if controller.state != pluginCommandRuntimeStopping {
+		controller.state = pluginCommandRuntimeStopping
+		controller.reason = "plugin command runtime is stopping"
+		controller.retryAt = time.Time{}
+		if active := controller.active.Swap(nil); active != nil {
+			controller.draining = active
+		}
+		if controller.cancel != nil {
+			controller.cancel()
+		}
+	}
+	done := controller.done
+	controller.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+
+	controller.mu.Lock()
+	draining := controller.draining
+	lease := controller.lease
+	controller.mu.Unlock()
 	var stopErr error
-	if dispatcher != nil {
+	if draining != nil && draining.dispatcher != nil {
 		stopCtx, cancel := context.WithTimeout(context.Background(), timeout)
-		stopErr = dispatcher.Stop(stopCtx)
+		stopErr = draining.dispatcher.Stop(stopCtx)
 		cancel()
-		if !dispatcher.RuntimeLeaseReleasable() {
-			// A worker may still own a process group, source descriptor or pending
-			// resource side effect. Keep both references alive so the advisory lock
-			// cannot be released before process exit or a later confirmed drain.
+		if !draining.dispatcher.RuntimeLeaseReleasable() {
+			// Keep the dispatcher and lease owned so a later Stop can confirm full
+			// quiescence before releasing the staging root.
 			return stopErr
 		}
 	}
-
-	ctx.pluginCommandDispatcher = nil
-	ctx.pluginCommandLease = nil
 	var leaseErr error
 	if lease != nil {
 		leaseErr = lease.Close()
 	}
+	controller.mu.Lock()
+	controller.lease = nil
+	controller.pending = nil
+	controller.pendingExchange = nil
+	controller.draining = nil
+	controller.cancel = nil
+	controller.done = nil
+	controller.mu.Unlock()
 	return errors.Join(stopErr, leaseErr)
 }
 
 // SubmitPluginCommand implements plugin_system.CommandSubmitter.
 func (ctx *MahresourcesContext) SubmitPluginCommand(request plugin_commands.CommandRequest) (string, error) {
-	if ctx.pluginCommandDispatcher == nil || ctx.pluginCommandExchange == nil {
-		return "", fmt.Errorf("plugin commands are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return "", err
 	}
-	return ctx.pluginCommandDispatcher.Submit(request)
+	return active.dispatcher.Submit(request)
 }
 
 func (ctx *MahresourcesContext) CommandRuns(access plugin_commands.Access) ([]plugin_commands.RunView, error) {
-	if ctx.pluginCommandExchange == nil {
-		return nil, fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+	if _, err := ctx.pluginCommandActive(); err != nil {
+		return nil, err
 	}
 	// Durable run/import records are the complete recovery surface. File listing
 	// is an explicit, bounded mah.fs.list call; runs() must not walk every
@@ -222,22 +200,25 @@ func (ctx *MahresourcesContext) CommandRuns(access plugin_commands.Access) ([]pl
 }
 
 func (ctx *MahresourcesContext) ListCommandFiles(access plugin_commands.Access, runID string) (plugin_commands.Listing, error) {
-	if ctx.pluginCommandExchange == nil {
-		return plugin_commands.Listing{}, fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return plugin_commands.Listing{}, err
 	}
-	return ctx.pluginCommandExchange.List(access, runID)
+	return active.exchange.List(access, runID)
 }
 
 func (ctx *MahresourcesContext) ReadCommandFile(access plugin_commands.Access, runID, name string, maxBytes int64) ([]byte, error) {
-	if ctx.pluginCommandExchange == nil {
-		return nil, fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return nil, err
 	}
-	return ctx.pluginCommandExchange.Read(access, runID, name, maxBytes)
+	return active.exchange.Read(access, runID, name, maxBytes)
 }
 
 func (ctx *MahresourcesContext) SubmitCommandImport(submission plugin_commands.ImportSubmission) (plugin_commands.ImportSubmitResult, error) {
-	if ctx.pluginCommandDispatcher == nil || ctx.pluginCommandExchange == nil {
-		return plugin_commands.ImportSubmitResult{}, fmt.Errorf("plugin command imports are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return plugin_commands.ImportSubmitResult{}, err
 	}
 	if submission.ActorUserID == nil || *submission.ActorUserID == 0 {
 		if ctx.AuthEnabled() {
@@ -255,19 +236,21 @@ func (ctx *MahresourcesContext) SubmitCommandImport(submission plugin_commands.I
 		accessActor := actor
 		submission.Access.ActorUserID = &accessActor
 	}
-	return ctx.pluginCommandDispatcher.SubmitImport(submission)
+	return active.dispatcher.SubmitImport(submission)
 }
 
 func (ctx *MahresourcesContext) DiscardCommandFile(access plugin_commands.Access, runID, name string) error {
-	if ctx.pluginCommandExchange == nil {
-		return fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return err
 	}
-	return ctx.pluginCommandExchange.Discard(access, runID, name)
+	return active.exchange.Discard(access, runID, name)
 }
 
 func (ctx *MahresourcesContext) DiscardCommandRun(access plugin_commands.Access, runID string) error {
-	if ctx.pluginCommandExchange == nil {
-		return fmt.Errorf("plugin exchange files are not available until startup recovery completes")
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return err
 	}
-	return ctx.pluginCommandExchange.DiscardRun(access, runID)
+	return active.exchange.DiscardRun(access, runID)
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -183,9 +182,15 @@ func TestPluginCommandLifecycleLeaseRefusesBeforeRecoveryMutation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.StartPluginCommands(context.Background(), settings); err == nil || !strings.Contains(err.Error(), "active runtime") {
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.acquireBackoff = []time.Duration{5 * time.Millisecond}
+	if err := ctx.startPluginCommandsWithConfig(context.Background(), settings, cfg); err != nil {
 		_ = lease.Close()
-		t.Fatalf("second runtime startup = %v", err)
+		t.Fatalf("lease contention failed process startup: %v", err)
+	}
+	if _, err := ctx.pluginCommandActive(); !errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
+		_ = lease.Close()
+		t.Fatalf("lease contention availability = %v, want quarantine", err)
 	}
 	run, _, err := ctx.Run("lease-guarded")
 	if err != nil {
@@ -200,10 +205,17 @@ func TestPluginCommandLifecycleLeaseRefusesBeforeRecoveryMutation(t *testing.T) 
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.StartPluginCommands(context.Background(), settings); err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := ctx.pluginCommandActive(); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lease quarantine did not heal")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestPluginCommandLifecycleRecoveryFailureReleasesLease(t *testing.T) {
@@ -279,7 +291,7 @@ func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
 		close(releaseRecovery)
 		t.Fatal("recovery did not reach durable publication barrier")
 	}
-	if _, err := ctx.SubmitPluginCommand(plugin_commands.CommandRequest{}); err == nil || !strings.Contains(err.Error(), "startup recovery completes") {
+	if _, err := ctx.SubmitPluginCommand(plugin_commands.CommandRequest{}); !errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
 		close(releaseRecovery)
 		t.Fatalf("command host was published during recovery: %v", err)
 	}
@@ -299,8 +311,8 @@ func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "import_tmp", "orphan")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("orphan import temp remains: %v", err)
 	}
-	if ctx.pluginCommandDispatcher == nil || ctx.pluginCommandExchange == nil {
-		t.Fatal("host published incompletely")
+	if active, err := ctx.pluginCommandActive(); err != nil || active.dispatcher == nil || active.exchange == nil {
+		t.Fatalf("host published incompletely: %v", err)
 	}
 }
 
@@ -354,8 +366,12 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if err := ctx.StartPluginCommands(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		t.Fatal(err)
+	}
 	owner := uint(11)
-	runID, err := ctx.pluginCommandDispatcher.Submit(plugin_commands.CommandRequest{
+	runID, err := active.dispatcher.Submit(plugin_commands.CommandRequest{
 		PluginName: "lifecycle", ActorUserID: &owner,
 		Declaration: plugin_commands.Declaration{Name: "slow", Argv: []string{"slow-command"}, Timeout: time.Minute},
 	})
@@ -404,8 +420,8 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	importer := lifecycleBlockingImporter{started: make(chan string, 1)}
-	ctx.pluginCommandDispatcher.SetImporter(importer)
-	claim, err := ctx.pluginCommandDispatcher.SubmitImport(plugin_commands.ImportSubmission{
+	active.dispatcher.SetImporter(importer)
+	claim, err := active.dispatcher.SubmitImport(plugin_commands.ImportSubmission{
 		Access: plugin_commands.Access{PluginName: "lifecycle", ActorUserID: &owner},
 		RunID:  importRunID, Name: "result.bin", PluginGeneration: 1, ActorUserID: &owner,
 		Fields: plugin_commands.ResourceFields{Name: "result"},
@@ -457,8 +473,7 @@ func TestPluginCommandLifecycleShutdownRetainsLeaseWhileClaimedWorkerIsActive(t 
 		_ = lease.Close()
 		t.Fatal(err)
 	}
-	ctx.pluginCommandDispatcher = dispatcher
-	ctx.pluginCommandLease = lease
+	installPluginCommandActiveForTest(ctx, dispatcher, nil, lease)
 	owner := uint(19)
 	if _, err := dispatcher.Submit(plugin_commands.CommandRequest{
 		PluginName: "lifecycle", ActorUserID: &owner,
@@ -535,8 +550,8 @@ func TestPluginCommandLifecycleDisabledLeavesHostUnavailable(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.pluginCommandDispatcher != nil || ctx.pluginCommandExchange != nil {
-		t.Fatal("disabled context unexpectedly has plugin command host")
+	if _, err := ctx.pluginCommandActive(); !errors.Is(err, plugin_commands.ErrCommandRuntimeQuarantined) {
+		t.Fatalf("disabled context unexpectedly has plugin command host: %v", err)
 	}
 	_, err := ctx.SubmitPluginCommand(plugin_commands.CommandRequest{})
 	if err == nil {

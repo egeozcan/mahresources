@@ -205,12 +205,31 @@ type PluginEnableOptions struct {
 	ConfirmCommands bool
 }
 
-// SetPluginCommandDispatcher installs the process-lifetime dispatcher after the
-// application context has been constructed. Task 11 owns constructing, starting
-// and stopping it; this seam only lets plugin disable revoke command work after
-// the VM has been removed.
+// SetPluginCommandDispatcher is a narrow test seam. Production publication is
+// owned by the runtime controller; this method updates that same atomic snapshot
+// so tests cannot create a second source of runtime truth.
 func (ctx *MahresourcesContext) SetPluginCommandDispatcher(dispatcher *plugin_commands.Dispatcher) {
-	ctx.pluginCommandDispatcher = dispatcher
+	if ctx == nil {
+		return
+	}
+	if ctx.pluginCommandController == nil {
+		ctx.pluginCommandController = newPluginCommandRuntimeController(ctx)
+	}
+	controller := ctx.pluginCommandController
+	controller.mu.Lock()
+	if dispatcher == nil {
+		controller.active.Store(nil)
+		controller.state = pluginCommandRuntimeIdle
+		controller.mu.Unlock()
+		return
+	}
+	var exchange plugin_commands.Exchange
+	if current := controller.active.Load(); current != nil {
+		exchange = current.exchange
+	}
+	controller.active.Store(&pluginCommandActiveRuntime{dispatcher: dispatcher, exchange: exchange})
+	controller.state = pluginCommandRuntimeActive
+	controller.mu.Unlock()
 }
 
 func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool) error {
@@ -319,8 +338,8 @@ func (ctx *MahresourcesContext) SetPluginEnabledWithOptions(pluginName string, e
 			// work can still survive the VM and must be revoked below.
 		}
 
-		if ctx.pluginCommandDispatcher != nil {
-			if err := ctx.pluginCommandDispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
+		if active, activeErr := ctx.pluginCommandActive(); activeErr == nil && active.dispatcher != nil {
+			if err := active.dispatcher.DisablePlugin(pluginName, "plugin disabled"); err != nil {
 				ctx.Logger().Error("system", "plugin", nil, pluginName,
 					"plugin was disabled but its command work could not be fully revoked", map[string]interface{}{"error": err.Error()})
 				return err

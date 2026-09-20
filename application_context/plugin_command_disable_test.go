@@ -154,8 +154,7 @@ end
 	if err := dispatcher.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ctx.SetPluginCommandDispatcher(dispatcher)
-	ctx.pluginCommandExchange = plugin_commands.NewExchange(ctx, settings)
+	installPluginCommandActiveForTest(ctx, dispatcher, plugin_commands.NewExchange(ctx, settings), nil)
 	ctx.PluginManager().SetCommandSubmitter(ctx)
 	t.Cleanup(func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
