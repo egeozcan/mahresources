@@ -9801,3 +9801,8 @@ periodic sweep or owner-side persistence call could remain blocked after bounded
 Stop returned. Runtime lease release now requires the owner loop to have exited
 and both claimed-worker and asynchronous-sweep counts to reach zero. A blocked
 sweep regression proves timeout keeps the lease and completion releases it.
+A follow-up publication-order review then found a successful Stop could receive
+the sweep result just before the sweep released its active count, retaining an
+otherwise quiescent lease. Sweeps now release ownership before sending their
+result, and Stop waits for the owner's done barrier after receiving its reply;
+the channel handoffs establish the release ordering without polling.

@@ -65,6 +65,48 @@ func TestRuntimeLeaseRemainsHeldUntilTimedOutSweepQuiesces(t *testing.T) {
 	waitFor(t, d.RuntimeLeaseReleasable)
 }
 
+func TestSuccessfulStopPublishesOnlyAfterSweepOwnershipIsReleased(t *testing.T) {
+	store := &blockingRuntimeSweepStore{
+		dispatcherTestStore: newDispatcherTestStore(),
+		entered:             make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: &dispatcherTestJobs{}, Executor: dispatcherTestExecutor{},
+		Settings: dispatcherTestSettings{pending: 10},
+	})
+	d.sweepInterval = time.Millisecond
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		close(store.release)
+		t.Fatal("periodic sweep did not start")
+	}
+
+	stopResult := make(chan error, 1)
+	go func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stopResult <- d.Stop(stopCtx)
+	}()
+	select {
+	case err := <-stopResult:
+		close(store.release)
+		t.Fatalf("Stop returned before its active sweep finished: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	close(store.release)
+	if err := <-stopResult; err != nil {
+		t.Fatal(err)
+	}
+	if !d.RuntimeLeaseReleasable() {
+		t.Fatal("successful Stop published before dispatcher runtime ownership quiesced")
+	}
+}
+
 func TestLeaseBlocksSweepAndSweepClosesCheckToAcquireGap(t *testing.T) {
 	leases := NewLeaseManager()
 	release, err := leases.Acquire("run")

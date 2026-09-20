@@ -304,10 +304,16 @@ func (d *Dispatcher) Stop(ctx context.Context) error {
 	}
 	// Once shutdown is accepted, the owner uses ctx only to bound worker drain.
 	// Stop waits for the owner's reply so terminal classification and persistence
-	// have completed before the caller is told shutdown is done.
+	// have completed before the caller is told shutdown is done. A reply is sent
+	// immediately before the owner returns, so also wait for its done barrier;
+	// runtime-lease release must not race that deferred owner cleanup.
+	ownerResult := func(err error) error {
+		<-d.done
+		return err
+	}
 	select {
 	case err := <-reply:
-		return err
+		return ownerResult(err)
 	case <-d.done:
 		select {
 		case err := <-reply:
@@ -321,7 +327,7 @@ func (d *Dispatcher) Stop(ctx context.Context) error {
 		// filesystem operation inside terminal persistence is stuck.
 		select {
 		case err := <-reply:
-			return err
+			return ownerResult(err)
 		default:
 			return fmt.Errorf("plugin command dispatcher stop: %w", ctx.Err())
 		}
@@ -545,8 +551,12 @@ func (d *Dispatcher) run(ctx context.Context) {
 		sweepDone = make(chan error, 1)
 		d.activeSweeps.Add(1)
 		go func(result chan<- error, now time.Time) {
-			defer d.activeSweeps.Add(-1)
-			result <- d.sweep(now)
+			err := d.sweep(now)
+			// Release sweep ownership before publishing the result. The channel
+			// handoff then proves the owner cannot finish a successful Stop while
+			// this sweep still counts as active.
+			d.activeSweeps.Add(-1)
+			result <- err
 		}(sweepDone, d.now())
 	}
 	waitForSweep := func(waitCtx context.Context) error {
