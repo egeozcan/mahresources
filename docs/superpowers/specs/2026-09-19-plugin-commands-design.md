@@ -365,43 +365,49 @@ in-memory dispatcher queue does not survive a restart — with no live dispatch
 is resolved as follows. A durable `cancel_requested` takes precedence over
 crash classification: a queued row is stamped `cancelled` with its stored
 reason; a running row still performs the identity checks below, kills a verified
-surviving group, and then stamps `cancelled`. If a recorded group is alive but
-ownership is unverifiable, recovery leaves the row nonterminal and refuses to
-start the command runtime. Rows without that latch use the other outcomes
-below.
+surviving group, and then stamps `cancelled`. If a recorded group may still be
+alive but recovery cannot settle it safely, recovery leaves the row nonterminal,
+retains the staging-root lease, withholds `mah.commands`/`mah.fs`, and allows the
+rest of the server to boot. Rows without that latch use the other outcomes
+below. The detailed containment rules are in
+`2026-09-20-plugin-command-recovery-containment-design.md`.
 
-1. **Identity check.** Every spawned process carries
+1. **Boot identity check.** New run rows carry the host boot identity captured
+   at admission (Linux `boot_id`, BSD/Darwin `kern.boottime`). When both the
+   recorded and current values are known and differ, the old local process
+   cannot still be a writer: do not inspect or signal its numeric pgid; stamp
+   `interrupted + output_unverified` (or latched `cancelled + output_unverified`). Empty legacy values and platforms where
+   boot identity is unavailable retain the fail-closed checks below.
+2. **Process identity check.** Every spawned process carries
    `MAHR_COMMAND_RUN_ID=<run id>` in its environment (§3, host hardening).
    Recovery enumerates the recorded pgid's group and verifies at least one
    member's environment carries the matching run id (via `/proc/<pid>/environ`
    on Linux, the process args interface on macOS).
-2. **Verified dead** (no group, or empty group): the processes are gone;
+3. **Verified dead** (no group, or empty group): the processes are gone;
    stamp `interrupted` with a finished timestamp. Nothing is writing.
-3. **Verified alive**: descendants survived the crash; the identity check
+4. **Verified alive**: descendants survived the crash; the identity check
    is repeated immediately before signalling, then the group is SIGKILLed
-   and reaped, and the run is stamped `interrupted`. This closes the
-   orphaned-writer case from the previous draft without touching unrelated
-   groups. A narrow residual race remains — between the pre-signal check
-   and signal delivery, the group can exit and the pgid be reused by an
-   unrelated process, so the SIGKILL could land on it. It is **accepted
-   and documented** rather than hidden: the window is sub-millisecond and
-   exploitation requires the pid counter to wrap past every intervening
-   allocation within that window — the same risk class the dispatcher's
-   own runtime `kill(-pgid)` accepts against groups it created moments
-   earlier. Post-signal, the group is re-enumerated once more; if surviving
-   members do not carry the run id, a warning naming the pgid is logged for
-   post-mortem visibility.
-4. **Unverifiable live group** (a recorded group exists but no member's
-   environment matches — either pgid reuse or an Apple platform executable
-   whose environment macOS does not disclose): **do not publish a terminal
-   row**. Recovery returns an error and command-runtime startup remains closed
-   while that possible writer survives. A later startup may classify the run
-   after the group is observably dead; an operator may also terminate the
-   recorded group out of band. Marking `interrupted + output_unverified` while
-   the group remains alive is prohibited: refusing import protects data
-   integrity but does not stop an unbounded writer or make terminal output
-   final.
-5. **No pgid persisted**: the fork/persist crash window provides no numeric
+   and observed until dead before the run is stamped `interrupted`. If the
+   group cannot be signalled, inspected, or proven dead inside the recovery
+   deadline, quarantine the command runtime as described above. A narrow
+   residual race remains — between the pre-signal check and signal delivery,
+   the group can exit and the pgid be reused by an unrelated process, so the
+   SIGKILL could land on it. It is **accepted and documented** rather than
+   hidden: the window is sub-millisecond and exploitation requires the pid
+   counter to wrap past every intervening allocation within that window — the
+   same risk class the dispatcher's own runtime `kill(-pgid)` accepts against
+   groups it created moments earlier.
+5. **Unverifiable live group** (a recorded group exists but no member's
+   environment matches — either same-boot pgid reuse or an Apple platform
+   executable whose environment macOS does not disclose): **do not publish a
+   terminal row**. Quarantine only the command runtime while retaining its
+   staging lease; the HTTP server and unrelated work continue. A later startup
+   may classify the run after the group is observably dead; an operator may
+   terminate it out of band or restart with `-plugins-disabled` to bypass all
+   plugin startup. Marking `interrupted + output_unverified` while the group
+   remains alive is prohibited: refusing import protects data integrity but
+   does not stop an unbounded writer or make terminal output final.
+6. **No pgid persisted**: the fork/persist crash window provides no numeric
    group to inspect or terminate. This remains the one unaddressable launch
    shape: stamp `interrupted + output_unverified`, refuse every file operation
    except `discard_run`, and name the missing pgid in the durable reason.
@@ -418,7 +424,7 @@ which terminal state each path produces:
 | Command exits non-zero / cannot start / quota exceeded | `failed` | error text names timeout or quota |
 | Operator cancels via the live job UI or admin command history | `cancelled` | queued run: removed from the dispatcher and no process exists; dispatched/running run: cancellation latch wins before fork or the process group is killed |
 | Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
-| Server crash / restart / shutdown / dispatch lost | `interrupted` | queued rows and running rows whose group is dead or identity-verified (survivors killed) are stamped; no persisted pgid → `interrupted + output_unverified`; a recorded live but unverifiable group remains nonterminal and blocks command-runtime startup |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | queued rows and running rows whose group is dead or identity-verified (survivors killed) are stamped; different known boot or no persisted pgid → `interrupted + output_unverified`; a recorded live but unverifiable group remains nonterminal and quarantines command surfaces while the server boots |
 
 `failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
 distinct statuses, as required.
@@ -521,7 +527,10 @@ quotas close that gap:
   only after the direct parent exits or termination starts; polling the whole
   process table every 20 ms for a multi-hour command is prohibited. Recovery
   likewise publishes only after verified death; an alive unverifiable group
-  blocks command-runtime startup as described above.
+  quarantines command-runtime startup as described above. A live worker that
+  passes its first cleanup deadline backs polling off to one second, logs the
+  pinned run once after one minute, and may make at most one final signal after
+  a fresh owned-group observation.
 - Command workers are registered with the queue's shutdown tracking; on
   server shutdown, process groups are terminated and runs are recorded
   `interrupted` (exchange dirs retained for later inspection until swept).
@@ -956,7 +965,7 @@ too. The walk over `mah.fs.runs()`:
   status says why);
 - terminal `output_unverified` runs (the no-pgid crash shape) → offered for
   `discard_run`; a recorded live-but-unverifiable group is not terminal and
-  keeps command-runtime startup closed.
+  keeps command surfaces closed while the staging lease remains held.
 
 Until a human opens the page after a restart, stranded claims sit in
 `runs()` — that is the documented behaviour, not a silent drop.
