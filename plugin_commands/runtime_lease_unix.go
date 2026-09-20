@@ -17,9 +17,10 @@ const runtimeLeaseFileName = ".plugin-command-runtime.lock"
 // RuntimeLease excludes a second command runtime from recovering or sweeping a
 // staging root while its current owner can still dispatch work.
 type RuntimeLease struct {
-	file *os.File
-	once sync.Once
-	err  error
+	file           *os.File
+	processRelease func()
+	once           sync.Once
+	err            error
 }
 
 func AcquireRuntimeLease(stagingRoot string) (*RuntimeLease, error) {
@@ -32,6 +33,20 @@ func AcquireRuntimeLease(stagingRoot string) (*RuntimeLease, error) {
 		return nil, fmt.Errorf("open plugin command staging root for runtime lease: %w", err)
 	}
 	defer unix.Close(rootFD)
+
+	processRelease, err := claimRuntimeLeaseProcess(rootFD)
+	if err != nil {
+		if errors.Is(err, ErrRuntimeLeaseBusy) {
+			return nil, runtimeLeaseBusyError(root)
+		}
+		return nil, fmt.Errorf("identify plugin command staging root for runtime lease: %w", err)
+	}
+	keepProcessClaim := false
+	defer func() {
+		if !keepProcessClaim {
+			processRelease()
+		}
+	}()
 
 	fd, err := unix.Openat(rootFD, runtimeLeaseFileName, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -58,14 +73,19 @@ func AcquireRuntimeLease(stagingRoot string) (*RuntimeLease, error) {
 	}
 	if err := lockRuntimeLease(fd); err != nil {
 		if errors.Is(err, ErrRuntimeLeaseBusy) {
-			return closeOnError(fmt.Errorf(
-				"%w: plugin command staging root %q already has an active runtime",
-				ErrRuntimeLeaseBusy, root,
-			))
+			return closeOnError(runtimeLeaseBusyError(root))
 		}
 		return closeOnError(fmt.Errorf("lock plugin command runtime lease: %w", err))
 	}
-	return &RuntimeLease{file: file}, nil
+	keepProcessClaim = true
+	return &RuntimeLease{file: file, processRelease: processRelease}, nil
+}
+
+func runtimeLeaseBusyError(root string) error {
+	return fmt.Errorf(
+		"%w: plugin command staging root %q already has an active runtime",
+		ErrRuntimeLeaseBusy, root,
+	)
 }
 
 func (l *RuntimeLease) Close() error {
@@ -73,14 +93,16 @@ func (l *RuntimeLease) Close() error {
 		return nil
 	}
 	l.once.Do(func() {
-		if l.file == nil {
-			return
+		if l.file != nil {
+			if err := unlockRuntimeLease(int(l.file.Fd())); err != nil {
+				l.err = err
+			}
+			if err := l.file.Close(); err != nil && l.err == nil {
+				l.err = err
+			}
 		}
-		if err := unlockRuntimeLease(int(l.file.Fd())); err != nil {
-			l.err = err
-		}
-		if err := l.file.Close(); err != nil && l.err == nil {
-			l.err = err
+		if l.processRelease != nil {
+			l.processRelease()
 		}
 	})
 	return l.err
