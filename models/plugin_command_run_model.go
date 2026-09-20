@@ -31,6 +31,7 @@ type PluginCommandRun struct {
 	CreatedAt             time.Time `gorm:"index"`
 	StartedAt             *time.Time
 	FinishedAt            *time.Time `gorm:"index"`
+	ExchangeRemovedAt     *time.Time `gorm:"index"`
 }
 
 type PluginCommandRunOutput struct {

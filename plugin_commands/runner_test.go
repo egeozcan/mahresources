@@ -164,8 +164,11 @@ func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error) {
 	}
 	return runs, nil
 }
-func (s *runnerTestStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) { return nil, nil }
-func (s *runnerTestStore) PruneRunOutputs(time.Time) (int64, error)           { return 0, nil }
+func (s *runnerTestStore) ExpiredTerminalRuns(time.Time, int) ([]RunRecord, error) {
+	return nil, nil
+}
+func (s *runnerTestStore) MarkRunExchangeRemoved(string, time.Time) error { return nil }
+func (s *runnerTestStore) PruneRunOutputs(time.Time) (int64, error)       { return 0, nil }
 func (s *runnerTestStore) ImportMap(string, string) (ImportMapEntry, bool, error) {
 	return ImportMapEntry{}, false, nil
 }

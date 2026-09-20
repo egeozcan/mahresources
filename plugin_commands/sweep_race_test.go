@@ -16,7 +16,7 @@ type blockingRuntimeSweepStore struct {
 	release chan struct{}
 }
 
-func (s *blockingRuntimeSweepStore) ExpiredTerminalRuns(before time.Time) ([]RunRecord, error) {
+func (s *blockingRuntimeSweepStore) ExpiredTerminalRuns(before time.Time, limit int) ([]RunRecord, error) {
 	if s.calls.Add(1) > 1 {
 		select {
 		case <-s.entered:
@@ -25,7 +25,7 @@ func (s *blockingRuntimeSweepStore) ExpiredTerminalRuns(before time.Time) ([]Run
 		}
 		<-s.release
 	}
-	return s.dispatcherTestStore.ExpiredTerminalRuns(before)
+	return s.dispatcherTestStore.ExpiredTerminalRuns(before, limit)
 }
 
 func TestRuntimeLeaseRemainsHeldUntilTimedOutSweepQuiesces(t *testing.T) {

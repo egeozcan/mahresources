@@ -20,6 +20,7 @@ const (
 	maxActiveImports           = 2
 	dispatchFailureRetryDelay  = 100 * time.Millisecond
 	pluginCommandSweepInterval = 5 * time.Minute
+	pluginCommandSweepBatch    = 100
 )
 
 var (
@@ -61,6 +62,7 @@ type Dispatcher struct {
 
 	shutdownStarted func() // test barrier; nil in production
 	sweepInterval   time.Duration
+	sweepBatchSize  int
 	now             func() time.Time
 }
 
@@ -273,6 +275,7 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 		deps: deps, inbox: make(chan any, 256), done: make(chan struct{}),
 		importQuotaReserved: make(map[string]int64),
 		sweepInterval:       pluginCommandSweepInterval,
+		sweepBatchSize:      pluginCommandSweepBatch,
 		now:                 func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -645,7 +648,7 @@ func (d *Dispatcher) sweep(now time.Time) error {
 		return fmt.Errorf("plugin_commands: sweep dependencies are incomplete")
 	}
 	var sweepErr error
-	expired, err := d.deps.Store.ExpiredTerminalRuns(now.Add(-d.deps.Settings.ExchangeRetention()))
+	expired, err := d.deps.Store.ExpiredTerminalRuns(now.Add(-d.deps.Settings.ExchangeRetention()), d.sweepBatchSize)
 	if err != nil {
 		sweepErr = errors.Join(sweepErr, fmt.Errorf("list expired plugin command runs: %w", err))
 	} else {
@@ -668,6 +671,10 @@ func (d *Dispatcher) sweep(now time.Time) error {
 			endSweep()
 			if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				sweepErr = errors.Join(sweepErr, fmt.Errorf("remove expired plugin command run %s: %w", run.ID, removeErr))
+				continue
+			}
+			if err := d.deps.Store.MarkRunExchangeRemoved(run.ID, now); err != nil {
+				sweepErr = errors.Join(sweepErr, fmt.Errorf("mark expired plugin command run %s exchange removed: %w", run.ID, err))
 			}
 		}
 	}

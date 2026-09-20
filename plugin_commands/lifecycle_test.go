@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,18 +13,34 @@ import (
 
 type lifecycleStore struct {
 	*dispatcherTestStore
-	expired      []RunRecord
-	nonterminal  map[string]bool
-	prunedBefore time.Time
-	pruneCalls   atomic.Int32
-	pruneNotify  chan struct{}
-	pruneBlock   <-chan struct{}
-	pruneStarted chan struct{}
-	blockAfter   int32
+	expired        []RunRecord
+	nonterminal    map[string]bool
+	prunedBefore   time.Time
+	pruneCalls     atomic.Int32
+	pruneNotify    chan struct{}
+	pruneBlock     <-chan struct{}
+	pruneStarted   chan struct{}
+	blockAfter     int32
+	exchangeMarked []string
+	requestedLimit int
 }
 
-func (s *lifecycleStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) {
-	return append([]RunRecord(nil), s.expired...), nil
+func (s *lifecycleStore) ExpiredTerminalRuns(_ time.Time, limit int) ([]RunRecord, error) {
+	s.requestedLimit = limit
+	if limit > len(s.expired) {
+		limit = len(s.expired)
+	}
+	return append([]RunRecord(nil), s.expired[:limit]...), nil
+}
+func (s *lifecycleStore) MarkRunExchangeRemoved(runID string, _ time.Time) error {
+	s.exchangeMarked = append(s.exchangeMarked, runID)
+	for i, run := range s.expired {
+		if run.ID == runID {
+			s.expired = append(s.expired[:i], s.expired[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 func (s *lifecycleStore) HasNonterminalImports(runID string) (bool, error) {
 	return s.nonterminal[runID], nil
@@ -92,6 +109,40 @@ func TestPluginCommandLifecycleSweepHonorsLeasesImportsAndRetention(t *testing.T
 	}
 	if store.pruneCalls.Load() != 1 || !store.prunedBefore.Equal(now.Add(-settings.output)) {
 		t.Fatalf("prune = calls %d before %s", store.pruneCalls.Load(), store.prunedBefore)
+	}
+}
+
+func TestPluginCommandLifecycleSweepUsesOneBoundedBatchAndMarksRemovedRuns(t *testing.T) {
+	root := t.TempDir()
+	store := &lifecycleStore{
+		dispatcherTestStore: newDispatcherTestStore(),
+		nonterminal:         map[string]bool{},
+		expired: []RunRecord{
+			{ID: "one", PluginName: "plugin", Status: RunStatusSucceeded},
+			{ID: "two", PluginName: "plugin", Status: RunStatusFailed},
+			{ID: "three", PluginName: "plugin", Status: RunStatusCancelled},
+		},
+	}
+	for _, id := range []string{"one", "two"} {
+		dir := filepath.Join(root, "plugin_exchange", "plugin", id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := NewDispatcher(Dependencies{Store: store, Settings: lifecycleSettings{root: root, exchange: time.Hour, output: time.Hour}})
+	d.sweepBatchSize = 2
+
+	if err := d.sweep(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if store.requestedLimit != 2 {
+		t.Fatalf("expired query limit = %d, want 2", store.requestedLimit)
+	}
+	if got := strings.Join(store.exchangeMarked, ","); got != "one,two" {
+		t.Fatalf("marked runs = %q, want one,two", got)
+	}
+	if len(store.expired) != 1 || store.expired[0].ID != "three" {
+		t.Fatalf("unswept rows = %+v, want only three", store.expired)
 	}
 }
 

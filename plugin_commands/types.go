@@ -39,6 +39,7 @@ type RunRecord struct {
 	CreatedAt             time.Time
 	StartedAt             *time.Time
 	FinishedAt            *time.Time
+	ExchangeRemovedAt     *time.Time
 }
 
 type RunOutput struct {

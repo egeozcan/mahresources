@@ -35,7 +35,7 @@ func runModel(record plugin_commands.RunRecord) models.PluginCommandRun {
 		CancelRequested: record.CancelRequested, OutputUnverified: record.OutputUnverified,
 		ActorlessAtSubmission: record.ActorlessAtSubmission,
 		CreatedByUserId:       copyCommandUint(record.CreatedByUserID), CreatedAt: record.CreatedAt,
-		StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+		StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, ExchangeRemovedAt: record.ExchangeRemovedAt,
 	}
 }
 
@@ -47,7 +47,7 @@ func runRecord(row models.PluginCommandRun) plugin_commands.RunRecord {
 		CancelRequested: row.CancelRequested, OutputUnverified: row.OutputUnverified,
 		ActorlessAtSubmission: row.ActorlessAtSubmission,
 		CreatedByUserID:       copyCommandUint(row.CreatedByUserId), CreatedAt: row.CreatedAt,
-		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
+		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, ExchangeRemovedAt: row.ExchangeRemovedAt,
 	}
 }
 
@@ -271,11 +271,21 @@ func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RunRecord, 
 	return result, nil
 }
 
-func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time) ([]plugin_commands.RunRecord, error) {
+func terminalCommandStatuses() []string {
+	return []string{
+		plugin_commands.RunStatusSucceeded, plugin_commands.RunStatusFailed,
+		plugin_commands.RunStatusCancelled, plugin_commands.RunStatusInterrupted,
+	}
+}
+
+func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time, limit int) ([]plugin_commands.RunRecord, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("plugin command exchange sweep limit must be positive")
+	}
 	var rows []models.PluginCommandRun
-	if err := ctx.db.Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ?",
-		[]string{plugin_commands.RunStatusSucceeded, plugin_commands.RunStatusFailed, plugin_commands.RunStatusCancelled, plugin_commands.RunStatusInterrupted}, before).
-		Order("finished_at asc, id asc").Find(&rows).Error; err != nil {
+	if err := ctx.db.Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ? AND exchange_removed_at IS NULL",
+		terminalCommandStatuses(), before).
+		Order("finished_at asc, id asc").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	result := make([]plugin_commands.RunRecord, len(rows))
@@ -285,8 +295,14 @@ func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time) ([]plugin_
 	return result, nil
 }
 
+func (ctx *MahresourcesContext) MarkRunExchangeRemoved(runID string, removedAt time.Time) error {
+	return ctx.db.Model(&models.PluginCommandRun{}).
+		Where("id = ? AND status IN ? AND exchange_removed_at IS NULL", runID, terminalCommandStatuses()).
+		Update("exchange_removed_at", removedAt).Error
+}
+
 func (ctx *MahresourcesContext) PruneRunOutputs(before time.Time) (int64, error) {
-	terminal := []string{plugin_commands.RunStatusSucceeded, plugin_commands.RunStatusFailed, plugin_commands.RunStatusCancelled, plugin_commands.RunStatusInterrupted}
+	terminal := terminalCommandStatuses()
 	subquery := ctx.db.Model(&models.PluginCommandRun{}).Select("id").Where("status IN ?", terminal)
 	res := ctx.db.Where("created_at < ? AND run_id IN (?)", before, subquery).Delete(&models.PluginCommandRunOutput{})
 	return res.RowsAffected, res.Error

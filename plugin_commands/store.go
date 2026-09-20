@@ -27,7 +27,8 @@ type Store interface {
 	Run(id string) (RunRecord, RunOutput, error)
 	Runs(Access) ([]RunView, error)
 	NonterminalRuns() ([]RunRecord, error)
-	ExpiredTerminalRuns(before time.Time) ([]RunRecord, error)
+	ExpiredTerminalRuns(before time.Time, limit int) ([]RunRecord, error)
+	MarkRunExchangeRemoved(runID string, removedAt time.Time) error
 	PruneRunOutputs(before time.Time) (int64, error)
 
 	ImportMap(runID, name string) (ImportMapEntry, bool, error)

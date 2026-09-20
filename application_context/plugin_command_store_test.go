@@ -118,9 +118,13 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	require.Equal(t, "tail", output.OutputTail)
 	require.Equal(t, 4321, *run.ProcessGroupID)
 
-	expired, err := ctx.ExpiredTerminalRuns(finished.Add(time.Second))
+	expired, err := ctx.ExpiredTerminalRuns(finished.Add(time.Second), 100)
 	require.NoError(t, err)
 	require.Len(t, expired, 1)
+	require.NoError(t, ctx.MarkRunExchangeRemoved("run-transitions", finished.Add(2*time.Second)))
+	expired, err = ctx.ExpiredTerminalRuns(finished.Add(3*time.Second), 100)
+	require.NoError(t, err)
+	require.Empty(t, expired, "a swept run must never be selected again")
 	pruned, err := ctx.PruneRunOutputs(now.Add(time.Second))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), pruned)
@@ -128,6 +132,34 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "run-transitions", run.ID, "pruning output must preserve the run")
 	require.Empty(t, output.RunID)
+}
+
+func TestPluginCommandStoreExpiredTerminalRunsAreBoundedAndOrdered(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	for i, id := range []string{"third", "first", "second"} {
+		created := now.Add(time.Duration(i) * time.Second)
+		require.NoError(t, ctx.CreateRun(testRun(id, uintPtr(7), false, created), testOutput(id, created)))
+		won, err := ctx.MarkRunRunning(id, created)
+		require.NoError(t, err)
+		require.True(t, won)
+		finished := map[string]time.Time{
+			"first":  now.Add(10 * time.Second),
+			"second": now.Add(20 * time.Second),
+			"third":  now.Add(30 * time.Second),
+		}[id]
+		won, err = ctx.FinishRun(id, plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: finished})
+		require.NoError(t, err)
+		require.True(t, won)
+	}
+
+	expired, err := ctx.ExpiredTerminalRuns(now.Add(time.Minute), 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"first", "second"}, []string{expired[0].ID, expired[1].ID})
+	require.NoError(t, ctx.MarkRunExchangeRemoved("first", now.Add(2*time.Minute)))
+	expired, err = ctx.ExpiredTerminalRuns(now.Add(3*time.Minute), 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"second", "third"}, []string{expired[0].ID, expired[1].ID})
 }
 
 func TestPluginCommandStoreFinishRunIsAtomicWithOutputTail(t *testing.T) {

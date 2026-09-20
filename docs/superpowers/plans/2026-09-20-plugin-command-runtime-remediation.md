@@ -355,29 +355,29 @@ git commit -m "fix: bound command imports at two copies"
 - Adds `MarkRunExchangeRemoved(id string, removed time.Time) error` to `Store`.
 - `ExpiredTerminalRuns(before)` returns at most `pluginCommandSweepBatchSize` unswept rows ordered by finish/id.
 
-- [ ] **Step 1: Write failing store-selection tests**
+- [x] **Step 1: Write failing store-selection tests**
 
 Seed more than the batch size of expired terminal rows, one already marked row, and one nonexpired row. Assert only the first bounded unswept batch is returned. Mark one returned row and assert it never appears in a later call.
 
-- [ ] **Step 2: Write failing dispatcher sweep tests**
+- [x] **Step 2: Write failing dispatcher sweep tests**
 
 Assert successful deletion and `os.ErrNotExist` both call `MarkRunExchangeRemoved`. Assert leased runs and runs with nonterminal imports are not marked. Assert a mark failure is returned and the row remains eligible for retry.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(ExpiredTerminalRuns|Sweep.*Removed|ExchangeRemoved)' -count=1
 ```
 
-- [ ] **Step 4: Add schema and store behavior**
+- [x] **Step 4: Add schema and store behavior**
 
 Add the nullable timestamp and an index suitable for `exchange_removed_at IS NULL` plus finish-time ordering. Thread it through `runModel`/`runRecord`. Add a bounded `LIMIT` to `ExpiredTerminalRuns` and filter `exchange_removed_at IS NULL`. Implement a conditional mark on the terminal row.
 
-- [ ] **Step 5: Mark only completed sweep ownership**
+- [x] **Step 5: Mark only completed sweep ownership**
 
 In `Dispatcher.sweep`, after `removeExchangeRunDir` succeeds or returns `os.ErrNotExist`, persist `MarkRunExchangeRemoved`. Do not mark when lease acquisition fails, imports are nonterminal, filesystem removal fails, or the mark itself fails.
 
-- [ ] **Step 6: Run SQLite/PostgreSQL GREEN and race tests**
+- [x] **Step 6: Run SQLite/PostgreSQL GREEN and race tests**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(Sweep|ExpiredTerminalRuns|ExchangeRemoved)' -count=1
@@ -385,7 +385,7 @@ go test --tags 'json1 fts5 postgres' ./application_context -run 'TestPluginComma
 go test -race --tags 'json1 fts5' ./plugin_commands -run 'Test.*Sweep' -count=20
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add models/plugin_command_run_model.go plugin_commands/types.go plugin_commands/store.go plugin_commands/dispatcher.go plugin_commands/lifecycle_test.go plugin_commands/dispatcher_test.go plugin_commands/runner_test.go plugin_commands/sweep_race_test.go application_context/plugin_command_store.go application_context/plugin_command_store_test.go application_context/plugin_command_store_pg_test.go

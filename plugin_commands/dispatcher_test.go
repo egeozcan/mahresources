@@ -147,8 +147,11 @@ func (s *dispatcherTestStore) NonterminalRuns() ([]RunRecord, error) {
 	}
 	return result, nil
 }
-func (s *dispatcherTestStore) ExpiredTerminalRuns(time.Time) ([]RunRecord, error) { return nil, nil }
-func (s *dispatcherTestStore) PruneRunOutputs(time.Time) (int64, error)           { return 0, nil }
+func (s *dispatcherTestStore) ExpiredTerminalRuns(time.Time, int) ([]RunRecord, error) {
+	return nil, nil
+}
+func (s *dispatcherTestStore) MarkRunExchangeRemoved(string, time.Time) error { return nil }
+func (s *dispatcherTestStore) PruneRunOutputs(time.Time) (int64, error)       { return 0, nil }
 func (s *dispatcherTestStore) ImportMap(string, string) (ImportMapEntry, bool, error) {
 	return ImportMapEntry{}, false, nil
 }
