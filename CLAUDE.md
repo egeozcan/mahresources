@@ -497,15 +497,20 @@ are sampled, so brief overshoot is possible, and the per-run quota must cover
 merge peak (roughly twice final size while separate audio/video and mux output
 coexist). Import streams the admitted source into AddResource's one scratch copy,
 so staging peaks near twice the source; the global sample is refreshed outside
-admission at startup and after sweeps. Exactly one process may own a staging
+admission at startup and after sweeps, and a failed refresh preserves the last
+complete sample. Exactly one process may own a staging
 root: a startup-held advisory lease refuses a second command runtime before it
 can recover or sweep live work.
 
-A live worker may terminate the process group it created; recovery may signal a
-persisted group only after identity verification. A surviving unverifiable group
-keeps its row nonterminal and command-runtime startup closed. Sweeps process
-bounded unswept terminal batches and stamp `exchange_removed_at` after deletion
-or confirmed absence, while output pruning retains durable run/import history.
+A live worker may terminate the process group it created exactly once; repeated
+signals widen the design's accepted narrow exit/reuse race and could hit a reused
+PGID. Recovery may signal a persisted group only after
+identity verification. A surviving unverifiable group keeps its row nonterminal
+and command-runtime startup closed. Sweeps page to a fixed finish/id boundary in
+bounded unswept terminal batches so sustained expiry cannot prevent wraparound
+and pinned rows cannot starve later work, then stamp `exchange_removed_at`
+after deletion or confirmed absence and clear successful imports' cleanup marker;
+output pruning retains durable run/import history.
 
 Pending commands/imports stay in dispatcher-owned per-plugin queues; only active
 work enters the bounded managed live lane, whose occupancy is derived from the

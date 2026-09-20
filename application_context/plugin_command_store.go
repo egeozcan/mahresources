@@ -278,14 +278,36 @@ func terminalCommandStatuses() []string {
 	}
 }
 
-func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time, limit int) ([]plugin_commands.RunRecord, error) {
+func (ctx *MahresourcesContext) expiredTerminalRunsQuery(before time.Time) *gorm.DB {
+	return ctx.db.Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ? AND exchange_removed_at IS NULL",
+		terminalCommandStatuses(), before)
+}
+
+func (ctx *MahresourcesContext) ExpiredTerminalRunBoundary(before time.Time) (*plugin_commands.RetentionCursor, error) {
+	var row models.PluginCommandRun
+	err := ctx.expiredTerminalRunsQuery(before).Order("finished_at desc, id desc").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &plugin_commands.RetentionCursor{FinishedAt: *row.FinishedAt, RunID: row.ID}, nil
+}
+
+func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time, after, through *plugin_commands.RetentionCursor, limit int) ([]plugin_commands.RunRecord, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("plugin command exchange sweep limit must be positive")
 	}
+	query := ctx.expiredTerminalRunsQuery(before)
+	if after != nil {
+		query = query.Where("finished_at > ? OR (finished_at = ? AND id > ?)", after.FinishedAt, after.FinishedAt, after.RunID)
+	}
+	if through != nil {
+		query = query.Where("finished_at < ? OR (finished_at = ? AND id <= ?)", through.FinishedAt, through.FinishedAt, through.RunID)
+	}
 	var rows []models.PluginCommandRun
-	if err := ctx.db.Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ? AND exchange_removed_at IS NULL",
-		terminalCommandStatuses(), before).
-		Order("finished_at asc, id asc").Limit(limit).Find(&rows).Error; err != nil {
+	if err := query.Order("finished_at asc, id asc").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	result := make([]plugin_commands.RunRecord, len(rows))
@@ -296,9 +318,25 @@ func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time, limit int)
 }
 
 func (ctx *MahresourcesContext) MarkRunExchangeRemoved(runID string, removedAt time.Time) error {
-	return ctx.db.Model(&models.PluginCommandRun{}).
-		Where("id = ? AND status IN ? AND exchange_removed_at IS NULL", runID, terminalCommandStatuses()).
-		Update("exchange_removed_at", removedAt).Error
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.PluginCommandRun{}).
+			Where("id = ? AND status IN ? AND exchange_removed_at IS NULL", runID, terminalCommandStatuses()).
+			Update("exchange_removed_at", removedAt)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("plugin command run %s exchange removal transition lost", runID)
+		}
+		if err := tx.Model(&models.PluginCommandImport{}).
+			Where("run_id = ? AND status = ? AND source_delete_pending = ?", runID, plugin_commands.ImportStatusSucceeded, true).
+			Update("source_delete_pending", false).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.PluginCommandImportMap{}).
+			Where("run_id = ? AND status = ? AND source_delete_pending = ?", runID, plugin_commands.ImportStatusSucceeded, true).
+			Update("source_delete_pending", false).Error
+	})
 }
 
 func (ctx *MahresourcesContext) PruneRunOutputs(before time.Time) (int64, error) {

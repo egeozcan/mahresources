@@ -53,6 +53,26 @@ func TestPrepareUsesCachedGlobalUsageWithoutRescanning(t *testing.T) {
 	}
 }
 
+func TestStagingUsageCacheKeepsLastCompleteSampleAfterRefreshFailure(t *testing.T) {
+	var fail atomic.Bool
+	usage := &StagingUsageCache{measure: func(string) (int64, error) {
+		if fail.Load() {
+			return 0, errors.New("walk failed")
+		}
+		return 41, nil
+	}}
+	if err := usage.Refresh(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	if err := usage.Refresh(t.TempDir()); err == nil {
+		t.Fatal("failed refresh succeeded")
+	}
+	if got, err := usage.Current(); err != nil || got != 41 {
+		t.Fatalf("cached usage after failed refresh = %d, %v; want 41", got, err)
+	}
+}
+
 func TestPrepareRefusesAnUninitializedGlobalUsageCache(t *testing.T) {
 	root := t.TempDir()
 	settings := runnerTestSettings{root: root, commandDir: t.TempDir(), perRun: 1024, global: 1024}
@@ -96,6 +116,39 @@ func TestQuotaGlobalAdmissionLeavesNoRunOrFolder(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("quota-refused folder remains: %#v", entries)
+	}
+}
+
+func TestDispatcherAdoptsExecutorUsageCacheAndFailsClosedAtStartup(t *testing.T) {
+	root := t.TempDir()
+	usage := &StagingUsageCache{measure: func(string) (int64, error) {
+		return 0, errors.New("measurement failed")
+	}}
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: t.TempDir(), perRun: 1024, global: 1024}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Usage: usage})
+	dispatcher := NewDispatcher(Dependencies{
+		Store: store, Jobs: &dispatcherTestJobs{}, Executor: executor, Settings: settings,
+	})
+	if err := dispatcher.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "measurement failed") {
+		if err == nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = dispatcher.Stop(stopCtx)
+		}
+		t.Fatalf("Start error = %v, want adopted cache refresh failure", err)
+	}
+}
+
+func TestDispatcherRefusesADifferentExecutorUsageCache(t *testing.T) {
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: t.TempDir(), commandDir: t.TempDir(), perRun: 1024, global: 1024}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Usage: NewStagingUsageCache()})
+	dispatcher := NewDispatcher(Dependencies{
+		Store: store, Jobs: &dispatcherTestJobs{}, Executor: executor, Settings: settings, Usage: NewStagingUsageCache(),
+	})
+	if err := dispatcher.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "share one staging usage cache") {
+		t.Fatalf("Start error = %v, want cache identity refusal", err)
 	}
 }
 
@@ -173,7 +226,7 @@ func TestQuotaFinalSampleRejectsAFastSuccessfulWriter(t *testing.T) {
 	}
 }
 
-func TestUsageRejectsASymlinkedRoot(t *testing.T) {
+func TestUsageRefreshRejectsASymlinkedRoot(t *testing.T) {
 	realRoot := t.TempDir()
 	link := filepath.Join(t.TempDir(), "staging")
 	if err := os.Symlink(realRoot, link); err != nil {
@@ -183,16 +236,12 @@ func TestUsageRejectsASymlinkedRoot(t *testing.T) {
 		t.Fatalf("pathUsageNoSymlinks error = %v", err)
 	}
 
-	settings := runnerTestSettings{root: link, commandDir: t.TempDir(), perRun: 1024, global: 1024}
-	executor := NewExecutor(RunnerDependencies{Store: newRunnerTestStore(), Settings: settings})
-	runID := strings.Repeat("a", 32)
-	run := QueuedRun{
-		RunID:       runID,
-		ExchangeDir: filepath.Join(link, "plugin_exchange", "plug", runID),
-		Request:     CommandRequest{PluginName: "plug"},
+	usage := NewStagingUsageCache()
+	if err := usage.Refresh(link); err == nil || !strings.Contains(err.Error(), "root is a symlink") {
+		t.Fatalf("Refresh error = %v", err)
 	}
-	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err == nil || !strings.Contains(err.Error(), "root is a symlink") {
-		t.Fatalf("Prepare error = %v", err)
+	if _, err := usage.Current(); err == nil || !strings.Contains(err.Error(), "no sample has been published") {
+		t.Fatalf("Current error after failed initial refresh = %v", err)
 	}
 }
 

@@ -353,7 +353,8 @@ git commit -m "fix: bound command imports at two copies"
 **Interfaces:**
 - Adds `ExchangeRemovedAt *time.Time` to `RunRecord` and `models.PluginCommandRun`.
 - Adds `MarkRunExchangeRemoved(id string, removed time.Time) error` to `Store`.
-- `ExpiredTerminalRuns(before)` returns at most `pluginCommandSweepBatchSize` unswept rows ordered by finish/id.
+- `ExpiredTerminalRunBoundary(before)` captures the newest eligible finish/id at the start of one retention cycle.
+- `ExpiredTerminalRuns(before, after, through)` returns at most `pluginCommandSweepBatchSize` unswept rows ordered by finish/id inside that fixed cycle boundary.
 
 - [x] **Step 1: Write failing store-selection tests**
 
@@ -361,7 +362,7 @@ Seed more than the batch size of expired terminal rows, one already marked row, 
 
 - [x] **Step 2: Write failing dispatcher sweep tests**
 
-Assert successful deletion and `os.ErrNotExist` both call `MarkRunExchangeRemoved`. Assert leased runs and runs with nonterminal imports are not marked. Assert a mark failure is returned and the row remains eligible for retry.
+Assert successful deletion and `os.ErrNotExist` both call `MarkRunExchangeRemoved`. Assert leased runs and runs with nonterminal imports are not marked. Assert a lost/no-op mark is returned as an error and the row remains eligible for retry. Fill one batch with pinned rows, append at least one full batch of newly expired rows, and assert the next sweep still reaches the original fixed boundary so the following cycle can retry the pinned prefix.
 
 - [x] **Step 3: Run RED**
 
@@ -371,11 +372,11 @@ go test --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*
 
 - [x] **Step 4: Add schema and store behavior**
 
-Add the nullable timestamp and an index suitable for `exchange_removed_at IS NULL` plus finish-time ordering. Thread it through `runModel`/`runRecord`. Add a bounded `LIMIT` to `ExpiredTerminalRuns` and filter `exchange_removed_at IS NULL`. Implement a conditional mark on the terminal row.
+Add the nullable timestamp and a composite index over `exchange_removed_at, finished_at, id`. Thread it through `runModel`/`runRecord`. Add a bounded `LIMIT` to `ExpiredTerminalRuns`, filter `exchange_removed_at IS NULL`, and page after a finish/id cursor through a fixed cycle boundary so sustained new expiry cannot defer wraparound. Implement a conditional mark that errors unless exactly one terminal row wins.
 
 - [x] **Step 5: Mark only completed sweep ownership**
 
-In `Dispatcher.sweep`, after `removeExchangeRunDir` succeeds or returns `os.ErrNotExist`, persist `MarkRunExchangeRemoved`. Do not mark when lease acquisition fails, imports are nonterminal, filesystem removal fails, or the mark itself fails.
+In `Dispatcher.sweep`, after `removeExchangeRunDir` succeeds or returns `os.ErrNotExist`, persist `MarkRunExchangeRemoved` and atomically reconcile successful imports' `source_delete_pending` flags. Do not mark when lease acquisition fails, imports are nonterminal, filesystem removal fails, or the mark itself fails.
 
 - [x] **Step 6: Run SQLite/PostgreSQL GREEN and race tests**
 
@@ -431,9 +432,9 @@ go test --tags 'json1 fts5' ./plugin_commands -run 'Test.*(CachedGlobal|RefreshG
 
 - [x] **Step 4: Implement atomic sample publication**
 
-Add `atomic.Int64` plus an atomic readiness flag to `commandExecutor`. `RefreshGlobalUsage` walks the staging root and publishes only after a successful complete scan. `Prepare` reads the sample, checks the current live limit, and proceeds without filesystem traversal.
+Add a shared usage cache to `commandExecutor`. `Refresh` walks the staging root and publishes only after a successful complete scan. `Prepare` reads the sample, checks the current live limit, and proceeds without filesystem traversal.
 
-Invoke refresh at the end of every sweep, including the initial sweep in `Start`. A failed periodic refresh logs/returns the sweep error but leaves the previous complete sample intact; a failed initial refresh prevents admission because readiness was never established.
+`NewDispatcher` adopts the executor's cache when the dependency is omitted, and `Start` refuses mismatched cache identities. Invoke refresh at the end of every sweep, including the initial sweep in `Start`. A failed periodic refresh logs/returns the sweep error but leaves the previous complete sample intact; a failed initial refresh prevents dispatcher start because readiness was never established.
 
 - [x] **Step 5: Run GREEN and race verification**
 
@@ -484,7 +485,7 @@ aria-label="Cancel queued run {{ commandRun.ID }}"
 aria-label="Cancel queued run {{ run.ID }}"
 ```
 
-Keep the visible label unchanged.
+Keep the visible label unchanged. When the selected detail run also appears in the table, replace its duplicate list action with a passive `Shown above` marker so the exact accessible name occurs only once.
 
 - [x] **Step 4: Run GREEN**
 
@@ -558,29 +559,29 @@ git commit -m "docs: record plugin command runtime remediation"
 **Interfaces:**
 - Produces merge-readiness evidence; does not weaken behavior or suppress the two accepted unrelated baseline failures.
 
-- [ ] **Step 1: Run focused race suites**
+- [x] **Step 1: Run focused race suites**
 
 ```bash
 go test -race --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_system ./server/api_tests -run 'Test.*(PluginCommand|Command|Import|Sweep|RuntimeLease)' -count=10
 ```
 
-- [ ] **Step 2: Run package and frontend suites**
+- [x] **Step 2: Run package and frontend suites**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_system ./server/api_tests -count=1
-npm test -- --run
+npm run test:unit -- --run
 ```
 
 Classify only the two named baseline failures as accepted; every new failure is blocking.
 
-- [ ] **Step 3: Run PostgreSQL selections**
+- [x] **Step 3: Run PostgreSQL selections**
 
 ```bash
 go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests -run 'Test.*PluginCommand' -count=1
 cd e2e && npm run test:with-server:postgres -- tests/plugins/plugin-command-history.spec.ts
 ```
 
-- [ ] **Step 4: Run browser/CLI shards on ephemeral servers**
+- [x] **Step 4: Run browser/CLI shards on ephemeral servers**
 
 ```bash
 cd e2e
@@ -592,7 +593,7 @@ npm run test:with-server:cli-doctest
 
 Use bounded shards if the monolithic harness exceeds worker-server startup limits; do not mask application failures.
 
-- [ ] **Step 5: Run final static/build checks**
+- [x] **Step 5: Run final static/build checks**
 
 ```bash
 npm run build
@@ -604,11 +605,11 @@ git diff --check
 git status --short
 ```
 
-- [ ] **Step 6: Review the complete remediation diff**
+- [x] **Step 6: Review the complete remediation diff**
 
 Compare `ac0a5603..HEAD` against the approved design. Specifically inspect process terminal ordering, recovery non-mutation, import callback ordering, cleanup flag persistence, quota arithmetic, sweep marking conditions, global-cache publication, and accessible names.
 
-- [ ] **Step 7: Commit any verification-only documentation update**
+- [x] **Step 7: Commit any verification-only documentation update**
 
 ```bash
 git add docs/todo.md docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md

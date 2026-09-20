@@ -25,12 +25,47 @@ type lifecycleStore struct {
 	requestedLimit int
 }
 
-func (s *lifecycleStore) ExpiredTerminalRuns(_ time.Time, limit int) ([]RunRecord, error) {
-	s.requestedLimit = limit
-	if limit > len(s.expired) {
-		limit = len(s.expired)
+func (s *lifecycleStore) ensureExpiredTimes() {
+	for i := range s.expired {
+		if s.expired[i].FinishedAt == nil {
+			finished := time.Unix(int64(i+1), 0).UTC()
+			s.expired[i].FinishedAt = &finished
+		}
 	}
-	return append([]RunRecord(nil), s.expired[:limit]...), nil
+}
+
+func (s *lifecycleStore) ExpiredTerminalRunBoundary(_ time.Time) (*RetentionCursor, error) {
+	s.ensureExpiredTimes()
+	if len(s.expired) == 0 {
+		return nil, nil
+	}
+	last := s.expired[len(s.expired)-1]
+	return &RetentionCursor{FinishedAt: *last.FinishedAt, RunID: last.ID}, nil
+}
+
+func (s *lifecycleStore) ExpiredTerminalRuns(_ time.Time, after, through *RetentionCursor, limit int) ([]RunRecord, error) {
+	s.requestedLimit = limit
+	s.ensureExpiredTimes()
+	result := make([]RunRecord, 0, limit)
+	for _, run := range s.expired {
+		cursor := RetentionCursor{FinishedAt: *run.FinishedAt, RunID: run.ID}
+		if after != nil && !retentionCursorAfter(cursor, *after) {
+			continue
+		}
+		if through != nil && retentionCursorAfter(cursor, *through) {
+			continue
+		}
+		result = append(result, run)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func retentionCursorAfter(left, right RetentionCursor) bool {
+	return left.FinishedAt.After(right.FinishedAt) ||
+		(left.FinishedAt.Equal(right.FinishedAt) && left.RunID > right.RunID)
 }
 func (s *lifecycleStore) MarkRunExchangeRemoved(runID string, _ time.Time) error {
 	s.exchangeMarked = append(s.exchangeMarked, runID)
@@ -145,6 +180,56 @@ func TestPluginCommandLifecycleSweepUsesOneBoundedBatchAndMarksRemovedRuns(t *te
 		t.Fatalf("unswept rows = %+v, want only three", store.expired)
 	}
 }
+
+func TestPluginCommandLifecycleSweepAdvancesPastPinnedBatch(t *testing.T) {
+	root := t.TempDir()
+	finished := time.Now().UTC().Add(-2 * time.Hour)
+	store := &lifecycleStore{
+		dispatcherTestStore: newDispatcherTestStore(),
+		nonterminal:         map[string]bool{"importing": true},
+		expired: []RunRecord{
+			{ID: "leased", PluginName: "plugin", Status: RunStatusFailed, FinishedAt: commandTimePtr(finished)},
+			{ID: "importing", PluginName: "plugin", Status: RunStatusCancelled, FinishedAt: commandTimePtr(finished.Add(time.Second))},
+			{ID: "removable", PluginName: "plugin", Status: RunStatusSucceeded, FinishedAt: commandTimePtr(finished.Add(2 * time.Second))},
+		},
+	}
+	for _, id := range []string{"leased", "importing", "removable"} {
+		if err := os.MkdirAll(filepath.Join(root, "plugin_exchange", "plugin", id), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	leases := NewLeaseManager()
+	release, err := leases.Acquire("leased")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	d := NewDispatcher(Dependencies{
+		Store: store, Settings: lifecycleSettings{root: root, exchange: time.Hour, output: time.Hour}, Leases: leases,
+	})
+	d.sweepBatchSize = 2
+
+	if err := d.sweep(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.exchangeMarked) != 0 {
+		t.Fatalf("first pinned batch marked = %v", store.exchangeMarked)
+	}
+	// New expirations arriving faster than the batch size must not extend the
+	// current cycle forever and prevent its skipped prefix from being retried.
+	store.expired = append(store.expired,
+		RunRecord{ID: "new-one", PluginName: "plugin", Status: RunStatusSucceeded, FinishedAt: commandTimePtr(finished.Add(3 * time.Second))},
+		RunRecord{ID: "new-two", PluginName: "plugin", Status: RunStatusSucceeded, FinishedAt: commandTimePtr(finished.Add(4 * time.Second))},
+	)
+	if err := d.sweep(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(store.exchangeMarked, ","); got != "removable" {
+		t.Fatalf("marked runs after advancing bounded cycle = %q, want removable", got)
+	}
+}
+
+func commandTimePtr(value time.Time) *time.Time { return &value }
 
 func TestPluginCommandLifecycleSweepRefreshesGlobalUsageSample(t *testing.T) {
 	var measurements atomic.Int32

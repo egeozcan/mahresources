@@ -118,11 +118,26 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	require.Equal(t, "tail", output.OutputTail)
 	require.Equal(t, 4321, *run.ProcessGroupID)
 
-	expired, err := ctx.ExpiredTerminalRuns(finished.Add(time.Second), 100)
+	expired, err := ctx.ExpiredTerminalRuns(finished.Add(time.Second), nil, nil, 100)
 	require.NoError(t, err)
 	require.Len(t, expired, 1)
+	require.NoError(t, ctx.db.Create(&models.PluginCommandImport{
+		ID: "pending-delete", RunID: "run-transitions", FileName: "result.bin", Status: plugin_commands.ImportStatusSucceeded,
+		SourceDeletePending: true, CreatedAt: now, FinishedAt: &finished,
+	}).Error)
+	require.NoError(t, ctx.db.Create(&models.PluginCommandImportMap{
+		RunID: "run-transitions", FileName: "result.bin", ImportID: "pending-delete",
+		Status: plugin_commands.ImportStatusSucceeded, SourceDeletePending: true,
+	}).Error)
 	require.NoError(t, ctx.MarkRunExchangeRemoved("run-transitions", finished.Add(2*time.Second)))
-	expired, err = ctx.ExpiredTerminalRuns(finished.Add(3*time.Second), 100)
+	require.Error(t, ctx.MarkRunExchangeRemoved("run-transitions", finished.Add(3*time.Second)), "a lost conditional mark must not report success")
+	var importRow models.PluginCommandImport
+	require.NoError(t, ctx.db.First(&importRow, "id = ?", "pending-delete").Error)
+	require.False(t, importRow.SourceDeletePending, "retention removal must reconcile successful import cleanup state")
+	var mapRow models.PluginCommandImportMap
+	require.NoError(t, ctx.db.First(&mapRow, "import_id = ?", "pending-delete").Error)
+	require.False(t, mapRow.SourceDeletePending, "retention removal must reconcile map cleanup state")
+	expired, err = ctx.ExpiredTerminalRuns(finished.Add(3*time.Second), nil, nil, 100)
 	require.NoError(t, err)
 	require.Empty(t, expired, "a swept run must never be selected again")
 	pruned, err := ctx.PruneRunOutputs(now.Add(time.Second))
@@ -136,6 +151,12 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 
 func TestPluginCommandStoreExpiredTerminalRunsAreBoundedAndOrdered(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
+	var sweepIndex []struct{ Name string }
+	require.NoError(t, ctx.db.Raw("PRAGMA index_info('idx_plugin_command_run_sweep')").Scan(&sweepIndex).Error)
+	require.Len(t, sweepIndex, 3)
+	require.Equal(t, []string{"exchange_removed_at", "finished_at", "id"}, []string{
+		sweepIndex[0].Name, sweepIndex[1].Name, sweepIndex[2].Name,
+	})
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	for i, id := range []string{"third", "first", "second"} {
 		created := now.Add(time.Duration(i) * time.Second)
@@ -153,11 +174,27 @@ func TestPluginCommandStoreExpiredTerminalRunsAreBoundedAndOrdered(t *testing.T)
 		require.True(t, won)
 	}
 
-	expired, err := ctx.ExpiredTerminalRuns(now.Add(time.Minute), 2)
+	boundary, err := ctx.ExpiredTerminalRunBoundary(now.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, "third", boundary.RunID)
+	require.NoError(t, ctx.CreateRun(testRun("later", uintPtr(7), false, now.Add(4*time.Second)), testOutput("later", now)))
+	won, err := ctx.MarkRunRunning("later", now.Add(4*time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = ctx.FinishRun("later", plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: now.Add(40 * time.Second)})
+	require.NoError(t, err)
+	require.True(t, won)
+	expired, err := ctx.ExpiredTerminalRuns(now.Add(time.Minute), nil, boundary, 2)
 	require.NoError(t, err)
 	require.Equal(t, []string{"first", "second"}, []string{expired[0].ID, expired[1].ID})
+	expiredAfterCursor, err := ctx.ExpiredTerminalRuns(now.Add(time.Minute), &plugin_commands.RetentionCursor{
+		FinishedAt: *expired[1].FinishedAt,
+		RunID:      expired[1].ID,
+	}, boundary, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"third"}, []string{expiredAfterCursor[0].ID})
 	require.NoError(t, ctx.MarkRunExchangeRemoved("first", now.Add(2*time.Minute)))
-	expired, err = ctx.ExpiredTerminalRuns(now.Add(3*time.Minute), 2)
+	expired, err = ctx.ExpiredTerminalRuns(now.Add(3*time.Minute), nil, nil, 2)
 	require.NoError(t, err)
 	require.Equal(t, []string{"second", "third"}, []string{expired[0].ID, expired[1].ID})
 }

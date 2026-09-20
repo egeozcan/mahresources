@@ -9823,9 +9823,9 @@ the channel handoffs establish the release ordering without polling.
 | Recovery could settle a live unverifiable group | Inspection/termination errors fell through to terminal persistence; recovery tests observed mutation instead of startup refusal. | Preserve the nonterminal row and fail runtime startup (`0a7eeb79`). |
 | Successful imports retained source bytes | The Unix unlink helper unconditionally returned an unavailable sentinel; success and cleanup-failure regressions both retained bytes. | Identity-check then `unlinkat`, with transactional `source_delete_pending` kept separate from `error` (`a278ef8c`). |
 | Import quota modeled three copies | Admission reserved source plus two snapshots; an exact `2 × source` boundary failed. | Stream the admitted descriptor through an exact-size reader into AddResource's sole scratch copy (`ed9e8703`). |
-| Retention revisited all history | Every sweep selected every old terminal row; the bounded-order regression had no durable cursor. | Limited unswept batches and `exchange_removed_at` marking after deletion/absence (`12fa4e24`). |
+| Retention revisited all history | Every sweep selected every old terminal row; the bounded-order regression had no durable marker. | Limited unswept batches and `exchange_removed_at` marking after deletion/absence (`12fa4e24`). |
 | Admission walked the staging tree | `Prepare` synchronously called `WalkDir`; a measurement counter advanced during admission. | One shared fail-closed usage cache refreshed at startup and after sweeps (`045d0c3a`). |
-| Cancellation actions shared a name | Detail and list controls all exposed `Cancel queued run`; rendered-page assertions could not distinguish them. | Run- and location-specific accessible names, covered by Go and keyboard E2E tests (`ed20a3cc`). |
+| Cancellation actions shared a name | Detail and list controls all exposed `Cancel queued run`; rendered-page assertions could not distinguish them. | Exact run-specific accessible names, with the selected run's duplicate list action suppressed, covered by Go and keyboard E2E tests. |
 
 Focused GREEN and race verification covers process/recovery ordering,
 transactional cleanup flags, exact-size single-snapshot imports, bounded ordered
@@ -9833,3 +9833,33 @@ retention, cache refresh/publication, and keyboard-accessible history
 cancellation. The intentional no-PGID crash limitation remains: without a
 persisted process-group id, recovery cannot identify descendants safely, so it
 records `interrupted + output_unverified` and permits only `discard_run`.
+
+The independent readiness audit then found four gaps in the remediation itself.
+Live workers could signal the same locally owned PGID again after it had been
+reused; signaling is now one-shot while inspection continues until death. A
+batch filled by leased or importing rows could starve every later expired run;
+the bounded finish/id cursor now advances through a fixed cycle boundary and
+wraps even under sustained expiry, backed by the composite
+`exchange_removed_at, finished_at, id` index. A failed periodic staging
+measurement overwrote the last complete sample; publication now occurs only
+after success, and the dispatcher structurally adopts and verifies the executor's
+cache before its initial refresh. Retention marking now errors on a lost
+conditional transition and atomically clears successful imports' cleanup flags
+after deletion or confirmed absence. The audit also enforced the planned exact cancellation name without
+reintroducing a duplicate control for the selected detail row. RED coverage
+includes repeated post-signal inspection failure, a fully pinned sweep batch,
+failed cache refresh, retention cleanup reconciliation, and exact unique rendered
+labels. A repeated race run exposed that the integration assertion observed the
+durable succeeded+pending state between publication and unlink; it now waits for
+the separate cleanup transition rather than treating successful import status as
+proof that cleanup has already finished.
+
+Final verification on the corrected tree: the focused four-package race selection
+passed 10 consecutive runs; focused SQLite and PostgreSQL command selections
+passed; PostgreSQL command-history E2E passed 3/3; vitest passed 90 files and
+1,412 tests; the combined ephemeral browser/auth/CLI/doctest harness passed 2,242
+with 5 intentional skips. The four-package aggregate reproduced only the two
+accepted unrelated baselines, `TestBundledPluginLiteralURLsAreDeclared` and
+`TestSidebar_IsWrappedInADisclosure`. Build, vet, CSS scan, CLI docs lint, skill
+generation and `git diff --check` passed. Fresh independent standards and spec
+closure reviews both returned `APPROVED` with no actionable findings.

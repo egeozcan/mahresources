@@ -443,6 +443,21 @@ func waitForImport(t *testing.T, ctx *application_context.MahresourcesContext, r
 	return plugin_commands.ImportMapEntry{}
 }
 
+func waitForImportSourceCleanup(t *testing.T, ctx *application_context.MahresourcesContext, runID, name string) plugin_commands.ImportMapEntry {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var last plugin_commands.ImportMapEntry
+	for time.Now().Before(deadline) {
+		last = waitForImport(t, ctx, runID, name, plugin_commands.ImportStatusSucceeded)
+		if !last.SourceDeletePending {
+			return last
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("import %s/%s source cleanup never settled; last=%+v", runID, name, last)
+	return plugin_commands.ImportMapEntry{}
+}
+
 func createImportBlocker(t *testing.T, ctx *application_context.MahresourcesContext, stagingRoot, id string, actorID uint, generation uint64) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -559,6 +574,7 @@ func TestPluginCommandRealProcessImportsIntoMemoryFS(t *testing.T) {
 		t.Fatalf("MemoryFS resource bytes = %q, want %q", got, want)
 	}
 
+	mapped = waitForImportSourceCleanup(t, tc.AppCtx, run.ID, "import.bin")
 	runDir := filepath.Join(stagingRoot, "plugin_exchange", commandIntegrationPluginName, run.ID)
 	if _, err := os.Stat(filepath.Join(runDir, "discard.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discard callback did not remove source: %v", err)
@@ -656,6 +672,7 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 	if resource.Name != "command integration resource" {
 		t.Fatalf("resource name = %q", resource.Name)
 	}
+	mapped = waitForImportSourceCleanup(t, tc.AppCtx, produce.ID, "import.bin")
 	runDir := filepath.Join(stagingRoot, "plugin_exchange", commandIntegrationPluginName, produce.ID)
 	if _, err := os.Stat(filepath.Join(runDir, "discard.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discarded source remains: %v", err)

@@ -34,6 +34,10 @@ type commandAdmission interface {
 	Cleanup(QueuedRun)
 }
 
+type stagingUsageCacheProvider interface {
+	stagingUsageCache() *StagingUsageCache
+}
+
 type Dispatcher struct {
 	deps Dependencies
 
@@ -61,6 +65,9 @@ type Dispatcher struct {
 	importQuotaReserved map[string]int64
 
 	shutdownStarted func() // test barrier; nil in production
+	sweepMu         sync.Mutex
+	sweepCursor     *RetentionCursor
+	sweepThrough    *RetentionCursor
 	sweepInterval   time.Duration
 	sweepBatchSize  int
 	now             func() time.Time
@@ -271,6 +278,9 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 	if deps.Leases == nil {
 		deps.Leases = NewLeaseManager()
 	}
+	if provider, ok := deps.Executor.(stagingUsageCacheProvider); ok && deps.Usage == nil {
+		deps.Usage = provider.stagingUsageCache()
+	}
 	return &Dispatcher{
 		deps: deps, inbox: make(chan any, 256), done: make(chan struct{}),
 		importQuotaReserved: make(map[string]int64),
@@ -283,6 +293,11 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 func (d *Dispatcher) Start(ctx context.Context) error {
 	if d.deps.Store == nil || d.deps.Jobs == nil || d.deps.Executor == nil || d.deps.Settings == nil {
 		return fmt.Errorf("plugin_commands: dispatcher dependencies are incomplete")
+	}
+	if provider, ok := d.deps.Executor.(stagingUsageCacheProvider); ok {
+		if cache := provider.stagingUsageCache(); cache == nil || d.deps.Usage != cache {
+			return fmt.Errorf("plugin_commands: dispatcher and executor must share one staging usage cache")
+		}
 	}
 	if err := d.sweep(d.now()); err != nil {
 		return fmt.Errorf("initial plugin command sweep: %w", err)
@@ -643,12 +658,42 @@ func (d *Dispatcher) run(ctx context.Context) {
 	}
 }
 
+func retentionCursorBefore(left, right RetentionCursor) bool {
+	return left.FinishedAt.Before(right.FinishedAt) ||
+		(left.FinishedAt.Equal(right.FinishedAt) && left.RunID < right.RunID)
+}
+
 func (d *Dispatcher) sweep(now time.Time) error {
 	if d == nil || d.deps.Store == nil || d.deps.Settings == nil || d.deps.Leases == nil {
 		return fmt.Errorf("plugin_commands: sweep dependencies are incomplete")
 	}
+	d.sweepMu.Lock()
+	defer d.sweepMu.Unlock()
+
 	var sweepErr error
-	expired, err := d.deps.Store.ExpiredTerminalRuns(now.Add(-d.deps.Settings.ExchangeRetention()), d.sweepBatchSize)
+	cutoff := now.Add(-d.deps.Settings.ExchangeRetention())
+	var err error
+	if d.sweepThrough == nil {
+		d.sweepThrough, err = d.deps.Store.ExpiredTerminalRunBoundary(cutoff)
+	}
+	var expired []RunRecord
+	if err == nil && d.sweepThrough != nil {
+		expired, err = d.deps.Store.ExpiredTerminalRuns(
+			cutoff, d.sweepCursor, d.sweepThrough, d.sweepBatchSize,
+		)
+	}
+	if err == nil && d.sweepThrough != nil {
+		if len(expired) == 0 {
+			d.sweepCursor, d.sweepThrough = nil, nil
+		} else if last := expired[len(expired)-1]; last.FinishedAt != nil {
+			cursor := &RetentionCursor{FinishedAt: *last.FinishedAt, RunID: last.ID}
+			if !retentionCursorBefore(*cursor, *d.sweepThrough) {
+				d.sweepCursor, d.sweepThrough = nil, nil
+			} else {
+				d.sweepCursor = cursor
+			}
+		}
+	}
 	if err != nil {
 		sweepErr = errors.Join(sweepErr, fmt.Errorf("list expired plugin command runs: %w", err))
 	} else {

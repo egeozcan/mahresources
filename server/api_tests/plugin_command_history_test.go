@@ -47,12 +47,11 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 		t.Fatalf("output was not escaped: %s", body)
 	}
 	for _, label := range []string{
-		`aria-label="Cancel queued run admin-owned-command in details"`,
-		`aria-label="Cancel queued run admin-owned-command in history"`,
-		`aria-label="Cancel queued run user-owned-command in history"`,
+		`aria-label="Cancel queued run admin-owned-command"`,
+		`aria-label="Cancel queued run user-owned-command"`,
 	} {
-		if !strings.Contains(body, label) {
-			t.Fatalf("history page lacks run-specific cancellation label %q: %s", label, body)
+		if count := strings.Count(body, label); count != 1 {
+			t.Fatalf("history page cancellation label %q occurs %d times, want once: %s", label, count, body)
 		}
 	}
 

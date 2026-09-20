@@ -33,7 +33,6 @@ type GroupIdentity struct {
 type StagingUsageCache struct {
 	mu          sync.RWMutex
 	bytes       int64
-	err         error
 	initialized bool
 	measure     func(string) (int64, error)
 }
@@ -51,10 +50,13 @@ func (c *StagingUsageCache) Refresh(root string) error {
 		measure = pathUsageNoSymlinks
 	}
 	bytes, err := measure(root)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
-	c.bytes, c.err, c.initialized = bytes, err, true
+	c.bytes, c.initialized = bytes, true
 	c.mu.Unlock()
-	return err
+	return nil
 }
 
 func (c *StagingUsageCache) Current() (int64, error) {
@@ -66,7 +68,7 @@ func (c *StagingUsageCache) Current() (int64, error) {
 	if !c.initialized {
 		return 0, fmt.Errorf("global staging usage is unavailable: no sample has been published")
 	}
-	return c.bytes, c.err
+	return c.bytes, nil
 }
 
 type ProcessInspector interface {

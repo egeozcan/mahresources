@@ -74,7 +74,7 @@
         <form method="post" action="/v1/plugin/command-run/cancel">
             <input type="hidden" name="csrf_token" value="{{ csrfToken }}">
             <input type="hidden" name="id" value="{{ commandRun.ID }}">
-            <button type="submit" aria-label="Cancel queued run {{ commandRun.ID }} in details" class="rounded border-l-4 border-t-4 border-red-700 bg-red-50 px-3 py-2 text-sm font-semibold text-red-900 focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
+            <button type="submit" aria-label="Cancel queued run {{ commandRun.ID }}" class="rounded border-l-4 border-t-4 border-red-700 bg-red-50 px-3 py-2 text-sm font-semibold text-red-900 focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
         </form>
         {% endif %}
     </section>
@@ -92,10 +92,14 @@
                 <td class="p-2">{{ run.PluginName }}</td><td class="p-2">{{ run.CommandName }}</td><td class="p-2">{{ run.Status }}</td><td class="p-2">{{ run.CreatedAt }}</td>
                 <td class="p-2">
                     {% if run.Status == "queued" %}
-                    <form method="post" action="/v1/plugin/command-run/cancel" class="inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrfToken }}"><input type="hidden" name="id" value="{{ run.ID }}">
-                        <button type="submit" aria-label="Cancel queued run {{ run.ID }} in history" class="text-red-700 underline rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
-                    </form>
+                        {% if commandRun and run.ID == commandRun.ID %}
+                        <span class="text-stone-500">Shown above</span>
+                        {% else %}
+                        <form method="post" action="/v1/plugin/command-run/cancel" class="inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrfToken }}"><input type="hidden" name="id" value="{{ run.ID }}">
+                            <button type="submit" aria-label="Cancel queued run {{ run.ID }}" class="text-red-700 underline rounded focus:outline-none focus:ring-2 focus:ring-amber-600">Cancel queued run</button>
+                        </form>
+                        {% endif %}
                     {% else %}<span class="text-stone-500">&mdash;</span>{% endif %}
                 </td>
             </tr>

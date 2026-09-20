@@ -147,7 +147,10 @@ func (s *dispatcherTestStore) NonterminalRuns() ([]RunRecord, error) {
 	}
 	return result, nil
 }
-func (s *dispatcherTestStore) ExpiredTerminalRuns(time.Time, int) ([]RunRecord, error) {
+func (s *dispatcherTestStore) ExpiredTerminalRunBoundary(time.Time) (*RetentionCursor, error) {
+	return nil, nil
+}
+func (s *dispatcherTestStore) ExpiredTerminalRuns(time.Time, *RetentionCursor, *RetentionCursor, int) ([]RunRecord, error) {
 	return nil, nil
 }
 func (s *dispatcherTestStore) MarkRunExchangeRemoved(string, time.Time) error { return nil }

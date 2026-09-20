@@ -43,12 +43,11 @@ func NewExecutor(deps RunnerDependencies) Executor {
 	}
 	if deps.Usage == nil {
 		deps.Usage = NewStagingUsageCache()
-		if deps.Settings != nil {
-			_ = deps.Usage.Refresh(deps.Settings.StagingRoot())
-		}
 	}
 	return &commandExecutor{deps: deps, cleanupTimeout: groupDrainTimeout, quotaInterval: quotaSampleInterval}
 }
+
+func (e *commandExecutor) stagingUsageCache() *StagingUsageCache { return e.deps.Usage }
 
 func (e *commandExecutor) Prepare(run QueuedRun) error {
 	if e.deps.Store == nil || e.deps.Settings == nil {
@@ -282,6 +281,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	outputUnverified := false
 	forcedCleanup := false
 	groupDead := false
+	groupSignalAttempted := false
 	var cleanupDeadline time.Time
 	appendReason := func(message string) {
 		if message == "" || strings.Contains(reason, message) {
@@ -294,11 +294,15 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		}
 	}
 	killGroup := func() {
-		// This worker created pgid from the exact process returned by Start, so it
-		// has creation-time authority to signal the group. Environment inspection
-		// is a restart-recovery identity check; using it here strands Apple platform
-		// executables whose environment kern.procargs2 deliberately omits.
 		startGroupPolling()
+		if groupSignalAttempted {
+			return
+		}
+		// This worker created pgid from the exact process returned by Start, so it
+		// has creation-time authority to signal the group once. Re-signalling after
+		// the original group exits could target a reused PGID; subsequent cleanup
+		// therefore only polls until that first signal is observed to have drained.
+		groupSignalAttempted = true
 		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
 			appendReason(fmt.Sprintf("kill process group: %v", err))
 			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {

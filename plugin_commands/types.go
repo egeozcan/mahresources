@@ -42,6 +42,11 @@ type RunRecord struct {
 	ExchangeRemovedAt     *time.Time
 }
 
+type RetentionCursor struct {
+	FinishedAt time.Time
+	RunID      string
+}
+
 type RunOutput struct {
 	RunID      string
 	ArgvJSON   string

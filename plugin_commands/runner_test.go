@@ -164,7 +164,10 @@ func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error) {
 	}
 	return runs, nil
 }
-func (s *runnerTestStore) ExpiredTerminalRuns(time.Time, int) ([]RunRecord, error) {
+func (s *runnerTestStore) ExpiredTerminalRunBoundary(time.Time) (*RetentionCursor, error) {
+	return nil, nil
+}
+func (s *runnerTestStore) ExpiredTerminalRuns(time.Time, *RetentionCursor, *RetentionCursor, int) ([]RunRecord, error) {
 	return nil, nil
 }
 func (s *runnerTestStore) MarkRunExchangeRemoved(string, time.Time) error { return nil }
@@ -384,6 +387,9 @@ func TestRunnerEnvironmentArgvPathAndRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := QueuedRun{RunID: runID, ExchangeDir: exchange, Invocation: invocation, Request: CommandRequest{PluginName: "plug", Declaration: declaration}}
+	if err := executor.(stagingUsageCacheProvider).stagingUsageCache().Refresh(root); err != nil {
+		t.Fatal(err)
+	}
 	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
 		t.Fatal(err)
 	}
@@ -588,16 +594,21 @@ func TestRunnerTimeoutKillsProcessGroupWithScrubbedDescendantBeforePublishingFin
 }
 
 type unverifiedUntilKilledInspector struct {
-	mu           sync.Mutex
-	killCalls    int
-	inspectCalls int
-	killed       bool
+	mu                    sync.Mutex
+	killCalls             int
+	inspectCalls          int
+	postKillInspectErrors int
+	killed                bool
 }
 
 func (i *unverifiedUntilKilledInspector) InspectGroup(int, string) (GroupIdentity, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.inspectCalls++
+	if i.killed && i.postKillInspectErrors > 0 {
+		i.postKillInspectErrors--
+		return GroupIdentity{}, errors.New("transient inspection failure")
+	}
 	if i.killed {
 		return GroupIdentity{State: GroupDead}, nil
 	}
@@ -620,7 +631,7 @@ func TestRunnerKillsLocallyCreatedGroupWhenMemberEnvironmentIsUnverified(t *test
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
-	inspector := &unverifiedUntilKilledInspector{}
+	inspector := &unverifiedUntilKilledInspector{postKillInspectErrors: 2}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: inspector})
 	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
 	run := seedRunnerRun(t, executor, store, settings, "local-owned", []string{"mah-helper", helperProcessFlag, "spawn-scrubbed-descendant", "{{exchange_dir}}"}, 100*time.Millisecond)
@@ -894,6 +905,11 @@ func seedRunnerRun(t *testing.T, executor Executor, store *runnerTestStore, sett
 		t.Fatal(err)
 	}
 	run := QueuedRun{RunID: runID, ExchangeDir: exchange, Invocation: invocation, Request: CommandRequest{PluginName: "plug", Declaration: declaration}}
+	if provider, ok := executor.(stagingUsageCacheProvider); ok {
+		if err := provider.stagingUsageCache().Refresh(settings.root); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := executor.(interface{ Prepare(QueuedRun) error }).Prepare(run); err != nil {
 		t.Fatal(err)
 	}
