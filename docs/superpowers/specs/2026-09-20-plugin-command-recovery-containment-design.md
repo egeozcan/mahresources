@@ -1,6 +1,7 @@
 # Plugin command recovery containment design
 
-**Date:** 2026-09-20  
+**Date:** 2026-09-20
+
 **Status:** Approved
 **Scope:** Follow-up to `2026-09-19-plugin-commands-design.md` and `2026-09-20-plugin-command-runtime-remediation.md`
 
