@@ -47,6 +47,7 @@ type Dispatcher struct {
 	workerMu      sync.Mutex
 	workerClosing bool
 	workers       sync.WaitGroup
+	activeWorkers atomic.Int64
 
 	shutdownMu  sync.Mutex
 	shutdownErr error
@@ -1150,7 +1151,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 		workerDone := false
 		defer func() {
 			if !workerDone {
-				d.workers.Done()
+				d.workerDone()
 			}
 		}()
 		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
@@ -1166,7 +1167,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 			d.deliverClaimedCompletion(run, resultFromRun(record))
 			completionHandedOff = true
 		}
-		d.workers.Done()
+		d.workerDone()
 		workerDone = true
 		d.post(commandCompleted{runID: run.RunID, outcome: outcome})
 		return outcome
@@ -1187,6 +1188,7 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	state.activeImports[item.spec.ImportID] = activeImport{plugin: item.spec.PluginName, cancel: cancel, release: item.release, claimed: item.claimed}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
+		workerActive := false
 		defer func() {
 			if item.cleanup != nil {
 				item.cleanup()
@@ -1194,21 +1196,19 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 			if item.release != nil {
 				item.release()
 			}
+			// Source descriptors and run leases are part of worker ownership. Mark
+			// the worker drained only after both have been released.
+			if workerActive {
+				d.workerDone()
+			}
 		}()
 		if !d.beginImportWorker(item.claimed) {
 			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
 		}
-		workerDone := false
-		defer func() {
-			if !workerDone {
-				d.workers.Done()
-			}
-		}()
+		workerActive = true
 		stop := context.AfterFunc(liveCtx, func() { cancel(context.Cause(liveCtx)) })
 		outcome := item.run(runCtx, progress)
 		stop()
-		d.workers.Done()
-		workerDone = true
 		d.post(importCompleted{importID: item.spec.ImportID})
 		return outcome
 	})
@@ -1424,6 +1424,7 @@ func (d *Dispatcher) beginWorker() bool {
 		return false
 	}
 	d.workers.Add(1)
+	d.activeWorkers.Add(1)
 	return true
 }
 
@@ -1435,7 +1436,24 @@ func (d *Dispatcher) beginImportWorker(claimed *atomic.Bool) bool {
 	}
 	claimed.Store(true)
 	d.workers.Add(1)
+	d.activeWorkers.Add(1)
 	return true
+}
+
+func (d *Dispatcher) workerDone() {
+	d.activeWorkers.Add(-1)
+	d.workers.Done()
+}
+
+// RuntimeLeaseReleasable reports whether shutdown has closed worker admission
+// and every worker which claimed durable command or import ownership returned.
+func (d *Dispatcher) RuntimeLeaseReleasable() bool {
+	if d == nil {
+		return true
+	}
+	d.workerMu.Lock()
+	defer d.workerMu.Unlock()
+	return d.workerClosing && d.activeWorkers.Load() == 0
 }
 
 func (d *Dispatcher) post(message any) {

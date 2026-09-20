@@ -56,8 +56,8 @@ func AcquireRuntimeLease(stagingRoot string) (*RuntimeLease, error) {
 	if err := unix.Fchmod(fd, 0o600); err != nil {
 		return closeOnError(fmt.Errorf("secure plugin command runtime lease: %w", err))
 	}
-	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+	if err := lockRuntimeLease(fd); err != nil {
+		if errors.Is(err, errRuntimeLeaseBusy) {
 			return closeOnError(fmt.Errorf("plugin command staging root %q already has an active runtime", root))
 		}
 		return closeOnError(fmt.Errorf("lock plugin command runtime lease: %w", err))
@@ -73,7 +73,7 @@ func (l *RuntimeLease) Close() error {
 		if l.file == nil {
 			return
 		}
-		if err := unix.Flock(int(l.file.Fd()), unix.LOCK_UN); err != nil {
+		if err := unlockRuntimeLease(int(l.file.Fd())); err != nil {
 			l.err = err
 		}
 		if err := l.file.Close(); err != nil && l.err == nil {

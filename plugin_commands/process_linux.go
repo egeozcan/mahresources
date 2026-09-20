@@ -32,11 +32,14 @@ func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentit
 			}
 			return GroupIdentity{}, fmt.Errorf("read process %d stat: %w", pid, err)
 		}
-		memberPGID, err := linuxStatProcessGroup(data)
+		memberPGID, zombie, err := linuxStatProcess(data)
 		if err != nil {
 			return GroupIdentity{}, fmt.Errorf("parse process %d stat: %w", pid, err)
 		}
-		if memberPGID == pgid {
+		// A zombie has exited and can no longer write into the exchange folder.
+		// PID 1 may leave orphaned descendants unreaped, so counting zombies as
+		// live would keep command cleanup waiting forever after SIGKILL.
+		if memberPGID == pgid && !zombie {
 			pids = append(pids, pid)
 		}
 	}
@@ -62,22 +65,22 @@ func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentit
 	return GroupIdentity{State: GroupAliveUnverified, PIDs: pids}, nil
 }
 
-func linuxStatProcessGroup(data []byte) (int, error) {
+func linuxStatProcess(data []byte) (pgid int, zombie bool, err error) {
 	// comm is parenthesized and may contain spaces or ')' characters. The last
 	// ')' is the only stable delimiter before state, ppid and pgrp.
 	end := strings.LastIndexByte(string(data), ')')
 	if end < 0 || end+2 >= len(data) {
-		return 0, errors.New("missing comm delimiter")
+		return 0, false, errors.New("missing comm delimiter")
 	}
 	fields := strings.Fields(string(data[end+1:]))
 	if len(fields) < 3 {
-		return 0, errors.New("missing pgrp field")
+		return 0, false, errors.New("missing state or pgrp field")
 	}
-	pgid, err := strconv.Atoi(fields[2])
+	pgid, err = strconv.Atoi(fields[2])
 	if err != nil {
-		return 0, fmt.Errorf("parse pgrp: %w", err)
+		return 0, false, fmt.Errorf("parse pgrp: %w", err)
 	}
-	return pgid, nil
+	return pgid, fields[0] == "Z", nil
 }
 
 func (nativeProcessInspector) KillGroup(pgid int) error {

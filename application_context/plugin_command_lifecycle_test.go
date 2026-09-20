@@ -306,6 +306,29 @@ func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
 
 type lifecycleBlockingImporter struct{ started chan string }
 
+type lifecycleAsyncJobs struct{}
+
+func (lifecycleAsyncJobs) SubmitCommandJob(_ plugin_commands.RunJobSpec, _ func(string) error, run func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
+	go run(context.Background(), nil)
+	return "lifecycle-job", nil
+}
+
+func (lifecycleAsyncJobs) SubmitImportJob(plugin_commands.ImportJobSpec, func(context.Context, plugin_commands.Progress) plugin_commands.Outcome) (string, error) {
+	return "", errors.New("unexpected import dispatch")
+}
+
+type lifecycleStubbornExecutor struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (e *lifecycleStubbornExecutor) Execute(context.Context, plugin_commands.QueuedRun) plugin_commands.Outcome {
+	e.once.Do(func() { close(e.started) })
+	<-e.release
+	return plugin_commands.Outcome{Status: plugin_commands.RunStatusFailed, Error: "released"}
+}
+
 func (i lifecycleBlockingImporter) ValidateImport(plugin_commands.ImportValidation) error { return nil }
 func (i lifecycleBlockingImporter) ImportResource(ctx context.Context, source plugin_commands.ImportSource, _ plugin_commands.ResourceFields, _ string) (uint, error) {
 	i.started <- source.ImportID
@@ -413,6 +436,68 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if mapped.ImportID != claim.ImportID || mapped.Status != plugin_commands.ImportStatusInterrupted {
 		t.Fatalf("shutdown import outcome = %+v, claim=%+v", mapped, claim)
 	}
+}
+
+func TestPluginCommandLifecycleShutdownRetainsLeaseWhileClaimedWorkerIsActive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("plugin commands are unsupported on Windows")
+	}
+	ctx := newPluginCommandStoreTestContext(t)
+	root := t.TempDir()
+	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
+	lease, err := plugin_commands.AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &lifecycleStubbornExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+		Store: ctx, Jobs: lifecycleAsyncJobs{}, Executor: executor, Settings: settings,
+	})
+	if err := dispatcher.Start(context.Background()); err != nil {
+		_ = lease.Close()
+		t.Fatal(err)
+	}
+	ctx.pluginCommandDispatcher = dispatcher
+	ctx.pluginCommandLease = lease
+	owner := uint(19)
+	if _, err := dispatcher.Submit(plugin_commands.CommandRequest{
+		PluginName: "lifecycle", ActorUserID: &owner,
+		Declaration: plugin_commands.Declaration{Name: "blocked", Argv: []string{"blocked"}, Timeout: time.Minute},
+	}); err != nil {
+		close(executor.release)
+		t.Fatal(err)
+	}
+	select {
+	case <-executor.started:
+	case <-time.After(time.Second):
+		close(executor.release)
+		t.Fatal("claimed command worker did not start")
+	}
+
+	if err := ctx.stopPluginCommandsWithin(20 * time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		close(executor.release)
+		t.Fatalf("bounded stop = %v, want deadline exceeded", err)
+	}
+	if second, err := plugin_commands.AcquireRuntimeLease(root); err == nil {
+		_ = second.Close()
+		close(executor.release)
+		t.Fatal("shutdown timeout released the staging lease while its worker remained active")
+	}
+
+	close(executor.release)
+	deadline := time.Now().Add(time.Second)
+	for !dispatcher.RuntimeLeaseReleasable() {
+		if time.Now().After(deadline) {
+			t.Fatal("released command worker did not drain")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_ = ctx.stopPluginCommandsWithin(20 * time.Millisecond)
+	second, err := plugin_commands.AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatalf("confirmed worker drain did not release staging lease: %v", err)
+	}
+	_ = second.Close()
 }
 
 func TestPluginCommandLifecycleShutdownReturnsPersistenceError(t *testing.T) {

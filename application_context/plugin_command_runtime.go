@@ -107,6 +107,9 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 	if ctx.pluginManager == nil {
 		return fmt.Errorf("plugin manager is unavailable")
 	}
+	if ctx.pluginCommandLease != nil {
+		return fmt.Errorf("plugin command runtime is already active or draining")
+	}
 	wrappedSettings := commandSettings{Settings: settings}
 	// The staging-root lease must precede every recovery read-modify-write and
 	// filesystem cleanup. Without it, a rolling second process could classify
@@ -165,20 +168,33 @@ func (ctx *MahresourcesContext) StartPluginCommandsIfEnabled(callCtx context.Con
 // and plugin manager are stopped. Its error is part of process shutdown: a
 // terminal write that did not persist must make the process exit unsuccessfully.
 func (ctx *MahresourcesContext) StopPluginCommands() error {
+	return ctx.stopPluginCommandsWithin(30 * time.Second)
+}
+
+func (ctx *MahresourcesContext) stopPluginCommandsWithin(timeout time.Duration) error {
 	if ctx == nil {
 		return nil
 	}
 	dispatcher := ctx.pluginCommandDispatcher
 	lease := ctx.pluginCommandLease
-	ctx.pluginCommandDispatcher = nil
+	// Stop publishing the host immediately, even when a claimed worker needs to
+	// retain process-lifetime ownership of the staging root.
 	ctx.pluginCommandExchange = nil
-	ctx.pluginCommandLease = nil
 	var stopErr error
 	if dispatcher != nil {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		stopErr = dispatcher.Stop(stopCtx)
 		cancel()
+		if !dispatcher.RuntimeLeaseReleasable() {
+			// A worker may still own a process group, source descriptor or pending
+			// resource side effect. Keep both references alive so the advisory lock
+			// cannot be released before process exit or a later confirmed drain.
+			return stopErr
+		}
 	}
+
+	ctx.pluginCommandDispatcher = nil
+	ctx.pluginCommandLease = nil
 	var leaseErr error
 	if lease != nil {
 		leaseErr = lease.Close()

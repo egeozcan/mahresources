@@ -9781,3 +9781,17 @@ Validation: focused regressions reproduced missing endpoint routing/prices befor
 RED evidence reproduced the reviewed defects: a blocked `SetRunProcessGroup` let a descendant survive terminal publication; repeated nonterminal import submission retained the plugin action waitgroup; trailing-separator trusted paths passed startup but failed execution; a second startup could enter recovery against a live owner; and bounded shutdown stamped claimed work terminal. GREEN coverage now includes a real subprocess lease exclusion/release test, a real process-group shutdown→restart recovery test, blocked-PGID descendant coverage, pending/running callback teardown checks, path normalization cases, and claimed import shutdown recovery checks. Focused lifecycle races passed 100 times under `-race`; callback ownership passed 50 times; the complete `plugin_commands` race suite, tagged SQLite/PostgreSQL command selections, build, vet, docs generation/lint, and SQLite/PostgreSQL command-history E2E all pass.
 
 The review suggestion to unlink every successful import was rejected: the approved spec and Task 8 require `imported-pending-delete` when descriptor-atomic unlink is unavailable. The descriptor-anchored retention sweep remains the safe deletion owner.
+
+A final runtime follow-up closes three review blockers. Shutdown now retains the
+staging-root runtime lease when worker admission has closed but a claimed command
+or import worker remains active, releasing it only after a confirmed drain (or at
+process exit). Linux process-group inspection excludes zombies, which cannot
+write output and may otherwise remain unreaped indefinitely when the server is
+PID 1. Runtime locking uses `fcntl` on AIX and `flock` on the supported BSD,
+Linux, Darwin and Solaris targets; focused AIX and Linux command-line package
+cross-compiles prove both build-tag paths. Focused race/SQLite/PostgreSQL tests,
+OpenAPI/CLI/skill docs, CSS scan, build/vet, and SQLite/PostgreSQL command-history
+E2E all pass. The broad concurrent race attempt exceeded the application-context
+10-minute package timeout in the unrelated root-admin concurrency test and also
+reproduced the two documented baseline failures; focused affected race suites
+pass repeatedly.
