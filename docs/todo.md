@@ -178,8 +178,32 @@ The Task 9 diff was whitespace-clean and reviewed. Task 9 was independently
 approved and recorded by commit `306fd6d3f1d34b862e949d0a0d15630b2e6f6143`.
 The remaining limitation is probe-only process inspection on AIX, DragonFly BSD,
 FreeBSD, NetBSD, OpenBSD and Solaris: those targets cannot prove a zombie-only
-group dead, so quarantine may require parent reaping or a server restart. Only
-the present whole-branch correction and closure review remains as the final gate.
+group dead, so quarantine may require parent reaping or a server restart.
+
+### Final recovery-containment closure review (approved)
+
+Correction commit `58b5a9bda0338c5ce3e4b99cd14091a2f6f07b36` adds a
+complete identity-validation pre-pass over every returned nonterminal run before
+import interruption, run terminalization, process inspection or runtime
+publication. Malformed queued/running PGID and boot-identity combinations now
+fail as ordinary fatal errors while preserving every row and returning the
+controller to idle without quarantine or publication. Positive-PGID/empty-boot
+legacy rows remain accepted.
+
+The independent final reviewer approved both specification compliance and code
+quality at clean HEAD `58b5a9bda0338c5ce3e4b99cd14091a2f6f07b36`, with no
+findings, after reviewing the complete `24a80e63..HEAD` branch diff. Earlier
+final-review findings remain resolved: lifecycle diagnostics are mirrored to
+stdout and `/logs`, unknown statuses and non-positive PGIDs fail fatally, Linux
+boot-id provider coverage exists, and completion records are aligned.
+
+Focused tests passed at 10 repeats and focused race tests at 3 repeats. The full
+`plugin_commands` and `application_context` suites, vet, targeted PostgreSQL
+command coverage, command-history/API coverage, and diff/cleanliness checks also
+passed. `plugin_system` reproduced only the explicitly accepted unrelated
+`TestBundledPluginLiteralURLsAreDeclared` baseline. The whole-branch
+recovery-containment closure review is approved and no implementation gate
+remains.
 
 ## Original implementation plan
 
