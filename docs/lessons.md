@@ -2,6 +2,19 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## A safety shortcut must be stable in the direction that relaxes protection
+
+When a persisted identity lets recovery skip inspection and publish terminal
+state, a false mismatch is fail-open, not conservative. Use a true boot-session
+UUID rather than a clock-derived timestamp: macOS `kern.boottime` moves with
+realtime-clock corrections and sleep/wake, while `kern.bootsessionuuid` is the
+boot-invariant analogue of Linux `boot_id`. If a platform cannot provide a
+host-unique boot identity, leave the optimization unavailable and keep the
+existing fail-closed process inspection. Persist the identity atomically with
+the process identifier whose reuse it qualifies, keep it out of plugin/admin
+views, and test the unsafe direction explicitly: same-boot work must never be
+classified as prior-boot work.
+
 ## Separate live ownership authority from crash-recovery identity
 
 A runner that just created a process group knows which group it owns; making its

@@ -372,12 +372,15 @@ rest of the server to boot. Rows without that latch use the other outcomes
 below. The detailed containment rules are in
 `2026-09-20-plugin-command-recovery-containment-design.md`.
 
-1. **Boot identity check.** New run rows carry the host boot identity captured
-   at admission (Linux `boot_id`, BSD/Darwin `kern.boottime`). When both the
-   recorded and current values are known and differ, the old local process
-   cannot still be a writer: do not inspect or signal its numeric pgid; stamp
-   `interrupted + output_unverified` (or latched `cancelled + output_unverified`). Empty legacy values and platforms where
-   boot identity is unavailable retain the fail-closed checks below.
+1. **Boot identity check.** The same conditional statement that persists a new
+   pgid also pairs it with the host-unique boot-session UUID (Linux `boot_id`,
+   Darwin `kern.bootsessionuuid`). When both the recorded and current values are
+   known and differ, the old local process cannot still be a writer: do not
+   inspect or signal its numeric pgid; stamp `interrupted + output_unverified`
+   (or latched `cancelled + output_unverified`). The identity is host-internal
+   and absent from Lua/admin views. Empty legacy values and platforms without a
+   reliable host-unique session UUID retain the fail-closed checks below;
+   clock-derived `kern.boottime` is never used.
 2. **Process identity check.** Every spawned process carries
    `MAHR_COMMAND_RUN_ID=<run id>` in its environment (§3, host hardening).
    Recovery enumerates the recorded pgid's group and verifies at least one
@@ -401,16 +404,25 @@ below. The detailed containment rules are in
    environment matches — either same-boot pgid reuse or an Apple platform
    executable whose environment macOS does not disclose): **do not publish a
    terminal row**. Quarantine only the command runtime while retaining its
-   staging lease; the HTTP server and unrelated work continue. A later startup
-   may classify the run after the group is observably dead; an operator may
-   terminate it out of band or restart with `-plugins-disabled` to bypass all
-   plugin startup. Marking `interrupted + output_unverified` while the group
+   staging lease; the HTTP server and unrelated work continue. Recovery retries
+   on the command sweep cadence and publishes the atomic command/filesystem
+   hosts without a plugin reload once every blocker is safe. It settles other
+   independently safe rows and reports the complete blocker set to stdout and
+   `/logs`. An operator may terminate a group out of band or restart with
+   `-plugins-disabled` to bypass all plugin startup. Marking
+   `interrupted + output_unverified` while the group
    remains alive is prohibited: refusing import protects data integrity but
    does not stop an unbounded writer or make terminal output final.
 6. **No pgid persisted**: the fork/persist crash window provides no numeric
    group to inspect or terminate. This remains the one unaddressable launch
    shape: stamp `interrupted + output_unverified`, refuse every file operation
    except `discard_run`, and name the missing pgid in the durable reason.
+
+The staging-root runtime lease is governed by the same containment boundary. A
+busy lease during a rolling replacement quarantines command surfaces and retries
+acquisition while the rest of the server boots; invalid roots, permissions
+failures and malformed lease files remain fatal. An acquired lease spans
+recovery, quarantine, activation and complete dispatcher quiescence.
 
 Exchange folders of resolved runs are retained until the sweep reaches them.
 
@@ -528,9 +540,10 @@ quotas close that gap:
   process table every 20 ms for a multi-hour command is prohibited. Recovery
   likewise publishes only after verified death; an alive unverifiable group
   quarantines command-runtime startup as described above. A live worker that
-  passes its first cleanup deadline backs polling off to one second, logs the
-  pinned run once after one minute, and may make at most one final signal after
-  a fresh owned-group observation.
+  passes its first cleanup deadline backs polling off to one second, logs once
+  after one minute that the named run/pgid permanently holds a global command
+  slot, and may make at most one final signal after a fresh observation that the
+  group is alive (owned or environment-unverified).
 - Command workers are registered with the queue's shutdown tracking; on
   server shutdown, process groups are terminated and runs are recorded
   `interrupted` (exchange dirs retained for later inspection until swept).
@@ -1051,7 +1064,8 @@ Core (mahresources):
 - Crash recovery: restart with a **surviving orphaned process group** (a
   grandchild writer still alive) — an identity-verified group is killed before
   the record is stamped `interrupted`; a recorded live but unverifiable group
-  is not killed, not stamped terminal, and prevents command-runtime startup.
+  is not killed or stamped terminal, quarantines command surfaces while the
+  server boots, and heals automatically after later recovery observes death.
   The guarantee is that output **cannot be imported while writers remain
   alive**, not that killed writers' files are complete: an `interrupted` run's
   files may be partial, and its status says why. A **spawn/persist crash** with
