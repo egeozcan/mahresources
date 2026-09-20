@@ -293,6 +293,7 @@ func (c *pluginCommandRuntimeController) buildRuntime() (*pluginCommandActiveRun
 	executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
 		Store: c.owner, BootSessionID: c.bootSessionID, Settings: c.settings,
 		Inspector: c.config.inspector, Usage: usage, Logf: log.Printf,
+		Warn: pluginCommandRuntimeWarningSink(c.owner),
 	})
 	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
 		Store: c.owner, BootSessionID: c.bootSessionID,
@@ -305,6 +306,19 @@ func (c *pluginCommandRuntimeController) buildRuntime() (*pluginCommandActiveRun
 		dispatcher: dispatcher,
 		exchange:   plugin_commands.NewExchangeWithLeases(c.owner, c.settings, leases),
 	}, nil
+}
+
+func pluginCommandRuntimeWarningSink(ctx *MahresourcesContext) func(plugin_commands.RuntimeWarning) {
+	return func(warning plugin_commands.RuntimeWarning) {
+		message := fmt.Sprintf(
+			"plugin command run %q process group %d remains alive after forced cleanup; one global command slot is pinned by this run (1 of %d total slots): %s",
+			warning.RunID, warning.ProcessGroupID, warning.ActiveLimit, warning.Message,
+		)
+		log.Printf("[plugin-command] WARNING: %s", message)
+		ctx.Logger().Warning(models.LogActionSystem, "plugin_command", nil, warning.RunID, message, map[string]interface{}{
+			"event": warning.Event, "run_id": warning.RunID, "process_group_id": warning.ProcessGroupID, "active_limit": warning.ActiveLimit,
+		})
+	}
 }
 
 func (c *pluginCommandRuntimeController) isStopping() bool {

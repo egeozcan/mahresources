@@ -27,6 +27,16 @@ type GroupIdentity struct {
 	PIDs  []int
 }
 
+const RuntimeWarningEventPinnedSlot = "pinned_global_command_slot"
+
+type RuntimeWarning struct {
+	Event          string
+	Message        string
+	RunID          string
+	ProcessGroupID int
+	ActiveLimit    int
+}
+
 // StagingUsageCache keeps global quota admission O(1). The runtime refreshes
 // the sample at startup and after each retention sweep; admission never walks
 // the staging tree while a plugin VM or dispatcher lock is held.
@@ -88,6 +98,7 @@ type RunnerDependencies struct {
 	Inspector     ProcessInspector
 	Usage         *StagingUsageCache
 	Logf          func(string, ...any)
+	Warn          func(RuntimeWarning)
 }
 
 func effectiveQuota(configured, fallback int64) int64 {

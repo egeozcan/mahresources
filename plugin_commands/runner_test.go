@@ -663,6 +663,199 @@ func TestRunnerKillsLocallyCreatedGroupWhenMemberEnvironmentIsUnverified(t *test
 	}
 }
 
+type boundedResignalInspector struct {
+	mu                       sync.Mutex
+	state                    GroupState
+	killCalls                int
+	deadAfterKills           int
+	inspectionErrorAfterKill bool
+	proveDead                bool
+	inspectionTimes          []time.Time
+	killTimes                []time.Time
+}
+
+func (i *boundedResignalInspector) InspectGroup(int, string) (GroupIdentity, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.inspectionTimes = append(i.inspectionTimes, time.Now())
+	if i.proveDead || i.deadAfterKills > 0 && i.killCalls >= i.deadAfterKills {
+		return GroupIdentity{State: GroupDead}, nil
+	}
+	if i.inspectionErrorAfterKill && i.killCalls > 0 {
+		return GroupIdentity{}, errors.New("inspection unavailable after first signal")
+	}
+	return GroupIdentity{State: i.state}, nil
+}
+
+func (i *boundedResignalInspector) KillGroup(int) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.killCalls++
+	i.killTimes = append(i.killTimes, time.Now())
+	return nil
+}
+
+func (i *boundedResignalInspector) setDead() {
+	i.mu.Lock()
+	i.proveDead = true
+	i.mu.Unlock()
+}
+
+func (i *boundedResignalInspector) snapshot() (int, []time.Time, []time.Time) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.killCalls, append([]time.Time(nil), i.inspectionTimes...), append([]time.Time(nil), i.killTimes...)
+}
+
+func startBoundedResignalRun(t *testing.T, inspector *boundedResignalInspector, warn func(RuntimeWarning)) (<-chan Outcome, QueuedRun) {
+	t.Helper()
+	root, commandDir := t.TempDir(), "/bin"
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: inspector, Warn: warn})
+	configured := executor.(*commandExecutor)
+	configured.pollInterval = 5 * time.Millisecond
+	configured.stuckPollInterval = 40 * time.Millisecond
+	configured.cleanupTimeout = 20 * time.Millisecond
+	configured.stuckWarningAfter = 80 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "bounded-resignal", []string{"sh", "-c", "exit 0"}, 5*time.Second)
+	result := make(chan Outcome, 1)
+	go func() { result <- executor.Execute(context.Background(), run) }()
+	return result, run
+}
+
+func requireBoundedResignal(t *testing.T, state GroupState) {
+	t.Helper()
+	inspector := &boundedResignalInspector{state: state, deadAfterKills: 2}
+	result, _ := startBoundedResignalRun(t, inspector, nil)
+	select {
+	case outcome := <-result:
+		if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != RunStatusFailed {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(750 * time.Millisecond):
+		inspector.setDead()
+		<-result
+		t.Fatal("runner did not publish after its bounded second group signal")
+	}
+	kills, _, _ := inspector.snapshot()
+	if kills != 2 {
+		t.Fatalf("group kills = %d, want 2", kills)
+	}
+}
+
+func TestRunnerResignalAliveUnverifiedGroupOnce(t *testing.T) {
+	requireBoundedResignal(t, GroupAliveUnverified)
+}
+
+func TestRunnerResignalAliveOwnedGroupOnce(t *testing.T) {
+	requireBoundedResignal(t, GroupAliveOwned)
+}
+
+func TestRunnerInspectionErrorDoesNotPermitResignal(t *testing.T) {
+	inspector := &boundedResignalInspector{state: GroupAliveOwned, inspectionErrorAfterKill: true}
+	result, _ := startBoundedResignalRun(t, inspector, nil)
+	time.Sleep(180 * time.Millisecond)
+	kills, _, _ := inspector.snapshot()
+	if kills != 1 {
+		inspector.setDead()
+		<-result
+		t.Fatalf("group kills after an inspection error = %d, want 1", kills)
+	}
+	inspector.setDead()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not publish after group death became observable")
+	}
+}
+
+func TestRunnerResignalNeverSignalsAStuckGroupMoreThanTwice(t *testing.T) {
+	inspector := &boundedResignalInspector{state: GroupAliveOwned}
+	result, _ := startBoundedResignalRun(t, inspector, nil)
+	time.Sleep(260 * time.Millisecond)
+	kills, _, _ := inspector.snapshot()
+	if kills != 2 {
+		inspector.setDead()
+		<-result
+		t.Fatalf("group kills across later cleanup deadlines = %d, want 2", kills)
+	}
+	inspector.setDead()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not publish after group death became observable")
+	}
+}
+
+func TestRunnerPollBackoffAndPinnedSlotWarning(t *testing.T) {
+	inspector := &boundedResignalInspector{state: GroupAliveUnverified}
+	var warningMu sync.Mutex
+	var warnings []RuntimeWarning
+	warningReady := make(chan struct{}, 1)
+	result, run := startBoundedResignalRun(t, inspector, func(warning RuntimeWarning) {
+		warningMu.Lock()
+		warnings = append(warnings, warning)
+		warningMu.Unlock()
+		select {
+		case warningReady <- struct{}{}:
+		default:
+		}
+	})
+	select {
+	case <-warningReady:
+	case <-time.After(time.Second):
+		inspector.setDead()
+		<-result
+		t.Fatal("stuck command warning was not emitted")
+	}
+	// Leave the group alive across more slow polls to prove both the backoff and
+	// the one-shot warning behavior.
+	time.Sleep(110 * time.Millisecond)
+	kills, inspections, killTimes := inspector.snapshot()
+	if kills != 2 || len(killTimes) != 2 {
+		inspector.setDead()
+		<-result
+		t.Fatalf("group kills = %d at %v, want exactly two", kills, killTimes)
+	}
+	var beforeForced, afterForced []time.Time
+	for _, inspectedAt := range inspections {
+		if inspectedAt.Before(killTimes[1]) {
+			beforeForced = append(beforeForced, inspectedAt)
+		} else {
+			afterForced = append(afterForced, inspectedAt)
+		}
+	}
+	if len(beforeForced) < 2 {
+		t.Errorf("pre-cleanup inspections = %d, want high-frequency polling", len(beforeForced))
+	}
+	if len(afterForced) < 3 {
+		t.Errorf("post-cleanup inspections = %d, want at least 3", len(afterForced))
+	}
+	for index := 1; index < len(afterForced); index++ {
+		if interval := afterForced[index].Sub(afterForced[index-1]); interval < 32*time.Millisecond {
+			t.Errorf("post-cleanup inspection interval = %s, want at least 32ms", interval)
+		}
+	}
+	warningMu.Lock()
+	gotWarnings := append([]RuntimeWarning(nil), warnings...)
+	warningMu.Unlock()
+	if len(gotWarnings) != 1 {
+		t.Errorf("warnings = %+v, want exactly one", gotWarnings)
+	} else {
+		warning := gotWarnings[0]
+		if warning.Event != RuntimeWarningEventPinnedSlot || warning.RunID != run.RunID || warning.ProcessGroupID <= 0 || warning.ActiveLimit != maxActiveCommands {
+			t.Errorf("warning = %+v", warning)
+		}
+	}
+	inspector.setDead()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not publish after group death became observable")
+	}
+}
+
 type countingNativeInspector struct {
 	mu    sync.Mutex
 	calls int

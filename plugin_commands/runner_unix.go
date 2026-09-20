@@ -17,15 +17,20 @@ import (
 )
 
 const (
-	quotaSampleInterval = time.Second
-	groupPollInterval   = 20 * time.Millisecond
-	groupDrainTimeout   = 10 * time.Second
+	quotaSampleInterval    = time.Second
+	groupPollInterval      = 20 * time.Millisecond
+	stuckGroupPollInterval = time.Second
+	groupDrainTimeout      = 10 * time.Second
+	stuckGroupWarningAfter = time.Minute
 )
 
 type commandExecutor struct {
-	deps           RunnerDependencies
-	cleanupTimeout time.Duration
-	quotaInterval  time.Duration
+	deps              RunnerDependencies
+	cleanupTimeout    time.Duration
+	quotaInterval     time.Duration
+	pollInterval      time.Duration
+	stuckPollInterval time.Duration
+	stuckWarningAfter time.Duration
 	// Test barriers sit on the cancellation boundaries which must remain closed:
 	// before the per-run fork lock, after the durable check while that lock is
 	// held, and after Start before pgid persistence. Nil in production.
@@ -38,13 +43,20 @@ func NewExecutor(deps RunnerDependencies) Executor {
 	if deps.Logf == nil {
 		deps.Logf = func(string, ...any) {}
 	}
+	if deps.Warn == nil {
+		deps.Warn = func(RuntimeWarning) {}
+	}
 	if deps.Inspector == nil {
 		deps.Inspector = nativeProcessInspector{}
 	}
 	if deps.Usage == nil {
 		deps.Usage = NewStagingUsageCache()
 	}
-	return &commandExecutor{deps: deps, cleanupTimeout: groupDrainTimeout, quotaInterval: quotaSampleInterval}
+	return &commandExecutor{
+		deps: deps, cleanupTimeout: groupDrainTimeout, quotaInterval: quotaSampleInterval,
+		pollInterval: groupPollInterval, stuckPollInterval: stuckGroupPollInterval,
+		stuckWarningAfter: stuckGroupWarningAfter,
+	}
 }
 
 func (e *commandExecutor) stagingUsageCache() *StagingUsageCache { return e.deps.Usage }
@@ -254,13 +266,25 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	}
 	quotaTicker := time.NewTicker(quotaInterval)
 	defer quotaTicker.Stop()
+	pollInterval := e.pollInterval
+	if pollInterval <= 0 {
+		pollInterval = groupPollInterval
+	}
+	stuckPollInterval := e.stuckPollInterval
+	if stuckPollInterval <= 0 {
+		stuckPollInterval = stuckGroupPollInterval
+	}
+	stuckWarningAfter := e.stuckWarningAfter
+	if stuckWarningAfter <= 0 {
+		stuckWarningAfter = stuckGroupWarningAfter
+	}
 	var groupTicker *time.Ticker
 	var groupTick <-chan time.Time
 	startGroupPolling := func() {
 		if groupTicker != nil {
 			return
 		}
-		groupTicker = time.NewTicker(groupPollInterval)
+		groupTicker = time.NewTicker(pollInterval)
 		groupTick = groupTicker.C
 	}
 	defer func() {
@@ -281,8 +305,12 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	outputUnverified := false
 	forcedCleanup := false
 	groupDead := false
-	groupSignalAttempted := false
+	groupSignalAttempts := 0
+	lastInspectionAllowsResignal := false
+	resignalOpportunityUsed := false
+	warningEmitted := false
 	var cleanupDeadline time.Time
+	var cleanupStarted time.Time
 	appendReason := func(message string) {
 		if message == "" || strings.Contains(reason, message) {
 			return
@@ -293,16 +321,18 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			reason += "; " + message
 		}
 	}
-	killGroup := func() {
+	signalGroup := func(allowResignal bool) {
 		startGroupPolling()
-		if groupSignalAttempted {
+		if groupSignalAttempts >= 2 {
 			return
 		}
-		// This worker created pgid from the exact process returned by Start, so it
-		// has creation-time authority to signal the group once. Re-signalling after
-		// the original group exits could target a reused PGID; subsequent cleanup
-		// therefore only polls until that first signal is observed to have drained.
-		groupSignalAttempted = true
+		if groupSignalAttempts > 0 && (!allowResignal || !lastInspectionAllowsResignal) {
+			return
+		}
+		// The first attempt rests on this worker's creation-time authority. The
+		// only later attempt is bounded to the first forced-cleanup edge and needs
+		// an immediately preceding successful observation that the group is alive.
+		groupSignalAttempts++
 		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
 			appendReason(fmt.Sprintf("kill process group: %v", err))
 			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
@@ -310,6 +340,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			}
 		}
 	}
+	killGroup := func() { signalGroup(false) }
 	terminate := func(nextStatus, nextReason string, cancellationWins bool) {
 		if status == "" || cancellationWins {
 			status, reason = nextStatus, nextReason
@@ -358,11 +389,14 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		}
 
 		if parentDone || status != "" {
+			lastInspectionAllowsResignal = false
 			identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
 			groupDead = inspectErr == nil && identity.State == GroupDead
 			if inspectErr != nil {
 				outputUnverified = true
 				terminate(RunStatusFailed, fmt.Sprintf("inspect process group: %v", inspectErr), false)
+			} else {
+				lastInspectionAllowsResignal = identity.State == GroupAliveOwned || identity.State == GroupAliveUnverified
 			}
 		}
 		if parentDone && pipesDone && groupDead {
@@ -392,6 +426,13 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			}
 			break
 		}
+		if forcedCleanup && !warningEmitted && !groupDead && time.Since(cleanupStarted) >= stuckWarningAfter {
+			warningEmitted = true
+			e.deps.Warn(RuntimeWarning{
+				Event: RuntimeWarningEventPinnedSlot, Message: "process group remains alive after forced cleanup",
+				RunID: run.RunID, ProcessGroupID: pgid, ActiveLimit: maxActiveCommands,
+			})
+		}
 		if cleanupDeadline.IsZero() || time.Now().Before(cleanupDeadline) {
 			continue
 		}
@@ -404,11 +445,20 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			continue
 		}
 
-		forcedCleanup = true
+		if !forcedCleanup {
+			forcedCleanup = true
+			cleanupStarted = time.Now()
+			if groupTicker != nil {
+				groupTicker.Reset(stuckPollInterval)
+			}
+		}
 		if !groupDead {
 			outputUnverified = true
 			appendReason("process group did not exit before cleanup deadline")
-			killGroup()
+			if !resignalOpportunityUsed {
+				resignalOpportunityUsed = true
+				signalGroup(true)
+			}
 		}
 		if !pipesDone {
 			outputUnverified = true

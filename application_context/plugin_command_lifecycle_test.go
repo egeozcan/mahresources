@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,32 @@ import (
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
+
+func TestPluginCommandPinnedSlotWarningIsPersisted(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	warning := plugin_commands.RuntimeWarning{
+		Event: plugin_commands.RuntimeWarningEventPinnedSlot, Message: "process group remains alive after forced cleanup",
+		RunID: "pinned-run", ProcessGroupID: 4321, ActiveLimit: 7,
+	}
+	pluginCommandRuntimeWarningSink(ctx)(warning)
+
+	var logs []models.LogEntry
+	if err := ctx.db.Where("entity_type = ?", "plugin_command").Find(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("plugin command warning logs = %d, want 1", len(logs))
+	}
+	entry := logs[0]
+	if entry.Level != models.LogLevelWarning || entry.Action != models.LogActionSystem {
+		t.Fatalf("warning log = %+v", entry)
+	}
+	for _, fragment := range []string{"pinned-run", "4321", "global command slot", "1 of 7"} {
+		if !strings.Contains(entry.Message, fragment) {
+			t.Errorf("warning message %q does not contain %q", entry.Message, fragment)
+		}
+	}
+}
 
 func TestPluginCommandConfigDefaultsAndValidation(t *testing.T) {
 	commandDir := t.TempDir()

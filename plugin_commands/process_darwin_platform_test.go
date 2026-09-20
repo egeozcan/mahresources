@@ -17,6 +17,10 @@ func TestDarwinInspectorTreatsZombieOnlyGroupAsDead(t *testing.T) {
 	assertNativeZombieOnlyGroupIsDead(t)
 }
 
+func TestDarwinRunnerResignalApplePlatformUnverifiedGroupOnce(t *testing.T) {
+	requireBoundedResignal(t, GroupAliveUnverified)
+}
+
 func TestDarwinRunnerKillsApplePlatformDescendantBeforeTerminalPublication(t *testing.T) {
 	root := t.TempDir()
 	store := newRunnerTestStore()
