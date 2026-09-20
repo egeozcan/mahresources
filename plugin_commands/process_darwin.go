@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const darwinProcessStateZombie = 5 // SZOMB from <sys/proc.h>
+
 func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentity, error) {
 	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
@@ -19,7 +21,11 @@ func (nativeProcessInspector) InspectGroup(pgid int, runID string) (GroupIdentit
 	}
 	pids := make([]int, 0)
 	for _, process := range processes {
-		if int(process.Eproc.Pgid) == pgid {
+		// A zombie has exited and cannot write into the exchange directory. The
+		// runner may be the only process able to reap its direct child, so counting
+		// that child as a surviving group member would deadlock recovery before
+		// cmd.Wait can run.
+		if int(process.Eproc.Pgid) == pgid && process.Proc.P_stat != darwinProcessStateZombie {
 			pids = append(pids, int(process.Proc.P_pid))
 		}
 	}

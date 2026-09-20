@@ -57,7 +57,10 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 				finish.Status, finish.Error = RunStatusInterrupted, "server interrupted before command start"
 			}
 		case RunStatusRunning:
-			finish = d.recoverRunning(ctx, run)
+			finish, err = d.recoverRunning(ctx, run)
+			if err != nil {
+				return fmt.Errorf("recover plugin command %s: %w", run.ID, err)
+			}
 		default:
 			continue
 		}
@@ -72,48 +75,43 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 	return nil
 }
 
-func (d *Dispatcher) recoverRunning(ctx context.Context, run RunRecord) RunFinish {
+func (d *Dispatcher) recoverRunning(ctx context.Context, run RunRecord) (RunFinish, error) {
 	finish := RunFinish{
 		Status: RunStatusInterrupted, Error: "server interrupted while command was running",
 		FinishedAt: time.Now().UTC(),
 	}
 	if run.ProcessGroupID == nil || *run.ProcessGroupID <= 0 {
+		// No numeric group survived the fork/persist crash window, so recovery has
+		// nothing it can inspect. Preserve the historical terminal fail-closed
+		// classification and refuse its output through OutputUnverified.
 		finish.OutputUnverified = true
 		finish.Error += "; process group was not recorded"
-		return finish
+		return finish, nil
 	}
 
 	pgid := *run.ProcessGroupID
 	identity, err := d.deps.Inspector.InspectGroup(pgid, run.ID)
 	if err != nil {
-		finish.OutputUnverified = true
-		finish.Error += "; process group ownership could not be verified: " + err.Error()
-		return finish
+		return RunFinish{}, fmt.Errorf("verify process group ownership: %w", err)
 	}
 	switch identity.State {
 	case GroupDead:
 		if run.CancelRequested {
 			finish.Status, finish.Error = RunStatusCancelled, run.Error
 		}
-		return finish
+		return finish, nil
 	case GroupAliveUnverified:
-		finish.OutputUnverified = true
-		finish.Error += "; process group ownership could not be verified"
-		return finish
+		return RunFinish{}, fmt.Errorf("process group %d ownership could not be verified while it remains alive", pgid)
 	case GroupAliveOwned:
 		if err := d.terminateRecoveredGroup(ctx, pgid, run.ID); err != nil {
-			finish.OutputUnverified = true
-			finish.Error += "; " + err.Error()
-			return finish
+			return RunFinish{}, err
 		}
 		if run.CancelRequested {
 			finish.Status, finish.Error = RunStatusCancelled, run.Error
 		}
-		return finish
+		return finish, nil
 	default:
-		finish.OutputUnverified = true
-		finish.Error += "; process group ownership returned an unknown state"
-		return finish
+		return RunFinish{}, fmt.Errorf("process group %d ownership returned an unknown state", pgid)
 	}
 }
 
@@ -138,6 +136,7 @@ func (d *Dispatcher) terminateRecoveredGroup(ctx context.Context, pgid int, runI
 	defer ticker.Stop()
 	deadline := time.NewTimer(groupDrainTimeout)
 	defer deadline.Stop()
+	ownershipLossLogged := false
 	for {
 		identity, err := d.deps.Inspector.InspectGroup(pgid, runID)
 		if err != nil {
@@ -146,9 +145,14 @@ func (d *Dispatcher) terminateRecoveredGroup(ctx context.Context, pgid int, runI
 		if identity.State == GroupDead {
 			return nil
 		}
-		if identity.State != GroupAliveOwned {
-			d.deps.Logf("plugin command process group %d ownership became unverifiable after termination", pgid)
-			return fmt.Errorf("process group %d ownership became unverifiable after termination", pgid)
+		// Identity was rechecked immediately before the one signal this function
+		// sends. Environment visibility may disappear while members are exiting
+		// (notably for Apple platform binaries), so loss of the marker after that
+		// point changes no signaling decision. Keep observing without signalling
+		// again and publish only once the group is actually dead.
+		if identity.State != GroupAliveOwned && !ownershipLossLogged {
+			d.deps.Logf("plugin command process group %d ownership became unverifiable after termination; waiting for death", pgid)
+			ownershipLossLogged = true
 		}
 		select {
 		case <-ctx.Done():

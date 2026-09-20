@@ -859,11 +859,12 @@ func waitForHelperPID(t *testing.T, path string) int {
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil {
-			pid, parseErr := strconv.Atoi(string(data))
-			if parseErr != nil {
-				t.Fatal(parseErr)
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr == nil && pid > 0 {
+				return pid
 			}
-			return pid
+			time.Sleep(5 * time.Millisecond)
+			continue
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)

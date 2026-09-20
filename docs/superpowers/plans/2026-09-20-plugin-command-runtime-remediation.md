@@ -121,7 +121,7 @@ git commit -m "fix: terminate locally owned command groups"
 - Produces: `Recover(context.Context) error` that leaves a live unverifiable run nonterminal and prevents dispatcher/runtime startup.
 - Preserves the no-pgid crash shape as terminal `interrupted + OutputUnverified`.
 
-- [ ] **Step 1: Write the failing recovery-store test**
+- [x] **Step 1: Write the failing recovery-store test**
 
 Seed a running row with a persisted pgid and configure the inspector to return `GroupAliveUnverified`. Assert:
 
@@ -135,11 +135,11 @@ if record.Status != RunStatusRunning || record.FinishedAt != nil {
 }
 ```
 
-- [ ] **Step 2: Write the failing lifecycle-startup test**
+- [x] **Step 2: Write the failing lifecycle-startup test**
 
-At the application runtime seam, inject the same live-unverified recovery result and assert startup returns an error, does not start the dispatcher owner, and retains the staging-root runtime lease until the failed runtime is closed.
+At the application runtime seam, point a durable running row at the test process's live group without a matching run marker. Assert startup returns an ownership error, does not publish the dispatcher/exchange host, leaves the row running, and releases the failed startup attempt's staging-root lease.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands -run 'TestRecover.*Unverified' -count=1
@@ -148,7 +148,7 @@ go test --tags 'json1 fts5' ./application_context -run 'TestPluginCommand.*Unver
 
 Expected: current code stamps `interrupted + output_unverified`, so the assertions fail.
 
-- [ ] **Step 4: Implement fail-closed recovery**
+- [x] **Step 4: Implement fail-closed recovery**
 
 Change `recoverRunning` to return `(RunFinish, bool, error)` or an equivalent explicit settlement decision. Required cases:
 
@@ -162,14 +162,14 @@ inspection error        -> return error, do not call FinishRun
 
 `Recover` must stop before dispatcher startup when a run cannot be settled safely.
 
-- [ ] **Step 5: Run GREEN and race verification**
+- [x] **Step 5: Run GREEN and race verification**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands -run 'TestRecover' -count=1
 go test -race --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*(Recover|Recovery|RuntimeLease)' -count=20
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add plugin_commands/recovery.go plugin_commands/recovery_test.go application_context/plugin_command_lifecycle_test.go
