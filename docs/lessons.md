@@ -2,6 +2,16 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Plugin lifecycle tests must initialize every production revocation owner
+
+Disabling a plugin revokes durable command work even when the plugin's current
+manifest declares no commands: work from an earlier generation may remain. A
+test that exercises disable or re-enable through the production route must start
+and stop the command runtime just as the server does. Leaving its controller idle
+is not a harmless narrow fixture; it deliberately reads as quarantined, so the
+correct disable path removes the VM and refuses the unenforceable durable
+mutation. Do not weaken that refusal to make a bare handler test pass.
+
 ## Signal-zero process-group existence is not writer liveness
 
 `kill(-pgid, 0)` reports a zombie-only process group as present (success on

@@ -26,6 +26,14 @@ also declare every runnable command; see [Declared server commands](./plugin-sys
 `mah.fs.create_resource` is installed only when the plugin also has `db:write`.
 All command and filesystem calls are refused inside `mah.db.transaction`.
 
+The modules stay installed while the host command runtime is quarantined by a
+busy staging lease or a recovery blocker. Calls then return `nil` and an error
+containing `plugin command runtime is unavailable`; the host represents this as
+a distinct typed unavailable state rather than as a missing run. Quarantined
+recovery retries automatically, and `/logs` records the reason and healing. Once
+it succeeds, calls begin working without a plugin reload. Do not retry in a tight
+Lua loop.
+
 ### Start a command
 
 ```lua
@@ -128,8 +136,11 @@ mah.fs.discard_run(run_id) -> true | nil, error
 
 An `output_unverified` run may have surviving or unowned writers after recovery.
 Every per-file operation is refused; only `discard_run` is allowed. `discard_run`
-also refuses while any import is `pending` or `running`. Listings are flat; when
-`truncated` is true, use `discard_run` if unseen output should be abandoned.
+also refuses while any import is `pending` or `running`. A host-unique boot-session
+identity may be used internally to classify a prior-boot run, but that private
+identity is never included in this table or in administrator command history.
+Listings are flat; when `truncated` is true, use `discard_run` if unseen output
+should be abandoned.
 
 ### Import a file as a resource
 

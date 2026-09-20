@@ -615,3 +615,35 @@ Compare `ac0a5603..HEAD` against the approved design. Specifically inspect proce
 git add docs/todo.md docs/superpowers/plans/2026-09-20-plugin-command-runtime-remediation.md
 git commit -m "docs: complete plugin command runtime remediation"
 ```
+
+## Recovery containment follow-up review (2026-09-20)
+
+The approved recovery-containment follow-up preserves the remediation's process
+ownership rules while containing safety refusals to the command runtime. PGID is
+paired atomically with a private host-unique boot-session UUID; Linux and Darwin
+exclude zombie-only groups from writer liveness; signal zero remains only
+conservative existence evidence. Recovery blockers retain the staging lease and
+retry every five minutes, while lease contention uses short capped backoff.
+Quarantine keeps rows nonterminal, withholds command mutations, records
+operator-actionable `/logs` warnings and activates automatically when safe.
+Recovery has one verified signal attempt per run per process; a live creator has
+at most two attempts and then one-second polling with a one-shot pinned-capacity
+warning.
+
+Final verification passed the build, CSS scan, tagged vet, ten focused race
+repetitions, focused PostgreSQL command tests, SQLite command-history browser
+coverage, all 1,412 frontend unit tests, and the full 2,242-pass/5-skip
+browser/auth/CLI/doctest matrix. The aggregate tagged Go rerun reproduced only
+the two accepted unrelated baselines. Its first run found one stale API fixture:
+a schedule re-enable test disabled a plugin without starting the command runtime,
+which now truthfully reports quarantine because durable work cannot be revoked.
+The fixture was corrected to use the production runtime lifecycle and passes 10
+ordinary and race repetitions. Native Darwin command tests pass. Linux and
+FreeBSD `CGO_ENABLED=0` package compilation remain blocked by the repository's
+SQLite stub (`sqlite3.SQLiteConn.Exec`), not this runtime.
+
+The remaining platform limitation is deliberate: AIX, DragonFly BSD, FreeBSD,
+NetBSD, OpenBSD and Solaris have probe-only inspection and cannot prove a
+zombie-only group dead. Their quarantine may require parent reaping or restart.
+Independent closure review remains the approval gate; `docs/todo.md` therefore
+leaves recovery-containment Task 9 unchecked.

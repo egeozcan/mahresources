@@ -498,19 +498,22 @@ merge peak (roughly twice final size while separate audio/video and mux output
 coexist). Import streams the admitted source into AddResource's one scratch copy,
 so staging peaks near twice the source; the global sample is refreshed outside
 admission at startup and after sweeps, and a failed refresh preserves the last
-complete sample. Exactly one process may own a staging
-root: a startup-held advisory lease refuses a second command runtime before it
-can recover or sweep live work.
+complete sample. Exactly one process may own a staging root. Busy lease
+acquisition uses short capped backoff; recovery blockers retain the lease and
+retry every five minutes.
+Quarantine keeps rows nonterminal, withholds command mutations, reports to
+`/logs`, and may be healed by terminating the named abandoned process group.
 
-A live worker may terminate the process group it created exactly once; repeated
-signals widen the design's accepted narrow exit/reuse race and could hit a reused
-PGID. Recovery may signal a persisted group only after
-identity verification. A surviving unverifiable group keeps its row nonterminal
-and command-runtime startup closed. Sweeps page to a fixed finish/id boundary in
-bounded unswept terminal batches so sustained expiry cannot prevent wraparound
-and pinned rows cannot starve later work, then stamp `exchange_removed_at`
-after deletion or confirmed absence and clear successful imports' cleanup marker;
-output pruning retains durable run/import history.
+The positive PGID and host-unique boot-session UUID are persisted together; that
+identity is host-internal and never enters Lua or administrator views. On Linux
+and Darwin an all-zombie group is dead, and signal zero is only conservative
+existence evidence. Recovery gets one verified signal attempt per process; a
+live creator gets at most two signals and then slow polling. A surviving group
+keeps its row nonterminal and its command slot occupied. Sweeps page to a fixed
+finish/id boundary in bounded unswept terminal batches so sustained expiry cannot
+prevent wraparound and pinned rows cannot starve later work, then stamp
+`exchange_removed_at` after deletion or confirmed absence and clear successful
+imports' cleanup marker; output pruning retains durable run/import history.
 
 Pending commands/imports stay in dispatcher-owned per-plugin queues; only active
 work enters the bounded managed live lane, whose occupancy is derived from the

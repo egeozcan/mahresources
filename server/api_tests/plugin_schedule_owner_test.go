@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -165,6 +166,16 @@ func TestPluginEnableThroughTheRouterRecordsTheOperator(t *testing.T) {
 // satisfy the test above and fail this one.
 func TestReEnableTransfersTheScheduleToTheNewOperator(t *testing.T) {
 	tc := setupScheduleEnv(t, "poller")
+	if err := tc.AppCtx.StartPluginCommands(context.Background(), pluginCommandHistorySettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("start plugin command runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := tc.AppCtx.StopPluginCommands(); err != nil {
+			t.Errorf("stop plugin command runtime: %v", err)
+		}
+	})
 	firstID, firstBearer := adminBearerWithID(t, tc, "first-operator")
 	secondID, secondBearer := adminBearerWithID(t, tc, "second-operator")
 

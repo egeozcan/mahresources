@@ -19,6 +19,38 @@ Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-
 - [x] Task 8: Bound live re-signalling, back off polling, and audit pinned capacity.
 - [ ] Task 9: Align invariants, complete verification, and record evidence.
 
+### Task 9 verification evidence (awaiting independent approval)
+
+The documentation assertion was RED because the operator and plugin references
+still promised startup failure/completion and omitted boot-session, zombie,
+automatic-healing and process-group repair invariants. It is GREEN after updating
+`CLAUDE.md` and both published references.
+
+Verification results:
+
+- `npm run build`, `./scripts/css-scan-test.sh`, and tagged `go vet ./...` pass.
+- The focused five-package race selection passes 10 repetitions.
+- Focused tagged PostgreSQL command tests pass; command-history Playwright passes
+  3/3 on SQLite.
+- Vitest passes 90 files / 1,412 tests. The full browser/auth/CLI/doctest matrix
+  passes 2,242 tests with 5 intentional skips.
+- The aggregate tagged Go run initially exposed
+  `TestReEnableTransfersTheScheduleToTheNewOperator` as a stale bare-runtime
+  fixture: production plugin disable now accurately refuses durable command
+  revocation while the runtime is quarantined. The fixture now starts and stops
+  the production command runtime; its ordinary and race selections each pass 10
+  repetitions. The aggregate rerun reports only the accepted unrelated
+  `plugin_system.TestBundledPluginLiteralURLsAreDeclared` and
+  `server/api_tests.TestSidebar_IsWrappedInADisclosure` baselines.
+- Native Darwin plugin-command tests pass. Linux and FreeBSD `CGO_ENABLED=0`
+  package compilation both reach the repository's known SQLite stub limitation
+  (`sqlite3.SQLiteConn.Exec` unavailable), not command-runtime code.
+
+Residual limitation: AIX, DragonFly BSD, FreeBSD, NetBSD, OpenBSD and Solaris use
+probe-only process inspection. They cannot prove that a zombie-only group is
+dead, so quarantine may require the parent to reap it or a server restart.
+Task 9 remains unchecked until independent closure review records approval.
+
 ## Original implementation plan
 
 - [x] Task 1: Make shared resource destinations replay-safe.

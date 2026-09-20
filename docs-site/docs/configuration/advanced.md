@@ -357,9 +357,12 @@ boundary, not convenience isolation.
 
 A server holds an exclusive advisory lease on the staging root from before
 recovery until command shutdown. A second process configured with the same root
-fails startup rather than interrupting or sweeping the first process's live work.
-A durable command database and its staging root are one runtime domain; do not
-run multiple command-enabled server processes against one such domain.
+puts this process's command runtime into quarantine rather than interrupting or
+sweeping the first process's live work; the rest of Mahresources continues to
+serve. Lease acquisition retries after 1s, 2s, 5s, 10s, 30s and 1m, then at the
+five-minute sweep interval. A durable command database and its staging root are
+one runtime domain; do not run multiple command-enabled server processes against
+one such domain.
 
 The path is used both to resolve a declaration's executable basename and as the
 child's `PATH`, so include required helpers too. A yt-dlp command using a
@@ -378,19 +381,45 @@ the staging tree. The global quota refuses new commands but permits imports that
 drain existing staging bytes. MemoryFS still uses an OS staging root and imported
 resource copies consume RAM.
 
-A live worker has creation-time authority to terminate the process group it
-started. Restart recovery has only a persisted process-group identity and must
-verify ownership before signaling; a live unverifiable group leaves its run
-nonterminal and refuses command-runtime startup. Successful imports persist the
-resource first, then unlink the source. Cleanup trouble is exposed as
-`source_delete_pending`, not as an import error.
+A run persists its positive process-group ID together with a host-unique
+boot-session UUID. The UUID is private host state: it is not shown in plugin Lua,
+JSON, or administrator command history. Recovery never inspects or signals a
+PGID proven to come from another boot. Otherwise it must verify ownership before
+signaling. Linux and Darwin process inspection treats an all-zombie group as
+dead because zombies cannot write; a successful signal-zero probe is only
+conservative evidence that a process-table entry still holds the PGID. Other
+supported Unix targets use probe-only inspection in this release and cannot
+prove a zombie-only group dead, so quarantine there may require the parent to
+reap the group or a restart.
+
+Lease contention and a live or uninspectable recovery group quarantine only the
+command runtime. Command and exchange calls return an unavailable error,
+administrator cancellation is disabled and returns HTTP 503 without setting the
+durable cancellation latch, and recovery continues automatically. Lease
+contention follows the short capped schedule above. A recovery blocker retains
+the staging lease and retries every five minutes. Quarantine warnings and retry
+failures appear in `/logs` with the blocked run ID, PGID, and reason; healing is
+also logged. If an operator has independently decided that the named group is
+abandoned, the immediate recovery action is to terminate it, for example
+`kill -KILL -- -<pgid>`. `-plugins-disabled` is the restart-time escape hatch.
+
+Recovery makes at most one verified signal attempt per run in one server
+process. A live worker has creation-time authority over its own group and can
+make at most two signal attempts, with the second allowed only after observing
+the group alive. It then polls no faster than once per second, keeps the run
+nonterminal and its global command slot occupied, and emits one `/logs` capacity
+warning after a minute. Successful imports persist the resource first, then
+unlink the source. Cleanup trouble is exposed as `source_delete_pending`, not as
+an import error.
 
 On startup, recovery resolves every queued/running run and pending/running
-import before plugin VMs load. Sweeps skip nonterminal work and active leases,
-process bounded batches, and stamp successfully removed or already absent
-exchange directories so historical rows are not rescanned. Only output tails
-and expired exchange bytes are pruned; durable run/import/map rows remain for
-replay idempotency and administrator history.
+import before publishing command surfaces. A blocker leaves those surfaces
+quarantined until an automatic healing scan succeeds; plugins do not need to be
+reloaded when the runtime activates. Sweeps skip nonterminal work and active
+leases, process bounded batches, and stamp successfully removed or already
+absent exchange directories so historical rows are not rescanned. Only output
+tails and expired exchange bytes are pruned; durable run/import/map rows remain
+for replay idempotency and administrator history.
 
 ## Plugin Configuration
 
