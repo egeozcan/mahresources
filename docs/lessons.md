@@ -2,6 +2,39 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Separate live ownership authority from crash-recovery identity
+
+A runner that just created a process group knows which group it owns; making its
+cancel path re-prove ownership through a platform-dependent environment reader
+can turn a conservative recovery check into a live cleanup failure. Apple
+platform binaries may expose no environment through `kern.procargs2`, and other
+Unix targets may have no equivalent reader at all. Use creation-time authority
+for live termination, require observable group death before terminal
+publication, and reserve stronger identity checks for restart recovery where a
+persisted numeric pgid may have been reused. Test with the least observable
+native executable, not only the Go test binary whose environment is easy to
+read.
+
+## Exercise the ordinary success path of every fail-closed safety mechanism
+
+A branch that always returns the safety fallback can satisfy adversarial race
+tests while making the advertised normal behavior unreachable. Pair every
+fail-closed test with an end-to-end success assertion that proves the intended
+state change actually occurs: successful import removes its source, reports no
+error, and releases quota immediately. Derive peak-space equations from every
+simultaneous copy (`source + scratch`, not a prose estimate), and test the exact
+boundary. Safety that silently disables draining is a capacity failure, not a
+successful hardening.
+
+## Durable retention needs a durable completion cursor
+
+If history rows live forever but their external artifacts do not, a periodic
+sweep must persist that artifact cleanup already completed. A time predicate
+alone reselects the same historical rows forever and turns each pass into
+unbounded database and filesystem work. Record an `*_removed_at` marker, index
+and bound the unswept query, stamp both successful deletion and confirmed
+absence, and leave skipped leased work unstamped for a later pass.
+
 ## Honor an explicit model constraint before launching delegated work
 
 When the operator names a model constraint for subagents, treat it as part of the

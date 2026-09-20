@@ -316,7 +316,10 @@ because later sections reference their contents:
 - **`plugin_command_runs`** — the run row: id, plugin name, command name,
   redacted parameter view, actor user id, `actorless_at_submission`,
   created/started/finished timestamps, status, exit code, error text, spawned
-  process group id. The boolean distinguishes a run intentionally submitted
+  process group id, and nullable `exchange_removed_at`. The removal timestamp
+  is set only after the retained exchange directory has been deleted or found
+  absent; it keeps later retention passes from revisiting historical runs
+  forever. The boolean distinguishes a run intentionally submitted
   without an actor from one whose actor was later deleted; `NULL` alone never
   grants actorless access.
   Small; survives restarts; independent of the queue's 1-hour terminal
@@ -331,10 +334,12 @@ because later sections reference their contents:
   a single exhaustive table would make unprunable on SQLite.
 - **`plugin_command_imports`** — the import claims: import id, run id, file
   name, submitting plugin generation, actor user id, created/started/
-  finished timestamps, status, error text (§5). Small; retained with the
-  run.
-- **The import map** (`name → { import_id, resource_id, status, error }`,
-  §5) — persisted as a table keyed by run id, the piece idempotent
+  finished timestamps, status, error text, and `source_delete_pending` (§5).
+  Cleanup trouble never overloads `error`: a succeeded import remains a
+  success, while the separate boolean says retained source bytes still await
+  run sweep. Small; retained with the run.
+- **The import map** (`name → { import_id, resource_id, status, error,
+  source_delete_pending }`, §5) — persisted as a table keyed by run id, the piece idempotent
   re-import depends on. Small; retained indefinitely.
 
 **Crash-safe launch registration.** Launch registration is tracked on the
@@ -360,9 +365,10 @@ in-memory dispatcher queue does not survive a restart — with no live dispatch
 is resolved as follows. A durable `cancel_requested` takes precedence over
 crash classification: a queued row is stamped `cancelled` with its stored
 reason; a running row still performs the identity checks below, kills a verified
-surviving group, and then stamps `cancelled`. If ownership is unverifiable it
-still takes the fail-closed `interrupted + output_unverified` arm. Rows without
-that latch use the other `interrupted` outcomes below.
+surviving group, and then stamps `cancelled`. If a recorded group is alive but
+ownership is unverifiable, recovery leaves the row nonterminal and refuses to
+start the command runtime. Rows without that latch use the other outcomes
+below.
 
 1. **Identity check.** Every spawned process carries
    `MAHR_COMMAND_RUN_ID=<run id>` in its environment (§3, host hardening).
@@ -385,15 +391,20 @@ that latch use the other `interrupted` outcomes below.
    earlier. Post-signal, the group is re-enumerated once more; if surviving
    members do not carry the run id, a warning naming the pgid is logged for
    post-mortem visibility.
-4. **Unverifiable** (group exists but no member's environment matches —
-   the reuse case — or no pgid was ever persisted, the spawn-crash case):
-   stamp `interrupted` **with `output_unverified = true`**. The exchange
-   folder's contents are **not importable**: `mah.fs` file operations on an
-   `output_unverified` run are refused with an `output unverified` error,
-   because ownership or death of the writers cannot be established. Only
-   `mah.fs.discard_run` may remove such a run (deleting unverified output is
-   safe; importing it is not). The plugin's page surfaces these runs for
-   operator disposal.
+4. **Unverifiable live group** (a recorded group exists but no member's
+   environment matches — either pgid reuse or an Apple platform executable
+   whose environment macOS does not disclose): **do not publish a terminal
+   row**. Recovery returns an error and command-runtime startup remains closed
+   while that possible writer survives. A later startup may classify the run
+   after the group is observably dead; an operator may also terminate the
+   recorded group out of band. Marking `interrupted + output_unverified` while
+   the group remains alive is prohibited: refusing import protects data
+   integrity but does not stop an unbounded writer or make terminal output
+   final.
+5. **No pgid persisted**: the fork/persist crash window provides no numeric
+   group to inspect or terminate. This remains the one unaddressable launch
+   shape: stamp `interrupted + output_unverified`, refuse every file operation
+   except `discard_run`, and name the missing pgid in the durable reason.
 
 Exchange folders of resolved runs are retained until the sweep reaches them.
 
@@ -407,7 +418,7 @@ which terminal state each path produces:
 | Command exits non-zero / cannot start / quota exceeded | `failed` | error text names timeout or quota |
 | Operator cancels via the live job UI or admin command history | `cancelled` | queued run: removed from the dispatcher and no process exists; dispatched/running run: cancellation latch wins before fork or the process group is killed |
 | Plugin disabled | `cancelled` | queued runs are refused at dispatch; running process groups killed — both marked `cancelled` with reason `plugin disabled` |
-| Server crash / restart / shutdown / dispatch lost | `interrupted` | running and queued records **without a prior durable cancel request**; pgid identity-verified (survivors killed) before stamping; unverifiable writer identity → `interrupted` + `output_unverified` |
+| Server crash / restart / shutdown / dispatch lost | `interrupted` | queued rows and running rows whose group is dead or identity-verified (survivors killed) are stamped; no persisted pgid → `interrupted + output_unverified`; a recorded live but unverifiable group remains nonterminal and blocks command-runtime startup |
 
 `failed` (timeout/quota) and `cancelled` (operator/disable) are therefore
 distinct statuses, as required.
@@ -474,29 +485,43 @@ quotas close that gap:
   approximate (sampling, not a syscall-level rlimit) and documented as such;
   a tool that writes fast between samples can overshoot the quota.
 - **Global staging quota** (default 50 GiB): what all exchange folders may
-  hold combined. While above it, **new command runs are refused** until the
-  sweep brings the total down. **The drain path is exempt**: imports of
-  already-admitted runs proceed even above the global quota — draining the
-  exchange folders (by importing and deleting their files) is exactly what
-  brings the total down, so refusing an import for want of space that only
-  that import can free would deadlock. Import temps therefore count toward
-  the accounting but never trigger the admission refusal.
+  hold combined. Usage is sampled at command-runtime startup and after each
+  background sweep, then cached; command submission reads that cache and
+  never walks the staging tree while holding the plugin VM or command
+  admission lock. This is an approximate admission bound rather than a
+  syscall-level hard cap: a run may grow beyond the last sample before the
+  next sweep refresh. When the sampled value is above the limit, **new command
+  runs are refused** until a refresh observes enough space. **The drain path
+  is exempt**: imports of already-admitted runs proceed even above the global
+  quota — draining the exchange folders by importing and deleting their files
+  is exactly what brings the total down, so refusing an import for want of
+  space that only that import can free would deadlock. Import temps count
+  toward the next sample but never trigger import admission refusal.
 
 ### Process-tree termination
 
 - v1 command runs are **Unix-only**. The child is started with its own
-  process group (`Setpgid`); timeout, cancellation, quota-kill and disable
-  kill the whole group (`kill(-pgid)`). Windows is out of scope for v1
+  process group (`Setpgid`). The live runner has creation-time authority over
+  the exact group it just created and uses that authority directly for
+  timeout, cancellation, quota-kill and disable (`kill(-pgid)`); it does not
+  make local cleanup depend on whether the OS exposes a member's environment.
+  The narrow exit/reuse race is the already accepted runtime risk described
+  above. Restart recovery has no such creation-time authority and therefore
+  retains the stronger environment identity check. Windows is out of scope for v1
   (see Non-goals): Go's `os.OpenFile` does not expose
   `FILE_FLAG_OPEN_REPARSE_POINT`, so §5's symlink defence has no Windows
   equivalent to name, and a Job Object alone would not close that gap. A
   command-bearing manifest loads on Windows but refuses to run.
-- Output pipes are drained with a size cap; termination waits (bounded) for
-  reap and pipe EOF. **Output is final only when the process group is dead
-  and pipes are closed** — descendant writers (e.g. an ffmpeg spawned by
-  yt-dlp) cannot keep writing into an exchange folder declared finished.
-  The same pgid-verified-dead check the startup recovery performs (§3,
-  durable run records) backs this claim for the crash case.
+- Output pipes are drained with a size cap. **Output is final only when the
+  process group is dead and pipes are closed** — descendant writers (e.g. an
+  ffmpeg spawned by yt-dlp) cannot keep writing into an exchange folder
+  declared finished. A cleanup deadline may classify the attempted outcome,
+  but it never licenses terminal publication while a group remains alive.
+  Process-group inspection is dormant during ordinary execution and begins
+  only after the direct parent exits or termination starts; polling the whole
+  process table every 20 ms for a multi-hour command is prohibited. Recovery
+  likewise publishes only after verified death; an alive unverifiable group
+  blocks command-runtime startup as described above.
 - Command workers are registered with the queue's shutdown tracking; on
   server shutdown, process groups are terminated and runs are recorded
   `interrupted` (exchange dirs retained for later inspection until swept).
@@ -528,7 +553,10 @@ needs its own records and its own check.
 Because dispatcher-queued rows deliberately do not occupy the live job
 registry, the administrator history is also their control surface: queued list
 and detail rows have a **Cancel** action backed by `Store.RequestRunCancel` and
-the dispatcher's per-run cancellation latch. The store atomically persists the
+the dispatcher's per-run cancellation latch. Every button's accessible name
+includes its run id, including when the same queued run appears in both list
+and detail, so administrators never face indistinguishable repeated actions.
+The store atomically persists the
 request and reason; recovery honors that durable request as `cancelled` if the
 process dies before in-memory removal completes. The dispatcher removes it from
 its private queue, stamps `cancelled`, and delivers the terminal callback
@@ -596,10 +624,18 @@ Granted with the `commands` capability:
   callback stays cheap and a slow import cannot hold the VM lock against
   pages and hooks. The import job streams the file from the staging
   directory through the `AddResource` path, records the result in the run's
-  import map (`name → { import_id, resource_id, status, error }`, idempotent
-  on completion), and then deletes the source file (on delete failure the
-  file is marked `imported-pending-delete`; the import map, not the bytes,
-  is what makes re-import idempotent). `on_import`, if given, fires
+  import map (`name → { import_id, resource_id, status, error,
+  source_delete_pending }`, idempotent on completion), and then deletes the
+  source file using descriptor-relative `unlinkat` after
+  checking that the current name still identifies the admitted regular file.
+  Unix cannot bind unlink atomically to an open descriptor, so the narrow
+  check-to-unlink pathname race is accepted under the documented
+  same-service-account threat model, just as `mah.fs.discard` accepts it.
+  Durable success is first recorded conservatively with
+  `source_delete_pending = true`; successful unlink clears the flag before
+  callback delivery, while a crash or genuine delete failure leaves it set.
+  The import remains `succeeded` and `error` remains empty either way; the
+  import map, not the bytes, is what makes re-import idempotent. `on_import`, if given, fires
   at-most-once when the import job reaches a terminal state (contract
   below). Import results remain readable through `mah.fs.runs()` after any
   callback loss. Refused inside DB transactions, like
@@ -608,9 +644,9 @@ Granted with the `commands` capability:
 - `mah.fs.runs()` → the calling plugin's durable run records: `{ id, command,
   status, started_at, finished_at, exit_code, error, output_unverified,
   imports }` — including `interrupted` runs after restart, the
-  `output_unverified` flag for runs whose writer identity could not be
-  verified (§3), and each run's import map — so recovery does not depend on
-  a live callback.
+  `output_unverified` flag for the no-pgid crash shape (§3), and each run's
+  import map with `source_delete_pending` — so recovery does not depend on a
+  live callback.
 
 ### Import job lifecycle
 
@@ -693,21 +729,21 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
   identical content) assert replay publishes complete resources and
   no worker loses its backing file.
 - **Import temp files are bounded and reclaimed, including AddResource's
-  inner temp.** AddResource itself creates a further full copy via
-  `os.CreateTemp(ctx.Config.HLSTempDir, "upload-")`
-  (`resource_upload_context.go:1084-1096`) — outside `import_tmp`, and its
-  deferred removal does not survive a crash. Import-owned invocations
-  route that scratch into the **claim's managed temp directory**
-  (`<staging root>/import_tmp/<import-id>/`) via an options-aware internal
-  helper — the public three-argument `AddResource` method on
-  `contracts.ResourceCreator` and the download queue's usage
-  (`resource_interfaces.go:19`, `manager.go:103`) stay unchanged, and
-  ordinary uploads keep their `HLSTempDir` behaviour — so every import
-  temp — outer and inner — is inside `import_tmp`,
-  never appears in `mah.fs.list`, and is covered by one accounting rule:
-  the per-run exchange quota covers the run's exchange folder **plus** its
-  import temps, and the global staging quota covers the whole staging root
-  including `import_tmp`. Cleanup is immediate on the import's terminal
+  snapshot.** Import does not make an outer full-file copy before calling
+  AddResource. Instead an exact-size, cancellation-aware reader streams the
+  admitted exchange descriptor into AddResource's own immutable scratch
+  file. Import-owned invocations route that scratch into the **claim's managed
+  temp directory** (`<staging root>/import_tmp/<import-id>/`) via an
+  options-aware internal helper — the public three-argument `AddResource`
+  method on `contracts.ResourceCreator` and the download queue's usage stay
+  unchanged, and ordinary uploads keep their `HLSTempDir` behaviour. The
+  exchange source plus one scratch copy makes the single-file admission bound
+  approximately `2 × source size`, matching the documented merge-peak sizing;
+  the previous outer-plus-inner scheme incorrectly required `3 ×`. Every
+  import temp is inside `import_tmp`, never appears in `mah.fs.list`, and is
+  covered by one accounting rule: the per-run exchange quota covers the run's
+  exchange folder **plus** its import temps, and the global staging quota
+  covers the whole staging root including `import_tmp`. Cleanup is immediate on the import's terminal
   state (success or failure); startup recovery deletes any temps whose
   claim is terminal or `interrupted` — partial temps are unusable by
   design, since re-import always copies fresh. Tests cover quota accounting
@@ -737,7 +773,8 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
 
   ```lua
   { ok = bool, import_id = "...", run_id = "...", name = "...",
-    resource_id = n|nil, error = string|nil }
+    resource_id = n|nil, error = string|nil,
+    source_delete_pending = bool }
   ```
 
   The submission-time short-circuit (already-imported) does **not** fire
@@ -762,10 +799,10 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
      actor, that flag remains false and Lua access fails closed; it does not
      turn the row into an intentionally actor-less schedule run.
   2. **Finished state**: the run must be terminal; file operations against
-     a running or queued run are refused. (Startup recovery has already
-     resolved every `interrupted` run's writer status — §3 — and flagged
-     `output_unverified` runs, whose file operations are refused with an
-     `output unverified` error except `discard_run`.)
+     a running or queued run are refused. Recovery never makes a recorded
+     live-but-unverifiable group terminal. The no-pgid crash shape is flagged
+     `output_unverified`; its file operations are refused with an `output
+     unverified` error except `discard_run`.
   3. **Name validation** (lexical): the name must match the plugin-visible
      character set (no `/`, `\`, null bytes, no `.` or `..`, length-capped).
   4. **Import claim short-circuit** (`create_resource` only): if the durable
@@ -774,7 +811,7 @@ and recovery — an enqueue that vanishes on restart is not acceptable:
      `interrupted` → re-enqueue the **same** claim id (bindings refreshed);
      `failed`/`cancelled` → a new claim replaces it — **before** any
      file-existence check. This is what makes re-import idempotent after the
-     source file was deleted (failed post-import delete, or swept); `read`
+     source file was deleted (successful cleanup or later sweep); `read`
      and `discard` of an imported-but-deleted name are plain `file not
      found`.
   5. **File checks**: the entry must be a **regular file** (`lstat`;
@@ -797,9 +834,12 @@ enable `commands` for all of them.
 
 ### Sweep and synchronization
 
-- A sweep pass removes finished runs' exchange directories once a
-  configurable retention (default 7 days, measured from **completion**, not
-  creation) has elapsed. A run is skipped by the sweep while it has an active
+- A sweep pass processes a bounded batch of finished runs whose configurable
+  retention has elapsed (default 7 days, measured from **completion**, not
+  creation) and whose `exchange_removed_at` is still NULL. Successful removal
+  or an already-absent directory stamps that field; later passes never revisit
+  the historical row. A crash after deletion but before the stamp causes one
+  harmless retry. A run is skipped by the sweep while it has an active
   file operation — import, read and discard each hold their lease — or a
   nonterminal run record **or any nonterminal import** (`pending`/`running`),
   because the import pin is taken at **claim/admission time**, not at worker
@@ -808,7 +848,7 @@ enable `commands` for all of them.
   run. Lease acquisition and the sweep's skip-check are coordinated under
   the same per-run lock, so an operation cannot slip between the check and
   the sweep. When retention elapses, **everything** in the exchange
-  directory is deleted, including `imported-pending-delete` bytes; what
+  directory is deleted, including any `source_delete_pending` bytes; what
   survives is the import map in the durable run record, which is what makes
   re-import idempotent after the bytes are gone — via the import-claim
   short-circuit in the operation order above.
@@ -914,7 +954,9 @@ too. The walk over `mah.fs.runs()`:
 - `interrupted` command runs with verified output → surfaced to the operator
   (their files may be partial; importing them is an explicit choice, the run
   status says why);
-- `output_unverified` runs → offered for `discard_run`.
+- terminal `output_unverified` runs (the no-pgid crash shape) → offered for
+  `discard_run`; a recorded live-but-unverifiable group is not terminal and
+  keeps command-runtime startup closed.
 
 Until a human opens the page after a restart, stranded claims sit in
 `runs()` — that is the documented behaviour, not a silent drop.
@@ -970,10 +1012,18 @@ Core (mahresources):
   and size caps; per-plugin and global concurrency **on the command pool
   (2 per plugin, 4 global), separate from the download pool (3)**; timeout
   kills the **whole process group** — a regression test uses a child that
-  spawns a long-lived descendant and asserts the descendant dies too.
+  spawns a long-lived descendant and asserts the descendant dies too. A
+  Darwin regression launches an Apple platform executable whose environment
+  is unavailable and proves local cancellation still kills its descendant
+  before terminal publication. A fake-unverified inspector gives the same
+  proof on every Unix test host. Process inspection call counts prove an
+  ordinary long-running parent is not polled every 20 ms.
 - Quotas: a run whose writes exceed the per-run exchange quota is killed and
-  marked `failed` (error names the quota); while above the global staging
-  quota, new runs are refused; sampled accounting documented as approximate.
+  marked `failed` (error names the quota); while the sampled global staging
+  usage is above the limit, new runs are refused. An import at the `2 × source`
+  boundary succeeds and one beyond it fails before copying. Submission tests
+  prove `Prepare` reads the cached sample without walking the staging tree;
+  startup and sweep refresh failures remain explicit.
 - Callback budget: a completion callback that only lists/queues/discards
   finishes inside `asyncActionTimeout`; an import of a large file runs on
   the import pool **while the plugin's page remains responsive** (no VM lock
@@ -990,16 +1040,15 @@ Core (mahresources):
   spawn, disable between fork and pgid persistence latches cancellation so
   the just-spawned group is killed and reaped before terminal publication.
 - Crash recovery: restart with a **surviving orphaned process group** (a
-  grandchild writer still alive) — the group is identity-verified and killed
-  before the record is stamped `interrupted` — the guarantee is that output
-  **cannot be imported while writers remain alive**, not that the killed
-  writers' files are complete: an `interrupted` run's files may be partial,
-  and its status is what tells the plugin that; a **spawn/persist crash**
-  (row `running`, no pgid persisted →
-  `interrupted` + `output_unverified`, file operations refused, `discard_run`
-  allowed) and **pgid reuse** (the recorded group id belongs to unrelated
-  processes after the original group exited → identity check fails, no
-  unrelated process is killed, output marked unverified).
+  grandchild writer still alive) — an identity-verified group is killed before
+  the record is stamped `interrupted`; a recorded live but unverifiable group
+  is not killed, not stamped terminal, and prevents command-runtime startup.
+  The guarantee is that output **cannot be imported while writers remain
+  alive**, not that killed writers' files are complete: an `interrupted` run's
+  files may be partial, and its status says why. A **spawn/persist crash** with
+  no pgid remains `interrupted + output_unverified`, file operations refused,
+  `discard_run` allowed. A **pgid reuse** test proves no unrelated process is
+  killed and no terminal row is published while that group remains alive.
 - stdin: the spawned process's stdin is `os.DevNull` (a prompting tool fails
   on timeout, never blocks forever).
 - `mah.fs`: enforcement tests for name validation, symlink refusal
@@ -1008,8 +1057,9 @@ Core (mahresources):
   fail-closed behavior**: nulling an ordinary submitter leaves
   `actorless_at_submission=false`, hides the run from every plugin principal
   and prevents its pending claim from starting, while a run born actorless
-  remains plugin-accessible; idempotent re-import after a failed delete **and
-  after the run has been swept** (import-claim
+  remains plugin-accessible; idempotent re-import after a cleanup failure
+  (`source_delete_pending`, successful import error remains empty) **and after
+  the run has been swept** (import-claim
   short-circuit, no source file present), refusal inside transactions,
   **listing truncates with a `truncated` flag instead of refusing**,
   `discard_run` on a truncated run, read cap, **`output_unverified` runs:
@@ -1022,7 +1072,8 @@ Core (mahresources):
 - History: sensitive-parameter redaction in both the parameter view and the
   persisted argv; output HTML-escaped and control-stripped; **command history
   access is administrator-only** in API and UI (a non-admin viewing their own
-  download history cannot see command records).
+  download history cannot see command records); every queued-run cancel button
+  has a distinct accessible name containing its run id.
 - **Staging/import**: a **real subprocess** (not a stub) writes a file that
   `mah.fs.create_resource` imports through the configured afero filesystem —
   including a **MemoryFS target** (small files), proving the import path
@@ -1064,19 +1115,22 @@ Core (mahresources):
   protection from admission time** — an import accepted against a
   retention-expired run is not swept before its worker starts;
   **`discard_run`** refuses while nonterminal imports exist and is the only
-  permitted operation on `output_unverified` runs; `on_import` receives the
+  permitted operation on terminal `output_unverified` runs; `on_import` receives the
   documented result table and is not fired by the submission-time
   short-circuit; **disable → re-enable → page reconciliation** re-drives
   interrupted claims (same id) and offers failed/cancelled claims for an
   explicit operator retry that creates a **new** claim id — nothing
   automatic; **import temp accounting**: per-run and global quotas include
-  `import_tmp` (which also holds `AddResource`'s inner upload scratch via
-  the scratch-dir option), and startup recovery deletes orphaned temps of
+  `import_tmp` (which holds the single `AddResource` snapshot scratch via the
+  scratch-dir option), and startup recovery deletes orphaned temps of
   terminal or interrupted claims — including a crash after the inner
   upload temp was populated; **concurrent same-content import**: two
   workers importing identical content never lose a backing file (the
   destination validation runs under `AddResource`'s hash lock, not as an
-  external preflight).
+  external preflight). **Retention scale**: sweeps fetch a bounded batch of
+  expired rows with `exchange_removed_at IS NULL`, stamp deleted or absent
+  directories, skip leased/nonterminal-import runs without stamping, and never
+  reconsider stamped historical rows.
 
 Manage UI: warning panel renders verbatim (shell-quoted, escaped) commands;
 enable flow shows it and requires the acknowledgement; a changed command set
