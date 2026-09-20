@@ -443,29 +443,6 @@ func waitForImport(t *testing.T, ctx *application_context.MahresourcesContext, r
 	return plugin_commands.ImportMapEntry{}
 }
 
-func waitForImportErrorContains(t *testing.T, ctx *application_context.MahresourcesContext, runID, name, fragment string) plugin_commands.ImportMapEntry {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	var last plugin_commands.ImportMapEntry
-	for time.Now().Before(deadline) {
-		view, _, err := ctx.GetPluginCommandRun(runID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, item := range view.Imports {
-			if item.FileName == name {
-				last = item
-				if strings.Contains(item.Error, fragment) {
-					return item
-				}
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("import %s/%s error never contained %q; last=%+v", runID, name, fragment, last)
-	return plugin_commands.ImportMapEntry{}
-}
-
 func createImportBlocker(t *testing.T, ctx *application_context.MahresourcesContext, stagingRoot, id string, actorID uint, generation uint64) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -586,10 +563,12 @@ func TestPluginCommandRealProcessImportsIntoMemoryFS(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(runDir, "discard.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discard callback did not remove source: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); err != nil {
-		t.Fatalf("identity-bound cleanup should retain imported source for run sweep: %v", err)
+	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful import did not remove its source: %v", err)
 	}
-	mapped = waitForImportErrorContains(t, tc.AppCtx, run.ID, "import.bin", "imported-pending-delete")
+	if mapped.SourceDeletePending || mapped.Error != "" {
+		t.Fatalf("successful import cleanup state = pending %t error %q", mapped.SourceDeletePending, mapped.Error)
+	}
 	actorID := actor.ID
 	if err := tc.AppCtx.DiscardCommandRun(plugin_commands.Access{
 		PluginName: commandIntegrationPluginName, ActorUserID: &actorID,
@@ -681,10 +660,11 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 	if _, err := os.Stat(filepath.Join(runDir, "discard.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discarded source remains: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); err == nil {
-		mapped = waitForImportErrorContains(t, tc.AppCtx, produce.ID, "import.bin", "imported-pending-delete")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("inspect imported source: %v", err)
+	if _, err := os.Stat(filepath.Join(runDir, "import.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful import did not remove source: %v", err)
+	}
+	if mapped.SourceDeletePending || mapped.Error != "" {
+		t.Fatalf("successful import cleanup state = pending %t error %q", mapped.SourceDeletePending, mapped.Error)
 	}
 
 	// Occupy both real import workers, then use the real command completion Lua
