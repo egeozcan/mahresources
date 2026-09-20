@@ -4,7 +4,7 @@ package application_context
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"syscall"
 	"testing"
 	"time"
@@ -39,8 +39,9 @@ func TestPluginCommandLifecycleDoesNotPublishHostForLiveUnverifiedRecoveryGroup(
 		_ = ctx.StopPluginCommands()
 		t.Fatal("startup published a command runtime for a live unverified recovery group")
 	}
-	if !strings.Contains(err.Error(), "ownership") {
-		t.Fatalf("startup error = %v", err)
+	var blocked *plugin_commands.RecoveryBlockedError
+	if !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0].RunID != "live-unverified-recovery" {
+		t.Fatalf("startup error = %v, blockers = %+v", err, blocked)
 	}
 	run, _, readErr := ctx.Run("live-unverified-recovery")
 	if readErr != nil {

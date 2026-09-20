@@ -58,6 +58,11 @@ type Dispatcher struct {
 	shutdownMu  sync.Mutex
 	shutdownErr error
 
+	recoveryMu           sync.Mutex
+	recoverySignals      map[string]struct{}
+	recoveryPollInterval time.Duration
+	recoveryDrainTimeout time.Duration
+
 	importerMu sync.RWMutex
 	importer   Importer
 
@@ -283,10 +288,13 @@ func NewDispatcher(deps Dependencies) *Dispatcher {
 	}
 	return &Dispatcher{
 		deps: deps, inbox: make(chan any, 256), done: make(chan struct{}),
-		importQuotaReserved: make(map[string]int64),
-		sweepInterval:       pluginCommandSweepInterval,
-		sweepBatchSize:      pluginCommandSweepBatch,
-		now:                 func() time.Time { return time.Now().UTC() },
+		importQuotaReserved:  make(map[string]int64),
+		recoverySignals:      make(map[string]struct{}),
+		recoveryPollInterval: groupPollInterval,
+		recoveryDrainTimeout: groupDrainTimeout,
+		sweepInterval:        pluginCommandSweepInterval,
+		sweepBatchSize:       pluginCommandSweepBatch,
+		now:                  func() time.Time { return time.Now().UTC() },
 	}
 }
 
