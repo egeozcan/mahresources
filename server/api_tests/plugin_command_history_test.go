@@ -46,6 +46,15 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	if strings.Contains(body, `<script>alert`) || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("output was not escaped: %s", body)
 	}
+	for _, label := range []string{
+		`aria-label="Cancel queued run admin-owned-command in details"`,
+		`aria-label="Cancel queued run admin-owned-command in history"`,
+		`aria-label="Cancel queued run user-owned-command in history"`,
+	} {
+		if !strings.Contains(body, label) {
+			t.Fatalf("history page lacks run-specific cancellation label %q: %s", label, body)
+		}
+	}
 
 	if err := tc.DB.Where("run_id = ?", "admin-owned-command").Delete(&models.PluginCommandRunOutput{}).Error; err != nil {
 		t.Fatal(err)

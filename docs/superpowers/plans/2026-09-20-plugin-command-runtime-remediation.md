@@ -462,11 +462,11 @@ git commit -m "perf: cache plugin command staging usage"
 - Visible button text remains `Cancel queued run`.
 - Accessible names become `Cancel queued run <run-id>` in both detail and list rows.
 
-- [ ] **Step 1: Write failing API/template and E2E assertions**
+- [x] **Step 1: Write failing API/template and E2E assertions**
 
 Render two queued rows plus one detail row and assert the HTML contains run-specific labels. In Playwright, select exact buttons by `getByRole('button', {name: 'Cancel queued run <id>', exact: true})` and assert each resolves uniquely.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./server/api_tests -run TestPluginCommandHistory -count=1
@@ -475,7 +475,7 @@ cd e2e && npm run test:with-server -- tests/plugins/plugin-command-history.spec.
 
 Expected: current bare accessible names fail exact run-id lookup.
 
-- [ ] **Step 3: Add `aria-label` values**
+- [x] **Step 3: Add `aria-label` values**
 
 Use Pongo interpolation:
 
@@ -486,14 +486,14 @@ aria-label="Cancel queued run {{ run.ID }}"
 
 Keep the visible label unchanged.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```bash
 go test --tags 'json1 fts5' ./server/api_tests -run TestPluginCommandHistory -count=1
 cd e2e && npm run test:with-server -- tests/plugins/plugin-command-history.spec.ts
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/pluginCommandHistory.tpl server/api_tests/plugin_command_history_test.go e2e/tests/plugins/plugin-command-history.spec.ts

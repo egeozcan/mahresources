@@ -99,7 +99,7 @@ test.describe('administrator plugin command history', () => {
     }).toEqual(['running', 'running', 'queued']);
 
     await page.goto(`/admin/plugin-command-runs?id=${queued}`);
-    const queuedCancel = page.getByRole('button', { name: 'Cancel queued run' }).first();
+    const queuedCancel = page.getByRole('button', { name: `Cancel queued run ${queued} in details` });
     await queuedCancel.focus();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/admin\/plugin-command-runs\?notice=cancelled$/);
