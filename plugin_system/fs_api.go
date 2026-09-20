@@ -254,12 +254,13 @@ func (pm *PluginManager) importCompletion(access liveExchangeAccess, L *lua.LSta
 		settle.Do(func() {
 			go runProtectedDurableCallback("import", waitGroup.Done, func() {
 				pm.runDurableCallback(access.PluginName, access.Generation, L, callback, access.ActorUserID, map[string]any{
-					"ok":          result.OK,
-					"error":       optionalLuaError(result.Error),
-					"import_id":   result.ImportID,
-					"resource_id": result.ResourceID,
-					"run_id":      runID,
-					"name":        name,
+					"ok":                    result.OK,
+					"error":                 optionalLuaError(result.Error),
+					"import_id":             result.ImportID,
+					"resource_id":           result.ResourceID,
+					"source_delete_pending": result.SourceDeletePending,
+					"run_id":                runID,
+					"name":                  name,
 				})
 			})
 		})
@@ -281,10 +282,11 @@ func runViewToLua(L *lua.LState, run plugin_commands.RunView) *lua.LTable {
 	imports := L.NewTable()
 	for _, item := range run.Imports {
 		imports.RawSetString(item.FileName, goToLuaTable(L, map[string]any{
-			"import_id":   item.ImportID,
-			"resource_id": item.ResourceID,
-			"status":      item.Status,
-			"error":       optionalLuaError(item.Error),
+			"import_id":             item.ImportID,
+			"resource_id":           item.ResourceID,
+			"status":                item.Status,
+			"error":                 optionalLuaError(item.Error),
+			"source_delete_pending": item.SourceDeletePending,
 		}))
 	}
 	table.RawSetString("imports", imports)

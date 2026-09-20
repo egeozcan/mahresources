@@ -199,7 +199,7 @@ git commit -m "fix: keep unverifiable command groups nonterminal"
 - Produces Lua `imports[name].source_delete_pending` and callback `source_delete_pending`.
 - Removes `RecordImportDeleteFailure`; successful cleanup state never occupies `Error`.
 
-- [ ] **Step 1: Write failing import success and cleanup-failure tests**
+- [x] **Step 1: Write failing import success and cleanup-failure tests**
 
 Replace the always-retained success assertion with:
 
@@ -214,11 +214,11 @@ if mapped.Error != "" || mapped.SourceDeletePending {
 
 Update the replacement/symlink cleanup failure test to assert status `succeeded`, resource id present, `Error == ""`, and `SourceDeletePending == true`.
 
-- [ ] **Step 2: Write failing persistence and Lua-shape tests**
+- [x] **Step 2: Write failing persistence and Lua-shape tests**
 
 In application-context tests, persist success with `SourceDeletePending: true`, clear it transactionally in both claim and map, and assert both rows changed. In `plugin_system/fs_api_test.go`, assert runs and callback tables expose a boolean `source_delete_pending` without converting it into `error`.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_system -run 'Test.*(Import.*Delete|SourceDeletePending|Runs.*Import)' -count=1
@@ -226,7 +226,7 @@ go test --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_sys
 
 Expected: missing fields/methods and retained source behavior fail.
 
-- [ ] **Step 4: Add durable cleanup state**
+- [x] **Step 4: Add durable cleanup state**
 
 Add `SourceDeletePending bool` to `models.PluginCommandImport` and `models.PluginCommandImportMap`, thread it through converters and finish/map updates, and implement:
 
@@ -236,7 +236,7 @@ func (ctx *MahresourcesContext) SetImportSourceDeletePending(importID string, pe
 
 as one transaction updating the succeeded claim and its succeeded map entry. A successful resource import initially persists `SourceDeletePending: true`; this makes a crash between durable success and unlink conservative.
 
-- [ ] **Step 5: Restore descriptor-relative unlink**
+- [x] **Step 5: Restore descriptor-relative unlink**
 
 After `os.SameFile(admittedInfo, currentInfo)` succeeds, call:
 
@@ -246,7 +246,7 @@ return unix.Unlinkat(int(dir.Fd()), name, 0)
 
 Remove `errExchangeAtomicUnlinkUnavailable` and its test-only after-identity hook. Preserve no-follow regular-file checks and classify real unlink errors normally.
 
-- [ ] **Step 6: Order cleanup and callback delivery**
+- [x] **Step 6: Order cleanup and callback delivery**
 
 After durable success:
 
@@ -257,14 +257,14 @@ After durable success:
 
 A synchronous successful-map short circuit returns the resource id as before.
 
-- [ ] **Step 7: Run GREEN and race verification**
+- [x] **Step 7: Run GREEN and race verification**
 
 ```bash
 go test --tags 'json1 fts5' ./plugin_commands ./application_context ./plugin_system -run 'Test.*(Import|SourceDeletePending|Unlink|Runs)' -count=1
 go test -race --tags 'json1 fts5' ./plugin_commands ./application_context -run 'Test.*Import' -count=20
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add models/plugin_command_import_model.go plugin_commands/types.go plugin_commands/imports.go plugin_commands/exchange_unix.go plugin_commands/exchange_windows.go plugin_commands/imports_test.go application_context/plugin_command_store.go application_context/plugin_command_import.go application_context/plugin_command_store_test.go plugin_system/fs_api.go plugin_system/fs_api_test.go

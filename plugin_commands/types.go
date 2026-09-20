@@ -91,25 +91,27 @@ func (a Access) AllowsRun(run RunRecord) bool {
 }
 
 type ImportRecord struct {
-	ID               string
-	RunID            string
-	FileName         string
-	PluginGeneration uint64
-	CreatedByUserID  *uint
-	Status           string
-	Error            string
-	CreatedAt        time.Time
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
+	ID                  string
+	RunID               string
+	FileName            string
+	PluginGeneration    uint64
+	CreatedByUserID     *uint
+	Status              string
+	Error               string
+	SourceDeletePending bool
+	CreatedAt           time.Time
+	StartedAt           *time.Time
+	FinishedAt          *time.Time
 }
 
 type ImportMapEntry struct {
-	RunID      string
-	FileName   string
-	ImportID   string
-	ResourceID *uint
-	Status     string
-	Error      string
+	RunID               string
+	FileName            string
+	ImportID            string
+	ResourceID          *uint
+	Status              string
+	Error               string
+	SourceDeletePending bool
 }
 
 type ImportClaimRequest struct {
@@ -130,10 +132,11 @@ type ImportClaimResult struct {
 }
 
 type ImportFinish struct {
-	Status     string
-	Error      string
-	ResourceID *uint
-	FinishedAt time.Time
+	Status              string
+	Error               string
+	ResourceID          *uint
+	SourceDeletePending bool
+	FinishedAt          time.Time
 }
 
 func RunStatusTerminal(status string) bool {

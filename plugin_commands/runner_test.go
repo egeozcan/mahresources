@@ -174,6 +174,7 @@ func (s *runnerTestStore) ClaimImport(ImportClaimRequest) (ImportClaimResult, er
 }
 func (s *runnerTestStore) MarkImportRunning(string, time.Time) (bool, error) { return true, nil }
 func (s *runnerTestStore) FinishImport(string, ImportFinish) (bool, error)   { return true, nil }
+func (s *runnerTestStore) SetImportSourceDeletePending(string, bool) error   { return nil }
 func (s *runnerTestStore) InterruptNonterminalImports(time.Time) error       { return nil }
 func (s *runnerTestStore) NonterminalImports() ([]ImportRecord, error) {
 	s.mu.Lock()

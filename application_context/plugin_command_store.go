@@ -63,8 +63,8 @@ func importRecord(row models.PluginCommandImport) plugin_commands.ImportRecord {
 	return plugin_commands.ImportRecord{
 		ID: row.ID, RunID: row.RunID, FileName: row.FileName,
 		PluginGeneration: row.PluginGeneration, CreatedByUserID: copyCommandUint(row.CreatedByUserId),
-		Status: row.Status, Error: row.Error, CreatedAt: row.CreatedAt,
-		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
+		Status: row.Status, Error: row.Error, SourceDeletePending: row.SourceDeletePending,
+		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 	}
 }
 
@@ -72,6 +72,7 @@ func importMapEntry(row models.PluginCommandImportMap) plugin_commands.ImportMap
 	return plugin_commands.ImportMapEntry{
 		RunID: row.RunID, FileName: row.FileName, ImportID: row.ImportID,
 		ResourceID: copyCommandUint(row.ResourceID), Status: row.Status, Error: row.Error,
+		SourceDeletePending: row.SourceDeletePending,
 	}
 }
 
@@ -387,10 +388,10 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 					return errPluginCommandTransitionLost
 				}
 				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
-					Updates(map[string]any{"status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": ""}).Error; err != nil {
+					Updates(map[string]any{"status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
 					return err
 				}
-				mapped.Status, mapped.ResourceID, mapped.Error = plugin_commands.ImportStatusPending, nil, ""
+				mapped.Status, mapped.ResourceID, mapped.Error, mapped.SourceDeletePending = plugin_commands.ImportStatusPending, nil, "", false
 				result = commandClaimResult(mapped, false, true)
 				return nil
 			case plugin_commands.ImportStatusFailed, plugin_commands.ImportStatusCancelled:
@@ -403,10 +404,10 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 					return err
 				}
 				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
-					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": ""}).Error; err != nil {
+					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
 					return err
 				}
-				mapped.ImportID, mapped.Status, mapped.ResourceID, mapped.Error = req.ImportID, plugin_commands.ImportStatusPending, nil, ""
+				mapped.ImportID, mapped.Status, mapped.ResourceID, mapped.Error, mapped.SourceDeletePending = req.ImportID, plugin_commands.ImportStatusPending, nil, "", false
 				result = commandClaimResult(mapped, true, true)
 				return nil
 			default:
@@ -505,7 +506,10 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.PluginCommandImport{}).
 			Where("id = ? AND status IN ?", importID, priorStatuses).
-			Updates(map[string]any{"status": finish.Status, "error": finish.Error, "finished_at": finish.FinishedAt})
+			Updates(map[string]any{
+				"status": finish.Status, "error": finish.Error, "finished_at": finish.FinishedAt,
+				"source_delete_pending": finish.SourceDeletePending,
+			})
 		if res.Error != nil {
 			return res.Error
 		}
@@ -513,7 +517,10 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 			return errPluginCommandTransitionLost
 		}
 		mapped := tx.Model(&models.PluginCommandImportMap{}).Where("import_id = ?", importID).
-			Updates(map[string]any{"status": finish.Status, "error": finish.Error, "resource_id": finish.ResourceID})
+			Updates(map[string]any{
+				"status": finish.Status, "error": finish.Error, "resource_id": finish.ResourceID,
+				"source_delete_pending": finish.SourceDeletePending,
+			})
 		if mapped.Error != nil {
 			return mapped.Error
 		}
@@ -526,6 +533,30 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 		return false, nil
 	}
 	return err == nil, err
+}
+
+func (ctx *MahresourcesContext) SetImportSourceDeletePending(importID string, pending bool) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		claim := tx.Model(&models.PluginCommandImport{}).
+			Where("id = ? AND status = ?", importID, plugin_commands.ImportStatusSucceeded).
+			Update("source_delete_pending", pending)
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected != 1 {
+			return fmt.Errorf("plugin command import %q is not a succeeded claim", importID)
+		}
+		mapped := tx.Model(&models.PluginCommandImportMap{}).
+			Where("import_id = ? AND status = ?", importID, plugin_commands.ImportStatusSucceeded).
+			Update("source_delete_pending", pending)
+		if mapped.Error != nil {
+			return mapped.Error
+		}
+		if mapped.RowsAffected != 1 {
+			return fmt.Errorf("plugin command import %q has no succeeded map entry", importID)
+		}
+		return nil
+	})
 }
 
 func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) error {

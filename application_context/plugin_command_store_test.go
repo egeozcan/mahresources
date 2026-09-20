@@ -357,7 +357,10 @@ func TestPluginCommandStoreImportTransitionsAndRecovery(t *testing.T) {
 	won, err = ctx.MarkImportRunning("pending", now.Add(5*time.Second))
 	require.NoError(t, err)
 	require.True(t, won)
-	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID, FinishedAt: now.Add(6 * time.Second)})
+	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID,
+		SourceDeletePending: true, FinishedAt: now.Add(6 * time.Second),
+	})
 	require.NoError(t, err)
 	require.True(t, won)
 	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusFailed, Error: "stale", FinishedAt: now.Add(7 * time.Second)})
@@ -368,6 +371,15 @@ func TestPluginCommandStoreImportTransitionsAndRecovery(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, plugin_commands.ImportStatusSucceeded, entry.Status)
 	require.Equal(t, resourceID, *entry.ResourceID)
+	require.True(t, entry.SourceDeletePending)
+	require.NoError(t, ctx.SetImportSourceDeletePending("pending", false))
+	entry, ok, err = ctx.ImportMap("imports-run", "a")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, entry.SourceDeletePending)
+	var claimRow models.PluginCommandImport
+	require.NoError(t, ctx.db.Where("id = ?", "pending").First(&claimRow).Error)
+	require.False(t, claimRow.SourceDeletePending)
 }
 
 func TestPluginCommandStoreCancelPendingImportLosesToRunningTransition(t *testing.T) {

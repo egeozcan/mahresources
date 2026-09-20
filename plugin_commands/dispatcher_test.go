@@ -171,6 +171,14 @@ func (s *dispatcherTestStore) FinishImport(id string, finish ImportFinish) (bool
 	s.importFinishes[id] = finish
 	return true, nil
 }
+func (s *dispatcherTestStore) SetImportSourceDeletePending(id string, pending bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finish := s.importFinishes[id]
+	finish.SourceDeletePending = pending
+	s.importFinishes[id] = finish
+	return nil
+}
 func (s *dispatcherTestStore) InterruptNonterminalImports(time.Time) error {
 	return s.interruptImportsErr
 }

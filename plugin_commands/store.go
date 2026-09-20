@@ -34,6 +34,7 @@ type Store interface {
 	ClaimImport(ImportClaimRequest) (ImportClaimResult, error)
 	MarkImportRunning(importID string, started time.Time) (bool, error)
 	FinishImport(importID string, finish ImportFinish) (bool, error)
+	SetImportSourceDeletePending(importID string, pending bool) error
 	InterruptNonterminalImports(time.Time) error
 	NonterminalImports() ([]ImportRecord, error)
 	HasNonterminalImports(runID string) (bool, error)

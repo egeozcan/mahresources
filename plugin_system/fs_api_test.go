@@ -19,7 +19,7 @@ func TestFSOperationsUseLiveActorAndReturnCompleteTables(t *testing.T) {
 		runs: []plugin_commands.RunView{{RunRecord: plugin_commands.RunRecord{
 			ID: "run-a", PluginName: "commander", CommandName: "download", Status: plugin_commands.RunStatusSucceeded,
 			StartedAt: &started, FinishedAt: &finished, OutputUnverified: false,
-		}, Imports: []plugin_commands.ImportMapEntry{{RunID: "run-a", FileName: "out.bin", ImportID: "import-a", Status: plugin_commands.ImportStatusFailed, Error: "decoder failed"}}}},
+		}, Imports: []plugin_commands.ImportMapEntry{{RunID: "run-a", FileName: "out.bin", ImportID: "import-a", Status: plugin_commands.ImportStatusFailed, Error: "decoder failed", SourceDeletePending: true}}}},
 		listing:  plugin_commands.Listing{Entries: []plugin_commands.Entry{{Name: "out.bin", Size: 4, Modified: finished}}, Truncated: true},
 		readBody: []byte("data"),
 		imported: plugin_commands.ImportSubmitResult{ImportID: "import-b", CompletionRegistered: true},
@@ -50,7 +50,7 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 	}
 	imports := run.RawGetString("imports").(*lua.LTable)
 	mapped := imports.RawGetString("out.bin").(*lua.LTable)
-	if mapped.RawGetString("resource_id") != lua.LNil || mapped.RawGetString("status").String() != plugin_commands.ImportStatusFailed || mapped.RawGetString("error").String() != "decoder failed" {
+	if mapped.RawGetString("resource_id") != lua.LNil || mapped.RawGetString("status").String() != plugin_commands.ImportStatusFailed || mapped.RawGetString("error").String() != "decoder failed" || mapped.RawGetString("source_delete_pending") != lua.LTrue {
 		t.Fatalf("import map incomplete: %v", mapped)
 	}
 	listing := L.GetGlobal("__listing").(*lua.LTable)
@@ -72,7 +72,7 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 		t.Fatalf("fields = %+v", request.Fields)
 	}
 
-	request.Completion(plugin_commands.ImportResult{OK: true, ImportID: "import-b", ResourceID: &resource})
+	request.Completion(plugin_commands.ImportResult{OK: true, ImportID: "import-b", ResourceID: &resource, SourceDeletePending: true})
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		mu := pm.LockVM(L)
@@ -81,7 +81,7 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 		}
 		if got := L.GetGlobal("__import_result"); got != lua.LNil {
 			tbl := got.(*lua.LTable)
-			if tbl.RawGetString("run_id").String() != "run-a" || tbl.RawGetString("name").String() != "out.bin" || tbl.RawGetString("resource_id").String() != "91" {
+			if tbl.RawGetString("run_id").String() != "run-a" || tbl.RawGetString("name").String() != "out.bin" || tbl.RawGetString("resource_id").String() != "91" || tbl.RawGetString("source_delete_pending") != lua.LTrue {
 				mu.Unlock()
 				t.Fatalf("import callback = %v", tbl)
 			}

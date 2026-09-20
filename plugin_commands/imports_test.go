@@ -69,15 +69,15 @@ func (s *importLifecycleStore) ClaimImport(req ImportClaimRequest) (ImportClaimR
 		return ImportClaimResult{ImportID: mapped.ImportID, ResourceID: copyUint(mapped.ResourceID), Status: mapped.Status}, nil
 	case ImportStatusInterrupted:
 		record := s.claims[mapped.ImportID]
-		record.Status, record.PluginGeneration, record.CreatedByUserID = ImportStatusPending, req.PluginGeneration, copyUint(req.CreatedByUserID)
+		record.Status, record.PluginGeneration, record.CreatedByUserID, record.SourceDeletePending = ImportStatusPending, req.PluginGeneration, copyUint(req.CreatedByUserID), false
 		s.claims[mapped.ImportID] = record
-		mapped.Status, mapped.Error, mapped.ResourceID = ImportStatusPending, "", nil
+		mapped.Status, mapped.Error, mapped.ResourceID, mapped.SourceDeletePending = ImportStatusPending, "", nil, false
 		s.maps[key] = mapped
 		return ImportClaimResult{ImportID: mapped.ImportID, Status: ImportStatusPending, Enqueue: true}, nil
 	case ImportStatusFailed, ImportStatusCancelled:
 		record := ImportRecord{ID: req.ImportID, RunID: req.RunID, FileName: req.FileName, PluginGeneration: req.PluginGeneration, CreatedByUserID: copyUint(req.CreatedByUserID), Status: ImportStatusPending, CreatedAt: req.CreatedAt}
 		s.claims[req.ImportID] = record
-		mapped.ImportID, mapped.Status, mapped.Error, mapped.ResourceID = req.ImportID, ImportStatusPending, "", nil
+		mapped.ImportID, mapped.Status, mapped.Error, mapped.ResourceID, mapped.SourceDeletePending = req.ImportID, ImportStatusPending, "", nil, false
 		s.maps[key] = mapped
 		return ImportClaimResult{ImportID: req.ImportID, Status: ImportStatusPending, Created: true, Enqueue: true}, nil
 	default:
@@ -140,16 +140,35 @@ func (s *importLifecycleStore) FinishImport(id string, finish ImportFinish) (boo
 	if !ok || ImportStatusTerminal(record.Status) {
 		return false, nil
 	}
-	record.Status, record.Error, record.FinishedAt = finish.Status, finish.Error, &finish.FinishedAt
+	record.Status, record.Error, record.SourceDeletePending, record.FinishedAt = finish.Status, finish.Error, finish.SourceDeletePending, &finish.FinishedAt
 	s.claims[id] = record
 	for key, mapped := range s.maps {
 		if mapped.ImportID == id {
-			mapped.Status, mapped.Error, mapped.ResourceID = finish.Status, finish.Error, copyUint(finish.ResourceID)
+			mapped.Status, mapped.Error, mapped.ResourceID, mapped.SourceDeletePending = finish.Status, finish.Error, copyUint(finish.ResourceID), finish.SourceDeletePending
 			s.maps[key] = mapped
 		}
 	}
 	return true, nil
 }
+func (s *importLifecycleStore) SetImportSourceDeletePending(id string, pending bool) error {
+	s.claimMu.Lock()
+	defer s.claimMu.Unlock()
+	record, ok := s.claims[id]
+	if !ok || record.Status != ImportStatusSucceeded {
+		return errors.New("import is not succeeded")
+	}
+	record.SourceDeletePending = pending
+	s.claims[id] = record
+	for key, mapped := range s.maps {
+		if mapped.ImportID == id && mapped.Status == ImportStatusSucceeded {
+			mapped.SourceDeletePending = pending
+			s.maps[key] = mapped
+			return nil
+		}
+	}
+	return errors.New("succeeded import map is missing")
+}
+
 func (s *importLifecycleStore) NonterminalImports() ([]ImportRecord, error) {
 	s.claimMu.Lock()
 	defer s.claimMu.Unlock()
@@ -185,20 +204,6 @@ func (s *importLifecycleStore) HasNonterminalImports(runID string) (bool, error)
 		}
 	}
 	return false, nil
-}
-func (s *importLifecycleStore) RecordImportDeleteFailure(importID, message string) error {
-	s.claimMu.Lock()
-	defer s.claimMu.Unlock()
-	record := s.claims[importID]
-	record.Error = message
-	s.claims[importID] = record
-	for key, mapped := range s.maps {
-		if mapped.ImportID == importID {
-			mapped.Error = message
-			s.maps[key] = mapped
-		}
-	}
-	return nil
 }
 
 type importTestImporter struct {
@@ -351,7 +356,7 @@ func TestSubmitImportStateTableAndSucceededShortCircuit(t *testing.T) {
 	}
 }
 
-func TestSubmitImportSnapshotsAndLeavesSourceForDescriptorAnchoredSweep(t *testing.T) {
+func TestSubmitImportDeletesSourceAfterDurableSuccess(t *testing.T) {
 	d, store, jobs, importer, root, sub := importHarness(t)
 	completed := make(chan ImportResult, 1)
 	sub.Completion = func(r ImportResult) { completed <- r }
@@ -367,16 +372,16 @@ func TestSubmitImportSnapshotsAndLeavesSourceForDescriptorAnchoredSweep(t *testi
 		t.Fatalf("outcome = %+v", outcome)
 	}
 	result := <-completed
-	if !result.OK || result.ResourceID == nil || *result.ResourceID != 91 {
+	if !result.OK || result.ResourceID == nil || *result.ResourceID != 91 || result.SourceDeletePending {
 		t.Fatalf("result = %+v", result)
 	}
 	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
-	if mapped.Status != ImportStatusSucceeded || mapped.ResourceID == nil || !strings.Contains(mapped.Error, "imported-pending-delete") {
+	if mapped.Status != ImportStatusSucceeded || mapped.ResourceID == nil || mapped.Error != "" || mapped.SourceDeletePending {
 		t.Fatalf("map = %+v", mapped)
 	}
 	sourcePath := filepath.Join(exchangeRunDir(root, "alpha", sub.RunID), sub.Name)
-	if contents, err := os.ReadFile(sourcePath); err != nil || string(contents) != "complete-output" {
-		t.Fatalf("source retained for safe sweep = %q, err=%v", contents, err)
+	if _, err := os.Stat(sourcePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful import source still exists: %v", err)
 	}
 	if _, err := os.Stat(claimDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("claim temp not removed: %v", err)
@@ -619,7 +624,7 @@ func TestSubmitImportDisableCancelsAnActiveButDurablyPendingClaim(t *testing.T) 
 	}
 }
 
-func TestUnlinkExchangeOpenedRegularAtNeverDeletesAReplacement(t *testing.T) {
+func TestUnlinkExchangeOpenedRegularAtRefusesAnExistingReplacement(t *testing.T) {
 	root := t.TempDir()
 	dirPath := filepath.Join(root, "run")
 	requireNoError(t, os.MkdirAll(dirPath, 0o700))
@@ -632,12 +637,11 @@ func TestUnlinkExchangeOpenedRegularAtNeverDeletesAReplacement(t *testing.T) {
 	requireNoError(t, err)
 	defer admitted.Close()
 
-	err = unlinkExchangeOpenedRegularAtWithHook(dir, "result.bin", admitted, func() {
-		requireNoError(t, os.Rename(path, filepath.Join(dirPath, "admitted-old")))
-		requireNoError(t, os.WriteFile(path, []byte("replacement"), 0o600))
-	})
-	if !errors.Is(err, errExchangeAtomicUnlinkUnavailable) {
-		t.Fatalf("cleanup error = %v, want identity-bound unlink refusal", err)
+	requireNoError(t, os.Rename(path, filepath.Join(dirPath, "admitted-old")))
+	requireNoError(t, os.WriteFile(path, []byte("replacement"), 0o600))
+	err = unlinkExchangeOpenedRegularAt(dir, "result.bin", admitted)
+	if !errors.Is(err, errExchangePathChanged) {
+		t.Fatalf("cleanup error = %v, want changed-path refusal", err)
 	}
 	got, readErr := os.ReadFile(path)
 	requireNoError(t, readErr)
@@ -659,7 +663,7 @@ func TestSubmitImportDeleteFailureKeepsDurableSuccessAndShortCircuits(t *testing
 		t.Fatalf("outcome=%+v", outcome)
 	}
 	mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
-	if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusSucceeded || mapped.ResourceID == nil || mapped.Error == "" {
+	if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusSucceeded || mapped.ResourceID == nil || mapped.Error != "" || !mapped.SourceDeletePending {
 		t.Fatalf("map=%+v", mapped)
 	}
 	jobs.mu.Lock()

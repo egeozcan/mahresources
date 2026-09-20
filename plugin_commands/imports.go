@@ -64,14 +64,11 @@ type ImportSubmitResult struct {
 }
 
 type ImportResult struct {
-	OK         bool
-	Error      string
-	ImportID   string
-	ResourceID *uint
-}
-
-type importDeleteFailureRecorder interface {
-	RecordImportDeleteFailure(importID, message string) error
+	OK                  bool
+	Error               string
+	ImportID            string
+	ResourceID          *uint
+	SourceDeletePending bool
 }
 
 // SetImporter installs the application-layer adapter. It is a process-lifetime
@@ -259,7 +256,8 @@ func (d *Dispatcher) persistImportTerminal(importID, runID, name string, finish 
 			if readErr == nil && found && mapped.ImportID == importID && ImportStatusTerminal(mapped.Status) {
 				return ImportFinish{
 					Status: mapped.Status, Error: mapped.Error,
-					ResourceID: copyUint(mapped.ResourceID), FinishedAt: finish.FinishedAt,
+					ResourceID: copyUint(mapped.ResourceID), SourceDeletePending: mapped.SourceDeletePending,
+					FinishedAt: finish.FinishedAt,
 				}, nil
 			}
 			if readErr != nil {
@@ -279,7 +277,7 @@ func (d *Dispatcher) persistImportTerminal(importID, runID, name string, finish 
 func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRecord, submission ImportSubmission, importID string, source *os.File, sourceSize int64) Outcome {
 	result := ImportResult{ImportID: importID}
 	var temp *importTempDir
-	finish := func(status, message string, resourceID *uint) Outcome {
+	persist := func(status, message string, resourceID *uint, sourceDeletePending bool) Outcome {
 		if temp != nil {
 			if err := temp.Cleanup(); err != nil {
 				d.deps.Logf("remove plugin command import temp %s: %v", importID, err)
@@ -287,7 +285,8 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 			temp = nil
 		}
 		persisted, err := d.persistImportTerminal(importID, run.ID, submission.Name, ImportFinish{
-			Status: status, Error: message, ResourceID: resourceID, FinishedAt: time.Now().UTC(),
+			Status: status, Error: message, ResourceID: resourceID,
+			SourceDeletePending: sourceDeletePending, FinishedAt: time.Now().UTC(),
 		})
 		if err != nil {
 			// persistImportTerminal currently retries until it has an authoritative
@@ -297,8 +296,13 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 		result.OK = persisted.Status == ImportStatusSucceeded
 		result.Error = persisted.Error
 		result.ResourceID = copyUint(persisted.ResourceID)
-		deliverImportCompletion(submission.Completion, result)
+		result.SourceDeletePending = persisted.SourceDeletePending
 		return Outcome{Status: persisted.Status, Error: persisted.Error}
+	}
+	finish := func(status, message string, resourceID *uint) Outcome {
+		outcome := persist(status, message, resourceID, false)
+		deliverImportCompletion(submission.Completion, result)
+		return outcome
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -367,20 +371,20 @@ func (d *Dispatcher) runImport(ctx context.Context, progress Progress, run RunRe
 	}
 
 	resource := resourceID
-	outcome := finish(ImportStatusSucceeded, "", &resource)
-	// Durable success is authoritative. Source cleanup is best-effort and is
-	// tied to the admitted descriptor, never merely to the current pathname.
+	// Record cleanup as pending before touching the source. A crash after durable
+	// resource success but before unlink therefore leaves an honest, successful
+	// map entry whose retained bytes are visible to the later run sweep.
+	outcome := persist(ImportStatusSucceeded, "", &resource, true)
 	if outcome.Status == ImportStatusSucceeded {
 		if err := d.deleteImportedSource(run, submission.Name, source); err != nil {
-			message := "imported-pending-delete: " + err.Error()
-			if recorder, ok := d.deps.Store.(importDeleteFailureRecorder); ok {
-				if recordErr := recorder.RecordImportDeleteFailure(importID, message); recordErr != nil {
-					d.deps.Logf("record plugin command import %s source cleanup failure: %v", importID, recordErr)
-				}
-			}
-			d.deps.Logf("plugin command import %s succeeded but source cleanup failed: %v", importID, err)
+			d.deps.Logf("plugin command import %s succeeded but source cleanup remains pending: %v", importID, err)
+		} else if err := d.deps.Store.SetImportSourceDeletePending(importID, false); err != nil {
+			d.deps.Logf("clear plugin command import %s source cleanup marker: %v", importID, err)
+		} else {
+			result.SourceDeletePending = false
 		}
 	}
+	deliverImportCompletion(submission.Completion, result)
 	return outcome
 }
 

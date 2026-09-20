@@ -12,8 +12,6 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/plugin_commands"
 	"mahresources/plugin_system"
-
-	"gorm.io/gorm"
 )
 
 var _ plugin_commands.Importer = (*MahresourcesContext)(nil)
@@ -161,37 +159,5 @@ func (f *contextImportFile) Read(p []byte) (int, error) {
 }
 
 func (f *contextImportFile) Close() error { return f.File.Close() }
-
-// RecordImportDeleteFailure preserves success and its resource id while making
-// the leftover source visible to operators and later sweeps.
-func (ctx *MahresourcesContext) RecordImportDeleteFailure(importID, message string) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		claim := tx.Model(&models.PluginCommandImport{}).
-			Where("id = ? AND status = ?", importID, plugin_commands.ImportStatusSucceeded).
-			Update("error", message)
-		if claim.Error != nil {
-			return claim.Error
-		}
-		if claim.RowsAffected != 1 {
-			return fmt.Errorf("plugin command import %q is not a succeeded claim", importID)
-		}
-		mapped := tx.Model(&models.PluginCommandImportMap{}).
-			Where("import_id = ? AND status = ?", importID, plugin_commands.ImportStatusSucceeded).
-			Update("error", message)
-		if mapped.Error != nil {
-			return mapped.Error
-		}
-		if mapped.RowsAffected != 1 {
-			return fmt.Errorf("plugin command import %q has no succeeded map entry", importID)
-		}
-		return nil
-	})
-}
-
-// ensure compile-time method-set checks continue to catch accidental drift in
-// the context's database-backed store implementation.
-var _ interface {
-	RecordImportDeleteFailure(string, string) error
-} = (*MahresourcesContext)(nil)
 
 var _ io.ReadCloser = (*contextImportFile)(nil)
