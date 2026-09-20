@@ -14,7 +14,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-
 - [x] Task 3: Aggregate recovery blockers and classify prior-boot rows.
 - [x] Task 4: Preserve the runtime-lease busy sentinel across the public boundary.
 - [x] Task 5: Introduce the command-runtime controller and heal lease contention.
-- [ ] Task 6: Quarantine blocked recovery, log it, and activate after healing.
+- [x] Task 6: Quarantine blocked recovery, log it, and activate after healing.
 - [ ] Task 7: Make administrator cancellation accurate during quarantine.
 - [ ] Task 8: Bound live re-signalling, back off polling, and audit pinned capacity.
 - [ ] Task 9: Align invariants, complete verification, and record evidence.
