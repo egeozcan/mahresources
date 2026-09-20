@@ -474,6 +474,19 @@ func TestRunnerRejectsInvalidCommandPath(t *testing.T) {
 	}
 }
 
+func TestRunnerNormalizesTrustedCommandPath(t *testing.T) {
+	dir := t.TempDir()
+	helperExecutable(t, dir, "mah-helper")
+	raw := filepath.Join(dir, ".") + string(os.PathSeparator) + string(os.PathSeparator)
+	got, err := resolveExecutable("mah-helper", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(dir, "mah-helper") {
+		t.Fatalf("resolved executable = %q", got)
+	}
+}
+
 func TestRunnerExitStatusMappingAndCannotStart(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
@@ -607,7 +620,7 @@ func TestRunnerTimeoutStartsWhenTheProcessSpawns(t *testing.T) {
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
 	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
 	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
-	run := seedRunnerRun(t, executor, store, settings, "persist-delay", []string{"mah-helper", helperProcessFlag, "sleep"}, 75*time.Millisecond)
+	run := seedRunnerRun(t, executor, store, settings, "persist-delay", []string{"mah-helper", helperProcessFlag, "spawn-descendant", "{{exchange_dir}}"}, 75*time.Millisecond)
 
 	result := make(chan Outcome, 1)
 	go func() { result <- executor.Execute(context.Background(), run) }()
@@ -616,6 +629,7 @@ func TestRunnerTimeoutStartsWhenTheProcessSpawns(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("process group persistence did not start")
 	}
+	descendantPID := waitForHelperPID(t, filepath.Join(run.ExchangeDir, "descendant.pid"))
 	select {
 	case outcome := <-result:
 		if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
@@ -623,6 +637,16 @@ func TestRunnerTimeoutStartsWhenTheProcessSpawns(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waited for process-group persistence")
+	}
+	if err := syscall.Kill(descendantPID, 0); err == nil || !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("descendant %d survived terminal publication: %v", descendantPID, err)
+	}
+	record, output, err := store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.OutputUnverified {
+		t.Fatalf("persist-stalled terminal output = record %+v output %+v", record, output)
 	}
 }
 

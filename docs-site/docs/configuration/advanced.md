@@ -349,11 +349,17 @@ boundary, not convenience isolation.
 | Flag | Environment | Default | Description |
 |---|---|---|---|
 | `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | startup `PATH` snapshot | Path-list of nonempty absolute trusted executable directories |
-| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | `<file-save-path>/_plugin_commands`, or private process temp with MemoryFS | OS-backed exchange and import root; relative values resolve once at startup |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | `<file-save-path>/_plugin_commands`, or private process temp with MemoryFS | OS-backed exchange and import root; relative values resolve once at startup; one active server process may own a root |
 | `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | `8589934592` (8 GiB) | Sampled bytes for one run's exchange folder plus import temps |
 | `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | `53687091200` (50 GiB) | Sampled bytes across the complete staging root |
 | `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` | Age from terminal completion before an unleased exchange folder is swept |
 | `-plugin-command-output-retention` | `PLUGIN_COMMAND_OUTPUT_RETENTION` | `720h` | Age before output-tail rows are pruned; run, claim and import-map rows survive |
+
+A server holds an exclusive advisory lease on the staging root from before
+recovery until command shutdown. A second process configured with the same root
+fails startup rather than interrupting or sweeping the first process's live work.
+A durable command database and its staging root are one runtime domain; do not
+run multiple command-enabled server processes against one such domain.
 
 The path is used both to resolve a declaration's executable basename and as the
 child's `PATH`, so include required helpers too. A yt-dlp command using a

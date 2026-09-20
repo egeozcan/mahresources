@@ -55,7 +55,9 @@ func ResolvePluginCommandConfig(input PluginCommandConfigInput) (PluginCommandCo
 	if input.CommandPathExplicit {
 		commandPath = input.CommandPath
 	}
-	if err := validatePluginCommandPath(commandPath); err != nil {
+	var err error
+	commandPath, err = normalizePluginCommandPath(commandPath)
+	if err != nil {
 		return PluginCommandConfig{}, err
 	}
 
@@ -129,30 +131,33 @@ func ResolvePluginCommandConfig(input PluginCommandConfigInput) (PluginCommandCo
 	}, nil
 }
 
-func validatePluginCommandPath(value string) error {
+func normalizePluginCommandPath(value string) (string, error) {
 	if value == "" {
-		return fmt.Errorf("plugin command path must not be empty")
+		return "", fmt.Errorf("plugin command path must not be empty")
 	}
 	entries := filepath.SplitList(value)
 	if len(entries) == 0 {
-		return fmt.Errorf("plugin command path must contain an absolute directory")
+		return "", fmt.Errorf("plugin command path must contain an absolute directory")
 	}
+	cleaned := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry == "" {
-			return fmt.Errorf("plugin command path contains an empty entry")
+			return "", fmt.Errorf("plugin command path contains an empty entry")
 		}
 		if !filepath.IsAbs(entry) {
-			return fmt.Errorf("plugin command path entry %q is not absolute", entry)
+			return "", fmt.Errorf("plugin command path entry %q is not absolute", entry)
 		}
+		entry = filepath.Clean(entry)
 		info, err := os.Stat(entry)
 		if err != nil {
-			return fmt.Errorf("plugin command path entry %q: %w", entry, err)
+			return "", fmt.Errorf("plugin command path entry %q: %w", entry, err)
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("plugin command path entry %q is not a directory", entry)
+			return "", fmt.Errorf("plugin command path entry %q is not a directory", entry)
 		}
+		cleaned = append(cleaned, entry)
 	}
-	return nil
+	return strings.Join(cleaned, string(os.PathListSeparator)), nil
 }
 
 func ensurePluginCommandStagingRoot(path string) error {

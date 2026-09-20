@@ -15,7 +15,7 @@ Lua-based plugins extend Mahresources with custom actions, hooks, pages, JSON AP
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable the plugin system entirely |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | `30s` | How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule |
 | `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | startup `PATH` snapshot | Trusted absolute directories searched for declared command executables |
-| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | data directory or private temporary root | OS-backed command exchange and import staging root |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | data directory or private temporary root | OS-backed command exchange/import root, exclusively leased by one active server process |
 | `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | `8589934592` (8 GiB) | Sampled per-run exchange and import-temp quota |
 | `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | `53687091200` (50 GiB) | Sampled deployment-wide staging quota |
 | `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | `168h` | Retention for terminal, unleased exchange folders |

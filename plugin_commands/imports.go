@@ -58,8 +58,9 @@ type ImportSubmission struct {
 }
 
 type ImportSubmitResult struct {
-	ImportID   string
-	ResourceID *uint
+	ImportID             string
+	ResourceID           *uint
+	CompletionRegistered bool
 }
 
 type ImportResult struct {
@@ -206,7 +207,7 @@ func (d *Dispatcher) SubmitImport(submission ImportSubmission) (ImportSubmitResu
 	}
 	sourceOwned = true
 	owned = true
-	return ImportSubmitResult{ImportID: claim.ImportID}, nil
+	return ImportSubmitResult{ImportID: claim.ImportID, CompletionRegistered: true}, nil
 }
 
 func importMapShortCircuit(mapped ImportMapEntry) (ImportSubmitResult, bool, error) {
@@ -217,6 +218,9 @@ func importMapShortCircuit(mapped ImportMapEntry) (ImportSubmitResult, bool, err
 		}
 		return ImportSubmitResult{ImportID: mapped.ImportID, ResourceID: copyUint(mapped.ResourceID)}, true, nil
 	case ImportStatusPending, ImportStatusRunning:
+		// Submission is idempotent, but the existing worker owns the only
+		// completion callback. Callers must not wait for a callback this request
+		// did not register.
 		return ImportSubmitResult{ImportID: mapped.ImportID}, true, nil
 	default:
 		return ImportSubmitResult{}, false, nil

@@ -175,9 +175,13 @@ func (pm *PluginManager) createResourceFromExchange(L *lua.LState) int {
 		release()
 		return pushLuaHostError(L, err)
 	}
-	if result.ResourceID != nil {
-		// Replay is synchronous and terminal. There will be no future callback.
+	if !result.CompletionRegistered {
+		// A terminal replay and a repeated pending/running submission both have
+		// another owner (or no future work). This invocation registered no
+		// callback, so it must release its VM-lifecycle reference immediately.
 		release()
+	}
+	if result.ResourceID != nil {
 		L.Push(lua.LNumber(*result.ResourceID))
 		return 1
 	}

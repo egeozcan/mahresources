@@ -119,6 +119,10 @@ func (l *commandCompletionLifecycle) settleUnclaimed() {
 	}
 }
 
+func (l *commandCompletionLifecycle) isClaimed() bool {
+	return l != nil && l.state.Load() == completionClaimed
+}
+
 func (t *completionDispatchTracker) begin(plugin string) func() {
 	t.mu.Lock()
 	if t.byPlugin == nil {
@@ -196,6 +200,7 @@ type queuedImport struct {
 	cleanup        func()
 	completion     func(ImportResult)
 	retainOnReject bool
+	claimed        *atomic.Bool
 }
 
 type activeCommand struct {
@@ -208,6 +213,7 @@ type activeImport struct {
 	plugin  string
 	cancel  context.CancelCauseFunc
 	release func()
+	claimed *atomic.Bool
 }
 
 type commandDispatchFailure struct {
@@ -454,6 +460,9 @@ func (d *Dispatcher) submitImport(spec ImportJobSpec, run func(context.Context, 
 }
 
 func (d *Dispatcher) submitClaimedImport(item queuedImport) error {
+	if item.claimed == nil {
+		item.claimed = &atomic.Bool{}
+	}
 	if item.run == nil {
 		if item.release != nil {
 			item.release()
@@ -833,29 +842,47 @@ func (d *Dispatcher) shutdown(ctx context.Context, state *dispatcherState) error
 		}
 	}
 
-	if err := d.deps.Store.InterruptNonterminalImports(time.Now().UTC()); err != nil && firstErr == nil {
-		firstErr = err
+	if !timedOut {
+		if err := d.deps.Store.InterruptNonterminalImports(time.Now().UTC()); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	for id, active := range state.activeImports {
 		active.cancel(errDispatcherShutdown)
+		if timedOut && active.claimed != nil && active.claimed.Load() {
+			// The worker still owns its source descriptor and run lease. Leave the
+			// durable row nonterminal so startup recovery, rather than shutdown,
+			// classifies work whose cleanup was not observed.
+			continue
+		}
+		if timedOut {
+			if _, err := d.finishImportUntil(ctx, id, ImportFinish{
+				Status: ImportStatusInterrupted, Error: shutdownReason, FinishedAt: time.Now().UTC(),
+			}); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 		active.release()
 		delete(state.activeImports, id)
 	}
 	for id, active := range state.activeCommands {
-		result, err := d.finishShutdownRun(id, timedOut)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-		} else {
-			_ = result
-		}
 		active.cancel(errDispatcherShutdown)
+		var finishErr error
+		if timedOut && active.run.completionLifecycle != nil && active.run.completionLifecycle.isClaimed() {
+			// A claimed worker may still own a verified process group. It alone may
+			// publish terminal state after proving the group dead and pipes closed.
+			finishErr = ctx.Err()
+		} else {
+			_, finishErr = d.finishShutdownRun(id, false)
+			if finishErr != nil && firstErr == nil {
+				firstErr = finishErr
+			}
+		}
 		delete(state.activeCommands, id)
 		state.activeByPlugin[active.plugin]--
 		d.controls.Delete(id)
 		for _, waiter := range state.cancelWaiters[id] {
-			waiter <- err
+			waiter <- finishErr
 		}
 		delete(state.cancelWaiters, id)
 		// A managed job which never entered its run function has nobody else
@@ -1158,7 +1185,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 
 func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	runCtx, cancel := context.WithCancelCause(context.Background())
-	state.activeImports[item.spec.ImportID] = activeImport{plugin: item.spec.PluginName, cancel: cancel, release: item.release}
+	state.activeImports[item.spec.ImportID] = activeImport{plugin: item.spec.PluginName, cancel: cancel, release: item.release, claimed: item.claimed}
 	_, err := d.deps.Jobs.SubmitImportJob(item.spec, func(liveCtx context.Context, progress Progress) Outcome {
 		defer func() {
 			if item.cleanup != nil {
@@ -1168,7 +1195,7 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 				item.release()
 			}
 		}()
-		if !d.beginWorker() {
+		if !d.beginImportWorker(item.claimed) {
 			return Outcome{Status: ImportStatusInterrupted, Error: "server interrupted"}
 		}
 		workerDone := false
@@ -1396,6 +1423,17 @@ func (d *Dispatcher) beginWorker() bool {
 	if d.workerClosing {
 		return false
 	}
+	d.workers.Add(1)
+	return true
+}
+
+func (d *Dispatcher) beginImportWorker(claimed *atomic.Bool) bool {
+	d.workerMu.Lock()
+	defer d.workerMu.Unlock()
+	if d.workerClosing {
+		return false
+	}
+	claimed.Store(true)
 	d.workers.Add(1)
 	return true
 }

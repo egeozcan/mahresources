@@ -6,7 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -90,9 +94,6 @@ func runCancellationBarrierCase(t *testing.T, afterStart, afterCancellationCheck
 	if spawnWon && record.ProcessGroupID == nil {
 		t.Fatal("post-fork cancellation finished before pgid persistence")
 	}
-	if spawnWon && record.OutputUnverified {
-		t.Fatalf("owned post-fork process group was not verified: %+v", record)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -117,11 +118,11 @@ func TestDisableCannotCommitInsideTheForkCriticalSection(t *testing.T) {
 	runCancellationBarrierCase(t, false, true, true)
 }
 
-func TestCancelAfterForkWaitsForProcessGroupPersistence(t *testing.T) {
+func TestCancelAfterForkDoesNotWaitForProcessGroupPersistence(t *testing.T) {
 	runCancellationBarrierCase(t, true, false, false)
 }
 
-func TestDisableAfterForkWaitsForProcessGroupPersistence(t *testing.T) {
+func TestDisableAfterForkDoesNotWaitForProcessGroupPersistence(t *testing.T) {
 	runCancellationBarrierCase(t, true, false, true)
 }
 
@@ -517,6 +518,111 @@ func TestShutdownTimeoutLeavesClaimedWorkerLifecycleOwnedUntilWorkerSettles(t *t
 	d.completionDispatch.wait("p")
 	if active := completionDispatchActive(d, "p"); active != 0 {
 		t.Fatalf("worker did not settle claimed lifecycle: active=%d", active)
+	}
+}
+
+func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
+	root := t.TempDir()
+	exchange := filepath.Join(root, "helper-exchange")
+	if err := os.MkdirAll(exchange, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := newDispatcherTestStore()
+	jobs := &dispatcherTestJobs{}
+	workerEntered := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	spawned := make(chan *exec.Cmd, 1)
+	settings := lifecycleSettings{root: root, exchange: time.Hour, output: time.Hour}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: jobs, Settings: settings,
+		Executor: dispatcherExecutorFunc(func(_ context.Context, run QueuedRun) Outcome {
+			cmd := exec.Command(os.Args[0], helperProcessFlag, "spawn-descendant", exchange)
+			cmd.Env = append(os.Environ(), "MAHR_COMMAND_RUN_ID="+run.RunID)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Errorf("start owned helper: %v", err)
+				return Outcome{Status: RunStatusFailed, Error: err.Error()}
+			}
+			spawned <- cmd
+			if won, err := store.MarkRunRunning(run.RunID, time.Now().UTC()); err != nil || !won {
+				t.Errorf("MarkRunRunning() = %v, %v", won, err)
+				return Outcome{Status: RunStatusFailed, Error: fmt.Sprint(err)}
+			}
+			if err := store.SetRunProcessGroup(run.RunID, cmd.Process.Pid); err != nil {
+				t.Errorf("SetRunProcessGroup: %v", err)
+			}
+			close(workerEntered)
+			<-releaseWorker
+			return Outcome{Status: RunStatusRunning}
+		}),
+	})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := d.Submit(CommandRequest{
+		PluginName: "p", Declaration: Declaration{Name: "blocked", Argv: []string{"blocked"}, Timeout: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return jobs.commandCount() == 1 })
+	workerDone := make(chan Outcome, 1)
+	go func() { workerDone <- jobs.commandSnapshot()[0].run(context.Background(), nopProgress{}) }()
+	select {
+	case <-workerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start owned process group")
+	}
+	cmd := <-spawned
+	pgid := cmd.Process.Pid
+	waited := false
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		if !waited {
+			_ = cmd.Wait()
+		}
+	})
+	descendantPID := waitForHelperPID(t, filepath.Join(exchange, "descendant.pid"))
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	err = d.Stop(stopCtx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop error = %v, want deadline exceeded", err)
+	}
+	record, _, err := store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusRunning || record.FinishedAt != nil {
+		t.Fatalf("timed-out shutdown destroyed recovery evidence: %+v", record)
+	}
+	if err := syscall.Kill(descendantPID, 0); err != nil {
+		t.Fatalf("precondition: descendant did not survive blocked worker: %v", err)
+	}
+
+	close(releaseWorker)
+	select {
+	case <-workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked worker did not release")
+	}
+	recovery := NewDispatcher(Dependencies{Store: store, Settings: settings})
+	if err := recovery.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	waited = true
+	record, _, err = store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusInterrupted || record.FinishedAt == nil {
+		t.Fatalf("recovery did not classify run: %+v", record)
+	}
+	identity, err := (nativeProcessInspector{}).InspectGroup(pgid, runID)
+	if err != nil || identity.State != GroupDead {
+		t.Fatalf("recovery left descendant %d group alive: identity=%+v err=%v", descendantPID, identity, err)
 	}
 }
 

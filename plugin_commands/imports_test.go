@@ -202,14 +202,15 @@ func (s *importLifecycleStore) RecordImportDeleteFailure(importID, message strin
 }
 
 type importTestImporter struct {
-	mu          sync.Mutex
-	validations []ImportValidation
-	bodies      [][]byte
-	validateErr error
-	resourceID  uint
-	started     chan struct{}
-	proceed     chan struct{}
-	once        sync.Once
+	mu            sync.Mutex
+	validations   []ImportValidation
+	bodies        [][]byte
+	validateErr   error
+	resourceID    uint
+	started       chan struct{}
+	proceed       chan struct{}
+	ignoreContext bool
+	once          sync.Once
 }
 
 func (i *importTestImporter) ValidateImport(v ImportValidation) error {
@@ -223,10 +224,14 @@ func (i *importTestImporter) ImportResource(ctx context.Context, source ImportSo
 		i.once.Do(func() { close(i.started) })
 	}
 	if i.proceed != nil {
-		select {
-		case <-i.proceed:
-		case <-ctx.Done():
-			return 0, context.Cause(ctx)
+		if i.ignoreContext {
+			<-i.proceed
+		} else {
+			select {
+			case <-i.proceed:
+			case <-ctx.Done():
+				return 0, context.Cause(ctx)
+			}
 		}
 	}
 	if source.File == nil {
@@ -326,6 +331,9 @@ func TestSubmitImportStateTableAndSucceededShortCircuit(t *testing.T) {
 			}
 			if tc.wantResource && (got.ResourceID == nil || *got.ResourceID != 88) {
 				t.Fatalf("resource = %v", got.ResourceID)
+			}
+			if got.CompletionRegistered != tc.wantQueue {
+				t.Fatalf("completion registered = %v, want %v", got.CompletionRegistered, tc.wantQueue)
 			}
 			if tc.wantQueue {
 				waitForImportJobs(t, jobs, 1)
@@ -525,6 +533,35 @@ func TestSubmitImportDisableCancelsPendingButNotRunningAndShutdownWinsLateSucces
 		mapped, _, _ := store.ImportMap(sub.RunID, sub.Name)
 		if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusInterrupted {
 			t.Fatalf("map = %+v", mapped)
+		}
+	})
+
+	t.Run("timed out shutdown leaves claimed import recoverable", func(t *testing.T) {
+		d, store, jobs, importer, _, sub := importHarness(t)
+		importer.started, importer.proceed = make(chan struct{}), make(chan struct{})
+		importer.ignoreContext = true
+		got, err := d.SubmitImport(sub)
+		requireNoError(t, err)
+		registered := waitForImportJobs(t, jobs, 1)
+		outcomes := make(chan Outcome, 1)
+		go func() { outcomes <- registered[0].run(context.Background(), nopProgress{}) }()
+		<-importer.started
+		stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		err = d.Stop(stopCtx)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop error = %v, want deadline exceeded", err)
+		}
+		mapped, _, err := store.ImportMap(sub.RunID, sub.Name)
+		requireNoError(t, err)
+		if mapped.ImportID != got.ImportID || mapped.Status != ImportStatusRunning {
+			t.Fatalf("timed-out shutdown destroyed import recovery evidence: %+v", mapped)
+		}
+		close(importer.proceed)
+		select {
+		case <-outcomes:
+		case <-time.After(time.Second):
+			t.Fatal("import worker did not release")
 		}
 	})
 

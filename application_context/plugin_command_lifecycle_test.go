@@ -88,6 +88,23 @@ func TestPluginCommandConfigResolvesRelativeStagingRoots(t *testing.T) {
 	}
 }
 
+func TestPluginCommandConfigNormalizesTrustedPathEntries(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	raw := first + string(os.PathSeparator) + string(os.PathSeparator) + string(os.PathListSeparator) + filepath.Join(second, ".", "") + string(os.PathSeparator)
+	got, err := ResolvePluginCommandConfig(PluginCommandConfigInput{
+		CommandPath: raw, CommandPathExplicit: true,
+		StagingPath: t.TempDir(), StagingPathExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Clean(first) + string(os.PathListSeparator) + filepath.Clean(second)
+	if got.CommandPath != want {
+		t.Fatalf("normalized command path = %q, want %q", got.CommandPath, want)
+	}
+}
+
 func TestPluginCommandConfigExplicitPathAndEphemeralRoot(t *testing.T) {
 	trusted := t.TempDir()
 	rogue := t.TempDir()
@@ -138,6 +155,73 @@ func TestPluginCommandConfigRejectsUnsafeValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPluginCommandLifecycleLeaseRefusesBeforeRecoveryMutation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("plugin commands are unsupported on Windows")
+	}
+	ctx := newPluginCommandStoreTestContext(t)
+	root := t.TempDir()
+	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
+	owner := uint(7)
+	now := time.Now().UTC()
+	if err := ctx.CreateRun(plugin_commands.RunRecord{
+		ID: "lease-guarded", PluginName: "lifecycle", CommandName: "command", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusQueued, CreatedByUserID: &owner, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: "lease-guarded", ArgvJSON: `[]`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(root, "import_tmp", "orphan", "source")
+	if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, []byte("still-owned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := plugin_commands.AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.StartPluginCommands(context.Background(), settings); err == nil || !strings.Contains(err.Error(), "active runtime") {
+		_ = lease.Close()
+		t.Fatalf("second runtime startup = %v", err)
+	}
+	run, _, err := ctx.Run("lease-guarded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != plugin_commands.RunStatusQueued {
+		t.Fatalf("refused startup mutated run = %+v", run)
+	}
+	if body, err := os.ReadFile(orphan); err != nil || string(body) != "still-owned" {
+		t.Fatalf("refused startup mutated recovery files: body=%q err=%v", body, err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.StartPluginCommands(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+}
+
+func TestPluginCommandLifecycleRecoveryFailureReleasesLease(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	root := t.TempDir()
+	if err := ctx.db.Migrator().DropTable(&models.PluginCommandImport{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
+		root: root, commandPath: t.TempDir(),
+	}); err == nil {
+		t.Fatal("startup unexpectedly survived recovery-store failure")
+	}
+	lease, err := plugin_commands.AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatalf("recovery failure retained runtime lease: %v", err)
+	}
+	_ = lease.Close()
 }
 
 func TestPluginCommandLifecycleRecoversBeforePublishingHost(t *testing.T) {
@@ -336,8 +420,9 @@ func TestPluginCommandLifecycleShutdownReturnsPersistenceError(t *testing.T) {
 	if ctx.pluginManager == nil {
 		t.Fatal("plugin manager unavailable")
 	}
+	root := t.TempDir()
 	if err := ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{
-		root: t.TempDir(), commandPath: t.TempDir(),
+		root: root, commandPath: t.TempDir(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -347,6 +432,11 @@ func TestPluginCommandLifecycleShutdownReturnsPersistenceError(t *testing.T) {
 	if err := ctx.StopPluginCommands(); err == nil {
 		t.Fatal("shutdown persistence failure was swallowed")
 	}
+	lease, err := plugin_commands.AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatalf("shutdown error retained runtime lease: %v", err)
+	}
+	_ = lease.Close()
 }
 
 func TestPluginCommandLifecycleDisabledLeavesHostUnavailable(t *testing.T) {

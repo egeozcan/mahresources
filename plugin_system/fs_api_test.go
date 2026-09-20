@@ -22,7 +22,7 @@ func TestFSOperationsUseLiveActorAndReturnCompleteTables(t *testing.T) {
 		}, Imports: []plugin_commands.ImportMapEntry{{RunID: "run-a", FileName: "out.bin", ImportID: "import-a", Status: plugin_commands.ImportStatusFailed, Error: "decoder failed"}}}},
 		listing:  plugin_commands.Listing{Entries: []plugin_commands.Entry{{Name: "out.bin", Size: 4, Modified: finished}}, Truncated: true},
 		readBody: []byte("data"),
-		imported: plugin_commands.ImportSubmitResult{ImportID: "import-b"},
+		imported: plugin_commands.ImportSubmitResult{ImportID: "import-b", CompletionRegistered: true},
 	}
 	pm, L := enableCommandPlugin(t, `"commands", "db:write"`, host)
 	L.SetContext(withInvocation(context.Background(), NewInvocation(actor)))
@@ -92,6 +92,51 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("import callback did not run")
+}
+
+func TestFSCreateResourceRepeatedNonterminalImportReleasesCallbackOwnership(t *testing.T) {
+	for _, status := range []string{plugin_commands.ImportStatusPending, plugin_commands.ImportStatusRunning} {
+		t.Run(status, func(t *testing.T) {
+			host := &commandLuaHost{imported: plugin_commands.ImportSubmitResult{ImportID: "existing-import"}}
+			pm, L := enableCommandPlugin(t, `"commands", "db:write"`, host)
+			if err := L.DoString(`
+__existing, __err = mah.fs.create_resource("run-a", "out.bin", {}, function() __unexpected = true end)
+`); err != nil {
+				t.Fatal(err)
+			}
+			if got := L.GetGlobal("__existing").String(); got != "existing-import" {
+				t.Fatalf("existing import id = %q", got)
+			}
+			settled := make(chan struct{})
+			go func() {
+				pm.actionWaitGroup("commander").Wait()
+				close(settled)
+			}()
+			select {
+			case <-settled:
+			case <-time.After(time.Second):
+				t.Fatal("repeated import retained callback lifecycle ownership")
+			}
+			host.mu.Lock()
+			request := host.imports[0]
+			host.mu.Unlock()
+			request.Completion(plugin_commands.ImportResult{OK: true, ImportID: "existing-import"})
+			time.Sleep(20 * time.Millisecond)
+			if L.GetGlobal("__unexpected") != lua.LNil {
+				t.Fatal("repeated import callback was promised and fired")
+			}
+			disabled := make(chan error, 1)
+			go func() { disabled <- pm.DisablePlugin("commander") }()
+			select {
+			case err := <-disabled:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("plugin disable hung on repeated import callback ownership")
+			}
+		})
+	}
 }
 
 func TestFSCreateResourceSynchronousSuccessDoesNotInvokeCallback(t *testing.T) {

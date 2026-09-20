@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -107,6 +108,20 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 		return fmt.Errorf("plugin manager is unavailable")
 	}
 	wrappedSettings := commandSettings{Settings: settings}
+	// The staging-root lease must precede every recovery read-modify-write and
+	// filesystem cleanup. Without it, a rolling second process could classify
+	// the first process's live work as interrupted and signal its process group.
+	runtimeLease, err := plugin_commands.AcquireRuntimeLease(wrappedSettings.StagingRoot())
+	if err != nil {
+		return fmt.Errorf("acquire plugin command runtime lease: %w", err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			_ = runtimeLease.Close()
+		}
+	}()
+
 	leases := plugin_commands.NewLeaseManager()
 	executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
 		Store: ctx, Settings: wrappedSettings, Logf: log.Printf,
@@ -126,6 +141,8 @@ func (ctx *MahresourcesContext) StartPluginCommands(callCtx context.Context, set
 	exchange := plugin_commands.NewExchangeWithLeases(ctx, wrappedSettings, leases)
 	ctx.pluginCommandDispatcher = dispatcher
 	ctx.pluginCommandExchange = exchange
+	ctx.pluginCommandLease = runtimeLease
+	leaseOwned = false
 	ctx.pluginManager.SetCommandSubmitter(ctx)
 	ctx.pluginManager.SetExchangeMediator(ctx)
 	return nil
@@ -148,12 +165,25 @@ func (ctx *MahresourcesContext) StartPluginCommandsIfEnabled(callCtx context.Con
 // and plugin manager are stopped. Its error is part of process shutdown: a
 // terminal write that did not persist must make the process exit unsuccessfully.
 func (ctx *MahresourcesContext) StopPluginCommands() error {
-	if ctx == nil || ctx.pluginCommandDispatcher == nil {
+	if ctx == nil {
 		return nil
 	}
-	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return ctx.pluginCommandDispatcher.Stop(stopCtx)
+	dispatcher := ctx.pluginCommandDispatcher
+	lease := ctx.pluginCommandLease
+	ctx.pluginCommandDispatcher = nil
+	ctx.pluginCommandExchange = nil
+	ctx.pluginCommandLease = nil
+	var stopErr error
+	if dispatcher != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stopErr = dispatcher.Stop(stopCtx)
+		cancel()
+	}
+	var leaseErr error
+	if lease != nil {
+		leaseErr = lease.Close()
+	}
+	return errors.Join(stopErr, leaseErr)
 }
 
 // SubmitPluginCommand implements plugin_system.CommandSubmitter.

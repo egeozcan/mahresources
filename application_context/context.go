@@ -493,6 +493,7 @@ type MahresourcesContext struct {
 	// intentionally share both pointers.
 	pluginCommandDispatcher *plugin_commands.Dispatcher
 	pluginCommandExchange   plugin_commands.Exchange
+	pluginCommandLease      *plugin_commands.RuntimeLease
 	// pluginScheduler owns the clock that fires plugin schedules, and is the only
 	// thing that can run one on demand. It is installed by main after the
 	// scheduler is constructed, the way the two worker queues above are, because

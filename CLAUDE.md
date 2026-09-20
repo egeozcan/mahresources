@@ -495,7 +495,9 @@ Command and import bytes live in an OS staging root even when resources use
 MemoryFS; in that mode staging and imported resource copies consume RAM. Quotas
 are sampled, so brief overshoot is possible, and the per-run quota must cover
 merge peak (roughly twice final size while separate audio/video and mux output
-coexist). Recovery completes before plugin VMs load; the dispatcher's own sweep
+coexist). Exactly one process may own a staging root: a startup-held advisory
+lease refuses a second command runtime before it can recover or sweep live work.
+Recovery completes before plugin VMs load; the dispatcher's own sweep
 removes only expired, terminal, unleased exchange folders and prunes output
 rows without deleting durable run/import history.
 
@@ -583,7 +585,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many **finished downloads** the jobs panel renders, newest first (default: 10); older ones stay reachable at `/downloads`. Active work and every non-download job (exports, imports, plugin actions) are never capped — `/downloads` cannot show them, so hiding them would leave their cancel and result controls unreachable. Runtime-editable. |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work (default: `30s`). It bounds the resolution of every plugin schedule: a plugin may not declare an interval shorter than `plugin_system.MinScheduleInterval` (30s), and a tick slower than a schedule's interval simply runs it at the tick's resolution. |
 | `-plugin-command-path` | `PLUGIN_COMMAND_PATH` | Trusted executable search path for plugin commands. Defaults to one startup snapshot of the server `PATH`; every entry must be a nonempty absolute directory. Pin the minimal trusted directories in production. |
-| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | Private command exchange/import root. Defaults to `<file-save-path>/_plugin_commands`, or a private process temp root with MemoryFS. Relative values resolve once against the startup working directory. |
+| `-plugin-command-staging-path` | `PLUGIN_COMMAND_STAGING_PATH` | Private command exchange/import root. Defaults to `<file-save-path>/_plugin_commands`, or a private process temp root with MemoryFS. Relative values resolve once against the startup working directory. One active server process may own a root. |
 | `-plugin-command-run-quota` | `PLUGIN_COMMAND_RUN_QUOTA` | Sampled per-run staging limit (default: `8589934592`, 8 GiB). Size for merge peak, roughly 2× final output when separate audio/video and mux coexist. |
 | `-plugin-command-staging-quota` | `PLUGIN_COMMAND_STAGING_QUOTA` | Sampled deployment-wide staging limit (default: `53687091200`, 50 GiB). |
 | `-plugin-command-exchange-retention` | `PLUGIN_COMMAND_EXCHANGE_RETENTION` | Retention for terminal, unleased command exchange folders (default: `168h`). |

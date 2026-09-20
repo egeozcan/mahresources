@@ -9769,3 +9769,15 @@ requires the user's choice, with no push or merge performed.
 Review: Added three verified fal.ai endpoints and retained existing model IDs/defaults. Dated USD rates distinguish per-image, MP, rounded Topaz output-MP blocks, and compute-second billing; SeedVR seamless and Topaz preset pricing are explicit. Recraft PNG preparation preserves decoded pixels and dimensions and fails before submission on conversion errors. No API key, network lookup, or paid inference is needed to view prices or run the regressions.
 
 Validation: focused regressions reproduced missing endpoint routing/prices before implementation and pass afterward; full `plugin_system` tests pass; `go vet --tags 'json1 fts5' ./plugin_system` passes; server and CLI builds pass; 15 CLI plugin E2E checks pass. Full `go test --tags 'json1 fts5' ./...` has one pre-existing failure, `TestCommittedOpenAPISpecIsFresh`, reproduced on unchanged base `defeacf3b11c2040bd10a4b465a618cbcd754fbd`. Browser checks could not run because the Chromium download timed out. No paid fal.ai jobs were submitted.
+
+### Final whole-branch runtime review follow-up
+
+- [x] Exclude concurrent recovery with a staging-root runtime lease acquired before recovery and released on every startup/shutdown path.
+- [x] Make repeated pending/running imports release Lua callback lifecycle ownership when no callback was registered.
+- [x] Normalize trusted command-path entries consistently at configuration and execution.
+- [x] Kill locally verified process groups without waiting for PGID persistence, and publish terminal state only after owned-group death and closed output pipes.
+- [x] Preserve claimed command/import rows, descriptors and leases as nonterminal when shutdown drain times out so restart recovery remains authoritative.
+
+RED evidence reproduced the reviewed defects: a blocked `SetRunProcessGroup` let a descendant survive terminal publication; repeated nonterminal import submission retained the plugin action waitgroup; trailing-separator trusted paths passed startup but failed execution; a second startup could enter recovery against a live owner; and bounded shutdown stamped claimed work terminal. GREEN coverage now includes a real subprocess lease exclusion/release test, a real process-group shutdown→restart recovery test, blocked-PGID descendant coverage, pending/running callback teardown checks, path normalization cases, and claimed import shutdown recovery checks. Focused lifecycle races passed 100 times under `-race`; callback ownership passed 50 times; the complete `plugin_commands` race suite, tagged SQLite/PostgreSQL command selections, build, vet, docs generation/lint, and SQLite/PostgreSQL command-history E2E all pass.
+
+The review suggestion to unlink every successful import was rejected: the approved spec and Task 8 require `imported-pending-delete` when descriptor-atomic unlink is unavailable. The descriptor-anchored retention sweep remains the safe deletion owner.

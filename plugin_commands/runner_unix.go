@@ -135,7 +135,11 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		return outcome
 	}
 
-	path, err := resolveExecutable(run.Invocation.Argv[0], e.deps.Settings.CommandPath())
+	commandPath, err := normalizeCommandPath(e.deps.Settings.CommandPath())
+	if err != nil {
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: err.Error(), FinishedAt: time.Now().UTC()})
+	}
+	path, err := resolveExecutable(run.Invocation.Argv[0], commandPath)
 	if err != nil {
 		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: err.Error(), FinishedAt: time.Now().UTC()})
 	}
@@ -171,7 +175,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		Args: append([]string(nil), run.Invocation.Argv...),
 		Dir:  run.ExchangeDir,
 		Env: []string{
-			"PATH=" + e.deps.Settings.CommandPath(),
+			"PATH=" + commandPath,
 			"HOME=" + os.Getenv("HOME"),
 			"TMPDIR=" + filepath.Join(run.ExchangeDir, ".tmp"),
 			"LANG=" + os.Getenv("LANG"),
@@ -258,6 +262,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	ctxDone := ctx.Done()
 	timerDone := timer.C
 	outputUnverified := false
+	ownedGroupObserved := false
 	forcedCleanup := false
 	var cleanupDeadline time.Time
 	appendReason := func(message string) {
@@ -271,13 +276,9 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		}
 	}
 	killGroup := func() {
-		if !processGroupRecorded {
-			// Cancellation after fork waits for the pgid durability barrier. Killing
-			// only the parent here would orphan descendants and make final output
-			// unverifiable. The bounded forced-cleanup branch below is the sole
-			// exception when persistence itself never returns.
-			return
-		}
+		// The child carries MAHR_COMMAND_RUN_ID from the instant Start returns.
+		// Durable pgid persistence is for crash recovery, not local ownership:
+		// waiting for a stalled write here would leave descendants alive.
 		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
 		if inspectErr != nil || identity.State != GroupAliveOwned {
 			if identity.State != GroupDead {
@@ -295,6 +296,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			}
 			return
 		}
+		ownedGroupObserved = true
 		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
 			appendReason(fmt.Sprintf("kill process group: %v", err))
 			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
@@ -343,8 +345,6 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			if persistErr != nil {
 				terminate(RunStatusFailed, fmt.Sprintf("persist command process group: %v", persistErr), false)
 			} else if status != "" {
-				// Cancellation may have arrived after Start but before the pgid was
-				// durable. Do not signal until that durability barrier has crossed.
 				killGroup()
 			}
 		case <-groupTicker.C:
@@ -352,11 +352,38 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 
 		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
 		groupDead := inspectErr == nil && identity.State == GroupDead
+		if inspectErr == nil && identity.State == GroupAliveOwned {
+			ownedGroupObserved = true
+		}
 		if inspectErr != nil {
 			outputUnverified = true
 			terminate(RunStatusFailed, fmt.Sprintf("inspect process group: %v", inspectErr), false)
 		}
-		if parentDone && pipesDone && groupDead && processGroupRecorded {
+		if parentDone && pipesDone && groupDead {
+			// Prefer a persistence result which became ready alongside the final
+			// process events; select is otherwise free to observe group death first.
+			if !processGroupRecorded && pgidDone != nil {
+				select {
+				case persistErr := <-pgidDone:
+					processGroupRecorded = true
+					pgidDone = nil
+					if persistErr != nil {
+						status = RunStatusFailed
+						appendReason(fmt.Sprintf("persist command process group: %v", persistErr))
+					}
+				default:
+				}
+			}
+			if !processGroupRecorded {
+				if persisted, _, readErr := e.deps.Store.Run(run.RunID); readErr == nil &&
+					persisted.ProcessGroupID != nil && *persisted.ProcessGroupID == pgid {
+					processGroupRecorded = true
+				}
+			}
+			if !processGroupRecorded {
+				outputUnverified = true
+				appendReason("process-group persistence did not finish before command cleanup")
+			}
 			break
 		}
 		if cleanupDeadline.IsZero() || time.Now().Before(cleanupDeadline) {
@@ -392,16 +419,13 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 				status = RunStatusFailed
 			}
 			appendReason("process-group persistence did not finish before cleanup deadline")
-			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
-				appendReason(fmt.Sprintf("kill command process: %v", processErr))
-			}
 		}
-		if parentDone && pipesDone {
+		if parentDone && pipesDone && (groupDead || !ownedGroupObserved) {
 			break
 		}
-		// Closing our pipe readers and killing the direct child make these
-		// channels ready in normal Unix operation. Keep the loop bounded even
-		// if an injected inspector failed both operations.
+		// Once an owned group was signalled, keep polling until inspection proves
+		// it dead. Publishing terminal state earlier would make restart recovery
+		// unable to find and reap surviving descendants.
 		cleanupDeadline = time.Now().Add(cleanupTimeout)
 	}
 
@@ -545,17 +569,30 @@ func (e *commandExecutor) cancelReason(runID string) string {
 	return "command cancelled"
 }
 
+func normalizeCommandPath(commandPath string) (string, error) {
+	if commandPath == "" {
+		return "", fmt.Errorf("plugin command path is empty")
+	}
+	entries := filepath.SplitList(commandPath)
+	cleaned := make([]string, 0, len(entries))
+	for _, directory := range entries {
+		if directory == "" || !filepath.IsAbs(directory) {
+			return "", fmt.Errorf("plugin command path contains invalid directory %q", directory)
+		}
+		cleaned = append(cleaned, filepath.Clean(directory))
+	}
+	return strings.Join(cleaned, string(os.PathListSeparator)), nil
+}
+
 func resolveExecutable(base, commandPath string) (string, error) {
 	if err := validateExecutable("run", base); err != nil {
 		return "", err
 	}
-	if commandPath == "" {
-		return "", fmt.Errorf("plugin command path is empty")
+	cleanedPath, err := normalizeCommandPath(commandPath)
+	if err != nil {
+		return "", err
 	}
-	for _, directory := range filepath.SplitList(commandPath) {
-		if directory == "" || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
-			return "", fmt.Errorf("plugin command path contains invalid directory %q", directory)
-		}
+	for _, directory := range filepath.SplitList(cleanedPath) {
 		candidate := filepath.Join(directory, base)
 		info, err := os.Stat(candidate)
 		if errors.Is(err, os.ErrNotExist) {

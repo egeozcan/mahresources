@@ -27,7 +27,7 @@ func (h *commandIntegrationHost) SubmitCommandImport(sub plugin_commands.ImportS
 	h.imports = append(h.imports, sub)
 	h.mu.Unlock()
 	h.importOnce.Do(func() { close(h.importQueued) })
-	return plugin_commands.ImportSubmitResult{ImportID: "integration-import"}, nil
+	return plugin_commands.ImportSubmitResult{ImportID: "integration-import", CompletionRegistered: true}, nil
 }
 
 func (h *commandIntegrationHost) DiscardCommandFile(access plugin_commands.Access, runID, name string) error {
