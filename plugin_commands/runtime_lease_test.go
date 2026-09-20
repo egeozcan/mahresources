@@ -3,6 +3,7 @@
 package plugin_commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,4 +56,31 @@ func TestRuntimeLeaseRootsAreIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
+}
+
+func TestRuntimeLeaseBusySurvivesPublicBoundary(t *testing.T) {
+	root := t.TempDir()
+	first, err := AcquireRuntimeLease(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+
+	second, err := AcquireRuntimeLease(root)
+	if second != nil || !errors.Is(err, ErrRuntimeLeaseBusy) {
+		t.Fatalf("second lease = %v, %v; want ErrRuntimeLeaseBusy", second, err)
+	}
+	if !strings.Contains(err.Error(), "active runtime") {
+		t.Fatalf("busy error lost staging context: %v", err)
+	}
+}
+
+func TestRuntimeLeaseRelativeRootIsNotBusy(t *testing.T) {
+	lease, err := AcquireRuntimeLease("relative/staging/root")
+	if lease != nil || err == nil {
+		t.Fatalf("relative-root lease = %v, %v; want an error", lease, err)
+	}
+	if errors.Is(err, ErrRuntimeLeaseBusy) {
+		t.Fatalf("relative-root error = %v; must not be ErrRuntimeLeaseBusy", err)
+	}
 }

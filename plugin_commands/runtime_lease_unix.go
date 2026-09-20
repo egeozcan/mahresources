@@ -57,8 +57,11 @@ func AcquireRuntimeLease(stagingRoot string) (*RuntimeLease, error) {
 		return closeOnError(fmt.Errorf("secure plugin command runtime lease: %w", err))
 	}
 	if err := lockRuntimeLease(fd); err != nil {
-		if errors.Is(err, errRuntimeLeaseBusy) {
-			return closeOnError(fmt.Errorf("plugin command staging root %q already has an active runtime", root))
+		if errors.Is(err, ErrRuntimeLeaseBusy) {
+			return closeOnError(fmt.Errorf(
+				"%w: plugin command staging root %q already has an active runtime",
+				ErrRuntimeLeaseBusy, root,
+			))
 		}
 		return closeOnError(fmt.Errorf("lock plugin command runtime lease: %w", err))
 	}
