@@ -2,6 +2,19 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Signal-zero process-group existence is not writer liveness
+
+`kill(-pgid, 0)` reports a zombie-only process group as present (success on
+Linux, potentially `EPERM` on Darwin), but zombies cannot write and may remain
+unreaped forever when the server is PID 1 without an init process. Never let an
+existence probe override a process-table scan that observed every target member
+as a zombie. Separate three cases: a live target member is alive; an enumerated
+all-zombie target group is dead; no target member observed is uncertain and may
+use signal zero conservatively. If individual samples fail, retry or use a
+secondary state source before declaring the all-zombie result. Test the shipped
+container lifecycle, where an adopted descendant can remain a zombie for the
+server's entire lifetime.
+
 ## A safety shortcut must be stable in the direction that relaxes protection
 
 When a persisted identity lets recovery skip inspection and publish terminal

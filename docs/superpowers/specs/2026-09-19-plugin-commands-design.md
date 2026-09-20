@@ -386,8 +386,11 @@ below. The detailed containment rules are in
    Recovery enumerates the recorded pgid's group and verifies at least one
    member's environment carries the matching run id (via `/proc/<pid>/environ`
    on Linux, the process args interface on macOS).
-3. **Verified dead** (no group, or empty group): the processes are gone;
-   stamp `interrupted` with a finished timestamp. Nothing is writing.
+3. **Verified dead** (no group, empty group, or an enumerated group whose
+   members are all zombies): stamp `interrupted` with a finished timestamp.
+   Zombies cannot write. Linux/Darwin enumeration therefore decides an
+   all-zombie group is dead without consulting `kill(-pgid, 0)`, which cannot
+   distinguish zombies from writers.
 4. **Verified alive**: descendants survived the crash; the identity check
    is repeated immediately before signalling, then the group is SIGKILLed
    and observed until dead before the run is stamped `interrupted`. If the
@@ -408,8 +411,12 @@ below. The detailed containment rules are in
    on the command sweep cadence and publishes the atomic command/filesystem
    hosts without a plugin reload once every blocker is safe. It settles other
    independently safe rows and reports the complete blocker set to stdout and
-   `/logs`. An operator may terminate a group out of band or restart with
-   `-plugins-disabled` to bypass all plugin startup. Marking
+   `/logs`. An operator who has decided the run is abandoned may terminate the
+   named process group (`kill -KILL -- -<pgid>`) to heal immediately, or restart
+   with `-plugins-disabled` to bypass all plugin startup. Probe-only Unix targets
+   cannot distinguish a zombie-only group; they may require the parent to reap
+   it or a server restart, while Linux/Darwin keep zombie-aware enumeration.
+   Marking
    `interrupted + output_unverified` while the group
    remains alive is prohibited: refusing import protects data integrity but
    does not stop an unbounded writer or make terminal output final.
@@ -419,10 +426,13 @@ below. The detailed containment rules are in
    except `discard_run`, and name the missing pgid in the durable reason.
 
 The staging-root runtime lease is governed by the same containment boundary. A
-busy lease during a rolling replacement quarantines command surfaces and retries
-acquisition while the rest of the server boots; invalid roots, permissions
-failures and malformed lease files remain fatal. An acquired lease spans
-recovery, quarantine, activation and complete dispatcher quiescence.
+busy lease during a rolling replacement is exposed through a publicly wrapped
+`ErrRuntimeLeaseBusy`, quarantines command surfaces, and retries acquisition
+after 1s, 2s, 5s, 10s, 30s, 1m, then at the five-minute cap while the rest of
+the server boots. Invalid roots, permissions failures, unsupported locks and
+malformed lease files remain fatal and name `-plugins-disabled`. An acquired
+lease spans recovery, quarantine, activation and complete dispatcher
+quiescence.
 
 Exchange folders of resolved runs are retained until the sweep reaches them.
 
@@ -542,8 +552,11 @@ quotas close that gap:
   quarantines command-runtime startup as described above. A live worker that
   passes its first cleanup deadline backs polling off to one second, logs once
   after one minute that the named run/pgid permanently holds a global command
-  slot, and may make at most one final signal after a fresh observation that the
-  group is alive (owned or environment-unverified).
+  slot (with total capacity derived from `maxActiveCommands`), and may make at
+  most one final signal after a fresh observation that the group is alive
+  (owned or environment-unverified). On Linux/Darwin, an enumerated all-zombie
+  group is dead even when signal 0 reports the PGID present; on the other Unix
+  targets the probe-only inspector cannot make that distinction.
 - Command workers are registered with the queue's shutdown tracking; on
   server shutdown, process groups are terminated and runs are recorded
   `interrupted` (exchange dirs retained for later inspection until swept).
@@ -586,6 +599,13 @@ without ever registering a live job. The same endpoint is race-safe if dispatch 
 and submit: it latches cancellation before fork or kills the verified running
 process group. Thus moving admission out of the cockpit does not make a
 100-deep queue cancellable only by disabling its whole plugin.
+
+While this process's command runtime is quarantined, it cannot enforce that
+mutation: another lease holder may own the live process. Queued Cancel controls
+therefore render disabled with the quarantine reason, and the API returns the
+distinct `ErrCommandRuntimeQuarantined` as HTTP 503 rather than claiming the run
+was not found. The quarantined process never writes `cancel_requested`, because
+that would relabel another process's eventual outcome without stopping it.
 
 ## 5. Exchange folders and `mah.fs`
 

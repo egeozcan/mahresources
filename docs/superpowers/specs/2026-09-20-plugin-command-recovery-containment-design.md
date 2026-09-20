@@ -34,7 +34,8 @@ are not.
    plugin-command runtime, not HTTP, downloads, resources, or unrelated plugin
    surfaces.
 2. Quarantine heals automatically when lease ownership or process-group safety
-   becomes resolvable.
+   becomes resolvable; zombie-only groups are considered dead on platforms where
+   process state can be enumerated.
 3. An acquired staging-root lease remains held throughout recovery, quarantine,
    activation, and complete dispatcher quiescence.
 4. A PGID paired with a different known host-unique boot-session UUID is never
@@ -55,6 +56,11 @@ are not.
   still have a writer.
 - Building a cross-host process supervisor or distributed staging lease.
 - Adding an administrator repair UI in this follow-up.
+- Implementing zombie-aware process enumeration on AIX, DragonFly BSD, FreeBSD,
+  NetBSD, OpenBSD, or Solaris. Their existing probe-only inspector cannot prove a
+  zombie-only group dead; quarantine there may require the parent to reap it or
+  a server restart. Linux and Darwin, including the shipped container path, are
+  covered by zombie-aware enumeration.
 - Changing the documented approximate global staging quota or retention batch.
 
 ## Design
@@ -113,24 +119,34 @@ A different host-unique session UUID proves that the persisted local PGID was
 not created in this boot. It does not prove output completeness, so output
 remains unverified and only discard is allowed.
 
-### 4. Make Linux inspection tolerant without becoming fail-open
+### 4. Preserve zombie exclusion while tolerating Linux scan races
 
-Linux process enumeration treats an individual `/proc/<pid>/stat` read or parse
-failure as a skipped sample rather than failing the whole scan. Group liveness
-is not inferred solely from successfully parsed samples:
+Linux process enumeration distinguishes three observations instead of treating
+all signal-0-visible groups as writers:
 
-- a parsed non-zombie target-group member proves the group alive;
-- if no target member was parsed, `kill(-pgid, 0)` distinguishes absent from
-  still-present/permission-denied;
-- `ESRCH` permits `GroupDead`;
-- a present group with no readable matching member is
-  `GroupAliveUnverified`; and
-- failure of the `/proc` directory read or an unexpected liveness-probe error
-  remains an inspection error.
+- any parsed non-zombie target-group member proves the group alive;
+- one or more parsed target-group members, all zombies, with no unresolved
+  target candidate proves `GroupDead`; zombies cannot write, so
+  `kill(-pgid, 0)` is deliberately not consulted;
+- no target member observed after the bounded scan/retry leaves a race in which
+  a member may have appeared or disappeared, so only then may
+  `kill(-pgid, 0)` distinguish absent from still present.
 
-This prevents an unrelated process disappearing or presenting malformed stat
-data from quarantining commands, while a target member hidden by the same race
-still keeps recovery fail-closed.
+A successful or `EPERM` signal-0 probe proves only that a process-table entry
+holds the PGID; it does not prove a writer exists. It therefore produces
+`GroupAliveUnverified`, never overrides the definitive zombie-only result.
+`ESRCH` permits `GroupDead`.
+
+An individual `/proc/<pid>/stat` read or parse failure is retried or classified
+through a secondary process-state read. A sample proven outside the target group
+is ignored. If a sample still could belong to the target group, inspection stays
+fail-closed rather than declaring a zombie-only result. Failure of `/proc`
+enumeration or an unexpected liveness-probe error remains an inspection error.
+
+Darwin's existing `kern.proc.all` scan already excludes `SZOMB` before deciding
+group liveness and must not add a signal-0 override. Probe-only Unix inspectors
+cannot make this distinction; their limitation is explicit in the non-goals and
+operator documentation.
 
 ### 5. Represent all blockers, separately from recovery failure
 
@@ -155,7 +171,9 @@ Recovery continues after a blocker so it can settle every independently safe
 row and report the full blocker set. Blocked rows are never passed to
 `FinishRun`. Recovery keeps an in-memory per-run signal-attempt latch: periodic
 healing scans may observe death, but do not repeatedly signal the same recovered
-group within one server process.
+group within one server process. This one-attempt recovery bound is deliberate:
+recovery has only persisted identity, not the live runner's creation authority;
+the runner's separately bounded two-attempt rule is defined in §10.
 
 ### 6. Own startup and healing through one runtime controller
 
@@ -169,9 +187,11 @@ The initial synchronous attempt is:
 1. Validate settings and plugin-manager dependencies.
 2. Try to acquire the staging-root runtime lease.
 3. If the lease is busy, enter acquiring quarantine, log it, start the single
-   retry loop, and let the server boot. A new exported sentinel/predicate
-   distinguishes busy contention from an invalid root, permissions failure, or
-   malformed lease file; those non-contention errors remain fatal.
+   retry loop, and let the server boot. `ErrRuntimeLeaseBusy` is exported and the
+   public `AcquireRuntimeLease` error wraps it with `%w`, so `errors.Is` survives
+   the staging-root context added at that boundary. An invalid root, permissions
+   failure, unsupported lock (`ENOLCK`/`EOPNOTSUPP`), or malformed lease file
+   remains fatal and names `-plugins-disabled` in its startup error.
 4. Once the lease is held, construct the shared usage cache, executor,
    dispatcher, and exchange dependencies, then run recovery.
 5. If recovery reports blockers, retain the lease and unstarted dispatcher,
@@ -182,10 +202,13 @@ The initial synchronous attempt is:
 7. Any other error during this initial attempt remains fatal and releases an
    acquired lease through the existing deferred cleanup.
 
-The controller retries on the existing five-minute plugin-command sweep cadence:
+The controller uses state-specific retry timing:
 
-- acquiring quarantine retries only lease acquisition;
-- recovery quarantine reruns recovery on the retained unstarted dispatcher;
+- acquiring quarantine retries lease acquisition after 1s, 2s, 5s, 10s, 30s,
+  1m, then caps at the five-minute sweep interval so ordinary rolling overlap
+  heals in seconds;
+- recovery quarantine reruns recovery on the retained unstarted dispatcher at
+  the flat five-minute sweep cadence;
 - once recovery succeeds, it starts the dispatcher and publishes both host
   surfaces without reloading plugins; and
 - after the server has accepted quarantine, a later transient infrastructure
@@ -214,16 +237,34 @@ when the plugin subsystem itself should stay offline.
 
 Entering acquiring or recovery quarantine writes the same warning to stdout and
 the application log (`/logs`, warning level, entity type `plugin_command`). A
-recovery warning contains every blocked run ID, PGID, and reason. A lease warning
-names the staging root and explains that automatic retry is active. Both name
+recovery warning contains every blocked run ID, PGID, and reason. It explains
+that an unverified Darwin orphan may heal only when it exits naturally or when
+an operator who has decided the run is abandoned terminates the named process
+group (for example, `kill -KILL -- -<pgid>`). A lease warning names the staging
+root and explains that automatic retry is active. Both name
 `-plugins-disabled` as the restart-time escape hatch.
 
-Retry failures are deduplicated by state/reason rather than written every five
-minutes. Healing emits one informational application-log/stdout entry. Failure
-to persist a log entry never changes runtime safety and remains visible on
-stdout.
+Every fatal lease error also names `-plugins-disabled`, even though only the busy
+sentinel takes the quarantine branch. Retry failures are deduplicated by
+state/reason rather than written every interval. Healing emits one informational
+application-log/stdout entry. Failure to persist a log entry never changes
+runtime safety and remains visible on stdout.
 
-### 8. Back off live cleanup polling and log the pinned capacity
+### 8. Make administrator cancellation truthful during quarantine
+
+The durable history page remains available while command execution is
+quarantined, but it must not offer a cancellation mutation that this process
+cannot enforce. The application exposes runtime availability and its reason to
+the administrator history context. While unavailable, queued-run Cancel controls
+render disabled with a visible explanation and no duplicate accessible action.
+
+`CancelPluginCommandRun` returns a distinct `ErrCommandRuntimeQuarantined`, not
+`ErrRunNotFound`; the API maps it to HTTP 503 (and `Retry-After` when acquisition
+retry timing is known). It never writes `cancel_requested` while quarantined: in
+lease-busy quarantine another process may own the live runner, and changing only
+the durable label would not stop its process group.
+
+### 9. Back off live cleanup polling and log the pinned capacity
 
 Ordinary execution remains free of group polling. Polling begins only after the
 direct parent exits or termination starts.
@@ -235,7 +276,9 @@ After the first cleanup deadline expires while the group is still alive:
 - keep the run nonterminal and retain its command slot; and
 - after the cleanup phase has lasted one minute, emit one stdout and `/logs`
   warning containing the run ID and PGID and stating that the wedged group is
-  permanently holding one of the four global command-concurrency slots.
+  permanently holding one global command-concurrency slot. The warning payload
+  derives total capacity from the same `maxActiveCommands` constant rather than
+  hardcoding four in application text.
 
 No terminal publication, slot release, or output verification rule changes.
 The warning is one-shot; no periodic log spam is added. A dedicated warning
@@ -243,7 +286,7 @@ callback carries this event from `plugin_commands` to the application logger so
 unrelated diagnostic `Logf` traffic is not silently promoted into durable audit
 rows.
 
-### 9. Allow one alive-observed re-signal
+### 10. Allow one alive-observed re-signal
 
 The first signal retains creation-time authority and does not depend on member
 environment visibility. If that signal fails or a member joins the group during
@@ -266,7 +309,7 @@ and does not restore signalling on every deadline.
 |---|---|---|---|---|
 | Different known boot | `interrupted`/latched `cancelled`, output unverified | Published after recovery | Held normally | Boots |
 | Same/unknown boot, group dead | `interrupted`/`cancelled` | Published after recovery | Held normally | Boots |
-| Live/uninspectable group | Remains nonterminal | Quarantined, auto-retrying | Retained until heal/exit | Boots |
+| Live/uninspectable group | Remains nonterminal | Quarantined, auto-retrying; probe-only Unix may require reap/restart | Retained until heal/exit | Boots |
 | Owned group ignores termination | Remains nonterminal | Quarantined, auto-retrying | Retained until heal/exit | Boots |
 | Runtime lease busy | Unchanged | Quarantined, auto-retrying | Held by old runtime | Boots |
 | Initial DB/filesystem/config/non-busy lease error | Unchanged where transactionality requires | Withheld | Released by failed startup | Startup fails |
@@ -287,14 +330,21 @@ and does not restore signalling on every deadline.
 - PGID and boot identity are persisted by one transition; queued rows have
   neither.
 - Lua run views, JSON/admin history, and rendered history contain no boot ID.
-- Linux skips unrelated per-process stat failures while liveness probing keeps a
-  possibly hidden target group alive/unverified rather than dead.
+- Linux classifies an all-zombie target group dead without consulting signal 0,
+  including under a PID-1 parent that does not reap adopted descendants.
+- A hidden/unknown target candidate stays alive-unverified; unrelated stat races
+  do not fail the whole scan.
+- Darwin's all-`SZOMB` group remains dead even when `kill(-pgid, 0)` would return
+  success or `EPERM`.
 
 ### Quarantine and healing
 
 - Lease contention makes startup succeed with command/filesystem calls refused,
-  then activates automatically after the old lease is released.
-- Non-contention lease errors remain fatal.
+  retries on the 1s→2s→5s capped schedule, then activates automatically after
+  the old lease is released.
+- `errors.Is(AcquireRuntimeLease(...), ErrRuntimeLeaseBusy)` survives the public
+  wrapper; non-contention lease errors remain fatal and name
+  `-plugins-disabled`.
 - A live unverified recovery group makes startup succeed, leaves host calls
   unavailable, retains the lease, and later activates automatically after the
   group dies.
@@ -308,14 +358,17 @@ and does not restore signalling on every deadline.
 - Stop races with acquisition, recovery, and activation cannot publish after
   stop or release a lease before dispatcher quiescence.
 - Quarantine, retry failure, and healing records appear in `/logs` with deduped
-  warnings and actionable wording.
+  warnings, the process-group repair action, and actionable wording.
+- Admin history disables queued cancellation while quarantined; the API returns
+  the quarantine sentinel as HTTP 503 and never writes the cancellation latch.
 
 ### Live worker hardening
 
 - Inspection frequency is 20 ms before the first cleanup deadline and no faster
   than the 1-second backoff afterward.
 - A one-minute stuck group emits exactly one warning naming run, PGID, and the
-  occupied global command slot.
+  occupied global command slot; reported total capacity comes from
+  `maxActiveCommands`.
 - Either alive identity state permits at most one re-signal; an inspection error
   permits none; total signalling attempts never exceed two.
 - An Apple-platform executable with unreadable environment receives the bounded
@@ -337,9 +390,12 @@ After implementation, amend the main plugin-command design, remediation plan,
 
 - only host-unique boot-session UUIDs permit the prior-boot shortcut;
 - boot identity is paired atomically with PGID and never exposed;
-- lease contention and recovery blockage quarantine only command surfaces and
-  heal automatically on the five-minute retry cadence;
-- warnings are visible at `/logs`, with `-plugins-disabled` as the escape hatch;
-  and
+- lease contention uses short capped backoff, while recovery blockage retries on
+  the five-minute cadence;
+- Linux/Darwin zombie-only groups are dead; probe-only Unix healing is limited;
+- warnings are visible at `/logs`, with the named process-group kill as the
+  immediate recovery action and `-plugins-disabled` as the restart escape hatch;
+- administrator cancellation is disabled and returns an accurate quarantine
+  error while this process cannot enforce it; and
 - stuck live cleanup uses bounded alive-observed re-signalling, backed-off
   polling, and a one-shot capacity warning.
