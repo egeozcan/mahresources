@@ -239,6 +239,164 @@ func TestPluginCommandControllerStopDuringPublishCannotPublish(t *testing.T) {
 	require.NoError(t, lease.Close())
 }
 
+func TestPluginCommandControllerStopDuringPrePublicationDrainRetainsLease(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	root := t.TempDir()
+	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
+	executor := &lifecycleStubbornExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	publishEntered := make(chan struct{})
+	allowPublish := make(chan struct{})
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.buildRuntime = func() (*pluginCommandActiveRuntime, error) {
+		return &pluginCommandActiveRuntime{dispatcher: plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+			Store: ctx, Jobs: lifecycleAsyncJobs{}, Executor: executor, Settings: settings,
+		})}, nil
+	}
+	cfg.beforePublish = func() {
+		close(publishEntered)
+		<-allowPublish
+	}
+
+	started := make(chan error, 1)
+	go func() { started <- ctx.startPluginCommandsWithConfig(context.Background(), settings, cfg) }()
+	<-publishEntered
+	ctx.pluginCommandController.mu.Lock()
+	pending := ctx.pluginCommandController.pending
+	ctx.pluginCommandController.mu.Unlock()
+	require.NotNil(t, pending)
+	owner := uint(19)
+	_, err := pending.Submit(plugin_commands.CommandRequest{
+		PluginName: "controller", ActorUserID: &owner,
+		Declaration: plugin_commands.Declaration{Name: "blocked", Argv: []string{"blocked"}, Timeout: time.Minute},
+	})
+	require.NoError(t, err)
+	select {
+	case <-executor.started:
+	case <-time.After(time.Second):
+		close(executor.release)
+		t.Fatal("pre-publication worker did not start")
+	}
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- ctx.stopPluginCommandsWithin(20 * time.Millisecond) }()
+	require.Eventually(t, func() bool {
+		ctx.pluginCommandController.mu.Lock()
+		defer ctx.pluginCommandController.mu.Unlock()
+		return ctx.pluginCommandController.state == pluginCommandRuntimeStopping
+	}, time.Second, time.Millisecond)
+	close(allowPublish)
+	require.NoError(t, <-started)
+	require.ErrorIs(t, <-stopped, context.DeadlineExceeded)
+	second, leaseErr := plugin_commands.AcquireRuntimeLease(root)
+	require.ErrorIs(t, leaseErr, plugin_commands.ErrRuntimeLeaseBusy)
+	require.Nil(t, second)
+
+	close(executor.release)
+	require.Eventually(t, pending.RuntimeLeaseReleasable, time.Second, time.Millisecond)
+	require.NoError(t, ctx.stopPluginCommandsWithin(20*time.Millisecond))
+	second, leaseErr = plugin_commands.AcquireRuntimeLease(root)
+	require.NoError(t, leaseErr)
+	require.NoError(t, second.Close())
+}
+
+func TestPluginCommandControllerStopDuringBusyAcquireStaysStopping(t *testing.T) {
+	testPluginCommandControllerStopDuringAcquireError(t, plugin_commands.ErrRuntimeLeaseBusy)
+}
+
+func TestPluginCommandControllerStopDuringNonBusyAcquireStaysStopping(t *testing.T) {
+	testPluginCommandControllerStopDuringAcquireError(t, errors.New("permission denied"))
+}
+
+func testPluginCommandControllerStopDuringAcquireError(t *testing.T, acquireErr error) {
+	t.Helper()
+	ctx := newPluginCommandStoreTestContext(t)
+	acquireEntered := make(chan struct{})
+	allowAcquire := make(chan struct{})
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.acquireLease = func(string) (*plugin_commands.RuntimeLease, error) {
+		close(acquireEntered)
+		<-allowAcquire
+		return nil, acquireErr
+	}
+	started := make(chan error, 1)
+	go func() {
+		started <- ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+			root: t.TempDir(), commandPath: t.TempDir(),
+		}, cfg)
+	}()
+	<-acquireEntered
+	stopped := make(chan error, 1)
+	go func() { stopped <- ctx.stopPluginCommandsWithin(20 * time.Millisecond) }()
+	require.Eventually(t, func() bool {
+		ctx.pluginCommandController.mu.Lock()
+		defer ctx.pluginCommandController.mu.Unlock()
+		return ctx.pluginCommandController.state == pluginCommandRuntimeStopping
+	}, time.Second, time.Millisecond)
+	close(allowAcquire)
+	require.NoError(t, <-started)
+	require.NoError(t, <-stopped)
+	ctx.pluginCommandController.mu.Lock()
+	state := ctx.pluginCommandController.state
+	ctx.pluginCommandController.mu.Unlock()
+	require.Equal(t, pluginCommandRuntimeStopping, state)
+	_, activeErr := ctx.pluginCommandActive()
+	requireGenericCommandQuarantineError(t, activeErr)
+	var logs []models.LogEntry
+	require.NoError(t, ctx.db.Where("entity_type = ?", "plugin_command").Find(&logs).Error)
+	require.Empty(t, logs)
+}
+
+func TestPluginCommandControllerStopAfterRecoveryBlockerStaysStopping(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC()
+	runID := "controller-stop-recovery-blocked"
+	require.NoError(t, ctx.CreateRun(plugin_commands.RunRecord{
+		ID: runID, PluginName: "controller", CommandName: "tool", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusQueued, CreatedAt: now,
+	}, plugin_commands.RunOutput{RunID: runID, ArgvJSON: `[]`, CreatedAt: now}))
+	won, err := ctx.MarkRunRunning(runID, now)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, ctx.SetRunProcessGroup(runID, 4242, "same-boot"))
+
+	inspector := &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
+	blockerReady := make(chan struct{})
+	allowQuarantine := make(chan struct{})
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+	cfg.inspector = inspector
+	cfg.beforeQuarantine = func(pluginCommandRuntimeState) {
+		close(blockerReady)
+		<-allowQuarantine
+	}
+	started := make(chan error, 1)
+	go func() {
+		started <- ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+			root: t.TempDir(), commandPath: t.TempDir(),
+		}, cfg)
+	}()
+	<-blockerReady
+	stopped := make(chan error, 1)
+	go func() { stopped <- ctx.stopPluginCommandsWithin(20 * time.Millisecond) }()
+	require.Eventually(t, func() bool {
+		ctx.pluginCommandController.mu.Lock()
+		defer ctx.pluginCommandController.mu.Unlock()
+		return ctx.pluginCommandController.state == pluginCommandRuntimeStopping
+	}, time.Second, time.Millisecond)
+	close(allowQuarantine)
+	require.NoError(t, <-started)
+	require.NoError(t, <-stopped)
+	ctx.pluginCommandController.mu.Lock()
+	state := ctx.pluginCommandController.state
+	ctx.pluginCommandController.mu.Unlock()
+	require.Equal(t, pluginCommandRuntimeStopping, state)
+	var logs []models.LogEntry
+	require.NoError(t, ctx.db.Where("entity_type = ?", "plugin_command").Find(&logs).Error)
+	require.Empty(t, logs)
+	_, activeErr := ctx.pluginCommandActive()
+	requireGenericCommandQuarantineError(t, activeErr)
+}
+
 func TestPluginCommandControllerNonBusyLeaseErrorIsFatal(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	cfg := defaultPluginCommandControllerConfig()

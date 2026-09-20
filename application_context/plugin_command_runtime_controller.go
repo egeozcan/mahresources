@@ -54,7 +54,9 @@ type pluginCommandControllerConfig struct {
 	acquireBackoff   []time.Duration
 	recoveryInterval time.Duration
 	inspector        plugin_commands.ProcessInspector
+	buildRuntime     func() (*pluginCommandActiveRuntime, error)
 	beforeAcquire    func(int)
+	beforeQuarantine func(pluginCommandRuntimeState)
 	beforePublish    func()
 }
 
@@ -156,6 +158,10 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 		close(done)
 		return nil
 	default:
+		if controller.isStopping() {
+			close(done)
+			return nil
+		}
 		controller.resetAfterFailedStart()
 		close(done)
 		return err
@@ -189,8 +195,13 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 		if err != nil {
 			if errors.Is(err, plugin_commands.ErrRuntimeLeaseBusy) {
 				message := fmt.Sprintf("plugin command runtime is quarantined because staging root %q is leased by another runtime; automatic retry is active; restart with -plugins-disabled to keep plugin commands offline", c.settings.StagingRoot())
-				c.enterQuarantine(pluginCommandRuntimeAcquiring, message, c.acquireDelay(attempt))
+				if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, c.acquireDelay(attempt)) {
+					return pluginCommandAttemptStopped, nil
+				}
 				return pluginCommandAttemptLeaseBusy, err
+			}
+			if c.isStopping() {
+				return pluginCommandAttemptStopped, nil
 			}
 			return pluginCommandAttemptFatal, fmt.Errorf("acquire plugin command runtime lease: %w; restart with -plugins-disabled to keep plugin commands offline", err)
 		}
@@ -203,42 +214,45 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 		c.lease = lease
 		c.mu.Unlock()
 
-		usage := plugin_commands.NewStagingUsageCache()
-		leases := plugin_commands.NewLeaseManager()
-		executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
-			Store: c.owner, BootSessionID: c.bootSessionID, Settings: c.settings,
-			Inspector: c.config.inspector, Usage: usage, Logf: log.Printf,
-		})
-		dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
-			Store: c.owner, BootSessionID: c.bootSessionID,
-			Jobs: commandLiveJobs{manager: c.owner.downloadManager}, Executor: executor,
-			Settings: c.settings, Inspector: c.config.inspector, Usage: usage,
-			Leases: leases, Logf: log.Printf,
-		})
-		dispatcher.SetImporter(c.owner)
-		exchange := plugin_commands.NewExchangeWithLeases(c.owner, c.settings, leases)
+		runtime, err := c.buildRuntime()
+		if err != nil {
+			if c.isStopping() {
+				return pluginCommandAttemptStopped, nil
+			}
+			return pluginCommandAttemptFatal, err
+		}
 		c.mu.Lock()
 		if c.state == pluginCommandRuntimeStopping {
 			c.mu.Unlock()
-			_ = lease.Close()
 			return pluginCommandAttemptStopped, nil
 		}
-		c.pending = dispatcher
-		c.pendingExchange = exchange
-		pending = dispatcher
+		c.pending = runtime.dispatcher
+		c.pendingExchange = runtime.exchange
+		pending = runtime.dispatcher
 		c.mu.Unlock()
+		if pending == nil {
+			return pluginCommandAttemptFatal, fmt.Errorf("build plugin command runtime: dispatcher is unavailable")
+		}
 	}
 
 	if err := pending.Recover(ctx); err != nil {
 		var blocked *plugin_commands.RecoveryBlockedError
 		if errors.As(err, &blocked) {
 			message := fmt.Sprintf("plugin command runtime recovery is quarantined: %v; automatic retry is active; after deciding a named process group is abandoned an operator may terminate it with kill -KILL -- -<pgid>; restart with -plugins-disabled to keep plugin commands offline", blocked)
-			c.enterQuarantine(pluginCommandRuntimeQuarantined, message, c.config.recoveryInterval)
+			if !c.enterQuarantine(pluginCommandRuntimeQuarantined, message, c.config.recoveryInterval) {
+				return pluginCommandAttemptStopped, nil
+			}
 			return pluginCommandAttemptRecoveryBlocked, err
+		}
+		if c.isStopping() {
+			return pluginCommandAttemptStopped, nil
 		}
 		return pluginCommandAttemptFatal, fmt.Errorf("recover plugin commands: %w", err)
 	}
 	if err := pending.Start(ctx); err != nil {
+		if c.isStopping() {
+			return pluginCommandAttemptStopped, nil
+		}
 		return pluginCommandAttemptFatal, fmt.Errorf("start plugin commands: %w", err)
 	}
 	if c.config.beforePublish != nil {
@@ -247,11 +261,7 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 
 	c.mu.Lock()
 	if c.state == pluginCommandRuntimeStopping {
-		c.mu.Unlock()
-		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_ = pending.Stop(stopCtx)
-		cancel()
-		c.mu.Lock()
+		c.draining = &pluginCommandActiveRuntime{dispatcher: pending, exchange: c.pendingExchange}
 		c.pending = nil
 		c.pendingExchange = nil
 		c.mu.Unlock()
@@ -274,6 +284,35 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 	return pluginCommandAttemptActive, nil
 }
 
+func (c *pluginCommandRuntimeController) buildRuntime() (*pluginCommandActiveRuntime, error) {
+	if c.config.buildRuntime != nil {
+		return c.config.buildRuntime()
+	}
+	usage := plugin_commands.NewStagingUsageCache()
+	leases := plugin_commands.NewLeaseManager()
+	executor := plugin_commands.NewExecutor(plugin_commands.RunnerDependencies{
+		Store: c.owner, BootSessionID: c.bootSessionID, Settings: c.settings,
+		Inspector: c.config.inspector, Usage: usage, Logf: log.Printf,
+	})
+	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+		Store: c.owner, BootSessionID: c.bootSessionID,
+		Jobs: commandLiveJobs{manager: c.owner.downloadManager}, Executor: executor,
+		Settings: c.settings, Inspector: c.config.inspector, Usage: usage,
+		Leases: leases, Logf: log.Printf,
+	})
+	dispatcher.SetImporter(c.owner)
+	return &pluginCommandActiveRuntime{
+		dispatcher: dispatcher,
+		exchange:   plugin_commands.NewExchangeWithLeases(c.owner, c.settings, leases),
+	}, nil
+}
+
+func (c *pluginCommandRuntimeController) isStopping() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state == pluginCommandRuntimeStopping
+}
+
 func (c *pluginCommandRuntimeController) acquireDelay(attempt int) time.Duration {
 	if attempt < 0 {
 		attempt = 0
@@ -284,8 +323,15 @@ func (c *pluginCommandRuntimeController) acquireDelay(attempt int) time.Duration
 	return c.config.acquireBackoff[attempt]
 }
 
-func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRuntimeState, reason string, delay time.Duration) {
+func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRuntimeState, reason string, delay time.Duration) bool {
+	if c.config.beforeQuarantine != nil {
+		c.config.beforeQuarantine(state)
+	}
 	c.mu.Lock()
+	if c.state == pluginCommandRuntimeStopping {
+		c.mu.Unlock()
+		return false
+	}
 	changed := c.state != state || c.reason != reason
 	c.state = state
 	c.reason = reason
@@ -295,6 +341,7 @@ func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRunt
 		log.Printf("[plugin-command] WARNING: %s", reason)
 		c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(), reason, nil)
 	}
+	return true
 }
 
 func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done chan struct{}) {
@@ -346,7 +393,9 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 				nextDelay = c.config.recoveryInterval
 			}
 			message := fmt.Sprintf("plugin command runtime automatic recovery failed and remains quarantined: %v", err)
-			c.enterQuarantine(nextState, message, nextDelay)
+			if !c.enterQuarantine(nextState, message, nextDelay) {
+				return
+			}
 			if !hasLease {
 				acquireAttempt++
 			}
@@ -356,6 +405,10 @@ func (c *pluginCommandRuntimeController) retryLoop(ctx context.Context, done cha
 
 func (c *pluginCommandRuntimeController) resetAfterFailedStart() {
 	c.mu.Lock()
+	if c.state == pluginCommandRuntimeStopping {
+		c.mu.Unlock()
+		return
+	}
 	lease := c.lease
 	c.lease = nil
 	c.pending = nil
