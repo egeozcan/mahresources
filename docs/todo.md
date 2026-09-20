@@ -9772,7 +9772,7 @@ Validation: focused regressions reproduced missing endpoint routing/prices befor
 
 ### Final whole-branch runtime review follow-up
 
-- [x] Exclude concurrent recovery with a staging-root runtime lease acquired before recovery and released on every startup/shutdown path.
+- [x] Exclude concurrent recovery with a staging-root runtime lease acquired before recovery and held until all dispatcher-owned work quiesces or the process exits.
 - [x] Make repeated pending/running imports release Lua callback lifecycle ownership when no callback was registered.
 - [x] Normalize trusted command-path entries consistently at configuration and execution.
 - [x] Kill locally verified process groups without waiting for PGID persistence, and publish terminal state only after owned-group death and closed output pipes.
@@ -9795,3 +9795,9 @@ E2E all pass. The broad concurrent race attempt exceeded the application-context
 10-minute package timeout in the unrelated root-admin concurrency test and also
 reproduced the two documented baseline failures; focused affected race suites
 pass repeatedly.
+
+Final review caught that a zero worker count still did not prove quiescence: a
+periodic sweep or owner-side persistence call could remain blocked after bounded
+Stop returned. Runtime lease release now requires the owner loop to have exited
+and both claimed-worker and asynchronous-sweep counts to reach zero. A blocked
+sweep regression proves timeout keeps the lease and completion releases it.

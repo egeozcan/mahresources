@@ -4,9 +4,66 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type blockingRuntimeSweepStore struct {
+	*dispatcherTestStore
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingRuntimeSweepStore) ExpiredTerminalRuns(before time.Time) ([]RunRecord, error) {
+	if s.calls.Add(1) > 1 {
+		select {
+		case <-s.entered:
+		default:
+			close(s.entered)
+		}
+		<-s.release
+	}
+	return s.dispatcherTestStore.ExpiredTerminalRuns(before)
+}
+
+func TestRuntimeLeaseRemainsHeldUntilTimedOutSweepQuiesces(t *testing.T) {
+	store := &blockingRuntimeSweepStore{
+		dispatcherTestStore: newDispatcherTestStore(),
+		entered:             make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+	d := NewDispatcher(Dependencies{
+		Store: store, Jobs: &dispatcherTestJobs{}, Executor: dispatcherTestExecutor{},
+		Settings: dispatcherTestSettings{pending: 10},
+	})
+	d.sweepInterval = time.Millisecond
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		close(store.release)
+		t.Fatal("periodic sweep did not start")
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err := d.Stop(stopCtx)
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		close(store.release)
+		t.Fatalf("Stop() = %v, want sweep deadline", err)
+	}
+	if d.RuntimeLeaseReleasable() {
+		close(store.release)
+		t.Fatal("runtime lease became releasable while a timed-out sweep remained active")
+	}
+
+	close(store.release)
+	waitFor(t, d.RuntimeLeaseReleasable)
+}
 
 func TestLeaseBlocksSweepAndSweepClosesCheckToAcquireGap(t *testing.T) {
 	leases := NewLeaseManager()

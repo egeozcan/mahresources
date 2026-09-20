@@ -48,6 +48,7 @@ type Dispatcher struct {
 	workerClosing bool
 	workers       sync.WaitGroup
 	activeWorkers atomic.Int64
+	activeSweeps  atomic.Int64
 
 	shutdownMu  sync.Mutex
 	shutdownErr error
@@ -542,7 +543,9 @@ func (d *Dispatcher) run(ctx context.Context) {
 			return
 		}
 		sweepDone = make(chan error, 1)
+		d.activeSweeps.Add(1)
 		go func(result chan<- error, now time.Time) {
+			defer d.activeSweeps.Add(-1)
 			result <- d.sweep(now)
 		}(sweepDone, d.now())
 	}
@@ -1445,15 +1448,20 @@ func (d *Dispatcher) workerDone() {
 	d.workers.Done()
 }
 
-// RuntimeLeaseReleasable reports whether shutdown has closed worker admission
-// and every worker which claimed durable command or import ownership returned.
+// RuntimeLeaseReleasable reports whether the dispatcher owner, every claimed
+// worker and every asynchronous sweep have stopped touching durable command
+// state and the staging root. A timed-out Stop may close the owner before a
+// blocked sweep returns, so owner termination alone is not sufficient.
 func (d *Dispatcher) RuntimeLeaseReleasable() bool {
 	if d == nil {
 		return true
 	}
-	d.workerMu.Lock()
-	defer d.workerMu.Unlock()
-	return d.workerClosing && d.activeWorkers.Load() == 0
+	select {
+	case <-d.done:
+		return d.activeWorkers.Load() == 0 && d.activeSweeps.Load() == 0
+	default:
+		return false
+	}
 }
 
 func (d *Dispatcher) post(message any) {
