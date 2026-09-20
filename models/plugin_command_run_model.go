@@ -24,6 +24,7 @@ type PluginCommandRun struct {
 	ExitCode              *int
 	Error                 string `gorm:"type:text"`
 	ProcessGroupID        *int
+	BootSessionID         string `gorm:"size:64"`
 	CancelRequested       bool
 	OutputUnverified      bool
 	ActorlessAtSubmission bool

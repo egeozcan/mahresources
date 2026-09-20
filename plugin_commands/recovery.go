@@ -57,7 +57,7 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 				finish.Status, finish.Error = RunStatusInterrupted, "server interrupted before command start"
 			}
 		case RunStatusRunning:
-			finish, err = d.recoverRunning(ctx, run)
+			finish, err = d.recoverRunning(ctx, run.RunRecord)
 			if err != nil {
 				return fmt.Errorf("recover plugin command %s: %w", run.ID, err)
 			}

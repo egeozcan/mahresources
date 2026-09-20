@@ -1,9 +1,11 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +55,15 @@ func testOutput(id string, at time.Time) plugin_commands.RunOutput {
 	return plugin_commands.RunOutput{RunID: id, ArgvJSON: `["tool"]`, CreatedAt: at}
 }
 
+func TestPluginCommandRunRecordOmitsBootSessionIdentity(t *testing.T) {
+	encoded, err := json.Marshal(runRecord(models.PluginCommandRun{
+		ID: "private-boot-session", BootSessionID: "boot-session-secret",
+	}))
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "boot-session-secret")
+	require.False(t, strings.Contains(strings.ToLower(string(encoded)), "bootsession"))
+}
+
 func TestPluginCommandStoreCreateRunAndOutputIsAtomic(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	now := time.Now().UTC()
@@ -69,6 +80,10 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	owner := uint(41)
 	require.NoError(t, ctx.CreateRun(testRun("run-transitions", &owner, false, now), testOutput("run-transitions", now)))
+	var queued models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&queued, "id = ?", "run-transitions").Error)
+	require.Nil(t, queued.ProcessGroupID)
+	require.Empty(t, queued.BootSessionID)
 	won, err := ctx.FinishRun("run-transitions", plugin_commands.RunFinish{
 		Status: plugin_commands.RunStatusSucceeded, FinishedAt: now.Add(time.Second),
 	})
@@ -87,7 +102,21 @@ func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	won, err = ctx.MarkRunRunning("run-transitions", started.Add(time.Second))
 	require.NoError(t, err)
 	require.False(t, won, "a stale start writer must lose")
-	require.NoError(t, ctx.SetRunProcessGroup("run-transitions", 4321))
+	require.NoError(t, ctx.SetRunProcessGroup("run-transitions", 4321, "boot-session-a"))
+	var startedRow models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&startedRow, "id = ?", "run-transitions").Error)
+	require.NotNil(t, startedRow.ProcessGroupID)
+	require.Equal(t, 4321, *startedRow.ProcessGroupID)
+	require.Equal(t, "boot-session-a", startedRow.BootSessionID)
+	recoveryRuns, err := ctx.NonterminalRuns()
+	require.NoError(t, err)
+	require.Len(t, recoveryRuns, 1)
+	require.Equal(t, "boot-session-a", recoveryRuns[0].BootSessionID)
+
+	require.Error(t, ctx.SetRunProcessGroup("run-transitions", 9999, "boot-session-b"))
+	require.NoError(t, ctx.db.First(&startedRow, "id = ?", "run-transitions").Error)
+	require.Equal(t, 4321, *startedRow.ProcessGroupID)
+	require.Equal(t, "boot-session-a", startedRow.BootSessionID, "a lost transition must change neither process identity field")
 
 	require.NoError(t, ctx.RequestRunCancel("run-transitions", "operator cancelled"))
 	require.ErrorIs(t, ctx.RequestRunCancel("run-transitions", "again"), plugin_commands.ErrRunNotCancellable)

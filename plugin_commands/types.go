@@ -42,6 +42,11 @@ type RunRecord struct {
 	ExchangeRemovedAt     *time.Time
 }
 
+type RecoveryRun struct {
+	RunRecord
+	BootSessionID string
+}
+
 type RetentionCursor struct {
 	FinishedAt time.Time
 	RunID      string
@@ -239,12 +244,13 @@ type Executor interface {
 }
 
 type Dependencies struct {
-	Store     Store
-	Jobs      LiveJobs
-	Executor  Executor
-	Settings  Settings
-	Inspector ProcessInspector
-	Usage     *StagingUsageCache
-	Leases    *LeaseManager
-	Logf      func(string, ...any)
+	Store         Store
+	BootSessionID string
+	Jobs          LiveJobs
+	Executor      Executor
+	Settings      Settings
+	Inspector     ProcessInspector
+	Usage         *StagingUsageCache
+	Leases        *LeaseManager
+	Logf          func(string, ...any)
 }

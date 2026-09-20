@@ -21,6 +21,7 @@ func (s dispatcherTestSettings) CommandPath() string              { return "/bin
 type dispatcherTestStore struct {
 	mu                     sync.Mutex
 	runs                   map[string]RunRecord
+	bootSessionIDs         map[string]string
 	finishes               map[string]RunFinish
 	importFinishes         map[string]ImportFinish
 	cancelled              []string
@@ -38,7 +39,7 @@ type dispatcherTestStore struct {
 
 func newDispatcherTestStore() *dispatcherTestStore {
 	return &dispatcherTestStore{
-		runs: map[string]RunRecord{}, finishes: map[string]RunFinish{}, importFinishes: map[string]ImportFinish{},
+		runs: map[string]RunRecord{}, bootSessionIDs: map[string]string{}, finishes: map[string]RunFinish{}, importFinishes: map[string]ImportFinish{},
 	}
 }
 func (s *dispatcherTestStore) CreateRun(r RunRecord, _ RunOutput) error {
@@ -65,7 +66,7 @@ func (s *dispatcherTestStore) MarkRunRunning(id string, started time.Time) (bool
 	s.runs[id] = record
 	return true, nil
 }
-func (s *dispatcherTestStore) SetRunProcessGroup(id string, pgid int) error {
+func (s *dispatcherTestStore) SetRunProcessGroup(id string, pgid int, bootSessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.runs[id]
@@ -74,6 +75,10 @@ func (s *dispatcherTestStore) SetRunProcessGroup(id string, pgid int) error {
 	}
 	record.ProcessGroupID = &pgid
 	s.runs[id] = record
+	if s.bootSessionIDs == nil {
+		s.bootSessionIDs = make(map[string]string)
+	}
+	s.bootSessionIDs[id] = bootSessionID
 	return nil
 }
 func (s *dispatcherTestStore) RequestRunCancel(id, reason string) error {
@@ -136,13 +141,13 @@ func (s *dispatcherTestStore) Run(id string) (RunRecord, RunOutput, error) {
 	return record, RunOutput{}, nil
 }
 func (s *dispatcherTestStore) Runs(Access) ([]RunView, error) { return nil, nil }
-func (s *dispatcherTestStore) NonterminalRuns() ([]RunRecord, error) {
+func (s *dispatcherTestStore) NonterminalRuns() ([]RecoveryRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var result []RunRecord
+	var result []RecoveryRun
 	for _, run := range s.runs {
 		if !RunStatusTerminal(run.Status) {
-			result = append(result, run)
+			result = append(result, RecoveryRun{RunRecord: run, BootSessionID: s.bootSessionIDs[run.ID]})
 		}
 	}
 	return result, nil

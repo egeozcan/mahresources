@@ -10,13 +10,14 @@ import (
 	"mahresources/plugin_commands"
 )
 
-func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) {
+func TestPluginCommandHistoryAdminOmitsBootSessionAndDownloadsStaySeparate(t *testing.T) {
 	tc := setupAuthEnv(t)
 	now := time.Now().UTC()
 	owner := uint(999)
 	exitCode := 0
+	const bootSessionSecret = "boot-session-secret"
 	rows := []models.PluginCommandRun{
-		{ID: "admin-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, ExitCode: &exitCode, CreatedAt: now},
+		{ID: "admin-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, ExitCode: &exitCode, BootSessionID: bootSessionSecret, CreatedAt: now},
 		{ID: "user-owned-command", PluginName: "media", CommandName: "fetch", ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedByUserId: &owner, CreatedAt: now.Add(-time.Second)},
 	}
 	for i := range rows {
@@ -33,6 +34,9 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "admin-owned-command") || !strings.Contains(list.Body.String(), "user-owned-command") {
 		t.Fatalf("admin list = %d %s", list.Code, list.Body.String())
 	}
+	if strings.Contains(list.Body.String(), bootSessionSecret) {
+		t.Fatalf("admin history response exposed boot session identity: %s", list.Body.String())
+	}
 	downloads := doReq(tc, http.MethodGet, "/v1/downloads", h, nil, nil)
 	if downloads.Code != http.StatusOK || strings.Contains(downloads.Body.String(), "owned-command") {
 		t.Fatalf("/downloads = %d; command rows leaked or route failed: %s", downloads.Code, downloads.Body.String())
@@ -45,6 +49,9 @@ func TestPluginCommandHistoryAdminSeesAllAndDownloadsStaySeparate(t *testing.T) 
 	}
 	if strings.Contains(body, `<script>alert`) || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("output was not escaped: %s", body)
+	}
+	if strings.Contains(body, bootSessionSecret) {
+		t.Fatalf("rendered command history exposed boot session identity: %s", body)
 	}
 	for _, label := range []string{
 		`aria-label="Cancel queued run admin-owned-command"`,

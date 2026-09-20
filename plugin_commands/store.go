@@ -21,12 +21,12 @@ type PendingImportCanceller interface {
 type Store interface {
 	CreateRun(RunRecord, RunOutput) error
 	MarkRunRunning(id string, started time.Time) (bool, error)
-	SetRunProcessGroup(id string, pgid int) error
+	SetRunProcessGroup(id string, pgid int, bootSessionID string) error
 	RequestRunCancel(id, reason string) error
 	FinishRun(id string, finish RunFinish) (bool, error)
 	Run(id string) (RunRecord, RunOutput, error)
 	Runs(Access) ([]RunView, error)
-	NonterminalRuns() ([]RunRecord, error)
+	NonterminalRuns() ([]RecoveryRun, error)
 	ExpiredTerminalRunBoundary(before time.Time) (*RetentionCursor, error)
 	ExpiredTerminalRuns(before time.Time, after, through *RetentionCursor, limit int) ([]RunRecord, error)
 	MarkRunExchangeRemoved(runID string, removedAt time.Time) error

@@ -82,11 +82,12 @@ type ProcessInspector interface {
 type nativeProcessInspector struct{}
 
 type RunnerDependencies struct {
-	Store     Store
-	Settings  Settings
-	Inspector ProcessInspector
-	Usage     *StagingUsageCache
-	Logf      func(string, ...any)
+	Store         Store
+	BootSessionID string
+	Settings      Settings
+	Inspector     ProcessInspector
+	Usage         *StagingUsageCache
+	Logf          func(string, ...any)
 }
 
 func effectiveQuota(configured, fallback int64) int64 {

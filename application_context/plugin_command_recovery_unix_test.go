@@ -28,7 +28,7 @@ func TestPluginCommandLifecycleDoesNotPublishHostForLiveUnverifiedRecoveryGroup(
 	if won, err := ctx.MarkRunRunning("live-unverified-recovery", now); err != nil || !won {
 		t.Fatalf("mark running: won=%v err=%v", won, err)
 	}
-	if err := ctx.SetRunProcessGroup("live-unverified-recovery", pgid); err != nil {
+	if err := ctx.SetRunProcessGroup("live-unverified-recovery", pgid, "test-boot-session"); err != nil {
 		t.Fatal(err)
 	}
 

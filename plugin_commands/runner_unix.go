@@ -247,7 +247,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- cmd.Wait() }()
 	pgidDone := make(chan error, 1)
-	go func() { pgidDone <- e.deps.Store.SetRunProcessGroup(run.RunID, pgid) }()
+	go func() { pgidDone <- e.deps.Store.SetRunProcessGroup(run.RunID, pgid, e.deps.BootSessionID) }()
 	quotaInterval := e.quotaInterval
 	if quotaInterval <= 0 {
 		quotaInterval = quotaSampleInterval

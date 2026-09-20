@@ -42,6 +42,7 @@ type runnerTestStore struct {
 	mu                     sync.Mutex
 	runs                   map[string]RunRecord
 	outputs                map[string]RunOutput
+	bootSessionIDs         map[string]string
 	imports                []ImportRecord
 	setProcessGroupStarted chan struct{}
 	setProcessGroupRelease <-chan struct{}
@@ -52,7 +53,7 @@ type runnerTestStore struct {
 }
 
 func newRunnerTestStore() *runnerTestStore {
-	return &runnerTestStore{runs: make(map[string]RunRecord), outputs: make(map[string]RunOutput)}
+	return &runnerTestStore{runs: make(map[string]RunRecord), outputs: make(map[string]RunOutput), bootSessionIDs: make(map[string]string)}
 }
 
 func (s *runnerTestStore) CreateRun(run RunRecord, output RunOutput) error {
@@ -79,7 +80,7 @@ func (s *runnerTestStore) MarkRunRunning(id string, started time.Time) (bool, er
 	s.runs[id] = run
 	return true, nil
 }
-func (s *runnerTestStore) SetRunProcessGroup(id string, pgid int) error {
+func (s *runnerTestStore) SetRunProcessGroup(id string, pgid int, bootSessionID string) error {
 	if s.setProcessGroupStarted != nil {
 		select {
 		case s.setProcessGroupStarted <- struct{}{}:
@@ -97,6 +98,10 @@ func (s *runnerTestStore) SetRunProcessGroup(id string, pgid int) error {
 	}
 	run.ProcessGroupID = &pgid
 	s.runs[id] = run
+	if s.bootSessionIDs == nil {
+		s.bootSessionIDs = make(map[string]string)
+	}
+	s.bootSessionIDs[id] = bootSessionID
 	return nil
 }
 func (s *runnerTestStore) RequestRunCancel(id, reason string) error {
@@ -153,13 +158,13 @@ func (s *runnerTestStore) Run(id string) (RunRecord, RunOutput, error) {
 	return run, s.outputs[id], nil
 }
 func (s *runnerTestStore) Runs(Access) ([]RunView, error) { return nil, nil }
-func (s *runnerTestStore) NonterminalRuns() ([]RunRecord, error) {
+func (s *runnerTestStore) NonterminalRuns() ([]RecoveryRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var runs []RunRecord
+	var runs []RecoveryRun
 	for _, run := range s.runs {
 		if !RunStatusTerminal(run.Status) {
-			runs = append(runs, run)
+			runs = append(runs, RecoveryRun{RunRecord: run, BootSessionID: s.bootSessionIDs[run.ID]})
 		}
 	}
 	return runs, nil
@@ -357,7 +362,7 @@ func TestRunnerAdmissionPersistsRedactedInvocationAndCleansRejectedFolder(t *tes
 	}
 }
 
-func TestRunnerEnvironmentArgvPathAndRedaction(t *testing.T) {
+func TestRunnerProcessGroupPersistsBootSessionWithEnvironmentArgvPathAndRedaction(t *testing.T) {
 	root := t.TempDir()
 	trusted := t.TempDir()
 	rogue := t.TempDir()
@@ -375,7 +380,8 @@ func TestRunnerEnvironmentArgvPathAndRedaction(t *testing.T) {
 
 	settings := runnerTestSettings{root: root, commandDir: trusted, perRun: 1 << 20, global: 1 << 21}
 	store := newRunnerTestStore()
-	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings})
+	const bootSessionID = "boot-session-runner"
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, BootSessionID: bootSessionID})
 	runID := "0123456789abcdef0123456789abcdef"
 	exchange := filepath.Join(root, "plugin_exchange", "plug", runID)
 	declaration := Declaration{
@@ -402,6 +408,12 @@ func TestRunnerEnvironmentArgvPathAndRedaction(t *testing.T) {
 	outcome := executor.Execute(context.Background(), run)
 	if outcome.Status != RunStatusSucceeded {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+	store.mu.Lock()
+	persistedBootSessionID := store.bootSessionIDs[runID]
+	store.mu.Unlock()
+	if persistedBootSessionID != bootSessionID {
+		t.Fatalf("persisted boot session = %q, want %q", persistedBootSessionID, bootSessionID)
 	}
 	encoded, err := os.ReadFile(filepath.Join(exchange, "record.json"))
 	if err != nil {

@@ -110,13 +110,16 @@ func (ctx *MahresourcesContext) MarkRunRunning(id string, started time.Time) (bo
 	return res.RowsAffected == 1, res.Error
 }
 
-func (ctx *MahresourcesContext) SetRunProcessGroup(id string, pgid int) error {
+func (ctx *MahresourcesContext) SetRunProcessGroup(id string, pgid int, bootSessionID string) error {
 	if pgid <= 0 {
 		return fmt.Errorf("plugin command process group must be positive")
 	}
 	res := ctx.db.Model(&models.PluginCommandRun{}).
 		Where("id = ? AND status = ? AND process_group_id IS NULL", id, plugin_commands.RunStatusRunning).
-		Update("process_group_id", pgid)
+		Updates(map[string]any{
+			"process_group_id": pgid,
+			"boot_session_id":  bootSessionID,
+		})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -258,15 +261,15 @@ func (ctx *MahresourcesContext) Runs(access plugin_commands.Access) ([]plugin_co
 	return result, nil
 }
 
-func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RunRecord, error) {
+func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RecoveryRun, error) {
 	var rows []models.PluginCommandRun
 	if err := ctx.db.Where("status IN ?", []string{plugin_commands.RunStatusQueued, plugin_commands.RunStatusRunning}).
 		Order("created_at asc, id asc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	result := make([]plugin_commands.RunRecord, len(rows))
+	result := make([]plugin_commands.RecoveryRun, len(rows))
 	for i, row := range rows {
-		result[i] = runRecord(row)
+		result[i] = plugin_commands.RecoveryRun{RunRecord: runRecord(row), BootSessionID: row.BootSessionID}
 	}
 	return result, nil
 }

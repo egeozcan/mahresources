@@ -10,6 +10,18 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+func TestRunViewToLuaOmitsBootSessionIdentity(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	table := runViewToLua(L, plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: "run-a"}})
+	for _, key := range []string{"boot_session_id", "bootSessionID", "BootSessionID"} {
+		if got := table.RawGetString(key); got != lua.LNil {
+			t.Fatalf("runViewToLua exposed %q as %v", key, got)
+		}
+	}
+}
+
 func TestFSOperationsUseLiveActorAndReturnCompleteTables(t *testing.T) {
 	actor := uint(55)
 	started := time.Unix(100, 0).UTC()

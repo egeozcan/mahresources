@@ -548,7 +548,7 @@ func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
 				t.Errorf("MarkRunRunning() = %v, %v", won, err)
 				return Outcome{Status: RunStatusFailed, Error: fmt.Sprint(err)}
 			}
-			if err := store.SetRunProcessGroup(run.RunID, cmd.Process.Pid); err != nil {
+			if err := store.SetRunProcessGroup(run.RunID, cmd.Process.Pid, "test-boot-session"); err != nil {
 				t.Errorf("SetRunProcessGroup: %v", err)
 			}
 			close(workerEntered)

@@ -65,6 +65,23 @@ func TestPluginCommandRunStartPGHasExactlyOneWinner(t *testing.T) {
 	require.Equal(t, 1, winnerCount)
 }
 
+func TestPluginCommandRunStartPGPersistsBootSessionWithProcessGroup(t *testing.T) {
+	ctx := newPluginCommandStorePGContext(t)
+	now := time.Now().UTC()
+	owner := uint(7)
+	require.NoError(t, ctx.CreateRun(testRun("pg-process-identity", &owner, false, now), testOutput("pg-process-identity", now)))
+	won, err := ctx.MarkRunRunning("pg-process-identity", now)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, ctx.SetRunProcessGroup("pg-process-identity", 4321, "boot-session-pg"))
+
+	var row models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&row, "id = ?", "pg-process-identity").Error)
+	require.NotNil(t, row.ProcessGroupID)
+	require.Equal(t, 4321, *row.ProcessGroupID)
+	require.Equal(t, "boot-session-pg", row.BootSessionID)
+}
+
 func TestPluginCommandRunFinishPGHasExactlyOneWinner(t *testing.T) {
 	ctx := newPluginCommandStorePGContext(t)
 	now := time.Now().UTC()

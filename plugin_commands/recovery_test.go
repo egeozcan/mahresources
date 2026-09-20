@@ -11,13 +11,13 @@ import (
 
 type recoveryStore struct{ *dispatcherTestStore }
 
-func (s *recoveryStore) NonterminalRuns() ([]RunRecord, error) {
+func (s *recoveryStore) NonterminalRuns() ([]RecoveryRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var result []RunRecord
+	var result []RecoveryRun
 	for _, run := range s.runs {
 		if !RunStatusTerminal(run.Status) {
-			result = append(result, run)
+			result = append(result, RecoveryRun{RunRecord: run, BootSessionID: s.bootSessionIDs[run.ID]})
 		}
 	}
 	return result, nil

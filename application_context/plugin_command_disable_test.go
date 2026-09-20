@@ -49,7 +49,7 @@ type blockingCommandDisableStore struct {
 	once    sync.Once
 }
 
-func (s *blockingCommandDisableStore) NonterminalRuns() ([]plugin_commands.RunRecord, error) {
+func (s *blockingCommandDisableStore) NonterminalRuns() ([]plugin_commands.RecoveryRun, error) {
 	s.once.Do(func() { close(s.entered) })
 	<-s.release
 	return s.Store.NonterminalRuns()
