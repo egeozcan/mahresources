@@ -238,6 +238,35 @@ func TestRecoveryUnknownIdentityStateIsOrdinaryError(t *testing.T) {
 	}
 }
 
+func TestRecoveryUnknownRunStatusIsOrdinaryError(t *testing.T) {
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runs["unknown-status"] = RunRecord{ID: "unknown-status", Status: "orphaned"}
+	err := NewDispatcher(Dependencies{Store: store, Inspector: &recoveryInspector{}}).Recover(context.Background())
+	var blocked *RecoveryBlockedError
+	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "unknown status") {
+		t.Fatalf("Recover error = %v, blocker = %+v; want ordinary unknown-status error", err, blocked)
+	}
+	record, _, readErr := store.Run("unknown-status")
+	if readErr != nil || record.Status != "orphaned" || record.FinishedAt != nil {
+		t.Fatalf("malformed record was changed: record=%+v err=%v", record, readErr)
+	}
+}
+
+func TestRecoveryRejectsPersistedNonPositiveProcessGroup(t *testing.T) {
+	pgid := -25
+	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
+	store.runs["invalid-pgid"] = RunRecord{ID: "invalid-pgid", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	err := NewDispatcher(Dependencies{Store: store, Inspector: &recoveryInspector{}}).Recover(context.Background())
+	var blocked *RecoveryBlockedError
+	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "non-positive process group") {
+		t.Fatalf("Recover error = %v, blocker = %+v; want ordinary malformed-pgid error", err, blocked)
+	}
+	record, _, readErr := store.Run("invalid-pgid")
+	if readErr != nil || record.Status != RunStatusRunning || record.FinishedAt != nil {
+		t.Fatalf("malformed record was changed: record=%+v err=%v", record, readErr)
+	}
+}
+
 func TestRecoveryWaitsForDeathWhenOwnershipMarkerDisappearsAfterSignal(t *testing.T) {
 	pgid := 32
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}

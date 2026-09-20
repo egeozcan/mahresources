@@ -93,7 +93,7 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 				continue
 			}
 		default:
-			continue
+			return fmt.Errorf("plugin command run %q has unknown status %q", run.ID, run.Status)
 		}
 		won, err := d.deps.Store.FinishRun(run.ID, finish)
 		if err != nil {
@@ -117,13 +117,16 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 		Status: RunStatusInterrupted, Error: "server interrupted while command was running",
 		FinishedAt: time.Now().UTC(),
 	}
-	if run.ProcessGroupID == nil || *run.ProcessGroupID <= 0 {
+	if run.ProcessGroupID == nil {
 		// No numeric group survived the fork/persist crash window, so recovery has
 		// nothing it can inspect. Preserve the historical terminal fail-closed
 		// classification and refuse its output through OutputUnverified.
 		finish.OutputUnverified = true
 		finish.Error += "; process group was not recorded"
 		return finish, nil, nil
+	}
+	if *run.ProcessGroupID <= 0 {
+		return RunFinish{}, nil, fmt.Errorf("persisted non-positive process group %d", *run.ProcessGroupID)
 	}
 
 	pgid := *run.ProcessGroupID

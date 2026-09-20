@@ -645,5 +645,6 @@ SQLite stub (`sqlite3.SQLiteConn.Exec`), not this runtime.
 The remaining platform limitation is deliberate: AIX, DragonFly BSD, FreeBSD,
 NetBSD, OpenBSD and Solaris have probe-only inspection and cannot prove a
 zombie-only group dead. Their quarantine may require parent reaping or restart.
-Independent closure review remains the approval gate; `docs/todo.md` therefore
-leaves recovery-containment Task 9 unchecked.
+Recovery-containment Task 9 was independently approved and recorded in
+`306fd6d3f1d34b862e949d0a0d15630b2e6f6143`; only the present whole-branch
+correction and closure review remains as the final gate.

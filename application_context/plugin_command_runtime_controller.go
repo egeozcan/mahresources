@@ -138,7 +138,7 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 	bootSessionID, identityErr := cfg.bootSessionID()
 	if identityErr != nil {
 		message := fmt.Sprintf("plugin command boot-session identity is unavailable; recovery will use process inspection: %v", identityErr)
-		log.Printf("[plugin-command] WARNING: %s", message)
+		fmt.Printf("[plugin-command] WARNING: %s\n", message)
 		ctx.Logger().Warning(models.LogActionSystem, "plugin_command", nil, settings.StagingRoot(), message, nil)
 		bootSessionID = ""
 	}
@@ -362,7 +362,7 @@ func (c *pluginCommandRuntimeController) enterQuarantine(state pluginCommandRunt
 	c.retryAt = time.Now().Add(delay)
 	c.mu.Unlock()
 	if changed {
-		log.Printf("[plugin-command] WARNING: %s", reason)
+		fmt.Printf("[plugin-command] WARNING: %s\n", reason)
 		c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(), reason, details)
 	}
 	return true
@@ -452,6 +452,6 @@ func (c *pluginCommandRuntimeController) resetAfterFailedStart() {
 
 func (c *pluginCommandRuntimeController) logActivation() {
 	message := fmt.Sprintf("plugin command runtime activated for staging root %q after safe recovery", c.settings.StagingRoot())
-	log.Printf("[plugin-command] %s", message)
+	fmt.Printf("[plugin-command] %s\n", message)
 	c.owner.Logger().Info(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(), message, nil)
 }

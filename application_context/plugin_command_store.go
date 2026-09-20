@@ -262,6 +262,20 @@ func (ctx *MahresourcesContext) Runs(access plugin_commands.Access) ([]plugin_co
 }
 
 func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RecoveryRun, error) {
+	knownStatuses := []string{
+		plugin_commands.RunStatusQueued, plugin_commands.RunStatusRunning,
+		plugin_commands.RunStatusSucceeded, plugin_commands.RunStatusFailed,
+		plugin_commands.RunStatusCancelled, plugin_commands.RunStatusInterrupted,
+	}
+	var malformed []models.PluginCommandRun
+	if err := ctx.db.Where("status NOT IN ?", knownStatuses).
+		Order("created_at asc, id asc").Limit(1).Find(&malformed).Error; err != nil {
+		return nil, err
+	}
+	if len(malformed) != 0 {
+		return nil, fmt.Errorf("plugin command run %q has unknown status %q", malformed[0].ID, malformed[0].Status)
+	}
+
 	var rows []models.PluginCommandRun
 	if err := ctx.db.Where("status IN ?", []string{plugin_commands.RunStatusQueued, plugin_commands.RunStatusRunning}).
 		Order("created_at asc, id asc").Find(&rows).Error; err != nil {

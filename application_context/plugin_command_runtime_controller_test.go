@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +40,34 @@ func requireGenericCommandQuarantineError(t *testing.T, err error, forbidden ...
 	}
 }
 
+func capturePluginCommandStdout(t *testing.T) func() string {
+	t.Helper()
+	readStdout, writeStdout, err := os.Pipe()
+	require.NoError(t, err)
+	originalStdout := os.Stdout
+	os.Stdout = writeStdout
+	stopped := false
+	t.Cleanup(func() {
+		if stopped {
+			return
+		}
+		os.Stdout = originalStdout
+		_ = writeStdout.Close()
+		_ = readStdout.Close()
+	})
+	return func() string {
+		t.Helper()
+		require.False(t, stopped, "stdout capture stopped twice")
+		stopped = true
+		os.Stdout = originalStdout
+		require.NoError(t, writeStdout.Close())
+		output, err := io.ReadAll(readStdout)
+		require.NoError(t, err)
+		require.NoError(t, readStdout.Close())
+		return string(output)
+	}
+}
+
 func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	root := t.TempDir()
@@ -49,6 +79,7 @@ func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 		_ = ctx.StopPluginCommands()
 	})
 
+	stopStdoutCapture := capturePluginCommandStdout(t)
 	cfg := defaultPluginCommandControllerConfig()
 	cfg.acquireBackoff = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
 	attempted := make(chan int, 3)
@@ -106,6 +137,27 @@ func TestPluginCommandControllerLeaseContentionHeals(t *testing.T) {
 	require.Contains(t, logs[0].Message, "-plugins-disabled")
 	require.Equal(t, models.LogLevelInfo, logs[1].Level)
 	require.Contains(t, logs[1].Message, root)
+
+	stdout := stopStdoutCapture()
+	require.Contains(t, stdout, "leased by another runtime")
+	require.Contains(t, stdout, "automatic retry is active")
+	require.Contains(t, stdout, "activated for staging root")
+	require.Equal(t, 1, strings.Count(stdout, "leased by another runtime"), "lease quarantine stdout warning must be deduplicated")
+}
+
+func TestPluginCommandControllerBootIdentityWarningUsesStdout(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	stopStdoutCapture := capturePluginCommandStdout(t)
+	cfg := defaultPluginCommandControllerConfig()
+	cfg.bootSessionID = func() (string, error) { return "", errors.New("identity provider unavailable") }
+	require.NoError(t, ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+		root: t.TempDir(), commandPath: t.TempDir(),
+	}, cfg))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+
+	stdout := stopStdoutCapture()
+	require.Contains(t, stdout, "boot-session identity is unavailable")
+	require.Contains(t, stdout, "identity provider unavailable")
 }
 
 type controllerRecoveryInspector struct {
@@ -320,6 +372,7 @@ func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing
 		states: map[int]plugin_commands.GroupState{5251: plugin_commands.GroupAliveUnverified},
 		errs:   map[int]error{5252: errors.New("ownership probe denied")},
 	}
+	stopStdoutCapture := capturePluginCommandStdout(t)
 	cfg := defaultPluginCommandControllerConfig()
 	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
 	cfg.inspector = inspector
@@ -386,6 +439,59 @@ func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing
 	require.NoError(t, ctx.db.Model(&models.LogEntry{}).
 		Where("entity_type = ? AND level = ?", "plugin_command", models.LogLevelInfo).Count(&infoCount).Error)
 	require.Equal(t, int64(1), infoCount, "healing must emit exactly one information log")
+
+	stdout := stopStdoutCapture()
+	for _, value := range []string{
+		"runtime recovery is quarantined", "log-blocked-one", "5251",
+		"automatic recovery failed and remains quarantined", "activated for staging root",
+	} {
+		require.Contains(t, stdout, value)
+	}
+	require.Equal(t, 1, strings.Count(stdout, "automatic recovery failed and remains quarantined"), "retry-failure stdout warning must be deduplicated")
+	require.Equal(t, 1, strings.Count(stdout, "activated for staging root"), "healing stdout message must be one-shot")
+}
+
+func TestPluginCommandControllerRejectsMalformedDurableRunsBeforePublication(t *testing.T) {
+	invalidPGID := -7
+	tests := []struct {
+		name   string
+		status string
+		pgid   *int
+		want   string
+	}{
+		{name: "unknown status", status: "orphaned", want: "unknown status"},
+		{name: "non-positive persisted pgid", status: plugin_commands.RunStatusRunning, pgid: &invalidPGID, want: "non-positive process group"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := newPluginCommandStoreTestContext(t)
+			now := time.Now().UTC()
+			require.NoError(t, ctx.db.Create(&models.PluginCommandRun{
+				ID: "malformed-durable-run", PluginName: "controller", CommandName: "tool",
+				ParamsJSON: `{}`, Status: test.status, ProcessGroupID: test.pgid, CreatedAt: now,
+			}).Error)
+			require.NoError(t, ctx.db.Create(&models.PluginCommandRunOutput{
+				RunID: "malformed-durable-run", ArgvJSON: `[]`, CreatedAt: now,
+			}).Error)
+
+			cfg := defaultPluginCommandControllerConfig()
+			cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
+			cfg.inspector = &controllerRecoveryInspector{state: plugin_commands.GroupDead}
+			err := ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
+				root: t.TempDir(), commandPath: t.TempDir(),
+			}, cfg)
+			require.ErrorContains(t, err, test.want)
+			var blocked *plugin_commands.RecoveryBlockedError
+			require.False(t, errors.As(err, &blocked), "malformed durable state must be fatal, not quarantine")
+			active, activeErr := ctx.pluginCommandActive()
+			require.Nil(t, active)
+			require.ErrorIs(t, activeErr, plugin_commands.ErrCommandRuntimeQuarantined)
+			ctx.pluginCommandController.mu.Lock()
+			state := ctx.pluginCommandController.state
+			ctx.pluginCommandController.mu.Unlock()
+			require.Equal(t, pluginCommandRuntimeIdle, state)
+		})
+	}
 }
 
 func TestPluginCommandControllerStopDuringHealingRetainsLeaseUntilDispatcherQuiesces(t *testing.T) {

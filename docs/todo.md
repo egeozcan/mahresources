@@ -19,13 +19,15 @@ Implementation plan: `docs/superpowers/plans/2026-09-20-plugin-command-recovery-
 - [x] Task 8: Bound live re-signalling, back off polling, and audit pinned capacity.
 - [x] Task 9: Align invariants, complete verification, and record evidence.
 
-### Task 9 verification evidence (awaiting independent approval)
+### Task 9 verification evidence (completed and independently approved)
 
 Task commits:
 
 - Task 9 report base: `0c05a6b950f8256e2bf0ba561241d247a564fb4f`.
 - Initial Task 9 documentation/verification head: `ec87dd56a64d29ac90379bf22e3c93db187b9205`.
 - Review correction for accurate operator log fields: `b45a275c122b9c01e2f3a02262977aaa8ef82667`.
+- Exact evidence correction / implementation-review head: `93f750ec8004b7fc3873da6b6590147ced873854`.
+- Independent approval/recording commit: `306fd6d3f1d34b862e949d0a0d15630b2e6f6143`.
 
 The exact documentation invariant RED assertion was run against the report base:
 
@@ -172,11 +174,12 @@ git status --short
 git diff --stat 283c2afab0ec2524840199e858a96156ca053599...HEAD
 ```
 
-The Task 9 diff was whitespace-clean and reviewed. The remaining limitation is
-probe-only process inspection on AIX, DragonFly BSD, FreeBSD, NetBSD, OpenBSD
-and Solaris: those targets cannot prove a zombie-only group dead, so quarantine
-may require parent reaping or a server restart. Task 9 remains unchecked until
-independent closure review records approval.
+The Task 9 diff was whitespace-clean and reviewed. Task 9 was independently
+approved and recorded by commit `306fd6d3f1d34b862e949d0a0d15630b2e6f6143`.
+The remaining limitation is probe-only process inspection on AIX, DragonFly BSD,
+FreeBSD, NetBSD, OpenBSD and Solaris: those targets cannot prove a zombie-only
+group dead, so quarantine may require parent reaping or a server restart. Only
+the present whole-branch correction and closure review remains as the final gate.
 
 ## Original implementation plan
 
