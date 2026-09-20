@@ -252,18 +252,57 @@ func TestRecoveryUnknownRunStatusIsOrdinaryError(t *testing.T) {
 	}
 }
 
-func TestRecoveryRejectsPersistedNonPositiveProcessGroup(t *testing.T) {
-	pgid := -25
-	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
-	store.runs["invalid-pgid"] = RunRecord{ID: "invalid-pgid", Status: RunStatusRunning, ProcessGroupID: &pgid}
-	err := NewDispatcher(Dependencies{Store: store, Inspector: &recoveryInspector{}}).Recover(context.Background())
-	var blocked *RecoveryBlockedError
-	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "non-positive process group") {
-		t.Fatalf("Recover error = %v, blocker = %+v; want ordinary malformed-pgid error", err, blocked)
+func TestRecoveryRejectsMalformedProcessIdentityBeforeTerminalizingAnyRun(t *testing.T) {
+	positive, zero, negative := 25, 0, -25
+	tests := []struct {
+		name          string
+		status        string
+		pgid          *int
+		bootSessionID string
+	}{
+		{name: "queued with process group", status: RunStatusQueued, pgid: &positive},
+		{name: "queued with boot identity", status: RunStatusQueued, bootSessionID: "boot-a"},
+		{name: "queued with both identity fields", status: RunStatusQueued, pgid: &positive, bootSessionID: "boot-a"},
+		{name: "running crash window with boot identity", status: RunStatusRunning, bootSessionID: "boot-a"},
+		{name: "running zero process group", status: RunStatusRunning, pgid: &zero},
+		{name: "running zero process group with boot identity", status: RunStatusRunning, pgid: &zero, bootSessionID: "boot-a"},
+		{name: "running negative process group", status: RunStatusRunning, pgid: &negative},
+		{name: "running negative process group with boot identity", status: RunStatusRunning, pgid: &negative, bootSessionID: "boot-a"},
 	}
-	record, _, readErr := store.Run("invalid-pgid")
-	if readErr != nil || record.Status != RunStatusRunning || record.FinishedAt != nil {
-		t.Fatalf("malformed record was changed: record=%+v err=%v", record, readErr)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &recoveryStore{
+				dispatcherTestStore: newDispatcherTestStore(),
+				runOrder:            []string{"valid-queued", "malformed"},
+			}
+			store.runs["valid-queued"] = RunRecord{ID: "valid-queued", Status: RunStatusQueued}
+			store.runs["malformed"] = RunRecord{ID: "malformed", Status: test.status, ProcessGroupID: test.pgid}
+			store.bootSessionIDs["malformed"] = test.bootSessionID
+			inspector := &recoveryInspector{}
+
+			err := NewDispatcher(Dependencies{Store: store, Inspector: inspector}).Recover(context.Background())
+			var blocked *RecoveryBlockedError
+			if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "invalid process identity") {
+				t.Fatalf("Recover error = %v, blocker = %+v; want ordinary process-identity consistency error", err, blocked)
+			}
+			for id, wantStatus := range map[string]string{"valid-queued": RunStatusQueued, "malformed": test.status} {
+				record, _, readErr := store.Run(id)
+				if readErr != nil || record.Status != wantStatus || record.FinishedAt != nil {
+					t.Fatalf("run %q changed before validation completed: record=%+v err=%v", id, record, readErr)
+				}
+			}
+			malformed, _, readErr := store.Run("malformed")
+			pgidChanged := (malformed.ProcessGroupID == nil) != (test.pgid == nil)
+			if malformed.ProcessGroupID != nil && test.pgid != nil {
+				pgidChanged = *malformed.ProcessGroupID != *test.pgid
+			}
+			if readErr != nil || pgidChanged || store.bootSessionIDs["malformed"] != test.bootSessionID {
+				t.Fatalf("malformed identity changed: record=%+v boot=%q err=%v", malformed, store.bootSessionIDs["malformed"], readErr)
+			}
+			if len(inspector.inspections) != 0 || len(inspector.kills) != 0 {
+				t.Fatalf("malformed identity reached process inspection: inspections=%v kills=%v", inspector.inspections, inspector.kills)
+			}
+		})
 	}
 }
 

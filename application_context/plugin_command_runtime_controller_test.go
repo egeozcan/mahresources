@@ -452,26 +452,42 @@ func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing
 }
 
 func TestPluginCommandControllerRejectsMalformedDurableRunsBeforePublication(t *testing.T) {
-	invalidPGID := -7
+	positivePGID, zeroPGID, negativePGID := 7, 0, -7
 	tests := []struct {
-		name   string
-		status string
-		pgid   *int
-		want   string
+		name          string
+		status        string
+		pgid          *int
+		bootSessionID string
+		want          string
 	}{
 		{name: "unknown status", status: "orphaned", want: "unknown status"},
-		{name: "non-positive persisted pgid", status: plugin_commands.RunStatusRunning, pgid: &invalidPGID, want: "non-positive process group"},
+		{name: "queued with process group", status: plugin_commands.RunStatusQueued, pgid: &positivePGID, want: "invalid process identity"},
+		{name: "queued with boot identity", status: plugin_commands.RunStatusQueued, bootSessionID: "same-boot", want: "invalid process identity"},
+		{name: "queued with both identity fields", status: plugin_commands.RunStatusQueued, pgid: &positivePGID, bootSessionID: "same-boot", want: "invalid process identity"},
+		{name: "running crash window with boot identity", status: plugin_commands.RunStatusRunning, bootSessionID: "same-boot", want: "invalid process identity"},
+		{name: "running zero process group", status: plugin_commands.RunStatusRunning, pgid: &zeroPGID, want: "invalid process identity"},
+		{name: "running zero process group with boot identity", status: plugin_commands.RunStatusRunning, pgid: &zeroPGID, bootSessionID: "same-boot", want: "invalid process identity"},
+		{name: "running negative process group", status: plugin_commands.RunStatusRunning, pgid: &negativePGID, want: "invalid process identity"},
+		{name: "running negative process group with boot identity", status: plugin_commands.RunStatusRunning, pgid: &negativePGID, bootSessionID: "same-boot", want: "invalid process identity"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := newPluginCommandStoreTestContext(t)
 			now := time.Now().UTC()
 			require.NoError(t, ctx.db.Create(&models.PluginCommandRun{
-				ID: "malformed-durable-run", PluginName: "controller", CommandName: "tool",
-				ParamsJSON: `{}`, Status: test.status, ProcessGroupID: test.pgid, CreatedAt: now,
+				ID: "valid-queued-run", PluginName: "controller", CommandName: "tool",
+				ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedAt: now,
 			}).Error)
 			require.NoError(t, ctx.db.Create(&models.PluginCommandRunOutput{
-				RunID: "malformed-durable-run", ArgvJSON: `[]`, CreatedAt: now,
+				RunID: "valid-queued-run", ArgvJSON: `[]`, CreatedAt: now,
+			}).Error)
+			require.NoError(t, ctx.db.Create(&models.PluginCommandRun{
+				ID: "malformed-durable-run", PluginName: "controller", CommandName: "tool",
+				ParamsJSON: `{}`, Status: test.status, ProcessGroupID: test.pgid,
+				BootSessionID: test.bootSessionID, CreatedAt: now.Add(time.Second),
+			}).Error)
+			require.NoError(t, ctx.db.Create(&models.PluginCommandRunOutput{
+				RunID: "malformed-durable-run", ArgvJSON: `[]`, CreatedAt: now.Add(time.Second),
 			}).Error)
 
 			cfg := defaultPluginCommandControllerConfig()
@@ -484,12 +500,26 @@ func TestPluginCommandControllerRejectsMalformedDurableRunsBeforePublication(t *
 			var blocked *plugin_commands.RecoveryBlockedError
 			require.False(t, errors.As(err, &blocked), "malformed durable state must be fatal, not quarantine")
 			active, activeErr := ctx.pluginCommandActive()
-			require.Nil(t, active)
+			require.Nil(t, active, "malformed durable state must not publish the runtime")
 			require.ErrorIs(t, activeErr, plugin_commands.ErrCommandRuntimeQuarantined)
 			ctx.pluginCommandController.mu.Lock()
 			state := ctx.pluginCommandController.state
 			ctx.pluginCommandController.mu.Unlock()
-			require.Equal(t, pluginCommandRuntimeIdle, state)
+			require.Equal(t, pluginCommandRuntimeIdle, state, "fatal consistency errors must not enter quarantine")
+
+			var valid, malformed models.PluginCommandRun
+			require.NoError(t, ctx.db.First(&valid, "id = ?", "valid-queued-run").Error)
+			require.Equal(t, plugin_commands.RunStatusQueued, valid.Status, "validation must precede recovery terminalization")
+			require.Nil(t, valid.FinishedAt)
+			require.NoError(t, ctx.db.First(&malformed, "id = ?", "malformed-durable-run").Error)
+			require.Equal(t, test.status, malformed.Status)
+			require.Equal(t, test.pgid, malformed.ProcessGroupID)
+			require.Equal(t, test.bootSessionID, malformed.BootSessionID)
+			require.Nil(t, malformed.FinishedAt)
+			var quarantineLogs int64
+			require.NoError(t, ctx.db.Model(&models.LogEntry{}).
+				Where("entity_type = ?", "plugin_command").Count(&quarantineLogs).Error)
+			require.Zero(t, quarantineLogs, "ordinary fatal consistency errors must not be logged as quarantine")
 		})
 	}
 }

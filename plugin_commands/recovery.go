@@ -39,6 +39,16 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 	if d == nil || d.deps.Store == nil || d.deps.Inspector == nil {
 		return fmt.Errorf("plugin_commands: recovery dependencies are incomplete")
 	}
+	runs, err := d.deps.Store.NonterminalRuns()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if err := validateRecoveryRunIdentity(run); err != nil {
+			return err
+		}
+	}
+
 	imports, err := d.deps.Store.NonterminalImports()
 	if err != nil {
 		return fmt.Errorf("list nonterminal plugin command imports: %w", err)
@@ -65,10 +75,6 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 		return fmt.Errorf("plugin_commands: import recovery settings are unavailable")
 	}
 
-	runs, err := d.deps.Store.NonterminalRuns()
-	if err != nil {
-		return err
-	}
 	var blocked []RecoveryBlocker
 	for _, run := range runs {
 		if err := ctx.Err(); err != nil {
@@ -108,6 +114,28 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 	}
 	if len(blocked) != 0 {
 		return &RecoveryBlockedError{Blockers: blocked}
+	}
+	return nil
+}
+
+func validateRecoveryRunIdentity(run RecoveryRun) error {
+	switch run.Status {
+	case RunStatusQueued:
+		if run.ProcessGroupID != nil || run.BootSessionID != "" {
+			return fmt.Errorf("plugin command run %q has invalid process identity: queued rows must have neither a process group nor a boot-session identity", run.ID)
+		}
+	case RunStatusRunning:
+		if run.ProcessGroupID == nil {
+			if run.BootSessionID != "" {
+				return fmt.Errorf("plugin command run %q has invalid process identity: a running row without a process group must not have a boot-session identity", run.ID)
+			}
+			return nil
+		}
+		if *run.ProcessGroupID <= 0 {
+			return fmt.Errorf("plugin command run %q has invalid process identity: persisted process group %d is not positive", run.ID, *run.ProcessGroupID)
+		}
+	default:
+		return fmt.Errorf("plugin command run %q has unknown status %q", run.ID, run.Status)
 	}
 	return nil
 }
