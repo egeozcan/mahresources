@@ -583,6 +583,96 @@ func TestRunnerTimeoutKillsProcessGroupWithScrubbedDescendantBeforePublishingFin
 	}
 }
 
+type unverifiedUntilKilledInspector struct {
+	mu           sync.Mutex
+	killCalls    int
+	inspectCalls int
+	killed       bool
+}
+
+func (i *unverifiedUntilKilledInspector) InspectGroup(int, string) (GroupIdentity, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.inspectCalls++
+	if i.killed {
+		return GroupIdentity{State: GroupDead}, nil
+	}
+	return GroupIdentity{State: GroupAliveUnverified}, nil
+}
+
+func (i *unverifiedUntilKilledInspector) KillGroup(pgid int) error {
+	i.mu.Lock()
+	i.killCalls++
+	i.mu.Unlock()
+	err := syscall.Kill(-pgid, syscall.SIGKILL)
+	i.mu.Lock()
+	i.killed = err == nil || errors.Is(err, syscall.ESRCH)
+	i.mu.Unlock()
+	return err
+}
+
+func TestRunnerKillsLocallyCreatedGroupWhenMemberEnvironmentIsUnverified(t *testing.T) {
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	inspector := &unverifiedUntilKilledInspector{}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: inspector})
+	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "local-owned", []string{"mah-helper", helperProcessFlag, "spawn-scrubbed-descendant", "{{exchange_dir}}"}, 100*time.Millisecond)
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	inspector.mu.Lock()
+	killCalls := inspector.killCalls
+	inspector.mu.Unlock()
+	if killCalls != 1 {
+		t.Fatalf("group kills = %d, want 1", killCalls)
+	}
+	pid := waitForHelperPID(t, filepath.Join(run.ExchangeDir, "descendant.pid"))
+	if processAlive(pid) {
+		t.Fatalf("descendant %d remains alive after terminal publication", pid)
+	}
+}
+
+type countingNativeInspector struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (i *countingNativeInspector) InspectGroup(pgid int, runID string) (GroupIdentity, error) {
+	i.mu.Lock()
+	i.calls++
+	i.mu.Unlock()
+	return (nativeProcessInspector{}).InspectGroup(pgid, runID)
+}
+
+func (i *countingNativeInspector) KillGroup(pgid int) error {
+	return (nativeProcessInspector{}).KillGroup(pgid)
+}
+
+func TestRunnerDoesNotPollProcessGroupWhileParentIsRunning(t *testing.T) {
+	requireNativeProcessOwnership(t)
+	root, commandDir := t.TempDir(), t.TempDir()
+	helperExecutable(t, commandDir, "mah-helper")
+	store := newRunnerTestStore()
+	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
+	inspector := &countingNativeInspector{}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: inspector})
+	run := seedRunnerRun(t, executor, store, settings, "no-poll", []string{"mah-helper", helperProcessFlag, "sleep-ms", "300"}, 2*time.Second)
+	outcome := executor.Execute(context.Background(), run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	inspector.mu.Lock()
+	calls := inspector.calls
+	inspector.mu.Unlock()
+	if calls > 5 {
+		t.Fatalf("process-group inspections = %d while parent ran; want at most 5", calls)
+	}
+}
+
 func TestRunnerCancellationKillsProcessGroup(t *testing.T) {
 	requireNativeProcessOwnership(t)
 	root, commandDir := t.TempDir(), t.TempDir()
@@ -711,29 +801,48 @@ func TestRunnerBoundsDetachedPipeDrain(t *testing.T) {
 	}
 }
 
-type failingProcessInspector struct{}
+type controlledFailingProcessInspector struct {
+	mu        sync.Mutex
+	proveDead bool
+}
 
-func (failingProcessInspector) InspectGroup(int, string) (GroupIdentity, error) {
+func (i *controlledFailingProcessInspector) InspectGroup(int, string) (GroupIdentity, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.proveDead {
+		return GroupIdentity{State: GroupDead}, nil
+	}
 	return GroupIdentity{}, errors.New("inspection unavailable")
 }
-func (failingProcessInspector) KillGroup(int) error { return errors.New("kill unavailable") }
+func (*controlledFailingProcessInspector) KillGroup(int) error { return errors.New("kill unavailable") }
 
-func TestRunnerBoundsInspectionAndKillFailures(t *testing.T) {
+func TestRunnerDoesNotPublishWhileGroupInspectionCannotProveDeath(t *testing.T) {
 	root, commandDir := t.TempDir(), t.TempDir()
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
-	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: failingProcessInspector{}})
-	executor.(*commandExecutor).cleanupTimeout = 100 * time.Millisecond
-	run := seedRunnerRun(t, executor, store, settings, "inspect-fail", []string{"mah-helper", helperProcessFlag, "sleep"}, 5*time.Second)
+	inspector := &controlledFailingProcessInspector{}
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Inspector: inspector})
+	executor.(*commandExecutor).cleanupTimeout = 50 * time.Millisecond
+	run := seedRunnerRun(t, executor, store, settings, "inspect-fail", []string{"mah-helper", helperProcessFlag, "sleep"}, 50*time.Millisecond)
 
-	started := time.Now()
-	outcome := executor.Execute(context.Background(), run)
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("runner cleanup took %s", elapsed)
+	result := make(chan Outcome, 1)
+	go func() { result <- executor.Execute(context.Background(), run) }()
+	select {
+	case outcome := <-result:
+		t.Fatalf("published while process-group death was unverified: %+v", outcome)
+	case <-time.After(250 * time.Millisecond):
 	}
-	if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "inspect process group") {
-		t.Fatalf("outcome = %+v", outcome)
+	inspector.mu.Lock()
+	inspector.proveDead = true
+	inspector.mu.Unlock()
+	select {
+	case outcome := <-result:
+		if outcome.Status != RunStatusFailed || !strings.Contains(outcome.Error, "timeout") {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not publish after process-group death became observable")
 	}
 	record, _, err := store.Run(run.RunID)
 	if err != nil {

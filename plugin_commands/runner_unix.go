@@ -249,8 +249,20 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	}
 	quotaTicker := time.NewTicker(quotaInterval)
 	defer quotaTicker.Stop()
-	groupTicker := time.NewTicker(groupPollInterval)
-	defer groupTicker.Stop()
+	var groupTicker *time.Ticker
+	var groupTick <-chan time.Time
+	startGroupPolling := func() {
+		if groupTicker != nil {
+			return
+		}
+		groupTicker = time.NewTicker(groupPollInterval)
+		groupTick = groupTicker.C
+	}
+	defer func() {
+		if groupTicker != nil {
+			groupTicker.Stop()
+		}
+	}()
 
 	cleanupTimeout := e.cleanupTimeout
 	if cleanupTimeout <= 0 {
@@ -262,8 +274,8 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	ctxDone := ctx.Done()
 	timerDone := timer.C
 	outputUnverified := false
-	ownedGroupObserved := false
 	forcedCleanup := false
+	groupDead := false
 	var cleanupDeadline time.Time
 	appendReason := func(message string) {
 		if message == "" || strings.Contains(reason, message) {
@@ -276,27 +288,11 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		}
 	}
 	killGroup := func() {
-		// The child carries MAHR_COMMAND_RUN_ID from the instant Start returns.
-		// Durable pgid persistence is for crash recovery, not local ownership:
-		// waiting for a stalled write here would leave descendants alive.
-		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
-		if inspectErr != nil || identity.State != GroupAliveOwned {
-			if identity.State != GroupDead {
-				outputUnverified = true
-				if inspectErr != nil {
-					appendReason(fmt.Sprintf("verify process group before kill: %v", inspectErr))
-				} else {
-					appendReason("process group ownership could not be verified before kill")
-				}
-			}
-			// The direct child is still the exact os.Process returned by Start and
-			// may be reaped safely. Never signal an unverified process *group*.
-			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
-				appendReason(fmt.Sprintf("kill command process: %v", processErr))
-			}
-			return
-		}
-		ownedGroupObserved = true
+		// This worker created pgid from the exact process returned by Start, so it
+		// has creation-time authority to signal the group. Environment inspection
+		// is a restart-recovery identity check; using it here strands Apple platform
+		// executables whose environment kern.procargs2 deliberately omits.
+		startGroupPolling()
 		if err := e.deps.Inspector.KillGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
 			appendReason(fmt.Sprintf("kill process group: %v", err))
 			if processErr := cmd.Process.Kill(); processErr != nil && !errors.Is(processErr, os.ErrProcessDone) {
@@ -333,6 +329,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		case waitErr = <-waitDone:
 			parentDone = true
 			waitDone = nil
+			startGroupPolling()
 			if cleanupDeadline.IsZero() {
 				cleanupDeadline = time.Now().Add(cleanupTimeout)
 			}
@@ -347,17 +344,16 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			} else if status != "" {
 				killGroup()
 			}
-		case <-groupTicker.C:
+		case <-groupTick:
 		}
 
-		identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
-		groupDead := inspectErr == nil && identity.State == GroupDead
-		if inspectErr == nil && identity.State == GroupAliveOwned {
-			ownedGroupObserved = true
-		}
-		if inspectErr != nil {
-			outputUnverified = true
-			terminate(RunStatusFailed, fmt.Sprintf("inspect process group: %v", inspectErr), false)
+		if parentDone || status != "" {
+			identity, inspectErr := e.deps.Inspector.InspectGroup(pgid, run.RunID)
+			groupDead = inspectErr == nil && identity.State == GroupDead
+			if inspectErr != nil {
+				outputUnverified = true
+				terminate(RunStatusFailed, fmt.Sprintf("inspect process group: %v", inspectErr), false)
+			}
 		}
 		if parentDone && pipesDone && groupDead {
 			// Prefer a persistence result which became ready alongside the final
@@ -420,12 +416,12 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 			}
 			appendReason("process-group persistence did not finish before cleanup deadline")
 		}
-		if parentDone && pipesDone && (groupDead || !ownedGroupObserved) {
+		if parentDone && pipesDone && groupDead {
 			break
 		}
-		// Once an owned group was signalled, keep polling until inspection proves
-		// it dead. Publishing terminal state earlier would make restart recovery
-		// unable to find and reap surviving descendants.
+		// Keep polling until inspection proves the locally owned group dead.
+		// Neither an unverifiable member environment nor an inspection failure can
+		// turn possible surviving writers into terminal output.
 		cleanupDeadline = time.Now().Add(cleanupTimeout)
 	}
 

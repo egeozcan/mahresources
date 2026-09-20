@@ -40,7 +40,7 @@
 - Produces: live-worker termination that calls `KillGroup` from creation-time authority, waits for `GroupDead`, and starts `groupPollInterval` polling only after parent exit or termination.
 - Does not change restart-recovery signaling rules.
 
-- [ ] **Step 1: Write the failing platform-independent live-ownership test**
+- [x] **Step 1: Write the failing platform-independent live-ownership test**
 
 Add a runner test whose fake inspector reports `GroupAliveUnverified` until `KillGroup` is called, then reports `GroupDead`. Run a timed-out command with a descendant and assert:
 
@@ -55,15 +55,15 @@ if outcome.Status != RunStatusFailed || outcome.AuthoritativeStatus != RunStatus
 
 The test must fail because current `killGroup` kills only `cmd.Process` when inspection is unverified.
 
-- [ ] **Step 2: Write the failing no-continuous-polling test**
+- [x] **Step 2: Write the failing no-continuous-polling test**
 
 Count `InspectGroup` calls while a direct parent remains alive for at least `10 * groupPollInterval` without cancellation. Assert the count stays below 4 before the parent exits. The current ticker should make this fail with repeated calls.
 
-- [ ] **Step 3: Add the Darwin Apple-platform executable regression**
+- [x] **Step 3: Add the Darwin Apple-platform executable regression**
 
 In a `//go:build darwin` test, execute `/bin/sh` from an explicit command path, have it launch `/bin/sleep 600` and write the descendant PID into the exchange directory, cancel the run, wait for durable terminal status, and assert `syscall.Kill(pid, 0)` returns `ESRCH`. This test must fail on the current environment-based local kill gate.
 
-- [ ] **Step 4: Run the RED tests**
+- [x] **Step 4: Run the RED tests**
 
 Run:
 
@@ -73,7 +73,7 @@ go test --tags 'json1 fts5' ./plugin_commands -run 'TestRunner.*(Unverified|Poll
 
 Expected: failures show no group kill for unverified local ownership, excessive inspection calls, and a surviving Darwin descendant.
 
-- [ ] **Step 5: Implement creation-time live authority**
+- [x] **Step 5: Implement creation-time live authority**
 
 Refactor `commandExecutor.Execute` so:
 
@@ -89,7 +89,7 @@ is used for timeout, cancellation, quota termination, disable, and shutdown afte
 
 Do not create the group ticker at fork. Create/enable it only after `parentDone` becomes true or `terminate` first runs. After termination, keep polling until `InspectGroup` reports `GroupDead`; neither `GroupAliveUnverified` nor an inspection error permits the loop to publish terminal state.
 
-- [ ] **Step 6: Run GREEN and race verification**
+- [x] **Step 6: Run GREEN and race verification**
 
 Run:
 
@@ -100,7 +100,7 @@ go test -race --tags 'json1 fts5' ./plugin_commands -run 'TestRunner.*(Unverifie
 
 Expected: all selected tests pass; Darwin descendant is absent before terminal publication.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add plugin_commands/runner_unix.go plugin_commands/runner_test.go plugin_commands/process_identity_test.go plugin_commands/process_darwin_platform_test.go

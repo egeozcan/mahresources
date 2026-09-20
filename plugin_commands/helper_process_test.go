@@ -149,6 +149,16 @@ func runPluginCommandHelper(args []string) int {
 		for {
 			time.Sleep(time.Second)
 		}
+	case "sleep-ms":
+		if len(args) != 2 {
+			return 2
+		}
+		delay, err := time.ParseDuration(args[1] + "ms")
+		if err != nil {
+			return 3
+		}
+		time.Sleep(delay)
+		return 0
 	default:
 		fmt.Fprintln(os.Stderr, "unknown helper mode")
 		return 2
