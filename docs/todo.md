@@ -1,3 +1,71 @@
+# Download completion refresh storm (2026-09-21)
+
+**Goal:** Coalesce background-download completion bursts into bounded, serialized resource-list refreshes without changing list morphing or lightbox reconciliation.
+
+- [x] Establish a red-capable Vitest seam around the real `download-completed` window event and reproduce concurrent fetch fan-out.
+- [x] Debounce completion bursts, serialize refreshes, and preserve one trailing dirty refresh.
+- [x] Preserve multi-list morphing and post-morph lightbox reconciliation; make failures recoverable.
+- [x] Deduplicate actually dispatched completion notifications, independently of init snapshots.
+- [x] Add a refresh-origin request header and rebuild committed JavaScript.
+- [x] Run focused tests, the existing lightbox refresh E2E test, and relevant broader verification.
+- [x] Record verification evidence and residual follow-ups here.
+
+## Latest independent review remediation
+
+- [x] Reproduce init(completed) followed by buffered updated(completed) in Vitest.
+- [x] Track dispatched completions independently; reset on an observed retry transition.
+- [x] Rebuild JavaScript and run focused validation.
+
+The regression failed before the fix (expected one dispatch, received zero).
+After the fix, the cockpit and refresh suites pass: 2 files / 65 tests.
+Coverage also checks duplicate suppression across reconnect and retry resets
+observed through `updated`, `added`, and `init`. `npm run build-js` passed
+with the existing chunk-size advisory. The full unit suite also passed
+(91 files / 1,426 tests), and the source whitespace check passed
+(`git diff --check -- . ':(exclude)public/dist/main.js'`). No files are staged.
+The GPT-6 Astra loop's second fresh review found no P0/P1 issues and returned
+`Merge verdict: OK`. Parent verification then reran the focused unit suites
+(65/65) and the ephemeral lightbox refresh E2E suite (4/4). CLI and database
+suites were not rerun after this narrow notification-only remediation; the full
+pre-review browser/auth/CLI evidence remains recorded below.
+
+## Review
+
+The red-capable focused test reproduced the incident mechanism exactly: 120
+`download-completed` events produced 120 immediate page fetches. After the fix,
+the same test produces one debounced fetch; events delivered while that fetch is
+unresolved produce no concurrent request and exactly one trailing fetch.
+
+Implementation notes:
+
+- `src/components/downloadListRefresh.js` owns the debounce timer, in-flight
+  guard and dirty bit while retaining the existing equal-shape multi-list morph
+  and lightbox reconciliation callback.
+- Automatic refresh requests carry
+  `X-Mahresources-Refresh-Reason: download-completed`.
+- `downloadCockpit` remembers actually dispatched completions rather than
+  treating an `init` snapshot as an announcement. A buffered first completion
+  therefore notifies even if init already showed it completed; subsequent
+  duplicates (including across reconnect) are inert. Observed non-completed
+  states reset notification tracking for a retry.
+- HTTP and response-body failures release the in-flight guard; a later
+  completion can refresh normally.
+
+Verification:
+
+- `npm run test:unit -- --run` — 91 files / 1,422 tests passed.
+- `cd e2e && npm run test:with-server -- tests/lightbox/items-refresh.spec.ts`
+  — 4/4 passed against an ephemeral server.
+- `cd e2e && npm run test:with-server:all` — 2,242 passed, 5 intentionally
+  skipped across browser, accessibility, auth, CLI and CLI-doctest projects.
+- `npm run build-js` — passed; `public/dist/main.js` rebuilt.
+- `git diff --check -- . ':(exclude)public/dist/main.js'` — passed. The generated
+  minified bundle retains pre-existing whitespace inside template literals, so
+  the ordinary whitespace checker reports those regenerated lines.
+
+Database indexes, keyset pagination, result caching and pool sizing remain
+follow-up defenses; they are intentionally not part of this source-level fix.
+
 # Plugin-declared server commands implementation (2026-09-19)
 
 **Goal:** Execute `docs/superpowers/plans/2026-09-19-plugin-commands.md`

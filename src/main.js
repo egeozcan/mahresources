@@ -116,6 +116,7 @@ import { sectionConfigForm } from './components/sectionConfigForm.js';
 import { templateBundle } from './components/templateBundle.js';
 import { accountSecurity } from './components/accountSecurity.js';
 import { resourceUpload } from './components/resourceUpload.js';
+import { setupDownloadListRefresh } from './components/downloadListRefresh.js';
 import { reductionBulkAction } from './components/resourceReductionBulk.js';
 import { reductionCreateForm } from './components/resourceReductionCreate.js';
 import { registerReductionReviewStore } from './components/reductionReview.js';
@@ -123,8 +124,6 @@ import { registerReductionReviewStore } from './components/reductionReview.js';
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
 import { createLiveRegion } from './utils/ariaLiveRegion.js';
-import { morphAndReinitChangedComponents } from './utils/shortcodeElementMorph.js';
-import { findListContainer, LIST_CONTAINER_SELECTOR } from './utils/listContainer.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -283,44 +282,9 @@ setupPasteListener();
 // Setup entity-link hover-preview cards (respects the "showHoverPreviews" setting)
 setupHoverCard();
 
-// Refresh resource lists when background downloads complete
-window.addEventListener('download-completed', async (e) => {
-  const job = e.detail;
-  const listContainer = findListContainer(document);
-
-  if (!listContainer || !job.resourceId) return;
-
-  try {
-    // Fetch the current page
-    const response = await fetch(window.location.href, {
-      headers: { 'Accept': 'text/html' }
-    });
-    const html = await response.text();
-
-    // Parse and extract the new list container
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const newListContainer = findListContainer(doc);
-
-    if (newListContainer) {
-      // A page can hold several lists (a group page has its own resources beside its
-      // related ones). Morphing only the first left the others showing pre-download
-      // content, so pair them up when the refreshed document has the same shape and fall
-      // back to the single container when it does not.
-      const current = Array.from(document.querySelectorAll(LIST_CONTAINER_SELECTOR));
-      const refreshed = Array.from(doc.querySelectorAll(LIST_CONTAINER_SELECTOR));
-
-      if (current.length > 1 && current.length === refreshed.length) {
-        current.forEach((el, i) => morphAndReinitChangedComponents(el, refreshed[i]));
-      } else {
-        morphAndReinitChangedComponents(listContainer, newListContainer);
-      }
-
-      // Re-collect lightbox items for the new cards. This reconciles rather than rebuilds
-      // when the viewer is open — see initFromDOM.
-      Alpine.store('lightbox').initFromDOM();
-    }
-  } catch (err) {
-    console.error('Failed to refresh resource list:', err);
-  }
+// Refresh resource lists when background downloads complete. The coordinator owns
+// burst coalescing and serialization; main supplies the Alpine reconciliation that
+// must run after a successful morph.
+setupDownloadListRefresh({
+  afterRefresh: () => Alpine.store('lightbox').initFromDOM(),
 });

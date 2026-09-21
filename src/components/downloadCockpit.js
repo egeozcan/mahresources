@@ -21,6 +21,9 @@ export function downloadCockpit() {
         // cleared row straight back, because the removal events arrive after the
         // clear request resolves.
         _dismissedIds: new Set(),
+        // Init can already contain a completion whose first update is buffered.
+        // Remember notifications, not snapshot statuses, across reconnects.
+        _notifiedCompletionIds: new Set(),
         // BH-036: retention window (ms). Read from the meta tag emitted by base.tpl.
         exportRetentionMs: 0,
         // How many rows the panel renders, from the same meta-tag channel. The
@@ -233,6 +236,9 @@ export function downloadCockpit() {
             this.eventSource.addEventListener('init', (e) => {
                 const data = JSON.parse(e.data);
                 this.jobs = data.jobs || [];
+                for (const job of this.jobs) {
+                    if (job.status !== 'completed') this._notifiedCompletionIds.delete(job.id);
+                }
                 // Load action jobs into the same array with source marker
                 const actionJobs = (data.actionJobs || []).map(j => ({ ...j, _isAction: true }));
                 this.jobs = [...this.jobs, ...actionJobs];
@@ -245,6 +251,7 @@ export function downloadCockpit() {
 
             this.eventSource.addEventListener('added', (e) => {
                 const { job } = JSON.parse(e.data);
+                if (job.status !== 'completed') this._notifiedCompletionIds.delete(job.id);
                 if (!this.upsertJob(job)) return;
                 this.announce(`Download queued: ${this.truncateUrl(job.url, 30)}`);
             });
@@ -252,8 +259,12 @@ export function downloadCockpit() {
             this.eventSource.addEventListener('updated', (e) => {
                 const { job } = JSON.parse(e.data);
                 const index = this.jobs.findIndex(j => j.id === job.id);
+                if (job.status !== 'completed') this._notifiedCompletionIds.delete(job.id);
                 if (index !== -1) {
                     this.jobs[index] = job;
+                } else {
+                    // An update can survive while its earlier added event was dropped.
+                    this.jobs.push(job);
                 }
 
                 // Calculate download speed
@@ -281,10 +292,11 @@ export function downloadCockpit() {
                 if (this.isPluginCommand(job) && this.isFinished(job)) {
                     delete this.speedTracking[job.id];
                     this.announce(`Plugin command ${this.statusLabels[effectiveStatus]?.toLowerCase() || effectiveStatus}: ${job.authoritativeId || job.id}`);
-                } else if (job.status === 'completed') {
+                } else if (job.status === 'completed' && !this._notifiedCompletionIds.has(job.id)) {
                     delete this.speedTracking[job.id];
                     this.announce(`Download completed: ${this.truncateUrl(job.url, 30)}`);
-                    // Dispatch global event for resource lists to reload
+                    // Only a dispatched update counts; init never announces completion.
+                    this._notifiedCompletionIds.add(job.id);
                     window.dispatchEvent(new CustomEvent('download-completed', { detail: job }));
                 } else if (job.status === 'failed') {
                     delete this.speedTracking[job.id];

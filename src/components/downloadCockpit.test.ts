@@ -105,6 +105,78 @@ describe('background job events preserve the panel visibility', () => {
         expect(component.isOpen).toBe(true);
         expect(component.jobs).toHaveLength(1);
     });
+
+    test('repeated completed updates dispatch one resource-list notification', () => {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        component.eventSource.emit('init', {
+            jobs: [job({ id: 'finished', status: 'downloading' })],
+            actionJobs: [],
+        });
+        const completed = job({ id: 'finished', status: 'completed', resourceId: 42 });
+
+        component.eventSource.emit('updated', { job: completed });
+        component.eventSource.emit('updated', { job: completed });
+
+        expect(dispatchEvent).toHaveBeenCalledTimes(1);
+        expect(component.announce).toHaveBeenCalledTimes(1);
+    });
+
+    test('a completed init snapshot does not suppress its buffered completion update', () => {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        const completed = job({ id: 'finished', status: 'completed', resourceId: 42 });
+        component.eventSource.emit('init', { jobs: [completed] });
+        expect(dispatchEvent).not.toHaveBeenCalled();
+
+        component.eventSource.emit('updated', { job: completed });
+        component.eventSource.emit('updated', { job: completed });
+
+        expect(dispatchEvent).toHaveBeenCalledTimes(1);
+        expect(dispatchEvent.mock.calls[0][0].type).toBe('download-completed');
+        expect(dispatchEvent.mock.calls[0][0].detail).toEqual(completed);
+        expect(component.announce).toHaveBeenCalledTimes(1);
+
+        component.disconnect();
+        component.connect();
+        component.eventSource.emit('init', { jobs: [completed] });
+        component.eventSource.emit('updated', { job: completed });
+        expect(dispatchEvent).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['updated', 'added', 'init'])('a retry observed through %s allows another completion notification', (event) => {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        const completed = job({ id: 'finished', status: 'completed', resourceId: 42 });
+        component.eventSource.emit('updated', { job: completed });
+        const retry = { ...completed, status: 'pending' };
+        component.eventSource.emit(event, event === 'init' ? { jobs: [retry] } : { job: retry });
+        component.eventSource.emit('updated', { job: completed });
+        component.eventSource.emit('updated', { job: completed });
+
+        expect(dispatchEvent).toHaveBeenCalledTimes(2);
+    });
+
+    test('distinct completions still notify while failed and cancelled updates do not', () => {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        component.eventSource.emit('init', {
+            jobs: [
+                job({ id: 'first' }),
+                job({ id: 'second' }),
+                job({ id: 'failed' }),
+                job({ id: 'cancelled' }),
+            ],
+            actionJobs: [],
+        });
+
+        component.eventSource.emit('updated', { job: job({ id: 'first', status: 'completed', resourceId: 41 }) });
+        component.eventSource.emit('updated', { job: job({ id: 'second', status: 'completed', resourceId: 42 }) });
+        component.eventSource.emit('updated', { job: job({ id: 'failed', status: 'failed' }) });
+        component.eventSource.emit('updated', { job: job({ id: 'cancelled', status: 'cancelled' }) });
+
+        expect(dispatchEvent).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('plugin command jobs use durable authority and only expose cancel while running', () => {

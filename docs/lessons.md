@@ -2,6 +2,14 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## An SSE snapshot is not a delivered completion notification
+
+A subscribe-before-snapshot stream may include a finished job in `init` before
+sending its buffered first completion update. Deduplicate against notifications
+actually dispatched, not the status installed by `init`; preserve that knowledge
+across reconnect and reset it when a retry's non-completed state is observed.
+Test init(completed) followed by repeated updated(completed) explicitly.
+
 ## Plugin lifecycle tests must initialize every production revocation owner
 
 Disabling a plugin revokes durable command work even when the plugin's current
