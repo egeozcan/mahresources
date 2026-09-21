@@ -85,7 +85,7 @@ function init() end
 `)
 
 	granted := []string{
-		"mah.db", "mah.db.query_resources", "mah.db.get_resource", "mah.db.count_notes",
+		"mah.db", "mah.db.query_resources", "mah.db.get_resource", "mah.db.get_series", "mah.db.count_notes",
 		"mah.db.mrql_query", "mah.db.get_resource_data", "mah.db.list_tags",
 		"mah.shortcode", "mah.block_type", "mah.display_type",
 		// Always installed: none of these reads or writes anything outside the
@@ -100,7 +100,7 @@ function init() end
 	}
 
 	withheld := []string{
-		"mah.db.create_note", "mah.db.update_resource", "mah.db.delete_group",
+		"mah.db.create_note", "mah.db.create_series", "mah.db.patch_series", "mah.db.update_resource", "mah.db.delete_group",
 		"mah.db.add_tags", "mah.db.create_resource_from_url",
 		"mah.kv", "mah.http", "mah.image",
 		"mah.download", "mah.download.submit",
@@ -147,6 +147,7 @@ function init() end
 `)
 	for _, path := range []string{
 		"mah.db.create_note", "mah.db.update_note", "mah.db.patch_note", "mah.db.delete_note",
+		"mah.db.create_series", "mah.db.patch_series",
 		"mah.db.add_tags", "mah.db.remove_tags", "mah.db.add_groups", "mah.db.add_resources_to_note",
 		// The three that are declared on EntityQuerier but are writes. They have
 		// no other behavioural assertion anywhere, and an arch rule alone left

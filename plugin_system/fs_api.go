@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ type ExchangeMediator interface {
 	CommandRuns(plugin_commands.Access) ([]plugin_commands.RunView, error)
 	ListCommandFiles(plugin_commands.Access, string) (plugin_commands.Listing, error)
 	ReadCommandFile(plugin_commands.Access, string, string, int64) ([]byte, error)
+	SetCommandResourceThumbnail(context.Context, plugin_commands.Access, string, string, uint) error
 	SubmitCommandImport(plugin_commands.ImportSubmission) (plugin_commands.ImportSubmitResult, error)
 	DiscardCommandFile(plugin_commands.Access, string, string) error
 	DiscardCommandRun(plugin_commands.Access, string) error
@@ -36,7 +38,7 @@ func (pm *PluginManager) exchangeHost() ExchangeMediator {
 	return value.(ExchangeMediator)
 }
 
-func (pm *PluginManager) registerFSAPI(L *lua.LState, mahMod *lua.LTable, canCreateResource bool) {
+func (pm *PluginManager) registerFSAPI(L *lua.LState, mahMod *lua.LTable, canWriteResources bool) {
 	module := L.NewTable()
 	functions := map[string]lua.LGFunction{
 		"runs": func(L *lua.LState) int {
@@ -117,8 +119,9 @@ func (pm *PluginManager) registerFSAPI(L *lua.LState, mahMod *lua.LTable, canCre
 			return 1
 		},
 	}
-	if canCreateResource {
+	if canWriteResources {
 		functions["create_resource"] = pm.createResourceFromExchange
+		functions["set_resource_thumbnail"] = pm.setResourceThumbnailFromExchange
 	}
 	L.SetFuncs(module, functions)
 	mahMod.RawSetString("fs", module)
@@ -145,6 +148,23 @@ func (pm *PluginManager) exchangeCall(L *lua.LState) (ExchangeMediator, liveExch
 		PluginName:  admission.pluginName,
 		ActorUserID: actorPointer(pm.actorFor(L)),
 	}, Generation: admission.generation, root: admission.root, release: admission.release}, nil
+}
+
+func (pm *PluginManager) setResourceThumbnailFromExchange(L *lua.LState) int {
+	checkExactArgs(L, "mah.fs.set_resource_thumbnail", 3)
+	host, access, err := pm.exchangeCall(L)
+	if err != nil {
+		return pushLuaHostError(L, err)
+	}
+	defer access.release()
+	resourceID := checkEntityID(L, 3)
+	if err := host.SetCommandResourceThumbnail(
+		pm.luaContext(L), access.Access, L.CheckString(1), L.CheckString(2), resourceID,
+	); err != nil {
+		return pushLuaHostError(L, err)
+	}
+	L.Push(lua.LTrue)
+	return 1
 }
 
 func (pm *PluginManager) createResourceFromExchange(L *lua.LState) int {
@@ -192,7 +212,10 @@ func (pm *PluginManager) createResourceFromExchange(L *lua.LState) int {
 func checkImportFields(L *lua.LState, index int) plugin_commands.ResourceFields {
 	table := L.CheckTable(index)
 	checkEntityIDOpts(L, index, table)
-	allowed := map[string]bool{"name": true, "description": true, "tags": true, "groups": true, "meta": true}
+	allowed := map[string]bool{
+		"name": true, "description": true, "tags": true, "groups": true,
+		"meta": true, "series_id": true, "series_slug": true,
+	}
 	table.ForEach(func(key, _ lua.LValue) {
 		name, ok := key.(lua.LString)
 		if !ok || !allowed[string(name)] {
@@ -237,6 +260,18 @@ func checkImportFields(L *lua.LState, index int) plugin_commands.ResourceFields 
 			L.ArgError(index, "meta must be a table")
 		}
 		fields.Meta = luaTableToGoMap(meta)
+	}
+	if value := table.RawGetString("series_id"); value != lua.LNil {
+		// checkEntityIDOpts above already rejected non-numeric, fractional and
+		// unsafe values while the original Lua shape was still available.
+		fields.SeriesID = uint(value.(lua.LNumber))
+	}
+	if value := table.RawGetString("series_slug"); value != lua.LNil {
+		slug, ok := value.(lua.LString)
+		if !ok {
+			L.ArgError(index, "series_slug must be a string")
+		}
+		fields.SeriesSlug = string(slug)
 	}
 	return fields
 }

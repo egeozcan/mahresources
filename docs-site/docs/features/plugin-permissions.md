@@ -77,7 +77,7 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 | `jobs` | `mah.start_job`, and the `job_*` reporters |
 | `schedule` | `mah.schedule` |
 | `job_events` | `mah.on` for the `after_job_*` events |
-| `commands` | declared `mah.commands` execution and mediated `mah.fs` exchange access; importing additionally needs `db:write` |
+| `commands` | declared `mah.commands` execution and mediated `mah.fs` exchange access; importing Resources and setting their thumbnails additionally need `db:write` |
 
 Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc`, `mah.get_setting`. None reads or writes anything outside the plugin itself.
 

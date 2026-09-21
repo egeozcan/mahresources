@@ -32,7 +32,15 @@ type commandLuaHost struct {
 	readBody      []byte
 	imported      plugin_commands.ImportSubmitResult
 	imports       []plugin_commands.ImportSubmission
+	thumbnails    []thumbnailCall
 	discards      []string
+}
+
+type thumbnailCall struct {
+	access     plugin_commands.Access
+	runID      string
+	name       string
+	resourceID uint
 }
 
 func (h *commandLuaHost) SubmitPluginCommand(req plugin_commands.CommandRequest) (string, error) {
@@ -84,6 +92,16 @@ func (h *commandLuaHost) ReadCommandFile(access plugin_commands.Access, runID, n
 	}
 	return append([]byte(nil), h.readBody...), nil
 }
+func (h *commandLuaHost) SetCommandResourceThumbnail(_ context.Context, access plugin_commands.Access, runID, name string, resourceID uint) error {
+	if !h.allows(access, runID) {
+		return fmt.Errorf("command run not accessible")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.thumbnails = append(h.thumbnails, thumbnailCall{access: access, runID: runID, name: name, resourceID: resourceID})
+	return nil
+}
+
 func (h *commandLuaHost) SubmitCommandImport(sub plugin_commands.ImportSubmission) (plugin_commands.ImportSubmitResult, error) {
 	if !h.allows(sub.Access, sub.RunID) {
 		return plugin_commands.ImportSubmitResult{}, fmt.Errorf("command run not accessible")
@@ -340,17 +358,18 @@ func TestCommandsAndFSRefuseInsideDBTransaction(t *testing.T) {
 __run, __run_err = mah.commands.run("download", {url="literal"})
 __runs, __runs_err = mah.fs.runs()
 __import, __import_err = mah.fs.create_resource("run", "out", {})
+__thumbnail, __thumbnail_err = mah.fs.set_resource_thumbnail("run", "cover.jpg", 1)
 `); err != nil {
 		t.Fatal(err)
 	}
-	for _, pair := range [][2]string{{"__run", "__run_err"}, {"__runs", "__runs_err"}, {"__import", "__import_err"}} {
+	for _, pair := range [][2]string{{"__run", "__run_err"}, {"__runs", "__runs_err"}, {"__import", "__import_err"}, {"__thumbnail", "__thumbnail_err"}} {
 		if L.GetGlobal(pair[0]) != lua.LNil || L.GetGlobal(pair[1]) == lua.LNil {
 			t.Fatalf("transaction refusal %s = %v/%v", pair[0], L.GetGlobal(pair[0]), L.GetGlobal(pair[1]))
 		}
 	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
-	if len(host.requests) != 0 || len(host.imports) != 0 {
+	if len(host.requests) != 0 || len(host.imports) != 0 || len(host.thumbnails) != 0 {
 		t.Fatal("transaction-bound request reached command host")
 	}
 }

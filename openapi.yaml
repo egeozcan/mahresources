@@ -2236,6 +2236,8 @@ components:
             type: object
         SeriesCreator:
             properties:
+                Meta:
+                    type: string
                 Name:
                     type: string
                 Slug:

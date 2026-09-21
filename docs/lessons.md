@@ -2,6 +2,55 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Lock every writer that derives denormalized state from one aggregate
+
+Locking only the operation that edits an aggregate does not protect derived
+rows. If a Series metadata patch locks the Series but Resource assignment reads
+it unlocked, assignment can persist the old effective metadata after the patch
+has already snapshotted its members; neither transaction then repairs the new
+row. Use one shared row-lock helper for metadata patches, assignment, removal
+and deletion. A move needs source and destination together, sorted before either
+lock is acquired; destination-first locking turns reciprocal moves into a
+classic two-row deadlock. The Resource read used to discover those locks is not
+safe state: lock and refresh the Resource afterwards, and restart discovery if
+membership moved while waiting. Every destructive sibling must join the same
+order too — single delete was fixed while bulk delete and merge still held
+Resource then reached back for Series. Test patch overlap, two moves of one
+Resource, reciprocal moves, and every deletion entry point on real PostgreSQL
+rather than inferring safety from transactions alone.
+
+A filesystem copy made before database locks is another optimistic snapshot. If
+a version upload can change hash/location while delete prepares its backup,
+revalidate content identity with the locked row and repeat the copy; never use a
+fresh row to delete bytes while retaining the old row's backup and filesystem
+handle.
+
+## A partial write must not pre-read fields it does not own
+
+When the application operation already loads and updates an entity inside its
+transaction, a plugin adapter must represent omitted fields as omitted rather
+than reading their current values first and replaying them. That preliminary
+read turns a partial write into a stale read-modify-write: another caller can
+commit between the adapter read and the operation transaction, and the adapter
+then overwrites the newer value it never intended to change. Keep preservation
+at the transaction-owning operation. On PostgreSQL, the transaction alone is
+not enough: READ COMMITTED readers can overlap, so lock the row before reading
+fields that a partial write will preserve. If an adapter still needs a
+presentation read for hook inputs or association decoding, carry a field-presence
+map across the boundary and ignore those preliminary values for omitted fields;
+only an actual hook rewrite becomes explicit. Test the adapter's read-to-write
+gap and a real concurrent pair of complementary patches.
+
+## Keep exchange-file operations at the exchange seam
+
+When plugin-produced bytes already live in a command exchange folder, do not
+make the plugin import those bytes as a Resource merely to pass that Resource's
+ID into another host operation. The exchange mediator already owns safe path
+resolution, run authorization, leases, actor identity and retention. Expose the
+operation through `mah.fs` with `(run_id, name, ...)`, and let the
+application-owned mediator consume the admitted file directly. This avoids a
+throwaway entity, a base64 round trip and a second authorization path.
+
 ## A plugin command's helper must be declared on its trusted path
 
 A plugin command runs with `PATH` set to `PLUGIN_COMMAND_PATH` and nothing else,

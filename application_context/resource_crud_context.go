@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -242,6 +243,16 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		return nil, err
 	}
 
+	patching := resourceQuery.PatchFields != nil
+	fieldProvided := func(name string) bool {
+		return !patching || resourceQuery.PatchFields[name]
+	}
+	markHookChange := func(name string) {
+		if patching {
+			resourceQuery.PatchFields[name] = true
+		}
+	}
+	hookName, hookDescription, hookMeta := resourceQuery.Name, resourceQuery.Description, resourceQuery.Meta
 	hookData := map[string]any{
 		"id":                   float64(resourceQuery.ID),
 		"name":                 resourceQuery.Name,
@@ -256,76 +267,162 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	}
 	if name, ok := hookData["name"].(string); ok {
 		resourceQuery.Name = name
+		if name != hookName {
+			markHookChange("name")
+		}
 	}
 	if desc, ok := hookData["description"].(string); ok {
 		resourceQuery.Description = desc
+		if desc != hookDescription {
+			markHookChange("description")
+		}
 	}
 	if hMeta, ok := hookData["meta"].(string); ok {
 		resourceQuery.Meta = hMeta
+		if hMeta != hookMeta {
+			markHookChange("meta")
+		}
 	}
 
 	var resource models.Resource
-
-	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	err := ctx.withResourceSeriesRetry("edit", func(altCtx *MahresourcesContext) error {
 		tx := altCtx.db
 
 		if err := tx.Preload(clause.Associations, pageLimit).First(&resource, resourceQuery.ID).Error; err != nil {
 			return err
 		}
 
-		if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
-			return err
+		// Resolve the requested membership before taking any Series lock, then
+		// lock the old and destination rows together in ascending id order. A
+		// destination-first lock deadlocks reciprocal moves; locking only the
+		// destination lets a metadata patch update this Resource after it moved.
+		var oldSeriesID *uint
+		if resource.SeriesID != nil {
+			oldID := *resource.SeriesID
+			oldSeriesID = &oldID
+		}
+		newSeriesID := uint(0)
+		if oldSeriesID != nil {
+			newSeriesID = *oldSeriesID
+		}
+		membershipRequested := !patching
+		if patching {
+			switch {
+			case resourceQuery.PatchFields["series_id"] && resourceQuery.SeriesId > 0:
+				membershipRequested = true
+				newSeriesID = resourceQuery.SeriesId
+			case resourceQuery.PatchFields["series_slug"] && resourceQuery.SeriesSlug != "":
+				membershipRequested = true
+				newSeriesID = 0
+			case resourceQuery.PatchFields["series_id"]:
+				membershipRequested = true
+				newSeriesID = 0
+			}
+		} else {
+			newSeriesID = resourceQuery.SeriesId
 		}
 
-		if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
-			return err
+		seriesCreator := false
+		if membershipRequested && newSeriesID == 0 && resourceQuery.SeriesSlug != "" {
+			series, created, err := ctx.ensureSeriesForResource(tx, resourceQuery.SeriesSlug)
+			if err != nil {
+				return fmt.Errorf("series slug %q: %w", resourceQuery.SeriesSlug, err)
+			}
+			newSeriesID = series.ID
+			seriesCreator = created
+		}
+		seriesChanged := membershipRequested && !sameOptionalUint(oldSeriesID, uintPtrOrNil(newSeriesID))
+
+		lockIDs := []uint{newSeriesID}
+		if oldSeriesID != nil {
+			lockIDs = append(lockIDs, *oldSeriesID)
+		}
+		lockedSeries, err := lockSeriesRowsForWrite(tx, lockIDs...)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				var current models.Resource
+				if readErr := tx.First(&current, resourceQuery.ID).Error; readErr != nil {
+					return readErr
+				}
+				if !sameOptionalUint(oldSeriesID, current.SeriesID) {
+					resource = current
+					return errResourceSeriesChanged
+				}
+			}
+			return fmt.Errorf("lock resource series membership: %w", err)
 		}
 
-		if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
+		// The first read exists only to discover the source Series for canonical
+		// locking. A Series patch or another move may commit while this edit waits
+		// for those locks, so lock and refresh the Resource before deriving or
+		// preserving any field. If membership moved, roll back and resolve the new
+		// source in a fresh transaction rather than taking another Series lock out
+		// of order.
+		var lockedResource models.Resource
+		lockedResourceQuery := tx
+		if tx.Dialector.Name() == "postgres" {
+			lockedResourceQuery = lockedResourceQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := lockedResourceQuery.Preload(clause.Associations, pageLimit).
+			First(&lockedResource, resourceQuery.ID).Error; err != nil {
 			return err
 		}
+		if !sameOptionalUint(oldSeriesID, lockedResource.SeriesID) {
+			resource = lockedResource
+			return errResourceSeriesChanged
+		}
+		resource = lockedResource
+		if oldSeriesID != nil {
+			resource.Series = lockedSeries[*oldSeriesID]
+		}
 
-		if len(resourceQuery.Groups) > 0 {
-			if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
+		if fieldProvided("groups") {
+			if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
+				return err
+			}
+			if len(resourceQuery.Groups) > 0 {
+				if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
+					return err
+				}
+			}
+			groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+			if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
 				return err
 			}
 		}
-		if len(resourceQuery.Notes) > 0 {
-			if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
+		if fieldProvided("notes") {
+			if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
+				return err
+			}
+			if len(resourceQuery.Notes) > 0 {
+				if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
+					return err
+				}
+			}
+			notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+			if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
 				return err
 			}
 		}
-		if len(resourceQuery.Tags) > 0 {
-			if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
+		if fieldProvided("tags") {
+			if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
 				return err
 			}
-		}
-
-		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
-		if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
-			return err
-		}
-
-		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
-		if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
-			return err
-		}
-
-		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
-		if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
-			return err
-		}
-
-		// Ensure Series is loaded if SeriesID is set (clause.Associations with pageLimit may not load it)
-		if resource.SeriesID != nil && resource.Series == nil {
-			resource.Series = &models.Series{}
-			if err := tx.First(resource.Series, *resource.SeriesID).Error; err != nil {
+			if len(resourceQuery.Tags) > 0 {
+				if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
+					return err
+				}
+			}
+			tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+			if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
 				return err
 			}
 		}
 
-		resource.Name = resourceQuery.Name
-		if resourceQuery.Meta != "" {
+		if fieldProvided("name") {
+			resource.Name = resourceQuery.Name
+		}
+		if fieldProvided("meta") && resourceQuery.Meta != "" {
 			if err := ValidateMeta(resourceQuery.Meta); err != nil {
 				return err
 			}
@@ -339,16 +436,28 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 				resource.OwnMeta = ownMeta
 			}
 		}
-		resource.Description = resourceQuery.Description
-		resource.OriginalName = resourceQuery.OriginalName
-		resource.OriginalLocation = resourceQuery.OriginalLocation
-		resource.Category = resourceQuery.Category
-		resource.ContentCategory = resourceQuery.ContentCategory
-		resource.ResourceCategoryId = ctx.resourceCategoryIdOrDefault(resourceQuery.ResourceCategoryId)
-		if resourceQuery.Width != 0 {
+		if fieldProvided("description") {
+			resource.Description = resourceQuery.Description
+		}
+		if fieldProvided("original_filename") {
+			resource.OriginalName = resourceQuery.OriginalName
+		}
+		if fieldProvided("original_location") {
+			resource.OriginalLocation = resourceQuery.OriginalLocation
+		}
+		if fieldProvided("category") {
+			resource.Category = resourceQuery.Category
+		}
+		if fieldProvided("content_category") {
+			resource.ContentCategory = resourceQuery.ContentCategory
+		}
+		if fieldProvided("resource_category_id") {
+			resource.ResourceCategoryId = ctx.resourceCategoryIdOrDefault(resourceQuery.ResourceCategoryId)
+		}
+		if fieldProvided("width") && resourceQuery.Width != 0 {
 			resource.Width = resourceQuery.Width
 		}
-		if resourceQuery.Height != 0 {
+		if fieldProvided("height") && resourceQuery.Height != 0 {
 			resource.Height = resourceQuery.Height
 		}
 		// Validate the (possibly changed) owner against the caller's scope. The
@@ -360,84 +469,52 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		// the auth-off system. Use the transaction's db (tx), never the outer
 		// ctx.db — a non-transaction query here would need a second connection and
 		// deadlock under a single-connection pool.
-		if resourceQuery.OwnerId != 0 {
-			var ownerCheck models.Group
-			if err := tx.Select("id").First(&ownerCheck, resourceQuery.OwnerId).Error; err != nil {
+		if fieldProvided("owner_id") {
+			if resourceQuery.OwnerId != 0 {
+				var ownerCheck models.Group
+				if err := tx.Select("id").First(&ownerCheck, resourceQuery.OwnerId).Error; err != nil {
+					return errors.New("owner group not found")
+				}
+			} else if altCtx.isScopedPrincipal() {
 				return errors.New("owner group not found")
 			}
-		} else if altCtx.isScopedPrincipal() {
-			return errors.New("owner group not found")
-		}
 
-		resource.OwnerId = uintPtrOrNil(resourceQuery.OwnerId)
-		if resourceQuery.OwnerId != 0 {
-			resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
-		} else {
-			resource.Owner = nil
-		}
-
-		// Handle series assignment changes
-		// Capture old series ID before any mutations so auto-delete logic can
-		// clean up the previous series when the resource moves to a new one.
-		oldSeriesID := resource.SeriesID
-
-		// Resolve SeriesSlug to SeriesId if provided (matches create-path behavior)
-		newSeriesID := resourceQuery.SeriesId
-		if newSeriesID == 0 && resourceQuery.SeriesSlug != "" {
-			series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
-			if err != nil {
-				return fmt.Errorf("series slug %q: %w", resourceQuery.SeriesSlug, err)
+			resource.OwnerId = uintPtrOrNil(resourceQuery.OwnerId)
+			if resourceQuery.OwnerId != 0 {
+				resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
+			} else {
+				resource.Owner = nil
 			}
-			newSeriesID = series.ID
-			// If this resource is the series creator, donate meta to series
-			if isCreator {
-				if err := ctx.AssignResourceToSeries(tx, &resource, series, true); err != nil {
-					return err
-				}
-			}
-		}
-		seriesChanged := false
-
-		if newSeriesID > 0 {
-			if oldSeriesID == nil || *oldSeriesID != newSeriesID {
-				seriesChanged = true
-			}
-		} else if oldSeriesID != nil && resourceQuery.SeriesSlug == "" {
-			// Only remove from series if SeriesSlug wasn't provided
-			// (SeriesSlug="" + SeriesId=0 means "not provided" for partial updates)
-			seriesChanged = true
 		}
 
 		if seriesChanged {
 			if newSeriesID > 0 {
-				// Assigning to a (new) series
-				var newSeries models.Series
-				if err := tx.First(&newSeries, newSeriesID).Error; err != nil {
-					return fmt.Errorf("series %d not found: %w", newSeriesID, err)
+				newSeries := lockedSeries[newSeriesID]
+				if seriesCreator {
+					if err := ctx.AssignResourceToSeries(tx, &resource, newSeries, true); err != nil {
+						return err
+					}
+				} else {
+					ownMeta, err := computeOwnMeta(resource.Meta, newSeries.Meta)
+					if err != nil {
+						return err
+					}
+					resource.OwnMeta = ownMeta
+					effectiveMeta, err := mergeMeta(newSeries.Meta, ownMeta)
+					if err != nil {
+						return err
+					}
+					resource.Meta = effectiveMeta
+					resource.SeriesID = &newSeries.ID
 				}
-				ownMeta, err := computeOwnMeta(resource.Meta, newSeries.Meta)
-				if err != nil {
-					return err
-				}
-				resource.OwnMeta = ownMeta
-				effectiveMeta, err := mergeMeta(newSeries.Meta, ownMeta)
-				if err != nil {
-					return err
-				}
-				resource.Meta = effectiveMeta
-				resource.SeriesID = &newSeries.ID
-				resource.Series = &newSeries
+				resource.Series = newSeries
 			} else {
-				// Removing from series - Meta already has effective value
+				// Removing from series keeps the last effective metadata as the
+				// Resource's independent value.
 				resource.OwnMeta = types.JSON("{}")
 				resource.SeriesID = nil
 				resource.Series = nil
 			}
-		} else if resource.SeriesID != nil && resource.Series != nil &&
-			resource.Series.ID != *resource.SeriesID {
-			// AssignResourceToSeries may have changed SeriesID without updating
-			// the loaded Series association — clear it so Save doesn't revert the FK.
-			resource.Series = nil
 		}
 
 		// Omit the Owner belongs-to so Save does not upsert the owner group: the
@@ -445,20 +522,39 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		// {ID} would fire the scope create-callback (the stub has a nil owner),
 		// which rejects the edit for a group-limited principal even when the new
 		// owner is inside its subtree.
-		if err := tx.Omit("Owner").Save(&resource).Error; err != nil {
+		if err := tx.Omit("Owner", "Series").Save(&resource).Error; err != nil {
 			return err
 		}
 
-		// Explicitly persist OwnMeta to ensure it's saved even if GORM's
-		// Save doesn't detect the change on the JSON field
+		// Save omits the Series association so it cannot upsert a stale
+		// preloaded Series. Persist membership explicitly alongside OwnMeta;
+		// omitting a belongs-to association also omits its foreign key.
 		if resource.SeriesID != nil || seriesChanged {
-			if err := tx.Model(&resource).Update("own_meta", resource.OwnMeta).Error; err != nil {
+			updates := map[string]any{"own_meta": resource.OwnMeta}
+			if seriesChanged {
+				if newSeriesID > 0 {
+					updates["series_id"] = newSeriesID
+				} else {
+					updates["series_id"] = nil
+				}
+			}
+			if err := tx.Model(&models.Resource{}).
+				Where("id = ?", resource.ID).
+				Updates(updates).Error; err != nil {
 				return err
+			}
+			// GORM may write through a non-nil pointer on the model while applying
+			// map updates. Restore the intended membership on the returned value.
+			if seriesChanged {
+				resource.SeriesID = uintPtrOrNil(newSeriesID)
 			}
 		}
 
-		// Auto-delete old series if it became empty
-		if seriesChanged && oldSeriesID != nil {
+		// Explicit removal keeps the established auto-delete behavior. A move
+		// deliberately does not delete its old Series here: a reciprocal move may
+		// already be waiting to use it as a destination, and PostgreSQL cannot see
+		// that transaction's uncommitted membership yet.
+		if seriesChanged && oldSeriesID != nil && newSeriesID == 0 {
 			var count int64
 			tx.Model(&models.Resource{}).Where("series_id = ?", *oldSeriesID).Count(&count)
 			if count == 0 {

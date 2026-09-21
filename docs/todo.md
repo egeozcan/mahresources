@@ -10133,3 +10133,193 @@ accepted unrelated baselines, `TestBundledPluginLiteralURLsAreDeclared` and
 `TestSidebar_IsWrappedInADisclosure`. Build, vet, CSS scan, CLI docs lint, skill
 generation and `git diff --check` passed. Fresh independent standards and spec
 closure reviews both returned `APPROVED` with no actionable findings.
+
+# Plugin series and custom-thumbnail surfaces (2026-09-21)
+
+## Confirmed public seams
+
+- `mah.db.get_series(id)` returns `{id, name, slug, meta}` under `db:read`.
+- `mah.db.create_series({name, slug?, meta?})` and
+  `mah.db.patch_series(id, {name?, meta?})` run under `db:write`; series writes
+  retain the HTTP surface's editor-role requirement. Slugs are chosen at create
+  time and remain immutable.
+- Resource creation options accept `series_id` and `series_slug` consistently
+  across `create_resource_from_data`, `create_resource_from_url`,
+  `mah.download.submit`, and `mah.fs.create_resource`; `patch_resource` accepts
+  a non-empty `series_slug` without replacing unrelated fields.
+- `mah.fs.set_resource_thumbnail(run_id, name, resource_id)` reads a verified
+  regular image file directly from the calling plugin's command exchange folder
+  and installs it as the visible Resource's canonical custom thumbnail. It
+  requires both `commands` and `db:write`, leaves the exchange file in place for
+  explicit discard/reuse, and is refused inside `mah.db.transaction` like every
+  other command/filesystem call.
+
+These Lua interfaces and the existing application-context operations they cross
+are the TDD seams. Tests observe returned Lua values and persisted public entity
+behaviour; they do not mock internal GORM steps.
+
+## Plan
+
+- [x] Establish targeted baseline results for the plugin DB, series, command
+      import, and custom-thumbnail packages. (`plugin_system`, `plugin_commands`,
+      and focused `application_context` suites pass with `json1 fts5`.)
+- [x] RED/GREEN: expose series get/create/patch through `EntityQuerier`,
+      `EntityWriter`, `pluginDBAdapter`, and `registerDbModule`; accept validated
+      JSON metadata at creation, return the stable four-field series shape, and
+      enforce editor-role writes for plugin invocations. Update `mockQuerier`,
+      `stubWriter`, and any other concrete interface test doubles in this same
+      compiling slice.
+- [x] RED/GREEN: make automatic series creation decide creator status from the
+      dialect-specific insert result rather than from empty metadata, so an
+      explicitly created empty series does not adopt its first Resource's
+      metadata. Prove both SQLite and PostgreSQL conflict/creator behaviour.
+- [x] RED/GREEN: plumb `series_id`/`series_slug` through synchronous, queued, and
+      durable command-import resource creation; make `patch_resource` resolve a
+      supplied slug while preserving every omitted field. At command-import
+      worker start, validate the admitted request's series options; interrupted
+      claims keep the existing resubmission semantics and do not acquire a new
+      persisted payload. For both ID and slug assignment, prove the Resource's
+      immediately persisted effective `Meta` is `mergeMeta(series.Meta,
+      resource.OwnMeta)` rather than merely persisting membership and the delta.
+- [x] RED/GREEN: expose `mah.fs.set_resource_thumbnail(run_id, name,
+      resource_id)` through the exchange mediator, reusing its run authorization,
+      descriptor-safe regular-file access and lease. Re-resolve the acting user,
+      enforce target visibility and write role, bound the source read, reuse the
+      canonical decode/resize/JPEG path, atomically replace the preview cache,
+      and leave the exchange source untouched. Update `commandLuaHost` and any
+      other `ExchangeMediator` test doubles in this same compiling slice.
+- [x] Update the plugin Lua reference, capability expectations, architecture
+      notes, and `CLAUDE.md` invariants for the newly reachable series writes
+      and custom-thumbnail path.
+- [x] Run focused tests after every vertical slice, then full tagged Go tests,
+      docs checks, build/vet, and relevant plugin E2E coverage.
+
+## Review
+
+GPT-6 Astra reviewed the plan read-only against the repository on 2026-09-21
+(run `db9c9f75-03dd-4408-a2f7-a5e51403dfa8`) and returned **PLAN READY WITH
+CHANGES**. The three accepted changes are now folded into the tasks above:
+
+1. series assignment must persist inherited effective metadata immediately;
+2. command imports revalidate the admitted in-memory fields rather than promise
+   a newly persisted payload; and
+3. interface test doubles must land in the same compiling slice, with explicit
+   PostgreSQL coverage for dialect-specific insert-result creator detection.
+
+### Implementation review remediation
+
+The first GPT-6 Astra implementation review found two P1 blockers:
+
+- [x] Remove `patch_series`'s out-of-transaction pre-read so omitted fields
+      cannot replay stale values over a concurrent update; guard the boundary
+      with a one-transactional-read regression.
+- [x] Preserve `SeriesId` when `AddRemoteResource` converts the remote creator;
+      cover synchronous URL assignment, effective metadata, and positive-ID
+      precedence over a simultaneously supplied slug.
+
+The second fresh review found one P1 and one P2:
+
+- [x] Serialize PostgreSQL Series patches with `SELECT ... FOR UPDATE` before
+      reading preserved fields; cover overlapping name-only and metadata-only
+      patches and verify Resource effective metadata stays consistent.
+- [x] Normalize whitespace-only Series creation metadata to `{}` before JSON
+      validation and persistence; prove subsequent assignment succeeds.
+
+The third fresh review found no P0/P1 issues and one P2 consistency gap:
+
+- [x] Normalize whitespace-only `patch_series` metadata to `{}` before
+      validation/persistence, matching explicit creation and preventing invalid
+      SQLite JSON or PostgreSQL-only rejection.
+
+The fourth fresh spec gate found one P1 concurrency gap:
+
+- [x] Make Series metadata patching, assignment, removal and deletion share the
+      same PostgreSQL row lock before deriving Series/Resource metadata. Cover
+      patch-versus-assignment overlap for both ID and existing-slug paths and
+      assert the newly assigned Resource stores the patched effective metadata.
+
+The fifth fresh gate found two facets of one P1 existing-member race:
+
+- [x] Resolve membership intent first, then lock old and destination Series rows
+      together in ascending id order before deriving metadata or writing the
+      Resource; refresh the old Series snapshot under that lock.
+- [x] Omit preloaded Resources when saving a Series so a metadata patch cannot
+      restore stale membership.
+- [x] Preserve a move's empty source Series instead of deleting a destination
+      another reciprocal move may already be waiting to use; explicit removal
+      retains auto-delete semantics.
+- [x] Add PostgreSQL regressions for metadata-patch versus existing-member move
+      and reciprocal singleton moves, requiring consistent metadata and both
+      moves to commit without deadlock.
+
+The sixth fresh gate found four related stale-snapshot/lock-order issues:
+
+- [x] After canonical Series locking, lock and refresh the Resource; retry the
+      transaction when membership changed while waiting. Cover an omitted-meta
+      same-Series edit racing a metadata patch and two concurrent moves of one
+      Resource.
+- [x] Make single, bulk and merge deletion acquire complete Series sets before
+      Resource rows. Run plugin vetoes before these locks because plugin writes
+      use their own bound handle. Cover edit-versus-single/bulk/merge deletion
+      with deterministic PostgreSQL barriers.
+- [x] Revalidate content identity after the pre-transaction filesystem backup;
+      discard and repeat the backup when hash, location or storage changed.
+- [x] Treat a missing discovered Series as membership drift when explicit
+      removal detached the Resource and deleted the Series while deletion
+      waited; refresh and retry instead of returning a false not-found.
+- [x] Strengthen new-slug movement coverage to reread persisted membership and
+      check the returned Series association, exposing and fixing stale GORM
+      association replay through non-nil pointers.
+
+The seventh fresh gate found two P1 stale-snapshot paths and one shared retry
+edge:
+
+- [x] Carry plugin `patch_resource` field presence into `EditResource`; omitted
+      values now come from the post-lock Resource snapshot rather than the
+      adapter's presentation read. Hook-changed name/description/meta become
+      explicit fields, while unchanged hook inputs remain omitted.
+- [x] Make `RemoveResourceFromSeries` discover Series, lock Series then Resource,
+      refresh both and retry membership drift before deriving detached metadata.
+- [x] When EditResource's discovered source Series disappeared, reread the
+      Resource and retry if membership changed while retaining not-found for a
+      genuinely missing requested destination or dangling membership.
+- [x] Correct the bulk-hook documentation to state that vetoes run before the
+      transaction/participant locks because plugin writes use another bound DB
+      handle.
+
+The eighth fresh gate reported **no P0/P1 findings**. Its one P2 noted that the
+new batch lock discovery used one request-sized `IN` list:
+
+- [x] Chunk Resource discovery, the complete ascending Series-lock phase, and
+      the later ascending Resource-lock phase so a large bulk selection cannot
+      exceed SQLite/PostgreSQL placeholder ceilings. Cover the query shape with
+      a reduced-chunk regression.
+- [x] Obtain a final fresh review with no P0/P1 findings.
+
+Implementation is complete. Series CRUD now crosses the plugin adapter with a
+stable `{id, name, slug, meta}` shape and role-guarded writes. Every plugin
+resource creation route and `patch_resource` carries series assignment, and the
+shared assignment path persists inherited effective metadata immediately.
+Creator detection is based on the actual dialect insert result. Command exchange
+thumbnail installation is capability-gated, transaction-refused, actor rebound,
+scope checked, bounded by the exchange read ceiling, routed through the existing
+custom-thumbnail pipeline, and non-destructive to its source.
+
+Verification during implementation (the full Go suite and focused
+`patch_resource` regression tests were rerun after the final source edit):
+
+- `go test --tags 'json1 fts5' ./...` — all packages passed.
+- `go test --tags 'json1 fts5 postgres' ./application_context -run
+  TestSeriesCreatorDetectionUsesPostgresInsertResult -count=1` — passed against
+  PostgreSQL.
+- `go vet --tags 'json1 fts5' ./...` and `go build --tags 'json1 fts5' ./...`
+  — passed.
+- OpenAPI regeneration and validation — 234 paths, 120 schemas, valid OpenAPI
+  3.0; `SeriesCreator.Meta` is present.
+- `./mr docs lint` — passed with zero warnings. A direct
+  `./mr docs check-examples` had no server and therefore failed only with
+  connection refusals; the supported ephemeral CLI-doctest project subsequently
+  passed in the combined E2E run.
+- `cd e2e && npm run test:with-server:all` — 2,242 passed, 5 intentionally
+  skipped across browser, accessibility, auth, CLI and CLI-doctest projects.
+- `./scripts/css-scan-test.sh` and `git diff --check` — passed.

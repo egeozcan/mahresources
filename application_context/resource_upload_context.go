@@ -439,6 +439,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 					ResourceCategoryId: resourceQuery.ResourceCategoryId,
 					OriginalName:       url,
 					OriginalLocation:   url,
+					SeriesId:           resourceQuery.SeriesId,
 					SeriesSlug:         resourceQuery.SeriesSlug,
 				},
 				// BH-023: PathName sits beside the embedded base rather than in
@@ -662,7 +663,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 
 	if resourceQuery.SeriesId != 0 {
 		var series models.Series
-		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
+		if err := seriesWriteQuery(tx).First(&series, resourceQuery.SeriesId).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
 		}
@@ -846,7 +847,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 	// Series assignment
 	if resourceQuery.SeriesId != 0 {
 		var series models.Series
-		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
+		if err := seriesWriteQuery(tx).First(&series, resourceQuery.SeriesId).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
 		}

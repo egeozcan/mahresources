@@ -16,7 +16,8 @@ type failingQuerier struct {
 
 var errBoom = fmt.Errorf("database is down")
 
-func (f *failingQuerier) GetNoteData(id uint) (map[string]any, error) { return nil, errBoom }
+func (f *failingQuerier) GetNoteData(id uint) (map[string]any, error)   { return nil, errBoom }
+func (f *failingQuerier) GetSeriesData(id uint) (map[string]any, error) { return nil, errBoom }
 func (f *failingQuerier) GetResourceData(id uint) (map[string]any, error) {
 	return nil, errBoom
 }
@@ -49,6 +50,10 @@ type stubWriter struct{}
 
 var errStubWriter = fmt.Errorf("not implemented in stubWriter")
 
+func (stubWriter) CreateSeries(map[string]any) (map[string]any, error) { return nil, errStubWriter }
+func (stubWriter) PatchSeries(uint, map[string]any) (map[string]any, error) {
+	return nil, errStubWriter
+}
 func (stubWriter) CreateGroup(map[string]any) (map[string]any, error) { return nil, errStubWriter }
 func (stubWriter) UpdateGroup(uint, map[string]any) (map[string]any, error) {
 	return nil, errStubWriter
@@ -143,6 +148,14 @@ type mockWriterQuerier struct {
 	stubWriter
 }
 
+func (m *mockWriterQuerier) CreateSeries(opts map[string]any) (map[string]any, error) {
+	return map[string]any{"id": float64(2), "name": opts["name"], "slug": opts["slug"], "meta": opts["meta"]}, nil
+}
+
+func (m *mockWriterQuerier) PatchSeries(id uint, opts map[string]any) (map[string]any, error) {
+	return map[string]any{"id": float64(id), "name": opts["name"], "slug": "test-series", "meta": "{}"}, nil
+}
+
 func (m *mockWriterQuerier) UpdateResource(id uint, opts map[string]any) (map[string]any, error) {
 	if id != 1 {
 		return nil, fmt.Errorf("resource not found")
@@ -199,6 +212,7 @@ end
 func TestDbApi_GettersReturnErrorOnFailure(t *testing.T) {
 	cases := []struct{ name, call string }{
 		{"get_note", "mah.db.get_note(1)"},
+		{"get_series", "mah.db.get_series(1)"},
 		{"get_resource", "mah.db.get_resource(1)"},
 		{"get_group", "mah.db.get_group(1)"},
 		{"get_tag", "mah.db.get_tag(1)"},
@@ -335,6 +349,17 @@ func TestDbApi_GetNoteTypeAndResourceCategory(t *testing.T) {
 `)
 	if got != "Meeting|Photos" {
 		t.Errorf("got %q, want %q", got, "Meeting|Photos")
+	}
+}
+
+func TestDBAPISeriesGetCreateAndPatch(t *testing.T) {
+	out := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local got, get_err = mah.db.get_series(1)
+        local created, create_err = mah.db.create_series({name = "Playlist", slug = "playlist", meta = "{}"})
+        local patched, patch_err = mah.db.patch_series(1, {name = "Renamed"})
+        return table.concat({got.slug, created.name, patched.name, tostring(get_err), tostring(create_err), tostring(patch_err)}, "|")`)
+	if out != "test-series|Playlist|Renamed|nil|nil|nil" {
+		t.Fatalf("unexpected series API result: %q", out)
 	}
 }
 

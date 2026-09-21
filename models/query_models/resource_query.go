@@ -56,6 +56,10 @@ type ResourceFromRemoteCreator struct {
 type ResourceEditor struct {
 	ResourceQueryBase
 	ID uint
+	// PatchFields is non-nil only for partial plugin writes. Keys absent from
+	// this set are preserved from EditResource's post-lock Resource snapshot.
+	// HTTP/full-update callers leave it nil and retain replace-all semantics.
+	PatchFields map[string]bool `json:"-" schema:"-"`
 }
 
 type ResourceSearchQuery struct {

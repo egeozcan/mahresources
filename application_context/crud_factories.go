@@ -20,6 +20,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 )
 
 // TagCRUD returns generic CRUD components for tags.
@@ -300,10 +301,17 @@ func buildSeries(creator *query_models.SeriesCreator) (models.Series, error) {
 	if slug == "" {
 		slug = name
 	}
+	meta := strings.TrimSpace(creator.Meta)
+	if meta == "" {
+		meta = "{}"
+	}
+	if err := ValidateMeta(meta); err != nil {
+		return models.Series{}, err
+	}
 	return models.Series{
 		Name: name,
 		Slug: slug,
-		Meta: []byte("{}"),
+		Meta: types.JSON(meta),
 	}, nil
 }
 

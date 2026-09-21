@@ -23,8 +23,9 @@ Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) a
 
 These modules exist only with the `commands` capability. The plugin manifest must
 also declare every runnable command; see [Declared server commands](./plugin-system.md#declared-server-commands).
-`mah.fs.create_resource` is installed only when the plugin also has `db:write`.
-All command and filesystem calls are refused inside `mah.db.transaction`.
+`mah.fs.create_resource` and `mah.fs.set_resource_thumbnail` are installed only
+when the plugin also has `db:write`. All command and filesystem calls are
+refused inside `mah.db.transaction`.
 
 The modules stay installed while the host command runtime is quarantined by a
 busy staging lease or a recovery blocker. Calls then return `nil` and an error
@@ -150,7 +151,9 @@ mah.fs.create_resource(run_id, name, fields [, on_import])
 ```
 
 `fields` accepts `name`, `description`, `tags` (numeric ID array), `groups`
-(numeric ID array), and `meta` (table). It does not accept an owner or a path.
+(numeric ID array), `meta` (table), `series_id` and `series_slug`. When both
+series fields are present, a positive `series_id` wins. It does not accept an owner or a
+path.
 The import is attributed to the user who submitted it and that user's current
 role and subtree scope are checked again when a worker starts. If that user was
 deleted, access and pending work fail closed. A run deliberately submitted with
@@ -186,7 +189,8 @@ those bytes. The flag is cleanup state, not a reason to retry resource creation.
 
 The durable import map is authoritative when callback delivery is lost. On a
 restart, nonterminal claims become `interrupted`; a later `create_resource` call
-re-drives the same claim. A command callback is not replayed. Reconcile from a
+re-drives the same claim with the fields supplied by that call. The fields are
+not stored as a durable payload. A command callback is not replayed. Reconcile from a
 page or another deliberate entry point by reading `mah.fs.runs()`, independently
 of command status: a cancelled or interrupted command can still have an
 interrupted import that needs re-driving. Verified output from an interrupted
@@ -220,6 +224,23 @@ local function completed(result)
 end
 ```
 
+### Set a Resource thumbnail from an exchange file
+
+```lua
+local ok, err = mah.fs.set_resource_thumbnail(run_id, "cover.jpg", resource_id)
+```
+
+Requires `commands` and `db:write`. The named file must be verified regular
+output from a run visible to the acting user and no larger than 4 MiB. The host
+validates and re-encodes it through the same custom-thumbnail path as the web
+upload, then replaces the Resource's preview cache atomically. The acting user's
+current write role and subtree visibility are enforced. The exchange file is
+left in place; call `mah.fs.discard` when it is no longer needed.
+
+The common command-import sequence is to call this from the import completion
+callback, using its `resource_id`. The operation is synchronous but only reads a
+small bounded image; resource import remains asynchronous.
+
 Exchange access is Lua-level isolation, not process isolation. The spawned
 service-account process can reach sibling folders if OS permissions allow it.
 The host uses descriptor-relative no-follow opens and regular-file checks for
@@ -227,7 +248,7 @@ Lua operations; those checks do not sandbox the external program itself.
 
 ## mah.db -- Database API
 
-Full CRUD access to all entity types, plus relationship management and resource file operations.
+Entity access and mutation, plus relationship management and resource file operations.
 
 ### Whose access it is
 
@@ -290,6 +311,7 @@ local note = mah.db.get_note(1)  -- the error return is simply discarded
 | Function | Returns |
 |----------|---------|
 | `mah.db.get_note(id)` | Note table, or `nil` |
+| `mah.db.get_series(id)` | Series table, or `nil` |
 | `mah.db.get_resource(id)` | Resource table, or `nil` |
 | `mah.db.get_group(id)` | Group table, or `nil` |
 | `mah.db.get_tag(id)` | Tag table, or `nil` |
@@ -322,6 +344,12 @@ as absent clears an owner or widens a filter. This applies to a positional ID
 | `blocks` | table | Ordered `{id,type,content,state}` records on `get_note`; content/state are decoded tables |
 | `owner_id` | number | Owner Group ID (if set) |
 | `tags` | table | Array of `{ id, name }` |
+
+#### Series Fields
+
+`id` (number), `name` (string), immutable `slug` (string), and `meta` (a
+JSON-encoded metadata string). Series writes require the acting user to have the
+editor role, matching the HTTP series surface.
 
 #### Resource Fields
 
@@ -517,6 +545,8 @@ Requires both `db:write` and `http`, because the URL is fetched by the applicati
 | `options.tags` | table | Array of Tag IDs |
 | `options.groups` | table | Array of Group IDs |
 | `options.meta` | string | JSON-encoded metadata string |
+| `options.series_id` | number | Assign to an existing Series |
+| `options.series_slug` | string | Assign by slug, creating the Series when absent; ignored when a positive `series_id` is present |
 | `options.headers` | table | Extra request headers for this fetch, e.g. `{ Referer = "https://example.com/watch" }` |
 
 A `User-Agent` in `options.headers` replaces the deployment's for the whole
@@ -644,8 +674,9 @@ for anything that edits one field.
 Accepted keys: `name`, `description`, `meta` (JSON string), `owner_id`,
 `groups`, `tags`, `notes` (arrays of numeric IDs), `category`,
 `content_category`, `resource_category_id`, `original_filename`,
-`original_location`, `width`, `height`, `series_id`. `update_resource` also
-accepts `series_slug`.
+`original_location`, `width`, `height`, `series_id`, and `series_slug`.
+A non-empty slug on `patch_resource` can move a Resource without replacing any
+other field; an explicit positive `series_id` wins when both are supplied.
 
 Three fields cannot be cleared, because the underlying edit ignores their empty
 value -- the same rule the HTTP resource-edit path applies:
@@ -701,6 +732,28 @@ Downloads the content at `url` and appends it as a new version of an existing re
 | `comment` | string | Optional version comment (defaults to `""`) |
 
 Returns a version table (`id`, `resource_id`, `version_number`, `content_type`, `file_size`, `hash`) on success, or `nil, error_string` on failure.
+
+### Series creation and editing
+
+```lua
+local series, err = mah.db.create_series({
+    name = "My Playlist",
+    slug = "my-playlist",          -- optional; defaults to name
+    meta = '{"publisher":"Example"}', -- optional; defaults to {}
+})
+local same, get_err = mah.db.get_series(series.id)
+local updated, patch_err = mah.db.patch_series(series.id, {
+    name = "Renamed Playlist",
+    meta = '{"publisher":"Elsewhere"}',
+})
+```
+
+`create_series` and `patch_series` require `db:write` and the acting user's
+editor role. `get_series` requires `db:read`. A Series slug is immutable after
+creation. Changing Series metadata recomputes effective metadata for its
+Resources. An explicitly created empty Series remains empty when its first
+Resource joins; only a Series created implicitly by `series_slug` adopts that
+creator Resource's metadata.
 
 ### Group CRUD
 
@@ -808,9 +861,9 @@ Most entity types follow the `(id, opts)` pattern for update/patch:
 | `mah.db.patch_{entity}(id, opts)` | table or `nil, error` | Partial update (preserves unspecified fields) |
 | `mah.db.delete_{entity}(id)` | `true` or `nil, error` | Delete an entity |
 
-**Exceptions:** `group_relation` and `relation_type` use `(opts)` for update/patch with `id` embedded in opts (e.g., `mah.db.update_group_relation({ id = 1, name = "new" })`).
+**Exceptions:** `group_relation` and `relation_type` use `(opts)` for update/patch with `id` embedded in opts (e.g., `mah.db.update_group_relation({ id = 1, name = "new" })`). Series exposes `create_series` and `patch_series` only; its application operation is partial and its slug is immutable, so a replace-all `update_series` would invent semantics the host does not have.
 
-Supported entity types: `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (no `create_resource`; use `create_resource_from_url` or `create_resource_from_data`).
+Supported entity types: `series`, `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (no `create_resource`; use `create_resource_from_url` or `create_resource_from_data`).
 
 Create, update and patch return a compact table rather than the getter shape: a resource comes back as `id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `owner_id`; a group as `id`, `name`, `description`, `meta`, `owner_id`, `category_id`; a note as `id`, `name`, `description`, `meta`, `owner_id`, `note_type_id`. None of them carries tags, and the group and note carry a numeric id where the getter returns the category or note type name. Re-fetch with the getter when you need associations.
 

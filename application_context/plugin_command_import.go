@@ -60,6 +60,11 @@ func (ctx *MahresourcesContext) ValidateImport(validation plugin_commands.Import
 	if err := ValidateAssociationIDs[models.Group](bound.db, validation.Fields.GroupIDs, "groups"); err != nil {
 		return fmt.Errorf("validate plugin command import groups: %w", err)
 	}
+	if validation.Fields.SeriesID != 0 {
+		if err := ValidateAssociationIDs[models.Series](bound.db, []uint{validation.Fields.SeriesID}, "series"); err != nil {
+			return fmt.Errorf("validate plugin command import series: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -89,6 +94,11 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 	}
 	if err := ValidateAssociationIDs[models.Group](bound.db, fields.GroupIDs, "groups"); err != nil {
 		return 0, fmt.Errorf("validate plugin command import groups: %w", err)
+	}
+	if fields.SeriesID != 0 {
+		if err := ValidateAssociationIDs[models.Series](bound.db, []uint{fields.SeriesID}, "series"); err != nil {
+			return 0, fmt.Errorf("validate plugin command import series: %w", err)
+		}
 	}
 
 	file := source.File
@@ -132,7 +142,7 @@ func (ctx *MahresourcesContext) ImportResource(callCtx context.Context, source p
 	query := &query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{
 		Name: name, Description: fields.Description, OwnerId: ownerID,
 		Groups: append([]uint(nil), fields.GroupIDs...), Tags: append([]uint(nil), fields.TagIDs...),
-		Meta: meta, OriginalName: source.FileName,
+		Meta: meta, OriginalName: source.FileName, SeriesId: fields.SeriesID, SeriesSlug: fields.SeriesSlug,
 	}}
 	resource, err := bound.addResourceWithOptions(
 		newContextImportFile(file, callCtx, source.SourceSize), source.FileName, query,

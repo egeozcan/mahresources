@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 	"mahresources/auth"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"mahresources/plugin_commands"
 )
 
@@ -258,7 +259,11 @@ func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	createImportClaimForTest(t, ctx, actor, "claim-memory", "run-memory", "result.bin", generation)
-	fields := plugin_commands.ResourceFields{Name: "from command", Meta: map[string]any{"source": "command"}}
+	series, err := ctx.CreateSeries(&query_models.SeriesCreator{Name: "Command Series", Slug: "command-series", Meta: `{"shared":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := plugin_commands.ResourceFields{Name: "from command", Meta: map[string]any{"source": "command"}, SeriesID: series.ID}
 	if err := ctx.ValidateImport(plugin_commands.ImportValidation{PluginName: "commanded", PluginGeneration: generation, ActorUserID: &actor.ID, Fields: fields}); err != nil {
 		t.Fatal(err)
 	}
@@ -281,6 +286,12 @@ func TestPluginCommandImportMemoryFSStoresSnapshotBytes(t *testing.T) {
 	}
 	if resource.CreatedByUserId == nil || *resource.CreatedByUserId != actor.ID {
 		t.Fatalf("creator = %v", resource.CreatedByUserId)
+	}
+	if resource.SeriesID == nil || *resource.SeriesID != series.ID {
+		t.Fatalf("series = %v, want %d", resource.SeriesID, series.ID)
+	}
+	if string(resource.Meta) != `{"shared":true,"source":"command"}` && string(resource.Meta) != `{"source":"command","shared":true}` {
+		t.Fatalf("effective meta = %s", resource.Meta)
 	}
 }
 

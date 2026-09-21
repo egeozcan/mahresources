@@ -20,6 +20,7 @@ import (
 type EntityQuerier interface {
 	// Single entity by ID — returns nil map if not found
 	GetNoteData(id uint) (map[string]any, error)
+	GetSeriesData(id uint) (map[string]any, error)
 	GetResourceData(id uint) (map[string]any, error)
 	GetGroupData(id uint) (map[string]any, error)
 	GetTagData(id uint) (map[string]any, error)
@@ -55,6 +56,8 @@ type EntityQuerier interface {
 // This includes associations — updating a note without specifying tags will clear its tags.
 // Use Patch methods for partial updates that preserve unspecified fields.
 type EntityWriter interface {
+	CreateSeries(opts map[string]any) (map[string]any, error)
+	PatchSeries(id uint, opts map[string]any) (map[string]any, error)
 	CreateGroup(opts map[string]any) (map[string]any, error)
 	UpdateGroup(id uint, opts map[string]any) (map[string]any, error)
 	PatchGroup(id uint, opts map[string]any) (map[string]any, error)
@@ -198,7 +201,7 @@ func (pm *PluginManager) getDbWriter() EntityWriter {
 // running as the user who triggered it, and carrying the chain of plugin VMs
 // already executing so a nested hook dispatch can refuse to re-enter one.
 //
-// It is one method rather than a context parameter on the 62 EntityQuerier and
+// It is one method rather than a context parameter on the 65 EntityQuerier and
 // EntityWriter methods because the implementation is a one-field struct whose
 // principal-bound clone is a single line — threading a context through every
 // signature would be churn with no payoff.
@@ -689,6 +692,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 	// mah.db.get_*(id) -> table | nil | (nil, error)
 	registerGetter("get_note", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetNoteData(id) })
+	registerGetter("get_series", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetSeriesData(id) })
 	registerGetter("get_resource", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetResourceData(id) })
 	registerGetter("get_group", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetGroupData(id) })
 	registerGetter("get_tag", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetTagData(id) })
@@ -973,6 +977,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 			return 1
 		})
 	}
+
+	// Series. Series updates are partial in the application layer, so only patch
+	// is exposed; there is no replace-all variant to mirror.
+	registerOptsWriter("create_series", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateSeries(o) })
+	registerIdOptsWriter("patch_series", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.PatchSeries(id, o)
+	})
 
 	// Group
 	registerOptsWriter("create_group", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateGroup(o) })

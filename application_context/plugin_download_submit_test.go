@@ -30,7 +30,7 @@ plugin = { name = "downloader", version = "1.0", api_version = 1,
            network = { "example.invalid" } }
 function init()
     mah.inject("page_bottom", function(c)
-        local job, err = mah.download.submit("https://example.invalid/clip.m3u8", { name = "clip" })
+        local job, err = mah.download.submit("https://example.invalid/clip.m3u8", { name = "clip", series_slug = "playlist" })
         if not job then return "error=" .. tostring(err) end
         return "id=" .. tostring(job.id) .. " status=" .. tostring(job.status)
     end)
@@ -54,6 +54,13 @@ end
 	// a retry replayed after a restart.
 	if got := jobs[0].PluginName(); got != "downloader" {
 		t.Errorf("the queued job names plugin %q, want \"downloader\" — without it the transfer runs under the host policy", got)
+	}
+	live, ok := ctx.DownloadManager().GetJob(jobs[0].ID)
+	if !ok {
+		t.Fatal("queued job disappeared before its creator payload could be inspected")
+	}
+	if creator := live.CreatorCopy(); creator == nil || creator.SeriesSlug != "playlist" {
+		t.Errorf("queued creator = %+v, want series slug playlist", creator)
 	}
 }
 

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -213,6 +214,39 @@ func (ctx *MahresourcesContext) ReadCommandFile(access plugin_commands.Access, r
 		return nil, err
 	}
 	return active.exchange.Read(access, runID, name, maxBytes)
+}
+
+// SetCommandResourceThumbnail consumes a verified regular file through the
+// exchange module that owns run authorization, descriptor-safe access and its
+// lease. The source remains in the exchange folder for explicit reuse/discard.
+func (ctx *MahresourcesContext) SetCommandResourceThumbnail(callCtx context.Context, access plugin_commands.Access, runID, name string, resourceID uint) error {
+	active, err := ctx.pluginCommandActive()
+	if err != nil {
+		return err
+	}
+	body, err := active.exchange.Read(access, runID, name, plugin_commands.MaxReadBytes)
+	if err != nil {
+		return err
+	}
+
+	var actorID uint
+	if access.ActorUserID == nil || *access.ActorUserID == 0 {
+		if ctx.AuthEnabled() {
+			return fmt.Errorf("plugin command thumbnail requires an acting user")
+		}
+		root, err := ctx.RootAdminPrincipal()
+		if err != nil || root == nil || root.UserID == 0 {
+			return fmt.Errorf("plugin command thumbnail actor is no longer available")
+		}
+		actorID = root.UserID
+	} else {
+		actorID = *access.ActorUserID
+	}
+	bound := ctx.WithPrincipal(ctx.principalForPluginActor(actorID))
+	if err := bound.requireWriteRole("set a resource thumbnail"); err != nil {
+		return err
+	}
+	return bound.SetCustomThumbnail(callCtx, resourceID, bytes.NewReader(body))
 }
 
 func (ctx *MahresourcesContext) SubmitCommandImport(submission plugin_commands.ImportSubmission) (plugin_commands.ImportSubmitResult, error) {

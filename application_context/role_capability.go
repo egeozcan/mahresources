@@ -34,8 +34,8 @@ func (ctx *MahresourcesContext) requireTaxonomyRole(op string) error {
 }
 
 // requireEditorRole refuses op unless the acting principal may perform
-// editor-level writes — note types, relation types and relation edges, which
-// server/authz_policy.go classifies capEditor.
+// editor-level writes — series, note types, relation types and relation edges,
+// which server/authz_policy.go classifies capEditor.
 func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 	return ctx.requireRole(op, func() bool { return ctx.Principal().CanEditorWrite() })
 }

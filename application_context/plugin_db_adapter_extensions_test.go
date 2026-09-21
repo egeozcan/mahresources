@@ -3,7 +3,14 @@
 package application_context
 
 import (
+	"sync/atomic"
 	"testing"
+
+	"gorm.io/gorm"
+
+	"mahresources/auth"
+	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // A getter that finds nothing must say so with (nil, nil), not with an error.
@@ -19,6 +26,7 @@ func TestPluginDBAdapter_GettersSeparateMissingFromFailed(t *testing.T) {
 		get  func(uint) (map[string]any, error)
 	}{
 		{"note", adapter.GetNoteData},
+		{"series", adapter.GetSeriesData},
 		{"resource", adapter.GetResourceData},
 		{"group", adapter.GetGroupData},
 		{"tag", adapter.GetTagData},
@@ -36,6 +44,96 @@ func TestPluginDBAdapter_GettersSeparateMissingFromFailed(t *testing.T) {
 				t.Errorf("missing %s should be nil, got %v", c.name, data)
 			}
 		})
+	}
+}
+
+func TestPluginDBAdapter_SeriesCreateGetAndPatch(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx.WithPrincipal(&auth.Principal{Role: models.RoleEditor})}
+
+	created, err := adapter.CreateSeries(map[string]any{
+		"name": "Playlist", "slug": "playlist", "meta": `{"publisher":"Example"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateSeries: %v", err)
+	}
+	id := uint(created["id"].(float64))
+	if created["slug"] != "playlist" || created["meta"] != `{"publisher":"Example"}` {
+		t.Fatalf("unexpected created series: %v", created)
+	}
+
+	got, err := adapter.GetSeriesData(id)
+	if err != nil {
+		t.Fatalf("GetSeriesData: %v", err)
+	}
+	if len(got) != 4 || got["id"] != float64(id) || got["name"] != "Playlist" || got["slug"] != "playlist" || got["meta"] != `{"publisher":"Example"}` {
+		t.Fatalf("unexpected series shape: %v", got)
+	}
+
+	patched, err := adapter.PatchSeries(id, map[string]any{"name": "Renamed"})
+	if err != nil {
+		t.Fatalf("PatchSeries: %v", err)
+	}
+	if patched["name"] != "Renamed" || patched["slug"] != "playlist" || patched["meta"] != `{"publisher":"Example"}` {
+		t.Fatalf("patch did not preserve omitted fields: %v", patched)
+	}
+
+	patched, err = adapter.PatchSeries(id, map[string]any{"meta": " \n\t "})
+	if err != nil {
+		t.Fatalf("PatchSeries whitespace meta: %v", err)
+	}
+	if patched["meta"] != "{}" {
+		t.Fatalf("whitespace patch metadata persisted as %q instead of an empty object", patched["meta"])
+	}
+}
+
+func TestPluginDBAdapter_PatchSeriesDoesNotPreReadOmittedFields(t *testing.T) {
+	ctx := createTestContext(t)
+	series, err := ctx.CreateSeries(&query_models.SeriesCreator{Name: "Original", Slug: "single-read", Meta: `{"kept":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var seriesReads atomic.Int32
+	callbackName := "test:count-patch-series-reads"
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
+		if db.Statement != nil && db.Statement.Table == "series" {
+			seriesReads.Add(1)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(callbackName) })
+
+	adapter := &pluginDBAdapter{ctx: ctx}
+	if _, err := adapter.PatchSeries(series.ID, map[string]any{"name": "Renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := seriesReads.Load(); got != 1 {
+		t.Fatalf("patch_series performed %d series reads, want one transactional read; a pre-read can replay stale omitted fields", got)
+	}
+	var stored models.Series
+	if err := ctx.db.First(&stored, series.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.Meta) != `{"kept":true}` {
+		t.Fatalf("name-only patch changed metadata: %s", stored.Meta)
+	}
+}
+
+func TestPluginDBAdapter_SeriesWritesRequireEditorRole(t *testing.T) {
+	ctx := createTestContext(t)
+	series, err := ctx.CreateSeries(&query_models.SeriesCreator{Name: "Existing", Slug: "existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &pluginDBAdapter{ctx: ctx.WithPrincipal(&auth.Principal{UserID: 44, Role: models.RoleUser})}
+
+	if _, err := adapter.CreateSeries(map[string]any{"name": "Forbidden"}); err == nil {
+		t.Fatal("ordinary user created a series through plugin adapter")
+	}
+	if _, err := adapter.PatchSeries(series.ID, map[string]any{"name": "Forbidden Rename"}); err == nil {
+		t.Fatal("ordinary user patched a series through plugin adapter")
 	}
 }
 
@@ -141,6 +239,91 @@ func TestPluginDBAdapter_GetNoteTypeAndResourceCategory(t *testing.T) {
 	}
 	if fetchedRC["name"] != "Scans" {
 		t.Errorf("expected 'Scans', got %v", fetchedRC["name"])
+	}
+}
+
+func TestPluginDBAdapter_ResourceCreationAcceptsSeriesOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+		opts func(*models.Series) map[string]any
+	}{
+		{name: "id", data: "c2VyaWVzLWNyZWF0ZS1pZA==", opts: func(s *models.Series) map[string]any { return map[string]any{"series_id": float64(s.ID)} }},
+		{name: "slug", data: "c2VyaWVzLWNyZWF0ZS1zbHVn", opts: func(s *models.Series) map[string]any { return map[string]any{"series_slug": s.Slug} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := createTestContext(t)
+			series, err := ctx.CreateSeries(&query_models.SeriesCreator{Name: "Create " + tc.name, Slug: "create-" + tc.name, Meta: `{"shared":true}`})
+			if err != nil {
+				t.Fatalf("CreateSeries: %v", err)
+			}
+			adapter := &pluginDBAdapter{ctx: ctx}
+			opts := tc.opts(series)
+			opts["name"] = "series-" + tc.name + ".txt"
+			opts["meta"] = "{}"
+			created, err := adapter.CreateResourceFromData(tc.data, opts)
+			if err != nil {
+				t.Fatalf("CreateResourceFromData: %v", err)
+			}
+			resource, err := ctx.GetResource(uint(created["id"].(float64)))
+			if err != nil {
+				t.Fatalf("GetResource: %v", err)
+			}
+			if resource.SeriesID == nil || *resource.SeriesID != series.ID {
+				t.Fatalf("resource series = %v, want %d", resource.SeriesID, series.ID)
+			}
+			if string(resource.Meta) != `{"shared":true}` {
+				t.Fatalf("resource effective meta = %s", resource.Meta)
+			}
+		})
+	}
+}
+
+func TestPluginDBAdapter_PatchResourceAcceptsSeriesSlug(t *testing.T) {
+	ctx := createTestContext(t)
+	series, err := ctx.CreateSeries(&query_models.SeriesCreator{Name: "Patch Series", Slug: "patch-series", Meta: `{"shared":true}`})
+	if err != nil {
+		t.Fatalf("CreateSeries: %v", err)
+	}
+	adapter := &pluginDBAdapter{ctx: ctx}
+	created, err := adapter.CreateResourceFromData("cGF0Y2gtc2VyaWVzLXNsdWc=", map[string]any{
+		"name": "keep-name.txt", "description": "keep description", "meta": `{"own":true}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateResourceFromData: %v", err)
+	}
+	id := uint(created["id"].(float64))
+
+	if _, err := adapter.PatchResource(id, map[string]any{"series_slug": series.Slug}); err != nil {
+		t.Fatalf("PatchResource: %v", err)
+	}
+	resource, err := ctx.GetResource(id)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if resource.SeriesID == nil || *resource.SeriesID != series.ID {
+		t.Fatalf("resource series = %v, want %d", resource.SeriesID, series.ID)
+	}
+	if resource.Name != "keep-name.txt" || resource.Description != "keep description" {
+		t.Fatalf("patch replaced omitted fields: %#v", resource)
+	}
+	if string(resource.Meta) != `{"own":true,"shared":true}` && string(resource.Meta) != `{"shared":true,"own":true}` {
+		t.Fatalf("resource effective meta = %s", resource.Meta)
+	}
+
+	if _, err := adapter.PatchResource(id, map[string]any{"description": "still assigned"}); err != nil {
+		t.Fatalf("PatchResource preserving series: %v", err)
+	}
+	resource, err = ctx.GetResource(id)
+	if err != nil || resource.SeriesID == nil || *resource.SeriesID != series.ID {
+		t.Fatalf("omitted series fields changed assignment: resource=%#v err=%v", resource, err)
+	}
+	if _, err := adapter.PatchResource(id, map[string]any{"series_id": float64(0)}); err != nil {
+		t.Fatalf("PatchResource clearing series: %v", err)
+	}
+	resource, err = ctx.GetResource(id)
+	if err != nil || resource.SeriesID != nil {
+		t.Fatalf("series_id=0 did not clear assignment: resource=%#v err=%v", resource, err)
 	}
 }
 

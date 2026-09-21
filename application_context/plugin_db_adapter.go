@@ -206,6 +206,14 @@ func (a *pluginDBAdapter) GetNoteData(id uint) (map[string]any, error) {
 	return result, nil
 }
 
+func (a *pluginDBAdapter) GetSeriesData(id uint) (map[string]any, error) {
+	series, err := a.ctx.GetSeries(id)
+	if err != nil {
+		return nil, skipNotFound(err)
+	}
+	return seriesToMap(series), nil
+}
+
 func (a *pluginDBAdapter) GetResourceData(id uint) (map[string]any, error) {
 	resource, err := a.ctx.GetResource(id)
 	if err != nil {
@@ -781,6 +789,15 @@ func versionToMap(v *models.ResourceVersion) map[string]any {
 // resourceToMap converts a Resource model to a map suitable for Lua.
 // Note: this intentionally omits description, meta, and tags (unlike GetResourceData)
 // because newly-created resources may not have those fields populated yet.
+func seriesToMap(s *models.Series) map[string]any {
+	return map[string]any{
+		"id":   float64(s.ID),
+		"name": s.Name,
+		"slug": s.Slug,
+		"meta": string(s.Meta),
+	}
+}
+
 func resourceToMap(r *models.Resource) map[string]any {
 	result := map[string]any{
 		"id":                float64(r.ID),
@@ -1938,6 +1955,32 @@ func (a *pluginDBAdapter) PatchRelationType(opts map[string]any) (map[string]any
 	return relationTypeToMap(result), nil
 }
 
+// --- EntityWriter: Series ---
+
+func (a *pluginDBAdapter) CreateSeries(opts map[string]any) (map[string]any, error) {
+	series, err := a.ctx.CreateSeries(&query_models.SeriesCreator{
+		Name: getStringOpt(opts, "name"),
+		Slug: getStringOpt(opts, "slug"),
+		Meta: getStringOpt(opts, "meta"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return seriesToMap(series), nil
+}
+
+func (a *pluginDBAdapter) PatchSeries(id uint, opts map[string]any) (map[string]any, error) {
+	series, err := a.ctx.UpdateSeries(&query_models.SeriesEditor{
+		ID:   id,
+		Name: getStringOpt(opts, "name"),
+		Meta: getStringOpt(opts, "meta"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return seriesToMap(series), nil
+}
+
 // --- EntityWriter: Resource deletion ---
 
 func (a *pluginDBAdapter) DeleteResource(id uint) error {
@@ -1983,20 +2026,52 @@ func (a *pluginDBAdapter) UpdateResource(id uint, opts map[string]any) (map[stri
 	return resourceToMap(resource), nil
 }
 
-// PatchResource changes only the keys present in opts. Everything else is read
-// back from the stored resource and re-sent, because EditResource is a
-// replace-all write.
+// pluginPatchResourceAfterRead is a test seam for the gap between the adapter's
+// presentation snapshot and EditResource's transaction. Production leaves it
+// nil.
+var pluginPatchResourceAfterRead func()
+
+// PatchResource changes only the keys present in opts. The preliminary read
+// supplies current values to update hooks and association decoding, but field
+// presence is carried into EditResource so omitted values are ultimately
+// preserved from its post-lock snapshot rather than replayed from this read.
 func (a *pluginDBAdapter) PatchResource(id uint, opts map[string]any) (map[string]any, error) {
 	current, err := a.ctx.GetResource(id)
 	if err != nil {
 		return nil, err
 	}
+	if pluginPatchResourceAfterRead != nil {
+		pluginPatchResourceAfterRead()
+	}
 	var seriesID uint
 	if current.SeriesID != nil {
 		seriesID = *current.SeriesID
 	}
+	seriesSlug := ""
+	requestedID := getUintOpt(opts, "series_id")
+	requestedSlug := getStringOpt(opts, "series_slug")
+	_, seriesIDProvided := opts["series_id"]
+	switch {
+	case requestedID > 0:
+		seriesID = requestedID
+	case requestedSlug != "":
+		// EditResource resolves a slug only when SeriesId is zero. Clear the
+		// preserved current id so a patch can move a resource by slug.
+		seriesID = 0
+		seriesSlug = requestedSlug
+	case seriesIDProvided:
+		// Preserve the established patch_resource({series_id=0}) spelling for
+		// removing a resource from its series. An omitted field still preserves
+		// the current assignment.
+		seriesID = 0
+	}
+	patchFields := make(map[string]bool, len(opts))
+	for key := range opts {
+		patchFields[key] = true
+	}
 	editor := &query_models.ResourceEditor{
-		ID: id,
+		ID:          id,
+		PatchFields: patchFields,
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name:               patchString(opts, "name", current.Name),
 			Description:        patchString(opts, "description", current.Description),
@@ -2012,7 +2087,8 @@ func (a *pluginDBAdapter) PatchResource(id uint, opts map[string]any) (map[strin
 			OriginalLocation:   patchString(opts, "original_location", current.OriginalLocation),
 			Width:              patchUint(opts, "width", current.Width),
 			Height:             patchUint(opts, "height", current.Height),
-			SeriesId:           patchUint(opts, "series_id", seriesID),
+			SeriesId:           seriesID,
+			SeriesSlug:         seriesSlug,
 		},
 	}
 	resource, err := a.ctx.EditResource(editor)
@@ -2178,6 +2254,10 @@ func applyResourceOptions(base *query_models.ResourceQueryBase, options map[stri
 	}
 	if meta, ok := options["meta"].(string); ok {
 		base.Meta = meta
+	}
+	base.SeriesId = getUintOpt(options, "series_id")
+	if base.SeriesId == 0 {
+		base.SeriesSlug = getStringOpt(options, "series_slug")
 	}
 }
 

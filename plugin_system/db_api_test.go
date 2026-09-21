@@ -20,6 +20,13 @@ func (m *mockQuerier) GetNoteData(id uint) (map[string]any, error) {
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *mockQuerier) GetSeriesData(id uint) (map[string]any, error) {
+	if id == 1 {
+		return map[string]any{"id": float64(1), "name": "Test Series", "slug": "test-series", "meta": "{}"}, nil
+	}
+	return nil, fmt.Errorf("not found")
+}
+
 func (m *mockQuerier) GetResourceData(id uint) (map[string]any, error) {
 	if id == 1 {
 		return map[string]any{"id": float64(1), "name": "test.jpg", "content_type": "image/jpeg"}, nil

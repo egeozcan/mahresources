@@ -70,7 +70,8 @@ __runs, __runs_err = mah.fs.runs()
 __listing, __list_err = mah.fs.list("run-a")
 __body, __read_err = mah.fs.read("run-a", "out.bin", 1024)
 __import_id, __import_err = mah.fs.create_resource("run-a", "out.bin", {
-  name="made", description="desc", tags={1,2}, groups={3}, meta={source="command"}
+  name="made", description="desc", tags={1,2}, groups={3}, meta={source="command"},
+  series_id=4, series_slug="ignored-when-id-is-present"
 }, function(result) __import_result = result end)
 __discard_ok, __discard_err = mah.fs.discard("run-a", "out.bin")
 __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
@@ -107,7 +108,7 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 	if request.Access.ActorUserID == nil || *request.Access.ActorUserID != actor || request.ActorUserID == nil || *request.ActorUserID != actor {
 		t.Fatalf("import actor/access = %+v / %+v", request.ActorUserID, request.Access)
 	}
-	if request.Fields.Name != "made" || len(request.Fields.TagIDs) != 2 || len(request.Fields.GroupIDs) != 1 || request.Fields.Meta["source"] != "command" {
+	if request.Fields.Name != "made" || len(request.Fields.TagIDs) != 2 || len(request.Fields.GroupIDs) != 1 || request.Fields.Meta["source"] != "command" || request.Fields.SeriesID != 4 || request.Fields.SeriesSlug != "ignored-when-id-is-present" {
 		t.Fatalf("fields = %+v", request.Fields)
 	}
 
@@ -131,6 +132,40 @@ __discard_run_ok, __discard_run_err = mah.fs.discard_run("run-a")
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("import callback did not run")
+}
+
+func TestFSSetResourceThumbnailUsesExchangeAccess(t *testing.T) {
+	actor := uint(55)
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands", "db:write"`, host)
+	L.SetContext(withInvocation(context.Background(), NewInvocation(actor)))
+	if err := L.DoString(`__thumb_ok, __thumb_err = mah.fs.set_resource_thumbnail("run-a", "cover.jpg", 91)`); err != nil {
+		t.Fatal(err)
+	}
+	L.RemoveContext()
+	if L.GetGlobal("__thumb_ok") != lua.LTrue || L.GetGlobal("__thumb_err") != lua.LNil {
+		t.Fatalf("thumbnail result = %v / %v", L.GetGlobal("__thumb_ok"), L.GetGlobal("__thumb_err"))
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.thumbnails) != 1 {
+		t.Fatalf("thumbnail calls = %d", len(host.thumbnails))
+	}
+	call := host.thumbnails[0]
+	if call.runID != "run-a" || call.name != "cover.jpg" || call.resourceID != 91 || call.access.ActorUserID == nil || *call.access.ActorUserID != actor {
+		t.Fatalf("thumbnail call = %+v", call)
+	}
+}
+
+func TestFSSetResourceThumbnailRequiresDBWrite(t *testing.T) {
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands"`, host)
+	if err := L.DoString(`__thumb_type = type(mah.fs.set_resource_thumbnail)`); err != nil {
+		t.Fatal(err)
+	}
+	if got := L.GetGlobal("__thumb_type").String(); got != "nil" {
+		t.Fatalf("set_resource_thumbnail installed without db:write: %s", got)
+	}
 }
 
 func TestFSCreateResourceRepeatedNonterminalImportReleasesCallbackOwnership(t *testing.T) {
@@ -255,6 +290,8 @@ func TestFSCreateResourceRejectsUnknownAndMalformedFields(t *testing.T) {
 		`mah.fs.create_resource("r", "f", {owner_id=1})`,
 		`mah.fs.create_resource("r", "f", {tags={"1"}})`,
 		`mah.fs.create_resource("r", "f", {name=7})`,
+		`mah.fs.create_resource("r", "f", {series_id=2.9})`,
+		`mah.fs.create_resource("r", "f", {series_slug=7})`,
 	} {
 		if err := L.DoString(script); err == nil {
 			t.Fatalf("invalid fields accepted: %s", script)

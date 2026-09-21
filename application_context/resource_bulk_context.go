@@ -13,12 +13,18 @@ import (
 	"mahresources/models/types"
 	"mahresources/mrql"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// deleteResourceAfterBackup is a test seam for the gap between filesystem
+// backup and the transaction that locks/revalidates the Resource. Production
+// leaves it nil.
+var deleteResourceAfterBackup func()
 
 func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	_, hookErr := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceId)})
@@ -32,104 +38,136 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
-
-	if storageErr != nil {
-		return storageErr
-	}
-
-	subFolder := "deleted"
-
-	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
-		subFolder = *resource.StorageLocation
-	}
-
-	folder := fmt.Sprintf("/deleted/%v/", subFolder)
-
-	if err := ctx.fs.MkdirAll(folder, 0777); err != nil {
+	fs, backupPath, err := ctx.backupResourceForDeletion(&resource)
+	if err != nil {
 		return err
 	}
-
-	ownerIdStr := "nil"
-	if resource.OwnerId != nil {
-		ownerIdStr = fmt.Sprintf("%v", *resource.OwnerId)
-	}
-	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, ownerIdStr, strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
-
-	file, openErr := fs.Open(resource.GetCleanLocation())
-
-	if openErr == nil {
-		backup, createErr := ctx.fs.Create(filePath)
-
-		if createErr != nil {
-			_ = file.Close()
-			return createErr
-		}
-
-		defer backup.Close()
-
-		_, copyErr := io.Copy(backup, file)
-
-		if copyErr != nil {
-			_ = file.Close()
-			return copyErr
-		}
-
-		_ = file.Close()
+	if deleteResourceAfterBackup != nil {
+		deleteResourceAfterBackup()
 	}
 
 	// Wrap all DB writes in a single transaction to avoid multiple short write locks
-	// that cause SQLite "database is locked" errors under concurrent access
+	// that cause SQLite "database is locked" errors under concurrent access.
+	//
+	// Series metadata writers lock Series before Resource. Deletion must join the
+	// same order or an edit can hold Series while waiting for Resource as delete
+	// holds Resource while waiting to auto-delete Series. The membership snapshot
+	// was read before this transaction; if it changed while we waited for its old
+	// Series lock, roll back and retry from the freshly locked Resource snapshot.
 	var refCount int64
-	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
-		// Clear CurrentVersionID to break circular reference before deletion
-		if resource.CurrentVersionID != nil {
-			if err := txCtx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+	for attempt := 0; attempt < 5; attempt++ {
+		err = ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+			if resource.SeriesID != nil {
+				if _, lockErr := lockSeriesRowsForWrite(txCtx.db, *resource.SeriesID); lockErr != nil {
+					if !errors.Is(lockErr, gorm.ErrRecordNotFound) {
+						return lockErr
+					}
+					// Explicit removal can detach the Resource and delete its old
+					// Series while this deletion waits. Refresh to distinguish that
+					// drift from a genuinely corrupt missing Series reference.
+					var current models.Resource
+					if readErr := txCtx.db.First(&current, resourceId).Error; readErr != nil {
+						return readErr
+					}
+					if sameOptionalUint(resource.SeriesID, current.SeriesID) {
+						return lockErr
+					}
+					contentChanged := !sameResourceContent(&resource, &current)
+					resource = current
+					if contentChanged {
+						return errResourceContentChanged
+					}
+					return errResourceSeriesChanged
+				}
+			}
+			var lockedResource models.Resource
+			if err := txCtx.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedResource, resourceId).Error; err != nil {
 				return err
 			}
-		}
-
-		// Explicitly clean up resource_similarities (not a GORM association on Resource,
-		// and SQLite FK cascades don't fire reliably inside transactions).
-		if err := txCtx.db.Where("resource_id1 = ? OR resource_id2 = ?", resourceId, resourceId).
-			Delete(&models.ResourceSimilarity{}).Error; err != nil {
-			return err
-		}
-
-		// Explicitly clean up image_hashes (same reason).
-		if err := txCtx.db.Where("resource_id = ?", resourceId).
-			Delete(&models.ImageHash{}).Error; err != nil {
-			return err
-		}
-
-		if err := txCtx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
-			return err
-		}
-
-		// Auto-delete empty series if this resource was in one
-		if resource.SeriesID != nil {
-			seriesID := *resource.SeriesID
-			result := txCtx.db.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).Delete(&models.Series{})
-			if result.Error != nil {
-				txCtx.Logger().Warning(models.LogActionDelete, "series", &seriesID, "Failed to auto-delete empty series", result.Error.Error(), nil)
-			} else if result.RowsAffected > 0 {
-				txCtx.Logger().Info(models.LogActionDelete, "series", &seriesID, "", "Auto-deleted empty series", nil)
+			sameSeries := sameOptionalUint(resource.SeriesID, lockedResource.SeriesID)
+			contentChanged := !sameResourceContent(&resource, &lockedResource)
+			resource = lockedResource
+			if contentChanged {
+				return errResourceContentChanged
 			}
+			if !sameSeries {
+				return errResourceSeriesChanged
+			}
+
+			// Clear CurrentVersionID to break circular reference before deletion
+			if resource.CurrentVersionID != nil {
+				if err := txCtx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+					return err
+				}
+			}
+
+			// Explicitly clean up resource_similarities (not a GORM association on Resource,
+			// and SQLite FK cascades don't fire reliably inside transactions).
+			if err := txCtx.db.Where("resource_id1 = ? OR resource_id2 = ?", resourceId, resourceId).
+				Delete(&models.ResourceSimilarity{}).Error; err != nil {
+				return err
+			}
+
+			// Explicitly clean up image_hashes (same reason).
+			if err := txCtx.db.Where("resource_id = ?", resourceId).
+				Delete(&models.ImageHash{}).Error; err != nil {
+				return err
+			}
+
+			if err := txCtx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
+				return err
+			}
+
+			// Auto-delete empty series if this resource was in one
+			if resource.SeriesID != nil {
+				seriesID := *resource.SeriesID
+				result := txCtx.db.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).Delete(&models.Series{})
+				if result.Error != nil {
+					txCtx.Logger().Warning(models.LogActionDelete, "series", &seriesID, "Failed to auto-delete empty series", result.Error.Error(), nil)
+				} else if result.RowsAffected > 0 {
+					txCtx.Logger().Info(models.LogActionDelete, "series", &seriesID, "", "Auto-deleted empty series", nil)
+				}
+			}
+
+			// Check if any other resources or versions reference this hash
+			var countErr error
+			refCount, countErr = txCtx.CountHashReferences(resource.Hash, resource.StorageLocation)
+			if countErr != nil {
+				txCtx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
+				refCount = 1 // Assume referenced to be safe
+			}
+
+			txCtx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
+
+			// BH-020: scrub dangling references from note_blocks
+			return ScrubResourceFromBlocks(txCtx.db, resourceId)
+		})
+		if errors.Is(err, errResourceContentChanged) {
+			if backupPath != "" {
+				_ = ctx.fs.Remove(backupPath)
+			}
+			newFS, newBackupPath, backupErr := ctx.backupResourceForDeletion(&resource)
+			if backupErr != nil {
+				err = backupErr
+				break
+			}
+			fs, backupPath = newFS, newBackupPath
+			// Keep the sentinel until a later transaction actually commits. If
+			// all bounded attempts observe drift, nil here would falsely report a
+			// deletion that never happened.
+			err = errResourceContentChanged
+			continue
 		}
-
-		// Check if any other resources or versions reference this hash
-		var countErr error
-		refCount, countErr = txCtx.CountHashReferences(resource.Hash, resource.StorageLocation)
-		if countErr != nil {
-			txCtx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
-			refCount = 1 // Assume referenced to be safe
+		if !errors.Is(err, errResourceSeriesChanged) {
+			break
 		}
-
-		txCtx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
-
-		// BH-020: scrub dangling references from note_blocks
-		return ScrubResourceFromBlocks(txCtx.db, resourceId)
-	})
+	}
+	if errors.Is(err, errResourceSeriesChanged) || errors.Is(err, errResourceContentChanged) {
+		if backupPath != "" {
+			_ = ctx.fs.Remove(backupPath)
+		}
+		err = fmt.Errorf("resource kept changing during deletion: %w", err)
+	}
 
 	if err != nil {
 		return err
@@ -144,6 +182,61 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return nil
+}
+
+func sameResourceContent(a, b *models.Resource) bool {
+	if a.Hash != b.Hash || a.GetCleanLocation() != b.GetCleanLocation() {
+		return false
+	}
+	if a.StorageLocation == nil || b.StorageLocation == nil {
+		return a.StorageLocation == nil && b.StorageLocation == nil
+	}
+	return *a.StorageLocation == *b.StorageLocation
+}
+
+func (ctx *MahresourcesContext) backupResourceForDeletion(resource *models.Resource) (afero.Fs, string, error) {
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return nil, "", err
+	}
+
+	subFolder := "deleted"
+	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+		subFolder = *resource.StorageLocation
+	}
+	folder := fmt.Sprintf("/deleted/%v/", subFolder)
+	if err := ctx.fs.MkdirAll(folder, 0777); err != nil {
+		return nil, "", err
+	}
+
+	ownerID := "nil"
+	if resource.OwnerId != nil {
+		ownerID = fmt.Sprintf("%v", *resource.OwnerId)
+	}
+	backupPath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v",
+		resource.Hash, resource.ID, ownerID,
+		strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
+
+	file, openErr := fs.Open(resource.GetCleanLocation())
+	if openErr != nil {
+		return fs, backupPath, nil
+	}
+	defer file.Close()
+
+	backup, err := ctx.fs.Create(backupPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := io.Copy(backup, file); err != nil {
+		_ = backup.Close()
+		_ = ctx.fs.Remove(backupPath)
+		return nil, "", err
+	}
+	if err := backup.Close(); err != nil {
+		_ = ctx.fs.Remove(backupPath)
+		return nil, "", err
+	}
+	return fs, backupPath, nil
 }
 
 func (ctx *MahresourcesContext) ResourceMetaKeys() ([]contracts.MetaKey, error) {
@@ -518,8 +611,10 @@ type resourceDeleteEffect struct {
 }
 
 // prepareResourceDelete runs the before-delete hook, giving a plugin its veto.
-// Called inside the owning transaction on the bulk paths, so a refusal rolls the
-// whole batch back rather than leaving it half-applied.
+// Bulk and merge run every veto before opening their transaction: plugin writes
+// use a separately bound handle, so calling one after participant locks would
+// invert locks on PostgreSQL and stale a read transaction on SQLite. No
+// destructive work starts until every veto has accepted the batch.
 func (ctx *MahresourcesContext) prepareResourceDelete(resourceID uint) error {
 	_, err := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceID)})
 	return err
@@ -541,6 +636,81 @@ func (ctx *MahresourcesContext) emitResourceDeleteEffects(events []resourceDelet
 		ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(event.ID), "name": event.Name, "resource_category_id": event.TaxonomyID, "owner_id": event.OwnerID})
 	}
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+}
+
+// resourceSeriesLockChunkSize keeps request-controlled IN lists below both
+// database engines' placeholder ceilings. It is a var so tests can force
+// multiple chunks with a small fixture.
+var resourceSeriesLockChunkSize = 500
+
+// lockResourcesAfterSeries discovers every target's current membership, locks
+// the complete Series set in ascending order, then locks the Resource rows in
+// ascending order. A membership change while waiting invalidates the discovery;
+// callers must roll back and retry rather than acquire a newly discovered Series
+// after any Resource lock.
+func lockResourcesAfterSeries(tx *gorm.DB, ids []uint) (map[uint]*models.Resource, error) {
+	ordered := deduplicateUints(ids)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	if len(ordered) == 0 {
+		return map[uint]*models.Resource{}, nil
+	}
+
+	var observed []models.Resource
+	for _, chunk := range chunkUints(ordered, resourceSeriesLockChunkSize) {
+		var rows []models.Resource
+		if err := tx.Select("id", "series_id").Where("id IN ?", chunk).Order("id ASC").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		observed = append(observed, rows...)
+	}
+	if len(observed) != len(ordered) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	seriesIDs := make([]uint, 0, len(observed))
+	for i := range observed {
+		if observed[i].SeriesID != nil {
+			seriesIDs = append(seriesIDs, *observed[i].SeriesID)
+		}
+	}
+	seriesIDs = deduplicateUints(seriesIDs)
+	sort.Slice(seriesIDs, func(i, j int) bool { return seriesIDs[i] < seriesIDs[j] })
+	for _, chunk := range chunkUints(seriesIDs, resourceSeriesLockChunkSize) {
+		if _, err := lockSeriesRowsForWrite(tx, chunk...); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, errResourceSeriesChanged
+			}
+			return nil, err
+		}
+	}
+
+	var locked []models.Resource
+	for _, chunk := range chunkUints(ordered, resourceSeriesLockChunkSize) {
+		resourceQuery := tx
+		if tx.Dialector.Name() == "postgres" {
+			resourceQuery = resourceQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var rows []models.Resource
+		if err := resourceQuery.Where("id IN ?", chunk).Order("id ASC").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		locked = append(locked, rows...)
+	}
+	if len(locked) != len(ordered) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	observedByID := make(map[uint]*uint, len(observed))
+	for i := range observed {
+		observedByID[observed[i].ID] = observed[i].SeriesID
+	}
+	result := make(map[uint]*models.Resource, len(locked))
+	for i := range locked {
+		if !sameOptionalUint(observedByID[locked[i].ID], locked[i].SeriesID) {
+			return nil, errResourceSeriesChanged
+		}
+		result[locked[i].ID] = &locked[i]
+	}
+	return result, nil
 }
 
 func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileCleanupAction, resourceDeleteEffect, error) {
@@ -628,15 +798,21 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	var cleanupActions []*FileCleanupAction
 	var deleteEffects []resourceDeleteEffect
 
-	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	// Plugin hooks execute through their bound context, not this transaction's
+	// handle. Run every veto before taking the read snapshot/row locks so a hook
+	// write cannot make SQLite promote a stale read transaction or deadlock a
+	// PostgreSQL row the hook itself needs.
+	for _, id := range query.ID {
+		if err := ctx.prepareResourceDelete(id); err != nil {
+			return err
+		}
+	}
+
+	err := ctx.withResourceSeriesRetry("bulk deletion", func(altCtx *MahresourcesContext) error {
+		if _, err := lockResourcesAfterSeries(altCtx.db, query.ID); err != nil {
+			return err
+		}
 		for _, id := range query.ID {
-			// Single-item DeleteResource has always bracketed its work with these
-			// hooks; this path fired neither, so a plugin that mirrors resources
-			// to an external system or vetoes deletion of protected ones worked
-			// for one resource and was silently bypassed for fifty.
-			if err := altCtx.prepareResourceDelete(id); err != nil {
-				return err
-			}
 			action, effect, err := altCtx.deleteResourceDBOnly(id)
 			if err != nil {
 				return err
@@ -744,40 +920,38 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 		}
 	}
 
-	// Two-phase approach: DB operations in transaction, file I/O after commit
+	// Two-phase approach: DB operations in transaction, file I/O after commit.
+	// Run plugin vetoes before participant row locks for the same cross-handle
+	// lock-order reason as BulkDeleteResources.
 	var cleanupActions []*FileCleanupAction
 	var deleteEffects []resourceDeleteEffect
-
-	err := ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
-		tx := transactionCtx.db
-
-		// Load losers WITHOUT associations — we only need their basic fields for backup
-		var losers []*models.Resource
-		loserQuery := tx
-		if precondition != nil && ctx.Config.DbType != constants.DbTypeSqlite {
-			// Locked because a precondition follows. Without this the check would be
-			// check-then-act against a concurrent committer, which is the thing the
-			// precondition exists to prevent.
-			loserQuery = loserQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		if loadResourcesErr := loserQuery.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
-			return loadResourcesErr
-		}
-
-		// Verify all loser IDs were found
-		if len(losers) != len(loserIds) {
-			return fmt.Errorf("one or more loser resources not found")
-		}
-
-		// Load winner WITHOUT associations
-		var winner models.Resource
-		winnerQuery := tx
-		if precondition != nil && ctx.Config.DbType != constants.DbTypeSqlite {
-			winnerQuery = winnerQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		if err := winnerQuery.First(&winner, winnerId).Error; err != nil {
+	for _, id := range loserIds {
+		if err := ctx.prepareResourceDelete(id); err != nil {
 			return err
 		}
+	}
+
+	err := ctx.withResourceSeriesRetry("merge", func(transactionCtx *MahresourcesContext) error {
+		tx := transactionCtx.db
+
+		participantIDs := append(append(make([]uint, 0, len(loserIds)+1), loserIds...), winnerId)
+		participants, err := lockResourcesAfterSeries(tx, participantIDs)
+		if err != nil {
+			return err
+		}
+		losers := make([]*models.Resource, 0, len(loserIds))
+		for _, id := range loserIds {
+			loser := participants[id]
+			if loser == nil {
+				return fmt.Errorf("one or more loser resources not found")
+			}
+			losers = append(losers, loser)
+		}
+		winnerRow := participants[winnerId]
+		if winnerRow == nil {
+			return gorm.ErrRecordNotFound
+		}
+		winner := *winnerRow
 
 		// The caller's check, here and not before the call: these are the rows the
 		// merge is about to delete, read inside the transaction that deletes them
@@ -872,13 +1046,6 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 		deletedResBackups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
-			// Before any destructive work on this loser, so a veto rolls the
-			// whole merge back. A merge that silently kept one loser alive would
-			// leave the winner holding half its associations.
-			if err := transactionCtx.prepareResourceDelete(loser.ID); err != nil {
-				return err
-			}
-
 			// The snapshot marshals the whole loser row, Meta included, so a loser
 			// that had itself absorbed merges would carry their backups inside its
 			// own. Snapshot a copy rather than the loaded row, so stripping cannot

@@ -18,6 +18,8 @@ type ResourceFields struct {
 	TagIDs      []uint
 	GroupIDs    []uint
 	Meta        map[string]any
+	SeriesID    uint
+	SeriesSlug  string
 }
 
 // ImportValidation is re-evaluated when a queued import actually owns a worker
