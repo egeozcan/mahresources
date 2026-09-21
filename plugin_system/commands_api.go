@@ -91,14 +91,15 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 		copyOfDeclaration := declaration
 		copyOfDeclaration.Argv = append([]string(nil), declaration.Argv...)
 		copyOfDeclaration.SensitiveParams = append([]string(nil), declaration.SensitiveParams...)
+		copyOfDeclaration.Inputs = append([]string(nil), declaration.Inputs...)
 		byName[declaration.Name] = copyOfDeclaration
 	}
 
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
 		"run": func(L *lua.LState) int {
-			if L.GetTop() < 2 || L.GetTop() > 3 {
-				L.RaiseError("mah.commands.run expects name, params, and optional callback")
+			if L.GetTop() < 2 || L.GetTop() > 4 {
+				L.RaiseError("mah.commands.run expects name, params, optional callback and optional options")
 			}
 			admission, err := pm.beginCommandCall(L)
 			if err != nil {
@@ -111,10 +112,19 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 				return pushLuaHostError(L, fmt.Errorf("command %q is not declared by this plugin", name))
 			}
 			params := checkCommandParams(L, 2)
-			// Validate the complete declaration substitution before the durable
-			// host sees the request. The real exchange directory is host-filled;
-			// a nonempty sentinel exercises the same declaration branch.
+			// Both the substitution and the supplied input names are validated
+			// before the durable host sees the request, so a refusal is a Lua
+			// return value rather than a run that fails later. The real exchange
+			// directory is host-filled; a nonempty sentinel exercises the same
+			// declaration branch.
 			if _, err := plugin_commands.BuildInvocation(declaration, params, "/host/exchange"); err != nil {
+				return pushLuaHostError(L, err)
+			}
+			inputs, err := checkCommandInputs(L, 4)
+			if err != nil {
+				return pushLuaHostError(L, err)
+			}
+			if _, err := plugin_commands.ValidateInputs(declaration, inputs); err != nil {
 				return pushLuaHostError(L, err)
 			}
 
@@ -135,6 +145,7 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 				ActorUserID:      actor,
 				Declaration:      declaration,
 				Params:           params,
+				Inputs:           inputs,
 				Completion:       completion,
 			})
 			if err != nil {
@@ -224,6 +235,71 @@ func pushLuaHostError(L *lua.LState, err error) int {
 	L.Push(lua.LNil)
 	L.Push(lua.LString(err.Error()))
 	return 2
+}
+
+// checkCommandInputs reads the optional options table, the fourth argument.
+//
+// Every problem here is returned as an error rather than raised as a Lua error:
+// the contents are data a plugin may have taken from a setting or a user's
+// clipboard, and a plugin that gets one wrong should be able to report it
+// through its own error handling rather than unwind. Shape problems in the
+// params table keep their existing raise behaviour; this table is new and gets
+// one uniform answer.
+func checkCommandInputs(L *lua.LState, index int) (map[string]string, error) {
+	if L.GetTop() < index || L.Get(index) == lua.LNil {
+		return nil, nil
+	}
+	value := L.Get(index)
+	options, ok := value.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("command input options must be a table, got %s", value.Type())
+	}
+
+	var inputs map[string]string
+	var failure error
+	options.ForEach(func(key, field lua.LValue) {
+		if failure != nil {
+			return
+		}
+		name, ok := key.(lua.LString)
+		if !ok {
+			failure = fmt.Errorf("command input options must be keyed by name, got %s", key.Type())
+			return
+		}
+		if string(name) != "inputs" {
+			failure = fmt.Errorf("command input options have unknown field %q", string(name))
+			return
+		}
+		body, ok := field.(*lua.LTable)
+		if !ok {
+			failure = fmt.Errorf("command input options field %q must be a table, got %s", "inputs", field.Type())
+			return
+		}
+		inputs = make(map[string]string, body.Len())
+		body.ForEach(func(fileKey, fileValue lua.LValue) {
+			if failure != nil {
+				return
+			}
+			file, ok := fileKey.(lua.LString)
+			if !ok {
+				failure = fmt.Errorf("input file names must be strings, got %s", fileKey.Type())
+				return
+			}
+			// A nil value cannot exist in a Lua table: assigning nil removes
+			// the key, so an empty table is what "no contents" looks like and
+			// supplying nothing stays legal.
+			content, ok := fileValue.(lua.LString)
+			if !ok {
+				failure = fmt.Errorf("input file %q contents must be a string", string(file))
+				return
+			}
+			inputs[string(file)] = string(content)
+		})
+	})
+	if failure != nil {
+		return nil, failure
+	}
+	return inputs, nil
 }
 
 func optionalLuaError(message string) any {

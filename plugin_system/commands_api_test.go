@@ -131,6 +131,19 @@ func commandPluginSource(capabilities string) string {
 plugin = {
   name = "commander", version = "1", api_version = 1,
   capabilities = {` + capabilities + `},
+  commands = {{ name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 60, sensitive_params = {"url"}, inputs = {"cookies.txt", "notes.txt"} }}
+}
+function init() end
+`
+}
+
+// commandPluginWithoutInputs is the same plugin with no declared input files, so
+// a test can assert that a supplied name is refused when it was never declared.
+func commandPluginWithoutInputs(capabilities string) string {
+	return `
+plugin = {
+  name = "commander", version = "1", api_version = 1,
+  capabilities = {` + capabilities + `},
   commands = {{ name = "download", argv = {"tool", "--", "{{url}}"}, timeout = 60, sensitive_params = {"url"} }}
 }
 function init() end
@@ -291,6 +304,131 @@ end)
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("command callback did not run")
+}
+
+func TestCommandsRunAcceptsDeclaredInputsAsTheFourthArgument(t *testing.T) {
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands"`, host)
+	L.SetContext(withInvocation(context.Background(), NewInvocation(77)))
+	if err := L.DoString(`
+__input_run, __input_err = mah.commands.run("download", {url="https://example.invalid"}, nil, {inputs={["cookies.txt"]="# Netscape\nSID=secret\n"}})
+`); err != nil {
+		t.Fatal(err)
+	}
+	// A nil value cannot exist in a Lua table, so an assignment of nil is an
+	// empty table: supplying nothing is legal and writes nothing.
+	if err := L.DoString(`
+__nil_run, __nil_err = mah.commands.run("download", {url="https://example.invalid"}, nil, {inputs={["cookies.txt"]=nil}})
+`); err != nil {
+		t.Fatal(err)
+	}
+	L.RemoveContext()
+	if got := L.GetGlobal("__input_err"); got != lua.LNil {
+		t.Fatalf("declared input refused: %v", got)
+	}
+	if got := L.GetGlobal("__input_run").String(); got != "run-123" {
+		t.Fatalf("run id = %q", got)
+	}
+	if got := L.GetGlobal("__nil_err"); got != lua.LNil {
+		t.Fatalf("an empty inputs table was refused: %v", got)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.requests) != 2 {
+		t.Fatalf("requests = %d", len(host.requests))
+	}
+	if got := host.requests[0].Inputs["cookies.txt"]; got != "# Netscape\nSID=secret\n" {
+		t.Fatalf("supplied input = %q", got)
+	}
+	if len(host.requests[1].Inputs) != 0 {
+		t.Fatalf("an empty inputs table reached the host as %+v", host.requests[1].Inputs)
+	}
+}
+
+func TestCommandsRunRefusesInputsItCannotHonour(t *testing.T) {
+	cases := map[string]struct {
+		lua  string
+		want string
+	}{
+		"undeclared name":   {`{inputs={["other.txt"]="x"}}`, "does not declare input file"},
+		"unknown option":    {`{input={["cookies.txt"]="x"}}`, "unknown field"},
+		"options not table": {`"cookies.txt"`, "must be a table"},
+		"value not string":  {`{inputs={["cookies.txt"]=42}}`, "contents must be a string"},
+		"field not table":   {`{inputs="x"}`, "must be a table"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			host := &commandLuaHost{}
+			_, L := enableCommandPlugin(t, `"commands"`, host)
+			L.SetContext(withInvocation(context.Background(), NewInvocation(77)))
+			if err := L.DoString(`__input_run, __input_err = mah.commands.run("download", {url="https://example.invalid"}, nil, ` + tc.lua + `)`); err != nil {
+				t.Fatalf("refusal must be nil, error rather than a Lua error: %v", err)
+			}
+			L.RemoveContext()
+			if got := L.GetGlobal("__input_run"); got != lua.LNil {
+				t.Fatalf("run id = %v, want nil", got)
+			}
+			if got := L.GetGlobal("__input_err").String(); !strings.Contains(got, tc.want) {
+				t.Fatalf("error = %q, want it to contain %q", got, tc.want)
+			}
+			host.mu.Lock()
+			defer host.mu.Unlock()
+			if len(host.requests) != 0 {
+				t.Fatal("a refused request reached the host")
+			}
+		})
+	}
+}
+
+func TestCommandsRunRefusesInputsForACommandThatDeclaresNone(t *testing.T) {
+	host := &commandLuaHost{}
+	dir := t.TempDir()
+	writePlugin(t, dir, "commander", commandPluginWithoutInputs(`"commands"`))
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pm.Close)
+	pm.SetCommandSubmitter(host)
+	store := newSharedConsentStore()
+	discovered := pm.GetDiscoveredPlugin("commander")
+	if discovered == nil {
+		t.Fatal("command plugin was not discovered")
+	}
+	grants, err := GrantsForEnable(discovered.Manifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.records["commander"] = grants
+	pm.SetConsentStore(store)
+	if err := pm.EnablePlugin("commander"); err != nil {
+		t.Fatal(err)
+	}
+	L := stateForPlugin(t, pm, "commander")
+	L.SetContext(withInvocation(context.Background(), NewInvocation(77)))
+	if err := L.DoString(`__input_run, __input_err = mah.commands.run("download", {url="https://example.invalid"}, nil, {inputs={["cookies.txt"]="x"}})`); err != nil {
+		t.Fatal(err)
+	}
+	L.RemoveContext()
+	if got := L.GetGlobal("__input_run"); got != lua.LNil {
+		t.Fatalf("run id = %v, want nil", got)
+	}
+	if got := L.GetGlobal("__input_err").String(); !strings.Contains(got, "does not declare input file") {
+		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestCommandsRunRefusesAFifthArgument(t *testing.T) {
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands"`, host)
+	if err := L.DoString(`mah.commands.run("download", {url="u"}, nil, {}, {})`); err == nil {
+		t.Fatal("a fifth argument was accepted")
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.requests) != 0 {
+		t.Fatal("a malformed call reached the host")
+	}
 }
 
 func TestCommandsSurfaceContainsOnlyApprovedRunFunction(t *testing.T) {

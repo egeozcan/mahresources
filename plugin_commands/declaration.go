@@ -50,6 +50,14 @@ type Invocation struct {
 	ParamView    map[string]string
 }
 
+// InputFile is one supplied input that has passed validation. Content is the
+// only place the bytes live outside the exchange folder once the run exists;
+// nothing may copy it into a record, a log line or an error.
+type InputFile struct {
+	Name    string
+	Content []byte
+}
+
 // ValidateDeclaration refuses templates that could select a path or interpolate
 // parameter data into only part of an argument.
 func ValidateDeclaration(declaration Declaration) error {
@@ -139,6 +147,60 @@ func validateExecutable(commandName, executable string) error {
 		return fmt.Errorf("command %q argv[0] %q must be a basename without path separators, '..', or a leading dash", commandName, executable)
 	}
 	return nil
+}
+
+// ValidateInputs checks the contents a plugin supplied against the command's
+// declaration and returns them in declaration order. It performs no I/O and
+// touches nothing durable, so a caller can refuse a run before the host has
+// created a row or a byte. Report order is deterministic: declaration order for
+// the supplied names, then sorted for the ones that were never declared.
+func ValidateInputs(declaration Declaration, supplied map[string]string) ([]InputFile, error) {
+	if len(supplied) == 0 {
+		return nil, nil
+	}
+	if len(supplied) > MaxInputFiles {
+		return nil, fmt.Errorf("command %q received %d input files; maximum is %d", declaration.Name, len(supplied), MaxInputFiles)
+	}
+	declared := make(map[string]struct{}, len(declaration.Inputs))
+	for _, name := range declaration.Inputs {
+		declared[name] = struct{}{}
+	}
+
+	ordered := make([]InputFile, 0, len(supplied))
+	total := 0
+	for _, name := range declaration.Inputs {
+		content, ok := supplied[name]
+		if !ok {
+			continue
+		}
+		if len(content) > MaxInputBytes {
+			return nil, fmt.Errorf("input file %q is %d bytes; maximum is %d", name, len(content), MaxInputBytes)
+		}
+		total += len(content)
+		ordered = append(ordered, InputFile{Name: name, Content: []byte(content)})
+	}
+
+	undeclared := make([]string, 0, len(supplied)-len(ordered))
+	for name := range supplied {
+		if _, ok := declared[name]; !ok {
+			undeclared = append(undeclared, name)
+		}
+	}
+	sort.Strings(undeclared)
+	for _, name := range undeclared {
+		// Grammar before declared-ness: a name that is not a plain file name
+		// could never have been declared, and its own message says what is
+		// wrong with it rather than calling it undeclared.
+		if err := ValidateInputFileName(name); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("command %q does not declare input file %q", declaration.Name, name)
+	}
+
+	if total > MaxAggregateInputBytes {
+		return nil, fmt.Errorf("input file contents total %d bytes; maximum is %d", total, MaxAggregateInputBytes)
+	}
+	return ordered, nil
 }
 
 // BuildInvocation substitutes whole argv elements only. exchangeDir is supplied

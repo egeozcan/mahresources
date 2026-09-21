@@ -291,6 +291,80 @@ func TestValidateDeclarationChecksInputNames(t *testing.T) {
 	}
 }
 
+func TestValidateInputsAcceptsDeclaredNamesInDeclarationOrder(t *testing.T) {
+	declaration := Declaration{Name: "fetch", Argv: []string{"tool"}, Timeout: DefaultTimeout, Inputs: []string{"b.txt", "a.txt"}}
+	got, err := ValidateInputs(declaration, map[string]string{"a.txt": "A", "b.txt": "BB"})
+	if err != nil {
+		t.Fatalf("ValidateInputs: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "b.txt" || string(got[0].Content) != "BB" || got[1].Name != "a.txt" || string(got[1].Content) != "A" {
+		t.Fatalf("ValidateInputs = %+v, want declaration order with contents", got)
+	}
+	for label, supplied := range map[string]map[string]string{"nil": nil, "empty": {}} {
+		t.Run(label, func(t *testing.T) {
+			files, err := ValidateInputs(declaration, supplied)
+			if err != nil || files != nil {
+				t.Fatalf("supplying nothing must be legal: %+v %v", files, err)
+			}
+		})
+	}
+	// A zero-byte value is a real, distinguishable artifact: absent and empty
+	// are different things, and the host does not interpret the program.
+	got, err = ValidateInputs(declaration, map[string]string{"a.txt": ""})
+	if err != nil || len(got) != 1 || len(got[0].Content) != 0 {
+		t.Fatalf("zero-byte contents = %+v, %v", got, err)
+	}
+}
+
+func TestValidateInputsRefusals(t *testing.T) {
+	names := make([]string, 0, MaxInputFiles)
+	for i := 0; i < MaxInputFiles; i++ {
+		names = append(names, fmt.Sprintf("in-%d", i))
+	}
+	declaration := Declaration{Name: "fetch", Argv: []string{"tool"}, Timeout: DefaultTimeout, Inputs: names}
+	undeclaring := Declaration{Name: "fetch", Argv: []string{"tool"}, Timeout: DefaultTimeout}
+	overCount := map[string]string{}
+	for i := 0; i <= MaxInputFiles; i++ {
+		overCount[fmt.Sprintf("in-%d", i)] = "x"
+	}
+	full := strings.Repeat("x", MaxInputBytes)
+	cases := []struct {
+		label       string
+		declaration Declaration
+		supplied    map[string]string
+		want        []string
+	}{
+		{"undeclared name", declaration, map[string]string{"other.txt": "x"}, []string{"fetch", "other.txt"}},
+		{"declaration without inputs", undeclaring, map[string]string{"a.txt": "x"}, []string{"fetch", "a.txt"}},
+		{"separator", declaration, map[string]string{"a/b": "x"}, []string{"a/b", "plain file name"}},
+		{"leading dot", declaration, map[string]string{".netrc": "x"}, []string{".netrc", "dot"}},
+		{"over file count", declaration, overCount, []string{"5 input files"}},
+		{"over file size", declaration, map[string]string{names[0]: full + "x"}, []string{names[0], "maximum"}},
+		{"over aggregate", declaration, map[string]string{names[0]: full, names[1]: full, names[2]: "x"}, []string{"total"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			got, err := ValidateInputs(tc.declaration, tc.supplied)
+			if err == nil {
+				t.Fatalf("ValidateInputs accepted %+v", tc.supplied)
+			}
+			if got != nil {
+				t.Fatalf("refusal returned files: %+v", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+	// Exactly the limits are accepted.
+	atLimits := map[string]string{names[0]: full, names[1]: full}
+	if got, err := ValidateInputs(declaration, atLimits); err != nil || len(got) != 2 {
+		t.Fatalf("exactly the limits were refused: %v", err)
+	}
+}
+
 func TestSameDeclarationsComparesInputNamesAsASet(t *testing.T) {
 	a := []Declaration{{Name: "one", Argv: []string{"tool"}, Timeout: time.Hour, Inputs: []string{"cookies.txt", "notes.txt"}}}
 	reordered := []Declaration{{Name: "one", Argv: []string{"tool"}, Timeout: time.Hour, Inputs: []string{"notes.txt", "cookies.txt"}}}

@@ -383,7 +383,14 @@ func (d *Dispatcher) Submit(request CommandRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	run := QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation, control: &runControl{}}
+	inputs, err := ValidateInputs(request.Declaration, request.Inputs)
+	if err != nil {
+		return "", err
+	}
+	if quota := effectiveQuota(d.deps.Settings.PerRunQuota(), defaultPerRunQuota); inputBytes(inputs) > quota {
+		return "", fmt.Errorf("input file contents total %d bytes; maximum is %d", inputBytes(inputs), quota)
+	}
+	run := QueuedRun{RunID: runID, Request: request, ExchangeDir: exchangeDir, Invocation: invocation, Inputs: inputs, control: &runControl{}}
 	admission, prepared := d.deps.Executor.(commandAdmission)
 	if prepared {
 		if err := admission.Prepare(run); err != nil {
@@ -1548,10 +1555,24 @@ func (d *Dispatcher) post(message any) {
 
 func cloneCommandRequest(request CommandRequest) CommandRequest {
 	request.Params = cloneStringMap(request.Params)
+	// The map the plugin handed over must be copied, not aliased: the caller
+	// keeps its own reference and the queued run is what gets cleared once the
+	// contents are on disk.
+	request.Inputs = cloneStringMap(request.Inputs)
 	request.Declaration.Argv = append([]string(nil), request.Declaration.Argv...)
 	request.Declaration.SensitiveParams = append([]string(nil), request.Declaration.SensitiveParams...)
+	request.Declaration.Inputs = append([]string(nil), request.Declaration.Inputs...)
 	request.ActorUserID = copyUint(request.ActorUserID)
 	return request
+}
+
+// inputBytes is the aggregate size of the files a run is about to write.
+func inputBytes(files []InputFile) int64 {
+	var total int64
+	for _, file := range files {
+		total += int64(len(file.Content))
+	}
+	return total
 }
 
 func cloneStringMap(source map[string]string) map[string]string {

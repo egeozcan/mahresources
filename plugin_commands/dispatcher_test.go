@@ -3,16 +3,25 @@ package plugin_commands
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-type dispatcherTestSettings struct{ pending int }
+type dispatcherTestSettings struct {
+	pending int
+	quota   int64
+}
 
-func (s dispatcherTestSettings) StagingRoot() string              { return "/staging" }
-func (s dispatcherTestSettings) PendingPerPluginLimit() int       { return s.pending }
-func (s dispatcherTestSettings) PerRunQuota() int64               { return 1 << 30 }
+func (s dispatcherTestSettings) StagingRoot() string        { return "/staging" }
+func (s dispatcherTestSettings) PendingPerPluginLimit() int { return s.pending }
+func (s dispatcherTestSettings) PerRunQuota() int64 {
+	if s.quota > 0 {
+		return s.quota
+	}
+	return 1 << 30
+}
 func (s dispatcherTestSettings) GlobalStagingQuota() int64        { return 1 << 31 }
 func (s dispatcherTestSettings) ExchangeRetention() time.Duration { return time.Hour }
 func (s dispatcherTestSettings) OutputRetention() time.Duration   { return time.Hour }
@@ -302,6 +311,28 @@ func startTestDispatcher(t *testing.T, pending int) (*Dispatcher, *dispatcherTes
 		_ = d.Stop(ctx)
 	})
 	return d, store, jobs
+}
+
+func TestSubmitRefusesInputsBeforeAnyDurableWork(t *testing.T) {
+	declaration := Declaration{Name: "fetch", Argv: []string{"tool", "--cookies", "cookies.txt"}, Timeout: time.Minute, Inputs: []string{"cookies.txt"}}
+	// Bare dispatcher: both refusals return from Submit before any queue or
+	// store is touched, which is the whole point of validating synchronously.
+	d := NewDispatcher(Dependencies{Executor: dispatcherTestExecutor{}, Settings: dispatcherTestSettings{pending: 10, quota: 8}})
+	if _, err := d.Submit(CommandRequest{PluginName: "p", Declaration: declaration, Inputs: map[string]string{"other.txt": "x"}}); err == nil || !strings.Contains(err.Error(), "other.txt") {
+		t.Fatalf("undeclared input err = %v", err)
+	}
+	if _, err := d.Submit(CommandRequest{PluginName: "p", Declaration: declaration, Inputs: map[string]string{"cookies.txt": "123456789"}}); err == nil || !strings.Contains(err.Error(), "total") {
+		t.Fatalf("per-run quota err = %v", err)
+	}
+}
+
+func TestSubmitAcceptsDeclaredInputs(t *testing.T) {
+	d, _, _ := startTestDispatcher(t, 10)
+	declaration := Declaration{Name: "fetch", Argv: []string{"tool", "--cookies", "cookies.txt"}, Timeout: time.Minute, Inputs: []string{"cookies.txt"}}
+	runID, err := d.Submit(CommandRequest{PluginName: "inputs", PluginGeneration: 1, Declaration: declaration, Inputs: map[string]string{"cookies.txt": "SID=secret"}})
+	if err != nil || runID == "" {
+		t.Fatalf("Submit with declared inputs = %q, %v", runID, err)
+	}
 }
 
 func completionDispatchActive(d *Dispatcher, plugin string) int {

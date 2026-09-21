@@ -164,6 +164,8 @@ Refusal wording, checked synchronously with no I/O:
 | Over `MaxAggregateInputBytes`, or the per-run quota | `input file contents total %d bytes; maximum is %d` |
 | Non-string value | `input file %q contents must be a string` |
 | Unknown options key | `command input options have unknown field %q` |
+| Options not a table | `command input options must be a table, got %s` |
+| Options field not a table | `command input options field %q must be a table, got %s` |
 
 ## 3. Ordering and atomicity
 

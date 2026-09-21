@@ -226,7 +226,12 @@ type CommandRequest struct {
 	ActorUserID      *uint
 	Declaration      Declaration
 	Params           map[string]string
-	Completion       func(Result)
+	// Inputs is what the plugin supplied, keyed by declared name. Validation
+	// belongs to the host: ValidateInputs turns this into QueuedRun.Inputs
+	// before anything durable exists, and the contents are dropped from memory
+	// once they are on disk.
+	Inputs     map[string]string
+	Completion func(Result)
 }
 
 type QueuedRun struct {
@@ -234,6 +239,7 @@ type QueuedRun struct {
 	Request             CommandRequest
 	ExchangeDir         string
 	Invocation          Invocation
+	Inputs              []InputFile
 	control             *runControl
 	progress            Progress
 	completionLifecycle *commandCompletionLifecycle
