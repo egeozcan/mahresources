@@ -56,6 +56,33 @@ func sourceWithoutComments(src string) string {
 	return b.String()
 }
 
+// isDNSShapedHost reports whether host is shaped like a name a resolver could
+// look up. It is a shape check and nothing more — nothing here resolves or
+// connects.
+//
+// What it exists for is the URL in a documented example: an empty label is
+// unlookupable, so a `network` list that omits it is not missing anything a
+// request could reach. fal-ai's `placeholder="https://.../style.png"` — an
+// illustration of what a form field takes, inside an HTML attribute nothing
+// dereferences — is the case that produced this. A form or docs URL is the one
+// shape this scan cannot tell apart from a live one, and it costs the check
+// nothing it could ever have caught.
+//
+// A single trailing dot stays: `fal.run.` is a rooted, absolute name DNS does
+// resolve, and skipping it would drop a genuinely reachable host.
+func isDNSShapedHost(host string) bool {
+	trimmed := strings.TrimSuffix(host, ".")
+	if trimmed == "" {
+		return false
+	}
+	for _, label := range strings.Split(trimmed, ".") {
+		if label == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // TestBundledPluginLiteralURLsAreDeclared checks every absolute URL written into
 // a bundled plugin's source against that plugin's own egress policy, through the
 // same matcher the request path uses.
@@ -85,6 +112,11 @@ func TestBundledPluginLiteralURLsAreDeclared(t *testing.T) {
 			// XML namespaces are identifiers that happen to be spelled as URLs.
 			// Nothing dereferences the xmlns of an inline <svg>.
 			if host == "www.w3.org" {
+				continue
+			}
+			// A host no resolver could look up is not an egress surface a manifest
+			// can be missing. See isDNSShapedHost.
+			if !isDNSShapedHost(host) {
 				continue
 			}
 			if !policy.Allows(host) {

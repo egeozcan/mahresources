@@ -207,16 +207,18 @@ func (e *exchangeService) DiscardRun(access Access, runID string) error {
 	return nil
 }
 
+// authorizeAndLease authorizes before it leases, and authorizes again after, so
+// an unauthorized caller never occupies a lease slot and a run that stopped
+// being eligible between the two calls cannot be handed back with one held.
 func (e *exchangeService) authorizeAndLease(access Access, runID string, allowUnverified bool) (RunRecord, func(), error) {
-	run, err := e.authorizeRun(access, runID, allowUnverified)
-	if err != nil {
+	if _, err := e.authorizeRun(access, runID, allowUnverified); err != nil {
 		return RunRecord{}, nil, err
 	}
 	release, err := e.leases.Acquire(runID)
 	if err != nil {
 		return RunRecord{}, nil, err
 	}
-	run, err = e.authorizeRun(access, runID, allowUnverified)
+	run, err := e.authorizeRun(access, runID, allowUnverified)
 	if err != nil {
 		release()
 		return RunRecord{}, nil, err

@@ -144,7 +144,14 @@ func TestSidebar_IsWrappedInADisclosure(t *testing.T) {
 
 			// Constraint 2: the <aside class="sidebar"> is wrapped, not replaced —
 			// specs address it as `aside, [role="complementary"]` without .first().
-			if !strings.Contains(body, `<aside class="sidebar">`) {
+			//
+			// Matched on the opening tag up to the class attribute's closing quote,
+			// not on the whole tag: a list view that renders the saved-search panel
+			// also puts `data-list-sidebar` on this same element (base.tpl), and
+			// ws10_global_chrome_test.go's `.sidebar[data-list-sidebar]` rules depend
+			// on it. The quote is part of the match so `class="sidebarbaz"` cannot
+			// pass as a substring.
+			if !strings.Contains(body, `<aside class="sidebar"`) {
 				t.Errorf("finding 25: <aside class=\"sidebar\"> is gone from %s; it must be wrapped, not replaced", url)
 			}
 			if n := strings.Count(body, `<aside`); n != 1 {

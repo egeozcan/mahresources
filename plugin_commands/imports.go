@@ -421,13 +421,6 @@ func (d *Dispatcher) deleteImportedSource(run RunRecord, name string, source *os
 	return nil
 }
 
-func appendImportError(message, prefix string, err error) string {
-	if message == "" {
-		return prefix + ": " + err.Error()
-	}
-	return message + "; " + prefix + ": " + err.Error()
-}
-
 func cloneImportSubmission(submission ImportSubmission) ImportSubmission {
 	submission.ActorUserID = copyUint(submission.ActorUserID)
 	submission.Access.ActorUserID = copyUint(submission.Access.ActorUserID)
