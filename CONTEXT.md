@@ -98,3 +98,25 @@ _Avoid_: previous version, old version, earlier version. Version numbers are not
 **Displayed Version**:
 The Resource Version a viewer is showing for a Resource. It is the Current Version unless a reader has chosen otherwise, and choosing otherwise changes what is on screen and nothing about the Resource.
 _Avoid_: active version, open version
+
+## Plugin Commands
+
+**Command Declaration**:
+A plugin's fixed argv template that the operator consents to run as the server service account, together with its timeout, sensitive parameter names and declared input file names.
+_Avoid_: command, server command, shell command
+
+**Declared Input File**:
+A file name listed by a Command Declaration whose contents the plugin supplies for one run; the host writes it into that run's Exchange Folder before the program starts, and the contents are never stored in any record.
+_Avoid_: input, input parameter, argument, config file
+
+**Run Parameter**:
+A value the plugin supplies for one run to fill a single whole-element `{{placeholder}}` in a Command Declaration's argv; a sensitive parameter's value is redacted from every record.
+_Avoid_: input, argument, variable
+
+**Command Import**:
+A file a command produced that the plugin has asked to enter the library.
+_Avoid_: input file, upload
+
+**Exchange Folder**:
+The private per-run working directory a command runs in: the host creates it, the process reads and writes files there, and the plugin reaches them afterwards through `mah.fs`.
+_Avoid_: exchange dir, staging folder, working directory
