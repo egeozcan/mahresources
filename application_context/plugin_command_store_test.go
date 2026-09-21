@@ -75,6 +75,45 @@ func TestPluginCommandStoreCreateRunAndOutputIsAtomic(t *testing.T) {
 	require.Zero(t, count, "an output insert failure must roll back the run row")
 }
 
+func TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	now := time.Now().UTC()
+	record := testRun("run-inputs", nil, true, now)
+	record.Inputs = []plugin_commands.SuppliedInput{{Name: "cookies.txt", Bytes: 1234}, {Name: "notes.txt", Bytes: 7}}
+	require.NoError(t, ctx.CreateRun(record, testOutput("run-inputs", now)))
+
+	var row models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&row, "id = ?", "run-inputs").Error)
+	require.Equal(t, `[{"name":"cookies.txt","bytes":1234},{"name":"notes.txt","bytes":7}]`, row.InputsJSON)
+
+	stored, _, err := ctx.Run("run-inputs")
+	require.NoError(t, err)
+	require.Equal(t, record.Inputs, stored.Inputs)
+
+	// A run with no inputs stores nothing, and a column that cannot be read is
+	// metadata trouble: it reads as empty rather than failing a history page.
+	require.NoError(t, ctx.CreateRun(testRun("run-none", nil, true, now), testOutput("run-none", now)))
+	var none models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&none, "id = ?", "run-none").Error)
+	require.Empty(t, none.InputsJSON)
+	require.NoError(t, ctx.db.Model(&models.PluginCommandRun{}).Where("id = ?", "run-none").Update("inputs_json", "{not json").Error)
+	corrupt, _, err := ctx.Run("run-none")
+	require.NoError(t, err)
+	require.Empty(t, corrupt.Inputs)
+
+	// The listing path decodes the same way, because both go through runRecord.
+	views, err := ctx.Runs(plugin_commands.Access{PluginName: "worker", Administrator: true})
+	require.NoError(t, err)
+	var listed bool
+	for _, view := range views {
+		if view.ID == "run-inputs" {
+			listed = true
+			require.Equal(t, record.Inputs, view.Inputs)
+		}
+	}
+	require.True(t, listed, "the run was not listed")
+}
+
 func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)

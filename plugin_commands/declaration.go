@@ -58,6 +58,20 @@ type InputFile struct {
 	Content []byte
 }
 
+// suppliedInputs is the record view of a validated input list: names and sizes
+// only, in declaration order. It is the one conversion that must never carry
+// the bytes across.
+func suppliedInputs(files []InputFile) []SuppliedInput {
+	if len(files) == 0 {
+		return nil
+	}
+	inputs := make([]SuppliedInput, 0, len(files))
+	for _, file := range files {
+		inputs = append(inputs, SuppliedInput{Name: file.Name, Bytes: int64(len(file.Content))})
+	}
+	return inputs
+}
+
 // ValidateDeclaration refuses templates that could select a path or interpolate
 // parameter data into only part of an argument.
 func ValidateDeclaration(declaration Declaration) error {

@@ -325,6 +325,16 @@ func runViewToLua(L *lua.LState, run plugin_commands.RunView) *lua.LTable {
 		}))
 	}
 	table.RawSetString("imports", imports)
+	// Names and sizes only: the contents live in the exchange folder and are read
+	// back with mah.fs.read, never through the run record.
+	inputs := L.NewTable()
+	for i, input := range run.Inputs {
+		inputs.RawSetInt(i+1, goToLuaTable(L, map[string]any{
+			"name":  input.Name,
+			"bytes": input.Bytes,
+		}))
+	}
+	table.RawSetString("inputs", inputs)
 	return table
 }
 

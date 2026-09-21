@@ -23,6 +23,38 @@ func TestRunViewToLuaOmitsBootSessionIdentity(t *testing.T) {
 	}
 }
 
+func TestRunViewToLuaExposesSuppliedInputNamesAndSizes(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	table := runViewToLua(L, plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{
+		ID:     "run-a",
+		Inputs: []plugin_commands.SuppliedInput{{Name: "cookies.txt", Bytes: 1234}},
+	}})
+	inputs, ok := table.RawGetString("inputs").(*lua.LTable)
+	if !ok {
+		t.Fatalf("inputs = %v, want a table", table.RawGetString("inputs"))
+	}
+	first, ok := inputs.RawGetInt(1).(*lua.LTable)
+	if !ok {
+		t.Fatalf("first input = %v, want a table", inputs.RawGetInt(1))
+	}
+	if got := first.RawGetString("name").String(); got != "cookies.txt" {
+		t.Fatalf("name = %q", got)
+	}
+	if got := first.RawGetString("bytes").String(); got != "1234" {
+		t.Fatalf("bytes = %q", got)
+	}
+	for _, key := range []string{"content", "contents", "body", "text"} {
+		if got := first.RawGetString(key); got != lua.LNil {
+			t.Fatalf("runViewToLua exposed input %q as %v", key, got)
+		}
+	}
+	if empty := runViewToLua(L, plugin_commands.RunView{RunRecord: plugin_commands.RunRecord{ID: "run-b"}}); empty.RawGetString("inputs") == lua.LNil {
+		t.Fatal("a run with no inputs must still expose an empty table")
+	}
+}
+
 func TestFSHostUnavailableExplainsAutomaticRecoveryAndActivatesWithoutReload(t *testing.T) {
 	pm, L := enableCommandPlugin(t, `"commands"`, nil)
 	if err := L.DoString(`__missing_runs, __missing_err = mah.fs.runs()`); err != nil {

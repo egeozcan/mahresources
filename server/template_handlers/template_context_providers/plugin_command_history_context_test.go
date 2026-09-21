@@ -2,6 +2,8 @@ package template_context_providers
 
 import (
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"mahresources/plugin_commands"
@@ -18,6 +20,30 @@ func (commandHistoryPageStub) GetPluginCommandRun(id string) (plugin_commands.Ru
 }
 func (commandHistoryPageStub) PluginCommandRuntimeAvailability() (bool, string) {
 	return false, "commands are quarantined until automatic recovery succeeds; see /logs"
+}
+
+func TestPluginCommandHistoryTemplateShowsInputNamesAndSizesWithoutContents(t *testing.T) {
+	source, err := os.ReadFile("../../../templates/pluginCommandHistory.tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, phrase := range []string{
+		"Supplied input files",
+		"Input files supplied to this command run",
+		"Bytes supplied",
+		"Contents are never recorded",
+		"command-run-inputs",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pluginCommandHistory.tpl does not contain %q", phrase)
+		}
+	}
+	for _, forbidden := range []string{"input.Content", "InputsJSON", "inputs_json"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("the history page renders %q; supplied contents must never be rendered", forbidden)
+		}
+	}
 }
 
 func TestPluginCommandHistoryContextProvidesListAndDetail(t *testing.T) {

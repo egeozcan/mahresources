@@ -51,6 +51,21 @@
             <p class="mt-1 text-sm text-stone-600">The retained command/output row has expired; durable run and import history remains.</p>
             {% endif %}
         </div>
+        {% if commandRun.Inputs %}
+        <div>
+            <h3 class="font-mono font-semibold text-stone-900">Supplied input files</h3>
+            <p class="mt-1 text-sm text-stone-600">Contents are never recorded; the names and sizes supplied at submission are shown.</p>
+            <table class="mt-1 w-full text-left text-sm" data-testid="command-run-inputs">
+                <caption class="sr-only">Input files supplied to this command run</caption>
+                <thead><tr><th scope="col" class="py-1">File</th><th scope="col">Bytes supplied</th></tr></thead>
+                <tbody>
+                {% for input in commandRun.Inputs %}
+                <tr class="border-t border-stone-200"><td class="py-1">{{ input.Name }}</td><td>{{ input.Bytes }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
         <div>
             <h3 class="font-mono font-semibold text-stone-900">Imports</h3>
             <table class="mt-1 w-full text-left text-sm">

@@ -1034,7 +1034,7 @@ func (d *Dispatcher) acceptCommand(state *dispatcherState, run QueuedRun) error 
 	actorless := run.Request.ActorUserID == nil
 	if err := d.deps.Store.CreateRun(RunRecord{
 		ID: run.RunID, PluginName: plugin, CommandName: run.Request.Declaration.Name,
-		ParamsJSON: string(paramsJSON), Status: RunStatusQueued,
+		ParamsJSON: string(paramsJSON), Inputs: suppliedInputs(run.Inputs), Status: RunStatusQueued,
 		ActorlessAtSubmission: actorless, CreatedByUserID: copyUint(run.Request.ActorUserID), CreatedAt: now,
 	}, RunOutput{RunID: run.RunID, ArgvJSON: string(argvJSON), CreatedAt: now}); err != nil {
 		return err

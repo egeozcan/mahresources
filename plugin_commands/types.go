@@ -28,6 +28,7 @@ type RunRecord struct {
 	PluginName            string
 	CommandName           string
 	ParamsJSON            string
+	Inputs                []SuppliedInput
 	Status                string
 	ExitCode              *int
 	Error                 string
@@ -57,6 +58,14 @@ type RunOutput struct {
 	ArgvJSON   string
 	OutputTail string
 	CreatedAt  time.Time
+}
+
+// SuppliedInput is the durable record of one input file a run was given: the
+// declared name and the number of bytes supplied. Contents are deliberately
+// absent — they exist only as the file in the run's exchange folder.
+type SuppliedInput struct {
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
 }
 
 type RunFinish struct {

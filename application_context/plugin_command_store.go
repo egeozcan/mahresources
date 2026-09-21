@@ -2,8 +2,10 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"mahresources/constants"
@@ -30,7 +32,7 @@ func copyCommandUint(value *uint) *uint {
 func runModel(record plugin_commands.RunRecord) models.PluginCommandRun {
 	return models.PluginCommandRun{
 		ID: record.ID, PluginName: record.PluginName, CommandName: record.CommandName,
-		ParamsJSON: record.ParamsJSON, Status: record.Status, ExitCode: record.ExitCode,
+		ParamsJSON: record.ParamsJSON, InputsJSON: encodeSuppliedInputs(record.Inputs), Status: record.Status, ExitCode: record.ExitCode,
 		Error: record.Error, ProcessGroupID: record.ProcessGroupID,
 		CancelRequested: record.CancelRequested, OutputUnverified: record.OutputUnverified,
 		ActorlessAtSubmission: record.ActorlessAtSubmission,
@@ -42,7 +44,7 @@ func runModel(record plugin_commands.RunRecord) models.PluginCommandRun {
 func runRecord(row models.PluginCommandRun) plugin_commands.RunRecord {
 	return plugin_commands.RunRecord{
 		ID: row.ID, PluginName: row.PluginName, CommandName: row.CommandName,
-		ParamsJSON: row.ParamsJSON, Status: row.Status, ExitCode: row.ExitCode,
+		ParamsJSON: row.ParamsJSON, Inputs: decodeSuppliedInputs(row.ID, row.InputsJSON), Status: row.Status, ExitCode: row.ExitCode,
 		Error: row.Error, ProcessGroupID: row.ProcessGroupID,
 		CancelRequested: row.CancelRequested, OutputUnverified: row.OutputUnverified,
 		ActorlessAtSubmission: row.ActorlessAtSubmission,
@@ -53,6 +55,37 @@ func runRecord(row models.PluginCommandRun) plugin_commands.RunRecord {
 
 func outputModel(output plugin_commands.RunOutput) models.PluginCommandRunOutput {
 	return models.PluginCommandRunOutput{RunID: output.RunID, ArgvJSON: output.ArgvJSON, OutputTail: output.OutputTail, CreatedAt: output.CreatedAt}
+}
+
+// encodeSuppliedInputs stores the names and sizes of a run's input files. A run
+// with none stores nothing at all rather than an empty array, and metadata that
+// somehow cannot be encoded (it is a name and a count) is dropped rather than
+// failing the run's admission.
+func encodeSuppliedInputs(inputs []plugin_commands.SuppliedInput) string {
+	if len(inputs) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(inputs)
+	if err != nil {
+		log.Printf("plugin command: encode supplied inputs: %v", err)
+		return ""
+	}
+	return string(encoded)
+}
+
+// decodeSuppliedInputs reads the record back. A column that cannot be read is
+// metadata trouble, not a reason to fail a history page, so it reads as empty
+// with one log line.
+func decodeSuppliedInputs(runID, encoded string) []plugin_commands.SuppliedInput {
+	if encoded == "" {
+		return nil
+	}
+	var inputs []plugin_commands.SuppliedInput
+	if err := json.Unmarshal([]byte(encoded), &inputs); err != nil {
+		log.Printf("plugin command %s: unreadable supplied inputs record: %v", runID, err)
+		return nil
+	}
+	return inputs
 }
 
 func outputRecord(row models.PluginCommandRunOutput) plugin_commands.RunOutput {
