@@ -9,6 +9,14 @@ case "$mode" in
   hostile-output)
     printf '\033[31m<script>window.commandFixtureSecret = true</script>\033[0m\n'
     ;;
+  read-input)
+    # Copy the input the host wrote into this run's working directory, so a test
+    # can prove the program saw it without the contents reaching a record.
+    # Absolute, because the spawned environment's PATH is the plugin command path
+    # alone.
+    /bin/cat cookies.txt > seen.txt
+    printf 'read-ok\n'
+    ;;
   *)
     printf 'unknown fixture mode: %s\n' "$mode" >&2
     exit 2

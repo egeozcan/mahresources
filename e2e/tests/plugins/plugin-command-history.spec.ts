@@ -50,7 +50,13 @@ async function enableCommandFixture(request: APIRequestContext) {
     form: { name: 'test-commands', confirm_commands: '1' },
     headers: { Accept: 'application/json' },
   });
-  expect(response.ok(), await response.text()).toBe(true);
+  if (response.ok()) {
+    return;
+  }
+  // The server is worker-scoped, so a later test finds the plugin already
+  // enabled. That refusal is not a failure of the test that follows it.
+  const body = await response.text();
+  expect(body).toContain('already enabled');
 }
 
 async function submitFixture(request: APIRequestContext, mode: 'wait' | 'hostile-output'): Promise<string> {
@@ -166,6 +172,51 @@ test.describe('administrator plugin command history', () => {
 
     const scan = await new AxeBuilder({ page }).analyze();
     expect(scan.violations).toEqual([]);
+  });
+
+  test('supplied input files reach the program and never reach a record', async ({ page, request }) => {
+    await enableCommandFixture(request);
+    const cookies = `# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\te2e-secret-cookie-value\n`;
+    const bytes = Buffer.byteLength(cookies, 'utf8');
+
+    const response = await request.post('/v1/plugins/test-commands/read-input', {
+      data: { files: [{ name: 'cookies.txt', content: cookies }] },
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.status(), await response.text()).toBe(202);
+    const runID = (await response.json()).run_id;
+
+    // The fixture copies the file it was handed to seen.txt and prints a fixed
+    // token, so a successful run means the program read exactly those bytes.
+    await expect.poll(async () => (await commandRuns(request)).find(run => run.ID === runID)?.Status).toBe('succeeded');
+
+    const run = (await commandRuns(request)).find(candidate => candidate.ID === runID);
+    expect(run.Inputs).toEqual([{ name: 'cookies.txt', bytes }]);
+    expect(JSON.stringify(run)).not.toContain('e2e-secret-cookie-value');
+
+    await page.goto(`/admin/plugin-command-runs?id=${runID}`);
+    const inputs = page.getByTestId('command-run-inputs');
+    await expect(inputs).toContainText('cookies.txt');
+    await expect(inputs).toContainText(String(bytes));
+    await expect(page.getByTestId('command-run-output')).toContainText('read-ok');
+    // The page shows the name and the size and nothing else about the file.
+    await expect(page.locator('body')).not.toContainText('e2e-secret-cookie-value');
+
+    const scan = await new AxeBuilder({ page }).analyze();
+    expect(scan.violations).toEqual([]);
+  });
+
+  test('refuses an input file the command does not declare', async ({ request }) => {
+    await enableCommandFixture(request);
+    const before = (await commandRuns(request)).length;
+    const response = await request.post('/v1/plugins/test-commands/read-input', {
+      data: { files: [{ name: 'other.txt', content: 'x' }] },
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.status(), await response.text()).toBe(400);
+    expect((await response.json()).error).toContain('does not declare input file');
+    // Nothing durable was created for the refused run.
+    expect((await commandRuns(request)).length).toBe(before);
   });
 
   test('unknown detail is a typed not-found response', async ({ request }) => {

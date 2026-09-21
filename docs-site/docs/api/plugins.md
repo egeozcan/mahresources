@@ -73,9 +73,10 @@ Required settings must be saved before enabling. Returns an error if required se
 
 A command-bearing plugin uses a deliberate two-step flow. A request without
 `confirm_commands=true` is refused with structured warning data containing the
-exact declared argv and timeout. Render that warning, then submit the same name
-with acknowledgement only after the operator confirms it. Persistent consent is
-required; an in-memory-only consent store never authorizes server commands.
+exact declared argv, timeout and declared input file names. Render that warning,
+then submit the same name with acknowledgement only after the operator confirms
+it. Persistent consent is required; an in-memory-only consent store never
+authorizes server commands.
 
 ### Disable Plugin
 

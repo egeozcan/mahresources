@@ -89,8 +89,10 @@ plugin = {
                 "--format", "{{format}}",
                 "--no-playlist",
                 "--no-directories",
+                "--cookies", "cookies.txt",
                 "--", "{{url}}",
             },
+            inputs = { "cookies.txt" },
             timeout = 7200,
             sensitive_params = { "url" },
         },
@@ -106,6 +108,7 @@ Each declaration has these fields:
 | `argv` | Yes | Nonempty list of literal arguments and whole-element placeholders |
 | `timeout` | No | Seconds after spawn; defaults to 3600 and is capped at 86400 |
 | `sensitive_params` | No | Parameter names redacted from stored params and argv; order does not affect identity |
+| `inputs` | No | At most 4 file names the command may be given contents for; a leading dot is refused, and order does not affect identity |
 
 The first `argv` element (the executable) must be a literal basename: no slash, backslash,
 `..`, leading dash or placeholder. It is resolved only from the operator's
@@ -115,13 +118,41 @@ nonempty string value at submission. `{{exchange_dir}}` is host-filled and
 reserved, so supplying that key is an error. A run accepts at most 32 parameters,
 8 KiB per value and 64 KiB in aggregate.
 
-Changing a command's name, positional argv, timeout or sensitive parameter set
-changes manifest identity and requires fresh operator consent. Put variable data
-after a fixed option, and terminate option parsing with a literal `--` where the
-program supports it. The yt-dlp example also uses `--ignore-config` so an
-operator config file cannot silently add behavior, pins output with `--paths`,
-and forbids playlists and directories. The separate plugin must still reject
-absolute paths, separators and `..` in its operator-supplied output template.
+Changing a command's name, positional argv, timeout, sensitive parameter set or
+declared input file names changes manifest identity and requires fresh operator
+consent. Put variable data after a fixed option, and terminate option parsing
+with a literal `--` where the program supports it. The yt-dlp example also uses
+`--ignore-config` so an operator config file cannot silently add behavior, pins
+output with `--paths`, forbids playlists and directories, and names the one file
+it may be handed the contents of. The separate plugin must still reject absolute
+paths, separators and `..` in its operator-supplied output template.
+
+### Supplied input files
+
+A declaration that lists `inputs` may be given those files' contents for one run;
+the host writes them into the run's private exchange folder just before the
+process starts, and the program reads them from its working directory. The names
+are consented to at enable time; the contents are not shown to the operator and
+are not reviewable, because the operator consents to the names only. Supplied
+contents are written as regular files owned by the service account, at mode
+0600, and are never stored in any record: the run row, the admin history and
+`mah.fs.runs()` show the names and byte counts only.
+
+A supplied file can be read back with `mah.fs.read` and removed with
+`mah.fs.discard` or `mah.fs.discard_run`, which is what a program that rewrites
+its input in place (yt-dlp refreshing a cookie jar) makes useful. It otherwise
+stays in the exchange folder until that folder is swept, which is 7 days by
+default unless the plugin discards it earlier — so a credential handed to a run
+this way lives in the staging root for up to that window, including after a
+plugin disable that dropped the completion callback. A run cancelled before its
+program starts writes no file at all.
+
+The name rules are the exchange file-name rules plus one: a name may not begin
+with a dot, so the files common tools read without being asked (`.netrc`,
+`.gitconfig`, `.env`) cannot be supplied at all. Names and limits are declared
+and enforced; a name the declaration does not list is refused before anything
+durable exists. The host cannot verify that a declared input is actually
+referenced by the program's argv, so that stays part of the review.
 
 Commands are trusted service-account processes, not extensions of the Lua
 sandbox. Read [Plugin Permissions](./plugin-permissions.md#trusted-server-commands)

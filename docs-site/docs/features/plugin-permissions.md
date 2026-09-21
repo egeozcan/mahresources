@@ -110,6 +110,27 @@ argv element. It does not understand the program's option grammar. A value can
 still be interpreted as a flag, and a declared executable can itself be an
 interpreter. Review the complete displayed argv and trust the plugin author.
 
+A declaration may also list **input files**: at most four plain file names, and
+the plugin may hand one run the contents of any of those files. The host writes
+them into the private folder the process runs in, at mode 0600, immediately
+before the spawn, so the program reads them from its working directory like any
+other file. Two consequences the operator should understand:
+
+- The names are consented to; the **contents are not shown and are not
+  reviewable**. The review panel and the CLI print the declared names beside the
+  argv, and the run's record keeps the name and the byte count of each file that
+  was supplied. Nothing records the bytes.
+- A name may not begin with a dot, so the files programs read without being
+  asked (`.netrc`, `.gitconfig`, `.env`) cannot be supplied. The host also
+  cannot verify that a declared input is actually referenced by the program's
+  argv — that is what reviewing the argv is for.
+
+Supplied contents stay in the run's exchange folder until it is swept, 7 days by
+default, unless the plugin discards them sooner. A credential handed to a run
+this way therefore lives in the staging root for up to that window, including
+after a plugin disable that dropped the plugin's completion callback; a run
+cancelled before its program starts writes no file at all.
+
 `commands` alone installs `mah.commands` and the read/list/discard parts of
 `mah.fs`. `mah.fs.create_resource` additionally requires `db:write`. Imports
 retain the submitting actor and re-check the current plugin generation,
@@ -122,8 +143,8 @@ A command-bearing plugin requires durable, explicit consent:
 - a manifest with `commands` but no `commands` capability is invalid;
 - an in-memory-only consent store refuses command-bearing plugins;
 - no-consent grandfathering never grants commands;
-- adding or changing a command, positional argv, timeout or sensitive parameter
-  set is a widening;
+- adding or changing a command, positional argv, timeout, sensitive parameter
+  set or declared input file names is a widening;
 - enable requires the separate `confirm_commands` acknowledgement. The web UI
   shows a warning panel and the CLI first prints the exact declarations, then
   requires `mr plugin enable NAME --confirm-commands`.

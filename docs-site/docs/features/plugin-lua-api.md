@@ -47,8 +47,21 @@ local run_id, err = mah.commands.run("download", {
 end)
 ```
 
+```lua
+-- Supply a file the command reads from its working directory. The name must be
+-- declared by the command; the host writes the contents before the process
+-- starts and never stores them.
+local run_id, err = mah.commands.run("fetch_video", {
+    url = "https://example.com/watch?v=123",
+}, nil, {
+    inputs = {
+        ["cookies.txt"] = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\t...\n",
+    },
+})
 ```
-mah.commands.run(name, params [, callback]) -> run_id | nil, error
+
+```
+mah.commands.run(name, params [, callback] [, options]) -> run_id | nil, error
 ```
 
 `name` must be a command slug declared by this plugin. `params` is a string-to-
@@ -56,6 +69,20 @@ string table: at most 32 entries, at most 8 KiB each and 64 KiB in aggregate.
 A value replaces one complete argv element; it is never split, quoted or parsed
 by Mahresources. Every placeholder must be supplied and nonempty, and the
 host-filled `exchange_dir` key cannot be overridden.
+
+The fourth argument is an optional options table whose only key is `inputs`: a
+string-to-string table of declared input file names to contents. The callback
+stays the third argument, so supplying files without one reads
+`mah.commands.run(name, params, nil, { inputs = ... })`. A name the command's
+declaration does not list, a name that is not a plain file name, a leading dot,
+more than four files, more than 256 KiB in one file or 512 KiB together, and any
+unknown options key are all refused with `nil, error` before anything durable
+exists. A zero-byte value writes a zero-byte file; supplying nothing writes
+nothing, and the two are different. The contents are never stored in a run
+record: the durable row and `mah.fs.runs()` show the declared names and the
+bytes supplied, and the bytes themselves live only in the run's exchange folder
+until it is swept, unless the plugin discards them earlier. See
+[Declared server commands](./plugin-system.md#declared-server-commands).
 
 The optional completion callback runs at most once and receives:
 

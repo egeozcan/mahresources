@@ -250,6 +250,27 @@ func TestRunnerCancellationDuringTheWriteStopsTheSpawn(t *testing.T) {
 	}
 }
 
+func TestRunnerWritesAZeroByteInput(t *testing.T) {
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte{}})
+	if outcome := f.executor.Execute(context.Background(), f.run); outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	info, err := os.Lstat(filepath.Join(f.exchange, "cookies.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != 0 {
+		t.Fatalf("zero-byte input = %v, %d bytes", info.Mode(), info.Size())
+	}
+	seen, err := os.ReadFile(filepath.Join(f.exchange, "seen.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 0 {
+		t.Fatalf("the program read %q, want an empty file", seen)
+	}
+}
+
 func TestRunnerLeavesNoScratchBehindOnASuccessfulWrite(t *testing.T) {
 	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte("SID=secret")})
 	if outcome := f.executor.Execute(context.Background(), f.run); outcome.Status != RunStatusSucceeded {
