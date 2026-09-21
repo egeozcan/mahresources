@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"mahresources/cmd/mr/client"
@@ -66,9 +67,10 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 					var refusal struct {
 						RequiresCommandConfirmation bool `json:"requiresCommandConfirmation"`
 						Commands                    []struct {
-							Name           string `json:"name"`
-							Argv           string `json:"argv"`
-							TimeoutSeconds int64  `json:"timeoutSeconds"`
+							Name           string   `json:"name"`
+							Argv           string   `json:"argv"`
+							TimeoutSeconds int64    `json:"timeoutSeconds"`
+							Inputs         []string `json:"inputs"`
 						} `json:"commands"`
 					}
 					if json.Unmarshal(apiErr.Body, &refusal) == nil && refusal.RequiresCommandConfirmation {
@@ -77,6 +79,9 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 						cmd.PrintErrln("This plugin requests permission to run these server commands:")
 						for _, command := range refusal.Commands {
 							cmd.PrintErrf("  %s: %s (timeout %d seconds)\n", command.Name, command.Argv, command.TimeoutSeconds)
+							if len(command.Inputs) > 0 {
+								cmd.PrintErrf("    input files: %s (contents are not shown and are not reviewable; they stay in the private run folder until it is swept unless the plugin discards them)\n", strings.Join(command.Inputs, ", "))
+							}
 						}
 						cmd.PrintErrf("Re-run with --confirm-commands: mr plugin enable %s --confirm-commands\n", args[0])
 					}

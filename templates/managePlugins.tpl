@@ -44,6 +44,9 @@
                 <span class="font-semibold">{{ command.Name }}</span>
                 <code class="block break-all font-mono text-xs">{{ command.DisplayArgv }}</code>
                 <span class="text-xs">Timeout: {{ command.TimeoutSeconds }} seconds</span>
+                {% if command.Inputs %}
+                <span class="block text-xs" data-testid="plugin-command-confirmation-inputs-{{ command.Name }}">Input files: {% for input in command.Inputs %}{{ input }}{% if not forloop.Last %}, {% endif %}{% endfor %} &mdash; contents are not shown and are not reviewable; they stay in the private run folder until it is swept unless the plugin discards them.</span>
+                {% endif %}
             </li>
             {% endfor %}
         </ul>
@@ -162,6 +165,9 @@
                         <span class="font-semibold">{{ command.Name }}</span>
                         <code class="block break-all font-mono text-xs">{{ command.DisplayArgv }}</code>
                         <span class="text-xs">Timeout: {{ command.TimeoutSeconds }} seconds</span>
+                        {% if command.Inputs %}
+                        <span class="block text-xs" data-testid="plugin-command-inputs-{{ command.Name }}">Input files: {% for input in command.Inputs %}{{ input }}{% if not forloop.Last %}, {% endif %}{% endfor %} &mdash; contents are not shown and are not reviewable; they stay in the private run folder until it is swept unless the plugin discards them.</span>
+                        {% endif %}
                     </li>
                     {% endfor %}
                 </ul>

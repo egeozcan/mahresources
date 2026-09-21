@@ -44,10 +44,21 @@ func TestPluginCommandWarningAndConfirmationStayExplicit(t *testing.T) {
 		"executable may itself be an interpreter",
 		"separate",
 		"db:write",
+		"Input files:",
+		"contents are not shown and are not reviewable",
+		"until it is swept unless the plugin discards them",
 		"Confirm and enable",
 	} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("managePlugins.tpl command warning does not contain %q", phrase)
+		}
+	}
+	for _, testid := range []string{
+		`data-testid="plugin-command-confirmation-inputs-{{ command.Name }}"`,
+		`data-testid="plugin-command-inputs-{{ command.Name }}"`,
+	} {
+		if got := strings.Count(text, testid); got != 1 {
+			t.Errorf("%s appears %d times; the warning panel and the confirmation step must both name the declared input files", testid, got)
 		}
 	}
 	if got := strings.Count(text, `name="confirm_commands"`); got != 1 {

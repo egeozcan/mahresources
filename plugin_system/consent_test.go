@@ -416,6 +416,68 @@ func TestRemovingACommandIsANarrowing(t *testing.T) {
 	}
 }
 
+func TestCommandInputsArePartOfConsentIdentity(t *testing.T) {
+	baseManifest := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool", "--cookies", "cookies.txt", "{{url}}"}, inputs = {"cookies.txt"}, sensitive_params = {"url"}}
+	}`))
+	base, err := GrantsForEnable(baseManifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := CompareGrants(base, baseManifest); !delta.Empty() {
+		t.Fatalf("an unchanged declaration asked for re-consent: %s", delta.Describe())
+	}
+
+	// The record carries the names, so a record written before this field
+	// existed has none and declaring one is a widening — with no migration.
+	if got := strings.Join(base.Commands[0].Inputs, ","); got != "cookies.txt" {
+		t.Fatalf("grant did not record the declared input: %q", got)
+	}
+	stored, err := base.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, present, err := ParseGrants(stored)
+	if err != nil || !present {
+		t.Fatalf("round trip: present=%v err=%v", present, err)
+	}
+	if got := strings.Join(parsed.Commands[0].Inputs, ","); got != "cookies.txt" {
+		t.Fatalf("round-tripped grant lost its inputs: %q", got)
+	}
+
+	// Order is display order. Two spellings of one set are one declaration.
+	twoNames := func(first, second string) Manifest {
+		return manifestFor(t, declaring(`capabilities = {"commands"}, commands = {
+			{name = "download", argv = {"tool"}, inputs = {"cookies.txt"}},
+			{name = "probe", argv = {"probe"}, inputs = {"`+first+`", "`+second+`"}}
+		}`))
+	}
+	consented, err := GrantsForEnable(twoNames("a.txt", "b.txt"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := CompareGrants(consented, twoNames("b.txt", "a.txt")); !delta.Empty() {
+		t.Fatalf("reordering declared input names asked for re-consent: %s", delta.Describe())
+	}
+
+	for name, commands := range map[string]string{
+		"added":   `{name = "download", argv = {"tool", "--cookies", "cookies.txt", "{{url}}"}, inputs = {"cookies.txt", "extra.txt"}, sensitive_params = {"url"}}`,
+		"removed": `{name = "download", argv = {"tool", "--cookies", "cookies.txt", "{{url}}"}, sensitive_params = {"url"}}`,
+		"renamed": `{name = "download", argv = {"tool", "--cookies", "cookies.txt", "{{url}}"}, inputs = {"jar.txt"}, sensitive_params = {"url"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			declared := manifestFor(t, declaring(`capabilities = {"commands"}, commands = {`+commands+`}`))
+			delta := CompareGrants(base, declared)
+			if delta.Empty() {
+				t.Fatal("a changed declared input loaded on the old consent")
+			}
+			if !contains(delta.ChangedCommands, "download") {
+				t.Fatalf("delta does not name the changed command: %+v", delta)
+			}
+		})
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {

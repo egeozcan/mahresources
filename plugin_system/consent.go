@@ -26,9 +26,10 @@ var ErrCommandConfirmationRequired = errors.New("command confirmation required")
 // CommandDisplay is the exact operator-facing command record returned by the
 // enable API and rendered by the management page.
 type CommandDisplay struct {
-	Name           string `json:"name"`
-	DisplayArgv    string `json:"argv"`
-	TimeoutSeconds int64  `json:"timeoutSeconds"`
+	Name           string   `json:"name"`
+	DisplayArgv    string   `json:"argv"`
+	TimeoutSeconds int64    `json:"timeoutSeconds"`
+	Inputs         []string `json:"inputs,omitempty"`
 }
 
 // CommandConfirmationError carries the commands the operator must review.
@@ -51,6 +52,7 @@ func CommandDisplays(m Manifest) []CommandDisplay {
 			Name:           command.Name,
 			DisplayArgv:    plugin_commands.ShellJoin(command.Argv),
 			TimeoutSeconds: int64(command.Timeout / time.Second),
+			Inputs:         append([]string(nil), command.Inputs...),
 		})
 	}
 	return out
@@ -68,6 +70,10 @@ type CommandGrant struct {
 	Argv            []string `json:"argv"`
 	TimeoutSeconds  int64    `json:"timeout_seconds"`
 	SensitiveParams []string `json:"sensitive_params,omitempty"`
+	// Inputs records the file names the operator agreed this command may be
+	// given contents for. A record written before inputs existed has none, so
+	// declaring one is a widening with no migration to write.
+	Inputs []string `json:"inputs,omitempty"`
 }
 
 type Grants struct {
@@ -112,6 +118,7 @@ func GrantsFromManifest(m Manifest) Grants {
 			Argv:            append([]string(nil), command.Argv...),
 			TimeoutSeconds:  int64(command.Timeout / time.Second),
 			SensitiveParams: append([]string(nil), command.SensitiveParams...),
+			Inputs:          append([]string(nil), command.Inputs...),
 		})
 	}
 	return grants
@@ -517,11 +524,17 @@ func sameCommandGrant(a, b CommandGrant) bool {
 			return false
 		}
 	}
-	if len(a.SensitiveParams) != len(b.SensitiveParams) {
+	return sameStringSet(a.SensitiveParams, b.SensitiveParams) && sameStringSet(a.Inputs, b.Inputs)
+}
+
+// sameStringSet compares two name lists as sets, because their order is
+// display order and never meaning: a respelled list is one decision.
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
 		return false
 	}
-	x := append([]string(nil), a.SensitiveParams...)
-	y := append([]string(nil), b.SensitiveParams...)
+	x := append([]string(nil), a...)
+	y := append([]string(nil), b...)
 	sort.Strings(x)
 	sort.Strings(y)
 	for i := range x {

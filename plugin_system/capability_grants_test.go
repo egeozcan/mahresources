@@ -67,6 +67,10 @@ func TestCommandCapabilityCataloguesDescribeTheHostPrivilege(t *testing.T) {
 		"anything that OS account can read",
 		"sibling plugin exchange folders",
 		"db:write",
+		"input files",
+		"not shown",
+		"not reviewable",
+		"swept",
 	} {
 		if !strings.Contains(label, phrase) {
 			t.Errorf("commands consent label %q does not say %q", label, phrase)

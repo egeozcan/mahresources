@@ -34,7 +34,7 @@ func commandEnableRequest(t *testing.T, accept string, values url.Values) *http.
 
 func TestPluginEnableCommandConfirmationReturnsStructuredJSONWithoutConfirming(t *testing.T) {
 	stub := &commandEnableContextStub{err: &plugin_system.CommandConfirmationError{Commands: []plugin_system.CommandDisplay{
-		{Name: "download", DisplayArgv: "yt-dlp -- '{{url}}'", TimeoutSeconds: 7200},
+		{Name: "download", DisplayArgv: "yt-dlp -- '{{url}}'", TimeoutSeconds: 7200, Inputs: []string{"cookies.txt"}},
 	}}}
 	recorder := httptest.NewRecorder()
 	GetPluginEnableHandler(stub)(recorder, commandEnableRequest(t, "application/json", url.Values{"name": {"media"}}))
@@ -58,6 +58,9 @@ func TestPluginEnableCommandConfirmationReturnsStructuredJSONWithoutConfirming(t
 	}
 	if len(body.Commands) != 1 || body.Commands[0].DisplayArgv != "yt-dlp -- '{{url}}'" || body.Commands[0].TimeoutSeconds != 7200 {
 		t.Fatalf("command review data changed: %+v", body.Commands)
+	}
+	if got := strings.Join(body.Commands[0].Inputs, ","); got != "cookies.txt" {
+		t.Fatalf("declared input files were not published to the review step: %q", got)
 	}
 }
 

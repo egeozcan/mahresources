@@ -66,7 +66,7 @@ func TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag(t *
 		gotForm = r.Form
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":"command confirmation required","requiresCommandConfirmation":true,"commands":[{"name":"download","argv":"yt-dlp -- '{{url}}'","timeoutSeconds":7200},{"name":"probe","argv":"ffprobe '{{exchange_dir}}'","timeoutSeconds":3600}]}`))
+		_, _ = w.Write([]byte(`{"error":"command confirmation required","requiresCommandConfirmation":true,"commands":[{"name":"download","argv":"yt-dlp -- '{{url}}'","timeoutSeconds":7200,"inputs":["cookies.txt"]},{"name":"probe","argv":"ffprobe '{{exchange_dir}}'","timeoutSeconds":3600}]}`))
 	}))
 	defer server.Close()
 
@@ -92,6 +92,8 @@ func TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag(t *
 		"executable may itself be an interpreter",
 		"download", "yt-dlp -- '{{url}}'", "7200",
 		"probe", "ffprobe '{{exchange_dir}}'", "3600",
+		"cookies.txt",
+		"contents are not shown and are not reviewable",
 		"Re-run with --confirm-commands",
 	} {
 		if !strings.Contains(out, want) {

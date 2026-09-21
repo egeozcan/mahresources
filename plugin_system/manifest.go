@@ -93,7 +93,7 @@ var CapabilityLabels = map[string]string{
 	CapJobs:      "Run background jobs",
 	CapSchedule:  "Run its own work on a repeating schedule, without anyone asking",
 	CapJobEvents: "See every background job in this deployment finish, whoever started it",
-	CapCommands:  "Run declared commands as the server service account from the operator-configured command path, without sandboxing and with unrestricted process networking; commands can read anything that OS account can read (including sibling plugin exchange folders), and importing output requires db:write",
+	CapCommands:  "Run declared commands as the server service account from the operator-configured command path, without sandboxing and with unrestricted process networking; commands can read anything that OS account can read (including sibling plugin exchange folders), and importing output requires db:write; a command may be given the contents of the input files its declaration names, written into the folder it runs in before it starts; those contents are not shown and are not reviewable, and they stay there until the exchange folder is swept (7 days by default) unless the plugin discards them",
 }
 
 // CapabilitySurfaces names what each capability installs, for the one log line
