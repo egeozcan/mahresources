@@ -37,6 +37,8 @@ type commandExecutor struct {
 	beforeStart            func()
 	afterCancellationCheck func()
 	afterStart             func()
+	// writeInputFileFn injects a failed or short input write. Nil in production.
+	writeInputFileFn func(dir, name string, content []byte) error
 }
 
 func NewExecutor(deps RunnerDependencies) Executor {
@@ -123,6 +125,120 @@ func ensureRunPath(root string, run QueuedRun) error {
 	return nil
 }
 
+// writeSuppliedInputs writes the validated inputs into the run's own exchange
+// folder and verifies what it wrote.
+//
+// It is deliberately not part of Prepare: Prepare runs in Submit, before the
+// durable row exists, so a crash between a write there and the row would strand
+// a folder holding plugin secrets that nothing reaps — the retention sweep is
+// driven by rows. Here the row exists and is running, so recovery settles it and
+// the sweep removes it.
+func (e *commandExecutor) writeSuppliedInputs(ctx context.Context, run QueuedRun) (Outcome, bool) {
+	if len(run.Inputs) == 0 {
+		return Outcome{}, false
+	}
+	write := e.writeInputFileFn
+	if write == nil {
+		write = writeInputFile
+	}
+	for _, input := range run.Inputs {
+		if err := write(run.ExchangeDir, input.Name, input.Content); err != nil {
+			return e.finish(run, RunFinish{
+				Status: RunStatusFailed, Error: fmt.Sprintf("write input file %q: %v", input.Name, err), FinishedAt: time.Now().UTC(),
+			}), true
+		}
+		if err := verifyInputFile(run.ExchangeDir, input.Name, int64(len(input.Content))); err != nil {
+			return e.finish(run, RunFinish{
+				Status: RunStatusFailed, Error: fmt.Sprintf("verify input file %q: %v", input.Name, err), FinishedAt: time.Now().UTC(),
+			}), true
+		}
+	}
+	// The bytes are on disk now and nothing below needs them again, so they stop
+	// existing in memory too. A run never writes its inputs twice: recovery
+	// finishes nonterminal rows instead of re-dispatching them, and a run that
+	// lost the durable running transition never reaches this point.
+	dropInputContents(&run)
+	// The same guard that admitted the write has to close the spawn: a
+	// cancellation that arrived while the files were being written must still
+	// stop the process from starting.
+	if outcome, stop := e.stopBeforeStart(ctx, run); stop {
+		return outcome, true
+	}
+	return Outcome{}, false
+}
+
+// writeInputFile stages the content at a host-chosen name inside the run
+// folder's private .tmp directory and renames it onto the declared name. The
+// rename is atomic within one filesystem, so the name the plugin supplied is
+// never visible partially written, never an empty file still being filled, and
+// never missing once the spawn happens. Debris from a crash in this window sits
+// in .tmp, which mah.fs.list skips and mah.fs.read cannot address.
+func writeInputFile(exchangeDir, name string, content []byte) error {
+	scratch, err := os.CreateTemp(filepath.Join(exchangeDir, ".tmp"), "input-*")
+	if err != nil {
+		return err
+	}
+	scratchPath := scratch.Name()
+	if _, err := scratch.Write(content); err != nil {
+		scratch.Close()
+		_ = os.Remove(scratchPath)
+		return err
+	}
+	// CreateTemp opens 0600 already; chmod anyway, so the mode does not depend
+	// on the operator's umask having been permissive enough to leave it there.
+	if err := scratch.Chmod(0o600); err != nil {
+		scratch.Close()
+		_ = os.Remove(scratchPath)
+		return err
+	}
+	if err := scratch.Close(); err != nil {
+		_ = os.Remove(scratchPath)
+		return err
+	}
+	if err := os.Rename(scratchPath, filepath.Join(exchangeDir, name)); err != nil {
+		_ = os.Remove(scratchPath)
+		return err
+	}
+	return nil
+}
+
+// verifyInputFile re-checks what the program is about to be handed. It turns
+// "the rename was atomic" from an argument into an assertion: a short write, a
+// replaced file or a surprise directory refuses the spawn instead of failing
+// somewhere inside the program.
+func verifyInputFile(exchangeDir, name string, size int64) error {
+	info, err := os.Lstat(filepath.Join(exchangeDir, name))
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("is not a regular file")
+	}
+	if info.Size() != size {
+		return fmt.Errorf("is %d bytes, want %d", info.Size(), size)
+	}
+	if info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("has mode %#o, want %#o", info.Mode().Perm(), 0o600)
+	}
+	return nil
+}
+
+// dropInputContents removes the supplied bytes from memory. The dispatcher holds
+// its own copies of this run, and Go copies the map header and the slice header
+// rather than the data, so clearing the map and zeroing the backing array reach
+// every copy at once.
+func dropInputContents(run *QueuedRun) {
+	for i := range run.Inputs {
+		for j := range run.Inputs[i].Content {
+			run.Inputs[i].Content[j] = 0
+		}
+	}
+	run.Inputs = nil
+	if run.Request.Inputs != nil {
+		clear(run.Request.Inputs)
+	}
+}
+
 func (e *commandExecutor) Cleanup(run QueuedRun) {
 	root := filepath.Clean(e.deps.Settings.StagingRoot())
 	if ensureRunPath(root, run) != nil {
@@ -165,6 +281,15 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("open null stdin: %v", err), FinishedAt: time.Now().UTC()})
 	}
 	defer stdin.Close()
+
+	// The plugin's input files go in here: after every cheap failure point above
+	// and before the first pipe exists, so a cancelled or doomed run never puts
+	// a secret on disk. Writing before the spawn is the whole contract of the
+	// feature; writing after the durable row exists is what keeps a crash here
+	// inside the recovery and retention paths that already exist.
+	if outcome, stop := e.writeSuppliedInputs(ctx, run); stop {
+		return outcome
+	}
 
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {

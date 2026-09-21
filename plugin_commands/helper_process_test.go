@@ -60,6 +60,23 @@ func runPluginCommandHelper(args []string) int {
 		fmt.Fprintln(os.Stdout, "stdout-record")
 		fmt.Fprintln(os.Stderr, "stderr-record")
 		return 0
+	case "read-input":
+		// Reads the named file from the working directory (the run's exchange
+		// folder) and copies it to the second name, so a test can prove the
+		// program saw exactly the supplied bytes without echoing them.
+		if len(args) != 3 {
+			return 2
+		}
+		content, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 7
+		}
+		if err := os.WriteFile(args[2], content, 0o600); err != nil {
+			return 8
+		}
+		fmt.Fprintln(os.Stdout, "read-ok")
+		return 0
 	case "tail":
 		if len(args) != 2 {
 			return 2
