@@ -734,6 +734,18 @@ func TestCommandManifestRejectsMalformedDeclarations(t *testing.T) {
 			{name="download",argv={"tool","{{url}}"},sensitive_params="url"}}}`,
 		"invalid name": `plugin={api_version=1,capabilities={"commands"},commands={
 			{name="Download Job",argv={"tool"}}}}`,
+		"inputs not an array": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs="cookies.txt"}}}`,
+		"inputs leading dot": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs={".netrc"}}}}`,
+		"inputs path": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs={"a/b"}}}}`,
+		"inputs duplicate": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs={"a.txt","a.txt"}}}}`,
+		"inputs over count": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs={"a","b","c","d","e"}}}}`,
+		"inputs non string": `plugin={api_version=1,capabilities={"commands"},commands={
+			{name="download",argv={"tool"},inputs={1}}}}`,
 	}
 	for name, source := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -781,6 +793,59 @@ func TestCommandManifestIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if base.Equal(parse(t, commands)) {
 				t.Fatal("changed command declaration compared equal")
+			}
+		})
+	}
+}
+
+func TestManifestCommandsWithInputs(t *testing.T) {
+	m, err := manifestFromLua(t, `plugin = {
+		name = "x", api_version = 1, capabilities = {"commands"},
+		commands = {
+			{name = "download", argv = {"tool", "--cookies", "cookies.txt", "{{url}}"}, inputs = {"cookies.txt"}, sensitive_params = {"url"}},
+		},
+	}`)
+	if err != nil {
+		t.Fatalf("valid inputs manifest refused: %v", err)
+	}
+	if len(m.Commands) != 1 {
+		t.Fatalf("Commands = %#v", m.Commands)
+	}
+	if got := strings.Join(m.Commands[0].Inputs, ","); got != "cookies.txt" {
+		t.Fatalf("Commands[0].Inputs = %q, want %q", got, "cookies.txt")
+	}
+	// The declaration is valid without referencing the input anywhere: the host
+	// cannot parse an arbitrary program's argv, so this is a convention the
+	// operator reviews rather than a rule the parser enforces.
+	if _, err := manifestFromLua(t, `plugin = {api_version = 1, capabilities = {"commands"}, commands = {
+		{name = "download", argv = {"tool"}, inputs = {"cookies.txt"}}}}`); err != nil {
+		t.Fatalf("an unreferenced declared input must be accepted: %v", err)
+	}
+}
+
+func TestCommandManifestInputIdentity(t *testing.T) {
+	parse := func(t *testing.T, commands string) Manifest {
+		t.Helper()
+		m, err := manifestFromLua(t, `plugin={api_version=1,capabilities={"commands"},commands={`+commands+`}}`)
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		return m
+	}
+	base := parse(t, `{name="one",argv={"tool"},inputs={"a.txt","b.txt"}}`)
+	reordered := parse(t, `{name="one",argv={"tool"},inputs={"b.txt","a.txt"}}`)
+	if !base.Equal(reordered) {
+		t.Fatal("input name order must not change manifest identity")
+	}
+	for label, commands := range map[string]string{
+		"added":   `{name="one",argv={"tool"},inputs={"a.txt","b.txt","c.txt"}}`,
+		"removed": `{name="one",argv={"tool"},inputs={"a.txt"}}`,
+		"renamed": `{name="one",argv={"tool"},inputs={"a.txt","c.txt"}}`,
+		"none":    `{name="one",argv={"tool"}}`,
+	} {
+		t.Run(label, func(t *testing.T) {
+			if base.Equal(parse(t, commands)) {
+				t.Fatal("changed declared inputs compared equal")
 			}
 		})
 	}

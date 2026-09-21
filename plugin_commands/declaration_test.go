@@ -218,3 +218,96 @@ func TestShellJoinIsDisplayOnlyAndQuotesUnsafeElements(t *testing.T) {
 		}
 	}
 }
+
+func TestInputFileNameGrammar(t *testing.T) {
+	for _, name := range []string{"cookies.txt", "a", "notes-2026.tar.gz", strings.Repeat("n", MaxFileNameBytes)} {
+		if err := ValidateInputFileName(name); err != nil {
+			t.Errorf("ValidateInputFileName(%q) = %v, want nil", name, err)
+		}
+	}
+	for label, name := range map[string]string{
+		"empty":         "",
+		"dot":           ".",
+		"dotdot":        "..",
+		"leading dot":   ".netrc",
+		"dot tmp":       ".tmp",
+		"slash":         "a/b",
+		"backslash":     `a\b`,
+		"nul":           "a\x00b",
+		"overlong name": strings.Repeat("n", MaxFileNameBytes+1),
+	} {
+		t.Run(label, func(t *testing.T) {
+			if err := ValidateInputFileName(name); err == nil {
+				t.Fatalf("ValidateInputFileName(%q) accepted a name that is not a plain file name", name)
+			}
+		})
+	}
+	// The leading dot rule is the one rule the exchange name grammar does not
+	// already have, so it has to say which rule it is.
+	err := ValidateInputFileName(".netrc")
+	if err == nil || !strings.Contains(err.Error(), ".netrc") || !strings.Contains(err.Error(), "dot") {
+		t.Fatalf("the leading-dot refusal must name the file and the rule: %v", err)
+	}
+}
+
+func TestValidateDeclarationChecksInputNames(t *testing.T) {
+	base := Declaration{
+		Name:    "fetch",
+		Argv:    []string{"tool", "--", "{{url}}"},
+		Timeout: DefaultTimeout,
+		Inputs:  []string{"cookies.txt"},
+	}
+	if err := ValidateDeclaration(base); err != nil {
+		t.Fatalf("valid declaration refused: %v", err)
+	}
+	max := make([]string, 0, MaxInputFiles)
+	for i := 0; i < MaxInputFiles; i++ {
+		max = append(max, fmt.Sprintf("in-%d.txt", i))
+	}
+	over := append(append([]string(nil), max...), "one-too-many.txt")
+	for label, inputs := range map[string][]string{
+		"leading dot": {".netrc"},
+		"separator":   {"a/b"},
+		"empty":       {""},
+		"duplicate":   {"cookies.txt", "cookies.txt"},
+		"over count":  over,
+	} {
+		t.Run(label, func(t *testing.T) {
+			declaration := base
+			declaration.Inputs = inputs
+			err := ValidateDeclaration(declaration)
+			if err == nil {
+				t.Fatal("expected the declaration to be refused")
+			}
+			if !strings.Contains(err.Error(), base.Name) {
+				t.Errorf("error must name the command: %v", err)
+			}
+		})
+	}
+	atLimit := base
+	atLimit.Inputs = max
+	if err := ValidateDeclaration(atLimit); err != nil {
+		t.Fatalf("%d inputs must be accepted: %v", MaxInputFiles, err)
+	}
+}
+
+func TestSameDeclarationsComparesInputNamesAsASet(t *testing.T) {
+	a := []Declaration{{Name: "one", Argv: []string{"tool"}, Timeout: time.Hour, Inputs: []string{"cookies.txt", "notes.txt"}}}
+	reordered := []Declaration{{Name: "one", Argv: []string{"tool"}, Timeout: time.Hour, Inputs: []string{"notes.txt", "cookies.txt"}}}
+	if !SameDeclarations(a, reordered) {
+		t.Fatal("input name order must not affect identity")
+	}
+	for label, inputs := range map[string][]string{
+		"added":   {"cookies.txt", "notes.txt", "extra.txt"},
+		"removed": {"cookies.txt"},
+		"renamed": {"cookies.txt", "notes.md"},
+		"none":    nil,
+	} {
+		t.Run(label, func(t *testing.T) {
+			changed := []Declaration{{Name: "one", Argv: []string{"tool"}, Timeout: time.Hour, Inputs: inputs}}
+			if SameDeclarations(a, changed) {
+				t.Fatal("changed input names compared equal")
+			}
+		})
+	}
+}

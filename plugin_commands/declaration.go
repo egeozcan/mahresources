@@ -16,6 +16,9 @@ const (
 	MaxParameters              = 32
 	MaxParameterBytes          = 8 << 10
 	MaxAggregateParameterBytes = 64 << 10
+	MaxInputFiles              = 4
+	MaxInputBytes              = 256 << 10
+	MaxAggregateInputBytes     = 512 << 10
 )
 
 const redactedValue = "[redacted]"
@@ -28,12 +31,15 @@ var (
 )
 
 // Declaration is one executable argv template from a plugin manifest. Timeout
-// is normalized by the manifest parser before a declaration is stored.
+// is normalized by the manifest parser before a declaration is stored. Inputs
+// are the file names the plugin may supply contents for; the order is display
+// order, and identity compares them as a set.
 type Declaration struct {
 	Name            string        `json:"name"`
 	Argv            []string      `json:"argv"`
 	Timeout         time.Duration `json:"timeout"`
 	SensitiveParams []string      `json:"sensitive_params,omitempty"`
+	Inputs          []string      `json:"inputs,omitempty"`
 }
 
 // Invocation is the launch vector and the separately redacted history view.
@@ -89,6 +95,35 @@ func ValidateDeclaration(declaration Declaration) error {
 			return fmt.Errorf("command %q lists sensitive parameter %q more than once", declaration.Name, name)
 		}
 		seenSensitive[name] = struct{}{}
+	}
+
+	if len(declaration.Inputs) > MaxInputFiles {
+		return fmt.Errorf("command %q declares %d input files; maximum is %d", declaration.Name, len(declaration.Inputs), MaxInputFiles)
+	}
+	seenInputs := make(map[string]struct{}, len(declaration.Inputs))
+	for _, name := range declaration.Inputs {
+		if err := ValidateInputFileName(name); err != nil {
+			return fmt.Errorf("command %q: %w", declaration.Name, err)
+		}
+		if _, duplicate := seenInputs[name]; duplicate {
+			return fmt.Errorf("command %q declares input file %q more than once", declaration.Name, name)
+		}
+		seenInputs[name] = struct{}{}
+	}
+	return nil
+}
+
+// ValidateInputFileName applies the exchange file-name grammar, which is the
+// grammar the read path already trusts, plus the one rule the read path does
+// not have: a name may not begin with a dot. The files common tools read
+// without being asked for them — .netrc, .gitconfig, .env, and this package's
+// own .tmp — are therefore out of reach of a supplied input.
+func ValidateInputFileName(name string) error {
+	if !validExchangeComponent(name) || len(name) > MaxFileNameBytes {
+		return fmt.Errorf("input file %q must be a plain file name", name)
+	}
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("input file %q must not begin with a dot", name)
 	}
 	return nil
 }
@@ -206,7 +241,7 @@ func SameDeclarations(a, b []Declaration) bool {
 		}
 		seen[declaration.Name] = struct{}{}
 		other, ok := byName[declaration.Name]
-		if !ok || declaration.Timeout != other.Timeout || !samePositionalStrings(declaration.Argv, other.Argv) || !sameStringSet(declaration.SensitiveParams, other.SensitiveParams) {
+		if !ok || declaration.Timeout != other.Timeout || !samePositionalStrings(declaration.Argv, other.Argv) || !sameStringSet(declaration.SensitiveParams, other.SensitiveParams) || !sameStringSet(declaration.Inputs, other.Inputs) {
 			return false
 		}
 	}

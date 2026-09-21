@@ -667,7 +667,7 @@ func parseManifestCommand(tbl *lua.LTable, idx int) (plugin_commands.Declaration
 		return plugin_commands.Declaration{}, fmt.Errorf("%s must not have a metatable", label)
 	}
 	allowed := map[string]struct{}{
-		"name": {}, "argv": {}, "timeout": {}, "sensitive_params": {},
+		"name": {}, "argv": {}, "timeout": {}, "sensitive_params": {}, "inputs": {},
 	}
 	var badKey error
 	tbl.ForEach(func(key, _ lua.LValue) {
@@ -713,6 +713,14 @@ func parseManifestCommand(tbl *lua.LTable, idx int) (plugin_commands.Declaration
 		}
 	}
 
+	inputs := []string(nil)
+	if value := tbl.RawGetString("inputs"); value != lua.LNil {
+		inputs, err = exactStringArray(value, label+".inputs")
+		if err != nil {
+			return plugin_commands.Declaration{}, err
+		}
+	}
+
 	timeout := plugin_commands.DefaultTimeout
 	if value := tbl.RawGetString("timeout"); value != lua.LNil {
 		number, ok := value.(lua.LNumber)
@@ -734,6 +742,7 @@ func parseManifestCommand(tbl *lua.LTable, idx int) (plugin_commands.Declaration
 		Argv:            argv,
 		Timeout:         timeout,
 		SensitiveParams: sensitive,
+		Inputs:          inputs,
 	}
 	if err := plugin_commands.ValidateDeclaration(declaration); err != nil {
 		return plugin_commands.Declaration{}, fmt.Errorf("%s: %w", label, err)
