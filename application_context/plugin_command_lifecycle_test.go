@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -406,9 +407,18 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	if ctx.pluginManager == nil {
 		t.Fatal("plugin manager unavailable")
 	}
+	// A command's PATH is the trusted command path and nothing else -- that is
+	// the boundary PLUGIN_COMMAND_PATH exists to draw -- so a helper the command
+	// runs has to be declared on that path, exactly as an operator declares it.
+	// A shell script calling a bare `sleep` therefore dies with exit 127 here
+	// (and `sleep` is not even a builtin), which is a failure racing the shutdown
+	// this test is about rather than the long-running command it wants.
+	sleepBin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("no sleep executable available: %v", err)
+	}
 	commandDir := t.TempDir()
-	commandPath := filepath.Join(commandDir, "slow-command")
-	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
+	if err := os.Symlink(sleepBin, filepath.Join(commandDir, "sleep")); err != nil {
 		t.Fatal(err)
 	}
 	stagingRoot := t.TempDir()
@@ -423,7 +433,7 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	owner := uint(11)
 	runID, err := active.dispatcher.Submit(plugin_commands.CommandRequest{
 		PluginName: "lifecycle", ActorUserID: &owner,
-		Declaration: plugin_commands.Declaration{Name: "slow", Argv: []string{"slow-command"}, Timeout: time.Minute},
+		Declaration: plugin_commands.Declaration{Name: "slow", Argv: []string{"sleep", "30"}, Timeout: time.Minute},
 	})
 	if err != nil {
 		_ = ctx.StopPluginCommands()

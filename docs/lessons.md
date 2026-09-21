@@ -2,6 +2,26 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## A plugin command's helper must be declared on its trusted path
+
+A plugin command runs with `PATH` set to `PLUGIN_COMMAND_PATH` and nothing else,
+so a fixture whose "long-running command" is `#!/bin/sh\nsleep 30` is not
+long-running at all: `sleep` is not a shell builtin, the child cannot find it,
+and the command exits 127 within milliseconds. `TestPluginCommandLifecycleShutdownPersistsOutcome`
+asserted the run was classified `interrupted` at shutdown and passed anyway --
+the process failure and the shutdown raced, and shutdown won on a developer
+machine while the failure won on CI. The test now symlinks the host's `sleep`
+into the trusted command directory and declares it, the way an operator declares
+a helper, so the command genuinely runs until shutdown kills it.
+
+Two habits follow. A test whose subject is "a command that is still running" has
+to prove the process is alive rather than assume it: verify by shortening the
+sleep and watching the test fail. And a fixture that spawns a real process must
+inherit the same restrictions the production spawner applies, because the host's
+environment is not available to it -- a bare tool name that resolves in your
+shell does not resolve in the child.
+
+
 ## An SSE snapshot is not a delivered completion notification
 
 A subscribe-before-snapshot stream may include a finished job in `init` before
