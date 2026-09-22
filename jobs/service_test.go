@@ -991,3 +991,71 @@ func TestJobVisibilityIsFixedByTheRegisteredKind(t *testing.T) {
 		t.Fatalf("an acceptance that contradicts its Kind's visibility = %v, want ErrInvalidAcceptance", err)
 	}
 }
+
+// TestJobExecutionPrincipalVocabularyIsClosed pins the class dispatch acts from:
+// every listed spelling round-trips into the durable row and back out of a
+// snapshot, and a spelling nothing resolves is refused rather than stored.
+//
+// It matters because the class is the memory of who a Job acts as after the
+// live reference beside it has been cleared — a class nobody can resolve would
+// be a Job whose execution authority nobody can decide.
+func TestJobExecutionPrincipalVocabularyIsClosed(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	deps.Now = func() time.Time { return time.Date(2031, 9, 10, 11, 12, 13, 0, time.UTC) }
+
+	if len(PrincipalClasses) != 3 {
+		t.Fatalf("PrincipalClasses has %d entries, want actor, owner and host", len(PrincipalClasses))
+	}
+	for _, class := range PrincipalClasses {
+		accepted, err := svc.Accept(deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), ActorUserID: uintPtr(7), ExecutionPrincipal: class,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+		if err != nil {
+			t.Fatalf("Accept as %s: %v", class, err)
+		}
+		if accepted.ExecutionPrincipal != class {
+			t.Fatalf("snapshot principal = %q, want %q", accepted.ExecutionPrincipal, class)
+		}
+		if stored := jobRow(t, deps, accepted.ID); stored.ExecutionPrincipal != string(class) {
+			t.Fatalf("stored principal = %q, want %q", stored.ExecutionPrincipal, class)
+		}
+	}
+
+	if _, err := svc.Accept(deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), ExecutionPrincipal: PrincipalClass("root"),
+		Replay: ReplayInput{NonReplayable: true},
+	}); !errors.Is(err, ErrInvalidAcceptance) {
+		t.Fatalf("an unknown execution principal = %v, want ErrInvalidAcceptance", err)
+	}
+
+	// The derived class is the one dispatch used to apply at run time: the actor
+	// when there is one, else the owner, else the host.
+	for _, testCase := range []struct {
+		name      string
+		owner     *uint
+		actor     *uint
+		wantClass PrincipalClass
+	}{
+		{"an actor is recorded", uintPtr(7), uintPtr(8), PrincipalActor},
+		{"only an owner is recorded", uintPtr(7), nil, PrincipalOwner},
+		{"no principal is recorded", nil, nil, PrincipalHost},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			accepted, err := svc.Accept(deps, Acceptance{
+				Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+				OwnerUserID: testCase.owner, ActorUserID: testCase.actor,
+				Replay: ReplayInput{NonReplayable: true},
+			})
+			if err != nil {
+				t.Fatalf("Accept: %v", err)
+			}
+			if accepted.ExecutionPrincipal != testCase.wantClass {
+				t.Fatalf("principal = %q, want %q", accepted.ExecutionPrincipal, testCase.wantClass)
+			}
+		})
+	}
+}
