@@ -49,7 +49,7 @@ func newJobContext(t *testing.T) *MahresourcesContext {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
-		&models.JobCommandRequest{},
+		&models.JobCommandRequest{}, &models.JobLegacyHandle{},
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
@@ -62,9 +62,23 @@ func newJobContext(t *testing.T) *MahresourcesContext {
 		t.Fatalf("load settings: %v", err)
 	}
 	ctx.SetSettings(settings)
+	// A replay keyring, because a Job accepted with input has to have somewhere to
+	// seal it: the control plane refuses replayable input with no stable key rather
+	// than storing it in the clear.
+	ring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
+	if err != nil {
+		t.Fatalf("build replay keyring: %v", err)
+	}
+	ctx.SetJobReplayKeyring(ring)
 	ctx.SetJobService(jobs.NewService())
 	return ctx
 }
+
+// facadeTestKind is the Kind the facade tests register their own adapter under.
+// It is deliberately not one of the Kinds a real context registers: these tests are
+// about the facade binding the asker, and a Kind the download adapter already owns
+// would test that adapter instead.
+const facadeTestKind = "facade-test-work"
 
 // acceptJobFor accepts one Job through the installed control plane, as a Kind
 // adapter would.
@@ -262,7 +276,7 @@ func TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade(t *testing.T) {
 	owner := uint(7)
 
 	adapter := newRuntimeTestAdapter()
-	adapter.def.Kind = "remote-download"
+	adapter.def.Kind = facadeTestKind
 	adapter.def.KindVersion = 1
 	var askedAs []jobs.Access
 	adapter.advertise = func(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
@@ -274,19 +288,19 @@ func TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade(t *testing.T) {
 	}
 
 	mine := acceptJobFor(t, ctx, jobs.Acceptance{
-		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		Kind: facadeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(owner), ActorUserID: jobUintPtr(owner), Title: "mine",
 		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	execution, ok, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
-		Kind: "remote-download", KindVersion: 1, Claimant: "facade-test",
+		Kind: facadeTestKind, KindVersion: 1, Claimant: "facade-test",
 	})
 	if err != nil || !ok || execution.JobID != mine.ID {
 		t.Fatalf("claiming the running job: %v (ok=%v, claimed %s)", err, ok, execution.JobID)
 	}
 
 	theirs := acceptJobFor(t, ctx, jobs.Acceptance{
-		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		Kind: facadeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(owner + 1), ActorUserID: jobUintPtr(owner + 1), Title: "theirs",
 		Replay: jobs.ReplayInput{NonReplayable: true},
 	})

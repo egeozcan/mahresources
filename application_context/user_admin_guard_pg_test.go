@@ -47,7 +47,7 @@ func newPostgresUserJobContext(t *testing.T) *MahresourcesContext {
 		&models.ResourceReduction{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{},
-		&models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

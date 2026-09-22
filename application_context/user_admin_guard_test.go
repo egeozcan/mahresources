@@ -46,7 +46,7 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		// actor, and deletes the viewer-keyed preferences beside it, so these
 		// tables exist wherever a user can be deleted.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

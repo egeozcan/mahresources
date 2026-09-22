@@ -927,6 +927,12 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	// reads its retention windows from the live settings on every call.
 	ctx.downloadManager.SetHistoryRecorder(ctx)
 	ctx.downloadManager.SetHistoryLogger(historyLogger{})
+	// Every download a canonical Job owns also mirrors its lifecycle into that Job.
+	// Installed here rather than through ManagerConfig because the control plane
+	// itself is installed later (from main, on the context a runtime also
+	// registers its Kinds with); the sink reads the service per call, so the order
+	// does not matter and a deployment with no control plane mirrors nothing.
+	ctx.downloadManager.SetCanonicalSink(&jobDownloadSink{ctx: ctx})
 	ctx.downloadManager.SetHistorySweepFn(func() {
 		if n, err := ctx.SweepDownloadHistory(); err != nil {
 			log.Printf("warning: download history sweep failed: %v", err)

@@ -1025,3 +1025,18 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 	}
 	return s.snapshotFor(deps, access, job), nil
 }
+
+// HasReplayCodec reports whether any registered codec could decode an envelope
+// written at one Kind version.
+//
+// It is exported because registration is a wiring step that may legitimately run
+// twice — a context registering its Kinds against a service it was handed — and
+// the second caller has to be able to ask whether the pair is already there
+// instead of provoking the refusal that guards against two codecs for one
+// version.
+func HasReplayCodec(s *Service, kind string, version uint) bool {
+	if s == nil {
+		return false
+	}
+	return s.hasReplayCodec(kind, version)
+}

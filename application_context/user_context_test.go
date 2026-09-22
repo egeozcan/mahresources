@@ -58,7 +58,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		// ... and preferences are keyed by the viewer, so the sweep removes them
 		// outright rather than nulling a column.
-		&models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

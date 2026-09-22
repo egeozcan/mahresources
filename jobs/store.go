@@ -294,3 +294,87 @@ func recordTruncationEvent(tx *gorm.DB, job models.Job, now time.Time) error {
 	}
 	return nil
 }
+
+// storeLegacyHandles records the legacy identifiers one accepted Job answers to.
+//
+// It runs inside acceptance's own transaction, so "a legacy submission response
+// supplies a handle" is a property of the acceptance rather than of a second
+// write that could be lost, and a handle can never name a Job that was never
+// stored.
+func storeLegacyHandles(tx *gorm.DB, jobID string, refs []LegacyRef, now time.Time) error {
+	for _, ref := range refs {
+		row := models.JobLegacyHandle{
+			Namespace: ref.Namespace,
+			Handle:    ref.Handle,
+			JobID:     jobID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return fmt.Errorf("jobs: store legacy handle %s/%s: %w", ref.Namespace, ref.Handle, err)
+		}
+	}
+	return nil
+}
+
+// moveLegacyHandles points every handle the ancestor answers to at its successor,
+// in the successor's own acceptance transaction.
+//
+// It is a movement rather than a new row because a handle names one current leaf:
+// the client that kept polling the old id is asking about the execution that id
+// now means, and inserting a second row for the successor would leave the handle
+// resolving to the immutable ancestor the Retry deliberately did not change.
+// Successors of a Retry are the only callers: a handle projects the linear Retry
+// lineage, and a Repeat's branch is not on it.
+func moveLegacyHandles(tx *gorm.DB, ancestorJobID, successorJobID string, now time.Time) error {
+	result := tx.Model(&models.JobLegacyHandle{}).
+		Where("job_id = ?", ancestorJobID).
+		Updates(map[string]any{"job_id": successorJobID, "updated_at": now})
+	if result.Error != nil {
+		return fmt.Errorf("jobs: move legacy handles: %w", result.Error)
+	}
+	return nil
+}
+
+// ResolveLegacyHandle answers which canonical Job one legacy identifier currently
+// names, or ErrNotFound.
+//
+// It is the resolution half of the compatibility surface and nothing else: a
+// handle carries no authority, so the caller authorizes the Job it resolves to
+// exactly as it would any other — which is why this reads no visibility
+// predicate and returns an identity rather than a snapshot.
+func (s *Service) ResolveLegacyHandle(deps Deps, namespace, handle string) (string, error) {
+	if deps.DB == nil {
+		return "", fmt.Errorf("%w: no database handle", ErrNotFound)
+	}
+	if namespace == "" || handle == "" {
+		return "", fmt.Errorf("%w: an empty legacy reference names nothing", ErrNotFound)
+	}
+	var row models.JobLegacyHandle
+	err := deps.DB.Where("namespace = ? AND handle = ?", namespace, handle).First(&row).Error
+	if err != nil {
+		if isNotFound(err) {
+			return "", fmt.Errorf("%w: %s/%s", ErrNotFound, namespace, handle)
+		}
+		return "", fmt.Errorf("jobs: resolve legacy handle: %w", err)
+	}
+	return row.JobID, nil
+}
+
+// LegacyHandlesFor lists the handles one Job currently answers to, ordered so a
+// projection built from them is stable.
+func (s *Service) LegacyHandlesFor(deps Deps, jobID string) ([]LegacyRef, error) {
+	if deps.DB == nil {
+		return nil, fmt.Errorf("%w: no database handle", ErrNotFound)
+	}
+	var rows []models.JobLegacyHandle
+	err := deps.DB.Where("job_id = ?", jobID).Order("namespace asc, handle asc").Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("jobs: read legacy handles: %w", err)
+	}
+	refs := make([]LegacyRef, 0, len(rows))
+	for _, row := range rows {
+		refs = append(refs, LegacyRef{Namespace: row.Namespace, Handle: row.Handle})
+	}
+	return refs, nil
+}

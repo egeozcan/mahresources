@@ -103,6 +103,114 @@ type ResourceCreator interface {
 	AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
 }
 
+// CanonicalRef names the durable Job execution one queue entry publishes into:
+// which Job, and the fencing token its claim was created with.
+//
+// A token and not an authorization decision: the control plane refuses every
+// publish whose token does not own the Job, which is what stops a transfer whose
+// claim was replaced from reporting an outcome for work somebody else now owns.
+type CanonicalRef struct {
+	JobID          string
+	ExecutionToken string
+}
+
+// CanonicalSink mirrors one queue entry's lifecycle into the durable Job control
+// plane.
+//
+// It is declared here and implemented above, the same seam as HistoryRecorder and
+// for the same reason: the queue is where a transfer publishes its own facts —
+// progress, the moment it is held, and the outcome — and it sits below the layer
+// that owns the Job tables. The sink is called outside every manager and job lock
+// (a mirror is a database write, and holding j.mu across one would serialise
+// every other job's progress against it), and its error is the mirrory's to
+// swallow: a Job row must never be able to change a download's outcome.
+//
+// All three methods receive a snapshot rather than the live job, so what is
+// mirrored is one instant — the same discipline the SSE snapshots follow, and for
+// the same reason.
+type CanonicalSink interface {
+	// DownloadProgress records one nonterminal observation of a live transfer.
+	DownloadProgress(ref CanonicalRef, snap *DownloadJob) error
+	// DownloadHeld records that a transfer was paused and is waiting for a person.
+	DownloadHeld(ref CanonicalRef, snap *DownloadJob) error
+	// DownloadFinished records one transfer's terminal outcome.
+	DownloadFinished(ref CanonicalRef, snap *DownloadJob) error
+}
+
+// RemoteDownloadSubmission is one submitted URL's outcome: the queue entry that
+// carries the transfer, the durable Job it publishes into, and the refusal when
+// there is neither.
+//
+// It is per URL rather than per request because that is how the queue has always
+// treated a newline batch, and because the design requires it: a batch whose fifth
+// URL is refused must still hand over the four that were accepted, and the caller
+// has to be able to say which was which.
+//
+// It is declared here rather than in the application layer because both the layer
+// that accepts the Jobs and the HTTP layer that answers the request have to name
+// it, and this is the package they already share (contracts/ may not depend on
+// this one).
+type RemoteDownloadSubmission struct {
+	URL string
+	// Job is the queue entry carrying the transfer, nil when the URL was refused.
+	Job *DownloadJob
+	// CanonicalJobID is the durable Job the transfer publishes into; empty when the
+	// deployment has no control plane installed.
+	CanonicalJobID string
+	// Err is the refusal, nil when the URL was accepted.
+	Err error
+}
+
+// DownloadProjection is one legacy download identifier's current view.
+//
+// A legacy id is a handle: it names the current leaf of a linear Retry lineage, so
+// resolving one answers two questions at once — which durable Job it now means, and
+// which queue entry in this process is carrying it (if any). Both are needed, and
+// by different callers: a read renders Row, and a control acts on Entry.
+//
+// It is declared here for the same reason RemoteDownloadSubmission is: the
+// application layer that resolves handles and the HTTP layer that answers with them
+// have to name one type, and neither may import the other.
+type DownloadProjection struct {
+	// ID is the handle the caller asked for. A legacy response reports it
+	// unchanged, whatever execution it currently resolves to.
+	ID string
+	// Row is the legacy-shaped row to report. It is the queue entry's own snapshot
+	// when this process holds one — live progress included — and a projection of the
+	// durable Job otherwise.
+	Row *DownloadJob
+	// Entry is the queue entry carrying the transfer, nil when this process has
+	// none: a Job that has not been dispatched yet, or one whose queue entry was
+	// evicted or lost with a restart.
+	Entry *DownloadJob
+	// CanonicalJobID and CanonicalVersion name the durable Job the id currently
+	// means, and the version a command has to decide from. Both are zero-valued
+	// when the id names only a queue entry.
+	CanonicalJobID   string
+	CanonicalVersion uint64
+	CanonicalState   string
+}
+
+// SubmissionOptions carries the durable identity a submission was *already*
+// accepted with, so the queue entry and the Job the control plane knows by are
+// reachable through one handle.
+//
+// The zero value is the whole legacy behaviour: the queue generates its own id and
+// publishes nowhere. That is what the package's own tests, the CLI and any
+// embedder that never installed a control plane get.
+type SubmissionOptions struct {
+	// JobID, when set, is the id the queue entry must take. An admission path that
+	// has already accepted a durable Job needs it: the id a client was handed is
+	// the one the queue entry has to answer to, or the same download would be one
+	// row in the Job Center and another in the panel.
+	JobID string
+	// Canonical names the durable Job this transfer publishes into. The execution
+	// token may be empty: a submission dispatches the transfer before any execution
+	// owns the Job — the runtime adopts it a tick later — and until it does, the
+	// transfer knows which Job it belongs to but has no token to publish under.
+	Canonical *CanonicalRef
+}
+
 // actorResourceCreator is the optional capability (implemented by
 // *application_context.MahresourcesContext, not by test doubles) that binds a
 // download's submitter as the create actor, so CreatedByUserId is stamped on the
@@ -211,6 +319,10 @@ type DownloadManager struct {
 	// job_events.go). Nil sink means every emit is a nil check, which is what a
 	// deployment with no plugin listening gets.
 	jobEventState
+	// canonicalSink mirrors each canonical transfer's lifecycle into the durable
+	// Job control plane (see CanonicalSink). Nil means the queue runs without
+	// one, which is what the tests' and the CLI's bare managers get.
+	canonicalSink CanonicalSink
 }
 
 // NewDownloadManagerWithConfig constructs a DownloadManager with the given
@@ -411,6 +523,19 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 // about. An empty name is a person's download and takes the host policy, which
 // is what Submit passes.
 func (dm *DownloadManager) SubmitForPlugin(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string) (*DownloadJob, error) {
+	return dm.SubmitForPluginWithOptions(creator, ownerUserID, pluginName, SubmissionOptions{})
+}
+
+// SubmitForPluginWithOptions enqueues a download on a plugin's behalf with the
+// durable identity an admission path has already accepted.
+//
+// Everything SubmitForPlugin documents applies; what is added is that the queue
+// entry can be the projection of a Job that already exists. The control plane
+// refuses an accepted Job that exists only in memory, so the admission path
+// accepts first and submits second — and the submission has to carry that
+// identity or the two records of one download would disagree about which one it
+// is.
+func (dm *DownloadManager) SubmitForPluginWithOptions(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName string, opts SubmissionOptions) (*DownloadJob, error) {
 	// At submit, not at fetch. Every door into the queue passes through here --
 	// POST /v1/download/submit, the plugin submitter, SubmitMultiple, and a
 	// retry replaying a stored payload -- and the submitter is present at
@@ -440,8 +565,12 @@ func (dm *DownloadManager) SubmitForPlugin(creator *query_models.ResourceFromRem
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	jobID := opts.JobID
+	if jobID == "" {
+		jobID = generateShortID()
+	}
 	job := &DownloadJob{
-		ID:              generateShortID(),
+		ID:              jobID,
 		URL:             strings.TrimSpace(creator.URL),
 		Status:          JobStatusPending,
 		Progress:        0,
@@ -454,6 +583,30 @@ func (dm *DownloadManager) SubmitForPlugin(creator *query_models.ResourceFromRem
 		cancel:          cancel,
 		ownerUserID:     ownerUserID,
 		pluginName:      pluginName,
+	}
+	if opts.Canonical != nil {
+		if opts.Canonical.JobID == "" {
+			dm.mu.Unlock()
+			cancel()
+			return nil, fmt.Errorf("a canonical submission needs the job it publishes into")
+		}
+		// A legacy id is a handle, and a Retry moves it onto the new attempt: the
+		// finished entry it named is the durable ancestor's record, which the Job
+		// Center keeps under its own identity. Replacing the queue row is what keeps
+		// one legacy id meaning one current execution — and it is what makes the
+		// legacy history row for that id describe the attempt that is running now
+		// rather than the one that already ended.
+		if existing, taken := dm.jobs[jobID]; taken {
+			if !downloadQueueStatusTerminal(existing.GetStatus()) {
+				dm.mu.Unlock()
+				cancel()
+				return nil, fmt.Errorf("the queue already has a live job with id %s", jobID)
+			}
+			dm.evictJob(jobID, existing)
+		}
+		ref := *opts.Canonical
+		job.canonical = &ref
+		job.CanonicalJobID = ref.JobID
 	}
 
 	dm.jobs[job.ID] = job
@@ -563,6 +716,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		return
 	}
 	dm.notifyJob("updated", job)
+	dm.mirrorProgress(job)
 
 	// Perform the download with progress tracking
 	resource, err := dm.downloadWithProgress(ctx, runID, job)
@@ -600,6 +754,12 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// otherwise be what the row described. The other two terminal writes (the
 	// cancelled-while-queued branch above, and Cancel's paused branch) record the
 	// same way.
+	// The canonical Job goes first and the legacy row second, because that is which
+	// of the two is authoritative: a client learns a download ended from the queue
+	// or from the history page, and neither may be ahead of the record a Retry is
+	// decided against. The other order left a window in which the row said `failed`
+	// while the Job still said `running`, and a Retry pressed inside it was refused.
+	dm.mirrorFinished(job)
 	dm.recordTerminal(job, snap)
 	dm.emitJobEvent(job, snap)
 }
@@ -633,6 +793,7 @@ func (dm *DownloadManager) finishCancelledBeforeStarting(job *DownloadJob, runID
 		// was still queued is exactly the kind the user wants to find later and
 		// press Retry on — leaving it out made the queue's own eviction the only
 		// record of it, which is what history exists to outlive.
+		dm.mirrorFinished(job)
 		dm.recordTerminal(job, snap)
 		dm.emitJobEvent(job, snap)
 	}
@@ -907,6 +1068,7 @@ func (r *attemptReporter) onProgress(downloaded int64) {
 	if time.Since(r.lastNotify) >= progressNotifyInterval {
 		r.lastNotify = time.Now()
 		r.dm.notifyJob("updated", r.job)
+		r.dm.mirrorProgress(r.job)
 	}
 }
 
@@ -922,6 +1084,7 @@ func (r *attemptReporter) onComplete() {
 		return
 	}
 	r.dm.notifyJob("updated", r.job)
+	r.dm.mirrorProgress(r.job)
 }
 
 // downloadWithProgress performs the HTTP download with progress tracking.
@@ -1169,6 +1332,7 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 		dm.notifyJob("updated", job)
 		// claimCancel stamped the terminal state itself, so this is the write the
 		// worker would otherwise have recorded — there is no worker left to do it.
+		dm.mirrorFinished(job)
 		dm.recordTerminal(job, snap)
 		dm.emitJobEvent(job, snap)
 	}
@@ -1194,6 +1358,12 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	}
 
 	dm.notifyJob("updated", job)
+	// The durable Job says a person is holding this transfer. It is not `paused`:
+	// §1 defines that as an executor's confirmed resumable checkpoint, and this
+	// queue's resume starts the transfer again from the beginning, so the honest
+	// record is that the transfer is waiting for a person — which is what the
+	// mirror decides, not this call.
+	dm.mirrorHeld(job)
 
 	return nil
 }
@@ -1311,6 +1481,110 @@ func (dm *DownloadManager) GetJob(jobID string) (*DownloadJob, bool) {
 	defer dm.mu.RUnlock()
 	job, exists := dm.jobs[jobID]
 	return job, exists
+}
+
+// downloadQueueStatusTerminal reports whether a queue status is one the queue
+// retires on its own.
+func downloadQueueStatusTerminal(status JobStatus) bool {
+	switch status {
+	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// GetJobByCanonicalJobID returns the queue entry publishing into one durable Job,
+// if this process still holds it.
+//
+// The whole registry is scanned rather than indexed, deliberately: the queue is
+// bounded by MaxQueueSize, and a second index is a second thing to keep in step
+// with eviction, ClearFinished, RemoveFinished and a retry that replaces an id —
+// every one of which is a place an index drifts from the map it describes.
+func (dm *DownloadManager) GetJobByCanonicalJobID(canonicalJobID string) (*DownloadJob, bool) {
+	if canonicalJobID == "" {
+		return nil, false
+	}
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	for _, id := range dm.jobOrder {
+		job, exists := dm.jobs[id]
+		if !exists {
+			continue
+		}
+		if job.CanonicalJobID == canonicalJobID {
+			return job, true
+		}
+	}
+	return nil, false
+}
+
+// NewJobID returns a fresh legacy queue id.
+//
+// Exported because an admission path that accepts a durable Job before it submits
+// has to name the queue entry it is about to create — the other order, generating
+// the id inside the queue and recording it afterwards, would leave a Job whose id
+// nothing in the panel answers to until the second write landed.
+func NewJobID() string { return generateShortID() }
+
+// SetCanonicalSink installs the mirror the queue publishes each canonical
+// transfer's lifecycle through. See CanonicalSink.
+func (dm *DownloadManager) SetCanonicalSink(sink CanonicalSink) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	dm.canonicalSink = sink
+}
+
+func (dm *DownloadManager) currentCanonicalSink() CanonicalSink {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return dm.canonicalSink
+}
+
+// mirrorProgress publishes one nonterminal observation of a canonical transfer.
+//
+// It is a no-op for every job that has no canonical execution — the CLI's queue,
+// the package's own tests, and every non-download source — and its error is
+// deliberately not propagated: the mirror is a record about a download, and a
+// record that cannot be written must not change what the download does.
+func (dm *DownloadManager) mirrorProgress(job *DownloadJob) {
+	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadProgress(ref, snap)
+	})
+}
+
+// mirrorHeld publishes the fact that a transfer is paused and waiting for a
+// person. It is the one nonterminal mirror that changes the Job's state, because
+// "paused" is a decision the executor made rather than a progress tick.
+func (dm *DownloadManager) mirrorHeld(job *DownloadJob) {
+	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadHeld(ref, snap)
+	})
+}
+
+// mirrorFinished publishes one transfer's terminal outcome.
+func (dm *DownloadManager) mirrorFinished(job *DownloadJob) {
+	dm.mirror(job, func(sink CanonicalSink, ref CanonicalRef, snap *DownloadJob) error {
+		return sink.DownloadFinished(ref, snap)
+	})
+}
+
+// mirror is the one place a canonical ref is read, the sink is looked up, and the
+// snapshot is taken — so no mirror can publish under a job's live pointer or
+// forget to be a no-op for a job without an execution.
+func (dm *DownloadManager) mirror(job *DownloadJob, publish func(CanonicalSink, CanonicalRef, *DownloadJob) error) {
+	if job == nil || job.Source != JobSourceDownload || job.runFn != nil {
+		return
+	}
+	ref, ok := job.CanonicalExecution()
+	if !ok {
+		return
+	}
+	sink := dm.currentCanonicalSink()
+	if sink == nil {
+		return
+	}
+	_ = publish(sink, ref, job.Snapshot())
 }
 
 // Subscribe creates a channel that receives job events
@@ -1479,6 +1753,7 @@ func (dm *DownloadManager) Shutdown() {
 	for _, job := range paused {
 		if prev, snap, ok := job.claimCancel(time.Now()); ok && prev == JobStatusPaused {
 			dm.notifyJob("updated", job)
+			dm.mirrorFinished(job)
 			dm.recordTerminal(job, snap)
 			dm.emitJobEvent(job, snap)
 		}

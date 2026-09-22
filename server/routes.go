@@ -846,22 +846,22 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// payload back to that unscoped worker, so both re-check it against the
 	// principal pressing the button rather than trusting what was allowed once.
 	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
-	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler))
+	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler))
+	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler))
 	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
 	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
 	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
-	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
-	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(api_handlers.GetDownloadJobHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadJobHandler))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.
 	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(api_handlers.GetJobsClearCompletedHandler(appContext))
 

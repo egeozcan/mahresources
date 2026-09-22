@@ -32,7 +32,7 @@ func jobCoreTables() []any {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{},
-		&models.JobPreference{},
+		&models.JobPreference{}, &models.JobLegacyHandle{},
 		&models.JobPinGuard{},
 		&models.JobCommandRequest{},
 	}

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"mahresources/auth"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
@@ -98,7 +99,49 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 	if err := db.Create(&row).Error; err != nil {
 		return nil, err
 	}
+	// The row and the Job are one deferred download seen two ways: the row is what
+	// the plugin management surfaces list, and the Job is what the control plane
+	// schedules, dispatches and keeps the outcome of. The row is written first
+	// because its is the identity the handle names — a Job accepted without it would
+	// be a handle pointing at nothing.
+	if err := ctx.acceptDeferredDownloadJob(&row, creator, pluginName); err != nil {
+		return nil, err
+	}
 	return &row, nil
+}
+
+// acceptDeferredDownloadJob records a deferred download as a `scheduled` Job.
+//
+// A one-off deferred operation is already a scheduled Job: it names one concrete
+// execution, so it does not need a Schedule, a materialization step or a second
+// identity when its due time arrives (§1). What the row keeps is the plugin-facing
+// record and the management listing; the Job is what is dispatched.
+//
+// A deployment with no control plane keeps the row alone, which is what this
+// feature was before there was a Job to accept it as.
+func (ctx *MahresourcesContext) acceptDeferredDownloadJob(row *models.ScheduledDownload, creator *query_models.ResourceFromRemoteCreator, pluginName string) error {
+	service := ctx.JobService()
+	if service == nil {
+		return nil
+	}
+	input, err := remoteDownloadInputJSON(creator, pluginName)
+	if err != nil {
+		return err
+	}
+	owner := row.CreatedByUserId
+	_, err = service.Accept(ctx.jobDeps(), jobs.Acceptance{
+		Kind:         JobKindDeferredDownload,
+		KindVersion:  jobDownloadKindVersion,
+		State:        jobs.StateScheduled,
+		OwnerUserID:  copyUintPtr(owner),
+		ActorUserID:  copyUintPtr(owner),
+		Origin:       "schedule",
+		Title:        downloadJobTitle(input),
+		Replay:       jobs.ReplayInput{Input: input},
+		ScheduledFor: &row.DueAt,
+		LegacyRefs:   []jobs.LegacyRef{{Namespace: ScheduledDownloadHandleNamespace, Handle: fmt.Sprintf("%d", row.ID)}},
+	})
+	return err
 }
 
 func scheduledDownloadPayload(creator *query_models.ResourceFromRemoteCreator) (types.JSON, error) {
@@ -388,6 +431,21 @@ func (ctx *MahresourcesContext) fireClaimedScheduledDownload(row *models.Schedul
 	if !reserved {
 		return false, nil
 	}
+
+	// A row with a durable Job behind it is materialized rather than submitted: the
+	// Job was accepted as `scheduled` when the deferral was made, and its due time
+	// moves *that* Job to the queue — one execution, one identity, and the dispatch
+	// loop is what starts it. Submitting here as well would be the second execution
+	// the design forbids.
+	if jobID, materialized, err := ctx.materializeDeferredDownloadJob(row.ID); err != nil {
+		return false, ctx.markScheduledDownloadFailed(row.ID, claim, err, now, false)
+	} else if materialized {
+		if err := ctx.MarkScheduledDownloadSubmitted(row.ID, claim, jobID, now); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
 	owner := actorID
 	jobID, err := cfg.Submit(creator, &owner, row.PluginName)
 	if err != nil {
@@ -411,4 +469,42 @@ func (ctx *MahresourcesContext) scheduledDownloadPluginAvailable(pluginName stri
 	}
 	_, ok := ctx.pluginManager.NetworkPolicyForPlugin(pluginName)
 	return ok
+}
+
+// materializeDeferredDownloadJob moves one row's deferred Job from `scheduled` to
+// the queue, at the moment the row becomes due.
+//
+// materialized is false when the row has no durable Job — one written before there
+// was a control plane — and the caller falls back to submitting the payload itself.
+// A Job that has moved on (cancelled, already queued by an earlier tick, blocked for
+// a person) is left exactly as it is: the row's own claim is what stops a second
+// materialization, and a Job in any other state has already been decided about.
+func (ctx *MahresourcesContext) materializeDeferredDownloadJob(rowID uint) (string, bool, error) {
+	service := ctx.JobService()
+	if service == nil {
+		return "", false, nil
+	}
+	jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ScheduledDownloadHandleNamespace, fmt.Sprintf("%d", rowID))
+	if err != nil {
+		if errors.Is(err, jobs.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	job, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	if err != nil {
+		return "", false, err
+	}
+	if job.State != jobs.StateScheduled {
+		return jobID, true, nil
+	}
+	_, err = service.Transition(ctx.jobDeps(), jobs.Transition{
+		JobID:           job.ID,
+		ExpectedVersion: job.Version,
+		To:              jobs.StateQueued,
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return job.ID, true, nil
 }

@@ -1,0 +1,332 @@
+package application_context
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"mahresources/download_queue"
+	"mahresources/jobs"
+	"mahresources/models/query_models"
+)
+
+// This file is the compatibility seam between the legacy identifier spaces the
+// deployed UI, API and CLI already speak and the canonical Jobs that now carry
+// the work behind them.
+//
+// A legacy `id` is a handle, not an identity. It names the current leaf of a
+// linear Retry lineage, which is what lets a bookmark or a polling client keep
+// one id across successive retries while every attempt keeps its own immutable
+// UUID (ADR 0007). The durable half of that mapping lives in the Job control
+// plane — it is written with acceptance and moved with a Retry successor, both
+// atomically — and what is left here is the only thing the application can add:
+// resolving a handle as the asking principal, so a handle grants no rights over
+// the Job it names.
+
+// ScheduledDownloadHandleNamespace is the namespace of the scheduled-download
+// store's own row ids. It is separate from the download queue's because they are
+// different id spaces: a row id and a queue id are both small numbers or short
+// strings, and one must never resolve as the other.
+const ScheduledDownloadHandleNamespace = "scheduled-download"
+
+// DownloadHandleNamespace is the namespace of the download queue's legacy ids.
+//
+// The namespace is part of the key rather than decoration: two legacy id spaces
+// (a download queue id and a plugin action job id) are both short random strings,
+// and one of them must not resolve as the other.
+const DownloadHandleNamespace = "download"
+
+// ResolveJobHandle answers the canonical Job one legacy identifier currently
+// names, under this context's own principal.
+//
+// A handle carries no authority, so the Job it resolves to is authorized exactly
+// as any other read would be: an asker who may not see it is answered NotFound,
+// which is the same answer a missing handle gets. That is deliberate — the
+// difference between "there is no such handle" and "there is one and you may not
+// have it" is itself information about somebody else's work.
+func (ctx *MahresourcesContext) ResolveJobHandle(namespace, handle string) (jobs.Snapshot, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return jobs.Snapshot{}, err
+	}
+	jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), namespace, handle)
+	if err != nil {
+		return jobs.Snapshot{}, err
+	}
+	return service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
+}
+
+// JobHandlesFor lists the legacy identifiers one visible Job currently answers to.
+// It is the reverse projection: a surface that has a canonical Job and wants to
+// print the id a legacy client would use asks this, and the visibility check is
+// the Job read's.
+func (ctx *MahresourcesContext) JobHandlesFor(jobID string) ([]jobs.LegacyRef, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID); err != nil {
+		return nil, err
+	}
+	return service.LegacyHandlesFor(ctx.jobDeps(), jobID)
+}
+
+// JobHandleNamespaceFor resolves the single handle in one namespace a Job answers
+// to, or an empty string when it answers to none.
+//
+// A Job may carry several handles in one namespace after a migration that met an
+// older one, and a projection that picked between them arbitrarily would hand
+// different clients different ids for one execution. The first in the stable
+// order is what every caller sees.
+func (ctx *MahresourcesContext) JobHandleNamespaceFor(jobID, namespace string) (string, error) {
+	refs, err := ctx.JobHandlesFor(jobID)
+	if err != nil {
+		return "", err
+	}
+	for _, ref := range refs {
+		if ref.Namespace == namespace {
+			return ref.Handle, nil
+		}
+	}
+	return "", nil
+}
+
+// ProjectDownloadJob answers the legacy row one download identifier currently names.
+//
+// It resolves in the order the compatibility contract implies, and each step is
+// skipped when nothing is there:
+//
+//  1. the durable handle table, which is what makes an unchanged legacy id follow
+//     successive retries to the execution it now means;
+//  2. the queue entry this process holds for that Job, if it holds one;
+//  3. otherwise a projection of the durable Job itself, so a client polling after a
+//     restart — or before the transfer was dispatched — still gets a row rather
+//     than a 404 for work that is plainly still going to happen.
+//
+// A raw queue id that no handle names is still resolved as an entry, which is what
+// keeps every legacy client that has an id from before this release working.
+func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.DownloadProjection, error) {
+	projection := download_queue.DownloadProjection{ID: id}
+	if ctx == nil {
+		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+	}
+
+	var canonical *jobs.Snapshot
+	if ctx.JobService() != nil {
+		resolved, err := ctx.ResolveJobHandle(DownloadHandleNamespace, id)
+		switch {
+		case err == nil:
+			canonical = &resolved
+		case errors.Is(err, jobs.ErrNotFound):
+			// Not a handle: it may still be a queue entry from before the handle
+			// table existed, or one this process queued without a control plane.
+		default:
+			return projection, err
+		}
+	}
+
+	if canonical != nil {
+		projection.CanonicalJobID = canonical.ID
+		projection.CanonicalVersion = canonical.Version
+		projection.CanonicalState = string(canonical.State)
+		if entry, ok := ctx.downloadManager.GetJobByCanonicalJobID(canonical.ID); ok {
+			projection.Entry = entry
+			// The live entry wins while it is not behind the record. It is the thing
+			// actually transferring, and its progress is finer than a Job's snapshot.
+			// It does not win when the record has already ended the work and the entry
+			// has not caught up — a cancellation the queue has yet to unwind, a mirror
+			// still in flight — because reporting a transfer as running after its Job
+			// is finished is the one direction that misleads.
+			if !canonical.Terminal() || downloadRowTerminal(entry) {
+				projection.Row = downloadRowFromEntry(entry, id, canonical.ID)
+				return projection, nil
+			}
+			projection.Row = downloadRowFromJob(*canonical, id)
+			return projection, nil
+		}
+		// No queue entry in this process. A Job that is still going to happen — queued,
+		// scheduled, running on a process that is not this one, or held for a person —
+		// is projected so a client polling after a restart still sees its work. A Job
+		// that has ended is not: its record is the Job Center's, and a legacy row for
+		// work that is over is exactly what deleting or clearing one removes. That is
+		// what keeps "clear completed" meaning what it has always meant.
+		if canonical.Terminal() {
+			return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+		}
+		projection.Row = downloadRowFromJob(*canonical, id)
+		return projection, nil
+	}
+
+	entry, ok := ctx.downloadManager.GetJob(id)
+	if !ok {
+		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+	}
+	// Visibility is the queue's own rule for a row that has no Job behind it: a
+	// non-administrator sees only what they submitted, and an ownerless row is
+	// nobody's.
+	if !ctx.downloadRowVisible(entry) {
+		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+	}
+	projection.Entry = entry
+	projection.Row = downloadRowFromEntry(entry, id, entry.CanonicalJobID)
+	return projection, nil
+}
+
+// downloadRowVisible applies the queue's visibility rule to one entry, at the
+// principal this context carries.
+func (ctx *MahresourcesContext) downloadRowVisible(entry *download_queue.DownloadJob) bool {
+	principal := ctx.Principal()
+	if principal == nil || principal.IsAdmin() {
+		return true
+	}
+	owner := entry.GetOwnerUserID()
+	return owner != nil && *owner == principal.UserID
+}
+
+// downloadRowTerminal reports whether a queue entry has reached one of the queue's
+// own terminal statuses.
+func downloadRowTerminal(entry *download_queue.DownloadJob) bool {
+	if entry == nil {
+		return false
+	}
+	switch entry.GetStatus() {
+	case download_queue.JobStatusCompleted, download_queue.JobStatusFailed, download_queue.JobStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// downloadRowFromEntry is the legacy row for a queue entry: the entry's own
+// snapshot, reporting the handle the caller asked for rather than the entry's own
+// id, because the two differ exactly when a retry has moved the handle.
+func downloadRowFromEntry(entry *download_queue.DownloadJob, handle, canonicalJobID string) *download_queue.DownloadJob {
+	snap := entry.Snapshot()
+	snap.ID = handle
+	snap.CanonicalJobID = canonicalJobID
+	return snap
+}
+
+// downloadRowFromJob projects a durable Job into the legacy row shape, for a
+// download this process's queue does not hold.
+//
+// It is a projection and nothing more: the queue's own statuses are finer than a
+// Job's states, so a state maps onto the queue's closest word for it, and no
+// progress is invented. A client that needs the authoritative view has the
+// canonical surfaces for exactly that.
+func downloadRowFromJob(projected jobs.Snapshot, handle string) *download_queue.DownloadJob {
+	row := &download_queue.DownloadJob{
+		ID:             handle,
+		URL:            downloadURLFromSummary(projected.Summary),
+		Status:         downloadStatusFromState(projected.State),
+		Progress:       progressCompleted(projected.Progress),
+		TotalSize:      progressTotal(projected.Progress),
+		CreatedAt:      projected.AcceptedAt,
+		Source:         download_queue.JobSourceDownload,
+		CanonicalJobID: projected.ID,
+		Phase:          projected.Phase,
+	}
+	if projected.Progress.Completed != nil {
+		row.Progress = *projected.Progress.Completed
+	}
+	if projected.Progress.Total != nil {
+		row.TotalSize = *projected.Progress.Total
+	}
+	if projected.Progress.Total != nil && *projected.Progress.Total > 0 {
+		row.ProgressPercent = float64(row.Progress) * 100 / float64(*projected.Progress.Total)
+	} else {
+		row.ProgressPercent = -1
+	}
+	row.StartedAt = projected.StartedAt
+	row.CompletedAt = projected.FinishedAt
+	if projected.Failure != nil {
+		row.Error = projected.Failure.Message
+	}
+	return row
+}
+
+// downloadStatusFromState maps a normalized Job state onto the queue's own status
+// vocabulary, which is what every legacy consumer switches on.
+func downloadStatusFromState(state jobs.State) download_queue.JobStatus {
+	switch state {
+	case jobs.StateScheduled, jobs.StateQueued:
+		return download_queue.JobStatusPending
+	case jobs.StateRunning:
+		return download_queue.JobStatusDownloading
+	case jobs.StatePaused, jobs.StateBlocked:
+		return download_queue.JobStatusPaused
+	case jobs.StateSucceeded:
+		return download_queue.JobStatusCompleted
+	case jobs.StateCancelled:
+		return download_queue.JobStatusCancelled
+	default:
+		return download_queue.JobStatusFailed
+	}
+}
+
+func progressCompleted(progress jobs.Progress) int64 {
+	if progress.Completed != nil {
+		return *progress.Completed
+	}
+	return 0
+}
+
+func progressTotal(progress jobs.Progress) int64 {
+	if progress.Total != nil {
+		return *progress.Total
+	}
+	return -1
+}
+
+// downloadURLFromSummary reads the sanitized host back out of a Job's summary.
+//
+// It is deliberately not the URL: a summary never carries one, and a legacy row
+// built from a Job this process never queued has no URL to show. What it shows is
+// the sanitized host, which is what a person needs to recognize the row.
+func downloadURLFromSummary(summary json.RawMessage) string {
+	var decoded downloadSummary
+	if len(summary) == 0 {
+		return ""
+	}
+	if err := json.Unmarshal(summary, &decoded); err != nil {
+		return ""
+	}
+	if decoded.Host == "" {
+		return ""
+	}
+	if decoded.Scheme == "" {
+		return decoded.Host
+	}
+	return decoded.Scheme + "://" + decoded.Host
+}
+
+// DownloadRestartPayload returns the submission a stored download Job was accepted
+// with, so a caller can re-validate it against the principal doing the restarting.
+//
+// The stored payload is a record of what was once asked for, not a standing
+// permission: a user whose confinement changed after submitting — or whose scope
+// group moved in the tree — must not be able to press a button and have the old
+// targets honoured. The validation itself belongs to the HTTP layer, which is where
+// the group-visibility question is asked, so this hands back the payload rather than
+// deciding about it.
+//
+// It opens sealed input, so it is a read for a purpose rather than a casual one: the
+// caller must already have resolved the Job under its own visibility.
+func (ctx *MahresourcesContext) DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	opened, err := service.OpenReplay(ctx.jobDeps(), ctx.jobAccess(), canonicalJobID)
+	if err != nil {
+		return nil, err
+	}
+	var decoded downloadJobInput
+	if err := json.Unmarshal(opened.Input, &decoded); err != nil {
+		return nil, fmt.Errorf("the stored download input is not readable: %w", err)
+	}
+	if decoded.Creator == nil {
+		return nil, errors.New("the stored download input names no submission")
+	}
+	return decoded.Creator, nil
+}

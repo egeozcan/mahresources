@@ -100,6 +100,12 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 		if err := tx.Create(&job).Error; err != nil {
 			return fmt.Errorf("jobs: store job: %w", err)
 		}
+		// The legacy identifiers are written in the same transaction as the Job
+		// they name: a handle is the identity a legacy client keeps polling, and
+		// one stored by a second write could name a Job the rollback removed.
+		if err := storeLegacyHandles(tx, job.ID, acceptance.LegacyRefs, now); err != nil {
+			return err
+		}
 		event := newEvent(job.ID, 1, job.Version, EventAccepted, nil, true, now)
 		if err := tx.Create(&event).Error; err != nil {
 			return fmt.Errorf("jobs: store accepted event: %w", err)

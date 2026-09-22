@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,11 +9,13 @@ import (
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/hostfetch"
+	"mahresources/jobs"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // DownloadQueueReader is the interface for reading download queue state
@@ -20,14 +23,30 @@ type DownloadQueueReader interface {
 	DownloadManager() *download_queue.DownloadManager
 }
 
+// DownloadScopeChecker is the group-visibility question the download paths ask
+// before a submission, a retry or a resume is allowed: are these targets inside the
+// principal's subtree at all? It is separate from DownloadSubmitter because the
+// history retry path re-validates a stored payload without ever submitting anything
+// itself.
+type DownloadScopeChecker interface {
+	GroupVisible(id uint) bool
+	NoteVisible(id uint) bool
+}
+
 // DownloadSubmitter adds group-visibility checks so the submit handler can
 // confine a group-limited principal's download targets to its subtree. The
 // request-scoped *MahresourcesContext satisfies it; GroupVisible is a no-op
 // (always true) for admins, the auth-off super-user, and unscoped users.
+//
+// SubmitRemoteDownloads is the one door a submission goes through: the durable
+// Job is accepted before anything is dispatched, and each URL's outcome comes
+// back separately. It is what dual-publishes a download into the Job control
+// plane without changing a single thing about the queue that runs it.
 type DownloadSubmitter interface {
 	DownloadManager() *download_queue.DownloadManager
 	GroupVisible(id uint) bool
 	NoteVisible(id uint) bool
+	SubmitRemoteDownloads(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName, origin string) []download_queue.RemoteDownloadSubmission
 }
 
 // principalOwnerID returns a pointer to the principal's user ID, or nil for the
@@ -65,7 +84,7 @@ func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
 // reason it is a function: a stored payload is a record of what was once asked
 // for, not a standing permission, so resubmitting one has to clear the same bar
 // as submitting it fresh — against the principal doing the retrying.
-func validateDownloadScope(ctx DownloadSubmitter, p *auth.Principal, creator *query_models.ResourceFromRemoteCreator) error {
+func validateDownloadScope(ctx DownloadScopeChecker, p *auth.Principal, creator *query_models.ResourceFromRemoteCreator) error {
 	if !actionScopeRestricted(p) {
 		return nil
 	}
@@ -120,36 +139,60 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 		// attributes the created resource to the submitter. Owner is set at enqueue
 		// (before processing starts), so there is no owner-visibility/attribution
 		// race.
+		//
+		// The submission goes through the one door that dual-publishes: the durable
+		// Job is accepted first, per URL, and only then is the transfer dispatched.
+		// A batch therefore reports per URL — the accepted ones hand back a queue
+		// entry, and a refused one is named rather than taking the batch with it.
 		owner := principalOwnerID(auth.PrincipalFromContext(request.Context()))
-		live, err := ctx.DownloadManager().SubmitMultiple(&creator, owner)
-		if err != nil {
-			// "no valid URLs provided" is a client validation error (400),
-			// while "download queue is full" is a capacity issue (503). A
-			// refused header is the first kind too, and typed rather than
-			// matched on wording: telling a submitter to retry a header that
-			// can never be sent is an instruction to fail again.
+		submissions := ctx.SubmitRemoteDownloads(&creator, owner, "", "api")
+
+		jobs := make([]*download_queue.DownloadJob, 0, len(submissions))
+		refused := make([]map[string]string, 0)
+		var firstErr error
+		for _, submission := range submissions {
+			if submission.Err != nil {
+				if firstErr == nil {
+					firstErr = submission.Err
+				}
+				refused = append(refused, map[string]string{"url": submission.URL, "reason": submission.Err.Error()})
+				continue
+			}
+			// Snapshots, because the workers are already running by the time this
+			// encodes: the queue hands back the live jobs so its caller can drive them,
+			// and marshalling one without its lock races the worker writing progress
+			// into it.
+			jobs = append(jobs, submission.Job.Snapshot())
+		}
+
+		if len(jobs) == 0 {
+			// Nothing was accepted at all. "no valid URLs provided" is a client
+			// validation error (400), while "download queue is full" is a capacity
+			// issue (503). A refused header is the first kind too, and typed rather
+			// than matched on wording: telling a submitter to retry a header that can
+			// never be sent is an instruction to fail again.
+			if firstErr == nil {
+				firstErr = fmt.Errorf("no valid URLs provided")
+			}
 			status := http.StatusServiceUnavailable
-			if strings.Contains(err.Error(), "no valid URLs") || errors.Is(err, hostfetch.ErrInvalidHeaders) {
+			if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) {
 				status = http.StatusBadRequest
 			}
-			http_utils.HandleError(err, writer, request, status)
+			http_utils.HandleError(firstErr, writer, request, status)
 			return
 		}
 
-		// Snapshots, because the workers are already running by the time this encodes:
-		// SubmitMultiple hands back the live jobs so its caller can drive them, and
-		// marshalling one without its lock races the worker writing progress into it.
-		jobs := make([]*download_queue.DownloadJob, 0, len(live))
-		for _, job := range live {
-			jobs = append(jobs, job.Snapshot())
+		body := map[string]any{
+			"queued": true,
+			"jobs":   jobs,
+		}
+		if len(refused) > 0 {
+			body["refused"] = refused
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		writer.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"queued": true,
-			"jobs":   jobs,
-		})
+		_ = json.NewEncoder(writer).Encode(body)
 	}
 }
 
@@ -215,9 +258,59 @@ func statusCodeForJobError(err error) int {
 	return statusCodeForError(err, http.StatusBadRequest)
 }
 
+// DownloadJobProjector resolves a legacy download identifier to what it currently
+// means: the queue entry carrying it in this process (when there is one) and the
+// durable Job it names (when the deployment has a control plane).
+//
+// A legacy id is a handle rather than an identity — ADR 0007 — so every deployed
+// route that names one has to resolve it before it acts, or a client that kept its
+// id across a retry would be acting on an execution that is over.
+type DownloadJobProjector interface {
+	DownloadManager() *download_queue.DownloadManager
+	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
+}
+
+// DownloadJobControl is the projector plus the two capabilities a replayed or
+// commanded restart needs: the group-visibility question, and the canonical command
+// surface.
+type DownloadJobControl interface {
+	DownloadJobProjector
+	DownloadSubmitter
+	// DownloadRestartPayload returns the submission a stored download Job was
+	// accepted with, so the caller can re-validate it against its own principal.
+	DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error)
+	ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error)
+}
+
+// restartScopeDeniedForJob re-validates a stored download Job's sealed submission
+// against the principal replaying it.
+//
+// It is the canonical twin of restartScopeDenied: a Job's payload is sealed rather
+// than held in memory, so the check has to open it — and an input that cannot be
+// opened is a refusal rather than a reason to run the replay unchecked.
+func restartScopeDeniedForJob(ctx DownloadJobControl, request *http.Request, canonicalJobID string) error {
+	creator, err := ctx.DownloadRestartPayload(canonicalJobID)
+	if err != nil {
+		return fmt.Errorf("this download's stored input cannot be re-read, so it will not be restarted: %w", err)
+	}
+	return restartScopeDeniedForCreator(ctx, request, creator)
+}
+
+// projectOrNotFound resolves one legacy id, answering 404 for an id that resolves
+// to nothing visible — the same answer a job that is not there gets, so an id
+// cannot be used to learn that somebody else's work exists.
+func projectOrNotFound(ctx DownloadJobProjector, writer http.ResponseWriter, request *http.Request, jobID string) (download_queue.DownloadProjection, bool) {
+	projection, err := ctx.ProjectDownloadJob(jobID)
+	if err != nil {
+		http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+		return download_queue.DownloadProjection{}, false
+	}
+	return projection, true
+}
+
 // GetDownloadCancelHandler handles POST /v1/download/cancel
 // Cancels a download job by ID
-func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadCancelHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -229,19 +322,82 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 			return
 		}
 
-		if jobMutationDenied(ctx, request, jobID) {
+		projection, ok := projectOrNotFound(ctx, writer, request, jobID)
+		if !ok {
+			return
+		}
+
+		// A Job the control plane knows is cancelled through its own command: the
+		// intent is durable before the executor is told, which is what makes a
+		// cancellation survive an executor that stops answering. Only an id that
+		// names no Job at all falls back to the queue's own cancel.
+		if projection.CanonicalJobID != "" {
+			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
+				JobID:           projection.CanonicalJobID,
+				Key:             jobs.CommandCancel,
+				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandCancel),
+				ExpectedVersion: projection.CanonicalVersion,
+				Origin:          "api",
+			})
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
+				return
+			}
+			// The control plane cancels a Job no execution owns without asking an
+			// executor — there is none to ask — and this Kind still has an
+			// executor-side artifact behind a held transfer: a paused queue entry
+			// holding a half-written file that nothing would ever retire. Releasing
+			// it is this layer's job, and it is idempotent: an entry an execution
+			// already cancelled refuses the second attempt, which is not a failure.
+			cancelQueueEntry(ctx, projection.Entry)
+			writeLegacyDownloadStatus(writer, "cancelled", result)
+			return
+		}
+
+		if projection.Entry == nil {
 			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
-
-		if err := ctx.DownloadManager().Cancel(jobID); err != nil {
+		if err := ctx.DownloadManager().Cancel(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
-
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "cancelled"})
+		writeLegacyDownloadStatus(writer, "cancelled", jobs.CommandResult{})
 	}
+}
+
+// cancelQueueEntry releases one queue entry a cancellation left behind. A refusal
+// is deliberately ignored: an entry that is already terminal, already being
+// cancelled, or gone from this process's registry is exactly what a released
+// cancellation looks like.
+func cancelQueueEntry(ctx DownloadJobProjector, entry *download_queue.DownloadJob) {
+	if entry == nil {
+		return
+	}
+	_ = ctx.DownloadManager().Cancel(entry.ID)
+}
+
+// writeLegacyDownloadStatus answers one legacy control in the shape it has always
+// answered, adding the canonical identity the compatibility contract requires where
+// there is one.
+func writeLegacyDownloadStatus(writer http.ResponseWriter, status string, result jobs.CommandResult) {
+	body := map[string]any{"status": status}
+	if result.SuccessorID != "" {
+		body["canonicalJobId"] = result.SuccessorID
+	}
+	writer.Header().Set("Content-Type", constants.JSON)
+	_ = json.NewEncoder(writer).Encode(body)
+}
+
+// legacyCommandKey is the idempotency key one unkeyed legacy request is run under.
+//
+// Legacy requests carry no key, so every press is a fresh request — which is what
+// the state-based behaviour they have always had amounts to. The key is unique per
+// press rather than stable per id, or a second Retry after a failure would be
+// answered with the first one's recorded outcome instead of creating the successor
+// the person asked for.
+func legacyCommandKey(jobID, command string) string {
+	return fmt.Sprintf("legacy:%s:%s:%d", command, jobID, time.Now().UnixNano())
 }
 
 // restartScopeDenied re-checks a job's stored payload against the principal
@@ -262,7 +418,13 @@ func restartScopeDenied(ctx DownloadSubmitter, request *http.Request, jobID stri
 	if !ok {
 		return nil
 	}
-	creator := job.CreatorCopy()
+	return restartScopeDeniedForCreator(ctx, request, job.CreatorCopy())
+}
+
+// restartScopeDeniedForCreator is the one scope re-validation a replay takes, from
+// either shape the payload arrives in: a live queue entry's creator, or the
+// submission a durable Job's sealed input carries.
+func restartScopeDeniedForCreator(ctx DownloadSubmitter, request *http.Request, creator *query_models.ResourceFromRemoteCreator) error {
 	if creator == nil {
 		return nil
 	}
@@ -271,7 +433,13 @@ func restartScopeDenied(ctx DownloadSubmitter, request *http.Request, jobID stri
 
 // GetDownloadPauseHandler handles POST /v1/download/pause
 // Pauses a download job by ID
-func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+//
+// Pause stays the queue's own control rather than a canonical command, and that is
+// the honest shape: this Kind cannot confirm a resumable checkpoint, so it does not
+// advertise `pause` at all, and the Job records the hold as blocked-by-choice once
+// the executor has confirmed it. The route still works for the legacy panel that
+// has always offered the button.
+func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -283,12 +451,18 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 			return
 		}
 
-		if jobMutationDenied(ctx, request, jobID) {
+		projection, ok := projectOrNotFound(ctx, writer, request, jobID)
+		if !ok {
+			return
+		}
+		if projection.Entry == nil {
+			// The transfer is not in this process's queue: there is no executor to
+			// confirm a hold, and "paused" would be a state nothing agreed to.
 			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
 
-		if err := ctx.DownloadManager().Pause(jobID); err != nil {
+		if err := ctx.DownloadManager().Pause(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
@@ -300,7 +474,7 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 
 // GetDownloadResumeHandler handles POST /v1/download/resume
 // Resumes a paused download job by ID
-func GetDownloadResumeHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -312,29 +486,59 @@ func GetDownloadResumeHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 			return
 		}
 
-		if jobMutationDenied(ctx, request, jobID) {
+		projection, ok := projectOrNotFound(ctx, writer, request, jobID)
+		if !ok {
+			return
+		}
+
+		if projection.CanonicalJobID != "" {
+			// The stored payload is a record of what was once asked for, not a standing
+			// permission, so the same bar the submission cleared is cleared again —
+			// against the principal doing the resuming.
+			if err := restartScopeDeniedForJob(ctx, request, projection.CanonicalJobID); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusForbidden)
+				return
+			}
+			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
+				JobID:           projection.CanonicalJobID,
+				Key:             jobs.CommandResume,
+				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandResume),
+				ExpectedVersion: projection.CanonicalVersion,
+				Origin:          "api",
+			})
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
+				return
+			}
+			writeLegacyDownloadStatus(writer, "resumed", result)
+			return
+		}
+
+		if projection.Entry == nil {
 			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
-
-		if err := restartScopeDenied(ctx, request, jobID); err != nil {
+		if err := restartScopeDeniedForCreator(ctx, request, projection.Entry.CreatorCopy()); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
-
-		if err := ctx.DownloadManager().Resume(jobID); err != nil {
+		if err := ctx.DownloadManager().Resume(projection.Entry.ID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
-
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "resumed"})
+		writeLegacyDownloadStatus(writer, "resumed", jobs.CommandResult{})
 	}
 }
 
 // GetDownloadRetryHandler handles POST /v1/download/retry
 // Retries a failed or cancelled download job by ID
-func GetDownloadRetryHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
+//
+// Once a download has a canonical Job, Retry is the control plane's Retry: it
+// creates a *new* Job with the sealed input, links it as `retry-of`, moves the
+// legacy handle onto it and leaves the failed execution's outcome exactly where it
+// was (ADR 0007). A queue id with no Job behind it keeps the in-place retry it has
+// always had, which is what the CLI's and the package's own paths still use.
+func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -346,36 +550,55 @@ func GetDownloadRetryHandler(ctx DownloadSubmitter) func(writer http.ResponseWri
 			return
 		}
 
-		if jobMutationDenied(ctx, request, jobID) {
-			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
-			return
-		}
-
-		if err := restartScopeDenied(ctx, request, jobID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusForbidden)
+		projection, ok := projectOrNotFound(ctx, writer, request, jobID)
+		if !ok {
 			return
 		}
 
 		// The same anti-fork rule the /downloads page applies: a second job already
 		// fetching this URL means running this one too would transfer it twice.
-		if dm := ctx.DownloadManager(); dm != nil {
-			if job, exists := dm.GetJob(jobID); exists {
-				if live, running := download_queue.ActiveDownloadForURL(dm, job.GetURL()); running {
-					http_utils.HandleError(
-						fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
-						writer, request, http.StatusConflict)
-					return
-				}
+		if projection.Entry != nil {
+			if live, running := download_queue.ActiveDownloadForURL(ctx.DownloadManager(), projection.Entry.GetURL()); running {
+				http_utils.HandleError(
+					fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
+					writer, request, http.StatusConflict)
+				return
 			}
 		}
 
-		if err := ctx.DownloadManager().Retry(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
+		if projection.CanonicalJobID != "" {
+			if err := restartScopeDeniedForJob(ctx, request, projection.CanonicalJobID); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusForbidden)
+				return
+			}
+			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
+				JobID:           projection.CanonicalJobID,
+				Key:             jobs.CommandRetry,
+				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandRetry),
+				ExpectedVersion: projection.CanonicalVersion,
+				Origin:          "api",
+			})
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
+				return
+			}
+			writeLegacyDownloadStatus(writer, "retrying", result)
 			return
 		}
 
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "retrying"})
+		if projection.Entry == nil {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+		if err := restartScopeDeniedForCreator(ctx, request, projection.Entry.CreatorCopy()); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusForbidden)
+			return
+		}
+		if err := ctx.DownloadManager().Retry(projection.Entry.ID); err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
+			return
+		}
+		writeLegacyDownloadStatus(writer, "retrying", jobs.CommandResult{})
 	}
 }
 
@@ -422,22 +645,26 @@ func GetJobsClearCompletedHandler(ctx JobsClearer) func(writer http.ResponseWrit
 // GetDownloadJobHandler handles GET /v1/jobs/get
 // Returns a single job by ID. Used by the CLI client's PollJob helper to check
 // terminal state without subscribing to SSE.
-func GetDownloadJobHandler(ctx DownloadQueueReader) func(http.ResponseWriter, *http.Request) {
+//
+// The id is resolved as a handle first: a client that has kept one id across a
+// retry reads the execution that id now names. Its `id` in the response stays the
+// handle it asked for, and `canonicalJobId` names the Job behind it.
+func GetDownloadJobHandler(ctx DownloadJobProjector) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
 			http_utils.HandleError(fmt.Errorf("id is required"), w, r, http.StatusBadRequest)
 			return
 		}
-		job, ok := ctx.DownloadManager().GetJob(id)
-		if !ok || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID()) {
-			// A non-owner is told the job does not exist rather than that it
-			// exists-but-is-forbidden, so job IDs can't be enumerated.
+		projection, err := ctx.ProjectDownloadJob(id)
+		if err != nil || projection.Row == nil {
+			// A handle for work the caller may not see is answered like a handle that
+			// names nothing, so ids cannot be enumerated.
 			http_utils.HandleError(fmt.Errorf("job not found"), w, r, http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(job.Snapshot())
+		_ = json.NewEncoder(w).Encode(projection.Row)
 	}
 }
 

@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -26,6 +28,20 @@ type DownloadHistoryContext interface {
 	DownloadManager() *download_queue.DownloadManager
 	GroupVisible(id uint) bool
 	NoteVisible(id uint) bool
+}
+
+// canonicalDownloadRetry is the control-plane half of a retry, present only in a
+// deployment that installed one.
+//
+// It is asked for by type assertion rather than declared on DownloadHistoryContext
+// because the history store is a legacy surface that must keep working without a
+// control plane: a deployment with none retries exactly as it always did, and a
+// deployment with one creates a successor Job instead of re-running an execution
+// that already has an outcome (ADR 0007).
+type canonicalDownloadRetry interface {
+	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
+	DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error)
+	ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error)
 }
 
 // downloadHistoryPageSize is how many rows one listing returns. The page is a
@@ -56,10 +72,13 @@ type idListRequest struct {
 // answering "503" for the whole request would hide the seven that were accepted
 // and the four that were not.
 type bulkResult struct {
-	ID     uint   `json:"id"`
-	OK     bool   `json:"ok"`
-	JobID  string `json:"jobId,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	ID    uint   `json:"id"`
+	OK    bool   `json:"ok"`
+	JobID string `json:"jobId,omitempty"`
+	// CanonicalJobID names the durable Job the retry created, which is an execution
+	// of its own rather than a second attempt at the one the row described.
+	CanonicalJobID string `json:"canonicalJobId,omitempty"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 // GetDownloadHistoryListHandler handles GET /v1/downloads.
@@ -155,14 +174,14 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 				continue
 			}
 
-			jobID, err := retryOrResubmit(ctx, entry, creator, owner)
+			jobID, successorID, err := retryOrResubmit(ctx, entry, creator, owner, principal)
 			if err != nil {
 				res.Reason = err.Error()
 				results = append(results, res)
 				continue
 			}
 
-			res.OK, res.JobID = true, jobID
+			res.OK, res.JobID, res.CanonicalJobID = true, jobID, successorID
 			accepted++
 			if entry.URL != "" {
 				batchURLs[entry.URL] = entry.ID
@@ -185,10 +204,22 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 
 // retryOrResubmit re-runs one stored download and returns the job id that is now
 // carrying it.
-func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry, creator *query_models.ResourceFromRemoteCreator, owner *uint) (string, error) {
+func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry, creator *query_models.ResourceFromRemoteCreator, owner *uint, principal *auth.Principal) (string, string, error) {
 	dm := ctx.DownloadManager()
 	if dm == nil {
-		return "", fmt.Errorf("the download queue is unavailable")
+		return "", "", fmt.Errorf("the download queue is unavailable")
+	}
+
+	// A row whose queue entry has a durable Job behind it is retried through the
+	// control plane. The successor is a *new* Job with the row's sealed input, its
+	// own immutable identity and a `retry-of` link; the row's handle moves onto it,
+	// so the client keeps polling one id while the failed execution it described
+	// keeps the outcome it reached.
+	if canonical, ok := any(ctx).(canonicalDownloadRetry); ok {
+		jobID, successorID, retried, err := retryCanonicalRow(canonical, ctx, entry, principal)
+		if retried {
+			return jobID, successorID, err
+		}
 	}
 
 	// The attempt a previous resubmission produced. A row keeps its own (terminal)
@@ -197,11 +228,11 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// in-place branch below refuses, reached through the other door.
 	switch marker, state := linkedRetry(ctx, entry); state {
 	case retryLinkClaiming:
-		return "", fmt.Errorf("this download is already being retried")
+		return "", "", fmt.Errorf("this download is already being retried")
 	case retryLinkRunning:
-		return "", fmt.Errorf("this download is already queued as %s; wait for it to finish", marker)
+		return "", "", fmt.Errorf("this download is already queued as %s; wait for it to finish", marker)
 	case retryLinkSucceeded:
-		return "", fmt.Errorf("this download already succeeded as %s; retrying it would fetch a second copy", marker)
+		return "", "", fmt.Errorf("this download already succeeded as %s; retrying it would fetch a second copy", marker)
 	}
 
 	// Before the in-place branch, not after it: two rows can name two different
@@ -209,7 +240,7 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// The queue is the authority on what is being downloaded, so it is asked first,
 	// whichever way this row is about to be run again.
 	if live, running := download_queue.ActiveDownloadForURL(dm, entry.URL); running {
-		return "", fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live)
+		return "", "", fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live)
 	}
 
 	if job, exists := dm.GetJob(entry.JobID); exists {
@@ -220,12 +251,12 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 		// download of the same URL, which is how one Retry from the jobs panel plus
 		// one from this page produced two copies of the same file.
 		if !job.CanRetry() {
-			return "", fmt.Errorf("this download is already queued; wait for it to finish")
+			return "", "", fmt.Errorf("this download is already queued; wait for it to finish")
 		}
 		if err := dm.Retry(entry.JobID); err != nil {
-			return "", err
+			return "", "", err
 		}
-		return entry.JobID, nil
+		return entry.JobID, "", nil
 	}
 
 	// The row's retry slot is claimed before the download is submitted, not
@@ -235,10 +266,10 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	claim := fmt.Sprintf("%s%d-%d", downloadRetryClaimPrefix, entry.ID, time.Now().UnixNano())
 	claimed, err := ctx.ClaimDownloadHistoryRetry(entry.ID, entry.LastRetryJobID, entry.Status, claim, time.Now())
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !claimed {
-		return "", fmt.Errorf("this download is already being retried")
+		return "", "", fmt.Errorf("this download is already being retried")
 	}
 
 	// Replayed with the row's own origin, not as a fresh operator download. A
@@ -252,9 +283,48 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 		// Hand the slot back, or a queue that was momentarily full would leave the
 		// row claimed by an attempt that never started.
 		_, _ = ctx.ClaimDownloadHistoryRetry(entry.ID, claim, "", entry.LastRetryJobID, time.Now())
-		return "", err
+		return "", "", err
 	}
-	return job.ID, nil
+	return job.ID, "", nil
+}
+
+// retryCanonicalRow runs one row's Retry through the control plane.
+//
+// retried reports whether the canonical path owned the request. A row whose queue
+// entry has no Job behind it — one from before the cutover, or one whose
+// deployment has no control plane — is left to the legacy path above.
+func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChecker, entry *models.DownloadHistoryEntry, principal *auth.Principal) (jobID, successorID string, retried bool, err error) {
+	if entry.JobID == "" {
+		return "", "", false, nil
+	}
+	projection, err := canonical.ProjectDownloadJob(entry.JobID)
+	if err != nil || projection.CanonicalJobID == "" {
+		return "", "", false, nil
+	}
+
+	// The stored payload is validated against the principal doing the retrying, not
+	// the one that submitted it. Otherwise a payload written while a user was
+	// unscoped — or by somebody else entirely — would be a way around the check the
+	// submit endpoint applies.
+	stored, err := canonical.DownloadRestartPayload(projection.CanonicalJobID)
+	if err != nil {
+		return "", "", true, fmt.Errorf("this download's stored input cannot be read: %w", err)
+	}
+	if err := validateDownloadScope(scope, principal, stored); err != nil {
+		return "", "", true, err
+	}
+
+	result, err := canonical.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID:           projection.CanonicalJobID,
+		Key:             jobs.CommandRetry,
+		IdempotencyKey:  fmt.Sprintf("downloads-retry:%d:%d", entry.ID, time.Now().UnixNano()),
+		ExpectedVersion: projection.CanonicalVersion,
+		Origin:          "api",
+	})
+	if err != nil {
+		return "", "", true, err
+	}
+	return entry.JobID, result.SuccessorID, true, nil
 }
 
 // The retry slot's claim marker. A claim is written before the download is

@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"mahresources/jobs"
@@ -33,6 +34,13 @@ func (ctx *MahresourcesContext) SetJobService(service *jobs.Service) {
 		return
 	}
 	ctx.jobService = service
+	// The Kind adapters this context's own executors publish into are registered
+	// with the control plane it was handed, so "one process, one control plane"
+	// includes one registry: a facade reading a service with no adapters registered
+	// would answer "this process cannot run that work" for work it is running.
+	if err := ctx.registerDownloadJobKinds(service); err != nil {
+		log.Printf("warning: could not register the download job kinds: %v", err)
+	}
 }
 
 // JobService returns the installed control plane, or nil when this context was

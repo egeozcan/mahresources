@@ -1356,6 +1356,18 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 		return err
 	}
 
+	// A Retry successor moves the ancestor's compatibility handles onto itself,
+	// in the same transaction as its acceptance, its link and the command's
+	// outcome: a legacy client polling its unchanged id must not be left on an
+	// ancestor the successor has already replaced, and a movement recorded
+	// separately could fail after the client was answered. A Repeat does not: a
+	// handle projects the linear Retry lineage, and a repeat is a branch off it.
+	if linkType == LinkRetryOf {
+		if err := moveLegacyHandles(tx, job.ID, successor.ID, now); err != nil {
+			return err
+		}
+	}
+
 	outcome := appliedOutcome("a new job was created", nil)
 	outcome.successorID = successor.ID
 	if err := completeCommandRequest(tx, claimID, outcome, now); err != nil {

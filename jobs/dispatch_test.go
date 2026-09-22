@@ -212,7 +212,7 @@ func openDispatchDatabase(t *testing.T, dsn string) Deps {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{},
-		&models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
 		&models.JobCommandRequest{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)

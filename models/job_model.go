@@ -452,6 +452,40 @@ type JobPreference struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// JobLegacyHandleTable is the compatibility-handle table's name, spelled once so
+// the migration, the resolver and the tests cannot disagree about it.
+const JobLegacyHandleTable = "job_legacy_handles"
+
+// JobLegacyHandle is the durable mapping from one legacy identifier to the
+// canonical Job that is its current projection.
+//
+// A legacy `id` is a handle, not an identity: it names the current leaf of a
+// linear Retry lineage, so successive retries through one unchanged legacy id
+// keep working while every execution keeps its own immutable UUID. The row is
+// what makes that possible across a restart — an in-memory link would forget
+// which execution a client's bookmark now means — and it is deliberately
+// separate from the canonical identity, which never moves.
+//
+// The pair (namespace, handle) is the key because one numeric id space can be
+// shared by several legacy surfaces (a download queue id and a plugin action job
+// id are both short random strings).
+type JobLegacyHandle struct {
+	Namespace string `gorm:"primaryKey;size:40" json:"namespace"`
+	Handle    string `gorm:"primaryKey;size:64" json:"handle"`
+
+	// JobID is the canonical Job the handle currently projects. It is indexed
+	// because the movement of a handle is read from the Job that supersedes it.
+	JobID string `gorm:"size:36;not null;index:idx_job_legacy_handles_job" json:"jobId"`
+
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// TableName pins the table name so the model and the migration agree.
+func (JobLegacyHandle) TableName() string {
+	return JobLegacyHandleTable
+}
+
 // JobCommandRequest is the durable idempotency record of one command a caller
 // asked for: what it asked, who asked, the outcome it reached, and — for a Retry
 // or a Repeat — the Job it created.

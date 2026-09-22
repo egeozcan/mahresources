@@ -1,3 +1,202 @@
+# Job Center Task 7 — dual-publish remote and deferred downloads (2026-09-22)
+
+**Goal:** Land Task 7 of the unified Job Center plan: a submission that durably
+accepts canonical Job(s) before anything is dispatched, a queue that carries the
+canonical execution and mirrors the transfer's whole lifecycle into it under the
+execution's own fencing token, a durable compatibility handle that follows the
+linear Retry lineage while every attempt keeps its immutable identity, the
+`remote-download@1` and `deferred-download@1` Kinds with their replay codec and
+advertised controls, and the bridge that keeps every deployed download route
+working — without touching the executors of Tasks 8-10 or the canonical HTTP
+surface of Task 13.
+
+## Plan
+
+- [x] Read Task 7's Files/Red/Green/Verify, the approved design (§1, §3, §4, §6,
+      §7, §8, §9, §12, §16, §17, §18, §20), ADRs 0006/0007, `CLAUDE.md`, the
+      committed Tasks 1-6, and the two corrections, before editing.
+- [x] `models/job_model.go`: `JobLegacyHandle` — one row per (namespace, handle)
+      naming the canonical Job the handle currently projects, plus
+      `JobLegacyHandleTable`; `main.go`'s `migrateJobCore` creates it.
+- [x] `jobs/store.go`, `jobs/service.go`, `jobs/commands.go`: `storeLegacyHandles`
+      inside acceptance's transaction, `moveLegacyHandles` inside a Retry
+      successor's, and `ResolveLegacyHandle`/`LegacyHandlesFor`;
+      `jobs.HasReplayCodec` for idempotent wiring.
+- [x] `download_queue/job.go`, `manager.go`: the queue entry carries a
+      `CanonicalRef` (Job id + execution token), `AttachCanonical` for a claim
+      replaced underneath a running transfer, `CanonicalJobID` on the legacy
+      snapshot, `SubmissionOptions`, `CanonicalSink` + `SetCanonicalSink`,
+      `GetJobByCanonicalJobID`, `NewJobID`, and the mirror calls at every
+      lifecycle point the queue already stamps.
+- [x] `application_context/job_download_adapter.go`: the two Kind adapters, the
+      replay codec and its sanitized summary, the sink implementation, the
+      submission funnel (`SubmitRemoteDownloads`) and the registration wired into
+      `SetJobService`; `context.go` installs the sink on the manager.
+- [x] `application_context/job_compatibility.go`: `ResolveJobHandle`,
+      `JobHandlesFor`, `ProjectDownloadJob` (handle → canonical Job → queue entry,
+      with a legacy-shaped row), `DownloadRestartPayload`.
+- [x] `application_context/scheduled_download_context.go`: a deferred download is
+      accepted as a `scheduled` Job whose handle is the row, and the row's due time
+      materializes that same Job instead of submitting a second execution.
+- [x] `server/api_handlers/download_queue_handlers.go`,
+      `download_history_handlers.go`, `server/routes.go`: submit through the one
+      funnel, resolve handles on get/cancel/pause/resume/retry, retry through the
+      control plane whenever a Job stands behind the id, and run the routes that
+      now need the request's principal through `scopedAPI`.
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Compatibility handles | `undefined: jobs.HasReplayCodec`, `undefined: DownloadHandleNamespace`, `ctx.ResolveJobHandle undefined` | `TestALegacyHandleFollowsTheRetryLeafAndNeverRewritesTheAncestor`, `TestHandleResolutionRechecksVisibilityAtTheFacade`, `TestARefusedRetryLeavesTheHandleWhereItWas` |
+| Queue carries the execution | (implemented first; mutation-checked — removing `dm.mirrorFinished(job)` from `processJob` fails the test with `timed out waiting for the transfer to finish`, and dropping the canonical attach from a submission fails it with `the queue entry names canonical job "", want …`) | `TestACanonicalSubmissionMirrorsItsProgressAndOutcome`, `TestAQueueWithNoControlPlaneMirrorsNothing`, `TestAPausedTransferIsMirroredAsHeld`, `TestAnExecutionReplacedUnderATransferIsAdopted` |
+| Submission funnel and adapters | `submit: a canonical submission needs both the job it publishes into and the token that owns it` (the identity-only submission the funnel makes was not representable yet) | `TestASubmissionAcceptsADurableJobBeforeDispatchAndRunsItToSuccess`, `TestAMultiURLSubmissionAcceptsEachURLIndependently`, `TestHeldWorkIsBlockedAndResumedThroughTheCanonicalSurface`, `TestADownloadClassifiesItsFailureWithoutCarryingTheURL`, `TestTheLegacyQueueStillRunsWithoutAControlPlane` |
+| Deferred downloads | `create the deferred download: no such table: scheduled_downloads` (the row, then the tables the user-deletion path touches), then `timed out waiting for the deferred download to run; the job is blocked/` (the plugin-policy refusal at dispatch, which is what a deferred Job with no resolvable plugin gets) | `TestADeferredDownloadIsAcceptedAsAScheduledJob`, `TestDueDeferredWorkRunsAsTheSameJob`, `TestDeferredWorkWithADeletedActorIsBlockedAndNeverRunsAsTheHost` |
+| Deployed routes | the HTTP seam first answered 409 `the job does not offer that command` (see the two defects below) and, before that, could not resolve a handle at all | `TestLegacyRetryKeepsTheHandleAndCreatesANewCanonicalJob`, `TestLegacyGetAndControlsRefuseAnUnknownOrHiddenId` |
+
+## Defects found while the cycles ran (all found by an existing test, not by inspection)
+
+- **A canonical Retry left the legacy row saying `failed` while the Job still said
+  `running`.** The queue mirrored its terminal state *after* writing the legacy
+  history row, so a client that learned a download had failed from the page could
+  press Retry inside the window and be refused with 409. The durable Job is the
+  authoritative record, so it is now published first and the projection second, at
+  all four terminal sites. Found by `downloads-history.spec.ts` ("a failed download
+  is listed with its error and can be retried"), whose trace showed the 409.
+- **A transfer that finished before the runtime adopted its Job never reached a
+  terminal state.** A submission dispatches the transfer immediately, while the
+  execution that owns the Job is granted a tick later — so a transfer that failed in
+  milliseconds had no token to publish under, and the Job stayed `queued` until the
+  runtime's adapter dispatch noticed the entry had finished. The queue's mirror now
+  publishes for an unowned Job with an empty token (the Job has no owner to be
+  fenced against), and the adapter's dispatch still publishes whatever the mirror
+  could not — the same test, and `TestLegacyRetryKeepsTheHandle…`, cover it.
+- **The legacy id did not stay one id.** Reusing a fresh queue id for a Retry
+  successor split one download into two legacy rows (`/downloads` showed the row's
+  `attempts` stuck at 1 and then two rows). The handle is the queue entry's id
+  again: a terminal entry under it is replaced, so the legacy history row keeps
+  counting attempts while the ancestor Job keeps its own immutable identity. Found
+  by the same spec's `attempts > 1` assertion and the retries filter test.
+- **A cancelled hold kept holding.** The control plane cancels a Job no execution
+  owns without asking an executor, and this Kind still had an executor-side
+  artifact behind a paused transfer. The route now releases the queue entry as well,
+  which is idempotent against an execution that already cancelled it. Found by
+  `ws9-jobs-cockpit.spec.ts`.
+- **`ProjectDownloadJob` reported a stale live entry over a finished record.** The
+  live queue entry is the better answer while it is not behind, and the worse one
+  when the record has already ended the work. It now prefers the entry only while
+  the Job is nonterminal, or the entry has itself reached a terminal status.
+- **`server/api_tests`' PostgreSQL helper was missing the Job core's later tables**
+  (`job_pin_guards` and the rest), so three user-management PG tests failed on
+  master with `relation "job_pin_guards" does not exist` before this task touched
+  anything. Fixed here because Task 7's own verification command runs that package.
+
+## Decisions worth recording
+
+- **A submission carries the Job's identity before it carries an execution token.**
+  The durable Job is accepted and dispatched in the same request — the queue entry
+  takes the id the Job's handle records — and the *execution* is granted by the
+  dispatch loop a tick later. Until it is, the transfer publishes as the Job's
+  unowned executor; once adopted, every publish is fenced by the claim's token and
+  the earlier ones are refused as stale. The alternative — claiming the Job in the
+  request — needs a targeted claim API and a heartbeat for a claim no runtime owns,
+  and buys nothing the mirror does not already have.
+- **A held download is `blocked`, not `paused`.** §1 defines `paused` as a
+  checkpoint the executor confirmed, and this queue's resume starts the transfer
+  from the beginning: it has none to confirm. The Job therefore advertises
+  `resume` rather than `pause`, and says `blocked` with a `paused` phase and a
+  bounded event naming the restart.
+- **A download Kind advertises Retry and Cancel, never Repeat.** Re-fetching a URL
+  that already produced a Resource is a second copy of content the library holds,
+  and the content hash would refuse it at the end of the transfer.
+- **The first transfer of a URL is not refused for being a duplicate; a retry is.**
+  `Dispatch` re-checks the live queue for the same URL and blocks the Job rather
+  than starting a second transfer, which is the general form of the rule the
+  queue's own Retry endpoint applies.
+- **A handle moves in the successor's acceptance transaction.** The canonical
+  Retry command already accepts the successor, links it and records the command
+  outcome in one transaction; moving the handle there is what makes "successive
+  retries through the unchanged legacy id" true without a second write that could
+  fail after the client was answered. A Repeat moves nothing: a handle projects
+  the linear Retry lineage, and a repeat is a branch off it.
+- **`ProjectDownloadJob` disappears a finished row with no queue entry.** The
+  legacy row of a download that ended and whose queue entry is gone is the Job
+  Center's, and answering it here would undo "Clear completed" — which is a prior
+  guarantee the browser suite asserts. A Job that is still going to happen is
+  projected, so a client polling after a restart keeps its row.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./download_queue ./application_context -run 'Test.*(Download|Deferred|Retry|Pause|Resume|Handle|Legacy|Canonical|Adopt)' -count=1`
+  — passed (Task 7's focused cycles).
+- `go test --tags 'json1 fts5' ./server/api_tests -run 'TestLegacy' -count=1`
+  — passed (the HTTP bridge).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go test -race --tags 'json1 fts5' ./download_queue ./application_context ./server/api_handlers -run 'Test.*(Download|Deferred|Retry|Pause|Resume)' -count=5`
+  — passed, and `-race` on `./download_queue ./jobs` unfiltered — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1` and
+  `./server/api_tests -count=1` — passed against PostgreSQL (the whole PG suite,
+  not only the filtered set).
+- `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests -run 'Test.*(Download|Deferred|Retry|Legacy|Handle)' -count=1`
+  — passed (Task 7's cross-engine gate).
+- Browser: `cd e2e && npm run test:with-server:cli` filtered to `job|download`
+  (15 passed, 1 skipped), `ws9-jobs-cockpit.spec.ts` (12 passed),
+  `downloads-history.spec.ts` (9 passed), and the whole default project filtered
+  to `download|jobs|job ` (68 passed, 1 skipped, plus `resource-versioning.spec.ts`
+  run whole: 17 passed).
+- CLI: the `cli-jobs` and download specs above.
+- `go vet --tags 'json1 fts5' ./...` — clean. `gofmt -l` on every changed file —
+  clean. `git diff --check` — clean. No frontend source changed, so no bundle
+  rebuild (`npm run build` ran as part of the e2e harness and produced no `src/` or
+  `dist/` diff).
+
+## Review
+
+Task 7 is complete. A download is now one durable Job seen two ways: the queue entry
+that transfers it drives it, and the Job records what happened — progress, the hold,
+the failure classification, the Resource it created — under the execution token that
+owns it. The compatibility half is durable rather than remembered: a legacy id is a
+handle row, it moves with a Retry in the successor's own transaction, and every
+deployed route resolves it before it acts. Deferred work is a `scheduled` Job from
+acceptance, so its due time materializes the same execution rather than a second one,
+and an actor who is gone blocks it rather than running it as somebody else.
+
+Residual risks and handoffs carried forward:
+
+- **A foreground claim is kept alive by reconciliation, and the mirror does not wait
+  for it.** The submitting request does not claim the Job; the dispatch loop does.
+  So the mirror publishes the first moments of a transfer with an empty token, and a
+  *running* Job whose claim is replaced by a reconciliation depends on the adapter's
+  dispatch to re-attach the new token (it does — `ReconcileResume` hands the
+  execution back and `Dispatch` attaches it). What is not covered: a deployment with
+  **no running `JobRuntime`** — a bare embed or the CLI's queue — where a Job accepted
+  by the funnel stays `queued` forever while the legacy queue still runs the
+  transfer. `main` always starts one, and `TestTheLegacyQueueStillRunsWithoutAControlPlane`
+  pins the deployment-with-no-control-plane case (no Job is accepted at all).
+- **A download claimed by one process and reconciled by another can be transferred
+  twice.** The queue is in memory, so a reconciler that cannot see the transfer
+  cannot prove it stopped: it answers `ReconcileQueue` and a fresh dispatch starts
+  again from the URL. A duplicate transfer is deduplicated by content hash at
+  `AddResource`, so it wastes bandwidth rather than creating two Resources — and
+  `ActiveDownloadForURL` refuses a duplicate inside one process. Multi-process
+  download affinity is not closed by this task.
+- **`/v1/download/queue` and the SSE stream still list one row per queue entry**,
+  each carrying `canonicalJobId`, rather than one projection per *handle*. §12's
+  "one projection per handle" matters once ancestors accumulate; today the only
+  ancestor whose entry lingers is the one the Retry replaced, and its handle has
+  moved to the successor. Task 14 owns the completed projection and the deprecation
+  headers; Task 11 owns backfilling handles for rows that predate the table.
+- **`pause` is not advertised for downloads** and the legacy pause route does not
+  go through the control plane (the Job records the hold once the executor confirms
+  it). A deployment that wants the canonical surface to own pause has to make the
+  queue checkpoint, which it cannot do today.
+- **A `deferred-download` Job's row and its Job can drift** if the row is deleted
+  out of band: the Job keeps the replay input and would still be claimable at its due
+  time. The fire path only materializes rows it claims, so this is invisible today;
+  Task 11's migration is where the two are reconciled.
+- **`Filter.Command` is still unimplemented**, so a Job Center listing cannot filter
+  by advertised command — the previous task's handoff, unchanged here.
+
 # Job Center Task 6 correction — the lifetime of a control intent (2026-09-22)
 
 **Goal:** Correct two defects in Task 6's own control-intent surface, found while

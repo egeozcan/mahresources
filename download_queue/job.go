@@ -57,6 +57,17 @@ type DownloadJob struct {
 	AuthoritativeID     string   `json:"authoritativeId,omitempty"`
 	AuthoritativeStatus string   `json:"authoritativeStatus,omitempty"`
 
+	// CanonicalJobID is the durable Job this queue entry publishes into, and is
+	// empty for a queue that runs without the control plane (the CLI, the package's
+	// own tests). It is additive to the legacy representation on purpose: the
+	// legacy `id` stays whatever handle the client has always used, and a client
+	// that wants the canonical identity reads this.
+	//
+	// It is set at construction and never changes, so a superseded attempt cannot
+	// be relabelled: after a Retry the *successor* Job carries the handle, and this
+	// entry — the ancestor's memory row — keeps naming the ancestor it ran.
+	CanonicalJobID string `json:"canonicalJobId,omitempty"`
+
 	// Internal fields (not serialized to JSON)
 	creator *query_models.ResourceFromRemoteCreator
 	runFn   func(ctx context.Context, j *DownloadJob, p ProgressSink) error
@@ -97,6 +108,16 @@ type DownloadJob struct {
 	managedControls JobControls
 	managedCancel   func(string) error
 	managedRunFn    ManagedJobRunFn
+
+	// canonical names the durable Job execution this transfer publishes through:
+	// which Job, and the fencing token its claim was created with. It is nil for a
+	// queue that runs without the control plane.
+	//
+	// It is read under the job's own lock and rewritten by AttachCanonical, because
+	// a claim can be replaced underneath a running transfer: a reconciliation hands
+	// the Job to a fresh execution, and the transfer that is still running adopts
+	// that execution's token rather than publishing under the one it lost.
+	canonical *CanonicalRef
 }
 
 // Status transitions
@@ -791,6 +812,50 @@ func (j *DownloadJob) GetOwnerUserID() *uint {
 	return j.ownerUserID
 }
 
+// CanonicalExecution is the durable Job execution this transfer publishes
+// through, and whether it has one at all.
+//
+// A copy, so the caller may hold it across a publish without racing a
+// reconciliation that replaces the token or a Dispatch that adopts it.
+func (j *DownloadJob) CanonicalExecution() (CanonicalRef, bool) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	// A Job an execution has not adopted yet is still this transfer's to publish
+	// into, with an empty token: the Job is unowned, so there is nobody to be fenced
+	// against, and the ref names the one Job this entry belongs to. What the empty
+	// token changes is only that a write which loses the race to an adoption is
+	// refused — which is the fence working, and why the sink treats that refusal as
+	// silence rather than as a failure.
+	if j.canonical == nil || j.canonical.JobID == "" {
+		return CanonicalRef{}, false
+	}
+	return *j.canonical, true
+}
+
+// AttachCanonical makes one durable execution the owner this transfer publishes
+// under.
+//
+// It exists for the one case where a claim is replaced underneath a transfer
+// that is still running: reconciliation hands the Job a fresh execution token,
+// and the executor that is already downloading adopts it rather than publishing
+// under a token it no longer owns. A ref that names a different Job is refused —
+// adopting another Job's execution is exactly the crossing the fencing token
+// exists to prevent.
+func (j *DownloadJob) AttachCanonical(ref CanonicalRef) bool {
+	if ref.JobID == "" || ref.ExecutionToken == "" {
+		return false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.CanonicalJobID != "" && j.CanonicalJobID != ref.JobID {
+		return false
+	}
+	copied := ref
+	j.canonical = &copied
+	j.CanonicalJobID = ref.JobID
+	return true
+}
+
 // Snapshot returns a shallow value-copy of the job's exported fields. The
 // returned *DownloadJob is a fresh struct whose fields are safe to read
 // without acquiring j.mu — it's a point-in-time capture. The copy does not
@@ -828,6 +893,7 @@ func (j *DownloadJob) snapshotLocked() *DownloadJob {
 		ResultPath:          j.ResultPath,
 		AuthoritativeID:     j.AuthoritativeID,
 		AuthoritativeStatus: j.AuthoritativeStatus,
+		CanonicalJobID:      j.CanonicalJobID,
 		ownerUserID:         j.ownerUserID,
 		pluginName:          j.pluginName,
 		managed:             j.managed,

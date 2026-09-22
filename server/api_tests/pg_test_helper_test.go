@@ -76,7 +76,9 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		// removes the viewer-keyed preferences beside it, so these tables exist
 		// wherever the suite exercises user deletion.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobPreference{},
+		&models.JobPreference{}, &models.JobLegacyHandle{}, &models.JobPinGuard{},
+		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
+		&models.JobCapacityLease{}, &models.JobCommandRequest{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
