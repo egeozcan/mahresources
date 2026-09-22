@@ -129,7 +129,11 @@ func (pm *PluginManager) registerCommandsAPI(L *lua.LState, mahMod *lua.LTable, 
 			}
 
 			var callback *lua.LFunction
-			if L.GetTop() == 3 && L.Get(3) != lua.LNil {
+			// The callback is argument three whenever it is present, including in
+			// the four-argument form the input options introduce. Reading it only
+			// for exactly three arguments silently dropped the completion
+			// callback of every `run(name, params, cb, {inputs = ...})` call.
+			if L.GetTop() >= 3 && L.Get(3) != lua.LNil {
 				callback = L.CheckFunction(3)
 			}
 			actor := actorPointer(pm.actorFor(L))

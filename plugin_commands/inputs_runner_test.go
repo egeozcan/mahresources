@@ -26,6 +26,10 @@ type inputRunnerFixture struct {
 	run         QueuedRun
 	exchange    string
 	secret      []byte
+	// callerMap and callerSlice are what the dispatcher's own QueuedRun values
+	// share: the submission map and the validated slice's backing array.
+	callerMap   map[string]string
+	callerSlice []InputFile
 }
 
 func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixture {
@@ -43,13 +47,17 @@ func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixtur
 	}
 	const runID = "0123456789abcdef0123456789abcdef"
 	exchange := filepath.Join(root, "plugin_exchange", "plug", runID)
+	submissionInputs := make(map[string]string, len(inputs))
+	for _, input := range inputs {
+		submissionInputs[input.Name] = string(input.Content)
+	}
 	invocation, err := BuildInvocation(declaration, nil, exchange)
 	if err != nil {
 		t.Fatal(err)
 	}
 	run := QueuedRun{
 		RunID: runID, ExchangeDir: exchange, Invocation: invocation,
-		Request: CommandRequest{PluginName: "plug", Declaration: declaration},
+		Request: CommandRequest{PluginName: "plug", Declaration: declaration, Inputs: submissionInputs},
 		Inputs:  inputs,
 	}
 	if err := executor.stagingUsageCache().Refresh(root); err != nil {
@@ -66,17 +74,32 @@ func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixtur
 	return &inputRunnerFixture{
 		executor: executor, store: store, settings: settings, declaration: declaration,
 		run: run, exchange: exchange, secret: inputs[0].Content,
+		callerMap: submissionInputs, callerSlice: inputs,
+	}
+}
+
+// requireContentsDropped asserts the memory-hygiene contract from the caller's
+// side: the map the dispatcher's copies share is empty and the validated slice's
+// backing array is zeroed, whether the write succeeded or failed.
+func (f *inputRunnerFixture) requireContentsDropped(t *testing.T) {
+	t.Helper()
+	for name, content := range f.callerMap {
+		if content != "" {
+			t.Errorf("request inputs still hold contents for %q", name)
+		}
+	}
+	for i, input := range f.callerSlice {
+		if !bytes.Equal(input.Content, make([]byte, len(input.Content))) {
+			t.Errorf("validated input %d still holds contents", i)
+		}
 	}
 }
 
 func TestRunnerWritesSuppliedInputsBeforeTheSpawn(t *testing.T) {
 	secret := []byte("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret\n")
 	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: append([]byte(nil), secret...)})
-	// The submission map is what the dispatcher's copies share, so clearing it
-	// has to be observable from the caller's side.
-	f.run.Request.Inputs = map[string]string{"cookies.txt": string(secret)}
-	callerMap := f.run.Request.Inputs
-	callerSlice := f.run.Inputs
+	callerMap := f.callerMap
+	callerSlice := f.callerSlice
 
 	outcome := f.executor.Execute(context.Background(), f.run)
 	if outcome.Status != RunStatusSucceeded {
@@ -118,16 +141,10 @@ func TestRunnerWritesSuppliedInputsBeforeTheSpawn(t *testing.T) {
 
 	// Contents are dropped once they are on disk: the map the dispatcher's
 	// copies share and the slice's backing array both lose them.
-	for name, content := range callerMap {
-		if content != "" {
-			t.Fatalf("request inputs still hold contents for %q", name)
-		}
+	if callerMap == nil || callerSlice == nil {
+		t.Fatal("the fixture did not expose the shared copies")
 	}
-	for i, input := range callerSlice {
-		if !bytes.Equal(input.Content, make([]byte, len(input.Content))) {
-			t.Fatalf("validated input %d still holds contents", i)
-		}
-	}
+	f.requireContentsDropped(t)
 }
 
 func TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten(t *testing.T) {
@@ -185,6 +202,10 @@ func TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten(t *testing.T) {
 	if _, err := exchangeService.Read(access, f.run.RunID, ".tmp", 1024); err == nil {
 		t.Fatal("the scratch directory is readable")
 	}
+
+	// A failed write must not leave the bytes in memory either: the failure
+	// return happens before the all-success path used to reach the drop.
+	f.requireContentsDropped(t)
 }
 
 func TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort(t *testing.T) {
@@ -199,6 +220,7 @@ func TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(f.exchange, "seen.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the program ran after a short write: %v", err)
 	}
+	f.requireContentsDropped(t)
 }
 
 func TestRunnerWritesNothingForADoomedSpawn(t *testing.T) {

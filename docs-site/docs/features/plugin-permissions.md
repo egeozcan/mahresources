@@ -128,8 +128,10 @@ other file. Two consequences the operator should understand:
 Supplied contents stay in the run's exchange folder until it is swept, 7 days by
 default, unless the plugin discards them sooner. A credential handed to a run
 this way therefore lives in the staging root for up to that window, including
-after a plugin disable that dropped the plugin's completion callback; a run
-cancelled before its program starts writes no file at all.
+after a plugin disable that dropped the plugin's completion callback. Cancelling
+a run before the host begins writing its inputs leaves no file at all; a
+cancellation that arrives once writing has begun cannot un-write it, and those
+files stay until the plugin discards them or the folder is swept.
 
 `commands` alone installs `mah.commands` and the read/list/discard parts of
 `mah.fs`. `mah.fs.create_resource` additionally requires `db:write`. Imports

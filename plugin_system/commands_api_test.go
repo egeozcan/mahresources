@@ -308,10 +308,14 @@ end)
 
 func TestCommandsRunAcceptsDeclaredInputsAsTheFourthArgument(t *testing.T) {
 	host := &commandLuaHost{}
-	_, L := enableCommandPlugin(t, `"commands"`, host)
+	pm, L := enableCommandPlugin(t, `"commands"`, host)
 	L.SetContext(withInvocation(context.Background(), NewInvocation(77)))
+	// The four-argument form with a real callback is the shape the spec
+	// documents, so the callback has to survive it.
 	if err := L.DoString(`
-__input_run, __input_err = mah.commands.run("download", {url="https://example.invalid"}, nil, {inputs={["cookies.txt"]="# Netscape\nSID=secret\n"}})
+__input_run, __input_err = mah.commands.run("download", {url="https://example.invalid"}, function(result)
+  __input_result = result
+end, {inputs={["cookies.txt"]="# Netscape\nSID=secret\n"}})
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -333,15 +337,60 @@ __nil_run, __nil_err = mah.commands.run("download", {url="https://example.invali
 		t.Fatalf("an empty inputs table was refused: %v", got)
 	}
 	host.mu.Lock()
-	defer host.mu.Unlock()
 	if len(host.requests) != 2 {
+		host.mu.Unlock()
 		t.Fatalf("requests = %d", len(host.requests))
 	}
-	if got := host.requests[0].Inputs["cookies.txt"]; got != "# Netscape\nSID=secret\n" {
+	first := host.requests[0]
+	second := host.requests[1]
+	host.mu.Unlock()
+	if got := first.Inputs["cookies.txt"]; got != "# Netscape\nSID=secret\n" {
 		t.Fatalf("supplied input = %q", got)
 	}
-	if len(host.requests[1].Inputs) != 0 {
-		t.Fatalf("an empty inputs table reached the host as %+v", host.requests[1].Inputs)
+	if len(second.Inputs) != 0 {
+		t.Fatalf("an empty inputs table reached the host as %+v", second.Inputs)
+	}
+	if first.Completion == nil {
+		t.Fatal("a four-argument call dropped the completion callback")
+	}
+	if second.Completion != nil {
+		t.Fatal("a nil callback was turned into a completion")
+	}
+
+	// The callback has to be delivered, not merely kept: drive the run's result
+	// back through it the way the host does.
+	first.Completion(plugin_commands.Result{OK: true, RunID: "run-123"})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu := pm.LockVM(L)
+		if mu == nil {
+			t.Fatal("plugin disappeared")
+		}
+		result := L.GetGlobal("__input_result")
+		if tbl, ok := result.(*lua.LTable); ok {
+			if tbl.RawGetString("run_id").String() != "run-123" || tbl.RawGetString("ok") != lua.LTrue {
+				mu.Unlock()
+				t.Fatalf("callback result = %v", result)
+			}
+			mu.Unlock()
+			return
+		}
+		mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the callback of a four-argument call never ran")
+}
+
+func TestCommandsRunRefusesANonFunctionCallbackBesideOptions(t *testing.T) {
+	host := &commandLuaHost{}
+	_, L := enableCommandPlugin(t, `"commands"`, host)
+	if err := L.DoString(`mah.commands.run("download", {url="u"}, {}, {inputs={["cookies.txt"]="x"}})`); err == nil {
+		t.Fatal("a table in the callback position was accepted once options were present")
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.requests) != 0 {
+		t.Fatal("a malformed call reached the host")
 	}
 }
 

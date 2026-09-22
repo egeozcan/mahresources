@@ -144,8 +144,10 @@ its input in place (yt-dlp refreshing a cookie jar) makes useful. It otherwise
 stays in the exchange folder until that folder is swept, which is 7 days by
 default unless the plugin discards it earlier — so a credential handed to a run
 this way lives in the staging root for up to that window, including after a
-plugin disable that dropped the completion callback. A run cancelled before its
-program starts writes no file at all.
+plugin disable that dropped the completion callback. Cancelling a run before the
+host begins writing its inputs leaves no file at all; a cancellation arriving
+once writing has begun cannot un-write it, and those files stay until the plugin
+discards them or the folder is swept.
 
 The name rules are the exchange file-name rules plus one: a name may not begin
 with a dot, so the files common tools read without being asked (`.netrc`,

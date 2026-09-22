@@ -137,6 +137,14 @@ func (e *commandExecutor) writeSuppliedInputs(ctx context.Context, run QueuedRun
 	if len(run.Inputs) == 0 {
 		return Outcome{}, false
 	}
+	// The bytes stop existing in memory on every path out of this function,
+	// including the failure ones: a failed write leaves them on disk and
+	// nowhere else. The dispatcher holds its own copies of this run, and Go
+	// copies the map header and the slice header rather than the data, so this
+	// reaches all of them at once. No run writes its inputs twice: recovery
+	// finishes nonterminal rows instead of re-dispatching them, and a run that
+	// lost the durable running transition never reaches this point.
+	defer dropInputContents(&run)
 	write := e.writeInputFileFn
 	if write == nil {
 		write = writeInputFile
@@ -153,11 +161,6 @@ func (e *commandExecutor) writeSuppliedInputs(ctx context.Context, run QueuedRun
 			}), true
 		}
 	}
-	// The bytes are on disk now and nothing below needs them again, so they stop
-	// existing in memory too. A run never writes its inputs twice: recovery
-	// finishes nonterminal rows instead of re-dispatching them, and a run that
-	// lost the durable running transition never reaches this point.
-	dropInputContents(&run)
 	// The same guard that admitted the write has to close the spawn: a
 	// cancellation that arrived while the files were being written must still
 	// stop the process from starting.
