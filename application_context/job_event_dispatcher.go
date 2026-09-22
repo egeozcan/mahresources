@@ -87,6 +87,35 @@ func (d *JobEventDispatcher) RecordJobEvent(rec download_queue.JobEventRecord) {
 	}
 }
 
+// announcePluginJobTerminal tells the deployment's observer that one plugin Job
+// reached an end state.
+//
+// It lives here rather than in the Kind adapter because this file is where an
+// outcome becomes a hook name and a payload: the download queue's jobs arrive
+// through RecordJobEvent and a plugin job's arrive through this, and both must
+// take the same one mapping. An adapter that built its own record would be a
+// second place the catalogue could drift out of, which is exactly what the
+// catalogue's drift test scans for.
+//
+// It is called from the goroutine running the plugin's Lua, so it must not block
+// on anything but the observer's own non-blocking hand-off — which is the
+// contract download_queue.JobEventSink already carries.
+func (ctx *MahresourcesContext) announcePluginJobTerminal(jobID, status, name, failureMessage string, ownerUserID *uint) {
+	if ctx == nil || ctx.jobTerminalSink == nil {
+		return
+	}
+	record := download_queue.JobEventRecord{
+		JobID:       jobID,
+		Source:      "plugin",
+		Status:      status,
+		Name:        name,
+		Error:       failureMessage,
+		CreatedAt:   time.Now(),
+		OwnerUserID: ownerUserID,
+	}
+	ctx.jobTerminalSink.RecordJobEvent(record)
+}
+
 func (d *JobEventDispatcher) run() {
 	defer d.wg.Done()
 	for {

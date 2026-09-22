@@ -246,6 +246,12 @@ type PluginManager struct {
 	actionSubsMu    sync.RWMutex
 	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
 
+	// hostJobs is the host's durable Job control plane, installed after
+	// construction (see SetHostJobs). Nil leaves plugin background work with its
+	// in-memory lifecycle alone, which is what every bare manager gets.
+	hostJobs   HostJobs
+	hostJobsMu sync.RWMutex
+
 	// HTTP async callback support.
 	//
 	// Pending callbacks are keyed by the VM that has to run them, not held in
@@ -1592,6 +1598,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 
 		if shouldNotify {
 			pm.notifyActionJobSubscribers("updated", job)
+			// Reported on the same throttle as the panel notification, and for the
+			// same reason: a plugin that reports every percent of a long loop must
+			// not turn one execution into thousands of database writes. Progress is
+			// a snapshot, not an event, so nothing is lost by replacing it less
+			// often — and the terminal report that follows is never throttled.
+			reportHostJob(job, func(sink HostJobSink) { sink.Progress(percent, message) })
 		}
 		return 0
 	})
@@ -1615,8 +1627,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		job.Status = "completed"
 		job.Progress = 100
 
+		var parsed map[string]any
 		if resultTbl != nil {
-			parsed := luaTableToGoMap(resultTbl)
+			parsed = luaTableToGoMap(resultTbl)
 			if msg, hasMsg := parsed["message"].(string); hasMsg {
 				job.Message = msg
 			} else {
@@ -1626,9 +1639,11 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		} else {
 			job.Message = "Completed"
 		}
+		message := job.Message
 		job.mu.Unlock()
 
 		pm.notifyActionJobSubscribers("updated", job)
+		reportHostJob(job, func(sink HostJobSink) { sink.Completed(message, parsed) })
 		return 0
 	})
 
@@ -1653,6 +1668,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		job.mu.Unlock()
 
 		pm.notifyActionJobSubscribers("updated", job)
+		reportHostJob(job, func(sink HostJobSink) { sink.Failed(errMsg) })
 		return 0
 	})
 
@@ -1675,7 +1691,33 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 
+		// The Job that was executing when this was called, when there was one: a
+		// start_job inside an action or a scheduled occurrence is child work of
+		// that execution, and §17 records the relation so a Job Center reader can
+		// see what started what. A start_job from a hook or a shortcode has no
+		// parent — a person's page load is not a Job.
+		parentJobID := invocationJobID(pm.invocationFor(L))
+		actor := pm.actorFor(L)
+
+		// The durable Job is accepted first, by the host that owns the database,
+		// because acceptance is the promise that the work is durable. A host that
+		// cannot accept it refuses rather than handing Lua an id for work nobody
+		// can find later — and a host with no control plane installs none, which
+		// is the in-memory behaviour every bare manager has always had.
+		var host *HostJobRef
+		if jobs := pm.hostJobsInstalled(); jobs != nil {
+			ref, err := jobs.StartClosureJob(*pluginNamePtr, label, actor, parentJobID)
+			if err != nil {
+				L.RaiseError("could not start the job: %v", err)
+				return 0
+			}
+			host = ref
+		}
+
 		jobID := generateActionJobID()
+		if host != nil && host.Handle != "" {
+			jobID = host.Handle
+		}
 		job := &ActionJob{
 			ID:         jobID,
 			Source:     "plugin",
@@ -1693,6 +1735,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			// every non-admin — including the user who just triggered it. The
 			// async *action* path has always set this; start_job never did.
 			ownerUserID: ownerFromInvocation(pm.invocationFor(L)),
+			host:        host,
 		}
 
 		pm.actionJobsMu.Lock()
@@ -2662,6 +2705,14 @@ func (pm *PluginManager) TryLockVMWithin(ctx context.Context, L *lua.LState, wai
 // it replaces), but if shutdown needs a hard ceiling it should get one of its
 // own, in the shape DownloadManager.ShutdownDrainTimeout already uses.
 func (pm *PluginManager) Close() {
+	// Every in-flight execution's callback dies with this process, and that is the
+	// one proof of runtime loss nothing else can supply: a lease expiry only says
+	// nobody renewed it, while stopping the VM says the *lua.LFunction that was
+	// running can never run again. Reported before the VMs are closed, because
+	// after that there is nothing left to ask and a Job left running would be
+	// reconciled by a process that cannot know which callback it belonged to.
+	pm.reportLostCallbacks("plugin-runtime-stopping")
+
 	// Under pm.mu so it is exclusive with a load registering itself: a load
 	// that got in first is in loadWg and waited for below; one that arrives
 	// after sees closed and stops before creating anything.

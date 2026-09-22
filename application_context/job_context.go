@@ -49,6 +49,44 @@ func (ctx *MahresourcesContext) SetJobService(service *jobs.Service) {
 	if err := ctx.registerWorkflowJobKinds(service); err != nil {
 		log.Printf("warning: could not register the workflow job kinds: %v", err)
 	}
+	// The plugin-action Kind is registered here for the same reason, and its host
+	// half is installed on the plugin manager in the same breath: a manager
+	// without it would keep plugin work in memory while the control plane had no
+	// executor for the Jobs the HTTP layer had already accepted.
+	if err := ctx.registerPluginActionJobKind(service); err != nil {
+		log.Printf("warning: could not register the plugin-action job kind: %v", err)
+	}
+}
+
+// registerPluginActionJobKind teaches one control plane to run plugin background
+// work, and installs the host half of that seam on the plugin manager.
+//
+// The two halves are one wiring step because they are one feature: the adapter is
+// the executor for Jobs accepted from the HTTP layer, and the manager's HostJobs
+// is what makes a closure-backed mah.start_job durable. Installing one without
+// the other leaves plugin work half-migrated in a way nothing reports.
+//
+// Idempotent, like the other registrations here: a context may be handed a service
+// another caller already populated.
+func (ctx *MahresourcesContext) registerPluginActionJobKind(service *jobs.Service) error {
+	if ctx == nil || service == nil {
+		return nil
+	}
+	adapter := &pluginActionAdapter{ctx: ctx}
+	if !jobs.HasReplayCodec(service, JobKindPluginAction, jobPluginActionKindVersion) {
+		if err := service.RegisterReplayCodec(JobKindPluginAction, jobPluginActionKindVersion, pluginActionJobCodec()); err != nil {
+			return err
+		}
+	}
+	if _, registered := service.AdapterFor(JobKindPluginAction, jobPluginActionKindVersion); !registered {
+		if err := service.RegisterAdapter(adapter); err != nil {
+			return err
+		}
+	}
+	if pm := ctx.PluginManager(); pm != nil {
+		pm.SetHostJobs(&pluginActionHostJobs{ctx: ctx})
+	}
+	return nil
 }
 
 // JobService returns the installed control plane, or nil when this context was

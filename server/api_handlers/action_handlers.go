@@ -69,6 +69,20 @@ func actionPluginAccess(ctx PluginActionRunner, r *http.Request) auth.PluginAcce
 	return auth.PluginActionAccessFor(r.Context(), ctx.PluginAllowsScopedPrincipals)
 }
 
+// pluginActionJobRunner is the application seam an async action is submitted
+// through when this context owns a Job control plane.
+//
+// It is an optional interface rather than a fourth method on PluginActionRunner,
+// because a runner without it is a perfectly valid thing to be: the package's own
+// tests mount bare handlers, and a programmatic embed may install no plugins at
+// all. A caller that finds no seam submits the action the way it always did,
+// which is the same degradation the download queue's own control-plane seam has.
+type pluginActionJobRunner interface {
+	// RunPluginActionAsync accepts and claims a durable Job for one async action
+	// and starts it, answering the legacy id and the canonical Job id.
+	RunPluginActionAsync(owner *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, string, error)
+}
+
 // entityVisibleForAction reports whether the target entity is visible to the
 // (scoped) context for the action's entity type. Entity types that are not
 // subtree-scoped (tags, categories, ...) are always allowed.
@@ -302,24 +316,69 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			// Async execution: create jobs for each entity ID, tagged with the
 			// submitting user so the job listing/SSE only surface them to that
 			// user (and admins).
+			//
+			// Each entity is accepted independently. A bulk submission is not one
+			// unit of work — the entities were checked one by one above and each
+			// becomes its own Job — so one refusal must not discard the others,
+			// and the answer says exactly which ids were accepted and why the rest
+			// were not. Reporting only the first failure made a partial batch
+			// indistinguishable from a total one.
 			owner := principalOwnerID(reqPrincipal)
-			jobIDs := make([]string, 0, len(req.EntityIDs))
+			jobs := make([]map[string]any, 0, len(req.EntityIDs))
+			failures := make([]map[string]any, 0)
 			for _, eid := range req.EntityIDs {
-				jobID, err := pm.RunActionAsyncForOwner(owner, req.Plugin, req.Action, eid, req.Params, expectFilters)
+				jobID, canonicalJobID, err := startPluginActionAsync(ctx, pm, owner, req.Plugin, req.Action, eid, req.Params, expectFilters)
 				if err != nil {
-					http_utils.HandleError(fmt.Errorf("failed to start async action for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
-					return
+					failures = append(failures, map[string]any{
+						"entity_id": eid,
+						"error":     err.Error(),
+					})
+					continue
 				}
-				jobIDs = append(jobIDs, jobID)
+				entry := map[string]any{"entity_id": eid, "job_id": jobID}
+				if canonicalJobID != "" {
+					entry["canonical_job_id"] = canonicalJobID
+				}
+				jobs = append(jobs, entry)
+			}
+
+			if len(jobs) == 0 {
+				// Nothing was accepted, so this is a failed submission rather than a
+				// partial one — the status the single-entity path has always answered.
+				message := "the action could not be started"
+				if len(failures) > 0 {
+					if first, ok := failures[0]["error"].(string); ok && first != "" {
+						message = first
+					}
+				}
+				http_utils.HandleError(fmt.Errorf("failed to start async action: %s", message), w, r, http.StatusInternalServerError)
+				return
+			}
+
+			body := map[string]any{"jobs": jobs}
+			if len(failures) > 0 {
+				body["failures"] = failures
+			}
+			if len(jobs) == 1 && len(failures) == 0 {
+				// The single-entity answer keeps its historical shape, plus the
+				// canonical id where a client can use it.
+				body["job_id"] = jobs[0]["job_id"]
+				if canonical, ok := jobs[0]["canonical_job_id"]; ok {
+					body["canonical_job_id"] = canonical
+				}
+			} else {
+				ids := make([]string, 0, len(jobs))
+				for _, entry := range jobs {
+					if id, ok := entry["job_id"].(string); ok {
+						ids = append(ids, id)
+					}
+				}
+				body["job_ids"] = ids
 			}
 
 			w.Header().Set("Content-Type", constants.JSON)
 			w.WriteHeader(http.StatusAccepted)
-			if len(jobIDs) == 1 {
-				_ = json.NewEncoder(w).Encode(map[string]any{"job_id": jobIDs[0]})
-			} else {
-				_ = json.NewEncoder(w).Encode(map[string]any{"job_ids": jobIDs})
-			}
+			_ = json.NewEncoder(w).Encode(body)
 		} else {
 			// Sync execution: run for each entity ID and collect results.
 			results := make([]*plugin_system.ActionResult, 0, len(req.EntityIDs))
@@ -369,6 +428,28 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			}
 		}
 	}
+}
+
+// startPluginActionAsync starts one async action through the durable seam when
+// the runner has one, and through the plugin manager's in-memory path otherwise.
+//
+// The fallback is not a lesser mode a deployment should reach: it is what a bare
+// handler mount, a programmatic embed and a context with no control plane get,
+// and it is the behaviour this endpoint had before the Job Center existed.
+func startPluginActionAsync(
+	ctx PluginActionRunner,
+	pm *plugin_system.PluginManager,
+	owner *uint,
+	pluginName, actionID string,
+	entityID uint,
+	params map[string]any,
+	expectFilters string,
+) (string, string, error) {
+	if runner, ok := ctx.(pluginActionJobRunner); ok {
+		return runner.RunPluginActionAsync(owner, pluginName, actionID, entityID, params, expectFilters)
+	}
+	jobID, err := pm.RunActionAsyncForOwner(owner, pluginName, actionID, entityID, params, expectFilters)
+	return jobID, "", err
 }
 
 // GetActionJobHandler handles GET /v1/jobs/action/job?id=abc

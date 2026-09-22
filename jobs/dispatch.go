@@ -62,7 +62,7 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 	}
 
 	now := deps.now()
-	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, now)
+	job, found, err := nextClaimable(deps.DB, request.Kind, request.KindVersion, request.JobID, now)
 	if err != nil || !found {
 		return Execution{}, false, err
 	}
@@ -226,13 +226,25 @@ func strictestCapacityLimit(a, b int) int {
 // nextClaimable selects the oldest Job of a Kind that is waiting to run: queued
 // work, and scheduled work whose time has come. A Job that is already owned, in
 // any other state, is not a candidate.
-func nextClaimable(db *gorm.DB, kind string, version uint, now time.Time) (models.Job, bool, error) {
-	var job models.Job
-	err := db.Where(
+//
+// A named job id narrows the read to that one Job, which is how an executor that
+// already knows which Job it is running — a host-side executor that materialized
+// it a moment ago — takes it under a claim rather than taking whatever happens to
+// be oldest.
+func nextClaimable(db *gorm.DB, kind string, version uint, jobID string, now time.Time) (models.Job, bool, error) {
+	query := db.Where(
 		"kind = ? AND kind_version = ? AND (execution_token IS NULL OR execution_token = '') "+
 			"AND (state = ? OR (state = ? AND scheduled_for IS NOT NULL AND scheduled_for <= ?))",
 		kind, version, string(StateQueued), string(StateScheduled), now,
-	).Order("accepted_at, id").First(&job).Error
+	)
+	if jobID != "" {
+		// Predicated on the Kind as well the id: a claim that named a Job of
+		// another Kind would hand it to an adapter that does not own its input
+		// shape, and the caller here is the one place a job id arrives untyped.
+		query = query.Where("jobs.id = ?", jobID)
+	}
+	var job models.Job
+	err := query.Order("accepted_at, jobs.id").First(&job).Error
 	if err != nil {
 		if isNotFound(err) {
 			return models.Job{}, false, nil

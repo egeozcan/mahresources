@@ -174,6 +174,16 @@ func (pm *PluginManager) ScheduleIsRegistered(pluginName, scheduleID string) boo
 	return false
 }
 
+// scheduleInvocation is the invocation a scheduled occurrence's handler runs
+// under: the operator the row names, and the Job the occurrence was materialized
+// as, so a mah.start_job inside it is that occurrence's child.
+func scheduleInvocation(actorUserID uint, host *HostJobRef) *Invocation {
+	if host == nil {
+		return NewInvocation(actorUserID)
+	}
+	return NewJobInvocation(actorUserID, host.JobID)
+}
+
 // errScheduleVMBusy is internal: it wraps errJobDidNotStart, so the job runner
 // returns ran=false without recording a failure, and RunSchedule's existing
 // !ran path removes the job entry. It never reaches a caller, because a schedule
@@ -231,6 +241,17 @@ func (pm *PluginManager) acquireScheduleVM(state *lua.LState, holdClaim bool, de
 }
 
 func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint, wait time.Duration, holdClaim bool) (jobID string, ran bool, err error) {
+	return pm.RunScheduleForHost(reg, actorUserID, wait, holdClaim, nil)
+}
+
+// RunScheduleForHost is RunSchedule with a durable host Job to report the
+// occurrence into.
+//
+// host names the Job the host materialized for this occurrence and the sink it
+// reports through; nil keeps the in-memory entry as the only record. The Job's
+// id (its handle) is what the handler is given as its argument and what the panel
+// renders, so the id Lua sees is the id the Job is listed under.
+func (pm *PluginManager) RunScheduleForHost(reg ScheduleRegistration, actorUserID uint, wait time.Duration, holdClaim bool, host *HostJobRef) (jobID string, ran bool, err error) {
 	pm.mu.RLock()
 	live := pm.schedules[reg.PluginName]
 	var current *ScheduleRegistration
@@ -251,6 +272,9 @@ func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint,
 	state, fn := current.state, current.fn
 
 	jobID = generateActionJobID()
+	if host != nil && host.Handle != "" {
+		jobID = host.Handle
+	}
 	var owner *uint
 	if actorUserID != 0 {
 		id := actorUserID
@@ -272,6 +296,7 @@ func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint,
 		// does. Without one, jobVisibleToPrincipal hides the job from every
 		// non-admin — including the operator whose schedule it is.
 		ownerUserID: owner,
+		host:        host,
 	}
 
 	pm.actionJobsMu.Lock()
@@ -309,7 +334,7 @@ func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint,
 		defer mu.Unlock()
 
 		timeoutCtx, cancel := context.WithTimeout(
-			withInvocation(context.Background(), NewInvocation(actorUserID)), asyncActionTimeout)
+			withInvocation(context.Background(), scheduleInvocation(actorUserID, host)), asyncActionTimeout)
 		state.SetContext(timeoutCtx)
 		defer func() {
 			state.RemoveContext()

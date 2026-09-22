@@ -1385,6 +1385,17 @@ type CapacityRef struct {
 type ClaimRequest struct {
 	Kind        string
 	KindVersion uint
+	// JobID names one specific waiting Job to claim instead of the next one, or
+	// is empty for the ordinary "next of this Kind" claim.
+	//
+	// It exists because some executors already know which Job they are running:
+	// a host-side executor that materialized a Job and is about to run it in its
+	// own goroutine must own it under a claim, or it would be running a Job that
+	// nothing can reconcile, whose state nothing owns and which no release would
+	// free. A Job that is not waiting — claimed, terminal, or a different Kind —
+	// is reported as "not claimed" rather than as an error, exactly as an empty
+	// queue is: the caller cannot act differently on the two answers.
+	JobID string
 	// Claimant identifies the runtime taking the claim: a process, or a named
 	// worker inside one. It is recorded as evidence, never as authority — the
 	// execution token is what fences publication.

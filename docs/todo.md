@@ -1,3 +1,189 @@
+# Job Center Task 9 — adapt plugin actions, schedules, and non-restorable `mah.start_job` (2026-09-22)
+
+**Goal:** Land Task 9 of the unified Job Center plan: plugin background work — an async
+registered action, one scheduled occurrence, and a closure-backed `mah.start_job` —
+becomes `plugin-action@1`, a durable Job accepted and claimed before anything runs, with
+its outcome reported through a host seam in `plugin_system`; and reconciliation interrupts
+such a Job only when the process that owned the callback is *proved* gone.
+
+## Plan
+
+- [x] Re-read Task 9's Files/Red/Green/Verify, the approved design (§1, §2, §3, §4, §6,
+      §15, §16, §17), ADRs 0006/0007, `CLAUDE.md`, the committed Tasks 1–8, and every
+      caller of the action/schedule/start_job executors before editing.
+- [x] `plugin_system/host_jobs.go` (new): the `HostJobSink` seam (Started / Progress /
+      Completed / Failed / CallbackLost), `HostJobRef` (canonical id, legacy handle,
+      parent, sink), the `HostJobs` interface + `SetHostJobs` late binding, and
+      `RuntimeIdentity` with `Liveness()` — the proof every reconciliation reads.
+- [x] `plugin_system/pid_unix.go`, `pid_windows.go` (new): the pid probe signal 0 is;
+      EPERM is *alive*, ESRCH *gone*, anything else and every Windows answer *unknown*.
+- [x] `plugin_system/action_jobs.go`: `ActionJob.host` plus `RunActionAsyncForHost`, the
+      reporting at each point the in-memory entry is stamped, and `reportLostCallbacks`
+      — the graceful-shutdown proof that a callback cannot finish.
+- [x] `plugin_system/schedules.go`: `RunScheduleForHost` and `scheduleInvocation`, so an
+      occurrence's handler runs under the Job it was materialized as (and a nested
+      `mah.start_job` is that Job's child).
+- [x] `plugin_system/manager.go`: the three `job_*` reporters publish through the sink on
+      the same 200ms throttle the panel notification uses, `mah.start_job` accepts its
+      durable Job through `HostJobs` before the goroutine exists and names the invoking
+      Job as the parent, and `Close` reports every in-flight callback lost.
+- [x] `plugin_system/actor.go`: `Invocation.JobID`, `NewJobInvocation`, `invocationJobID`
+      — carried through the chain the way `tx` is, so a hook inside a Job's execution is
+      still that Job's execution.
+- [x] `jobs/types.go`, `jobs/dispatch.go`: `ClaimRequest.JobID`, so an executor that
+      already knows which Job it is running claims *that* Job rather than whatever is
+      oldest. Additive: an empty id is the previous behaviour.
+- [x] `application_context/job_plugin_action_adapter.go` (new): the Kind — codec and
+      sanitized summary, the three subtypes, dispatch with dispatch-time revalidation,
+      `Reconcile` by proved runtime loss, Retry-only commands, the host sink, the closure
+      acceptance and the scheduler's materialize-claim-run door.
+- [x] `application_context/job_context.go`: `registerPluginActionJobKind` registers the
+      adapter, its codec and the plugin manager's host half in the one place a process's
+      control plane is installed.
+- [x] `application_context/plugin_scheduler.go`: a tick materializes one Job for a claimed
+      occurrence and records the row's outcome from it; the inline run remains the
+      executor when no control plane is installed.
+- [x] `application_context/job_event_dispatcher.go`, `context.go`: the observer the queue
+      publishes through is also reachable from a plugin Job, so the `after_job_*` hooks
+      fire for plugin work through one mapping rather than two.
+- [x] `server/api_handlers/action_handlers.go`: an async bulk submission is accepted per
+      entity, reports every accepted id and every refusal, and keeps its historical
+      response shape (plus `canonical_job_id` where a client can use it).
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Action acceptance | `jobs: invalid acceptance: a replayable Job's summary is produced by its Kind's sanitizer, not named by the request` — four tests, the acceptance path naming the summary itself | `TestAnAsyncPluginActionAcceptsADurableJobBeforeItRuns` (the codec's sanitizer derives it; the params stay in the sealed input) |
+| Dispatch revalidation | `the action ended succeeded, want blocked` — the adapter ran a handler for a plugin that had been disabled between acceptance and dispatch | `TestAPluginActionRefusalIsRecheckedAtDispatch` |
+| Scheduled occurrence | `no durable plugin-action job of subtype "scheduled-occurrence" was ever accepted` (twice: once because a fresh row is not due — a test defect — and once because the tick could not claim an unowned row, which is why the test seeds an operator) | `TestAScheduledOccurrenceMaterializesExactlyOneJob` |
+| Closure child job | `no durable plugin-action job of subtype "closure-start-job" was ever accepted`, from a real defect: a non-replayable Job stores no envelope, so its sanitized summary was empty and no reader could tell what it was | `TestAStartJobFromAnActionIsANonReplayableChildJob` |
+| Runtime-loss proof | `a job whose runtime is proved gone is blocked, want interrupted`, from a second real defect: `Reconcile` read the sealed input, which non-replayable work does not have — so it could never prove anything about a closure | `TestAClosureJobWhoseRuntimeIsProvedGoneIsInterrupted` (the identity is read from the sanitized summary) |
+| Scheduled outcome | `panic: invalid memory address or nil pointer dereference` in `awaitPluginActionRun`, dereferencing a nil `Failure` on a succeeded Job | the same test green, and `snap.Failure` is nil-checked |
+| Burst and terminal event | `the succeeded job has no terminal event` — the adapter replaced the derived terminal event with a Kind-specific type, so the timeline no longer said `succeeded` | `TestAPluginProgressBurstCannotDisplaceItsOutcome` |
+| Observer seam | `a finished plugin job announced nothing to the job-event observer` | `TestAPluginJobIsAnnouncedToJobEventObservers` |
+| Host seam | written alongside the package change: `plugin_system/host_jobs_test.go` drives the sink, the parent id and the shutdown proof through a recording `HostJobs` | `TestAnAsyncActionReportsIntoItsHostJob`, `TestStartJobAcceptsAHostJobAndNamesItsParent`, `TestClosingTheManagerReportsEveryLostCallback`, `TestRuntimeIdentityLiveness_isConservative` |
+| Bulk per-entity acceptance | written at the HTTP seam with a refusing application double | `TestActionRun_BulkReportsPerEntityAcceptance`, `TestActionRun_AllRefusalsAreAServerError` |
+
+Mutation checks confirm the new tests are not vacuous — each defect was caught by exactly
+the test written for it, and the source was restored afterwards:
+
+- making `Reconcile` answer `blocked-external-work-unproven` unconditionally fails
+  `TestAClosureJobWhoseRuntimeIsProvedGoneIsInterrupted` with
+  `a job whose runtime is proved gone is blocked, want interrupted`;
+- replacing the per-entity loop's `continue` with `break` fails
+  `TestActionRun_BulkReportsPerEntityAcceptance` with
+  `expected the three accepted entities to be reported, got [{EntityID:1 …} {EntityID:2 …}]`.
+
+## Decisions worth recording
+
+- **One Kind, three subtypes.** The executor, the ownership rule and the reason the work
+  can never be restarted are the same for all three; they differ only in what started them
+  and what a reader is shown. Three Kinds would be three registrations and three
+  reconciliations for one executor — and the subtype is read from the *sanitized summary*,
+  which is also what a `Commands` call answers from, so an advertisement never has to open
+  a replay envelope.
+- **The Kind is non-restorable, and the proof is a process identity.** A closure's
+  `*lua.LFunction` belongs to one `*lua.LState` in one process, and a registered action is
+  arbitrary Lua the host cannot claim is idempotent. So an expired lease decides nothing:
+  the recorded `host/boot/pid` is asked, and only "this host has rebooted since" or "no
+  such process" interrupts. Another host, an uninspectable process table or a reused pid
+  (which reads as alive) leave the Job blocked with its claim and capacity held, where a
+  person resolves it. `Restorable: false` is the Kind's own declaration, so even an
+  adapter that answered "queue" could not put the work back.
+- **The host claims by id, and the dispatch loop races it.** `ClaimRequest.JobID` is what
+  lets a host-side executor own the Job it just accepted: running the Lua in its own
+  goroutine under a claim is what gives the work a lease, a heartbeat and a token a stale
+  publisher is fenced by. The control plane's loop claims waiting Jobs of the same Kind,
+  so a Job accepted a microsecond ago can be claimed by it first; the loser is told which
+  situation it is in (`pluginActionClaim`), and for a registered action or a scheduled
+  occurrence that means *waiting for the outcome* rather than starting a second run.
+- **A closure-backed Job is accepted before its goroutine exists.** `mah.start_job` asks
+  the host for the Job, and a host that cannot accept one makes the call raise rather than
+  hand Lua an id for work nothing can find later. The identity it records is
+  non-replayable: no Retry is advertised, and the Job's own summary is built through the
+  same codec so the sanitized view and the sealed input cannot disagree.
+- **"Not started" is `cancelled` with a `not-started` phase, never `failed`.** A full job
+  budget or a busy VM is `errJobDidNotStart`'s doctrine: the plugin entered nothing, so a
+  failure on its timeline would accuse it of work it never had. The scheduler reads that
+  phase as "give the row its claim back and record no outcome", which is the behaviour the
+  inline path always had.
+- **No Cancel, anywhere in this Kind.** Nothing in a registration declares that its handler
+  can be stopped, and one Lua call holds its VM lock for its whole duration — so a Cancel
+  would mean killing a VM mid-write or a button whose only outcome is a Job that keeps
+  running. Retry is offered where the input is replayable, and it is a lineage command the
+  control plane owns, so every check is re-asked at Retry time.
+- **Graceful shutdown is a proof, not an inference.** `Close` reports every in-flight
+  callback lost *before* the VMs are closed, which is the one moment the process can say
+  with certainty that a `*lua.LFunction` will never run again; the Jobs it names end
+  `interrupted` rather than being reconciled into a guess.
+- **`after_job_*` fires for plugin Jobs through the queue's own mapping.** The adapter
+  hands the observer a `download_queue.JobEventRecord` through one helper in
+  `job_event_dispatcher.go`, so there is still one place an outcome becomes a hook name.
+  An *interrupted* Job is deliberately not announced: the catalogue has three names and
+  "its runtime vanished" is none of them.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- Task 9's exact focused gate,
+  `go test -race --tags 'json1 fts5' ./plugin_system ./application_context ./server/api_handlers -run 'Test.*(ActionJob|StartJob|Schedule|PluginAction|RuntimeLoss)' -count=10`
+  — passed (`plugin_system` 5.5s, `application_context` 32.9s; `server/api_handlers` has no
+  test matching the filter).
+- Task 9's cross-engine gate,
+  `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests -run 'Test.*(Action|Schedule|Job)' -count=1`
+  — passed against PostgreSQL.
+- `go test --tags 'json1 fts5' ./plugin_system ./jobs ./server/api_handlers ./server/api_tests -count=1`
+  and `./application_context -count=1` — passed.
+- Browser: `tests/plugins/plugin-actions.spec.ts`, `plugin-action-refusal.spec.ts`,
+  `plugin-schedules.spec.ts`, `plugin-schedule-run-now.spec.ts` — 35 passed, including the
+  async-submission and bulk-refusal specs that exercise the deployed route.
+- `go vet --tags 'json1 fts5' ./...` clean, `gofmt -l` on every changed file clean,
+  `git diff --check` clean. No frontend source changed (`npm run build-js` produces no
+  diff), so no bundle rebuild.
+
+## Review
+
+Task 9 is complete. Plugin background work is a durable Job in all three of its shapes, and
+the property that matters is negative and testable: a plugin Job is never redispatched. The
+Kind says so, the replay class says so for closures, the host claims the Job before the
+callback exists, and reconciliation interrupts only on a proved process death — a lease
+expiry, a cross-host identity or an uninspectable process table all end in a blocked Job a
+person has to resolve, which is the honest answer to "nobody can prove what happened".
+
+Residual risks and handoffs carried forward:
+
+- **The in-memory `ActionJob` is still the panel's record.** It is now a projection —
+  stamped from the same points the sink reports and listed under the Job's own handle — but
+  `ClearFinishedActionJobs`, the SSE `action_*` feed and `/v1/jobs/action/job` all still
+  read it, and it is gone at the next restart. Task 17's cutover is what retires it.
+- **A closure Job can be blocked by a microsecond race.** `mah.start_job` accepts its Job
+  and *then* claims it; if the dispatch loop claims it in between, the host withdraws, the
+  plugin's call raises, and the loop's own dispatch finds no callback and blocks the Job
+  (`closure-callback-gone`). No double execution is possible, but the Job needs a person.
+  Closing it properly means accepting the Job in a state the loop cannot claim, which the
+  state machine does not have (acceptance is queued or scheduled, and running requires a
+  claim).
+- **`ClaimRequest.JobID` is a `jobs` change Task 9's file list did not name.** The
+  alternative was routing every plugin execution through the dispatch loop, which cannot
+  preserve the scheduler's "the row's claim is held for the whole run" semantics or
+  `start_job`'s "the callback runs here, now". It is additive and its empty value is the
+  previous behaviour.
+- **The scheduler still runs under the plugin manager's own gates.** Its occurrence's Job
+  is claimed by this process, so the job budget and VM waits happen inside `RunSchedule`,
+  bounded by `ScheduleDispatchWait` under "skip" exactly as before; `ScheduleClaimTTL` is
+  unchanged and still the honest bound, because nothing new waits before the handler runs.
+- **No Cancel for plugin work** (see the decisions above). When a registration can declare
+  that its handler is stoppable, the command belongs here — with a capability story, since
+  a plugin asking for cancellation of arbitrary Lua is a new power.
+- **`after_job_*` does not fire for an interrupted plugin Job.** The catalogue has three
+  names and no fourth; adding one is a catalogue change with its own drift test, not a line
+  in an adapter.
+- **A Job whose runtime identity cannot be read stays blocked forever.** That is the
+  deliberate fail-safe, and it is what a deployment that sets no boot session (a platform
+  where `plugin_commands` cannot read one) will see for every closure that outlives a
+  crash.
+
 # Job Center Task 8 — adapt export, import parse/apply, Resource Reduction, and maintenance Jobs (2026-09-22)
 
 **Goal:** Land Task 8 of the unified Job Center plan: the four queue-backed workflow

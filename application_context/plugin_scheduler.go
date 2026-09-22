@@ -250,24 +250,24 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		}
 	}
 
-	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, !overlapAllows)
-
-	if !ran {
-		// Nothing executed and nothing was recorded, so the honest outcome is
-		// "not this tick": hand the claim back and leave the row due. Under
-		// "skip" that is a full job budget or a VM that stayed busy for the
-		// dispatch wait. Under "allow" it is only ever a full job budget — the
-		// VM is waited for indefinitely there, because the schedule has already
-		// been advanced and an interval dropped under "allow" is not deferred to
-		// the next tick, it is gone. A full budget still drops one, which is
-		// this dispatcher's own pre-existing behaviour rather than the VM wait's.
+	run := s.runOccurrence(row, reg, actor, !overlapAllows)
+	if !run.Started {
+		// The handler was never entered, so there is nobody to blame and nothing
+		// to record: the honest outcome is "not this tick", and the row gets its
+		// claim back. Under "skip" that is a full job budget or a VM that stayed
+		// busy for the dispatch wait. Under "allow" it is only ever a full job
+		// budget — the VM is waited for indefinitely there, because the schedule
+		// has already been advanced and an interval dropped under "allow" is not
+		// deferred to the next tick, it is gone. A full budget still drops one,
+		// which is this dispatcher's own pre-existing behaviour rather than the VM
+		// wait's.
 		if !overlapAllows {
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		}
 		return
 	}
 
-	status, message := scheduleOutcome(runErr)
+	status, message := scheduleRunOutcome(run)
 
 	now := time.Now()
 	if overlapAllows {
@@ -281,6 +281,67 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		log.Printf("warning: plugin scheduler could not complete %s/%s: %v",
 			row.PluginName, row.ScheduleID, err)
 	}
+}
+
+// runOccurrence runs one claimed schedule's handler and answers what happened to
+// it.
+//
+// Two executors, one policy. With a control plane installed the occurrence is
+// first *materialized* as a durable Job — accepted, then claimed by this very
+// process, then dispatched through the plugin-action adapter — so the run has a
+// durable identity, a fenced outcome and a place in the Job Center. Without one
+// the inline run stands alone, which is what the CLI, a bare embedder and this
+// package's own scheduler tests get.
+//
+// The wait and the holdClaim policy are the scheduler's own either way: they are
+// why the row's claim is held for the whole run under "skip", and moving them
+// into the executor would make the claim and the execution two different
+// lifetimes.
+func (s *PluginScheduler) runOccurrence(row models.PluginSchedule, reg plugin_system.ScheduleRegistration, actor uint, holdClaim bool) pluginActionRun {
+	if s.ctx != nil && s.ctx.JobService() != nil {
+		run, err := s.ctx.runScheduledOccurrenceJob(reg, actor, row.Overlap, s.dispatchWait)
+		if err != nil {
+			// The Job could not be materialized at all. The row is given back
+			// rather than reported as a failed run: nothing was executed, and the
+			// next tick will try again.
+			log.Printf("warning: plugin scheduler could not materialize %s/%s: %v",
+				row.PluginName, row.ScheduleID, err)
+			return pluginActionRun{}
+		}
+		return run
+	}
+
+	pm := s.ctx.PluginManager()
+	if pm == nil {
+		return pluginActionRun{}
+	}
+	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, holdClaim)
+	if !ran {
+		return pluginActionRun{}
+	}
+	return pluginActionRun{Started: true, Failed: runErr != nil, Message: scheduleOutcomeMessage(runErr)}
+}
+
+// scheduleRunOutcome turns one occurrence's result into the pair stored on the
+// row. It reads the execution's own outcome rather than an error, because a
+// plugin job reports what happened through its Job rather than by returning.
+func scheduleRunOutcome(run pluginActionRun) (status, message string) {
+	if run.Failed {
+		if run.Message == "" {
+			return models.PluginScheduleStatusFailed, "the plugin's handler failed"
+		}
+		return models.PluginScheduleStatusFailed, truncateScheduleError(run.Message)
+	}
+	return models.PluginScheduleStatusCompleted, ""
+}
+
+// scheduleOutcomeMessage is the inline path's message: the error the manager
+// reported, bounded for the column.
+func scheduleOutcomeMessage(runErr error) string {
+	if runErr == nil {
+		return ""
+	}
+	return truncateScheduleError(runErr.Error())
 }
 
 // RunNow executes one schedule immediately, on an operator's say-so, and returns
@@ -376,8 +437,8 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 		return
 	}
 
-	_, ran, runErr := pm.RunSchedule(reg, scheduleActor(row), s.dispatchWait, true)
-	if !ran {
+	run := s.runOccurrence(row, reg, scheduleActor(row), true)
+	if !run.Started {
 		// The handler was never entered, so there is no outcome to record — the
 		// same "not this tick" a full job budget or a busy VM gives a ticked run.
 		// Recording a failure here would blame the plugin for a run it did not
@@ -396,7 +457,7 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 		return
 	}
 
-	status, message := scheduleOutcome(runErr)
+	status, message := scheduleRunOutcome(run)
 	// Record first, release second. While the claim is held nothing else can run
 	// this schedule, so nothing else can write an outcome — releasing first would
 	// open a window in which a tick starts, finishes, records its result, and then
@@ -436,14 +497,6 @@ func scheduleActor(row models.PluginSchedule) uint {
 		return 0
 	}
 	return *row.CreatedByUserId
-}
-
-// scheduleOutcome turns a run's error into the pair stored on the row.
-func scheduleOutcome(runErr error) (status, message string) {
-	if runErr == nil {
-		return models.PluginScheduleStatusCompleted, ""
-	}
-	return models.PluginScheduleStatusFailed, truncateScheduleError(runErr.Error())
 }
 
 // newScheduleClaimToken mints a token no other process can produce.

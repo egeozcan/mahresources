@@ -20,6 +20,12 @@ const (
 )
 
 // ActionJob represents an asynchronous plugin action execution.
+//
+// It is the *in-memory projection* of one execution: the jobs panel lists it and
+// the action_* SSE stream announces it. When a host Job control plane is
+// installed the durable Job is the authority — this entry mirrors what it reports
+// — and without one this entry is the only lifecycle there is, which is what a
+// bare manager, the package's own tests and a programmatic embedder see.
 type ActionJob struct {
 	ID           string         `json:"id"`
 	Source       string         `json:"source"` // always "plugin"
@@ -39,6 +45,9 @@ type ActionJob struct {
 	// serialized to JSON; callers read it via Owner() to decide visibility so a
 	// non-admin only sees the jobs it created.
 	ownerUserID *uint
+	// host is the durable Job this execution reports into, or nil when this
+	// process has no control plane. It is read under mu like every other field.
+	host *HostJobRef
 }
 
 // Owner returns the user that submitted the action job, or nil when it was
@@ -54,6 +63,56 @@ func (j *ActionJob) Owner() *uint {
 type ActionJobEvent struct {
 	Type string     `json:"type"` // "added", "updated", "removed"
 	Job  *ActionJob `json:"job"`
+}
+
+// hostJobRef answers the durable Job this execution reports into, or nil.
+func (j *ActionJob) hostJobRef() *HostJobRef {
+	if j == nil {
+		return nil
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.host
+}
+
+// reportHostJob calls one sink method outside the job's own lock.
+//
+// Outside, because a report reaches a database and the panel reads this entry
+// under that lock: doing the I/O inside would stall every reader behind one
+// progress tick. A job with no host Job reports nowhere, which is the whole
+// difference a process without a control plane sees.
+func reportHostJob(job *ActionJob, report func(HostJobSink)) {
+	ref := job.hostJobRef()
+	if ref == nil || ref.Sink == nil {
+		return
+	}
+	report(ref.Sink)
+}
+
+// reportLostCallbacks tells the host that the callbacks of every execution still
+// running in this process will never finish.
+//
+// Called from Close, and only from there: a lease expiry proves nothing about a
+// callback, while stopping the VM proves the *lua.LFunction cannot run again.
+// Both queued and running work is named — a job that never started is as
+// unfinishable as one that did — and the host decides what that means for each.
+func (pm *PluginManager) reportLostCallbacks(reason string) {
+	pm.actionJobsMu.RLock()
+	running := make([]*ActionJob, 0, len(pm.actionJobs))
+	for _, job := range pm.actionJobs {
+		job.mu.RLock()
+		status := job.Status
+		host := job.host
+		job.mu.RUnlock()
+		if host != nil && host.Sink != nil && status != "completed" && status != "failed" && status != "cancelled" {
+			running = append(running, job)
+		}
+	}
+	pm.actionJobsMu.RUnlock()
+
+	for _, job := range running {
+		reportHostJob(job, func(sink HostJobSink) { sink.CallbackLost(reason) })
+	}
 }
 
 // Snapshot returns a copy of the ActionJob safe for serialization.
@@ -85,6 +144,14 @@ func (j *ActionJob) Snapshot() *ActionJob {
 		}
 	}
 
+	// The host reference is copied by value: an *ActionJob the panel reads must not
+	// carry a pointer into the live entry, and the sink is what a caller of a
+	// snapshot never uses.
+	if j.host != nil {
+		host := *j.host
+		snap.host = &host
+	}
+
 	return snap
 }
 
@@ -113,6 +180,22 @@ func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID ui
 // expectFilters is the fingerprint of the registration the caller validated
 // against, or "" to skip the check. See checkActionUnchanged.
 func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, error) {
+	return pm.RunActionAsyncForHost(nil, ownerUserID, pluginName, actionID, entityID, params, expectFilters)
+}
+
+// RunActionAsyncForHost is RunActionAsyncForOwner with a durable host Job to
+// report the execution into.
+//
+// host names the Job the host accepted for this execution and the sink it reports
+// through; the caller owns that Job's lifecycle and this only publishes facts into
+// it. Nil is the no-control-plane shape and keeps the in-memory entry as the only
+// record, exactly as before.
+//
+// The in-memory ActionJob is created either way and its id is *host.Handle* when
+// one is given: the id the client was answered with, the id the panel renders and
+// the id the legacy action-job endpoint resolves all have to be the same string,
+// or one execution would be two rows seen two ways.
+func (pm *PluginManager) RunActionAsyncForHost(host *HostJobRef, ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -131,6 +214,9 @@ func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, a
 	}
 
 	jobID := generateActionJobID()
+	if host != nil && host.Handle != "" {
+		jobID = host.Handle
+	}
 	job := &ActionJob{
 		ID:          jobID,
 		Source:      "plugin",
@@ -144,6 +230,7 @@ func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, a
 		Message:     "Waiting to start...",
 		CreatedAt:   time.Now(),
 		ownerUserID: ownerUserID,
+		host:        host,
 	}
 
 	pm.actionJobsMu.Lock()
@@ -243,11 +330,13 @@ var errJobDidNotStart = errors.New("the job never entered its work")
 func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, wait time.Duration, work func() error) (ran bool) {
 	defer func() {
 		if r := recover(); r != nil {
+			message := fmt.Sprintf("panic: %v", r)
 			job.mu.Lock()
 			job.Status = "failed"
-			job.Message = fmt.Sprintf("panic: %v", r)
+			job.Message = message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
+			reportHostJob(job, func(sink HostJobSink) { sink.Failed(message) })
 			log.Printf("[plugin] panic in %s: %v", logLabel, r)
 		}
 	}()
@@ -267,6 +356,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 	job.Message = "Running..."
 	job.mu.Unlock()
 	pm.notifyActionJobSubscribers("updated", job)
+	reportHostJob(job, func(sink HostJobSink) { sink.Started("Running...") })
 
 	err := work()
 
@@ -274,6 +364,11 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 		// Nothing was entered, so there is no outcome to record and nothing to
 		// tell subscribers: the caller removes the job entry, and a status
 		// written here would be the last word the panel retained about it.
+		//
+		// The durable Job is deliberately not told either. "Never started" is not
+		// an outcome a Job records — the same reason the in-memory entry goes away
+		// — and the caller that owns the Job decides what leaving it undone means
+		// (for a schedule, that the tick gave the row back).
 		return false
 	}
 
@@ -296,6 +391,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 		job.Message = errMsg
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
+		reportHostJob(job, func(sink HostJobSink) { sink.Failed(errMsg) })
 		log.Printf("[plugin] %s failed: %v", logLabel, err)
 		return true
 	}
@@ -311,6 +407,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 		job.Message = "Completed"
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
+		reportHostJob(job, func(sink HostJobSink) { sink.Completed("Completed", nil) })
 	}
 	return true
 }
@@ -395,8 +492,10 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 				job.Message = "Completed"
 			}
 			job.Result = parsed
+			message := job.Message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
+			reportHostJob(job, func(sink HostJobSink) { sink.Completed(message, parsed) })
 		}
 
 		return nil

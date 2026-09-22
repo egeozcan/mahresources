@@ -582,6 +582,13 @@ type MahresourcesContext struct {
 	// nil means "this context has no control plane", which a facade call reports
 	// rather than dereferencing.
 	jobService *jobs.Service
+	// jobTerminalSink observes Jobs reaching an end state, whoever ran them. It
+	// is the same observer the download queue publishes through, installed here
+	// as well because plugin background work is a Job now and its completion is
+	// the same fact: the three after_job_* hooks fire for every Kind, not only for
+	// the queue's. Nil means this deployment has no observer, which is what the
+	// CLI and every bare manager get.
+	jobTerminalSink download_queue.JobEventSink
 	// shareServerListening records that the public share server bound its port and
 	// has not stopped serving. Finding 51: a bind failure was logged and swallowed,
 	// so /admin/settings went on advertising the share port and the note sidebar
@@ -1281,7 +1288,14 @@ func (ctx *MahresourcesContext) SetPluginScheduler(scheduler *PluginScheduler) {
 // A deployment that never calls this has no sink, and every emit in the queue is
 // a nil check — which is what the CLI's and the tests' bare managers get.
 func (ctx *MahresourcesContext) SetJobEventSink(sink download_queue.JobEventSink) {
-	if ctx == nil || ctx.downloadManager == nil {
+	if ctx == nil {
+		return
+	}
+	// Kept on the context as well as handed to the manager: plugin background work
+	// publishes its own completion, and a second observer built for it would be a
+	// second place the hook names and their payloads are decided.
+	ctx.jobTerminalSink = sink
+	if ctx.downloadManager == nil {
 		return
 	}
 	ctx.downloadManager.SetJobEventSink(sink)

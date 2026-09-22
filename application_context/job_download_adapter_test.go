@@ -86,6 +86,12 @@ func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
 	// One plugin the deferred tests can schedule through: a deferred download
 	// always names the plugin that asked for it, and its egress policy is what the
 	// transfer runs under, so the dispatch path cannot be exercised without one.
+	//
+	// A second plugin declares the things the plugin-action Kind runs — an async
+	// action, a failing action, an action that starts a child job, and a schedule —
+	// because none of that can be exercised through a plugin that declares none.
+	// Neither is enabled by the harness: a test says which one it needs, and a
+	// disabled plugin must not be reachable by accident.
 	pluginDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(pluginDir, downloadTestPlugin), 0o755); err != nil {
 		t.Fatalf("mkdir plugin: %v", err)
@@ -98,6 +104,13 @@ function init() end
 `
 	if err := os.WriteFile(filepath.Join(pluginDir, downloadTestPlugin, "plugin.lua"), []byte(pluginSource), 0o644); err != nil {
 		t.Fatalf("write plugin: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(pluginDir, pluginActionTestPlugin), 0o755); err != nil {
+		t.Fatalf("mkdir action plugin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, pluginActionTestPlugin, "plugin.lua"), []byte(pluginActionTestSource), 0o644); err != nil {
+		t.Fatalf("write action plugin: %v", err)
 	}
 
 	cfg := &MahresourcesConfig{

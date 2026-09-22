@@ -45,6 +45,15 @@ type Invocation struct {
 	// when there is none (auth off, or a context-less worker path).
 	ActorUserID uint
 
+	// JobID is the durable Job this call is executing inside, when it is
+	// executing inside one. It is what makes mah.start_job's work a child of the
+	// execution that asked for it: a Job Center reader can see that one job
+	// started another, and the child inherits nothing else — no authority, no
+	// input, no outcome. Empty for a call that no Job is running (an ordinary
+	// request, a hook, a shortcode), which is why a start_job from there has no
+	// parent rather than a made-up one.
+	JobID string
+
 	// Egress is the network policy of the plugin that made this call, when the
 	// call can reach the network. Nil for every other call, and for host-side
 	// fetches that no plugin triggered — which is what keeps operator-initiated
@@ -128,6 +137,20 @@ func NewInvocation(actorUserID uint) *Invocation {
 	return &Invocation{ActorUserID: actorUserID}
 }
 
+// NewJobInvocation returns an Invocation for a call that is executing one
+// durable Job, so nested work can name it as its parent.
+func NewJobInvocation(actorUserID uint, jobID string) *Invocation {
+	return &Invocation{ActorUserID: actorUserID, JobID: jobID}
+}
+
+// invocationJobID answers the durable Job a call chain is executing, or "".
+func invocationJobID(inv *Invocation) string {
+	if inv == nil {
+		return ""
+	}
+	return inv.JobID
+}
+
 // holds reports whether L is already executing somewhere on this call chain, and
 // therefore whether taking its VM lock again would deadlock.
 func (inv *Invocation) holds(L *lua.LState) bool {
@@ -158,7 +181,12 @@ func (inv *Invocation) with(L *lua.LState) *Invocation {
 	// here would silently put the hook's writes on a second connection, which is
 	// the whole failure this field exists to prevent. Egress is deliberately not
 	// carried — querierForFetch attaches it per call, after this.
-	return &Invocation{ActorUserID: inv.ActorUserID, tx: inv.tx, states: append(states, L)}
+	//
+	// JobID is carried for the same reason tx is: a hook that fires while one
+	// Job's execution is writing is still that execution, and a mah.start_job
+	// inside it is that Job's child. Dropping it here would make the relationship
+	// depend on which entry point happened to run the Lua.
+	return &Invocation{ActorUserID: inv.ActorUserID, JobID: inv.JobID, tx: inv.tx, states: append(states, L)}
 }
 
 // withInvocation returns a child context carrying inv, for a VM entry point that
@@ -224,7 +252,8 @@ func ownerFromInvocation(inv *Invocation) *uint {
 }
 
 // invocationContextForJob returns the Background-derived context an async job's
-// Lua call runs under, carrying the job's submitter as the actor.
+// Lua call runs under, carrying the job's submitter as the actor and the durable
+// Job it is executing as its parent.
 //
 // Background, not a request: the job outlives whatever submitted it, so tying it
 // to request cancellation would kill work the user explicitly backgrounded. The
@@ -234,7 +263,11 @@ func invocationContextForJob(job *ActionJob) context.Context {
 	if owner := job.Owner(); owner != nil {
 		actor = *owner
 	}
-	return withInvocation(context.Background(), NewInvocation(actor))
+	var jobID string
+	if host := job.hostJobRef(); host != nil {
+		jobID = host.JobID
+	}
+	return withInvocation(context.Background(), NewJobInvocation(actor, jobID))
 }
 
 // mainState returns the LState that owns L's VM: L itself for a plugin's main
