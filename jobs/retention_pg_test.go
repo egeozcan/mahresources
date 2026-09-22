@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"mahresources/models"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -255,4 +258,108 @@ func TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifactPG(t *testing.
 	deps.Now = func() time.Time { return clock }
 
 	runArtifactCleanupRepublication(t, svc, deps, deps, policy)
+}
+
+// TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpointPG is the other engine's
+// half of the lineage-versus-retention race.
+//
+// SQLite's answer to the read-then-write transaction is a refusal; PostgreSQL's is
+// the dangling relation, because these tables carry no foreign keys and both
+// endpoints of one were counted outside any lock. The sweep deletes an expired
+// endpoint and the relations incident to it, so a relation stored after that count
+// and before its endpoint was taken names a Job that is not there.
+func TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpointPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+
+	// The engine's own pool is the second connection here, exactly as the artifact
+	// cleanup interleavings take it.
+	runLinkEndpointDeletion(t, svc, deps, deps, policy)
+}
+
+// TestLinkHoldsItsEndpointsAgainstTheSweepPG is the ordering the interleaving above
+// cannot show: the relation's endpoints are taken before retention deletes one of
+// them, rather than merely re-read after it.
+//
+// Confirming the endpoints after the relation is written is what closes the dangling
+// row; taking their rows FOR UPDATE is what makes that confirmation mean something,
+// because retention's own delete of an endpoint takes the same row first. Without it
+// the check is check-then-act again — the delete commits between the read and this
+// transaction's commit, and the relation outlives the Job it names.
+func TestLinkHoldsItsEndpointsAgainstTheSweepPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2034, 4, 5, 6, 7, 8, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	keeper := acceptQueued(t, svc, deps, uintPtr(7))
+	expired := seedExpiredEndpoint(t, deps, clock)
+
+	// The relation is held inside its transaction once its endpoints have been
+	// taken, which is the instant the sweep has to arrive at to be blocked.
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	const hook = "test:hold-the-endpoints"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "jobs" ||
+			!strings.Contains(tx.Statement.SQL.String(), "FOR UPDATE") {
+			return
+		}
+		once.Do(func() {
+			close(locked)
+			<-release
+		})
+	}); err != nil {
+		t.Fatalf("register the holding hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
+
+	linkDone := make(chan error, 1)
+	go func() {
+		linkDone <- svc.Link(deps, LinkRequest{Type: LinkRetryOf, FromJobID: keeper.ID, ToJobID: expired.ID})
+	}()
+
+	select {
+	case <-locked:
+	case err := <-linkDone:
+		t.Fatalf("Link returned without taking its endpoints: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Link never took its endpoints' rows, so retention's delete of one is not serialized against it")
+	}
+
+	swept := make(chan error, 1)
+	go func() {
+		_, err := svc.Sweep(deps, policy, SweepCursor{}, 100)
+		swept <- err
+	}()
+
+	// The sweep has reached the endpoint's row and can go no further while the
+	// relation's transaction holds it.
+	waitForABlockedQuery(t, deps.DB)
+	close(release)
+
+	if err := <-linkDone; err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if err := <-swept; err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if jobExists(t, deps, expired.ID) {
+		t.Fatal("the sweep did not delete the endpoint the relation named")
+	}
+	if !jobExists(t, deps, keeper.ID) {
+		t.Fatal("the sweep pruned the endpoint that was not due")
+	}
+	if rows := countRows(t, deps, &models.JobLink{}, "from_job_id = ? OR to_job_id = ?", expired.ID, expired.ID); rows != 0 {
+		t.Fatalf("%d relations survived the delete of the Job they name", rows)
+	}
+	if dangling := danglingLinks(t, deps); dangling != 0 {
+		t.Fatalf("%d lineage rows name an endpoint that is not there", dangling)
+	}
 }

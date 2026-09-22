@@ -3,6 +3,7 @@ package jobs
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -530,6 +531,12 @@ func validateAppendedEvent(event EventInput) error {
 // is deliberately not checked here: this is the host-side seam, and every read
 // that follows a link applies the shared visibility predicate to the Job it
 // reaches — a link grants no rights and makes no relative reachable.
+//
+// Storing the relation and confirming its endpoints are one decision, ordered by
+// the engine's own concurrency control: retention deletes an expired Job and the
+// relations incident to it, and a relation stored against an endpoint that went in
+// the gap is exactly the dangling row the tables' missing foreign keys cannot
+// catch. linkLineage is that ordering.
 func (s *Service) Link(deps Deps, request LinkRequest) error {
 	if err := validateLinkRequest(request); err != nil {
 		return err
@@ -537,27 +544,71 @@ func (s *Service) Link(deps Deps, request LinkRequest) error {
 
 	now := deps.now()
 	return deps.DB.Transaction(func(tx *gorm.DB) error {
-		var present int64
-		if err := tx.Model(&models.Job{}).
-			Where("id IN ?", []string{request.FromJobID, request.ToJobID}).
-			Count(&present).Error; err != nil {
-			return fmt.Errorf("jobs: read link endpoints: %w", err)
-		}
-		if present != 2 {
-			return fmt.Errorf("%w: a link needs both jobs to exist", ErrNotFound)
-		}
-
-		link := models.JobLink{
-			Type:      string(request.Type),
-			FromJobID: request.FromJobID,
-			ToJobID:   request.ToJobID,
-			CreatedAt: now,
-		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; err != nil {
-			return fmt.Errorf("jobs: store link: %w", err)
-		}
-		return nil
+		return linkLineage(tx, request, now)
 	})
+}
+
+// linkLineage stores one relation and confirms both endpoints are there, in the
+// order the engine's concurrency control requires.
+//
+// The relation is written first on both engines, and a missing endpoint rolls the
+// transaction back with it — so the write that takes the lock leaves nothing
+// behind when the answer is no. That order is what the endpoints are then read
+// under, which is the whole of the fix: the existence check is not a check-then-act
+// a sweep can slip past.
+//
+// The engines differ in what holds the endpoints while they are read, exactly as
+// lockPruneTarget does. SQLite has no row locks and serializes writers, so the
+// insert is the write that takes the writer lock before anything is read; a
+// transaction that reads first and writes afterwards is refused outright when
+// another connection commits in between (SQLITE_BUSY_SNAPSHOT, which SQLite does
+// not put through the busy handler). PostgreSQL has row locks, so both endpoints
+// are taken FOR UPDATE in ascending id order before either is read — the order two
+// relations naming the same pair in opposite directions would otherwise take in
+// reverse — and retention's own delete of an endpoint waits on that row.
+func linkLineage(tx *gorm.DB, request LinkRequest, now time.Time) error {
+	if err := storeLink(tx, request, now); err != nil {
+		return err
+	}
+	return holdLinkEndpoints(tx, request)
+}
+
+// storeLink writes the relation itself. It is idempotent: (type, from, to) is
+// unique, so a repeated request is the row that is already there.
+func storeLink(tx *gorm.DB, request LinkRequest, now time.Time) error {
+	link := models.JobLink{
+		Type:      string(request.Type),
+		FromJobID: request.FromJobID,
+		ToJobID:   request.ToJobID,
+		CreatedAt: now,
+	}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; err != nil {
+		return fmt.Errorf("jobs: store link: %w", err)
+	}
+	return nil
+}
+
+// holdLinkEndpoints confirms both endpoints exist, holding their rows for the rest
+// of the transaction on the engine that has row locks. A missing endpoint is
+// ErrNotFound, and the relation written on the way in rolls back with that verdict.
+func holdLinkEndpoints(tx *gorm.DB, request LinkRequest) error {
+	// Sorted, and locked in that order: two transactions taking the same row locks
+	// in opposite orders deadlock, and a relation is stored in both directions.
+	ids := []string{request.FromJobID, request.ToJobID}
+	sort.Strings(ids)
+
+	query := tx.Model(&models.Job{}).Where("id IN ?", ids).Order("id")
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var present []string
+	if err := query.Pluck("id", &present).Error; err != nil {
+		return fmt.Errorf("jobs: read link endpoints: %w", err)
+	}
+	if len(present) != 2 {
+		return fmt.Errorf("%w: a link needs both jobs to exist", ErrNotFound)
+	}
+	return nil
 }
 
 // validateLinkRequest checks a lineage request before anything is read.

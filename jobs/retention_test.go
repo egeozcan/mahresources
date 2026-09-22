@@ -1646,3 +1646,213 @@ func TestRetentionArtifactCleanupIsFencedAgainstANewClaim(t *testing.T) {
 		t.Fatalf("artifact availability = %s, want the removal the adapter acknowledged recorded", artifact.Availability)
 	}
 }
+
+// danglingLinks counts lineage rows naming an endpoint that is not there. These
+// tables carry no foreign keys, so nothing but the code that writes them keeps
+// them resolvable: a relation whose endpoint retention has deleted is a row no
+// reader can follow and no reader can resolve.
+func danglingLinks(t *testing.T, deps Deps) int64 {
+	t.Helper()
+	return countRows(t, deps, &models.JobLink{},
+		`NOT EXISTS (SELECT 1 FROM jobs f WHERE f.id = job_links.from_job_id)
+		 OR NOT EXISTS (SELECT 1 FROM jobs x WHERE x.id = job_links.to_job_id)`)
+}
+
+// seedExpiredEndpoint seeds the endpoint retention deletes: a finished Job whose
+// history window has passed, which is what puts it in a sweep's candidates.
+func seedExpiredEndpoint(t *testing.T, deps Deps, clock time.Time) models.Job {
+	t.Helper()
+	job := seedJob(t, deps, StateSucceeded, clock.Add(-2*time.Hour), 1)
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).
+		Updates(map[string]any{
+			"finished_at": clock.Add(-2 * time.Hour),
+			"expires_at":  clock.Add(-time.Hour),
+		}).Error; err != nil {
+		t.Fatalf("settle the expired endpoint: %v", err)
+	}
+	return job
+}
+
+// runLinkEndpointDeletion drives the Link → Sweep interleaving for one engine.
+// deps is the handle the relation is recorded on and other is where the sweep
+// runs: a second connection on SQLite, the engine's own pool on PostgreSQL.
+//
+// The deletion lands in the window the existence check opened: after the relation
+// was written or its endpoints were read, and before the transaction that stores it
+// commits.
+func runLinkEndpointDeletion(t *testing.T, svc *Service, deps Deps, other Deps, policy RetentionPolicy) {
+	t.Helper()
+
+	clock := time.Date(2032, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	other.Now = deps.Now
+
+	keeper := acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Title: "the endpoint that stays",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	expired := seedExpiredEndpoint(t, deps, clock)
+
+	var swept sync.Once
+	const hook = "test:sweep-under-link"
+	if err := deps.DB.Callback().Create().Before("gorm:create").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "job_links" {
+			return
+		}
+		swept.Do(func() {
+			if _, err := svc.Sweep(other, policy, SweepCursor{}, 100); err != nil {
+				t.Errorf("sweep the endpoint while the relation was being recorded: %v", err)
+			}
+		})
+	}); err != nil {
+		t.Fatalf("register the interleaving hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Create().Remove(hook) })
+
+	err := svc.Link(deps, LinkRequest{Type: LinkRetryOf, FromJobID: keeper.ID, ToJobID: expired.ID})
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Link = %v, want the relation stored or refused because an endpoint is gone", err)
+	}
+
+	if jobExists(t, deps, expired.ID) {
+		t.Fatal("the sweep never deleted the endpoint the relation named: nothing was interleaved")
+	}
+	if !jobExists(t, deps, keeper.ID) {
+		t.Fatal("the sweep pruned the endpoint that was not due")
+	}
+	if dangling := danglingLinks(t, deps); dangling != 0 {
+		t.Fatalf("%d lineage rows name an endpoint that is not there", dangling)
+	}
+}
+
+// TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpoint is the SQLite half of
+// the lineage-versus-retention race: the relation and the deletion of one of its
+// endpoints are two writers on the same rows, and the relation must not outlive
+// the endpoint it names.
+//
+// The existence check and the insert are one decision, and a sweep deleting an
+// endpoint between them used to leave a relation that no reader can resolve.
+// SQLite's own answer to the read-then-write transaction is worse than the dangling
+// row: a snapshot promoted to a write after another connection committed is refused
+// outright (SQLITE_BUSY_SNAPSHOT, which SQLite does not put through the busy
+// handler), so the caller saw a storage failure instead of the verdict.
+func TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpoint(t *testing.T) {
+	deps, dsn := newFileDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+
+	// The sweep runs on its own connection, so the deletion is an interleaving
+	// rather than a step of the relation.
+	other := Deps{DB: openSecondHandle(t, dsn), Retention: &policy}
+	runLinkEndpointDeletion(t, svc, deps, other, policy)
+}
+
+// TestRetentionPrunesAJobWhoseArtifactsAreAlreadyRemoved is §7's "an already-missing
+// artifact is treated as removed" read through the pass that decides whether a Job's
+// history may go.
+//
+// The cleanup admission asked the Kind about every artifact row, removed ones
+// included. A removal recorded during an earlier expiry sweep is a durable
+// acknowledgement that the bytes are gone — the fact is already on the Job's
+// timeline — so asking again about a Job whose Kind this process can no longer run
+// answered "unaccounted", and the Job was kept for ever by an artifact no reader
+// could open and no bytes were left behind for.
+func TestRetentionPrunesAJobWhoseArtifactsAreAlreadyRemoved(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 20, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			result.Removed = append(result.Removed, artifact.Key)
+		}
+		return result, nil
+	}
+
+	// One Job whose only artifact promises an hour, and one that keeps a second
+	// artifact with no deadline at all: the second is the case that must still be
+	// accounted for, whatever happens to the first.
+	settle := func(title string, artifacts map[string]*time.Time) Snapshot {
+		t.Helper()
+		clock = clock.Add(time.Minute)
+		accepted := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			OwnerUserID: uintPtr(7), Replay: ReplayInput{NonReplayable: true},
+		})
+		execution, ok := claimOnce(t, svc, deps, "runtime-a")
+		if !ok {
+			t.Fatalf("claim for %s: nothing was claimed", title)
+		}
+		if execution.JobID != accepted.ID {
+			t.Fatalf("claimed %s while settling %s", execution.JobID, title)
+		}
+		for key, expires := range artifacts {
+			if _, err := execution.Output(OutputInput{
+				Key: key, Type: OutputTypeArtifact, Label: "the tar",
+				Reference: json.RawMessage(`{"path":"exports/` + key + `.tar"}`), ExpiresAt: expires,
+			}); err != nil {
+				t.Fatalf("publish %s of %s: %v", key, title, err)
+			}
+		}
+		finished, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateSucceeded})
+		if err != nil {
+			t.Fatalf("finish %s: %v", title, err)
+		}
+		return finished
+	}
+
+	short := clock.Add(time.Hour)
+	onlyArtifact := settle("the Job whose only artifact goes", map[string]*time.Time{"artifact": &short})
+	// The second artifact carries no deadline of its own, so it is never due and
+	// only the pass that may prune the history can ask about it.
+	keepsOne := settle("the Job with an artifact nothing can account for", map[string]*time.Time{
+		"artifact-short": &short,
+		"artifact-kept":  nil,
+	})
+
+	// The artifacts' own deadlines pass long before either Job's history does, so
+	// the expiry sweep removes the bytes and records the removal.
+	clock = clock.Add(2 * time.Hour)
+	sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+
+	removed := func(job Snapshot, key string) {
+		t.Helper()
+		var output models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", job.ID, key).First(&output).Error; err != nil {
+			t.Fatalf("%s lost its %s reference: %v", job.Title, key, err)
+		}
+		if output.Availability != string(OutputRemoved) || output.RemovedAt == nil {
+			t.Fatalf("%s/%s is %s (removed at %v), want the acknowledged removal recorded",
+				job.Title, key, output.Availability, output.RemovedAt)
+		}
+	}
+	removed(onlyArtifact, "artifact")
+	removed(keepsOne, "artifact-short")
+
+	// The Kind is retired, and an artifact of the second Job's remains: nothing in
+	// this process can establish that its bytes are gone.
+	retired := NewService()
+
+	// Both Jobs' history windows pass.
+	clock = clock.Add(48 * time.Hour)
+	result := sweepFor(t, retired, deps, policy, SweepCursor{}, 100)
+
+	if jobExists(t, deps, onlyArtifact.ID) {
+		t.Fatal("a Job whose only artifact was already recorded removed was kept: no bytes are left to account for")
+	}
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ?", onlyArtifact.ID); rows != 0 {
+		t.Fatalf("the pruned Job's output rows survived: %d", rows)
+	}
+	if !jobExists(t, deps, keepsOne.ID) {
+		t.Fatal("a Job whose Kind this process cannot run still had an artifact no one accounted for")
+	}
+	if result.Pruned != 1 {
+		t.Fatalf("pruned %d Jobs, want only the one whose artifacts are all accounted for", result.Pruned)
+	}
+}

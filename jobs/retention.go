@@ -650,9 +650,19 @@ func outputsByJob(rows []models.JobOutput) []outputBatch {
 // The call is bounded by the batch it belongs to — one Job's artifacts, at most
 // one cleanup per candidate — and runs without a cancellation source because a
 // sweep has none. An adapter whose cleanup can take a long time bounds itself.
+//
+// Artifacts already recorded as removed are deliberately not part of the question.
+// Such a row is a removal this database durably acknowledged — the bytes went, an
+// event says so — so there is nothing left for a Kind to establish about it, and
+// asking again about a Job whose Kind this process can no longer run would answer
+// "unaccounted" and keep the history for ever, naming bytes that are already gone.
+// §7's own reading of the same fact: an already-missing artifact is treated as
+// removed. A publication of the same key clears the removal, so an artifact
+// produced again is asked about again.
 func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) (bool, int, error) {
 	var rows []models.JobOutput
 	if err := deps.DB.Where("job_id = ? AND type = ?", job.ID, OutputTypeArtifact).
+		Where("availability <> ?", string(OutputRemoved)).
 		Order("key ASC").Find(&rows).Error; err != nil {
 		return false, 0, fmt.Errorf("jobs: read artifacts of %s: %w", job.ID, err)
 	}

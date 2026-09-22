@@ -1,3 +1,48 @@
+# Job Center checkpoint review corrections, round 7 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct both P1 findings from the seventh GPT-6 Astra checkpoint review of Tasks 1-5 — lineage recorded against an endpoint retention may delete concurrently, and artifact cleanup admission asking a Kind about artifacts this database has already durably recorded as removed — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§7, §9), ADRs 0006/0007, the plan's Task 2/5 contracts, `CLAUDE.md`, and the current `jobs/` code.
+- [x] Reproduce both findings as behaviour tests at the confirmed public seams — `Service.Link` interleaved with `Service.Sweep`, and `Service.Sweep` on a second `Service` with no adapter for the Kind — and record the real red failures on both engines before touching production code.
+- [x] Implement one minimal correction per finding, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| Lineage endpoints are not locked against retention | SQLite: `Link = jobs: store link: database is locked, want the relation stored or refused because an endpoint is gone` — returned in 10ms, so the 10s `busy_timeout` never engaged: the write was refused as a stale snapshot (SQLITE_BUSY_SNAPSHOT), exactly the failure the finding named. PostgreSQL, with the same count-then-insert implementation: `1 lineage rows name an endpoint that is not there` — the sweep deleted the expired endpoint and its relations after the existence count, and the relation was stored anyway, with no foreign key to catch it | Storing the relation and confirming both endpoints became one ordered decision (`jobs/service.go`, `linkLineage`): the relation is written first on both engines, so a missing endpoint rolls the transaction back with it and the write that takes the lock leaves nothing behind when the answer is no. The endpoints are then read under that hold — SQLite's writer lock (taken by the insert, the transaction's first statement, so a snapshot can never be promoted to a write after another connection committed) and PostgreSQL's `SELECT ... FOR UPDATE` over both ids in ascending order, the canonical order two relations naming one pair in opposite directions would otherwise take in reverse, and the row retention's own delete waits on. Pinned by `TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpoint` (second handle) and `TestLinkIsSerializedAgainstTheSweepThatDeletesItsEndpointPG` (the engine's pool), which drive the sweep from the create callback so the deletion lands in the window the check opened, plus `TestLinkHoldsItsEndpointsAgainstTheSweepPG` for the other half of the ordering: the relation's transaction is held open with its endpoints' rows taken, the sweep is observed blocked on that row (`pg_stat_activity`), and the relation then goes with the Job — the test that fails when the row lock is dropped while the other two still pass. After the correction both engines answer `jobs: job not found: a link needs both jobs to exist` with 0 dangling rows |
+| Confirmed artifact removals are counted as unaccounted | `a Job whose only artifact was already recorded removed was kept: no bytes are left to account for` — the artifact's earlier expiry sweep had recorded its removal (`availability = removed`, removal event), and the metadata pass then asked the Kind about that same row; with the Kind's adapter gone from the process every row came back unaccounted, so the Job could never expire | Cleanup admission and accounting read only artifacts that are not durably removed (`jobs/retention.go`, `accountForArtifacts`): a recorded removal is this database's own acknowledgement that the bytes went, so there is nothing left for a Kind to establish — §7's "an already-missing artifact is treated as removed" — and a publication of the same key clears the removal, so an artifact produced again is asked about again. Pinned by `TestRetentionPrunesAJobWhoseArtifactsAreAlreadyRemoved`, which also holds the other half: a Job that still has an artifact nothing can account for is kept |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed; `-race -run 'TestLink|TestRetention' -count=5` — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed; `-run 'TestLink' -count=3` for the three lineage regressions — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1` — passed (5.9s / 76.7s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each defect is caught by the test written for it, and the source was restored): restoring the count-then-insert `Link` fails the SQLite test with the snapshot refusal and the PostgreSQL test with `1 lineage rows name an endpoint that is not there`; dropping the `FOR UPDATE` on the endpoints fails `TestLinkHoldsItsEndpointsAgainstTheSweepPG` (`Link returned without taking its endpoints`) while both interleaving tests still pass; dropping the `availability <> removed` predicate fails `TestRetentionPrunesAJobWhoseArtifactsAreAlreadyRemoved`.
+- `go vet --tags 'json1 fts5'` and `--tags 'json1 fts5 postgres'` on `./jobs ./application_context` — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source, CLI command, generated asset or documented setting changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The relation is written first on both engines, not only where the engine forces it.** SQLite forces it (the transaction's first statement must be the write, or a read snapshot promoted to a write is refused without the busy handler), but doing it on PostgreSQL too is what makes the ordering one rule instead of two: an endpoint deleted before the insert is caught by the check that follows, an endpoint deleted while the relation's row is uncommitted cannot be (the delete waits on the row lock the check takes), and an endpoint deleted after that lock went on to delete the relation too, because the prune's own link sweep takes its snapshot after the Job's row. Writing the relation on the refusal path and rolling it back is the price of one order, and a rollback of an uncommitted row is not observable to any reader.
+- **The canonical order is the sorted id pair, as `lockIDs` already takes it.** The two directions of one relation produce byte-identical SQL, so the two transactions cannot pick opposite lock orders and deadlock; the ids are sorted explicitly rather than left to map iteration, which is what makes that true.
+- **"Durably removed" is the only exclusion from the accounting, and it is a fact about the row rather than about the bytes.** An artifact that is `expired` but not `removed` is still asked about: its deadline says the bytes are due, not that they are gone, which is exactly the distinction §7 draws between planned and confirmed expiry. A publication of the same key clears the removal, so the exclusion cannot outlive the row it applies to.
+- **Nothing else about the sweep changed.** Removed artifacts were already excluded from the deadline-driven cleanup (`dueArtifactsForCleanup`) and from the prune's own output marking (`markOutputsRemoved`); the metadata pass was the one path still asking about them.
+
+## Review
+
+Both corrections are at the seams their findings named and are pinned by behaviour rather than by statements about code: the relation by a sweep that deletes an endpoint inside the window the existence check opens, and the accounting by an artifact whose removal was durably recorded before its Kind left the process.
+
+Residual risks and handoffs:
+
+- **The second half of the artifact test retires a Kind by building a second `Service`,** which is the same property a restart has: the adapter registry is per `Service`, and a deployment's next process is exactly a Service with whatever adapters it registered.
+- **The interleaving tests drive the sweep from a GORM create callback,** so they couple to the relation being written by a `job_links` insert; a future implementation that stores lineage some other way would move the hook with it.
+- **`jobs` still has no adapter for a retired Kind's artifacts** (carried forward from Task 2): the accounting decision is now right, but reconciling bytes left behind by a Kind this process cannot run remains a deployment concern.
+
 # Job Center checkpoint review corrections, round 6 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct both P1 findings from the sixth GPT-6 Astra checkpoint review of Tasks 1-5 — a resumable history sweep with no fixed end boundary, so work an earlier pass left behind is never revisited under sustained expiry, and retention configuration captured when an execution is claimed, so an operator's change during a run has no effect on the deadlines that run's completion stamps — without widening scope into Tasks 6-18.
