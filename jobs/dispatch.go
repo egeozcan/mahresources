@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"time"
@@ -243,10 +244,12 @@ func nextClaimable(db *gorm.DB, kind string, version uint, now time.Time) (model
 
 // acquireCapacityTx occupies one slot in every budget the claim draws on.
 //
-// The budgets are taken in group order, so two claims holding several of them
-// cannot take them in opposite orders. Each budget is all-or-nothing within the
-// claim transaction: a budget that cannot be entered rolls back the slot in the
-// budgets already taken, and the Job's move to running with them.
+// The budgets are taken in group order, and that order is the order the group
+// locks are taken in as well as the order the slots are, so two claims holding
+// several budgets cannot take either in opposite orders: they do not deadlock and
+// neither of them admits past the other's count. Each budget is all-or-nothing
+// within the claim transaction: a budget that cannot be entered rolls back the
+// slot in the budgets already taken, and the Job's move to running with them.
 func acquireCapacityTx(tx *gorm.DB, budgets []CapacityRef, jobID, token string, now time.Time) error {
 	ordered := make([]CapacityRef, len(budgets))
 	copy(ordered, budgets)
@@ -263,14 +266,39 @@ func acquireCapacityTx(tx *gorm.DB, budgets []CapacityRef, jobID, token string, 
 	return nil
 }
 
-// occupyCapacitySlot takes the lowest free slot in one budget.
+// occupyCapacitySlot takes the lowest free slot in one budget, if the budget has
+// room for one more execution.
 //
-// The insert is the admission rather than a count: (group, slot) is unique, so a
-// slot two runtimes contend for is taken by exactly one of them and the loser
-// moves to the next slot — and "no slot below the limit" is a full budget. A
-// counter row would be shorter and would eventually disagree with the claims it
-// describes; this cannot drift, because the rows *are* the occupancy.
+// The rows are the occupancy — a counter would drift from the claims it is
+// supposed to describe — and the whole of the budget is what they are counted
+// against, not the slot range the *current* limit admits. A limit can be lowered
+// under a running deployment, and the executions admitted under the wider one
+// keep the higher-numbered slots they took: taken alone, "is a slot below the
+// limit free" then admits a second execution into a budget whose one execution is
+// already running in slot 1, and a restart with a lower `max-job-concurrency`
+// does the same to whatever an unresolved claim still holds. So the count is the
+// admission.
+//
+// Counting and taking are one decision, and a decision has to be one the next
+// runtime can see, so both happen under a serialization of the group across
+// processes (lockCapacityGroup). The insert is still the last word within that:
+// (group, slot) is unique, so a slot that is occupied is not taken twice.
 func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, now time.Time) error {
+	if err := lockCapacityGroup(tx, budget.Group); err != nil {
+		return err
+	}
+	var occupied int64
+	if err := tx.Model(&models.JobCapacityLease{}).
+		Where("capacity_group = ?", budget.Group).Count(&occupied).Error; err != nil {
+		return fmt.Errorf("jobs: count capacity in %s: %w", budget.Group, err)
+	}
+	if occupied >= int64(budget.Limit) {
+		return capacityExhausted(budget)
+	}
+	// A free slot below the limit always exists here: every slot below it being
+	// occupied would mean at least `limit` occupied rows, and the count just said
+	// there are fewer. The insert still decides, so a slot the count could not
+	// have known about is taken by exactly one runtime.
 	for slot := 0; slot < budget.Limit; slot++ {
 		lease := models.JobCapacityLease{
 			ID:             types.NewUUIDv7(),
@@ -282,9 +310,11 @@ func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, no
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}
-		// DO NOTHING rather than an error: a duplicate key would abort the whole
-		// claim transaction on PostgreSQL, where the loser of a contended slot
-		// still has every other slot to try.
+		// DO NOTHING rather than an error: the loop is looking for a free slot, and
+		// a slot that is already taken is simply passed over. Nothing inside this
+		// group can be taking one alongside us — the count was decided under the
+		// group's lock — and an error here would abort a claim that still has
+		// another slot to try.
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&lease)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: occupy capacity in %s: %w", budget.Group, result.Error)
@@ -293,7 +323,58 @@ func occupyCapacitySlot(tx *gorm.DB, budget CapacityRef, jobID, token string, no
 			return nil
 		}
 	}
+	return capacityExhausted(budget)
+}
+
+// capacityExhausted is the refusal every full budget reports, with the group and
+// the limit that refused it, so a log line says which budget was at its ceiling.
+func capacityExhausted(budget CapacityRef) error {
 	return fmt.Errorf("%w: %s allows %d concurrent executions", ErrCapacityExhausted, budget.Group, budget.Limit)
+}
+
+// lockCapacityGroup holds one capacity budget's admission for the rest of the
+// claim transaction, so the count it decides on is a count no other runtime can
+// be inside of.
+//
+// The engines hold it the way each of them can. SQLite has no row locks but one
+// writer, and the claim's first statement is a write (see this file's header),
+// so no other connection is inside a claim while this one is: the count and the
+// insert are already one decision there. PostgreSQL runs several writers, so the
+// group is held with a transaction-scoped advisory lock — the instrument this
+// tree uses for a decision no single row can carry
+// (application_context/group_tree_lock.go) — released when the claim's
+// transaction ends, committed or rolled back alike.
+//
+// A dialect with neither is refused rather than admitted: work admitted without
+// a serialization of its group is exactly the over-admission this lock exists to
+// prevent, and it would be invisible until a limit was lowered.
+func lockCapacityGroup(tx *gorm.DB, group string) error {
+	switch tx.Dialector.Name() {
+	case "sqlite":
+		return nil
+	case "postgres":
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", capacityAdvisoryLockKey(group)).Error; err != nil {
+			return fmt.Errorf("jobs: serialize capacity admission in %s: %w", group, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("jobs: the %s dialect has no capacity admission lock", tx.Dialector.Name())
+	}
+}
+
+// capacityAdvisoryLockKey is the PostgreSQL advisory lock one capacity group's
+// admissions share, derived from the group's name.
+//
+// The mapping only has to be stable and near-unique: two budgets whose names
+// hash to one key share a lock, which costs them some concurrency and nothing
+// else, because the occupancy rows are what admits and refuses work. It is
+// deliberately not a constant: two budgets that share a lock for no reason would
+// serialize every claim of a Kind that names a group of its own against the
+// deployment-wide budget.
+func capacityAdvisoryLockKey(group string) int64 {
+	digest := fnv.New64a()
+	_, _ = digest.Write([]byte(group))
+	return int64(digest.Sum64())
 }
 
 // releaseCapacityTx frees every capacity slot one execution holds, by token, so

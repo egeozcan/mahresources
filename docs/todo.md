@@ -1,3 +1,47 @@
+# Job Center checkpoint review corrections, round 8 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct the P1 finding from the eighth GPT-6 Astra checkpoint review of Tasks 1-5 — capacity admission reading only the slots below the *current* limit, so a budget lowered while a higher-numbered slot is still held (or held by a quarantined claim) admits one execution more than the limit allows — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§3, §7), ADRs 0006/0007, the plan's Task 4 dispatch contract, `CLAUDE.md`, and the current `jobs/` code.
+- [x] Reproduce the finding as behaviour tests at the confirmed public seam — `Service.Claim` over a budget whose limit is lowered underneath a held slot, and again underneath a quarantined one — and record the real red failures on both engines before touching production code.
+- [x] Implement one minimal correction, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| Capacity admission ignores occupied slots above a reduced limit | SQLite, before the correction: `Job 01a0ca56-c4b8-73aa-996e-33d1a6daddb2 was admitted while global already held its one execution in slot 1: an occupied slot outside the reduced range must count against the limit`, and `Job 01a0ca56-c4be-77c8-97c8-8de2273a8096 was admitted while a quarantined claim held global's only execution in slot 1` — two executions holding slots 0 and 1 under a limit of two, one of them finished (or quarantined), and a limit of one then admitted a third. PostgreSQL, with the same admission code: `Job 01a0ca5c-5e76-70ea-81be-4cf819be4359 was admitted while global already held its one execution in slot 1`, and, for the race two claims run at one moment, `two claims were admitted into a budget with room for one: 01a0ca5c-5ece-755e-bd4c-8c589b0072f1 and 01a0ca5c-5ece-7a98-a4e3-bf77745aadc5` | Admission counts the group's **rows**, and that count — under a serialization of the group — is the decision (`jobs/dispatch.go`, `occupyCapacitySlot` + `lockCapacityGroup`): the rows are the occupancy (§3), so the whole of the budget is what they are held against rather than the slot range the current limit happens to admit, and the count-and-take is one decision no other runtime can be inside of. SQLite already serializes it (the claim's first statement is the guarded write); PostgreSQL takes the group's transaction-scoped advisory lock (`pg_advisory_xact_lock` over a key derived from the group's name), the instrument this tree uses where no single row can carry a lock. The `(group, slot)` insert stays the last word within that. Pinned by `TestClaimCountsTheSlotsOutsideAReducedBudget` and `TestClaimCountsAQuarantinedSlotOutsideAReducedBudget` (SQLite), `TestClaimCountsTheSlotsOutsideAReducedBudgetPG` and `TestClaimSerializesAdmissionOnTheCapacityGroupPG` (the race two claims of two Kinds run into one shared budget at the same moment) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed; `-race -run 'Test(Claim|Lease|Heartbeat|Reconcile|Capacity|JobRuntime)' -count=5` — passed (3.6s).
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed (6.2s); the two new PostgreSQL regressions `-count=3` — passed.
+- `go test --tags 'json1 fts5' ./application_context -count=1` — passed (62.4s); `-race -run 'TestJobRuntime'` — passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each defect is caught by the test written for it, and the source was restored): dropping the count gate (`if false && occupied >= …`) fails both SQLite tests with the red rows above and both PostgreSQL tests, `TestClaimCountsTheSlotsOutsideAReducedBudgetPG` among them; dropping the group's serialization (`lockCapacityGroup` returning nil) leaves the deterministic tests passing and fails `TestClaimSerializesAdmissionOnTheCapacityGroupPG` alone with `two claims were admitted into a budget with room for one` — the race is what the lock is for, and the deterministic tests alone would not have caught it.
+- `go vet --tags 'json1 fts5' ./jobs` and `--tags 'json1 fts5 postgres' ./jobs` — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source, CLI command, generated asset or documented setting changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The count is the admission, and the rows are still the occupancy.** §3's "database-backed accounting" is the `JobCapacityLease` rows, and this keeps it that way: a counter row would drift from the claims it describes (the module's existing reason for the rows), so lowering a limit is answered by counting what is actually held rather than by keeping a second number in step. The `(group, slot)` insert stays underneath as the last word, so a slot the count could not have known about is still taken by exactly one runtime.
+- **The serialization is per group, not global, and only where the engine needs one.** SQLite needs nothing (one writer, and the claim's first statement is the guarded write — `application_context/group_tree_lock.go` records that same reasoning); PostgreSQL gets a transaction-scoped advisory lock keyed on the group's name. Two budgets whose names hash to one key share a lock, which costs them concurrency and nothing else, because what admits and refuses is the count. A dialect with neither engine's answer is refused rather than admitted.
+- **The group locks follow the budget order.** `acquireCapacityTx` already sorts the budgets by group so two claims holding several of them cannot take them in opposite orders; the group locks ride that order, so a claim never holds one group's lock while waiting for another's — and it holds the group rather than any of its lease rows, so a release freeing a slot cannot block admission.
+- **Quarantine is occupancy like any other.** A claim nobody could prove anything about keeps its capacity (§3), so it keeps its slot in the count: the quarantined half of the finding is pinned by its own test rather than by an argument about the held one.
+
+## Review
+
+Both engines are pinned by behaviour rather than by statements about code: the deterministic halves by a budget whose limit is lowered under a slot that is still held, and the PostgreSQL half by two claims of two Kinds that read the same count at the same moment and must admit exactly one — the test that fails when the group's serialization is dropped while every deterministic test still passes.
+
+Residual risks and handoffs:
+
+- **A lowered limit never displaces a running execution**, by construction: the executions admitted under the wider limit keep the slots they took and finish. What changes is that no further work is admitted until the group is back under its limit, which is what the finding's correction asks for.
+- **The advisory lock is held for the rest of the claim transaction**, including the claim row and the started event. Claims are short and one per dispatched Job; the sharing is per group, so unrelated budgets never contend.
+- **An over-admitted group is not repaired by this correction.** Work admitted while the defect was live stays admitted; nothing here cancels an execution that is already running.
+
 # Job Center checkpoint review corrections, round 7 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct both P1 findings from the seventh GPT-6 Astra checkpoint review of Tasks 1-5 — lineage recorded against an endpoint retention may delete concurrently, and artifact cleanup admission asking a Kind about artifacts this database has already durably recorded as removed — without widening scope into Tasks 6-18.

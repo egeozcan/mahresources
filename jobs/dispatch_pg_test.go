@@ -4,6 +4,7 @@ package jobs
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -223,5 +224,189 @@ func TestLifecycleReleaseAndQuarantineTakeTheJobLockFirstPG(t *testing.T) {
 		if result.err != nil && strings.Contains(result.err.Error(), "deadlock") {
 			t.Fatalf("the %s transaction deadlocked: %v", result.name, result.err)
 		}
+	}
+}
+
+// pgSecondKind is a second Kind the capacity admission tests register: one
+// claim's candidate query is taken by each claim's own transaction, so two claims
+// of two Kinds reach the deployment-wide budget they share at the same time. Two
+// claims of one Kind cannot: the second reads the first's Job as still queued
+// (its claim is uncommitted) and is refused by the Job's own fence before
+// capacity is ever asked.
+const pgSecondKind = "test-work-b"
+
+// acceptQueuedKind accepts one queued Job of the named Kind.
+func acceptQueuedKind(t *testing.T, svc *Service, deps Deps, kind string) Snapshot {
+	t.Helper()
+	snap, err := svc.Accept(deps, Acceptance{
+		Kind: kind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept queued job of %s: %v", kind, err)
+	}
+	return snap
+}
+
+// claimKindOnce claims one Job of the named Kind, failing the test on an
+// unexpected error.
+func claimKindOnce(t *testing.T, svc *Service, deps Deps, kind, claimant string, capacity ...CapacityRef) (Execution, bool) {
+	t.Helper()
+	execution, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+		Kind: kind, KindVersion: 1, Claimant: claimant, Capacity: capacity,
+	})
+	if err != nil {
+		t.Fatalf("Claim(%s): %v", kind, err)
+	}
+	return execution, ok
+}
+
+// TestClaimCountsTheSlotsOutsideAReducedBudgetPG is the PostgreSQL half of the
+// reduced-budget regression: the deployment-wide group holds one execution in a
+// slot outside the range a limit of one admits, and further work must be refused
+// there too. It is the same decision as the SQLite test's, asked of the engine
+// whose writers run concurrently.
+func TestClaimCountsTheSlotsOutsideAReducedBudgetPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+	})
+	clock := time.Date(2034, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	wide := CapacityRef{Group: CapacityGroupGlobal, Limit: 2}
+	first := acceptQueued(t, svc, deps, nil)
+	clock = clock.Add(time.Second)
+	acceptQueued(t, svc, deps, nil)
+	firstExecution, ok := claimKindOnce(t, svc, deps, testKind, "runtime-a", wide)
+	if !ok {
+		t.Fatal("the first Job was refused a budget of two with nothing in it")
+	}
+	if firstExecution.JobID != first.ID {
+		t.Fatalf("the first claim took %s, want the oldest accepted Job %s", firstExecution.JobID, first.ID)
+	}
+	if _, ok := claimKindOnce(t, svc, deps, testKind, "runtime-a", wide); !ok {
+		t.Fatal("the second Job was refused the budget's second slot")
+	}
+	finishCancelled(t, svc, deps, firstExecution.JobID, firstExecution.ExecutionToken)
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after one execution ended = %v, want only slot 1",
+			CapacityGroupGlobal, slots)
+	}
+
+	third := acceptQueued(t, svc, deps, nil)
+	if execution, claimed := claimKindOnce(t, svc, deps, testKind, "runtime-b",
+		CapacityRef{Group: CapacityGroupGlobal, Limit: 1}); claimed {
+		t.Fatalf("Job %s was admitted while %s already held its one execution in slot 1",
+			execution.JobID, CapacityGroupGlobal)
+	}
+	if stored := jobRow(t, deps, third.ID); stored.State != string(StateQueued) {
+		t.Fatalf("the refused Job is %s, want queued", stored.State)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after the refusal = %v, want only the held slot 1",
+			CapacityGroupGlobal, slots)
+	}
+}
+
+// TestClaimSerializesAdmissionOnTheCapacityGroupPG is the race the group's
+// admission lock exists for, and only PostgreSQL can show it: SQLite has one
+// writer, so two claims can never be inside capacity admission at the same
+// moment.
+//
+// The budget holds one execution in slot 2 — a slot the limit of two now in
+// force does not admit, left behind by the wider limit that admitted it — so one
+// more execution fits and only one. Two claims of two Kinds read that count at
+// the same moment; without a serialization of the group both see room for one,
+// and the budget ends up holding three executions where two are allowed.
+func TestClaimSerializesAdmissionOnTheCapacityGroupPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	shared := Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+		CapacityGroup: CapacityGroupGlobal,
+	}
+	registerTestAdapter(t, svc, shared)
+	registerTestAdapter(t, svc, Definition{
+		Kind: pgSecondKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+		CapacityGroup: CapacityGroupGlobal,
+	})
+	clock := time.Date(2034, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// Three executions under a budget of three fill slots 0, 1 and 2; the first
+	// two end, leaving the budget one execution away from its ceiling in a slot
+	// outside the range a limit of two admits.
+	wide := CapacityRef{Group: CapacityGroupGlobal, Limit: 3}
+	var executions []Execution
+	for i := 0; i < 3; i++ {
+		acceptQueued(t, svc, deps, nil)
+		clock = clock.Add(time.Second)
+		execution, ok := claimKindOnce(t, svc, deps, testKind, "runtime-a", wide)
+		if !ok {
+			t.Fatalf("execution %d was refused a budget of three with room in it", i)
+		}
+		executions = append(executions, execution)
+	}
+	for _, execution := range executions[:2] {
+		finishCancelled(t, svc, deps, execution.JobID, execution.ExecutionToken)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{2}) {
+		t.Fatalf("slots occupied in %s = %v, want the one execution in slot 2", CapacityGroupGlobal, slots)
+	}
+
+	// Two Jobs wait, one per Kind, and the second Kind's claim is started from
+	// inside the first claim's transaction: the window the two counts would
+	// otherwise pass through at the same moment.
+	acceptQueued(t, svc, deps, nil)
+	acceptQueuedKind(t, svc, deps, pgSecondKind)
+
+	narrowed := []CapacityRef{{Group: CapacityGroupGlobal, Limit: 2}}
+	type claimResult struct {
+		execution Execution
+		claimed   bool
+		err       error
+	}
+	competing := make(chan claimResult, 1)
+	var once sync.Once
+	deps.DB.Callback().Create().After("gorm:create").Register("test:competing-capacity-claim", func(tx *gorm.DB) {
+		if tx.Statement.Table != "job_capacity_leases" {
+			return
+		}
+		once.Do(func() {
+			go func() {
+				execution, claimed, err := svc.Claim(context.Background(), deps, ClaimRequest{
+					Kind: pgSecondKind, KindVersion: 1, Claimant: "runtime-b", Capacity: narrowed,
+				})
+				competing <- claimResult{execution: execution, claimed: claimed, err: err}
+			}()
+			// Long enough for the competing claim to read the occupancy and take
+			// the free slot if nothing serializes the group.
+			time.Sleep(500 * time.Millisecond)
+		})
+	})
+
+	first, ok := claimKindOnce(t, svc, deps, testKind, "runtime-a", narrowed...)
+	if !ok {
+		t.Fatal("the first claim was refused while the budget had room for one execution")
+	}
+
+	var result claimResult
+	select {
+	case result = <-competing:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the competing claim never returned")
+	}
+	if result.err != nil {
+		t.Fatalf("the competing claim: %v", result.err)
+	}
+	if result.claimed {
+		t.Fatalf("two claims were admitted into a budget with room for one: %s and %s",
+			first.JobID, result.execution.JobID)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{0, 2}) {
+		t.Fatalf("slots occupied in %s = %v, want the admitted slot 0 and the leftover slot 2",
+			CapacityGroupGlobal, slots)
 	}
 }

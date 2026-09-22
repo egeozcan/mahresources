@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -228,6 +229,31 @@ func capacityCount(t *testing.T, deps Deps, group string) int64 {
 	return count
 }
 
+// capacitySlots lists the slot numbers one capacity group's leases occupy,
+// ascending: which slots a budget holds is what a limit is enforced against.
+func capacitySlots(t *testing.T, deps Deps, group string) []int {
+	t.Helper()
+	var slots []int
+	if err := deps.DB.Model(&models.JobCapacityLease{}).Where("capacity_group = ?", group).
+		Order("slot").Pluck("slot", &slots).Error; err != nil {
+		t.Fatalf("load capacity slots for %s: %v", group, err)
+	}
+	return slots
+}
+
+// finishCancelled ends a claimed Job as cancelled, which is how a test gives
+// back the capacity an execution held without leaving the Job claimable again.
+func finishCancelled(t *testing.T, svc *Service, deps Deps, jobID, token string) {
+	t.Helper()
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: jobID, ExecutionToken: token},
+		ExpectedVersion: jobRow(t, deps, jobID).Version,
+		Outcome:         StateCancelled,
+	}); err != nil {
+		t.Fatalf("Finish(cancelled) %s: %v", jobID, err)
+	}
+}
+
 // TestClaimMovesTheJobAndItsLeaseCapacityAndStartedEventInOneTransaction is
 // Task 4's central fact: one transaction moves the Job to running, installs the
 // fencing token, records the lease, occupies every capacity budget the runtime
@@ -421,6 +447,137 @@ func TestClaimRefusesAFullBudgetWithoutClaimingAnything(t *testing.T) {
 		t.Fatalf("kind capacity rows = %d, want 1: a rolled back claim must free every budget it took", count)
 	}
 	_ = first
+}
+
+// TestClaimCountsTheSlotsOutsideAReducedBudget is this correction's regression:
+// admission asked only whether a slot below the *current* limit was free, so an
+// execution admitted under a wider limit and still holding a higher-numbered
+// slot was invisible to it. Lowering the deployment's limit then admitted one
+// execution more than the new limit allows.
+//
+// The budget here is the whole of it: the Kind declares none of its own, so the
+// occupancy that matters is the deployment-wide group's.
+func TestClaimCountsTheSlotsOutsideAReducedBudget(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-reduced-budget.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+	})
+
+	// The two Jobs are accepted a second apart so the candidate order — oldest
+	// accepted, id breaking the tie — hands them over in the order they were made.
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	wide := CapacityRef{Group: CapacityGroupGlobal, Limit: 2}
+	first := acceptQueued(t, svc, deps, nil)
+	clock = clock.Add(time.Second)
+	second := acceptQueued(t, svc, deps, nil)
+	firstExecution, ok := claimOnce(t, svc, deps, "runtime-a", wide)
+	if !ok {
+		t.Fatal("the first Job was refused a budget of two with nothing in it")
+	}
+	if _, ok := claimOnce(t, svc, deps, "runtime-a", wide); !ok {
+		t.Fatal("the second Job was refused the budget's second slot")
+	}
+	if firstExecution.JobID != first.ID {
+		t.Fatalf("the first claim took %s, want the oldest accepted Job %s", firstExecution.JobID, first.ID)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{0, 1}) {
+		t.Fatalf("slots occupied in %s = %v, want 0 and 1", CapacityGroupGlobal, slots)
+	}
+
+	// The execution holding the lower slot ends, so the budget holds one
+	// execution — in slot 1, which is outside the range a limit of one admits.
+	finishCancelled(t, svc, deps, first.ID, firstExecution.ExecutionToken)
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after one execution ended = %v, want only slot 1",
+			CapacityGroupGlobal, slots)
+	}
+
+	third := acceptQueued(t, svc, deps, nil)
+	if execution, claimed := claimOnce(t, svc, deps, "runtime-b",
+		CapacityRef{Group: CapacityGroupGlobal, Limit: 1}); claimed {
+		t.Fatalf("Job %s was admitted while %s already held its one execution in slot 1: an occupied "+
+			"slot outside the reduced range must count against the limit", execution.JobID, CapacityGroupGlobal)
+	}
+	if stored := jobRow(t, deps, third.ID); stored.State != string(StateQueued) || stored.ExecutionToken != "" {
+		t.Fatalf("the refused Job is %s with token %q, want queued and unowned", stored.State, stored.ExecutionToken)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after the refusal = %v, want only the held slot 1",
+			CapacityGroupGlobal, slots)
+	}
+	if stored := jobRow(t, deps, second.ID); stored.State != string(StateRunning) {
+		t.Fatalf("the held Job is %s, want still running", stored.State)
+	}
+}
+
+// TestClaimCountsAQuarantinedSlotOutsideAReducedBudget is the other half of the
+// same rule: a claim nobody could prove anything about keeps its capacity while
+// it stays unresolved (§3), and that capacity is occupancy like any other, so it
+// counts against a limit lowered underneath it.
+func TestClaimCountsAQuarantinedSlotOutsideAReducedBudget(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "claim-reduced-budget-quarantined.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+	})
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileExternalWorkUnproven, nil
+	}
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// Accepted a second apart, so the candidate order hands them over in the order
+	// they were made and the quarantined claim is the one in the higher slot.
+	wide := CapacityRef{Group: CapacityGroupGlobal, Limit: 2}
+	first := acceptQueued(t, svc, deps, nil)
+	clock = clock.Add(time.Second)
+	quarantined := acceptQueued(t, svc, deps, nil)
+	firstExecution, ok := claimOnce(t, svc, deps, "runtime-a", wide)
+	if !ok {
+		t.Fatal("the first Job was refused a budget of two with nothing in it")
+	}
+	if firstExecution.JobID != first.ID {
+		t.Fatalf("the first claim took %s, want the oldest accepted Job %s", firstExecution.JobID, first.ID)
+	}
+	if _, ok := claimOnce(t, svc, deps, "runtime-a", wide); !ok {
+		t.Fatal("the second Job was refused the budget's second slot")
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{0, 1}) {
+		t.Fatalf("slots occupied in %s = %v, want 0 and 1", CapacityGroupGlobal, slots)
+	}
+
+	// The second execution's runtime disappears without proving anything, so its
+	// claim is quarantined and its slot stays occupied.
+	expireClaim(t, deps, quarantined.ID, clock)
+	reconcileOnce(t, svc, deps, "runtime-b")
+	if claim := claimRow(t, deps, quarantined.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+
+	// The first execution ends, so the budget holds one execution — the
+	// quarantined one, in slot 1.
+	finishCancelled(t, svc, deps, first.ID, firstExecution.ExecutionToken)
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after one execution ended = %v, want only the quarantined slot 1",
+			CapacityGroupGlobal, slots)
+	}
+
+	third := acceptQueued(t, svc, deps, nil)
+	if execution, claimed := claimOnce(t, svc, deps, "runtime-c",
+		CapacityRef{Group: CapacityGroupGlobal, Limit: 1}); claimed {
+		t.Fatalf("Job %s was admitted while a quarantined claim held %s's only execution in slot 1",
+			execution.JobID, CapacityGroupGlobal)
+	}
+	if stored := jobRow(t, deps, third.ID); stored.State != string(StateQueued) {
+		t.Fatalf("the refused Job is %s, want queued", stored.State)
+	}
+	if slots := capacitySlots(t, deps, CapacityGroupGlobal); !slices.Equal(slots, []int{1}) {
+		t.Fatalf("slots occupied in %s after the refusal = %v, want only the quarantined slot 1",
+			CapacityGroupGlobal, slots)
+	}
 }
 
 // TestClaimRefusesAKindNoAdapterIsRegisteredFor keeps dispatch from inventing an
