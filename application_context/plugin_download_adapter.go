@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"mahresources/download_queue"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
@@ -114,15 +115,37 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 		owner = &id
 	}
 
-	job, err := ctx.downloadManager.SubmitForPlugin(creator, owner, pluginName)
-	if err != nil {
-		return nil, err
+	// The one door a remote download is submitted through, so a plugin's own
+	// submission is the same work as any other: with a control plane installed the
+	// durable Job is accepted (and dispatched) first, and the entry the plugin is
+	// told about is the projection of that Job rather than a memory-only row that
+	// would never appear in the Job Center and would be lost with the process.
+	// With none installed the funnel is the queue's own submission, which is the
+	// behaviour every bare manager and the CLI have always had.
+	submissions := ctx.SubmitRemoteDownloads(creator, owner, pluginName, "plugin")
+	if len(submissions) != 1 {
+		return nil, errors.New("the download could not be submitted")
+	}
+	submission := submissions[0]
+	if submission.Err != nil {
+		return nil, submission.Err
+	}
+	if submission.Job == nil {
+		// Accepted and dispatched by somebody else: this process lost the claim (or
+		// the deployment's budget is full), so the work is queued and a runtime will
+		// run it. The plugin is answered with the same shape it always gets, and the
+		// id is the one the Job Center lists it under.
+		return map[string]any{
+			"id":     submission.CanonicalJobID,
+			"url":    url,
+			"status": string(download_queue.JobStatusPending),
+		}, nil
 	}
 
 	// Snapshot, not the live job: Submit starts the worker before it returns,
 	// so reading job.Status here is a read racing that worker's first write.
 	// Snapshot takes the job's own lock.
-	snap := job.Snapshot()
+	snap := submission.Job.Snapshot()
 	return map[string]any{
 		"id":     snap.ID,
 		"url":    snap.URL,

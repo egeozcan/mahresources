@@ -632,3 +632,79 @@ func TestDeferredWorkWithADeletedActorIsBlockedAndNeverRunsAsTheHost(t *testing.
 		t.Fatalf("work whose actor is gone was dispatched anyway: %d queue entries", len(entries))
 	}
 }
+
+// TestAPluginsImmediateDownloadIsADurableJob pins the one production Lua surface
+// that used to bypass durable acceptance: mah.download.submit.
+//
+// It reaches the queue through SubmitDownload, and going straight to
+// SubmitForPlugin made its work memory-only — no canonical Job, nothing in the Job
+// Center, and nothing left of it but a legacy history row once the process moved
+// on. It goes through the same funnel every other remote download does instead,
+// and answers the plugin the shape it always has.
+func TestAPluginsImmediateDownloadIsADurableJob(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	enableDownloadTestPlugin(t, ctx)
+
+	// A reserved, never-resolving host: a plugin's transfer is policed by its own
+	// egress list, which denies the loopback address a test server would use, and
+	// what is under test here is the durable acceptance rather than the transfer.
+	response, err := ctx.SubmitDownload(downloadTestPlugin, 0, "https://example.invalid/plugin.bin", nil)
+	if err != nil {
+		t.Fatalf("submit the plugin's download: %v", err)
+	}
+	legacyID, _ := response["id"].(string)
+	if legacyID == "" {
+		t.Fatalf("the plugin was answered %+v", response)
+	}
+
+	// The id the plugin holds is the legacy handle of a canonical Job, and the
+	// queue entry it names is that Job's execution.
+	resolved, err := ctx.ResolveJobHandle(DownloadHandleNamespace, legacyID)
+	if err != nil {
+		t.Fatalf("the answered id resolves to no durable job: %v", err)
+	}
+	if resolved.Kind != JobKindRemoteDownload {
+		t.Fatalf("the plugin's download is a %s job, want %s", resolved.Kind, JobKindRemoteDownload)
+	}
+	entry, ok := ctx.DownloadManager().GetJob(legacyID)
+	if !ok {
+		t.Fatalf("no queue entry carries the answered id")
+	}
+	if entry.CanonicalJobID != resolved.ID {
+		t.Fatalf("the queue entry names job %q, want %q", entry.CanonicalJobID, resolved.ID)
+	}
+	summary := string(resolved.Summary)
+	if !strings.Contains(summary, downloadTestPlugin) {
+		t.Fatalf("the durable record does not name the plugin that asked: %s", summary)
+	}
+
+	// The transfer itself fails — the host does not resolve — and that failure is
+	// the Job's, recorded on the durable record rather than only in the queue's
+	// memory.
+	finished := waitForSnapshot(t, ctx, resolved.ID, "the download to finish",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if finished.State != jobs.StateFailed {
+		t.Fatalf("the download ended %s (%+v), want the transfer's failure", finished.State, finished.Failure)
+	}
+}
+
+// TestAPluginsImmediateDownloadReportsAnAcceptanceFailure is the other half: when
+// the Job cannot be accepted at all, the plugin is told and the queue is left
+// alone. A submission that started a transfer nothing durable had agreed to is the
+// failure this path exists to make impossible.
+func TestAPluginsImmediateDownloadReportsAnAcceptanceFailure(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+	enableDownloadTestPlugin(t, ctx)
+
+	// No replay key: a download Job whose input must be sealed cannot be accepted,
+	// and the refusal has to reach the caller rather than the queue.
+	ctx.SetJobReplayKeyring(nil)
+	before := len(ctx.DownloadManager().GetJobs())
+
+	if _, err := ctx.SubmitDownload(downloadTestPlugin, 0, "https://example.invalid/unsealed.bin", nil); err == nil {
+		t.Fatalf("a submission with no replay key was accepted")
+	}
+	if after := len(ctx.DownloadManager().GetJobs()); after != before {
+		t.Fatalf("the refused submission left %d queue entries behind", after-before)
+	}
+}
