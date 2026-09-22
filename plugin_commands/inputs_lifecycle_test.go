@@ -95,9 +95,11 @@ func TestSuppliedInputsAreDiscardableAndSweptWithTheFolder(t *testing.T) {
 func TestRecoverySettlesARunLeftMidWrite(t *testing.T) {
 	root := t.TempDir()
 	const runID = "left-mid-write"
-	pgid := 4242
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
-	store.runs[runID] = RunRecord{ID: runID, PluginName: "plug", Status: RunStatusRunning, ProcessGroupID: &pgid}
+	// The exact identity a kill during input writing leaves: running, marked
+	// before the write, with no process group recorded because the spawn had not
+	// happened yet. That is what sends recovery down the unverified branch.
+	store.runs[runID] = RunRecord{ID: runID, PluginName: "plug", Status: RunStatusRunning}
 	folder := filepath.Join(root, "plugin_exchange", "plug", runID)
 	if err := os.MkdirAll(filepath.Join(folder, ".tmp"), 0o700); err != nil {
 		t.Fatal(err)
@@ -109,7 +111,7 @@ func TestRecoverySettlesARunLeftMidWrite(t *testing.T) {
 	settings := lifecycleSettings{root: root, exchange: time.Hour, output: time.Hour}
 	d := NewDispatcher(Dependencies{
 		Store: store, Settings: settings,
-		Inspector: &recoveryInspector{states: map[int][]GroupIdentity{pgid: {{State: GroupDead}}}},
+		Inspector: &recoveryInspector{states: map[int][]GroupIdentity{}},
 	})
 	if err := d.Recover(context.Background()); err != nil {
 		t.Fatalf("Recover: %v", err)
@@ -121,13 +123,17 @@ func TestRecoverySettlesARunLeftMidWrite(t *testing.T) {
 	if record.Status != RunStatusInterrupted {
 		t.Fatalf("recovered status = %q, want %q", record.Status, RunStatusInterrupted)
 	}
+	if !record.OutputUnverified {
+		t.Fatal("a run killed before its process group was recorded must be marked output-unverified")
+	}
 
 	// The settled run is terminal, so the read path can answer: the declared
-	// name does not exist and the scratch is not reachable as an input.
+	// name does not exist, and because recovery marked the output unverified the
+	// folder is refused outright rather than read.
 	exchange := NewExchange(store, settings)
 	access := Access{PluginName: "plug", Administrator: true}
-	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, ErrExchangeFileNotFound) {
-		t.Fatalf("Read of a name that was never renamed = %v, want %v", err, ErrExchangeFileNotFound)
+	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, ErrExchangeOutputUnverified) {
+		t.Fatalf("Read of a name that was never renamed = %v, want %v", err, ErrExchangeOutputUnverified)
 	}
 	if _, err := exchange.Read(access, runID, ".tmp", 1024); err == nil {
 		t.Fatal("the scratch directory is readable as an input")

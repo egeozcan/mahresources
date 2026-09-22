@@ -399,24 +399,34 @@ git commit -m "test: prove plugin command inputs end to end"
 
 ## Spec §9 coverage map
 
+The spec's §9 preamble requires the real runner and store, and §9.1, §9.5, §9.6,
+§9.8, §9.9 and §9.13 are covered that way by
+`application_context/plugin_command_inputs_integration_test.go`, which wires the
+real SQLite store, the real `plugin_commands` dispatcher and the real runner
+around `/bin/sh`. The remaining rows name the finer-grained unit tests, which use
+the real filesystem and real processes but a fake store on purpose: they exist to
+pin edge cases a real command cannot produce on demand. §9.18's assertion is
+about memory shared between the dispatcher's copies of a run, so it is pinned at
+the copy boundary rather than by inspecting the dispatcher's private state.
+
 | §9 | Test |
 | --- | --- |
-| 1 present before spawn | `TestRunnerWritesSuppliedInputsBeforeTheSpawn`, e2e `supplied input files reach the program and never reach a record` |
+| 1 present before spawn | `TestPluginCommandInputsAgainstTheRealStore` (real store and runner), `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (mode and size), e2e `supplied input files reach the program and never reach a record` |
 | 2 undeclared name | `TestValidateInputsRefusals`, `TestCommandsRunRefusesInputsItCannotHonour`, `TestCommandsRunRefusesInputsForACommandThatDeclaresNone`, `TestSubmitRefusesInputsBeforeAnyDurableWork`, e2e `refuses an input file the command does not declare` |
 | 3 name grammar | `TestInputFileNameGrammar`, `TestValidateDeclarationChecksInputNames`, `TestValidateInputsRefusals`, the manifest malformed-declaration table |
 | 4 limits | `TestValidateInputsRefusals` (including the at-limit acceptance), `TestSubmitRefusesInputsBeforeAnyDurableWork` |
-| 5 quota | per-run: `TestSubmitRefusesInputsBeforeAnyDurableWork`; global sample: `TestSuppliedInputsCountTowardTheGlobalStagingSample` |
-| 6 nothing leaks | `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (params, argv, output, error, record JSON, run-view JSON, captured log lines), `TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes`, e2e page assertion |
+| 5 quota | per-run: `TestSubmitRefusesInputsBeforeAnyDurableWork`; global sample after a run: `TestSuppliedInputsCountTowardTheGlobalStagingSample` |
+| 6 nothing leaks | `TestPluginCommandInputsAgainstTheRealStore` (stored row, output row, run list, application log), `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (record and run-view JSON, log lines), `TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes`, e2e page assertion |
 | 7 consent | `TestCommandInputsArePartOfConsentIdentity`, `TestCommandManifestInputIdentity`, `TestCommandCapabilityCataloguesDescribeTheHostPrivilege`, `TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag`, `TestPluginEnableCommandConfirmationReturnsStructuredJSONWithoutConfirming` |
-| 8 retention and discard | `TestSuppliedInputsAreDiscardableAndSweptWithTheFolder` |
-| 9 crash safety | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten` (partial scratch, declared name absent, debris unlistable and unreadable), `TestRecoverySettlesARunLeftMidWrite` (durable row settled, declared name absent) — state-level, see the spec's §9.9 |
+| 8 retention and discard | `TestPluginCommandInputsAgainstTheRealStore` (discard), `TestPluginCommandInputsAreSweptWithTheExpiredFolderAgainstTheRealStore` (sweep of the folder that held the input), `TestSuppliedInputsAreDiscardableAndSweptWithTheFolder` |
+| 9 crash safety | `TestPluginCommandKillDuringInputWriteRecoversAndSweeps` (real store: the crash-shaped row is `running` with no process group, recovery settles it `interrupted`/`output_unverified`, the declared name was never renamed, and the same folder is then swept), `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten` and `TestRecoverySettlesARunLeftMidWrite` (unit-level artifacts); the kill itself is not reproduced, see spec §9.9 |
 | 10 failure path | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten`, `TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort` |
 | 11 options shape | `TestCommandsRunRefusesInputsItCannotHonour`, `TestCommandsRunRefusesAFifthArgument`, `TestCommandsRunRefusesANonFunctionCallbackBesideOptions` |
 | 12 zero bytes | `TestRunnerWritesAZeroByteInput`, `TestValidateInputsAcceptsDeclaredNamesInDeclarationOrder` |
-| 13 queued cancellation | `TestRunnerWritesNothingWhenTheRunIsCancelledBeforeItStarts`, `TestRunnerCancellationDuringTheWriteStopsTheSpawn` |
+| 13 queued cancellation | `TestPluginCommandQueuedCancellationWritesNoInputAgainstTheRealStore` (real store and dispatcher: the third run waits in the plugin's lane, is cancelled while queued, and its folder has no input), `TestRunnerWritesNothingWhenTheRunIsCancelledBeforeItStarts`, `TestRunnerCancellationDuringTheWriteStopsTheSpawn` |
 | 14 record shape | `TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes`, `TestRunViewToLuaExposesSuppliedInputNamesAndSizes`, `TestPluginCommandHistoryTemplateShowsInputNamesAndSizesWithoutContents`, e2e |
 | 15 doomed spawn writes nothing | `TestRunnerWritesNothingForADoomedSpawn` |
 | 16 short write refused | `TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort` |
-| 17 scratch isolation | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten`, `TestRunnerLeavesNoScratchBehindOnASuccessfulWrite`, `TestRecoverySettlesARunLeftMidWrite` |
-| 18 in-memory residency | `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (shared map and backing array), `TestDispatcherRetirementPathsDropSuppliedContents` |
+| 17 scratch isolation | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten`, `TestRunnerLeavesNoScratchBehindOnASuccessfulWrite`, `TestPluginCommandKillDuringInputWriteRecoversAndSweeps` |
+| 18 in-memory residency | `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (the submission map the dispatcher's copies share is emptied and the validated slice's backing array is zeroed), `TestDispatcherRetirementPathsDropSuppliedContents` (the two retry paths that retain a run also drop its bytes) |
 - [x] `CONTEXT.md` terms (Command Declaration, Declared Input File, Run Parameter, Command Import, Exchange Folder) appear in the new docs prose, and "input file" is never used for a Command Import.
