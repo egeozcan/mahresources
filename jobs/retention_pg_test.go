@@ -363,3 +363,21 @@ func TestLinkHoldsItsEndpointsAgainstTheSweepPG(t *testing.T) {
 		t.Fatalf("%d lineage rows name an endpoint that is not there", dangling)
 	}
 }
+
+// TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidatePG is the other
+// engine's half of the superseded-candidate interleaving, on the pool the runtime's
+// writes already run on.
+//
+// The artifact's deadline and the Job's metadata deadline run on different clocks,
+// and a second sweep crossing the first while the metadata pass holds the second in
+// its hands is what makes the candidate the metadata pass re-reads a row it never
+// selected. PostgreSQL lets both statements run at once for real; SQLite serializes
+// writers, so the untagged test drives the same interleaving through a second
+// connection.
+func TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidatePG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+
+	runSupersededArtifactCandidatePrune(t, svc, deps, deps, policy)
+}

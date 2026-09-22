@@ -225,15 +225,25 @@ func sweepBound(db *gorm.DB, cursor SweepCursor, now time.Time) (*SweepBound, er
 }
 
 // expiredJobPredicate is the retention decision, written once: a terminal Job
-// whose deadline passed, which nobody pinned and no unresolved claim still
-// protects. It is re-asserted inside the deleting transaction, so the decision
-// and the delete cannot be separated by a pin or a claim landing in between —
-// and on an engine with row locks the transaction has taken the Job's own row
-// before this predicate is evaluated, so a writer holding it has committed by
-// then.
+// whose deadline passed, which nobody pinned, no unresolved claim still protects,
+// and whose artifacts are all durably recorded removed. It is re-asserted inside
+// the deleting transaction, so the decision and the delete cannot be separated by a
+// pin or a claim landing in between — and on an engine with row locks the
+// transaction has taken the Job's own row before this predicate is evaluated, so a
+// writer holding it has committed by then.
+//
+// The last clause is §9's "records output removal before pruning the relevant
+// history" as a property of the statement that does the pruning rather than of the
+// accounting that preceded it: history is the only durable reference an artifact's
+// bytes have, so while any artifact of this Job is not recorded removed, the bytes
+// are still out there and the delete must not match. What the accounting established
+// before is what makes this clause admit the ordinary case; it is stated here as well
+// because everything between the two — another pass, a stale candidate, a recording
+// its own guard declined — is exactly what a decision made earlier cannot speak for.
 const expiredJobPredicate = `jobs.id = ? AND jobs.state IN ? AND jobs.expires_at IS NOT NULL AND jobs.expires_at <= ?
 	AND NOT EXISTS (SELECT 1 FROM job_preferences p WHERE p.job_id = jobs.id AND p.pinned_at IS NOT NULL)
-	AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)`
+	AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)
+	AND NOT EXISTS (SELECT 1 FROM job_outputs o WHERE o.job_id = jobs.id AND o.type = ? AND o.availability <> ?)`
 
 // pruneExpiredJob applies one candidate in its own transaction.
 //
@@ -266,6 +276,7 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 
 		result := tx.Where(expiredJobPredicate,
 			candidate.ID, terminalStates(), now, unresolvedClaimStates(),
+			OutputTypeArtifact, string(OutputRemoved),
 		).Delete(&models.Job{})
 		if result.Error != nil {
 			return fmt.Errorf("jobs: prune expired job %s: %w", candidate.ID, result.Error)
@@ -728,18 +739,26 @@ func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.Jo
 			return nil
 		}
 
-		candidates, err := currentArtifacts(tx, job.ID, rows)
+		candidates, superseded, err := currentArtifacts(tx, job.ID, rows)
 		if err != nil {
 			return err
 		}
 		if len(candidates) == 0 {
-			// Every candidate was replaced while the pass was running, so there is
-			// nothing here to ask the Kind about and nothing to defer: the artifacts
-			// that replaced them carry their own deadlines.
+			// Every candidate was replaced while the pass was running. That is not an
+			// answer about the bytes: the rows that replaced them carry their own
+			// deadlines, and reading "nothing left of this selection" as "nothing left
+			// to remove" is what let a Job whose artifact is still there be pruned,
+			// leaving the bytes with nothing naming them. The replacements are what a
+			// later pass decides about, so this one accounts for nothing and keeps the
+			// history that still points at them.
+			unaccounted = superseded
 			return nil
 		}
 
 		removed, unaccounted, err = s.askForArtifactRemoval(tx, job, candidates, now)
+		// A candidate the pass was not looking at any more goes with the ones the
+		// Kind would not vouch for: neither is a removal this pass established.
+		unaccounted = append(unaccounted, superseded...)
 		return err
 	})
 	if err != nil {
@@ -749,7 +768,8 @@ func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.Jo
 }
 
 // currentArtifacts re-reads the candidates a pass selected, under the Job's own row,
-// and keeps the ones that are still the rows that pass decided about.
+// and splits them into the ones that are still the rows that pass decided about and
+// the ones a replacement superseded.
 //
 // The row's own version is what makes it the same artifact, and it is the whole of
 // the check: every column that says what an output promises — its reference, its
@@ -761,10 +781,18 @@ func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.Jo
 // deletes bytes an output still advertises, and the version guard on the recording
 // cannot undo it — it can only decline to record what already happened.
 //
+// Which of the two it is matters to the caller. A superseded row is not a removal:
+// the row that replaced it carries its own deadline and its own availability, and
+// the bytes those name are still there, so the pass that skipped it has established
+// nothing about them and the Job keeps the history that is their only durable
+// reference until some pass accounts for the replacement. A row that is not there at
+// all is neither: nothing deletes an output row but the pruning of its own Job, which
+// the admission above has already answered for.
+//
 // A deferral is the one write to these rows that deliberately moves no version, and
 // it is not a reason to skip a candidate here: it says a pass could not establish
 // that the bytes are gone, which is the question this pass is answering.
-func currentArtifacts(tx *gorm.DB, jobID string, rows []models.JobOutput) ([]models.JobOutput, error) {
+func currentArtifacts(tx *gorm.DB, jobID string, rows []models.JobOutput) (current, superseded []models.JobOutput, err error) {
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
 		ids = append(ids, row.ID)
@@ -772,22 +800,27 @@ func currentArtifacts(tx *gorm.DB, jobID string, rows []models.JobOutput) ([]mod
 
 	var stored []models.JobOutput
 	if err := tx.Where("job_id = ? AND id IN ?", jobID, ids).Find(&stored).Error; err != nil {
-		return nil, fmt.Errorf("jobs: re-read artifacts before cleanup: %w", err)
+		return nil, nil, fmt.Errorf("jobs: re-read artifacts before cleanup: %w", err)
 	}
 	byID := make(map[string]models.JobOutput, len(stored))
 	for _, row := range stored {
 		byID[row.ID] = row
 	}
 
-	current := make([]models.JobOutput, 0, len(rows))
+	current = make([]models.JobOutput, 0, len(rows))
+	superseded = make([]models.JobOutput, 0, len(rows))
 	for _, row := range rows {
 		here, found := byID[row.ID]
-		if !found || here.Version != row.Version {
+		if !found {
+			continue
+		}
+		if here.Version != row.Version {
+			superseded = append(superseded, row)
 			continue
 		}
 		current = append(current, here)
 	}
-	return current, nil
+	return current, superseded, nil
 }
 
 // lockArtifactCleanupTarget takes the Job's own row before the adapter is asked

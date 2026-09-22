@@ -1856,3 +1856,173 @@ func TestRetentionPrunesAJobWhoseArtifactsAreAlreadyRemoved(t *testing.T) {
 		t.Fatalf("pruned %d Jobs, want only the one whose artifacts are all accounted for", result.Pruned)
 	}
 }
+
+// TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidate is §9's "sweep work
+// records output removal before pruning the relevant history" read as a requirement
+// about the *candidate* rather than about the Job.
+//
+// The metadata pass asks the Kind about the artifacts of the Job it is deciding
+// about and prunes the history only when every one of them is accounted for. The
+// rows it asks about are the ones it selected, and a second sweep can cross an
+// artifact's own deadline in the window between that selection and the Job's row:
+// the deadline pass marks the artifact expired — a new version of the same row —
+// and the cleanup that follows asks the Kind and is told the bytes are still there.
+// The metadata pass then re-read the row, saw a version it had not selected, dropped
+// it from the set it asks about, and read "nothing left to ask about" as "everything
+// is gone": the Job was pruned while the artifact's bytes survived, and the only
+// durable reference to them went with the history that named them. A superseded
+// candidate is not a removal acknowledgement.
+func TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidate(t *testing.T) {
+	deps, dsn := newFileDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+
+	// The deadline sweep runs on its own connection, so crossing the artifact's
+	// deadline is an interleaving rather than a step of the pass under test.
+	other := Deps{DB: openSecondHandle(t, dsn), Retention: &policy}
+	runSupersededArtifactCandidatePrune(t, svc, deps, other, policy)
+}
+
+// runSupersededArtifactCandidatePrune drives the selection → deadline expiry and
+// retained cleanup → Job's row interleaving for one engine. deps is the connection
+// the pass under test runs on and other is where the deadline sweep runs: a second
+// handle on SQLite, the engine's own pool on PostgreSQL.
+func runSupersededArtifactCandidatePrune(t *testing.T, svc *Service, deps Deps, other Deps, policy RetentionPolicy) {
+	t.Helper()
+
+	clock := time.Date(2034, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	other.Now = deps.Now
+	other.Retention = &policy
+
+	// The artifact's bytes. The Kind's cleanup deletes the file its reference names
+	// only where it can establish that the artifact is gone, so the file still being
+	// there is a fact about the disk rather than about a column.
+	bytes := filepath.Join(t.TempDir(), "retained.tar")
+	if err := os.WriteFile(bytes, []byte("the export"), 0o600); err != nil {
+		t.Fatalf("write the artifact: %v", err)
+	}
+	reference := json.RawMessage(fmt.Sprintf(`{"path":%q}`, bytes))
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		// The Kind cannot remove these bytes: the file is still what a reader is
+		// being offered.
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			result.Retained = append(result.Retained, artifact.Key)
+		}
+		return result, nil
+	}
+
+	// A Job whose history window has passed while its artifact's own deadline has
+	// not: the metadata pass is due, the deadline pass is not.
+	clock = clock.Add(time.Minute)
+	accepted := acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Title: "an export with a retained artifact",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	if execution.JobID != accepted.ID {
+		t.Fatalf("claimed %s while publishing the artifact of %s", execution.JobID, accepted.ID)
+	}
+	artifactDeadline := clock.Add(time.Hour)
+	if _, err := execution.Output(OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+		Reference: reference, ExpiresAt: &artifactDeadline,
+	}); err != nil {
+		t.Fatalf("publish the artifact: %v", err)
+	}
+	if _, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateSucceeded}); err != nil {
+		t.Fatalf("finish the Job: %v", err)
+	}
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", accepted.ID).Updates(map[string]any{
+		"finished_at": clock.Add(-2 * time.Hour),
+		"expires_at":  clock.Add(-time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("settle the Job's metadata deadline: %v", err)
+	}
+
+	// The window: the metadata pass has read the artifacts of the Job it is deciding
+	// about and has not yet taken the Job's row. The artifact's own deadline crosses
+	// in it, and the sweep that crosses it cannot establish that the bytes are gone.
+	var mu sync.Mutex
+	interleaved := false
+	var deadlineSweep SweepResult
+	const hook = "test:expire-artifact-under-metadata-prune"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "job_outputs" {
+			return
+		}
+		names := false
+		for _, variable := range tx.Statement.Vars {
+			if named, ok := variable.(string); ok && named == accepted.ID {
+				names = true
+			}
+		}
+		if !names {
+			return
+		}
+		mu.Lock()
+		if interleaved {
+			mu.Unlock()
+			return
+		}
+		interleaved = true
+		mu.Unlock()
+
+		clock = clock.Add(2 * time.Hour)
+		result, err := svc.Sweep(other, policy, SweepCursor{}, 100)
+		if err != nil {
+			t.Errorf("sweep the artifact's own deadline while the metadata pass was reading its Job: %v", err)
+			return
+		}
+		deadlineSweep = result
+	}); err != nil {
+		t.Fatalf("register the interleaving hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
+
+	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+
+	mu.Lock()
+	ran := interleaved
+	mu.Unlock()
+	if !ran {
+		t.Fatal("the interleaving never ran: the metadata pass did not read the Job's artifacts")
+	}
+	if deadlineSweep.Pruned != 0 {
+		t.Fatalf("the deadline sweep pruned %d Jobs, want none: it never got past a retained artifact",
+			deadlineSweep.Pruned)
+	}
+
+	// The property: history is not pruned while the bytes it is the only reference
+	// to are still there.
+	if !jobExists(t, deps, accepted.ID) {
+		t.Fatal("a Job was pruned while the artifact its history names is still there: " +
+			"the retained bytes outlived their only durable reference")
+	}
+	if result.Pruned != 0 {
+		t.Fatalf("pruned %d Jobs, want none", result.Pruned)
+	}
+	if result.Skipped == 0 {
+		t.Error("the sweep did not report the Job it left alone")
+	}
+
+	// The artifact is expired and its bytes are still there, so no removal was
+	// acknowledged for it.
+	var artifact models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", accepted.ID, "artifact").First(&artifact).Error; err != nil {
+		t.Fatalf("the Job's artifact reference is gone: %v", err)
+	}
+	if artifact.Availability != string(OutputExpired) {
+		t.Fatalf("artifact availability = %s, want the deadline it crossed recorded", artifact.Availability)
+	}
+	if _, err := os.Stat(bytes); err != nil {
+		t.Fatalf("the bytes the Kind retained are gone: %v", err)
+	}
+}

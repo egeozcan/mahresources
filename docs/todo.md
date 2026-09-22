@@ -1,3 +1,37 @@
+# Job Center checkpoint review corrections, round 9 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct the P1 finding from the ninth GPT-6 Astra checkpoint review of Tasks 1-5 — a superseded artifact candidate read as a completed cleanup, so a metadata prune could delete the only durable reference to bytes that are still there — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§7, §9), ADRs 0006/0007, the plan's Task 5 contract, `CLAUDE.md`, and the current `jobs/retention.go` code and tests.
+- [x] Reproduce the finding as behaviour tests at the confirmed public seam — `Service.Sweep` interleaved with a second `Service.Sweep` crossing an artifact's own deadline, its cleanup returning `Retained` for the bytes — and record the real red failure on both engines before touching production code.
+- [x] Implement one minimal correction per half of the finding's correction, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| A superseded artifact candidate authorizes metadata deletion | SQLite, before the correction: `a Job was pruned while the artifact its history names is still there: the retained bytes outlived their only durable reference` (`retention_test.go:1883`). PostgreSQL, with the same code: the same failure from `retention_pg_test.go:382`. In both, the pass under test selected an artifact row (`version` v, `available`), a second sweep crossed the artifact's own deadline inside the window before the Job's row (the deadline pass marked it `expired`, v+1, and its cleanup was told the bytes are still there), and the metadata pass then dropped the version it had not selected from the set it asks the Kind about — reading "nothing left of this selection" as "everything is gone". The Job was pruned, its output rows went with it, and the retained file was left with no durable reference at all | The accounting no longer equates a superseded candidate with a removal, and the delete statement re-asserts the invariant itself (`jobs/retention.go`). `currentArtifacts` returns the rows a replacement superseded alongside the ones the pass decided about, and `removeJobArtifacts` counts them as unaccounted — the row that replaced one carries its own deadline and its own availability, so nothing about its bytes was established, and the Job keeps the history that is their only durable reference. `expiredJobPredicate` additionally refuses a Job whose artifacts are not all recorded removed, so the same property holds at the statement that deletes rather than only in the decision that preceded it. Pinned by `TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidate` (SQLite, second connection) and `TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidatePG` (the engine's own pool) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed (1.2s).
+- `go test --tags 'json1 fts5' ./jobs -race -run 'TestRetention|TestLink' -count=3` — passed (3.0s).
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed (7.3s); `-run 'TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidatePG' -count=5` — passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1` — passed (6.9s / 76.8s).
+- Mutation checks (each half was reverted in turn, the other left in place, and the source restored): dropping the artifact clause from `expiredJobPredicate` leaves the regression green — the accounting alone keeps the Job; reverting the accounting alone leaves it green — the delete's own clause refuses. Dropping both makes both engines red again with the message above. The two halves are therefore independently sufficient for the reported interleaving, and each covers a case the other does not reason about: the accounting says *why* the pass stands down, and the statement covers everything that can happen between the accounting and the delete.
+- `go vet --tags 'json1 fts5' ./jobs` and `--tags 'json1 fts5 postgres' ./jobs` — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source, CLI command, generated asset or documented setting changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The invariant is stated where the deletion happens, not only where it is reasoned about.** §9's "records output removal before pruning the relevant history" is a claim about history being the artifact's only durable reference, and the finding is the proof that a decision made before the delete cannot speak for what happened since: the accounting read a row, another pass replaced it, and the boolean that came back described a set that no longer existed. The clause is the same instrument the pin and claim predicates already are — a re-assertion inside the deleting transaction, on the row the transaction has already taken — and it is what makes the ordinary case admit *because* the artifacts are durably removed rather than because a caller said so.
+- **A superseded candidate is not a removed one, and the difference is which row the bytes belong to.** The version is the row's identity (`currentArtifacts`' own reasoning): a row at a different version is one a reader would be served differently, so a pass that skipped it has established nothing about it. Counting it as accounted was the defect; counting it as unaccounted keeps the Job one cycle longer, which converges — the replacement is what the next pass decides about, and once that pass records the removal the Job has no artifact left to account for at all.
+- **Nothing else about either pass changed.** The deadline pass, the deferral that keeps one unaccountable artifact from holding the head of every batch, the removal recording and its version guard, and the per-artifact acknowledgement are all as they were; the metadata pass simply no longer reads "the set I selected is gone" as an answer about bytes.
+
 # Job Center checkpoint review corrections, round 8 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct the P1 finding from the eighth GPT-6 Astra checkpoint review of Tasks 1-5 — capacity admission reading only the slots below the *current* limit, so a budget lowered while a higher-numbered slot is still held (or held by a quarantined claim) admits one execution more than the limit allows — without widening scope into Tasks 6-18.
