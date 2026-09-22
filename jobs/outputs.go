@@ -28,6 +28,11 @@ import (
 // not a lifecycle fact, and moving the version would invalidate the transition
 // an executor is about to make.
 //
+// Every publication also records a Job Event (§6 lists publication among the
+// significant facts), in the same transaction as the row, so the timeline says
+// what was published — including when a key was produced again, which replaces the
+// reference a reader would otherwise still be holding.
+//
 // An output whose planned expiry has already passed is stored expired rather
 // than available: nothing can fetch it, and advertising it as available would
 // make every reader check the clock for themselves. For an optional output that
@@ -81,6 +86,19 @@ func (s *Service) PublishOutput(deps Deps, ref ExecutionRef, input OutputInput) 
 		}
 		published = outputView(row)
 
+		// The publication is a significant fact in its own right (§6), and it is
+		// recorded in the transaction that makes the row durable: the timeline
+		// says what was published, and the row is what a reader fetches. A
+		// replacement publication of one key is a publication too, or the timeline
+		// would hold the first reference and no record that it was superseded.
+		detail, err := outputPublishedDetail(input, availability)
+		if err != nil {
+			return err
+		}
+		if err := appendEventTx(tx, job, EventInput{Type: EventOutputPublished, Detail: detail}, now); err != nil {
+			return err
+		}
+
 		if availability != OutputAvailable && !input.Required {
 			detail, err := json.Marshal(map[string]any{
 				"reason": "an optional output is not available",
@@ -98,6 +116,20 @@ func (s *Service) PublishOutput(deps Deps, ref ExecutionRef, input OutputInput) 
 		return Output{}, err
 	}
 	return published, nil
+}
+
+// outputPublishedDetail is the bounded, sanitized fact one publication records:
+// which output, of what type, and the availability it was stored with. The
+// reference is deliberately absent — it is whatever the Kind wrote, the output row
+// is the one place that holds it, and a timeline read is not a fetch.
+func outputPublishedDetail(input OutputInput, availability OutputAvailability) ([]byte, error) {
+	detail, err := json.Marshal(map[string]string{
+		"key": input.Key, "type": input.Type, "state": string(availability),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("jobs: encode output publication detail: %w", err)
+	}
+	return detail, nil
 }
 
 // upsertOutput stores one output row, replacing the Job's existing row for the

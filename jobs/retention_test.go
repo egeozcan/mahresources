@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -493,6 +494,53 @@ func TestRetentionSweepExpiresOutputsOnTheirOwnDeadline(t *testing.T) {
 		}
 	}
 
+	// Recording the expiry records the Job Event with it (§7), so the timeline and
+	// the resumable stream both say what became of the artifact rather than leaving
+	// a reader to compare a clock against a stored instant.
+	admin := Access{UserID: 1, Administrator: true}
+	for _, job := range []models.Job{running, settled} {
+		timeline, err := svc.Timeline(deps, admin, job.ID, 0, 0)
+		if err != nil {
+			t.Fatalf("Timeline of %s: %v", job.ID, err)
+		}
+		expired := eventsOfType(timeline, EventOutputExpired)
+		if len(expired) != 1 {
+			t.Fatalf("job %s recorded %d expiry events, want one", job.ID, len(expired))
+		}
+		if detail := string(expired[0].Detail); !strings.Contains(detail, `"key":"artifact"`) {
+			t.Errorf("expiry detail = %s, want it to name the artifact", detail)
+		}
+		if expired[0].ReservedHost {
+			t.Error("an output expiry is not a lifecycle fact and must not claim the reserved capacity")
+		}
+	}
+	if _, err := svc.PublishPendingEvents(deps, DefaultPublishBatch); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	delivered, err := svc.PublishedEvents(deps, admin, 0, 0)
+	if err != nil {
+		t.Fatalf("PublishedEvents: %v", err)
+	}
+	if len(eventsOfType(delivered, EventOutputExpired)) != 2 {
+		t.Fatalf("delivered %+v, want both committed expiries", delivered)
+	}
+
+	// A repeated pass records nothing more: an expiry is a durable fact about one
+	// crossing of one deadline, not one event per sweep.
+	second := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+	if second.Outputs != 0 {
+		t.Fatalf("the repeated pass recorded %d more output availabilities, want none", second.Outputs)
+	}
+	for _, job := range []models.Job{running, settled} {
+		timeline, err := svc.Timeline(deps, admin, job.ID, 0, 0)
+		if err != nil {
+			t.Fatalf("Timeline of %s: %v", job.ID, err)
+		}
+		if len(eventsOfType(timeline, EventOutputExpired)) != 1 {
+			t.Fatalf("job %s recorded the same expiry twice", job.ID)
+		}
+	}
+
 	// The Job itself is untouched: its own window has not started, or has not
 	// passed, and an expired artifact never rewrites an outcome.
 	if !jobExists(t, deps, running.ID) || !jobExists(t, deps, settled.ID) {
@@ -560,7 +608,10 @@ func TestRetentionSweepConfirmsArtifactCleanupBeforePruningHistory(t *testing.T)
 	retained := settle("the artifacts stay")
 	retain[retained.ID] = true
 	// A pinned Job is not due at all, so nothing of its own may be destroyed on
-	// its way past — including the artifact its history points at.
+	// its way past — including the artifact its history points at. That artifact
+	// carries no deadline of its own; one that did would be removed on its own
+	// schedule, which is what the pin does not exempt (see
+	// TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays).
 	pinned := settle("the pinned one")
 	if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: pinned.ID, Pinned: boolPtr(true)}); err != nil {
 		t.Fatalf("pin: %v", err)
@@ -667,15 +718,16 @@ func TestRetentionOutputExpiryRechecksTheRowItSelected(t *testing.T) {
 	// The artifact's own deadline passes, so this pass selects its row.
 	clock = clock.Add(time.Hour)
 
-	// The republication runs from the pass's own update statement: after the
-	// selection has been read and before the update executes, which is the window
-	// the defect lived in. It goes through a second connection, because two writes
-	// on one handle would be a sequence rather than an interleaving.
+	// The republication runs from the pass's own selection: after the rows past
+	// their deadline have been read and before the transaction that records them
+	// opens, which is the window the defect lived in. It goes through a second
+	// connection, because two writes on one handle would be a sequence rather
+	// than an interleaving.
 	other := Deps{DB: openSecondHandle(t, dsn), Now: deps.Now}
 	fresh := clock.Add(24 * time.Hour)
 	var once sync.Once
 	const hook = "test:republish_output"
-	if err := deps.DB.Callback().Update().Before("gorm:update").Register(hook, func(tx *gorm.DB) {
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
 		if tx.Statement == nil || tx.Statement.Table != "job_outputs" {
 			return
 		}
@@ -690,7 +742,7 @@ func TestRetentionOutputExpiryRechecksTheRowItSelected(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register the interleaving hook: %v", err)
 	}
-	t.Cleanup(func() { _ = deps.DB.Callback().Update().Remove(hook) })
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
 
 	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
 
@@ -836,5 +888,207 @@ func TestRetentionSweepRecordsEachAcknowledgedArtifactRemoval(t *testing.T) {
 	}
 	if events := countRows(t, deps, &models.JobEvent{}, "job_id = ? AND type = ?", partial.ID, EventOutputRemoved); events != 1 {
 		t.Fatalf("the second pass recorded the same removal again: %d events", events)
+	}
+}
+
+// TestRetentionExpiryRollsBackItsRowWhenTheEventCannotBeRecorded is the atomic
+// half of §7's "confirmed expiry records a Job Event": the availability change and
+// the fact that says so are one write, so a failure while the event is stored must
+// leave the artifact advertised exactly as it was — never an output that silently
+// changed state with nothing on the timeline saying why.
+func TestRetentionExpiryRollsBackItsRowWhenTheEventCannotBeRecorded(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 10, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	running := seededExecution(t, deps, StateRunning, "claim-a")
+	expires := clock.Add(time.Minute)
+	if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: running.ID, ExecutionToken: "claim-a"}, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Label: "group-export.tar",
+		Reference: json.RawMessage(`{"path":"exports/17.tar"}`), ExpiresAt: &expires,
+	}); err != nil {
+		t.Fatalf("PublishOutput: %v", err)
+	}
+	clock = clock.Add(time.Hour)
+
+	// The event store fails while the pass is recording the expiry.
+	var once sync.Once
+	const hook = "test:fail_event_store"
+	if err := deps.DB.Callback().Create().Before("gorm:create").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "job_events" {
+			return
+		}
+		once.Do(func() { tx.AddError(errors.New("the event store is unavailable")) })
+	}); err != nil {
+		t.Fatalf("register the failing event store: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Create().Remove(hook) })
+
+	if _, err := svc.Sweep(deps, policy, SweepCursor{}, 100); err == nil {
+		t.Fatal("a sweep that could not record an expiry reported success")
+	}
+
+	var output models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", running.ID, "artifact").First(&output).Error; err != nil {
+		t.Fatalf("read the artifact output: %v", err)
+	}
+	if output.Availability != string(OutputAvailable) {
+		t.Fatalf("artifact availability = %s, want the write rolled back with the event it belongs to",
+			output.Availability)
+	}
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ? AND availability = ?", running.ID, string(OutputExpired)); rows != 0 {
+		t.Fatalf("an unrecorded expiry left %d expired rows", rows)
+	}
+}
+
+// TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays is §9's
+// "sweep work records output removal before pruning the relevant history" read
+// from the artifact's own side: an artifact has its own deadline and its own
+// retention, so the bytes must go when that deadline passes — whether the Job's
+// metadata window is a month out, or the Job is pinned and about to be kept
+// forever.
+//
+// Artifact cleanup used to be reachable only from the metadata pass: it ran for a
+// Job that was already due to be pruned, after pins and unresolved claims had been
+// filtered out. So a one-hour artifact of a Job with thirty days of history kept
+// its bytes for thirty days, and a pinned Job kept them indefinitely — a pin is not
+// a retention policy for what a Job produced (§7).
+func TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 11, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	var askedMu sync.Mutex
+	var askedJobs []string
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		askedMu.Lock()
+		askedJobs = append(askedJobs, request.JobID)
+		askedMu.Unlock()
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			result.Removed = append(result.Removed, artifact.Key)
+		}
+		return result, nil
+	}
+
+	settle := func(title string) Snapshot {
+		t.Helper()
+		clock = clock.Add(time.Minute)
+		accepted := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			OwnerUserID: uintPtr(7), Replay: ReplayInput{NonReplayable: true},
+		})
+		execution, ok := claimOnce(t, svc, deps, "runtime-a")
+		if !ok {
+			t.Fatalf("claim for %s: nothing was claimed", title)
+		}
+		if execution.JobID != accepted.ID {
+			t.Fatalf("claimed %s while settling %s", execution.JobID, title)
+		}
+		// The artifact promises an hour, which is far inside the Job's thirty days.
+		expires := clock.Add(time.Hour)
+		if _, err := execution.Output(OutputInput{
+			Key: "artifact", Type: OutputTypeArtifact, Label: "group-export.tar",
+			Reference: json.RawMessage(`{"path":"exports/17.tar"}`), ExpiresAt: &expires,
+		}); err != nil {
+			t.Fatalf("publish artifact of %s: %v", title, err)
+		}
+		finished, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateSucceeded})
+		if err != nil {
+			t.Fatalf("finish %s: %v", title, err)
+		}
+		return finished
+	}
+
+	ordinary := settle("an artifact past its own deadline")
+	pinned := settle("a pinned Job's artifact past its own deadline")
+	if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: pinned.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+
+	// An artifact whose deadline has passed on a Job an unresolved claim still
+	// protects: the one thing §9 says no expiry may write through, and the bytes
+	// stay where they are with everything else about that execution.
+	protected := settle("a claim-protected Job's artifact past its own deadline")
+	// The claim its own execution released becomes one nobody could resolve: the
+	// state a quarantined execution leaves behind when the process that held it
+	// never came back.
+	if err := deps.DB.Model(&models.JobClaim{}).Where("job_id = ?", protected.ID).
+		Updates(map[string]any{
+			"state":            models.JobClaimStateQuarantined,
+			"lease_expires_at": clock,
+		}).Error; err != nil {
+		t.Fatalf("quarantine the claim: %v", err)
+	}
+
+	// The artifacts' deadlines pass; no Job's metadata window is anywhere near its
+	// own.
+	clock = clock.Add(2 * time.Hour)
+	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+
+	removedIsRecorded := func(job Snapshot, title string) {
+		t.Helper()
+		var output models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", job.ID, "artifact").First(&output).Error; err != nil {
+			t.Fatalf("%s lost its artifact reference: %v", title, err)
+		}
+		if output.Availability != string(OutputRemoved) || output.RemovedAt == nil {
+			t.Fatalf("%s/artifact is %s (removed at %v), want the bytes gone and recorded",
+				title, output.Availability, output.RemovedAt)
+		}
+		if events := countRows(t, deps, &models.JobEvent{}, "job_id = ? AND type = ?", job.ID, EventOutputRemoved); events != 1 {
+			t.Fatalf("%s recorded %d artifact-removal events, want one", title, events)
+		}
+	}
+	removedIsRecorded(ordinary, "an artifact past its own deadline")
+	removedIsRecorded(pinned, "a pinned Job's artifact")
+
+	// The pinned Job's history is exactly what the pin exempts, and it is still
+	// there: the artifact went on its own schedule, the metadata stayed.
+	if !jobExists(t, deps, pinned.ID) {
+		t.Fatal("removing a pinned Job's expired artifact pruned the Job the pin protects")
+	}
+	if rows := countRows(t, deps, &models.JobEvent{}, "job_id = ?", pinned.ID); rows == 0 {
+		t.Error("a pinned Job's events were pruned")
+	}
+
+	// The claim-protected Job was not asked about at all, and keeps its artifact
+	// reference: a claim nothing could prove dead is not a license to delete what
+	// the execution may still be producing.
+	var protectedOutput models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", protected.ID, "artifact").First(&protectedOutput).Error; err != nil {
+		t.Fatalf("the claim-protected Job lost its artifact reference: %v", err)
+	}
+	if protectedOutput.Availability != string(OutputExpired) {
+		t.Fatalf("claim-protected artifact availability = %s, want the deadline it was published with recorded",
+			protectedOutput.Availability)
+	}
+	if protectedOutput.RemovedAt != nil {
+		t.Fatal("a Job an unresolved claim still protects had its artifact removed")
+	}
+	if result.Pruned != 0 {
+		t.Fatalf("the sweep pruned %d Jobs, want none: no Job's metadata window has passed", result.Pruned)
+	}
+
+	// The cleanup was asked about exactly the two artifacts whose own deadline had
+	// passed — never the claim-protected Job's, which is still in the hands of an
+	// execution nobody could prove had stopped.
+	askedMu.Lock()
+	defer askedMu.Unlock()
+	if len(askedJobs) != 2 {
+		t.Fatalf("the sweep asked for cleanup %d times, want the two artifacts past their deadline: %v",
+			len(askedJobs), askedJobs)
+	}
+	for _, jobID := range askedJobs {
+		if jobID == protected.ID {
+			t.Fatal("the sweep asked about a Job an unresolved claim still protects")
+		}
 	}
 }

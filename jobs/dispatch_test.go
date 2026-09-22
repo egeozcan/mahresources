@@ -518,7 +518,7 @@ func TestExecutionHandsTheAdapterTheInputActorAndReport(t *testing.T) {
 	for _, event := range jobEvents(t, deps, accepted.ID) {
 		types = append(types, event.Type)
 	}
-	want := []string{EventAccepted, EventStarted, "checkpoint", EventSucceeded}
+	want := []string{EventAccepted, EventStarted, "checkpoint", EventOutputPublished, EventSucceeded}
 	if len(types) != len(want) {
 		t.Fatalf("timeline = %v, want %v", types, want)
 	}
@@ -1589,5 +1589,135 @@ func TestReconcileUnrunnableBlocksPendingWorkNoAdapterCanRun(t *testing.T) {
 	if second.Examined != 0 || len(second.Outcomes) != 0 {
 		t.Fatalf("the second pass examined %d Jobs and applied %d decisions, want none",
 			second.Examined, len(second.Outcomes))
+	}
+}
+
+// TestReconcileExpiredReachesClaimsBehindAFullBatchOfFailures is the fairness
+// contract of a bounded pass: a batch of claims whose adapters cannot answer must
+// not be the only claims any pass ever looks at.
+//
+// The scan reads the oldest expired claims up to its limit and nothing else, and a
+// claim nothing was applied to stays exactly where it was — so a Kind whose
+// reconciler keeps failing monopolized every pass: the claims behind it, including
+// one whose adapter could decide it at once, were never examined, however long the
+// deployment ran. A claim the pass could not decide is now deferred to a later
+// instant and the scan is ordered by when each claim is next due, so the work
+// behind a full batch of failures is reached on the very next pass — while the
+// deferred claims keep their claim and the capacity that goes with it.
+func TestReconcileExpiredReachesClaimsBehindAFullBatchOfFailures(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "reconcile-fairness.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// One Kind, one adapter: the three oldest claims are ones it cannot answer
+	// about, and the newest is one it can decide at once.
+	var resolvable Snapshot
+	adapter.reconcile = func(_ context.Context, request ReconcileRequest) (ReconcileDecision, error) {
+		if request.Snapshot.ID == resolvable.ID {
+			return ReconcileBlock, nil
+		}
+		return "", errors.New("the reconciler could not reach its own database")
+	}
+
+	jobs := make([]Snapshot, 0, 4)
+	for i := 0; i < 4; i++ {
+		accepted := acceptQueued(t, svc, deps, nil)
+		execution, ok := claimOnce(t, svc, deps, "runtime-a")
+		if !ok {
+			t.Fatalf("queued Job %d was not claimed", i)
+		}
+		if execution.JobID != accepted.ID {
+			t.Fatalf("claimed %s while accepting %s", execution.JobID, accepted.ID)
+		}
+		jobs = append(jobs, accepted)
+	}
+	resolvable = jobs[3]
+
+	// Every claim has expired, with the three the adapter cannot answer about
+	// oldest — the order the scan reads them in.
+	for i, job := range jobs {
+		expiry := clock.Add(-time.Minute)
+		if i < 3 {
+			expiry = clock.Add(-time.Duration(30-i) * time.Minute)
+		}
+		if err := deps.DB.Model(&models.JobClaim{}).Where("job_id = ?", job.ID).
+			Update("lease_expires_at", expiry).Error; err != nil {
+			t.Fatalf("expire the claim of %s: %v", job.ID, err)
+		}
+	}
+
+	const batch = 3
+	first, err := svc.ReconcileExpired(context.Background(), deps, "runtime-b", batch)
+	if err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if first.Examined != batch || len(first.Outcomes) != 0 {
+		t.Fatalf("first pass = %+v, want the three claims the adapter cannot answer about and nothing applied", first)
+	}
+	if first.Deferred != batch {
+		t.Fatalf("first pass deferred %d of %d undecided claims", first.Deferred, batch)
+	}
+	// Nothing was applied, so nothing was released: a claim an adapter could not
+	// decide keeps the claim and the capacity it holds, and its next attempt is
+	// scheduled rather than immediate.
+	for i, job := range jobs[:3] {
+		claim := claimRow(t, deps, job.ID)
+		if claim.State != models.JobClaimStateHeld {
+			t.Fatalf("undecided claim %d is %s, want held", i, claim.State)
+		}
+		if leases := countRows(t, deps, &models.JobCapacityLease{}, "job_id = ?", job.ID); leases == 0 {
+			t.Errorf("undecided claim %d lost the capacity it holds", i)
+		}
+		if claim.ReconcileAttempts != 1 {
+			t.Errorf("undecided claim %d recorded %d attempts, want one", i, claim.ReconcileAttempts)
+		}
+		if claim.NextReconcileAt == nil || !claim.NextReconcileAt.After(clock) {
+			t.Fatalf("undecided claim %d is due again at %v, want a later attempt than now",
+				i, claim.NextReconcileAt)
+		}
+	}
+
+	// The claim behind them is reached by the next pass, rather than after the
+	// failures have been retried for however long the deployment runs.
+	second, err := svc.ReconcileExpired(context.Background(), deps, "runtime-b", batch)
+	if err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if second.Examined != 1 || len(second.Outcomes) != 1 || second.Outcomes[0].JobID != resolvable.ID {
+		t.Fatalf("second pass = %+v, want the one claim behind the failures", second)
+	}
+	if stored := jobRow(t, deps, resolvable.ID); stored.State != string(StateBlocked) {
+		t.Fatalf("the claim behind a full batch of failures was never reconciled: state = %s", stored.State)
+	}
+}
+
+// TestReconcileRetryScheduleWidensAndStops pins the schedule an undecided claim is
+// put on: the first retry is short, so a transient failure recovers quickly without
+// the claim being asked about in every pass, and the wait widens to a bounded
+// ceiling rather than growing without limit or abandoning the claim.
+func TestReconcileRetryScheduleWidensAndStops(t *testing.T) {
+	cases := []struct {
+		attempts uint
+		want     time.Duration
+	}{
+		{attempts: 1, want: DefaultReconcileRetry},
+		{attempts: 2, want: 2 * DefaultReconcileRetry},
+		{attempts: 3, want: 4 * DefaultReconcileRetry},
+		{attempts: 500, want: MaxReconcileRetry},
+	}
+	for _, tc := range cases {
+		if got := reconcileRetryDelay(tc.attempts); got != tc.want {
+			t.Errorf("reconcileRetryDelay(%d) = %v, want %v", tc.attempts, got, tc.want)
+		}
+	}
+	// No attempt count reaches a wait that is not a wait, and none grows past the
+	// ceiling however long a reconciler keeps failing.
+	for _, attempts := range []uint{0, 1, 7, 1000} {
+		got := reconcileRetryDelay(attempts)
+		if got <= 0 || got > MaxReconcileRetry {
+			t.Errorf("reconcileRetryDelay(%d) = %v, want a positive wait within the ceiling", attempts, got)
+		}
 	}
 }

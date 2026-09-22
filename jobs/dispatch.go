@@ -642,8 +642,14 @@ const (
 // stopped.
 //
 // A claim whose adapter cannot answer or answers "nothing" is left exactly as it
-// is for the next pass. The pass is bounded, and it is a pass rather than a sweep
-// because the caller polls it.
+// is — nothing is applied on its behalf, and it keeps its claim and the capacity
+// that goes with it — but it is deferred to a later pass rather than to the next
+// one, and the scan is ordered by when a claim is next due. A bounded pass that
+// only ever read the oldest claims would otherwise let a Kind whose reconciler
+// keeps failing occupy every batch, leaving the claims behind it — including ones
+// an adapter could decide at once — unreconciled for as long as it failed. The
+// pass is bounded, and it is a pass rather than a sweep because the caller polls
+// it.
 func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant string, limit int) (ReconcileReport, error) {
 	if strings.TrimSpace(claimant) == "" {
 		return ReconcileReport{}, fmt.Errorf("%w: a reconciliation pass needs a claimant", ErrInvalidClaim)
@@ -713,7 +719,13 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 		if err != nil {
 			// An adapter that could not answer has not decided anything, and
 			// nothing may be applied on its behalf: an error here is a
-			// reconciler that could not do its job, not a Job that failed.
+			// reconciler that could not do its job, not a Job that failed. The
+			// claim is left where it is and deferred to a later pass rather than
+			// retried by the next one.
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
 			continue
 		}
 
@@ -722,6 +734,10 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 				decisionErr = fmt.Errorf("%w: %s v%d answered %q",
 					ErrInvalidReconcileDecision, claim.Kind, claim.KindVersion, decision)
 			}
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
 			continue
 		}
 
@@ -885,17 +901,69 @@ func validReconcileDecision(decision ReconcileDecision) bool {
 	return false
 }
 
-// expiredClaims reads the held claims whose lease has run out, oldest first, in
-// a bounded batch. A quarantined claim is deliberately not here: it was already
-// reconciled as far as anyone could, and rescanning it would turn an
-// unresolvable Job into a reconciliation loop.
+// expiredClaims reads the held claims whose lease has run out and whose own
+// reconciliation schedule is due, soonest first, in a bounded batch. A quarantined
+// claim is deliberately not here: it was already reconciled as far as anyone
+// could, and rescanning it would turn an unresolvable Job into a reconciliation
+// loop.
+//
+// The order is when each claim is next due, which is its lease expiry until a pass
+// has deferred it: a claim nothing could decide sinks behind every claim whose own
+// lease has expired and that no pass has asked about yet, so a failing Kind cannot
+// hold the batch against work it has never been asked about.
 func expiredClaims(db *gorm.DB, now time.Time, limit int) ([]models.JobClaim, error) {
 	var claims []models.JobClaim
 	if err := db.Where("state = ? AND lease_expires_at <= ?", models.JobClaimStateHeld, now).
-		Order("lease_expires_at, job_id").Limit(limit).Find(&claims).Error; err != nil {
+		Where("(next_reconcile_at IS NULL OR next_reconcile_at <= ?)", now).
+		Order("COALESCE(next_reconcile_at, lease_expires_at), job_id").Limit(limit).Find(&claims).Error; err != nil {
 		return nil, fmt.Errorf("jobs: read expired claims: %w", err)
 	}
 	return claims, nil
+}
+
+// deferClaimReconcile schedules the next pass that may ask about a claim a
+// reconciliation pass could not decide.
+//
+// It writes nothing else. The claim keeps its state, its token, its lease and the
+// capacity it holds: an adapter that did not answer has proved nothing about the
+// external work, and releasing any of it on that silence is how duplicate side
+// effects happen. The wait widens with each undecided attempt, so a Kind whose
+// reconciler is broken is still retried and still fails to hold up the claims
+// behind it.
+//
+// The write is guarded by the token, so a claim that was resumed or released while
+// the pass was running is not deferred by mistake — there is nothing left to defer
+// about it.
+func deferClaimReconcile(deps Deps, claim models.JobClaim, at time.Time) error {
+	result := deps.DB.Model(&models.JobClaim{}).
+		Where("job_id = ? AND state = ? AND execution_token = ?",
+			claim.JobID, models.JobClaimStateHeld, claim.ExecutionToken).
+		Updates(map[string]any{
+			"reconcile_attempts": gorm.Expr("reconcile_attempts + 1"),
+			"next_reconcile_at":  at.Add(reconcileRetryDelay(claim.ReconcileAttempts + 1)),
+			"updated_at":         at,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("jobs: defer reconciliation of %s: %w", claim.JobID, result.Error)
+	}
+	return nil
+}
+
+// reconcileRetryDelay is how long a claim waits after an attempt that decided
+// nothing. It doubles from DefaultReconcileRetry and stops at MaxReconcileRetry,
+// which is the same shape the download queue's backoff uses: the first deferral is
+// short enough to recover a transient adapter failure quickly, and a reconciler
+// that never answers is retried forever at a bounded interval rather than
+// abandoned.
+func reconcileRetryDelay(attempts uint) time.Duration {
+	delay := DefaultReconcileRetry
+	for attempt := uint(1); attempt < attempts && delay < MaxReconcileRetry; attempt++ {
+		delay *= 2
+	}
+	if delay > MaxReconcileRetry {
+		return MaxReconcileRetry
+	}
+	return delay
 }
 
 // reconcileRequest builds what one adapter is told about an expired claim. The

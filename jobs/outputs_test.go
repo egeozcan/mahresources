@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,8 +59,37 @@ func TestOutputPublicationStoresATypedOutputWithAnIndependentVersion(t *testing.
 	if stored := jobRow(t, deps, job.ID); stored.Version != job.Version {
 		t.Errorf("publishing an output moved the lifecycle version to %d", stored.Version)
 	}
-	if events := jobEvents(t, deps, job.ID); len(events) != 0 {
-		t.Errorf("publishing an available output recorded %d events", len(events))
+	// Publishing is a significant fact in its own right (§6), recorded in the
+	// same transaction as the row it is about: the timeline names the output, and
+	// the post-commit publisher is what makes it deliverable to a subscriber.
+	admin := Access{UserID: 1, Administrator: true}
+	timeline, err := svc.Timeline(deps, admin, job.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	if len(timeline) != 1 || timeline[0].Type != EventOutputPublished {
+		t.Fatalf("timeline = %+v, want the publication recorded", timeline)
+	}
+	if timeline[0].Sequence != 1 || timeline[0].ReservedHost {
+		t.Errorf("publication event = %+v, want the Job's first position and no reserved capacity", timeline[0])
+	}
+	if detail := string(timeline[0].Detail); !strings.Contains(detail, `"key":"artifact"`) {
+		t.Errorf("publication detail = %s, want it to name the output", detail)
+	}
+	if delivered, err := svc.PublishedEvents(deps, admin, 0, 0); err != nil {
+		t.Fatalf("PublishedEvents: %v", err)
+	} else if len(delivered) != 0 {
+		t.Fatalf("the event was deliverable before the publisher ran: %+v", delivered)
+	}
+	if _, err := svc.PublishPendingEvents(deps, DefaultPublishBatch); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	delivered, err := svc.PublishedEvents(deps, admin, 0, 0)
+	if err != nil {
+		t.Fatalf("PublishedEvents: %v", err)
+	}
+	if len(delivered) != 1 || delivered[0].Type != EventOutputPublished || delivered[0].DeliverySequence == nil {
+		t.Fatalf("published events = %+v, want the committed publication", delivered)
 	}
 
 	// Republishing the same key replaces it rather than accumulating: one row
@@ -93,6 +124,12 @@ func TestOutputPublicationStoresATypedOutputWithAnIndependentVersion(t *testing.
 	}
 	if string(republished.Reference) != `{"path":"exports/17.tar","bytes":8192}` {
 		t.Errorf("republished reference = %s", republished.Reference)
+	}
+	// A replacement is a publication too: the timeline says the key was produced
+	// again rather than leaving a reader with the first reference and no record
+	// that it was superseded.
+	if events := jobEvents(t, deps, job.ID); len(events) != 2 {
+		t.Fatalf("timeline has %d events, want one per publication", len(events))
 	}
 
 	var count int64
@@ -305,11 +342,11 @@ func TestOutputOptionalFailureWarnsWithoutChangingOutcome(t *testing.T) {
 		t.Fatalf("an optional output failure left the Job in %s", stored.State)
 	}
 	events := jobEvents(t, deps, job.ID)
-	if len(events) != 1 || events[0].Type != EventWarning {
-		t.Fatalf("events = %+v, want one warning", events)
+	if len(events) != 2 || events[0].Type != EventOutputPublished || events[1].Type != EventWarning {
+		t.Fatalf("events = %+v, want the publication and the one warning about it", events)
 	}
-	if events[0].ReservedHost {
-		t.Error("the optional-output warning is not a lifecycle fact and must not claim the reserved capacity")
+	if events[0].ReservedHost || events[1].ReservedHost {
+		t.Error("neither an output publication nor the optional-output warning is a lifecycle fact, so neither may claim the reserved capacity")
 	}
 
 	// The committed success is unchanged by it: the warning stays on the
@@ -326,8 +363,8 @@ func TestOutputOptionalFailureWarnsWithoutChangingOutcome(t *testing.T) {
 		t.Fatalf("state = %s, want succeeded", snap.State)
 	}
 	events = jobEvents(t, deps, job.ID)
-	if len(events) != 2 || events[0].Type != EventWarning || events[1].Type != EventSucceeded {
-		t.Fatalf("timeline = %+v, want the warning kept ahead of the terminal event", events)
+	if len(events) != 3 || events[0].Type != EventOutputPublished || events[1].Type != EventWarning || events[2].Type != EventSucceeded {
+		t.Fatalf("timeline = %+v, want the publication and its warning kept ahead of the terminal event", events)
 	}
 }
 
@@ -379,7 +416,7 @@ func TestOutputRequiredOutputsAndSuccessCommitTogether(t *testing.T) {
 		t.Fatalf("stored state = %s", stored.State)
 	}
 	events := jobEvents(t, deps, job.ID)
-	if len(events) != 1 || events[0].Type != EventSucceeded || events[0].JobVersion != snap.Version {
+	if len(events) != 2 || events[0].Type != EventOutputPublished || events[1].Type != EventSucceeded || events[1].JobVersion != snap.Version {
 		t.Fatalf("terminal events = %+v", events)
 	}
 	var output models.JobOutput
@@ -418,8 +455,8 @@ func TestOutputRequiredOutputsAndSuccessCommitTogether(t *testing.T) {
 	if stored := jobRow(t, deps, second.ID); stored.State != string(StateRunning) {
 		t.Fatalf("a rolled-back finish left the Job in %s", stored.State)
 	}
-	if events := jobEvents(t, deps, second.ID); len(events) != 0 {
-		t.Fatalf("a rolled-back finish recorded %d events", len(events))
+	if events := jobEvents(t, deps, second.ID); len(events) != 1 || events[0].Type != EventOutputPublished {
+		t.Fatalf("a rolled-back finish recorded %d events besides the publication", len(events))
 	}
 }
 
@@ -588,8 +625,8 @@ func TestOutputSuccessThroughATransitionVerifiesRequiredOutputs(t *testing.T) {
 		if stored := jobRow(t, deps, job.ID); stored.State != string(StateRunning) || stored.Version != job.Version {
 			t.Fatalf("a refused success left the Job in %s v%d", stored.State, stored.Version)
 		}
-		if events := jobEvents(t, deps, job.ID); len(events) != 0 {
-			t.Fatalf("a refused success recorded %d events", len(events))
+		if events := jobEvents(t, deps, job.ID); len(events) != 1 || events[0].Type != EventOutputPublished {
+			t.Fatalf("a refused success recorded %d events besides the publication", len(events))
 		}
 	})
 
@@ -646,5 +683,45 @@ func TestOutputRequiredOutputsAreVerifiedAgainstTheirDeadlineNotOnlyTheStoredStr
 	}
 	if stored := jobRow(t, deps, job.ID); stored.State != string(StateRunning) {
 		t.Fatalf("a refused success left the Job in %s", stored.State)
+	}
+}
+
+// TestOutputPublicationRollsBackItsRowWithItsEvent is the atomic half of §6's
+// "output publication or expiry" being a Job Event: the row and the fact that
+// records it are one write, so a failure while the event is stored must leave
+// neither behind. A row without its event advertises an output no reader is ever
+// told about; an event without its row names an output that is not there.
+func TestOutputPublicationRollsBackItsRowWithItsEvent(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	deps.Now = func() time.Time { return time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC) }
+
+	job := seededExecution(t, deps, StateRunning, "claim-a")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-a"}
+
+	// The event store fails once, inside the publication's own transaction.
+	var once sync.Once
+	const hook = "test:fail_event_store"
+	if err := deps.DB.Callback().Create().Before("gorm:create").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "job_events" {
+			return
+		}
+		once.Do(func() { tx.AddError(errors.New("the event store is unavailable")) })
+	}); err != nil {
+		t.Fatalf("register the failing event store: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Create().Remove(hook) })
+
+	if _, err := svc.PublishOutput(deps, ref, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Reference: json.RawMessage(`{"path":"exports/17.tar"}`),
+	}); err == nil {
+		t.Fatal("a publication whose event could not be stored was reported as published")
+	}
+
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ?", job.ID); rows != 0 {
+		t.Fatalf("a refused publication stored %d outputs", rows)
+	}
+	if rows := countRows(t, deps, &models.JobEvent{}, "job_id = ?", job.ID); rows != 0 {
+		t.Fatalf("a refused publication left %d events", rows)
 	}
 }

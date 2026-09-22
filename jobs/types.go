@@ -299,6 +299,16 @@ const (
 	// recorded even though the capacity that triggered it is full, and exactly
 	// one of them exists per Job.
 	EventTruncated = "events-truncated"
+	// EventOutputPublished records one output becoming durable and current for its
+	// key: §6 lists publication among the significant facts, and a replacement
+	// publication — the same key produced again — is one too, or a reader is left
+	// with the first reference and no record that it was superseded.
+	EventOutputPublished = "output-published"
+	// EventOutputExpired records an output reaching its own planned deadline. §7
+	// records the event with the availability change, so the timeline says what
+	// became of an artifact rather than leaving every reader to compare a clock
+	// against a stored instant.
+	EventOutputExpired = "output-expired"
 	// EventOutputRemoved is the confirmation that one output's artifact is really
 	// gone. §7 records a Job Event when an expiry is confirmed rather than merely
 	// planned, and this is the confirmation for a removal an adapter performed:
@@ -1074,6 +1084,13 @@ const (
 	CapacityGroupGlobal = "global"
 	// DefaultReconcileBatch bounds one reconciliation pass.
 	DefaultReconcileBatch = 50
+	// DefaultReconcileRetry is how long a claim a reconciliation pass could not
+	// decide waits before it may be asked about again. It is a schedule rather
+	// than a state: the claim keeps its token, its lease and its capacity.
+	DefaultReconcileRetry = 30 * time.Second
+	// MaxReconcileRetry caps that wait, so a Kind whose reconciler never answers
+	// is retried at a bounded interval rather than abandoned.
+	MaxReconcileRetry = 30 * time.Minute
 	// DefaultClaimBatch bounds how many Jobs one pass over one Kind claims, so a
 	// runtime that falls behind does not claim an unbounded amount of work in a
 	// single tick.
@@ -1351,6 +1368,12 @@ type ReconcileRequest struct {
 type ReconcileReport struct {
 	// Examined is how many expired claims the pass looked at.
 	Examined int
+	// Deferred is how many of them the pass could not decide: an adapter that
+	// did not answer, or answered outside the vocabulary. Nothing was applied on
+	// their behalf, they keep their claim and the capacity that goes with it, and
+	// they are scheduled for a later pass rather than for the next one — which is
+	// what keeps a Kind whose reconciler is failing from occupying every batch.
+	Deferred int
 	// Outcomes records the applied decisions, in the order they were applied.
 	Outcomes []ReconcileOutcome
 	// Resume holds the executions the caller must dispatch: a resume keeps the

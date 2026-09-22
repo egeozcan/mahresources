@@ -378,6 +378,9 @@ func TestRetentionSweepCannotPruneAJobPinnedByAnOpenTransactionPG(t *testing.T) 
 // waitForABlockedQuery waits until some statement in this database is waiting on a
 // lock, which is how a test observes that one transaction has reached the point
 // where another holds the row it needs — without sleeping for a guessed interval.
+// The row itself is the caller's business: a sweep blocked on a Job pinned under
+// an open transaction and a sweep blocked on the row an append holds both show up
+// as one waiting statement.
 func waitForABlockedQuery(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -392,5 +395,5 @@ func waitForABlockedQuery(t *testing.T, db *gorm.DB) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatal("timed out waiting for the sweep to block on the pinned Job's row lock")
+	t.Fatal("timed out waiting for a statement to block on a lock in this database")
 }

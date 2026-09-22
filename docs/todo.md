@@ -1,3 +1,53 @@
+# Job Center checkpoint review corrections, round 3 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct every P0/P1 finding from the third GPT-6 Astra checkpoint review of Tasks 1-5 — artifact cleanup inheriting metadata retention and pins, artifact-removal events allocating timeline positions without the Job's row lock, output publication and deadline expiry omitting their durable events, and a full batch of reconciliation failures starving later claims — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§6, §7, §9), ADRs 0006/0007, Task 4/5 contracts, `CLAUDE.md`, and the current `jobs/`, `models/` code.
+- [x] Reproduce each finding as a red behavior test at the confirmed public seam before changing production code, including the interleaving only a second PostgreSQL connection can express.
+- [x] Implement one minimal correction per finding, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| Artifact cleanup still inherits metadata retention and pinning | `an artifact past its own deadline/artifact is expired (removed at <nil>), want the bytes gone and recorded`; with the pin check restored (mutation) the pinned half fails alone: `a pinned Job's artifact/artifact is expired (removed at <nil>)` | `Sweep` now runs `cleanupExpiredArtifacts` between the deadline pass and the metadata pass: a bounded artifact-deadline pass that asks the Kind's adapter and records what it acknowledges, independent of the Job's metadata eligibility and of any pin, and still skipping a Job an unresolved execution claim protects (`TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays`) |
+| Artifact-removal events allocate timeline positions without the Job lock | PostgreSQL: `jobs: store event: ERROR: duplicate key value violates unique constraint "idx_job_events_timeline" (SQLSTATE 23505)` — a removal the adapter had confirmed was rolled back with the event that recorded it | `recordArtifactRemovals` opens its transaction with the parent Job's own row (a write on SQLite, the row lock on PostgreSQL), which is the order prune, the deadline pass and the publication already take, so two writers of one timeline cannot read the same maximum (`TestArtifactRemovalSerializesOnTheJobTimelinePG`, two connections through `Sweep` and `AppendEvent`) |
+| Output publication and deadline expiry omit their durable events | `timeline = [], want the publication recorded`; `events = [{... Type:warning ...}], want the publication and the one warning about it`; `job ... recorded 0 expiry events, want one`; `a publication whose event could not be stored was reported as published`; `a sweep that could not record an expiry reported success` | New `EventOutputPublished` / `EventOutputExpired`, recorded in the same transaction as the output mutation: publication appends one per publication (a replacement of one key included), and the deadline pass became per Job with the Job's row taken first so each expiry allocates its position under the shared lock (`TestOutputPublicationStoresATypedOutputWithAnIndependentVersion`, `TestOutputPublicationRollsBackItsRowWithItsEvent`, `TestRetentionSweepExpiresOutputsOnTheirOwnDeadline`, `TestRetentionExpiryRollsBackItsRowWhenTheEventCannotBeRecorded`) |
+| A full batch of reconciliation failures permanently starves later claims | `second pass = {Examined:3 Deferred:3 Outcomes:[] Resume:[]}, want the one claim behind the failures` — the batch of three undecided claims was read again, and the fourth claim was never reached | A claim a pass could not decide is deferred: `job_claims.next_reconcile_at` / `reconcile_attempts` are written (claim, token, lease and capacity untouched), the scan selects claims whose schedule is due and orders by when each is next due, and the wait widens to a bounded ceiling (`TestReconcileExpiredReachesClaimsBehindAFullBatchOfFailures`, `TestReconcileRetryScheduleWidensAndStops`) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed, including the new two-connection removal regression.
+- `go test --tags 'json1 fts5' ./application_context ./internal/arch -count=1` — passed (`application_context` 61s, `internal/arch` 1.9s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each defect is caught by the test written for it, and the source was restored): dropping the cleanup pass fails `TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays` on both the ordinary and the pinned artifact; making pins exempt artifacts again fails it on the pinned one alone; the removal-recording lock and the fairness scan were each observed failing before their corrections (the red rows above).
+- `go vet --tags 'json1 fts5' ./...` — clean. `gofmt -l` on every changed file — clean (`models/query_models/filter_decode.go` is gofmt-dirty on `main` and untouched here). `git diff --check` — clean.
+- No frontend source, CLI command or generated asset changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **Cleanup is driven by the artifact's deadline, and an unresolved execution claim still holds it back.** The pass protects a claim in the codebase's existing sense (`held` or `quarantined`), and a pin protects nothing: that is the finding's correction read literally, and it stays on the conservative side — bytes are not deleted under an execution that is still alive. A Job that is *running* therefore keeps an expired artifact until its claim is resolved, which the metadata path could never have cleaned either, and the deadline pass records the expiry either way. Held and quarantined are one spelling for one rule (`unresolvedClaimStates`), so a second reading of "unresolved" would have to be introduced deliberately.
+- **Expiry has exactly one home.** `pruneExpiredJob` no longer marks outputs expired: the deadline pass records it for every Job whatever its metadata retention or state says, so an expiry can never be written without its event, and a Job whose prune matched nothing — a pin or a claim landing while the pass ran — now writes nothing at all. `markOutputsRemoved` (previously `recordOutputAvailability`) covers only the removal recorded before a pruned Job's rows go.
+- **`ReconcileReport.Deferred` is part of the pass's answer.** Whether the caller's runtime logs, schedules or alerts on it is the runtime's business, but "how many claims could not be decided" is otherwise only visible by reading the claim rows, and a reviewer asking why a pass applied nothing has no other answer at that seam.
+- **The retry schedule is a durable property of the claim, not a process-local scan position.** A cursor in `Service` would have made `ReconcileExpired` depend on process state a caller cannot see, and two processes would each maintain their own; the claim's own schedule is visible, survives a restart and keeps the pass a pure function of the database.
+
+## Review
+
+Every correction is at the seam its finding named. The two hardest are pinned by interleavings rather than by statements about code: the removal recorder is exercised by an append on a second connection whose position it cannot see, and the fairness fix by two passes over four claims where three adapters keep failing. The three corrections that touch durable state — the artifact cleanup, the two new events and the retry schedule — keep the module's ordering invariants: a transaction's first statement is still a write on SQLite, the Job's own row is taken before the rows that hang off it, and a refusal writes nothing.
+
+Test assertions that encoded the old behavior were corrected rather than weakened, and each is a fact the design already required: `outputs_test.go`'s "publishing an available output recorded 0 events" and the two "a refused success recorded 0 events", `dispatch_test.go`'s expected execution timeline, and `retention_test.go`'s interleaving hook — which now drives the republication from the pass's *selection* (a Query callback) because the expiry write is a transaction from that point on, and a write from inside it would be a deadlock rather than an interleaving.
+
+Residual risks and handoffs:
+
+- **A running Job's expired artifact waits for its claim.** Deliberate, and recorded above. Closing it needs a decision about deleting bytes under a live execution that the finding did not make.
+- **Event capacity applies to the new events.** Publication and expiry are optional-capacity events, like the removal event beside them: §6 reserves capacity for host lifecycle and terminal facts, so an adapter flooding a Job's timeline can still displace them, and one visible `events-truncated` warning is recorded. The output mutation itself is never dropped — only the fact that describes it.
+- **The sweep still has no scheduler** (carried forward from Task 5): `ctx.SweepJobHistory` is a bounded call a loop or an operator drives, so the artifact pass runs when a sweep runs.
+- **Reconciliation retries are per claim, not per Kind.** A Kind whose reconciler fails for some Jobs and answers for others is retried for the failing ones on the widening schedule; a Kind that always fails is retried at `MaxReconcileRetry` (30m) forever rather than abandoned, which is the fail-safe direction for work nobody has proved stopped.
+
 # Job Center checkpoint review corrections, round 2 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct every P0/P1 finding from the second GPT-6 Astra checkpoint review of Tasks 1-5 — retention/output expiry, PostgreSQL pin-versus-prune ordering, per-artifact removal recording, the reserved-event ceiling, a Kind/deployment capacity-group collision, missing-adapter blocking for *pending* work, and the replay decode and key-file boundaries — without widening scope into Tasks 6-18.

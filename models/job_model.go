@@ -298,6 +298,16 @@ type JobClaim struct {
 	// work stopped.
 	LeaseExpiresAt time.Time `gorm:"not null;index:idx_job_claims_expiry,priority:2" json:"leaseExpiresAt"`
 
+	// ReconcileAttempts counts the reconciliation passes that asked about this
+	// claim and applied nothing, and NextReconcileAt is the instant it may be
+	// asked about again. They are a schedule, not a state: neither one changes
+	// what the claim protects, so an undecided claim keeps its token, its lease
+	// and the capacity it holds. A claim whose lease a heartbeat extended simply
+	// leaves the scan until that lease lapses, and comes back with this instant
+	// already behind it.
+	ReconcileAttempts uint       `gorm:"not null;default:0" json:"reconcileAttempts"`
+	NextReconcileAt   *time.Time `gorm:"index:idx_job_claims_reconcile" json:"nextReconcileAt,omitempty"`
+
 	ReleasedAt    *time.Time `json:"releasedAt,omitempty"`
 	ReleaseReason string     `gorm:"size:40" json:"releaseReason,omitempty"`
 

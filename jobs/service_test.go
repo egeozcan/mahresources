@@ -117,6 +117,19 @@ func jobEvents(t *testing.T, deps Deps, id string) []models.JobEvent {
 	return events
 }
 
+// eventsOfType filters a timeline or a delivered page down to one event type.
+// Assertions about output facts come as pairs — the publication, the expiry, the
+// removal — so they read the type rather than a position in the list.
+func eventsOfType(events []Event, eventType string) []Event {
+	matched := make([]Event, 0, len(events))
+	for _, event := range events {
+		if event.Type == eventType {
+			matched = append(matched, event)
+		}
+	}
+	return matched
+}
+
 func TestJobAcceptStoresUUIDv7IdentityAndAcceptedEventAtomically(t *testing.T) {
 	deps := newTestDeps(t)
 	svc := NewService()
