@@ -194,7 +194,10 @@ func (r *JobRuntime) run() {
 //
 // Reconciliation comes first because the capacity an expired claim holds is
 // capacity the dispatch behind it may need, and because a Job whose claim is
-// still live must not be handed out a second time.
+// still live must not be handed out a second time. Pending work of a Kind this
+// process has no adapter for is blocked in between, for the same reason: such a
+// Job is not owned by anybody, so no reconciliation batch would ever reach it and
+// nothing here could ever run it.
 func (r *JobRuntime) tick(ctx context.Context) {
 	if r == nil || r.service == nil || r.ctx == nil {
 		return
@@ -211,6 +214,13 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			continue
 		}
 		r.startExecution(adapter, execution, adapter.Definition().EffectiveLease())
+	}
+
+	// A Kind this process cannot run at all leaves its pending work in a state
+	// nobody is asked about, so this pass blocks it: nonterminal, visible, and
+	// owned by the person who has to decide what happens to it.
+	if _, err := r.service.ReconcileUnrunnable(r.depsFor(ctx), jobs.DefaultReconcileBatch); err != nil {
+		log.Printf("job runtime: blocking work no adapter can run failed: %v", err)
 	}
 
 	for _, registration := range r.service.Registrations() {

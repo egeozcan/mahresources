@@ -446,6 +446,11 @@ func (s *Service) UpdateProgress(deps Deps, ref ExecutionRef, progress Progress)
 // deliberate — an adapter whose phase chatter overflowed a ceiling must not have
 // that fail the work it is reporting on — and the reserved headroom is what
 // keeps a lifecycle or terminal fact out of that bargain.
+//
+// That headroom is spent by the host only. A caller's own ReservedHost flag is
+// cleared here rather than forwarded: this is the path an adapter's events take,
+// and a flag the caller could set would make the reservation a budget the traffic
+// it is reserved against can spend — the ceiling would then hold for nobody.
 func (s *Service) AppendEvent(deps Deps, ref ExecutionRef, event EventInput) error {
 	if err := validateExecutionRef(ref); err != nil {
 		return err
@@ -453,6 +458,7 @@ func (s *Service) AppendEvent(deps Deps, ref ExecutionRef, event EventInput) err
 	if err := validateAppendedEvent(event); err != nil {
 		return err
 	}
+	event.ReservedHost = false
 
 	job, err := loadJob(deps.DB, ref.JobID)
 	if err != nil {

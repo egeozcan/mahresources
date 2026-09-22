@@ -299,6 +299,12 @@ const (
 	// recorded even though the capacity that triggered it is full, and exactly
 	// one of them exists per Job.
 	EventTruncated = "events-truncated"
+	// EventOutputRemoved is the confirmation that one output's artifact is really
+	// gone. §7 records a Job Event when an expiry is confirmed rather than merely
+	// planned, and this is the confirmation for a removal an adapter performed:
+	// the row's availability is what this database believes, and the event is what
+	// says somebody established the bytes are gone.
+	EventOutputRemoved = "output-removed"
 )
 
 // Bounds on everything searchable. A summary, event detail or failure message
@@ -591,8 +597,10 @@ type SweepResult struct {
 	// still protects, and work whose artifacts nothing could establish were
 	// removed.
 	Skipped int
-	// Outputs is how many output rows had their availability recorded before the
-	// history that pointed at them was pruned.
+	// Outputs is how many output rows had their availability recorded: an artifact
+	// past its own deadline, an output of a Job whose history the pass pruned, and
+	// an artifact a cleanup acknowledged as removed whether or not that history
+	// could follow it.
 	Outputs int
 	// Envelopes is how many replay envelopes the pass purged.
 	Envelopes int
@@ -900,10 +908,13 @@ type EventInput struct {
 	Type   string
 	Detail json.RawMessage
 	// ReservedHost marks an event whose capacity optional Kind traffic may never
-	// consume: host lifecycle, terminal, control and output facts. Transition
-	// ignores it — a lifecycle transition *is* a host fact and is always recorded
-	// as one — while AppendEvent honours it, so an adapter cannot claim the
-	// reserved headroom for its own phase chatter.
+	// consume: host lifecycle, terminal, control and output facts. It is
+	// host-internal. Transition ignores it — a lifecycle transition *is* a host
+	// fact and is always recorded as one — and AppendEvent, which is the path an
+	// adapter's own events take, does not honour a supplied value: an adapter
+	// cannot claim the reserved headroom for its phase chatter by labelling it a
+	// host fact, so what it appends is bounded by the optional ceiling exactly
+	// like every other adapter event.
 	ReservedHost bool
 }
 

@@ -1,8 +1,13 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"log"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -555,5 +560,177 @@ func TestJobRuntimeStopsWhileReconciliationIsWaitingOnItsContext(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop waited for the reconciliation it was supposed to cancel")
+	}
+}
+
+// TestJobRuntimeBlocksQueuedWorkWhoseAdapterIsGone is the restart the design's
+// §3 answers: work accepted under one Service, and a process that comes back with
+// no adapter for its Kind.
+//
+// Reconciliation only visits held claims, so a Job that was accepted and never
+// claimed is invisible to it — no claim to expire, no registration to be reached
+// through — and it would stay queued forever while the process reports itself
+// healthy. §2/§3 make a missing adapter block nonterminal work rather than fall
+// back to another executor, and the blocked state is what puts it in front of the
+// person who can decide what happens to it.
+func TestJobRuntimeBlocksQueuedWorkWhoseAdapterIsGone(t *testing.T) {
+	app := newJobRuntimeContext(t)
+
+	// The process that accepted the work: one Kind, one adapter.
+	original := jobs.NewService()
+	if err := original.RegisterAdapter(newRuntimeTestAdapter()); err != nil {
+		t.Fatalf("RegisterAdapter: %v", err)
+	}
+	accepted := acceptRuntimeJob(t, original, app)
+	due := time.Now().Add(24 * time.Hour).UTC()
+	scheduled, err := original.Accept(app.jobDeps(), jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateScheduled, Origin: "api",
+		ScheduledFor: &due, Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept scheduled job: %v", err)
+	}
+
+	// The restart: a fresh control plane with no registration for that Kind, and
+	// the runtime that owns the loop.
+	restarted := jobs.NewService()
+	runtime := NewJobRuntime(app, restarted, JobRuntimeConfig{Claimant: "runtime-b", Interval: time.Hour})
+	runtime.Start()
+	defer runtime.Stop()
+
+	for _, job := range []jobs.Snapshot{accepted, scheduled} {
+		waitFor(t, "the Job to be blocked", func() bool {
+			var stored models.Job
+			if err := app.db.Where("id = ?", job.ID).First(&stored).Error; err != nil {
+				return false
+			}
+			return stored.State == string(jobs.StateBlocked)
+		})
+		if held := storedCapacity(t, app, jobs.CapacityGroupGlobal) + storedCapacity(t, app, runtimeTestKind); held != 0 {
+			t.Fatalf("blocking pending work took %d capacity slots: nothing is executing", held)
+		}
+		var claims int64
+		if err := app.db.Model(&models.JobClaim{}).Where("job_id = ?", job.ID).Count(&claims).Error; err != nil {
+			t.Fatalf("count claims for %s: %v", job.ID, err)
+		}
+		if claims != 0 {
+			t.Fatalf("blocking pending work took a claim: %d rows", claims)
+		}
+	}
+
+	// The Kind this process *can* run is unaffected: registering the adapter again
+	// is all it takes for new work of that Kind to run.
+	if err := restarted.RegisterAdapter(newRuntimeTestAdapter()); err != nil {
+		t.Fatalf("re-register the adapter: %v", err)
+	}
+	later := acceptRuntimeJob(t, restarted, app)
+	runtime.tick(context.Background())
+	waitFor(t, "the Job accepted after the adapter came back to be dispatched", func() bool {
+		stored := jobSnapshot(t, restarted, app, later.ID)
+		return stored.State != jobs.StateQueued && stored.State != jobs.StateRunning
+	})
+}
+
+// replayLogSecrets are the shapes a decrypted replay input carries that must never
+// reach a log line: a URL's query string, a Cookie, an Authorization header and a
+// value a plugin supplied. They are deliberately not secret-shaped, so an
+// assertion that scans for them cannot pass by accident.
+const (
+	replayLogQuerySecret  = "runtime-url-query-secret-4d1a"
+	replayLogCookieSecret = "runtime-cookie-secret-7e2b"
+	replayLogAuthSecret   = "runtime-bearer-secret-1c9d"
+	replayLogPluginSecret = "runtime-plugin-secret-6f30"
+)
+
+// lockedBuffer is a log destination a test goroutine and the runtime's goroutines
+// can share.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestJobRuntimeNeverLogsTheDecryptedInputItCouldNotDecode is §5's redaction rule
+// where it was actually broken: the runtime's own log.
+//
+// A codec's Decode runs on the decrypted envelope, so the errors a real one
+// produces quote their input — a URL with its query string, a Cookie, an
+// Authorization header, a plugin value. Claim propagated that error, and the loop
+// logged it verbatim, so a secret that had been stored encrypted and never rendered
+// appeared in plaintext in the deployment's log. The failure classification is
+// unchanged: the Job is still blocked rather than run with input nobody can decode.
+func TestJobRuntimeNeverLogsTheDecryptedInputItCouldNotDecode(t *testing.T) {
+	secrets := []string{replayLogQuerySecret, replayLogCookieSecret, replayLogAuthSecret, replayLogPluginSecret}
+	input := jobs.ReplayInput{Input: json.RawMessage(`{
+  "url": "https://files.example.test/media/clip.mp4?token=` + replayLogQuerySecret + `",
+  "headers": {"Cookie": "sid=` + replayLogCookieSecret + `", "Authorization": "Bearer ` + replayLogAuthSecret + `"},
+  "pluginSecret": "` + replayLogPluginSecret + `"
+}`)}
+
+	app := newJobRuntimeContext(t)
+	svc := jobs.NewService()
+	codec := jobs.ReplayCodec{
+		Sanitize: func(json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(`{"host":"files.example.test"}`), nil
+		},
+		Encode: func(value json.RawMessage) (json.RawMessage, error) { return value, nil },
+		Decode: func(payload json.RawMessage, _ uint) (json.RawMessage, error) {
+			// The shape a parser's own error takes: it quotes what it could not read.
+			return nil, fmt.Errorf("cannot decode payload %s", payload)
+		},
+		Migrate: func(payload json.RawMessage, _, _ uint) (json.RawMessage, error) { return payload, nil },
+	}
+	if err := svc.RegisterReplayCodec(runtimeTestKind, 1, codec); err != nil {
+		t.Fatalf("RegisterReplayCodec: %v", err)
+	}
+	if err := svc.RegisterAdapter(newRuntimeTestAdapter()); err != nil {
+		t.Fatalf("RegisterAdapter: %v", err)
+	}
+	accepted, err := svc.Accept(app.jobDeps(), jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		Replay: input,
+	})
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	captured := &lockedBuffer{}
+	previous := log.Writer()
+	log.SetOutput(captured)
+	defer log.SetOutput(previous)
+
+	runtime := NewJobRuntime(app, svc, JobRuntimeConfig{Claimant: "runtime-test", Interval: time.Hour})
+	runtime.Start()
+	defer runtime.Stop()
+
+	waitFor(t, "the Job to be blocked", func() bool {
+		return jobSnapshot(t, svc, app, accepted.ID).State == jobs.StateBlocked
+	})
+	// The claim failure was logged at all: without this, the absence of the
+	// secrets below could be the absence of a log line rather than redaction.
+	if logged := captured.String(); !strings.Contains(logged, "job runtime: claiming") {
+		t.Fatalf("the runtime logged nothing about the refused claim: %q", logged)
+	}
+	if logged := captured.String(); !strings.Contains(logged, "replay") {
+		t.Fatalf("the runtime logged something other than the replay refusal: %q", logged)
+	}
+	for _, secret := range secrets {
+		if logged := captured.String(); strings.Contains(logged, secret) {
+			t.Fatalf("the runtime logged a decrypted secret (%s): %q", secret, logged)
+		}
+	}
+	if held := storedCapacity(t, app, jobs.CapacityGroupGlobal) + storedCapacity(t, app, runtimeTestKind); held != 0 {
+		t.Fatalf("the blocked Job still holds %d capacity slots", held)
 	}
 }

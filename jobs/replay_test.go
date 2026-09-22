@@ -1134,7 +1134,7 @@ func TestReplayBlockedSeparatesNonterminalFromTerminalDecodeFailures(t *testing.
 func TestReplayKeyFilePublishNeverReplacesAnExistingKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), JobReplayKeyFileName)
 	first := replayKeyFromSeed(t, "the-process-that-won-the-race")
-	published, err := publishReplayKeyFile(path, first)
+	published, err := publishReplayKeyFile(path, first, syncReplayKeyDirectory)
 	if err != nil {
 		t.Fatalf("publish the first key: %v", err)
 	}
@@ -1143,7 +1143,7 @@ func TestReplayKeyFilePublishNeverReplacesAnExistingKey(t *testing.T) {
 	}
 
 	loser := replayKeyFromSeed(t, "the-process-that-lost-the-race")
-	published, err = publishReplayKeyFile(path, loser)
+	published, err = publishReplayKeyFile(path, loser, syncReplayKeyDirectory)
 	if err != nil {
 		t.Fatalf("publish the second key: %v", err)
 	}
@@ -1333,4 +1333,221 @@ func TestReplayableJobWithoutItsEnvelopeIsBlockedRatherThanRun(t *testing.T) {
 	if stored := jobRow(t, deps, snap.ID); stored.State != string(StateBlocked) {
 		t.Fatalf("state = %s, want blocked", stored.State)
 	}
+}
+
+// TestReplayPostDecodeValidationBlocksTheClaimAndReleasesItsCapacity is §5's
+// "nonterminal work that cannot decode its required input becomes `blocked`" read
+// as covering the whole decode boundary rather than the codec's error return.
+//
+// A codec can succeed and still produce input no executor may run with: empty, not
+// JSON, or over the size ceiling. That is a decode failure in the sense the rule
+// means, and it was classified as a plain validation error — so the claim this
+// process had just committed stayed committed: the Job sat `running` under a token
+// with an execution that never started, and the capacity it was admitted under
+// stayed occupied until somebody's lease expired.
+func TestReplayPostDecodeValidationBlocksTheClaimAndReleasesItsCapacity(t *testing.T) {
+	cases := []struct {
+		name    string
+		decoded func() json.RawMessage
+	}{
+		{name: "an empty payload", decoded: func() json.RawMessage { return nil }},
+		{name: "a payload that is not JSON", decoded: func() json.RawMessage { return json.RawMessage("not json") }},
+		{
+			name: "a payload over the size ceiling",
+			decoded: func() json.RawMessage {
+				return json.RawMessage(`{"oversized":"` + strings.Repeat("a", MaxReplayPayloadBytes) + `"}`)
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			deps, _ := newReplayDeps(t)
+			svc := NewService()
+			codec := fixtureReplayCodec()
+			codec.Decode = func(json.RawMessage, uint) (json.RawMessage, error) { return testCase.decoded(), nil }
+			if err := svc.RegisterReplayCodec("remote-download", 1, codec); err != nil {
+				t.Fatalf("register codec: %v", err)
+			}
+			deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+			adapter := registerTestAdapter(t, svc, Definition{
+				Kind: "remote-download", KindVersion: 1, Restorable: true,
+			})
+			snap := acceptFixtureReplayJob(t, svc, deps)
+
+			_, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+				Kind: "remote-download", KindVersion: 1, Claimant: "runtime-a",
+				Capacity: []CapacityRef{{Group: CapacityGroupGlobal, Limit: 1}},
+			})
+			if err == nil {
+				t.Fatalf("Claim of a Job whose decoded input cannot be run returned no error (ok=%v)", ok)
+			}
+			if adapter.dispatchedCount() != 0 {
+				t.Fatalf("a Job with unusable input reached the adapter %d times", adapter.dispatchedCount())
+			}
+
+			stored := jobRow(t, deps, snap.ID)
+			if stored.State != string(StateBlocked) {
+				t.Fatalf("state = %s, want blocked", stored.State)
+			}
+			if stored.ExecutionToken != "" {
+				t.Fatalf("the blocked Job still carries the claim's execution token %q", stored.ExecutionToken)
+			}
+			if claim := claimRow(t, deps, snap.ID); claim.State != models.JobClaimStateReleased {
+				t.Fatalf("claim state = %s, want released once the Job was blocked", claim.State)
+			}
+			if held := capacityCount(t, deps, CapacityGroupGlobal); held != 0 {
+				t.Fatalf("capacity rows = %d, want none: a Job that never ran may not hold the slot it was admitted under", held)
+			}
+		})
+	}
+}
+
+// TestReplayCodecFailuresNeverQuoteTheDecryptedInput is §5's "raw payloads never
+// enter searchable summaries or user-visible Job Events" applied to the one
+// channel that was left open: the codec's own error.
+//
+// A codec's Decode and Migrate hooks run on the decrypted bytes, and the errors a
+// real one produces are the errors a parser produces — which quote their input. A
+// URL with its query string, a Cookie header, an Authorization header and a plugin
+// value all reached the caller that way, and the dispatch runtime logs that error
+// verbatim, so a secret that was stored encrypted was written to the log in clear.
+func TestReplayCodecFailuresNeverQuoteTheDecryptedInput(t *testing.T) {
+	secrets := []string{fixtureQuerySecret, fixtureCookieSecret, fixtureAuthSecret, fixturePluginSecret}
+
+	// Decode: the codec reports what it could not parse, quoting its input.
+	t.Run("a failure decoding the current version", func(t *testing.T) {
+		deps, _ := newReplayDeps(t)
+		svc := NewService()
+		codec := fixtureReplayCodec()
+		codec.Decode = func(payload json.RawMessage, _ uint) (json.RawMessage, error) {
+			return nil, fmt.Errorf("cannot decode payload %s", payload)
+		}
+		if err := svc.RegisterReplayCodec("remote-download", 1, codec); err != nil {
+			t.Fatalf("register codec: %v", err)
+		}
+		deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+		snap := acceptFixtureReplayJob(t, svc, deps)
+
+		_, err := svc.OpenReplay(deps, Access{Administrator: true}, snap.ID)
+		if !errors.Is(err, ErrReplayDecodeFailed) {
+			t.Fatalf("OpenReplay = %v, want ErrReplayDecodeFailed", err)
+		}
+		for _, secret := range secrets {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("the decode failure quoted a secret: %v", err)
+			}
+		}
+	})
+
+	// Migrate: the same, on the read path an envelope written at a retired Kind
+	// version takes.
+	t.Run("a failure migrating a retired version", func(t *testing.T) {
+		deps, _ := newReplayDeps(t)
+		original := NewService()
+		if err := original.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+			t.Fatalf("register v1: %v", err)
+		}
+		deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+		snap := acceptFixtureReplayJob(t, original, deps)
+
+		v2 := NewService()
+		codec := fixtureReplayCodec()
+		codec.Migrate = func(payload json.RawMessage, _, _ uint) (json.RawMessage, error) {
+			return nil, fmt.Errorf("cannot upgrade payload %s", payload)
+		}
+		if err := v2.RegisterReplayCodec("remote-download", 2, codec); err != nil {
+			t.Fatalf("register v2: %v", err)
+		}
+
+		_, err := v2.OpenReplay(deps, Access{Administrator: true}, snap.ID)
+		if !errors.Is(err, ErrReplayDecodeFailed) {
+			t.Fatalf("OpenReplay = %v, want ErrReplayDecodeFailed", err)
+		}
+		for _, secret := range secrets {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("the migration failure quoted a secret: %v", err)
+			}
+		}
+	})
+}
+
+// TestReplayKeyFilePublicationMakesTheNameDurable is the boundary a key file
+// exists for: the key that sealed committed envelopes must still be there after a
+// power failure, or the next boot generates a different one and every envelope
+// written under the first becomes unreadable.
+//
+// Syncing the *file* before publishing makes its contents durable and says nothing
+// about the directory entry that now names it: the bytes can survive the crash and
+// the name be lost. So the publication flushes the containing directory after the
+// exclusive link — both when it won the race and when it adopted another process's
+// key, because in the second case the winner's entry is the one this process now
+// depends on. A directory that cannot be flushed is a refusal, and startup then
+// stops before anything is accepted: a key nobody can promise will survive is the
+// failure this file exists to prevent.
+func TestReplayKeyFilePublicationMakesTheNameDurable(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, JobReplayKeyFileName)
+	key := replayKeyFromSeed(t, "the-key-that-must-survive")
+
+	t.Run("the containing directory is flushed after the name exists", func(t *testing.T) {
+		var flushed []string
+		recording := func(dir string) error {
+			flushed = append(flushed, dir)
+			return nil
+		}
+		published, err := publishReplayKeyFile(path, key, recording)
+		if err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+		if published.ID != key.ID {
+			t.Fatalf("published key = %s, want %s", published.ID, key.ID)
+		}
+		if len(flushed) != 1 || flushed[0] != directory {
+			t.Fatalf("flushed %v, want the key file's own directory %s once", flushed, directory)
+		}
+		// The entry really is there, so the flush was about a name that exists.
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("the published key file is missing: %v", err)
+		}
+	})
+
+	t.Run("a directory that cannot be flushed refuses the publication", func(t *testing.T) {
+		second := filepath.Join(t.TempDir(), JobReplayKeyFileName)
+		broken := func(string) error { return errors.New("the directory could not be flushed") }
+		if _, err := publishReplayKeyFile(second, key, broken); err == nil {
+			t.Fatal("a key whose name could not be made durable was accepted")
+		}
+	})
+
+	t.Run("a competing publisher flushes the directory it adopted the key from", func(t *testing.T) {
+		contestedDir := t.TempDir()
+		contested := filepath.Join(contestedDir, JobReplayKeyFileName)
+		winner := replayKeyFromSeed(t, "the-process-that-won-the-race")
+		if _, err := publishReplayKeyFile(contested, winner, func(string) error { return nil }); err != nil {
+			t.Fatalf("publish the winner's key: %v", err)
+		}
+		var flushed []string
+		loser := replayKeyFromSeed(t, "the-process-that-lost-the-race")
+		published, err := publishReplayKeyFile(contested, loser, func(dir string) error {
+			flushed = append(flushed, dir)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("publish the losing key: %v", err)
+		}
+		if published.ID != winner.ID {
+			t.Fatalf("the losing publish returned %s, want the winner's %s", published.ID, winner.ID)
+		}
+		if len(flushed) != 1 || flushed[0] != contestedDir {
+			t.Fatalf("flushed %v, want the directory the adopted key was published into", flushed)
+		}
+	})
+
+	t.Run("a publication that cannot be written reports the failure", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "absent", JobReplayKeyFileName)
+		if _, err := publishReplayKeyFile(missing, key, func(string) error { return nil }); err == nil {
+			t.Fatal("a key file was published into a directory that does not exist")
+		}
+	})
 }

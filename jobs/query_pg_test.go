@@ -5,10 +5,13 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // These are the cross-engine regressions for the read and retention SQL: a
@@ -270,4 +273,124 @@ func TestPinAdmissionSerializesOnTheViewersGuardPG(t *testing.T) {
 	if pinned != 2 {
 		t.Fatalf("%d pins are held under a limit of %d", pinned, deps.PinLimit)
 	}
+}
+
+// TestRetentionSweepCannotPruneAJobPinnedByAnOpenTransactionPG is the pin/delete
+// ordering the sweep's guarded delete does not cover on its own.
+//
+// `SetPreference` takes the Job's row with `SELECT ... FOR UPDATE` and then writes
+// only its own preference row, so the Job tuple a concurrent delete rechecks is
+// *unchanged*. A delete whose `NOT EXISTS (pins)` predicate was evaluated before
+// the pin committed therefore keeps its earlier snapshot — the row lock wait does
+// not make PostgreSQL re-evaluate a predicate the tuple never invalidated — and
+// the Job, with the pin that was just committed for it, is deleted anyway. Only
+// PostgreSQL can show this: SQLite serializes writers, so the two transactions
+// cannot interleave that way.
+func TestRetentionSweepCannotPruneAJobPinnedByAnOpenTransactionPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := RetentionPolicy{History: time.Hour, Attention: 2 * time.Hour}
+	deps.Retention = &policy
+	clock := time.Date(2033, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	registerTestAdapter(t, svc, Definition{Kind: "group-export", KindVersion: 1, Restorable: true})
+
+	accepted := acceptForPG(t, svc, deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Title: "pinned while it was being swept",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	running, err := svc.Transition(deps, Transition{JobID: accepted.ID, ExpectedVersion: accepted.Version, To: StateRunning})
+	if err != nil {
+		t.Fatalf("transition to running: %v", err)
+	}
+	if _, err := svc.Transition(deps, Transition{JobID: running.ID, ExpectedVersion: running.Version, To: StateSucceeded}); err != nil {
+		t.Fatalf("transition to succeeded: %v", err)
+	}
+	// Past its window, so the sweep's selection includes it.
+	clock = clock.Add(24 * time.Hour)
+
+	// The pin's transaction holds the Job's row from here on, and stops just
+	// before it writes the preference — which is the instant the pin is real to
+	// everyone but the sweep.
+	tx := deps.DB.Begin()
+	if tx.Error != nil {
+		t.Fatalf("begin the pin transaction: %v", tx.Error)
+	}
+	atThePreferenceWrite := make(chan struct{})
+	letThePinCommit := make(chan struct{})
+	var once sync.Once
+	const hook = "test:pause_before_the_preference_write"
+	if err := tx.Callback().Update().Before("gorm:update").Register(hook, func(db *gorm.DB) {
+		if db.Statement == nil || db.Statement.Table != "job_preferences" {
+			return
+		}
+		once.Do(func() {
+			close(atThePreferenceWrite)
+			<-letThePinCommit
+		})
+	}); err != nil {
+		t.Fatalf("register the interleaving hook: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Callback().Update().Remove(hook) })
+
+	pinDone := make(chan error, 1)
+	go func() {
+		pinErr := svc.SetPreference(Deps{DB: tx}, Access{UserID: 7}, PreferenceRequest{JobID: accepted.ID, Pinned: boolPtr(true)})
+		if pinErr == nil {
+			pinErr = tx.Commit().Error
+		}
+		pinDone <- pinErr
+	}()
+	<-atThePreferenceWrite
+
+	swept := make(chan SweepResult, 1)
+	sweepFailed := make(chan error, 1)
+	go func() {
+		result, sweepErr := svc.Sweep(deps, policy, SweepCursor{}, 100)
+		swept <- result
+		sweepFailed <- sweepErr
+	}()
+
+	// The sweep's delete is now waiting on the row the pin holds.
+	waitForABlockedQuery(t, deps.DB)
+	close(letThePinCommit)
+
+	if err := <-pinDone; err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	result := <-swept
+	if err := <-sweepFailed; err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if !jobExists(t, deps, accepted.ID) {
+		t.Fatal("a Job pinned by a transaction that committed while the sweep waited was pruned anyway")
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "job_id = ? AND pinned_at IS NOT NULL", accepted.ID); rows != 1 {
+		t.Fatalf("the committed pin is gone: %d rows", rows)
+	}
+	if result.Pruned != 0 {
+		t.Fatalf("pruned %d Jobs, want none: the pin committed before the delete decided", result.Pruned)
+	}
+}
+
+// waitForABlockedQuery waits until some statement in this database is waiting on a
+// lock, which is how a test observes that one transaction has reached the point
+// where another holds the row it needs — without sleeping for a guessed interval.
+func waitForABlockedQuery(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int64
+		if err := db.Raw("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()").
+			Scan(&waiting).Error; err != nil {
+			t.Fatalf("read pg_stat_activity: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for the sweep to block on the pinned Job's row lock")
 }

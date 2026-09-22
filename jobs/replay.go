@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"mahresources/constants"
@@ -266,7 +267,7 @@ func loadOrCreateReplayKeyFile(path string) (ReplayKey, error) {
 	if err != nil {
 		return ReplayKey{}, err
 	}
-	return publishReplayKeyFile(path, generated)
+	return publishReplayKeyFile(path, generated, syncReplayKeyDirectory)
 }
 
 // parseReplayKeyFile reads the file's single base64 key. A file holding several
@@ -285,14 +286,49 @@ func parseReplayKeyFile(path string, contents []byte) (ReplayKey, error) {
 	return keys[0], nil
 }
 
+// replayKeyDirSync makes the directory entry that names a published file durable:
+// it flushes the directory itself. It is the step file-content syncing does not
+// take, and the one this file cannot do without.
+//
+// It is a parameter of publishReplayKeyFile rather than a direct call because the
+// property worth testing is the publication's *response* to a directory that
+// cannot be flushed, and no real filesystem can be made to fail at that instant.
+type replayKeyDirSync func(dir string) error
+
+// syncReplayKeyDirectory flushes one directory, so the entry naming a file linked
+// into it survives a power failure.
+//
+// The platform errors that mean "this filesystem does not flush directories" are
+// tolerated: the guarantee is weaker there for every file on it, and refusing to
+// start a deployment over a capability the filesystem does not have would be a
+// worse answer than the one it already gives. Everything else is a refusal, because
+// an entry that could not be flushed is a key that might not be there next boot.
+func syncReplayKeyDirectory(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("jobs: open %s to flush the replay key file's name: %w", dir, err)
+	}
+	defer handle.Close()
+
+	if err := handle.Sync(); err != nil {
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) {
+			return nil
+		}
+		return fmt.Errorf("jobs: flush %s after publishing the replay key file: %w", dir, err)
+	}
+	return nil
+}
+
 // publishReplayKeyFile writes a fresh key to its final name, atomically and only
-// if that name is still free, and returns the key that name now holds.
+// if that name is still free, makes that name durable, and returns the key the
+// name now holds.
 //
 // The return value is the point. When the name was taken, the process that lost
-// the race must adopt the winner's key — returning its own would give one
-// database two keys, and every envelope written by the other process would be
-// unreadable here.
-func publishReplayKeyFile(path string, key ReplayKey) (ReplayKey, error) {
+// the race must adopt the winner's key — returning its own would give one database
+// two keys, and every envelope written by the other process would be unreadable
+// here — and it flushes the directory it adopted the key from too, because that
+// entry is now what its own envelopes depend on.
+func publishReplayKeyFile(path string, key ReplayKey, flush replayKeyDirSync) (ReplayKey, error) {
 	dir := filepath.Dir(path)
 	temp, err := os.CreateTemp(dir, "."+JobReplayKeyFileName+"-*")
 	if err != nil {
@@ -311,7 +347,9 @@ func publishReplayKeyFile(path string, key ReplayKey) (ReplayKey, error) {
 		return ReplayKey{}, fmt.Errorf("jobs: write replay key file: %w", err)
 	}
 	// Synced before the name exists: a key file that is published and then lost
-	// to a power cut would leave envelopes nothing can open.
+	// to a power cut would leave envelopes nothing can open. The name itself is
+	// flushed below — this makes the bytes durable, that makes the entry durable,
+	// and neither is enough alone.
 	if err := temp.Sync(); err != nil {
 		temp.Close()
 		return ReplayKey{}, fmt.Errorf("jobs: sync replay key file: %w", err)
@@ -324,7 +362,12 @@ func publishReplayKeyFile(path string, key ReplayKey) (ReplayKey, error) {
 	// rename would silently replace whatever another process just wrote.
 	if err := os.Link(tempName, path); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			// Another process won the race. Its key is the deployment's key.
+			// Another process won the race. Its key is the deployment's key, and its
+			// entry is the one to flush: this process is about to seal envelopes that
+			// only that file can open.
+			if err := flush(dir); err != nil {
+				return ReplayKey{}, err
+			}
 			existing, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return ReplayKey{}, fmt.Errorf("jobs: read the replay key another process published: %w", readErr)
@@ -336,6 +379,13 @@ func publishReplayKeyFile(path string, key ReplayKey) (ReplayKey, error) {
 			return winner, nil
 		}
 		return ReplayKey{}, fmt.Errorf("jobs: publish replay key file %s: %w", path, err)
+	}
+
+	// The name exists; now it has to survive. The file's contents were synced
+	// before the link, and the directory is flushed after it, so a power failure
+	// leaves either no key file or the whole of it — never bytes and no entry.
+	if err := flush(dir); err != nil {
+		return ReplayKey{}, err
 	}
 	return key, nil
 }
@@ -763,8 +813,10 @@ func (s *Service) OpenReplay(deps Deps, access Access, jobID string) (OpenedRepl
 	if targetVersion != envelope.KindVersion {
 		migrated, migrateErr := codec.Migrate(plaintext, envelope.KindVersion, targetVersion)
 		if migrateErr != nil {
-			return OpenedReplay{}, fmt.Errorf("%w: %s v%d -> v%d: %v",
-				ErrReplayDecodeFailed, envelope.Kind, envelope.KindVersion, targetVersion, migrateErr)
+			// As for Decode: the migration runs on decrypted bytes, so its error
+			// text may quote them.
+			return OpenedReplay{}, fmt.Errorf("%w: %s v%d could not be migrated to v%d",
+				ErrReplayDecodeFailed, envelope.Kind, envelope.KindVersion, targetVersion)
 		}
 		plaintext = migrated
 		from := envelope.KindVersion
@@ -773,10 +825,22 @@ func (s *Service) OpenReplay(deps Deps, access Access, jobID string) (OpenedRepl
 
 	decoded, err := codec.Decode(plaintext, targetVersion)
 	if err != nil {
-		return OpenedReplay{}, fmt.Errorf("%w: %s v%d: %v", ErrReplayDecodeFailed, envelope.Kind, targetVersion, err)
+		// The codec's own text is deliberately not carried: Decode runs on the
+		// *decrypted* input, so its error can quote a URL, a Cookie header or a
+		// plugin value — and this error reaches runtime logs and the caller that
+		// asked to run the Job. The classification is what a reader acts on, and
+		// the Kind and version are what an operator needs to find it.
+		return OpenedReplay{}, fmt.Errorf("%w: %s v%d could not be decoded",
+			ErrReplayDecodeFailed, envelope.Kind, targetVersion)
 	}
 	if err := validateReplayJSON("input", decoded, MaxReplayPayloadBytes); err != nil {
-		return OpenedReplay{}, err
+		// A codec that succeeds and still produces something no executor may run
+		// with — nothing at all, something that is not JSON, something over the
+		// ceiling — is a decode failure in the sense §5 means, so it is classified
+		// as one rather than left as a validation error the dispatch seam does not
+		// recognise and would therefore let run on with no input.
+		return OpenedReplay{}, fmt.Errorf("%w: %s v%d produced input no executor may run with: %v",
+			ErrReplayDecodeFailed, envelope.Kind, targetVersion, err)
 	}
 
 	return OpenedReplay{

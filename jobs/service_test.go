@@ -47,6 +47,16 @@ func jobCoreTables() []any {
 // what the acceptance and publisher tests exercise.
 func newTestDeps(t *testing.T) Deps {
 	t.Helper()
+	deps, _ := newFileDeps(t)
+	return deps
+}
+
+// newFileDeps is newTestDeps plus the DSN it opened, so a test that needs a
+// second connection — an interleaving driven from another transaction, which is
+// what makes it an interleaving rather than a sequence — can open one against
+// the very same file.
+func newFileDeps(t *testing.T) (Deps, string) {
+	t.Helper()
 
 	dsn := filepath.Join(t.TempDir(), "jobs.db")
 	db, _, err := models.CreateDatabaseConnection(constants.DbTypeSqlite, dsn, "", 0)
@@ -63,7 +73,24 @@ func newTestDeps(t *testing.T) Deps {
 	if err := db.AutoMigrate(append(jobCoreTables(), &models.PluginKV{})...); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
-	return Deps{DB: db}
+	return Deps{DB: db}, dsn
+}
+
+// openSecondHandle opens another connection to one test database. It is how a
+// test performs a write in the middle of another transaction's statement.
+func openSecondHandle(t *testing.T, dsn string) *gorm.DB {
+	t.Helper()
+	db, _, err := models.CreateDatabaseConnection(constants.DbTypeSqlite, dsn, "", 0)
+	if err != nil {
+		t.Fatalf("open second handle: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("underlying second handle: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(2)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return db
 }
 
 func uintPtr(v uint) *uint { return &v }

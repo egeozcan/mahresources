@@ -10,6 +10,7 @@ import (
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // This file holds ordinary history retention: the bounded, resumable sweep that
@@ -111,14 +112,18 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 
 		// The artifacts go next, and the answer has to be yes before the history
 		// that points at them may: §9 requires the removal to be established, and
-		// nobody but the Kind that published an artifact can establish it. A
-		// refusal — an artifact still in use, an adapter that cannot answer, a
-		// Kind this process has no adapter for at all — keeps the Job, which is
-		// the only thing still naming what was left behind.
-		accounted, err := s.artifactsAccountedFor(deps, candidate)
+		// nobody but the Kind that published an artifact can establish it. What the
+		// adapter acknowledges as removed is recorded whether or not the whole set
+		// went, because an artifact that is really gone is gone whatever happens to
+		// the history that names it. A refusal — an artifact still in use, an
+		// adapter that cannot answer, a Kind this process has no adapter for at all
+		// — keeps the Job, which is the only thing still naming what was left
+		// behind.
+		accounted, outputs, err := s.accountForArtifacts(deps, candidate, now)
 		if err != nil {
 			return result, err
 		}
+		result.Outputs += outputs
 		if !accounted {
 			result.Skipped++
 			continue
@@ -145,25 +150,43 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 // expiredJobPredicate is the retention decision, written once: a terminal Job
 // whose deadline passed, which nobody pinned and no unresolved claim still
 // protects. It is re-asserted inside the deleting transaction, so the decision
-// and the delete cannot be separated by a pin or a claim landing in between.
+// and the delete cannot be separated by a pin or a claim landing in between —
+// and on an engine with row locks the transaction has taken the Job's own row
+// before this predicate is evaluated, so a writer holding it has committed by
+// then.
 const expiredJobPredicate = `jobs.id = ? AND jobs.state IN ? AND jobs.expires_at IS NOT NULL AND jobs.expires_at <= ?
 	AND NOT EXISTS (SELECT 1 FROM job_preferences p WHERE p.job_id = jobs.id AND p.pinned_at IS NOT NULL)
 	AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)`
 
 // pruneExpiredJob applies one candidate in its own transaction.
 //
-// The transaction opens with the guarded delete rather than with a read: on
-// SQLite the first statement of a write transaction must be the write, or a read
-// snapshot is promoted to a write after another connection has committed, which
-// SQLite refuses without running the busy handler. The delete therefore carries
-// the whole decision, and its row count is the answer — a Job that was pinned,
-// claimed or changed underneath the selection matches no row and is left where
-// it is.
+// The transaction opens with a write rather than with a read: on SQLite the first
+// statement of a write transaction must be the write, or a read snapshot is
+// promoted to a write after another connection has committed, which SQLite
+// refuses without running the busy handler. So on SQLite the guarded delete is
+// first and carries the whole decision, and its row count is the answer — a Job
+// that was pinned, claimed or changed underneath the selection matches no row and
+// is left where it is. On an engine with row locks the candidate's own row is
+// taken first, because the predicates below are evaluated per statement and a
+// writer that holds that row without changing it — a pin, which is a viewer's own
+// row rather than a fact about the Job — would otherwise stay invisible to the
+// statement that decides.
 func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time) (bool, int, error) {
 	pruned := false
 	outputs := 0
 
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
+		locked, err := lockPruneTarget(tx, candidate.ID)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			// The Job is gone: another pass, or an operator, removed it while this
+			// one was reading candidates. There is nothing to decide and nothing to
+			// record about a history that no longer exists.
+			return nil
+		}
+
 		result := tx.Where(expiredJobPredicate,
 			candidate.ID, terminalStates(), now, unresolvedClaimStates(),
 		).Delete(&models.Job{})
@@ -222,6 +245,37 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 		return nil
 	})
 	return pruned, outputs, err
+}
+
+// lockPruneTarget takes the candidate Job's own row before the statement that
+// decides about it, on an engine that has row locks, and reports whether the row
+// was there to take.
+//
+// The guarded delete's pin and claim predicates are `NOT EXISTS` subqueries, and
+// PostgreSQL evaluates them from the snapshot the statement started with. A pin
+// transaction takes the Job's row with `SELECT ... FOR UPDATE` and writes only
+// its own preference row, so the Job tuple never changes and no recheck follows
+// the lock wait: a delete that had already decided would go through on the
+// snapshot taken before the pin committed. Waiting for that row here means the
+// deciding statement begins after the pin is committed, and its fresh
+// READ COMMITTED snapshot sees it.
+//
+// SQLite has no row locks and serializes writers, so the guarded delete is
+// already the first statement of the transaction and is already the whole
+// decision; this is inert there.
+func lockPruneTarget(tx *gorm.DB, jobID string) (bool, error) {
+	if tx.Dialector.Name() == "sqlite" {
+		return true, nil
+	}
+	var job models.Job
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).First(&job).Error
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("jobs: lock job %s for pruning: %w", jobID, err)
+	}
+	return true, nil
 }
 
 // protectedByUnresolvedClaim reports whether an execution claim nobody could
@@ -291,11 +345,18 @@ func sweepProtected(db *gorm.DB, jobID string) (bool, error) {
 // expireOutputsOnTheirDeadline records the expiry of every output whose own
 // deadline has passed, whatever its Job's state or retention says.
 //
-// It is one bounded statement pair rather than a per-Job walk: the rows it is
-// about are the ones an executor promised a viewer, and the sweep is the only
-// sane place to turn "past its deadline" into the recorded fact that every reader
-// agrees about. The update is guarded on the availability it is replacing, so two
-// sweeps racing each other record one expiry once.
+// It is one bounded statement rather than a per-Job walk: the rows it is about
+// are the ones an executor promised a viewer, and the sweep is the only sane
+// place to turn "past its deadline" into the recorded fact that every reader
+// agrees about.
+//
+// The statement carries the row it decided about rather than the id alone. A
+// publication of the same key — the same artifact produced again — replaces the
+// row, and an update guarded on id and availability would then expire a
+// still-valid output; so each guarded disjunct rechecks that row's own version
+// and deadline, which is also what makes the write safe on PostgreSQL, where the
+// row updated between the selection and the statement is rechecked against the
+// predicate the statement carries.
 func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, error) {
 	var due []models.JobOutput
 	if err := deps.DB.Model(&models.JobOutput{}).
@@ -308,13 +369,17 @@ func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, err
 	if len(due) == 0 {
 		return 0, nil
 	}
-	ids := make([]string, 0, len(due))
+
+	guards := make([]string, 0, len(due))
+	args := make([]any, 0, len(due)*3)
 	for _, row := range due {
-		ids = append(ids, row.ID)
+		guards = append(guards, "(id = ? AND version = ? AND expires_at IS NOT NULL AND expires_at <= ?)")
+		args = append(args, row.ID, row.Version, now)
 	}
 
 	result := deps.DB.Model(&models.JobOutput{}).
-		Where("id IN ? AND availability = ?", ids, string(OutputAvailable)).
+		Where("availability = ?", string(OutputAvailable)).
+		Where("("+strings.Join(guards, " OR ")+")", args...).
 		Updates(map[string]any{
 			"availability": string(OutputExpired),
 			"version":      gorm.Expr("version + 1"),
@@ -326,9 +391,9 @@ func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, err
 	return int(result.RowsAffected), nil
 }
 
-// artifactsAccountedFor asks the Kind's adapter whether every artifact one expired
-// Job published is really gone, and reports whether the history that names them
-// may be pruned.
+// accountForArtifacts asks the Kind's adapter whether every artifact one expired
+// Job published is really gone, records each removal the adapter acknowledges,
+// and reports whether every one of them is accounted for.
 //
 // The question is not answerable from the output rows: their availability is what
 // this database believes, and the bytes may live anywhere the adapter put them.
@@ -337,22 +402,31 @@ func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, err
 // Kind this process cannot run at all. An already-missing artifact is a yes,
 // because that is one of the outcomes §7 names.
 //
+// The acknowledgement is per artifact rather than per Job, and it is recorded per
+// artifact. A cleanup that removed two of three left two artifacts that are really
+// gone, and the Job they belonged to keeps its history because of the third — so
+// reducing the answer to one boolean left those two advertised as available for as
+// long as that history lived, which for an artifact with no expiry of its own is
+// forever. The same loss happens the other way round: when the accounting is
+// complete but the metadata cannot be pruned, because a pin landed while the
+// cleanup ran.
+//
 // The call is bounded by the batch it belongs to — one Job's artifacts, at most
 // one cleanup per candidate — and runs without a cancellation source because a
 // sweep has none. An adapter whose cleanup can take a long time bounds itself.
-func (s *Service) artifactsAccountedFor(deps Deps, job models.Job) (bool, error) {
+func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) (bool, int, error) {
 	var rows []models.JobOutput
 	if err := deps.DB.Where("job_id = ? AND type = ?", job.ID, OutputTypeArtifact).
 		Order("key ASC").Find(&rows).Error; err != nil {
-		return false, fmt.Errorf("jobs: read artifacts of %s: %w", job.ID, err)
+		return false, 0, fmt.Errorf("jobs: read artifacts of %s: %w", job.ID, err)
 	}
 	if len(rows) == 0 {
-		return true, nil
+		return true, 0, nil
 	}
 
 	adapter, _, err := s.adapterFor(job.Kind, job.KindVersion)
 	if err != nil {
-		return false, nil
+		return false, 0, nil
 	}
 	artifacts := make([]ArtifactRef, 0, len(rows))
 	for _, row := range rows {
@@ -362,18 +436,83 @@ func (s *Service) artifactsAccountedFor(deps Deps, job models.Job) (bool, error)
 		JobID: job.ID, Kind: job.Kind, KindVersion: job.KindVersion, Artifacts: artifacts,
 	})
 	if err != nil {
-		return false, nil
+		return false, 0, nil
 	}
 	removed := make(map[string]bool, len(result.Removed))
 	for _, key := range result.Removed {
 		removed[key] = true
 	}
-	for _, artifact := range artifacts {
-		if !removed[artifact.Key] {
-			return false, nil
+
+	accounted := true
+	acknowledged := make([]models.JobOutput, 0, len(rows))
+	for _, row := range rows {
+		if removed[row.Key] {
+			acknowledged = append(acknowledged, row)
+			continue
 		}
+		accounted = false
 	}
-	return true, nil
+
+	recorded, err := recordArtifactRemovals(deps.DB, job, acknowledged, now)
+	if err != nil {
+		return false, 0, err
+	}
+	return accounted, recorded, nil
+}
+
+// recordArtifactRemovals records the artifacts one cleanup acknowledged as gone:
+// each output row's own availability, and one Job Event saying the bytes are
+// gone.
+//
+// Each write carries the output's own version, so an artifact published again
+// while the cleanup ran is not marked with an outcome that belongs to the row it
+// replaced, and a row already recorded removed is not recorded twice — which is
+// also what keeps a repeated pass over one Job from growing its timeline. The
+// transaction is this one rather than the pruning one on purpose: an artifact that
+// is really gone is gone whether or not the history naming it may follow.
+func recordArtifactRemovals(db *gorm.DB, job models.Job, removed []models.JobOutput, now time.Time) (int, error) {
+	if len(removed) == 0 {
+		return 0, nil
+	}
+	recorded := 0
+	err := db.Transaction(func(tx *gorm.DB) error {
+		for _, output := range removed {
+			// The first statement is the write: it takes the writer lock before
+			// anything is read (SQLite) and is what serialises this against a
+			// publication of the same key.
+			result := tx.Model(&models.JobOutput{}).
+				Where("id = ? AND version = ? AND availability <> ?",
+					output.ID, output.Version, string(OutputRemoved)).
+				Updates(map[string]any{
+					"availability": string(OutputRemoved),
+					"removed_at":   now,
+					"version":      gorm.Expr("version + 1"),
+					"updated_at":   now,
+				})
+			if result.Error != nil {
+				return fmt.Errorf("jobs: record artifact removal for %s: %w", output.Key, result.Error)
+			}
+			if result.RowsAffected == 0 {
+				continue
+			}
+			recorded++
+
+			detail, err := json.Marshal(map[string]string{
+				"key": output.Key, "availability": string(OutputRemoved),
+			})
+			if err != nil {
+				return fmt.Errorf("jobs: encode artifact removal detail: %w", err)
+			}
+			if err := appendEventTx(tx, job, EventInput{Type: EventOutputRemoved, Detail: detail}, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return recorded, nil
 }
 
 // stampMissingDeadlines gives the policy's window to terminal Jobs that carry no

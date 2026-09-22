@@ -158,8 +158,17 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 //
 // The Kind's own budget is always taken, from the registered definition rather
 // than from the request: a runtime cannot forget the budget its own Kind
-// declares, and a request that names the same group again is redundant rather
-// than additive.
+// declares, and a request that names the same group again does not add a second
+// budget for it.
+//
+// Two limits for one group are merged into the strictest positive one rather than
+// the first one seen. The groups collide in practice, because a Kind may declare
+// `CapacityGroup: "global"` — the deployment-wide group the runtime always asks
+// for — and picking either limit is wrong: taking the Kind's would discard the
+// deployment's ceiling (a Kind declaring no limit of its own would leave it
+// unenforced altogether), and taking the deployment's would discard a Kind's own
+// stricter cap. "Not enforced" is what a limit of zero means, so a zero never
+// loosens a positive one.
 func validateClaimRequest(request *ClaimRequest, definition Definition) error {
 	invalid := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidClaim, fmt.Sprintf(format, args...))
@@ -177,7 +186,7 @@ func validateClaimRequest(request *ClaimRequest, definition Definition) error {
 
 	kindBudget := CapacityRef{Group: definition.capacityGroup(), Limit: definition.MaxConcurrent}
 	budgets := []CapacityRef{kindBudget}
-	named := map[string]bool{kindBudget.Group: true}
+	named := map[string]int{kindBudget.Group: 0}
 	for _, budget := range request.Capacity {
 		if strings.TrimSpace(budget.Group) == "" {
 			return invalid("a capacity budget needs a group")
@@ -185,14 +194,30 @@ func validateClaimRequest(request *ClaimRequest, definition Definition) error {
 		if budget.Limit < 0 {
 			return invalid("budget %s has a negative limit", budget.Group)
 		}
-		if named[budget.Group] {
+		if at, seen := named[budget.Group]; seen {
+			budgets[at].Limit = strictestCapacityLimit(budgets[at].Limit, budget.Limit)
 			continue
 		}
-		named[budget.Group] = true
+		named[budget.Group] = len(budgets)
 		budgets = append(budgets, budget)
 	}
 	request.Capacity = budgets
 	return nil
+}
+
+// strictestCapacityLimit combines two limits for one capacity group: the tighter
+// enforced one, or zero when neither is enforced.
+func strictestCapacityLimit(a, b int) int {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 {
+		return a
+	}
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // nextClaimable selects the oldest Job of a Kind that is waiting to run: queued
@@ -759,6 +784,95 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 		})
 	}
 	return report, decisionErr
+}
+
+// ReconcileUnrunnable blocks pending work this process has no adapter for.
+//
+// Reconciliation proper scans held claims, so work that is waiting rather than
+// owned is in none of its batches: a Job accepted under a Kind that has since been
+// removed, renamed or disabled at this deployment has no claim to expire and no
+// registration to be visited through, and would otherwise stay queued (or
+// scheduled) forever — not running, owned by nobody, and unrunnable by every
+// executor here. §2/§3's rule for that work is the same one reconciliation
+// applies to an expired claim no adapter can explain: it becomes `blocked`, which
+// is where a person can see it, and never handed to a different executor.
+//
+// It takes no execution capacity and writes no claim, because nothing is
+// executing: the only durable effect is the Job's own state and event, committed
+// together by the same transition every other host-side change goes through. Like
+// every pass here it is bounded, idempotent and driven by the caller's cadence —
+// blocked work is not pending, so the next pass does not see it again.
+func (s *Service) ReconcileUnrunnable(deps Deps, limit int) (ReconcileReport, error) {
+	if limit <= 0 {
+		limit = DefaultReconcileBatch
+	}
+
+	jobs, err := unclaimedPendingJobs(deps.DB, s.Registrations(), limit)
+	if err != nil {
+		return ReconcileReport{}, err
+	}
+	if len(jobs) == 0 {
+		return ReconcileReport{}, nil
+	}
+
+	detail, err := json.Marshal(map[string]string{"reason": blockedReasonAdapterMissing})
+	if err != nil {
+		return ReconcileReport{}, fmt.Errorf("jobs: encode unrunnable detail: %w", err)
+	}
+
+	report := ReconcileReport{Examined: len(jobs)}
+	for _, job := range jobs {
+		snap, err := s.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, To: StateBlocked,
+			Event: EventInput{Type: EventBlocked, Detail: detail},
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrVersionConflict), errors.Is(err, ErrIllegalTransition), errors.Is(err, ErrStaleExecution):
+				// The Job moved, or was claimed and started, between the read above
+				// and this write. Whatever it is now, it is not work this pass may
+				// decide about.
+				continue
+			default:
+				return report, err
+			}
+		}
+		report.Outcomes = append(report.Outcomes, ReconcileOutcome{
+			JobID: job.ID, Decision: ReconcileBlock, Snapshot: snap,
+		})
+	}
+	return report, nil
+}
+
+// blockedReasonAdapterMissing is the reason a Job the control plane itself blocks
+// records when this process has no executor for its Kind.
+const blockedReasonAdapterMissing = "adapter-missing"
+
+// unclaimedPendingJobs reads the pending Jobs of Kinds no adapter is registered
+// for, oldest first, in a bounded batch.
+//
+// The registered pairs are excluded by the query rather than filtered afterwards,
+// because a page of runnable work must not be what stands between this pass and
+// the work it exists for: the backlog of a Kind this process *can* run is
+// unbounded, and reading it every tick would never reach the rest.
+func unclaimedPendingJobs(db *gorm.DB, registrations []AdapterRegistration, limit int) ([]models.Job, error) {
+	query := db.Where("(execution_token IS NULL OR execution_token = '')").
+		Where("state IN ?", []string{string(StateQueued), string(StateScheduled)})
+	if len(registrations) > 0 {
+		clauses := make([]string, 0, len(registrations))
+		args := make([]any, 0, len(registrations)*2)
+		for _, registration := range registrations {
+			clauses = append(clauses, "(kind = ? AND kind_version = ?)")
+			args = append(args, registration.Definition.Kind, registration.Definition.KindVersion)
+		}
+		query = query.Where("NOT ("+strings.Join(clauses, " OR ")+")", args...)
+	}
+
+	var jobs []models.Job
+	if err := query.Order("accepted_at, jobs.id").Limit(limit).Find(&jobs).Error; err != nil {
+		return nil, fmt.Errorf("jobs: read pending work no adapter can run: %w", err)
+	}
+	return jobs, nil
 }
 
 // validReconcileDecision reports whether a decision is one this release knows.

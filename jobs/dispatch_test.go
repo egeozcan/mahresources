@@ -1451,3 +1451,143 @@ func TestHeartbeatKeepsTheLeaseNearTheLastHeartbeatRatherThanAccumulatingIt(t *t
 		t.Fatalf("state after reconciliation = %s, want queued", stored.State)
 	}
 }
+
+// TestKindCapacityGroupCollisionCannotDiscardTheDeploymentBudget is §3's
+// "deployment-wide global or per-Kind concurrency limits use database-backed
+// accounting" read as a property that survives a Kind naming the deployment's own
+// group.
+//
+// A runtime asks every claim for the deployment-wide budget on top of the Kind's
+// own, and the two are the same group whenever a Kind declares
+// `CapacityGroup: "global"`. Install-first deduplication then silently discarded
+// the runtime's budget: a Kind declaring the group with no limit of its own left
+// the global budget unenforced altogether, and one declaring a larger limit
+// replaced it. The merge is the strictest positive limit instead, because a limit
+// of zero means "not enforced" rather than "unlimited".
+func TestKindCapacityGroupCollisionCannotDiscardTheDeploymentBudget(t *testing.T) {
+	cases := []struct {
+		name        string
+		kindLimit   int
+		deployLimit int
+		wantHeld    int64
+	}{
+		{
+			name: "a Kind declaring the global group with no limit of its own",
+			// The Kind's own budget says nothing; the deployment's one slot is what
+			// applies.
+			kindLimit: 0, deployLimit: 1, wantHeld: 1,
+		},
+		{
+			name:        "a Kind declaring a larger limit in the global group",
+			kindLimit:   5,
+			deployLimit: 1,
+			wantHeld:    1,
+		},
+		{
+			name:        "a Kind declaring a stricter limit in the global group",
+			kindLimit:   1,
+			deployLimit: 5,
+			wantHeld:    1,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, deps := newDispatchDatabase(t, "capacity-collision.db")
+			deps.Now = func() time.Time { return time.Date(2033, 8, 9, 10, 11, 12, 0, time.UTC) }
+			definition := Definition{
+				Kind: testKind, KindVersion: 1, Restorable: true,
+				CapacityGroup: CapacityGroupGlobal, MaxConcurrent: testCase.kindLimit,
+			}
+			first, second := NewService(), NewService()
+			registerTestAdapter(t, first, definition)
+			registerTestAdapter(t, second, definition)
+			acceptQueued(t, first, deps, uintPtr(4))
+			acceptQueued(t, first, deps, uintPtr(4))
+
+			budget := CapacityRef{Group: CapacityGroupGlobal, Limit: testCase.deployLimit}
+			if _, ok := claimOnce(t, first, deps, "runtime-a", budget); !ok {
+				t.Fatal("the first claim of a queued Job was refused")
+			}
+			if _, ok := claimOnce(t, second, deps, "runtime-b", budget); ok {
+				t.Fatalf("a second execution was admitted into the %s budget: the Kind's declaration "+
+					"discarded the deployment-wide limit", CapacityGroupGlobal)
+			}
+			if held := capacityCount(t, deps, CapacityGroupGlobal); held != testCase.wantHeld {
+				t.Fatalf("capacity rows in %s = %d, want %d", CapacityGroupGlobal, held, testCase.wantHeld)
+			}
+		})
+	}
+}
+
+// TestReconcileUnrunnableBlocksPendingWorkNoAdapterCanRun is §2/§3's "if an
+// adapter disappears after a deploy or plugin disablement ... nonterminal work
+// becomes `blocked`. The system never falls back to a different executor."
+//
+// Reconciliation scans held claims, so work that is *waiting* — queued, or
+// scheduled for a time that has come — has no claim to expire and no registration
+// to be visited through. Without a pass of its own it stays queued forever, which
+// is the one state nobody is asked about: it is not running, nothing owns it, and
+// no executor here can ever run it. Blocking it is the honest answer, and it takes
+// no execution capacity, because nothing is executing.
+func TestReconcileUnrunnableBlocksPendingWorkNoAdapterCanRun(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "unrunnable.db")
+	svc := NewService()
+	clock := time.Date(2033, 9, 10, 11, 12, 13, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	registerTestAdapter(t, svc, Definition{Kind: "runnable-kind", KindVersion: 1, Restorable: true})
+
+	acceptKind := func(kind string, state State, scheduledFor *time.Time) Snapshot {
+		t.Helper()
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: kind, KindVersion: 1, State: state, Origin: "api",
+			ScheduledFor: scheduledFor, OwnerUserID: uintPtr(4),
+			Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+
+	queued := acceptKind("gone-kind", StateQueued, nil)
+	due := clock.Add(time.Hour)
+	scheduled := acceptKind("gone-kind", StateScheduled, &due)
+	// The Kind this process *can* run is none of this pass's business, whatever
+	// state its work is in.
+	runnable := acceptKind("runnable-kind", StateQueued, nil)
+
+	report, err := svc.ReconcileUnrunnable(deps, DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ReconcileUnrunnable: %v", err)
+	}
+	if report.Examined != 2 {
+		t.Fatalf("examined %d Jobs, want the two of the Kind this process cannot run", report.Examined)
+	}
+
+	for _, job := range []Snapshot{queued, scheduled} {
+		stored := jobRow(t, deps, job.ID)
+		if stored.State != string(StateBlocked) {
+			t.Errorf("job %s of a Kind this process cannot run is %s, want blocked", job.ID, stored.State)
+		}
+		if events := jobEvents(t, deps, job.ID); len(events) == 0 || events[len(events)-1].Type != EventBlocked {
+			t.Errorf("job %s has no blocked event on its timeline", job.ID)
+		}
+		if claims := countRows(t, deps, &models.JobClaim{}, "job_id = ?", job.ID); claims != 0 {
+			t.Errorf("blocking job %s took a claim", job.ID)
+		}
+		if leases := countRows(t, deps, &models.JobCapacityLease{}, "job_id = ?", job.ID); leases != 0 {
+			t.Errorf("blocking job %s took %d capacity slots: nothing is executing", job.ID, leases)
+		}
+	}
+	if stored := jobRow(t, deps, runnable.ID); stored.State != string(StateQueued) {
+		t.Fatalf("a queued Job of a Kind this process can run became %s", stored.State)
+	}
+
+	// The pass is idempotent: once those Jobs are blocked there is nothing left
+	// for it to look at, and a repeated pass cannot grow timelines.
+	second, err := svc.ReconcileUnrunnable(deps, DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("second ReconcileUnrunnable: %v", err)
+	}
+	if second.Examined != 0 || len(second.Outcomes) != 0 {
+		t.Fatalf("the second pass examined %d Jobs and applied %d decisions, want none",
+			second.Examined, len(second.Outcomes))
+	}
+}

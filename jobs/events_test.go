@@ -589,3 +589,75 @@ func TestProgressRefusesMalformedRequestsAndTerminalJobs(t *testing.T) {
 		})
 	}
 }
+
+// TestEventAppendKeepsTheReservedHeadroomHostInternal is §6's reservation read as
+// a property of who may spend it: "host lifecycle and terminal events reserve
+// capacity and cannot be displaced" bounds *optional Kind traffic*, so an event an
+// adapter appends is optional traffic however it labels itself.
+//
+// The flag was forwarded from the adapter's own input, which made the reserved
+// headroom a budget any adapter could spend: a phase tick sent with it bypassed
+// the optional ceiling entirely, and a talkative adapter could grow one Job's
+// timeline without bound while the terminal fact it was supposed to reserve room
+// for had none left.
+func TestEventAppendKeepsTheReservedHeadroomHostInternal(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	deps.Now = func() time.Time { return time.Date(2032, 2, 3, 4, 5, 6, 0, time.UTC) }
+	registerTestAdapter(t, svc, testDefinition())
+	accepted := acceptQueued(t, svc, deps, uintPtr(4))
+
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+
+	// The adapter spends more than the optional budget, and labels every one of
+	// those events as a reserved host fact.
+	for i := 0; i < MaxOptionalEventsPerJob+5; i++ {
+		if err := execution.Event(EventInput{Type: "phase-tick", ReservedHost: true}); err != nil {
+			t.Fatalf("Event %d: %v", i, err)
+		}
+	}
+
+	optional, truncations, reserved := 0, 0, 0
+	for _, event := range jobEvents(t, deps, accepted.ID) {
+		switch {
+		case event.Type == EventTruncated:
+			truncations++
+			reserved++
+		case event.Type == "phase-tick":
+			optional++
+			if event.ReservedHost {
+				t.Errorf("the adapter's event %s was stored as a reserved host fact", event.Type)
+			}
+		default:
+			reserved++
+		}
+	}
+	if optional != MaxOptionalEventsPerJob-2 {
+		t.Errorf("stored %d adapter events, want the %d left under the ceiling once the accepted and started events are counted",
+			optional, MaxOptionalEventsPerJob-2)
+	}
+	if truncations != 1 {
+		t.Errorf("recorded %d truncation warnings, want exactly one", truncations)
+	}
+	// The host's own facts are what is stored beside them: the acceptance, the
+	// claim, and the one truncation warning.
+	if reserved != 3 {
+		t.Errorf("stored %d host facts, want the accepted, started and truncation events", reserved)
+	}
+	if events := jobEvents(t, deps, accepted.ID); len(events) > MaxEventsPerJob {
+		t.Errorf("%d events exceed the %d-event ceiling", len(events), MaxEventsPerJob)
+	}
+
+	// And the headroom did what it is for: the terminal fact still fits.
+	if _, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateSucceeded}); err != nil {
+		t.Fatalf("Finish with the optional budget spent: %v", err)
+	}
+	events := jobEvents(t, deps, accepted.ID)
+	last := events[len(events)-1]
+	if last.Type != EventSucceeded || !last.ReservedHost {
+		t.Fatalf("the terminal event was not recorded: %+v", last)
+	}
+}
