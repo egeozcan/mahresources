@@ -904,6 +904,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobEvent{},
 		&models.JobEventSequence{},
 		&models.JobLink{},
+		&models.JobOutput{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err

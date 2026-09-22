@@ -41,6 +41,39 @@ func isNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
 }
 
+// requireExecutionToken refuses a write from an executor that does not own the
+// Job. It is the fence every executor-side entry point opens with: progress,
+// events, outputs and finishing all use it, so a replaced worker cannot publish
+// anything through the token its dead claim held.
+func requireExecutionToken(job models.Job, token string) error {
+	if job.ExecutionToken != token {
+		return fmt.Errorf("%w: job %s is not owned by this executor", ErrStaleExecution, job.ID)
+	}
+	return nil
+}
+
+// requireNonterminal refuses an executor-side write to a finished Job: terminal
+// state and identity are immutable, and progress or an output published after
+// the outcome would make the record describe an execution that had already
+// ended.
+func requireNonterminal(job models.Job) error {
+	if State(job.State).Terminal() {
+		return fmt.Errorf("%w: job %s is %s, and a terminal Job never changes",
+			ErrIllegalTransition, job.ID, job.State)
+	}
+	return nil
+}
+
+// copyInt64 copies an optional amount so the stored column never shares a
+// pointer with the caller's progress snapshot.
+func copyInt64(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	copied := *v
+	return &copied
+}
+
 // visibleTo applies the shared visibility predicate.
 //
 // An administrator sees every Job. Everybody else sees a Job only when it
@@ -163,4 +196,65 @@ func newEvent(jobID string, sequence, jobVersion uint64, eventType string, detai
 		ReservedHost: reserved,
 		CreatedAt:    now,
 	}
+}
+
+// appendEventTx stores one appended event on a handle that already holds the
+// Job's row, applying the capacity rule first.
+//
+// The count and the sequence are read after that write rather than before it, so
+// two appends racing on one Job cannot both take the same position; the unique
+// index on (job_id, sequence) is the backstop that turns a mistake here into a
+// refused write instead of a corrupted timeline.
+func appendEventTx(tx *gorm.DB, job models.Job, event EventInput, now time.Time) error {
+	var stored int64
+	if err := tx.Model(&models.JobEvent{}).Where("job_id = ?", job.ID).Count(&stored).Error; err != nil {
+		return fmt.Errorf("jobs: count events: %w", err)
+	}
+
+	if !event.ReservedHost && stored >= MaxOptionalEventsPerJob {
+		return recordTruncationEvent(tx, job, now)
+	}
+
+	sequence, err := nextEventSequence(tx, job.ID)
+	if err != nil {
+		return err
+	}
+	row := newEvent(job.ID, sequence, job.Version, event.Type, event.Detail, event.ReservedHost, now)
+	if err := tx.Create(&row).Error; err != nil {
+		return fmt.Errorf("jobs: store event: %w", err)
+	}
+	return nil
+}
+
+// recordTruncationEvent records the one visible warning that says optional event
+// capacity was exhausted, and does nothing at all once it exists. It is a
+// reserved host event, which is why it fits while the optional capacity that
+// triggered it is full.
+func recordTruncationEvent(tx *gorm.DB, job models.Job, now time.Time) error {
+	var existing int64
+	if err := tx.Model(&models.JobEvent{}).
+		Where("job_id = ? AND type = ?", job.ID, EventTruncated).
+		Count(&existing).Error; err != nil {
+		return fmt.Errorf("jobs: read truncation warning: %w", err)
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	sequence, err := nextEventSequence(tx, job.ID)
+	if err != nil {
+		return err
+	}
+	detail, err := json.Marshal(map[string]any{
+		"reason":          "optional event capacity exhausted",
+		"optionalCeiling": MaxOptionalEventsPerJob,
+	})
+	if err != nil {
+		return fmt.Errorf("jobs: encode truncation detail: %w", err)
+	}
+	row := newEvent(job.ID, sequence, job.Version, EventTruncated, detail, true, now)
+	if err := tx.Create(&row).Error; err != nil {
+		return fmt.Errorf("jobs: store truncation warning: %w", err)
+	}
+	return nil
 }

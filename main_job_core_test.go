@@ -28,7 +28,7 @@ func TestJobCoreMigrationSeedsTheWriterEpoch(t *testing.T) {
 		t.Fatalf("migrateJobCore: %v", err)
 	}
 
-	for _, table := range []string{"jobs", "job_events", "job_event_sequences", "job_links", models.JobWriterEpochTable} {
+	for _, table := range []string{"jobs", "job_events", "job_event_sequences", "job_links", "job_outputs", models.JobWriterEpochTable} {
 		if !db.Migrator().HasTable(table) {
 			t.Errorf("the durable job core did not create %s", table)
 		}

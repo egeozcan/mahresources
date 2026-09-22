@@ -10468,3 +10468,119 @@ without storing an envelope yet; `ControlIntent` and `ExpiresAt` are columns
 whose writers arrive with the command surface and retention. None of them is
 reachable from a user-facing path in this task, because no Kind adapter is
 registered until later tasks.
+
+# Job Center Task 2 — bounded events, progress, links and outputs (2026-09-22)
+
+**Goal:** Land Task 2 of the unified Job Center plan: one bounded progress
+snapshot per Job, bounded significant events with reserved host capacity, typed
+outputs with independent availability, the lineage links, and a `Finish` that
+records success only beside the required outputs it claims — every red test
+written first and observed failing.
+
+## Plan
+
+- [x] Read the complete plan, the approved design (§6, §7, §8), ADRs
+      0006/0007, `CLAUDE.md`, and the Task 1 durable core before editing.
+- [x] `jobs/types.go`: `ExecutionRef`, `Progress` bounds, `EventInput.ReservedHost`,
+      the output availability/type vocabulary, `OutputInput`, `Output`,
+      `FinishRequest`, `LinkType`/`LinkRequest`, the new sentinels and the
+      capacity ceilings.
+- [x] `models/job_model.go`: `JobOutput` — type, bounded reference JSON,
+      availability, required flag, expiry/removal instants, and its own version,
+      unique on `(job_id, key)`.
+- [x] `jobs/service.go`: `UpdateProgress`, `AppendEvent`, `Link`, `Finish`, and
+      the transition decide/commit split that lets `Finish` verify inside the
+      terminal transaction.
+- [x] `jobs/store.go`: the shared execution-token fence, the nonterminal guard,
+      and the bounded event insert with its single truncation warning.
+- [x] `jobs/outputs.go`: publication, replacement per key, the bounded view, and
+      required-output verification.
+- [x] `main.go` / `main_job_core_test.go` / `jobs/service_test.go`: the new table
+      joins `migrateJobCore` and the declared-table assertions.
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Progress | `svc.UpdateProgress undefined (type *Service has no field or method UpdateProgress)`, `undefined: ExecutionRef` | `TestProgressUpdatesReplaceOneBoundedSnapshotWithoutEvents`, `TestProgressRefusesAStaleExecutionToken`, `TestProgressRefusesMalformedRequestsAndTerminalJobs` (6 request cases + 4 terminal states) |
+| Events | `undefined: MaxOptionalEventsPerJob`, `undefined: EventTruncated`, `svc.AppendEvent undefined`, `undefined: ErrInvalidEvent` | `TestEventAppendRecordsSignificantEventsOnTheJobsTimeline`, `TestEventAppendRefusesAStaleExecutionTokenAndOutOfBoundsEvents` (6 cases), `TestEventAppendTruncatesOptionalTrafficIntoOneReservedWarning` |
+| Outputs & Finish | `svc.PublishOutput undefined`, `undefined: OutputInput`, `undefined: models.JobOutput`, `undefined: OutputAvailable` | `TestOutputPublicationStoresATypedOutputWithAnIndependentVersion`, `TestOutputPublicationRefusesAStaleExecutionToken`, `TestOutputPublicationRefusesAFinishedJob`, `TestOutputCeilingsRefuseOversizedAndExcessOutputs` (9 request cases + the count ceiling), `TestOutputOptionalFailureWarnsWithoutChangingOutcome`, `TestOutputRequiredOutputsAndSuccessCommitTogether`, `TestFinishRefusesSuccessWithoutAvailableRequiredOutputs` (3 cases), `TestFinishRefusesANonTerminalOutcomeAndAStaleExecutionToken` |
+| Links | `svc.Link undefined (type *Service has no field or method Link)`, `undefined: LinkRequest`, `undefined: LinkParentChild` | `TestLinkRecordsTypedLineageIdempotently`, `TestLinkRefusesUnknownTypesSelfLinksAndUnknownJobs` (7 cases), `TestLinkDoesNotMakeHiddenRelativesVisibleOrCountable` |
+
+Four mutation checks confirm the tests are not vacuous — each defect was caught
+by exactly the tests written for it, and the source was restored afterwards:
+
+- dropping the "a named required output must exist" half of
+  `verifyRequiredOutputs` fails
+  `TestFinishRefusesSuccessWithoutAvailableRequiredOutputs/a_required_output_that_was_never_published`;
+- letting a progress tick consume the lifecycle version fails
+  `TestProgressUpdatesReplaceOneBoundedSnapshotWithoutEvents`;
+- ignoring the optional event ceiling fails
+  `TestEventAppendTruncatesOptionalTrafficIntoOneReservedWarning`.
+
+Three behavioral decisions the tests forced, worth recording:
+
+- **Progress does not consume the lifecycle version.** A version per tick would
+  invalidate the version the transition an executor is about to make decided
+  from, so a Job could never finish while its executor reported progress. The
+  fence for a tick is the execution token, not the version.
+- **A terminal Job refuses `UpdateProgress` and `PublishOutput`, but not
+  `AppendEvent`.** Progress and outputs describe work in flight; §7 has
+  post-terminal events (output expiry) that must still be recordable, so the
+  event seam is fenced by the execution token alone and Task 4's claim release is
+  what ends an executor's ability to append.
+- **An optional output that cannot be made available warns instead of failing.**
+  An output whose planned expiry has already passed is stored `expired` rather
+  than advertised available, and for an optional output that becomes one bounded
+  `warning` event; the Job's outcome is untouched. A required output in the same
+  state is not refused at publication — §7 makes availability a property of
+  success — and `Finish` is where it refuses.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -run 'Test(Event|Progress|Output|Link|Finish)' -count=1`
+  — passed (Task 2's focused gate).
+- `go test --tags 'json1 fts5 postgres' ./jobs -run 'Test(Event|Progress|Output|Link|Finish)' -count=1`
+  — passed against PostgreSQL.
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed, including
+  Task 1's out-of-order-commit and concurrent-publisher regressions on the same
+  schema.
+- `go test --tags 'json1 fts5' ./jobs ./internal/arch ./application_context -count=1`
+  — passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — all 45 test packages passed.
+- `go test --tags 'json1 fts5' . -run TestJobCore -count=1` — passed (the new
+  `job_outputs` table is created by `migrateJobCore`).
+- `go vet --tags 'json1 fts5' ./...`, `go vet --tags 'json1 fts5 postgres' ./jobs`
+  and `go build --tags 'json1 fts5' ./...` — clean.
+- `gofmt -l` on every changed file — clean. `git diff --check` — clean. No
+  frontend source changed, so no bundle rebuild.
+
+The summary-size ceiling in the same Red list is proven by Task 1's
+`TestJobAcceptRefusesMalformedAcceptance` (`summary over its ceiling`), which
+shares `MaxSummaryBytes` with the event/output ceilings added here.
+
+## Review
+
+Task 2 is complete. Everything an executor writes now passes one fence
+(`requireExecutionToken`), one shape validation, and one atomic transaction whose
+first statement is a write — which is what keeps SQLite from promoting a read
+snapshot to a write, the hazard `CLAUDE.md` records for the upload path.
+
+`Finish` verifies inside the terminal transaction rather than before it, which
+is the one place this task departs from the plan's literal wording ("verify
+required output rows before writing terminal state/event"): a verification read
+as the transaction's first statement would make the terminal write a
+read-snapshot promotion, and the observable contract — the outcome, its event and
+the outputs it claims commit together or not at all — is what the plan is asking
+for. The `RequiredOutputs` declaration is not redundant with the stored rows: a
+scan cannot see an output that was never published, which is exactly the
+"missing" case the plan requires to refuse success.
+
+Residual risks carried forward: output expiry and removal have no writer yet
+(the sweeps and adapters arrive with Tasks 5/8), so `OutputExpired`/`OutputRemoved`
+are reachable today only through a planned expiry that has already passed;
+`EventInput.ReservedHost` is the Service's own capacity claim, and a later task
+that lets an adapter append through a host-owned path must keep setting it from
+the host side rather than from adapter input; `MaxEventsPerJob` bounds optional
+traffic plus the reservation, not host facts, because refusing a terminal event
+would be worse than an over-long timeline.

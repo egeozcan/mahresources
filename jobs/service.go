@@ -10,6 +10,7 @@ import (
 	"mahresources/models/types"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service is the Job control plane. It holds no database handle: every entry
@@ -169,6 +170,257 @@ func validateAcceptance(a *Acceptance) error {
 	return nil
 }
 
+// UpdateProgress replaces the current progress snapshot of a Job an execution
+// owns.
+//
+// A tick is a snapshot, not a Job Event: it updates the bounded progress columns
+// in place and records nothing, because a download reporting every few hundred
+// milliseconds would otherwise drown the timeline an operator reads. It does not
+// consume the lifecycle version either — a version bump per tick would
+// invalidate the version a transition in flight decided from, and a Job could
+// then never finish while its executor kept reporting progress.
+func (s *Service) UpdateProgress(deps Deps, ref ExecutionRef, progress Progress) (Snapshot, error) {
+	if err := validateExecutionRef(ref); err != nil {
+		return Snapshot{}, err
+	}
+	if err := validateProgress(progress); err != nil {
+		return Snapshot{}, err
+	}
+
+	job, err := loadJob(deps.DB, ref.JobID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := requireExecutionToken(job, ref.ExecutionToken); err != nil {
+		return Snapshot{}, err
+	}
+	if err := requireNonterminal(job); err != nil {
+		return Snapshot{}, err
+	}
+
+	now := deps.now()
+	next := job
+	next.ProgressCompleted = copyInt64(progress.Completed)
+	next.ProgressTotal = copyInt64(progress.Total)
+	next.ProgressUnit = progress.Unit
+	next.ProgressMessage = progress.Message
+	next.ProgressETA = utcPtr(progress.ETA)
+	if progress.Phase != "" {
+		next.Phase = progress.Phase
+	}
+
+	updates := map[string]any{
+		"progress_completed": next.ProgressCompleted,
+		"progress_total":     next.ProgressTotal,
+		"progress_unit":      next.ProgressUnit,
+		"progress_message":   next.ProgressMessage,
+		"progress_eta":       next.ProgressETA,
+		"phase":              next.Phase,
+		"updated_at":         now,
+	}
+
+	var snap Snapshot
+	err = deps.DB.Transaction(func(tx *gorm.DB) error {
+		// The transaction's first statement is the write, which takes the writer
+		// lock before anything is read and is what serialises this against a
+		// transition racing the same Job.
+		result := tx.Model(&models.Job{}).
+			Where("id = ? AND execution_token = ? AND state = ?", job.ID, job.ExecutionToken, job.State).
+			Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("jobs: update progress: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%w: job %s changed while the progress update was decided", ErrVersionConflict, job.ID)
+		}
+		snap = snapshot(next)
+		return nil
+	})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return snap, nil
+}
+
+// AppendEvent records one significant event on a Job an execution owns.
+//
+// Typed and bounded, because it is the timeline an operator reads: an event
+// without a type says nothing, and an unbounded detail would turn the table into
+// a log. Routine progress ticks do not come through here — they are snapshots.
+//
+// Optional capacity is bounded and the truncation is visible rather than silent:
+// once it is exhausted, one `events-truncated` warning is recorded and later
+// optional events are dropped without failing the Job or the caller. Dropping is
+// deliberate — an adapter whose phase chatter overflowed a ceiling must not have
+// that fail the work it is reporting on — and the reserved headroom is what
+// keeps a lifecycle or terminal fact out of that bargain.
+func (s *Service) AppendEvent(deps Deps, ref ExecutionRef, event EventInput) error {
+	if err := validateExecutionRef(ref); err != nil {
+		return err
+	}
+	if err := validateAppendedEvent(event); err != nil {
+		return err
+	}
+
+	job, err := loadJob(deps.DB, ref.JobID)
+	if err != nil {
+		return err
+	}
+	if err := requireExecutionToken(job, ref.ExecutionToken); err != nil {
+		return err
+	}
+
+	now := deps.now()
+	return deps.DB.Transaction(func(tx *gorm.DB) error {
+		// The first statement is the write, both because it takes the writer lock
+		// before anything is read (SQLite) and because it locks the Job row
+		// (PostgreSQL) — which is also what serialises two events racing for the
+		// same position on one Job's timeline.
+		result := tx.Model(&models.Job{}).
+			Where("id = ? AND execution_token = ? AND state = ?", job.ID, job.ExecutionToken, job.State).
+			Update("updated_at", now)
+		if result.Error != nil {
+			return fmt.Errorf("jobs: touch job: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%w: job %s changed while the event was being recorded", ErrVersionConflict, job.ID)
+		}
+		return appendEventTx(tx, job, event, now)
+	})
+}
+
+// validateAppendedEvent checks an event appended on its own. The type is
+// required here and optional on a transition, where the state being entered
+// names the fact.
+func validateAppendedEvent(event EventInput) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidEvent, fmt.Sprintf(format, args...))
+	}
+
+	if strings.TrimSpace(event.Type) == "" {
+		return invalid("an appended event must name its type")
+	}
+	if len(event.Type) > MaxEventTypeBytes {
+		return invalid("event type is %d bytes, over the %d-byte ceiling", len(event.Type), MaxEventTypeBytes)
+	}
+	if len(event.Detail) > 0 {
+		if len(event.Detail) > MaxEventDetailBytes {
+			return invalid("event detail is %d bytes, over the %d-byte ceiling", len(event.Detail), MaxEventDetailBytes)
+		}
+		if !json.Valid(event.Detail) {
+			return invalid("event detail is not valid JSON")
+		}
+	}
+	return nil
+}
+
+// Link records one typed durable relation between two Jobs.
+//
+// Idempotent, because the relation is the fact and recording it twice is still
+// one fact: (type, from, to) is unique, so a repeated Retry-link request is the
+// row that is already there rather than a second one would-be ancestors have to
+// be reconciled against.
+//
+// It writes the relation and nothing else. Lineage is deliberately not recorded
+// as an event on either Job: an event lives on one Job's timeline, and a line
+// naming the other endpoint's identity there would leak a relative a viewer is
+// not entitled to see. A relation that must be announced is announced by the
+// command that created it, in bounded terms.
+//
+// Both endpoints must exist, because these tables carry no foreign keys and a
+// link to a Job that is not there is a row no reader can resolve. Authorization
+// is deliberately not checked here: this is the host-side seam, and every read
+// that follows a link applies the shared visibility predicate to the Job it
+// reaches — a link grants no rights and makes no relative reachable.
+func (s *Service) Link(deps Deps, request LinkRequest) error {
+	if err := validateLinkRequest(request); err != nil {
+		return err
+	}
+
+	now := deps.now()
+	return deps.DB.Transaction(func(tx *gorm.DB) error {
+		var present int64
+		if err := tx.Model(&models.Job{}).
+			Where("id IN ?", []string{request.FromJobID, request.ToJobID}).
+			Count(&present).Error; err != nil {
+			return fmt.Errorf("jobs: read link endpoints: %w", err)
+		}
+		if present != 2 {
+			return fmt.Errorf("%w: a link needs both jobs to exist", ErrNotFound)
+		}
+
+		link := models.JobLink{
+			Type:      string(request.Type),
+			FromJobID: request.FromJobID,
+			ToJobID:   request.ToJobID,
+			CreatedAt: now,
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; err != nil {
+			return fmt.Errorf("jobs: store link: %w", err)
+		}
+		return nil
+	})
+}
+
+// validateLinkRequest checks a lineage request before anything is read.
+func validateLinkRequest(request LinkRequest) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidLink, fmt.Sprintf(format, args...))
+	}
+
+	known := false
+	for _, candidate := range LinkTypes {
+		if string(request.Type) == candidate {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return invalid("link type %q is not one of %s", request.Type, strings.Join(LinkTypes, ", "))
+	}
+	if strings.TrimSpace(request.FromJobID) == "" || strings.TrimSpace(request.ToJobID) == "" {
+		return invalid("a link needs both endpoints")
+	}
+	if request.FromJobID == request.ToJobID {
+		return invalid("a job is not its own relative")
+	}
+	return nil
+}
+
+// validateExecutionRef checks an executor-side request names a Job.
+func validateExecutionRef(ref ExecutionRef) error {
+	if strings.TrimSpace(ref.JobID) == "" {
+		return fmt.Errorf("%w: a job id is required", ErrInvalidExecution)
+	}
+	return nil
+}
+
+// validateProgress checks a progress snapshot against its bounds. Amounts are
+// optional, but an amount that is present cannot be negative: a byte count below
+// zero renders as a negative percentage rather than as indeterminate work.
+func validateProgress(progress Progress) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidProgress, fmt.Sprintf(format, args...))
+	}
+
+	if len(progress.Phase) > MaxPhaseBytes {
+		return invalid("phase is %d bytes, over the %d-byte ceiling", len(progress.Phase), MaxPhaseBytes)
+	}
+	if len(progress.Unit) > MaxProgressUnitBytes {
+		return invalid("unit is %d bytes, over the %d-byte ceiling", len(progress.Unit), MaxProgressUnitBytes)
+	}
+	if len(progress.Message) > MaxProgressMessageBytes {
+		return invalid("message is %d bytes, over the %d-byte ceiling", len(progress.Message), MaxProgressMessageBytes)
+	}
+	if progress.Completed != nil && *progress.Completed < 0 {
+		return invalid("completed is negative")
+	}
+	if progress.Total != nil && *progress.Total < 0 {
+		return invalid("total is negative")
+	}
+	return nil
+}
+
 // copyUint copies an optional user id so the caller's value can never be written
 // through, and so the stored column never shares a pointer with a request.
 func copyUint(v *uint) *uint {
@@ -225,24 +477,91 @@ func (s *Service) Transition(deps Deps, transition Transition) (Snapshot, error)
 		return Snapshot{}, err
 	}
 
-	job, err := loadJob(deps.DB, transition.JobID)
+	prepared, err := prepareTransition(deps, transition)
 	if err != nil {
 		return Snapshot{}, err
 	}
+	return commitTransition(deps, prepared, nil)
+}
+
+// Finish ends a Job an execution owns, and is the only way success is recorded.
+//
+// It is a terminal transition plus the verification §7 requires: when the
+// outcome is success, every required output the Job published — and every key
+// the caller names — must be durable and available, and that check runs inside
+// the same transaction as the terminal state and its event. A Job therefore
+// never commits a success beside an output it cannot honestly claim, and a
+// refused finish writes nothing at all: the Job stays where it is until its
+// executor can satisfy the contract or records a failure instead.
+//
+// A failed, cancelled or interrupted finish verifies nothing: only success makes
+// a promise about outputs.
+func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
+	transition := Transition{
+		JobID:           request.JobID,
+		ExpectedVersion: request.ExpectedVersion,
+		ExecutionToken:  request.ExecutionToken,
+		To:              request.Outcome,
+		Event:           request.Event,
+		Failure:         request.Failure,
+	}
+	if err := validateTransition(&transition); err != nil {
+		return Snapshot{}, err
+	}
+	if !request.Outcome.Terminal() {
+		return Snapshot{}, fmt.Errorf("%w: Finish ends a Job, and %q is not a terminal state",
+			ErrInvalidTransition, request.Outcome)
+	}
+
+	prepared, err := prepareTransition(deps, transition)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	var verify func(tx *gorm.DB) error
+	if request.Outcome == StateSucceeded {
+		verify = func(tx *gorm.DB) error {
+			return verifyRequiredOutputs(tx, prepared.job.ID, request.RequiredOutputs)
+		}
+	}
+	return commitTransition(deps, prepared, verify)
+}
+
+// preparedTransition is a transition that has passed every precondition, with
+// the row it decided from, the row it will leave behind, the column values and
+// the event its transaction will write. Deciding outside the transaction and
+// writing inside it is deliberate: the transaction's first statement must be the
+// write, so that SQLite takes the writer lock before it reads anything rather
+// than promoting a read snapshot afterwards (SQLITE_BUSY_SNAPSHOT, for which its
+// busy handler does not run).
+type preparedTransition struct {
+	job     models.Job
+	next    models.Job
+	updates map[string]any
+	event   models.JobEvent
+}
+
+// prepareTransition loads the Job, applies every precondition, and derives what
+// the write will look like.
+func prepareTransition(deps Deps, transition Transition) (preparedTransition, error) {
+	job, err := loadJob(deps.DB, transition.JobID)
+	if err != nil {
+		return preparedTransition{}, err
+	}
 	if job.Version != transition.ExpectedVersion {
-		return Snapshot{}, fmt.Errorf("%w: job %s is at version %d, the request expected %d",
+		return preparedTransition{}, fmt.Errorf("%w: job %s is at version %d, the request expected %d",
 			ErrVersionConflict, job.ID, job.Version, transition.ExpectedVersion)
 	}
-	if job.ExecutionToken != transition.ExecutionToken {
-		return Snapshot{}, fmt.Errorf("%w: job %s is not owned by this executor", ErrStaleExecution, job.ID)
+	if err := requireExecutionToken(job, transition.ExecutionToken); err != nil {
+		return preparedTransition{}, err
 	}
 	if !canTransition(State(job.State), transition.To) {
-		return Snapshot{}, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, job.State, transition.To)
+		return preparedTransition{}, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, job.State, transition.To)
 	}
 
 	sequence, err := nextEventSequence(deps.DB, job.ID)
 	if err != nil {
-		return Snapshot{}, err
+		return preparedTransition{}, err
 	}
 
 	now := deps.now()
@@ -256,22 +575,37 @@ func (s *Service) Transition(deps Deps, transition Transition) (Snapshot, error)
 		true,
 		now,
 	)
+	return preparedTransition{job: job, next: next, updates: updates, event: event}, nil
+}
 
+// commitTransition writes one decided transition, its event, and — when the
+// caller supplies one — the verification the transition's outcome depends on,
+// all in one transaction on the caller's handle. The verification runs after the
+// guarded update for the same reason the update comes first: the transaction is
+// a write transaction from its first statement. Its refusal rolls the update
+// back, so the outcome and the evidence for it still commit together or not at
+// all.
+func commitTransition(deps Deps, prepared preparedTransition, verify func(tx *gorm.DB) error) (Snapshot, error) {
 	var snap Snapshot
-	err = deps.DB.Transaction(func(tx *gorm.DB) error {
+	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.Job{}).
-			Where("id = ? AND version = ? AND state = ?", job.ID, job.Version, job.State).
-			Updates(updates)
+			Where("id = ? AND version = ? AND state = ?", prepared.job.ID, prepared.job.Version, prepared.job.State).
+			Updates(prepared.updates)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: apply transition: %w", result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return fmt.Errorf("%w: job %s changed while the transition was decided", ErrVersionConflict, job.ID)
+			return fmt.Errorf("%w: job %s changed while the transition was decided", ErrVersionConflict, prepared.job.ID)
 		}
-		if err := tx.Create(&event).Error; err != nil {
+		if verify != nil {
+			if err := verify(tx); err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(&prepared.event).Error; err != nil {
 			return fmt.Errorf("jobs: store lifecycle event: %w", err)
 		}
-		snap = snapshot(next)
+		snap = snapshot(prepared.next)
 		return nil
 	})
 	if err != nil {

@@ -12,8 +12,8 @@ import (
 
 // This file holds the relational core of the Job control plane: the durable Job
 // record, its immutable events, the single-row delivery-sequence allocator, the
-// typed lineage links, and the writer-epoch row that fences mixed-version
-// writers against one database.
+// typed lineage links, the typed outputs a Job publishes, and the writer-epoch
+// row that fences mixed-version writers against one database.
 //
 // The vocabulary — which states exist, which transitions are legal, what a
 // visibility class means — belongs to the jobs/ package, which is the only
@@ -212,6 +212,44 @@ type JobLink struct {
 	FromJobID string    `gorm:"size:36;not null;uniqueIndex:idx_job_links_unique,priority:2;index:idx_job_links_from" json:"fromJobId"`
 	ToJobID   string    `gorm:"size:36;not null;uniqueIndex:idx_job_links_unique,priority:3;index:idx_job_links_to" json:"toJobId"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// JobOutput is one typed result a Job published: an entity link, a downloadable
+// artifact with an expiry, a report or detail link, a structured summary, an
+// explicitly safe external link, or a verbose-log reference.
+//
+// Availability is independent of the Job's outcome and of the other outputs, so
+// an artifact nobody can fetch any more never rewrites the success that produced
+// it, and expiry is recorded on the output rather than inferred from the Job.
+// Version is the output's own optimistic counter, separate from the Job's: an
+// at-least-once executor republishing the same key after a crash replaces one
+// row rather than consuming the lifecycle version.
+//
+// Key is unique per Job, which is what makes a republish a replacement. The
+// reference is bounded JSON this module never interprets: which shape is safe is
+// the Kind adapter's decision, and the Service only guarantees that it is
+// bounded, valid, and never a filesystem path a reader could act on directly.
+type JobOutput struct {
+	ID    string `gorm:"primaryKey;size:36" json:"id"`
+	JobID string `gorm:"size:36;not null;uniqueIndex:idx_job_outputs_key,priority:1;index:idx_job_outputs_job" json:"jobId"`
+	Key   string `gorm:"size:120;not null;uniqueIndex:idx_job_outputs_key,priority:2" json:"key"`
+
+	Type      string     `gorm:"size:40;not null" json:"type"`
+	Label     string     `gorm:"size:200" json:"label,omitempty"`
+	Reference types.JSON `gorm:"type:json" json:"reference,omitempty"`
+	Required  bool       `gorm:"not null;default:false" json:"required"`
+
+	// Availability is available, expired or removed. ExpiresAt is the planned
+	// instant that becomes true at, and RemovedAt the instant a sweep confirmed
+	// the artifact is gone — an already-missing artifact is removed rather than
+	// an error.
+	Availability string     `gorm:"size:20;not null" json:"availability"`
+	ExpiresAt    *time.Time `gorm:"index:idx_job_outputs_expiry" json:"expiresAt,omitempty"`
+	RemovedAt    *time.Time `json:"removedAt,omitempty"`
+
+	Version   uint64    `gorm:"not null;default:1" json:"version"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // JobWriterEpoch is the single row recording the minimum writer epoch this

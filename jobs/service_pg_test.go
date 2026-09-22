@@ -36,6 +36,7 @@ func newPGDeps(t *testing.T) Deps {
 	db := pgContainer.CreateTestDB(t)
 	if err := db.AutoMigrate(
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobOutput{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}

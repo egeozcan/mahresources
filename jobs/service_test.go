@@ -45,7 +45,7 @@ func newTestDeps(t *testing.T) Deps {
 
 	if err := db.AutoMigrate(
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.PluginKV{},
+		&models.JobOutput{}, &models.PluginKV{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestJobAcceptRollsBackWithTheCallersTransaction(t *testing.T) {
 func TestJobAcceptUsesTheDeclaredTables(t *testing.T) {
 	deps := newTestDeps(t)
 	migrator := deps.DB.Migrator()
-	for _, table := range []string{"jobs", "job_events", "job_event_sequences", "job_links"} {
+	for _, table := range []string{"jobs", "job_events", "job_event_sequences", "job_links", "job_outputs"} {
 		if !migrator.HasTable(table) {
 			t.Errorf("table %s was not created by AutoMigrate", table)
 		}
@@ -277,9 +277,18 @@ func TestJobAcceptUsesTheDeclaredTables(t *testing.T) {
 	for _, column := range []string{
 		"visibility_class", "owner_user_id", "actor_user_id", "state", "accepted_at",
 		"version", "execution_token", "replay_class", "finished_at",
+		"progress_completed", "progress_total", "progress_unit", "progress_message", "progress_eta",
 	} {
 		if !migrator.HasColumn(&models.Job{}, column) {
 			t.Errorf("jobs.%s is missing from the durable core", column)
+		}
+	}
+	for _, column := range []string{
+		"key", "type", "label", "reference", "required", "availability",
+		"expires_at", "removed_at", "version", "job_id",
+	} {
+		if !migrator.HasColumn(&models.JobOutput{}, column) {
+			t.Errorf("job_outputs.%s is missing from the durable core", column)
 		}
 	}
 }
