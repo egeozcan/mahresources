@@ -128,16 +128,9 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 // Get returns one visible Job. A Job the caller may not see is reported exactly
 // as a Job that does not exist, so probing cannot distinguish the two.
 func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) {
-	if strings.TrimSpace(jobID) == "" {
-		return Snapshot{}, fmt.Errorf("%w: empty job id", ErrNotFound)
-	}
-	var job models.Job
-	err := jobQuery(deps.DB, access).Where("jobs.id = ?", jobID).First(&job).Error
+	job, err := loadVisibleJob(deps.DB, access, jobID)
 	if err != nil {
-		if isNotFound(err) {
-			return Snapshot{}, fmt.Errorf("%w: %s", ErrNotFound, jobID)
-		}
-		return Snapshot{}, fmt.Errorf("jobs: load job: %w", err)
+		return Snapshot{}, err
 	}
 	return s.snapshotFor(deps, access, job), nil
 }
@@ -846,6 +839,21 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 	if !canTransition(State(job.State), transition.To) {
 		return preparedTransition{}, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, job.State, transition.To)
 	}
+	// A cancellation that won owns the outcome: §4 makes a later success
+	// unrepresentable rather than merely discouraged, because an executor that
+	// finishes anyway would otherwise erase what the person watching it asked for.
+	// The refusal leaves the Job exactly where it is — running, with its intent —
+	// so the execution can still publish the cancellation it was asked for.
+	//
+	// A success decided *before* the cancellation cannot reach the write either,
+	// and needs no second guard to stop it: recording the intent moves the Job's
+	// version, and the guarded update below carries the version (and the state and
+	// the token) the caller decided from. The two refusals together are what make
+	// "once cancellation intent wins, later success cannot overwrite it" true of
+	// every interleaving rather than of the ones a read happens to see.
+	if transition.To == StateSucceeded && job.ControlIntent == ControlIntentCancel {
+		return preparedTransition{}, fmt.Errorf("%w: job %s", ErrControlIntentWon, job.ID)
+	}
 
 	now := deps.now()
 	next, updates := applyTransition(job, transition, deps.retention(), now)
@@ -986,6 +994,19 @@ func applyTransition(job models.Job, transition Transition, policy RetentionPoli
 		} else {
 			next.LastResumedAt = &now
 		}
+	case StatePaused:
+		// A pause request is resolved by the state it asked for. A cancellation's
+		// intent is not: it is resolved by cancellation, which is why this is not
+		// an unconditional clear.
+		if next.ControlIntent == ControlIntentPause {
+			next.ControlIntent = ""
+			next.ControlRequestedAt = nil
+		}
+	case StateCancelled, StateFailed, StateInterrupted, StateSucceeded:
+		// Any end state resolves whatever control was asked for: the intent records
+		// a request that has not reached its outcome yet, and this is the outcome.
+		next.ControlIntent = ""
+		next.ControlRequestedAt = nil
 	}
 	if transition.To.Terminal() {
 		next.FinishedAt = &now
@@ -1006,6 +1027,8 @@ func applyTransition(job models.Job, transition Transition, policy RetentionPoli
 		"phase":                  next.Phase,
 		"version":                next.Version,
 		"state_entered_at":       next.StateEnteredAt,
+		"control_intent":         next.ControlIntent,
+		"control_requested_at":   next.ControlRequestedAt,
 		"running_duration":       next.RunningDuration,
 		"paused_duration":        next.PausedDuration,
 		"blocked_duration":       next.BlockedDuration,

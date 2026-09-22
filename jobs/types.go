@@ -343,6 +343,13 @@ const (
 	// the row's availability is what this database believes, and the event is what
 	// says somebody established the bytes are gone.
 	EventOutputRemoved = "output-removed"
+	// EventControlRequested records durable control intent the moment it is
+	// accepted: a cancellation that has won or a pause whose checkpoint has not
+	// been confirmed yet. It is a significant fact rather than a state change —
+	// a Job being cancelled is still running — and it is recorded before the
+	// executor is told, so what was asked of a Job survives an executor that
+	// stops answering.
+	EventControlRequested = "control-requested"
 )
 
 // Bounds on everything searchable. A summary, event detail or failure message
@@ -363,6 +370,25 @@ const (
 	MaxProgressMessageBytes   = 500
 	// DefaultPublishBatch bounds one publisher transaction's work.
 	DefaultPublishBatch = 200
+
+	// Command bounds. A command's key, label and endpoint end up in a page and in
+	// a route, and its detail is stored as the outcome a repeat is answered with,
+	// so each is bounded at the boundary that accepts it rather than truncated
+	// later.
+	MaxCommandKeyBytes          = 40
+	MaxCommandLabelBytes        = 120
+	MaxCommandConfirmationBytes = 300
+	MaxCommandPresentationBytes = 4 << 10
+	MaxCommandMessageBytes      = 1000
+	MaxCommandDetailBytes       = 8 << 10
+	// MaxIdempotencyKeyBytes bounds the caller-supplied key a command's outcome is
+	// recorded under.
+	MaxIdempotencyKeyBytes = 200
+	// MaxBulkCommandJobs bounds one bulk command. Each Job is its own transaction
+	// and its own outcome, so the ceiling is what keeps one request from being an
+	// unbounded amount of work; Jobs past it are refused individually rather than
+	// silently dropped.
+	MaxBulkCommandJobs = 200
 )
 
 // Event capacity. Optional Kind traffic — phase chatter, checkpoints, adapter
@@ -1205,6 +1231,36 @@ var (
 	// ErrInvalidReconcileDecision is a reconciliation answer outside the
 	// vocabulary, or one this Kind may not be given.
 	ErrInvalidReconcileDecision = errors.New("jobs: invalid reconciliation decision")
+
+	// ErrInvalidCommand is a command request outside its bounds, or an adapter
+	// answer that is not a command at all — a missing key, an oversized label, an
+	// endpoint that is not a path.
+	ErrInvalidCommand = errors.New("jobs: invalid command")
+	// ErrCommandNotAdvertised means the Job does not offer that command under the
+	// asker's current access. Nothing is written: a command is only ever run when
+	// the Job says it offers it right now.
+	ErrCommandNotAdvertised = errors.New("jobs: the job does not offer that command")
+	// ErrCommandInFlight means an identical request — same Job, command, actor and
+	// idempotency key — is already being executed. It is a refusal rather than a
+	// second attempt: the first one may already have had an effect, and this
+	// mechanism exists to stop exactly that from happening twice.
+	ErrCommandInFlight = errors.New("jobs: that command request is already in flight")
+	// ErrCommandKeyReused means an idempotency key already used for one request
+	// was reused for a different one. The recorded outcome describes the other
+	// request, so answering with it would be a lie.
+	ErrCommandKeyReused = errors.New("jobs: that idempotency key was used for a different request")
+	// ErrCommandChainConflict means the Job is not the quiescent leaf of a linear
+	// retry lineage: a successor already exists, so a second one would fork the
+	// chain and make "the current leaf" mean two things.
+	ErrCommandChainConflict = errors.New("jobs: the retry lineage already has a successor")
+	// ErrCommandFailed means a command was attempted and did not succeed. The
+	// recorded outcome is returned beside it, and a repeat of the same request is
+	// answered with that record rather than by running the executor again.
+	ErrCommandFailed = errors.New("jobs: the command did not succeed")
+	// ErrControlIntentWon refuses a control request a cancellation has already
+	// won. Cancellation is not one intent among others: once it is recorded, the
+	// Job cannot be paused, and success cannot overwrite it.
+	ErrControlIntentWon = errors.New("jobs: a cancellation already owns this job")
 )
 
 // Dispatch vocabulary. The defaults are what a Kind that declares nothing
@@ -1581,6 +1637,152 @@ type Command struct {
 	Confirmation string
 	Presentation json.RawMessage
 }
+
+// The command vocabulary. The host implements the keys below it owns itself — a
+// cancellation's durable intent, the retry lineage, and a viewer's own dismissal
+// and pinning — and a Kind adapter advertises everything else its work actually
+// supports. A client never derives any of them from the Kind or the state.
+const (
+	// CommandCancel asks a Job's execution to stop. The host records the intent
+	// durably before the executor is told, and a Job no execution owns is cancelled
+	// in that same transaction.
+	CommandCancel = "cancel"
+	// CommandPause asks a running execution to reach a resumable checkpoint.
+	CommandPause = "pause"
+	// CommandResume returns held work to the queue once its executor has accepted
+	// it again.
+	CommandResume = "resume"
+	// CommandRetry creates a new Job from an unsuccessful finished Job's sealed
+	// input.
+	CommandRetry = "retry"
+	// CommandRepeat creates a new Job from a successful Job's sealed input. Unlike
+	// Retry it may branch: each repeat is an independent execution.
+	CommandRepeat = "repeat"
+	// CommandDismiss hides a Job from one viewer's default list.
+	CommandDismiss = "dismiss"
+	// CommandPin exempts a Job's metadata and events from ordinary retention for
+	// as long as any viewer keeps it pinned.
+	CommandPin = "pin"
+	// CommandPinLineage pins this Job and every relative of its lineage the asker
+	// may see. Pinning one Job never pins a relative by itself.
+	CommandPinLineage = "pin-lineage"
+	// CommandForget purges a finished Job's sealed input without removing its
+	// sanitized history.
+	CommandForget = "forget"
+)
+
+// Command statuses an adapter's outcome may name, and that the Service records.
+// They are the storage model's spellings, so an outcome a caller reads and the
+// row a repeat is answered from cannot disagree.
+const (
+	// CommandStatusSucceeded means the command's effect is durable.
+	CommandStatusSucceeded = models.JobCommandStatusSucceeded
+	// CommandStatusFailed means the command was attempted and did not succeed.
+	CommandStatusFailed = models.JobCommandStatusFailed
+)
+
+// Command result codes: the bounded classification of what a command did or why
+// it was refused. A bulk command answers one result per Job, so the reason is a
+// machine-readable code rather than a sentence an assertion would have to match.
+const (
+	// CommandCodeApplied means the command's effect is complete.
+	CommandCodeApplied = "applied"
+	// CommandCodeRequested means the durable request is recorded and the executor
+	// has been asked; the state change is the executor's to publish.
+	CommandCodeRequested = "requested"
+	// CommandCodeNotAdvertised means the Job does not offer that command right now.
+	CommandCodeNotAdvertised = "not-advertised"
+	// CommandCodeNotFound means the Job is missing or invisible to the asker. The
+	// two are deliberately one answer.
+	CommandCodeNotFound = "not-found"
+	// CommandCodeConflict means the request was decided from a stale Job.
+	CommandCodeConflict = "conflict"
+	// CommandCodeKeyReused means the idempotency key was already used for a
+	// different request, so the outcome recorded under it is not this request's.
+	CommandCodeKeyReused = "key-reused"
+	// CommandCodeInFlight means an identical request is already being executed.
+	CommandCodeInFlight = "in-flight"
+	// CommandCodeChainConflict means the retry lineage already has a successor.
+	CommandCodeChainConflict = "chain-conflict"
+	// CommandCodeFailed means the command was attempted and did not succeed.
+	CommandCodeFailed = "failed"
+	// CommandCodeInvalid means the request itself is malformed, which is the one
+	// answer a bulk command gives once rather than per Job.
+	CommandCodeInvalid = "invalid-request"
+)
+
+// CommandRequest is one command a caller asks for. JobID, Key, IdempotencyKey
+// and ExpectedVersion come from the request; Actor is bound by the caller's own
+// authorization layer and is what every visibility and policy answer is made
+// for, so a caller cannot name somebody else's identity.
+type CommandRequest struct {
+	JobID           string
+	Key             string
+	IdempotencyKey  string
+	ExpectedVersion uint64
+	Actor           Access
+	// Origin names the surface the command came from. Empty selects the Job's own
+	// origin, which is what a Retry or a Repeat copies onto its successor.
+	Origin string
+}
+
+// CommandResult is one command's recorded outcome: the classification, the
+// bounded message and detail the executor gave, the Job as it stood when the
+// outcome was recorded, and the Job a Retry or a Repeat created.
+//
+// A repeat of the same (Job, command, actor, idempotency key) is answered with
+// the recorded outcome rather than by running the executor again, including when
+// that outcome is a failure — which is why a failure is a result here rather than
+// an absence.
+type CommandResult struct {
+	JobID string
+	Key   string
+	// Status is succeeded or failed and Code classifies why.
+	Status  string
+	Code    string
+	Message string
+	Detail  json.RawMessage
+	// SuccessorID names the Job a Retry or a Repeat created, and is empty for
+	// every other command.
+	SuccessorID string
+	// Job is the Job as the asker may see it when the outcome was recorded. A
+	// version conflict carries the fresh snapshot here, so a caller that raced is
+	// shown what it lost to rather than an empty answer.
+	Job Snapshot
+}
+
+// BulkCommandRequest runs one command across a selection of Jobs. Each Job is
+// resolved, authorized, advertised and executed on its own, so a selection may
+// partially succeed and every Job keeps its own outcome.
+type BulkCommandRequest struct {
+	JobIDs         []string
+	Key            string
+	IdempotencyKey string
+	Actor          Access
+	Origin         string
+}
+
+// Control intent spellings: what a viewer has asked a Job to do, recorded
+// durably before the executor is told so that a Job that stops answering still
+// says what was asked of it.
+const (
+	// ControlIntentCancel is a cancellation that has won but whose execution has
+	// not stopped yet. Once it is recorded, a later success cannot overwrite it.
+	ControlIntentCancel = "cancel"
+	// ControlIntentPause is a pause request whose executor has not confirmed a
+	// resumable checkpoint yet.
+	ControlIntentPause = "pause"
+)
+
+// Phases the host publishes while a control request is outstanding. A Phase is
+// descriptive and never redefines State: a Job being cancelled is still running
+// until its execution stops.
+const (
+	// PhaseCancelling is the phase of a running Job whose cancellation has won.
+	PhaseCancelling = "cancelling"
+	// PhasePausing is the phase of a running Job that is reaching a checkpoint.
+	PhasePausing = "pausing"
+)
 
 // CommandContext is what an adapter is told when the host asks which commands a
 // Job offers.

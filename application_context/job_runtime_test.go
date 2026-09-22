@@ -38,10 +38,14 @@ type runtimeTestAdapter struct {
 
 	cleanup func(context.Context, jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error)
 
+	advertise func(context.Context, jobs.CommandContext) ([]jobs.Command, error)
+	command   func(context.Context, jobs.CommandExecution) (jobs.CommandOutcome, error)
+
 	mu         sync.Mutex
 	executions []jobs.Execution
 	requests   []jobs.ReconcileRequest
 	cleanups   []jobs.ArtifactCleanupRequest
+	commands   []jobs.CommandExecution
 }
 
 func newRuntimeTestAdapter() *runtimeTestAdapter {
@@ -86,12 +90,28 @@ func (a *runtimeTestAdapter) CleanupArtifacts(ctx context.Context, request jobs.
 	return jobs.ArtifactCleanupResult{Removed: removed}, nil
 }
 
-func (a *runtimeTestAdapter) Commands(context.Context, jobs.CommandContext) ([]jobs.Command, error) {
+func (a *runtimeTestAdapter) Commands(ctx context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	if a.advertise != nil {
+		return a.advertise(ctx, commandContext)
+	}
 	return nil, nil
 }
 
-func (a *runtimeTestAdapter) ExecuteCommand(context.Context, jobs.CommandExecution) (jobs.CommandOutcome, error) {
-	return jobs.CommandOutcome{}, nil
+func (a *runtimeTestAdapter) ExecuteCommand(ctx context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
+	a.mu.Lock()
+	a.commands = append(a.commands, execution)
+	a.mu.Unlock()
+	if a.command != nil {
+		return a.command(ctx, execution)
+	}
+	return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded}, nil
+}
+
+// commandExecutions is the commands this adapter was asked to run.
+func (a *runtimeTestAdapter) commandExecutions() []jobs.CommandExecution {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]jobs.CommandExecution(nil), a.commands...)
 }
 
 func (a *runtimeTestAdapter) dispatched() []jobs.Execution {

@@ -49,6 +49,7 @@ func newJobContext(t *testing.T) *MahresourcesContext {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobCommandRequest{},
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
@@ -248,6 +249,121 @@ func TestPreferenceAndRetentionFollowTheDeploymentSettings(t *testing.T) {
 	}
 	if want := finished.FinishedAt.Add(time.Hour); !finished.ExpiresAt.Equal(want) {
 		t.Fatalf("deadline = %v, want finished_at + the configured hour (%v)", finished.ExpiresAt, want)
+	}
+}
+
+// TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade is the application seam's
+// half of §8: the command surface asks as the principal this context carries,
+// never as the one a request names, a Job the principal may not see is answered
+// exactly as a Job that does not exist, and the same holds for the bulk surface
+// where each Job is answered on its own.
+func TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade(t *testing.T) {
+	ctx := newJobContext(t)
+	owner := uint(7)
+
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = "remote-download"
+	adapter.def.KindVersion = 1
+	var askedAs []jobs.Access
+	adapter.advertise = func(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+		askedAs = append(askedAs, commandContext.Access)
+		return []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel"}}, nil
+	}
+	if err := ctx.JobService().RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register the kind's adapter: %v", err)
+	}
+
+	mine := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(owner), ActorUserID: jobUintPtr(owner), Title: "mine",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	execution, ok, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: "remote-download", KindVersion: 1, Claimant: "facade-test",
+	})
+	if err != nil || !ok || execution.JobID != mine.ID {
+		t.Fatalf("claiming the running job: %v (ok=%v, claimed %s)", err, ok, execution.JobID)
+	}
+
+	theirs := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(owner + 1), ActorUserID: jobUintPtr(owner + 1), Title: "theirs",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+
+	asUser := ctx.WithPrincipal(&auth.Principal{UserID: owner, Username: "user", Role: models.RoleUser})
+
+	// A Job the principal may not see is not-found through every command surface.
+	if _, err := asUser.AdvertisedJobCommands(context.Background(), theirs.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("advertising a foreign job's commands = %v, want ErrNotFound", err)
+	}
+	if _, err := asUser.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: theirs.ID, Key: jobs.CommandCancel, IdempotencyKey: "idem-foreign", ExpectedVersion: 1, Origin: "api",
+	}); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("running a command on a foreign job = %v, want ErrNotFound", err)
+	}
+
+	// The actor is the context's principal, not the one the request names: a request
+	// claiming to be an administrator still asks as this user.
+	snapshot, err := asUser.GetJob(mine.ID)
+	if err != nil {
+		t.Fatalf("read the running job: %v", err)
+	}
+	result, err := asUser.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: mine.ID, Key: jobs.CommandCancel, IdempotencyKey: "idem-facade",
+		ExpectedVersion: snapshot.Version,
+		Actor:           jobs.Access{UserID: owner + 1, Administrator: true},
+		Origin:          "api",
+	})
+	if err != nil {
+		t.Fatalf("running a command through the facade: %v", err)
+	}
+	if result.Code != jobs.CommandCodeRequested {
+		t.Fatalf("the cancellation recorded %s/%s, want a durable request", result.Status, result.Code)
+	}
+
+	commands := adapter.commandExecutions()
+	if len(commands) != 1 || commands[0].Access.UserID != owner {
+		t.Fatalf("the adapter was asked to run %d commands with access %+v, want one as user %d",
+			len(commands), commands, owner)
+	}
+	for _, access := range askedAs {
+		if access.UserID != owner {
+			t.Fatalf("the adapter was asked for a job's commands as %+v, want the bound principal", access)
+		}
+	}
+
+	var recorded []models.JobCommandRequest
+	if err := ctx.db.Where("job_id = ?", mine.ID).Find(&recorded).Error; err != nil {
+		t.Fatalf("read the recorded command: %v", err)
+	}
+	if len(recorded) != 1 || recorded[0].ActorUserID != owner {
+		t.Fatalf("the recorded command names actor %v, want the bound principal %d", recorded, owner)
+	}
+
+	// The bulk surface is the same rule per Job: the principal's own Job is acted on
+	// and the foreign one is not found, with an outcome for each.
+	results := asUser.ExecuteBulkJobCommand(context.Background(), jobs.BulkCommandRequest{
+		JobIDs: []string{mine.ID, theirs.ID}, Key: jobs.CommandPin,
+		IdempotencyKey: "idem-facade-bulk", Actor: jobs.Access{UserID: owner + 1}, Origin: "api",
+	})
+	if len(results) != 2 {
+		t.Fatalf("the bulk command answered %d results, want one per job", len(results))
+	}
+	if results[0].Status != jobs.CommandStatusSucceeded || results[0].Code != jobs.CommandCodeApplied {
+		t.Fatalf("the principal's own job = %s/%s, want it pinned", results[0].Status, results[0].Code)
+	}
+	if results[1].Code != jobs.CommandCodeNotFound {
+		t.Fatalf("the foreign job = %s/%s, want not-found rather than a refusal that names it",
+			results[1].Status, results[1].Code)
+	}
+
+	var preference models.JobPreference
+	if err := ctx.db.Where("job_id = ?", mine.ID).First(&preference).Error; err != nil {
+		t.Fatalf("read the preference: %v", err)
+	}
+	if preference.UserID != owner || preference.PinnedAt == nil {
+		t.Fatalf("the pin = %+v, want it recorded for the bound principal %d", preference, owner)
 	}
 }
 

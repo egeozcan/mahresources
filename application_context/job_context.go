@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -148,6 +149,46 @@ func (ctx *MahresourcesContext) SweepJobHistory(cursor jobs.SweepCursor, limit i
 		return jobs.SweepResult{}, err
 	}
 	return service.Sweep(ctx.jobDeps(), ctx.jobRetentionPolicy(), cursor, limit)
+}
+
+// AdvertisedJobCommands returns the controls one visible Job offers this
+// context's principal right now: the Job's Kind answers for its own work and the
+// control plane answers for the bookkeeping it owns, so a page renders what the
+// server will actually accept rather than what a client guessed from the state.
+func (ctx *MahresourcesContext) AdvertisedJobCommands(requestCtx context.Context, jobID string) ([]jobs.Command, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	return service.AdvertisedCommands(requestCtx, ctx.jobDeps(), ctx.jobAccess(), jobID)
+}
+
+// ExecuteJobCommand runs one command as this context's principal.
+//
+// The actor is replaced with the principal this context is bound to rather than
+// taken from the request: every visibility and policy answer a command makes is
+// made for the person asking, and a caller that could name its own actor would be
+// asking as somebody else. The request's own fields — which Job, which command,
+// which idempotency key, which version the client decided from — are the caller's.
+func (ctx *MahresourcesContext) ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return jobs.CommandResult{}, err
+	}
+	request.Actor = ctx.jobAccess()
+	return service.ExecuteCommand(requestCtx, ctx.jobDeps(), request)
+}
+
+// ExecuteBulkJobCommand runs one command across a selection as this context's
+// principal, with one outcome per Job. A context with no control plane answers
+// nothing at all rather than reporting a refusal per Job it never looked at.
+func (ctx *MahresourcesContext) ExecuteBulkJobCommand(requestCtx context.Context, request jobs.BulkCommandRequest) []jobs.CommandResult {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil
+	}
+	request.Actor = ctx.jobAccess()
+	return service.ExecuteBulkCommand(requestCtx, ctx.jobDeps(), request)
 }
 
 // requireJobService refuses a facade call on a context with no control plane,

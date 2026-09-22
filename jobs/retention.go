@@ -304,6 +304,10 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 		for _, table := range []any{
 			&models.JobEvent{}, &models.JobOutput{}, &models.JobPreference{},
 			&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobReplayEnvelope{},
+			// Command records go with the history that answers for them: the tuple a
+			// repeat is answered from names a Job nobody can read any more, so keeping
+			// the row would be an orphan no caller could reach.
+			&models.JobCommandRequest{},
 		} {
 			if err := tx.Where("job_id = ?", candidate.ID).Delete(table).Error; err != nil {
 				return fmt.Errorf("jobs: prune %s of job %s: %w", tableName(tx, table), candidate.ID, err)

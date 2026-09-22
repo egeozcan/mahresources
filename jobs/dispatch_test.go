@@ -34,10 +34,15 @@ type testAdapter struct {
 
 	cleanup func(context.Context, ArtifactCleanupRequest) (ArtifactCleanupResult, error)
 
+	advertise func(context.Context, CommandContext) ([]Command, error)
+	execute   func(context.Context, CommandExecution) (CommandOutcome, error)
+
 	mu         sync.Mutex
 	dispatched []Execution
 	reconciled []ReconcileRequest
 	cleanups   []ArtifactCleanupRequest
+	advertised []CommandContext
+	commands   []CommandExecution
 }
 
 func newTestAdapter(def Definition) *testAdapter { return &testAdapter{def: def} }
@@ -80,10 +85,49 @@ func (a *testAdapter) CleanupArtifacts(ctx context.Context, request ArtifactClea
 	return ArtifactCleanupResult{Removed: removed}, nil
 }
 
-func (a *testAdapter) Commands(context.Context, CommandContext) ([]Command, error) { return nil, nil }
+func (a *testAdapter) Commands(ctx context.Context, commandContext CommandContext) ([]Command, error) {
+	a.mu.Lock()
+	a.advertised = append(a.advertised, commandContext)
+	a.mu.Unlock()
+	if a.advertise != nil {
+		return a.advertise(ctx, commandContext)
+	}
+	return nil, nil
+}
 
-func (a *testAdapter) ExecuteCommand(context.Context, CommandExecution) (CommandOutcome, error) {
-	return CommandOutcome{}, nil
+func (a *testAdapter) ExecuteCommand(ctx context.Context, execution CommandExecution) (CommandOutcome, error) {
+	a.mu.Lock()
+	a.commands = append(a.commands, execution)
+	a.mu.Unlock()
+	if a.execute != nil {
+		return a.execute(ctx, execution)
+	}
+	return CommandOutcome{Status: CommandStatusSucceeded}, nil
+}
+
+// commandCount is how many commands the adapter was asked to run, which is what
+// an idempotency assertion counts: a repeat must not reach the adapter at all.
+func (a *testAdapter) commandCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.commands)
+}
+
+// lastCommand is the execution the adapter was last handed.
+func (a *testAdapter) lastCommand() CommandExecution {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.commands) == 0 {
+		return CommandExecution{}
+	}
+	return a.commands[len(a.commands)-1]
+}
+
+// advertisementCount is how many times the adapter was asked what a Job offers.
+func (a *testAdapter) advertisementCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.advertised)
 }
 
 func (a *testAdapter) cleanupCount() int {
@@ -169,6 +213,7 @@ func openDispatchDatabase(t *testing.T, dsn string) Deps {
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{},
 		&models.JobPreference{}, &models.JobPinGuard{},
+		&models.JobCommandRequest{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}

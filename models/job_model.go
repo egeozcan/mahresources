@@ -452,6 +452,66 @@ type JobPreference struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// JobCommandRequest is the durable idempotency record of one command a caller
+// asked for: what it asked, who asked, the outcome it reached, and — for a Retry
+// or a Repeat — the Job it created.
+//
+// It is a row rather than an in-memory guard because a command's effects are
+// durable and a client that never saw the answer must be able to ask again: the
+// unique tuple (job, command, actor, idempotency key) is what makes the repeat
+// return the recorded outcome instead of running the executor a second time. The
+// row is written before the effect is attempted and completed afterwards, so a
+// process that dies mid-command leaves a claim that refuses a repeat rather than
+// a second side effect.
+//
+// ActorUserID is a plain uint rather than the nullable reference the rest of the
+// module uses, and 0 is the host principal — an administrator acting with no user
+// of their own. A NULL column would make every host request a new tuple (NULLs
+// compare equal to nothing), which is the one thing this table exists to prevent.
+// The reference is deliberately not swept when the account is deleted: it is the
+// identity the idempotency tuple is keyed on, so nulling it would let a later
+// owner of the same numeric id replay somebody else's recorded outcome.
+type JobCommandRequest struct {
+	ID string `gorm:"primaryKey;size:36" json:"id"`
+
+	JobID          string `gorm:"size:36;not null;uniqueIndex:idx_job_command_requests_idempotency,priority:1;index:idx_job_command_requests_job" json:"jobId"`
+	CommandKey     string `gorm:"size:40;not null;uniqueIndex:idx_job_command_requests_idempotency,priority:2" json:"commandKey"`
+	ActorUserID    uint   `gorm:"not null;uniqueIndex:idx_job_command_requests_idempotency,priority:3" json:"actorUserId"`
+	IdempotencyKey string `gorm:"size:200;not null;uniqueIndex:idx_job_command_requests_idempotency,priority:4" json:"idempotencyKey"`
+
+	// RequestHash is the fingerprint of what was asked for through this key, so a
+	// key reused for a different request is refused rather than answered with the
+	// other request's outcome.
+	RequestHash string `gorm:"size:64;not null" json:"requestHash"`
+
+	// Status is running, succeeded or failed. Code, Message, Detail and
+	// SuccessorJobID are the recorded outcome a repeat is answered with.
+	Status         string     `gorm:"size:20;not null" json:"status"`
+	Code           string     `gorm:"size:40" json:"code,omitempty"`
+	Message        string     `gorm:"size:1000" json:"message,omitempty"`
+	Detail         types.JSON `gorm:"type:json" json:"detail,omitempty"`
+	SuccessorJobID string     `gorm:"size:36" json:"successorJobId,omitempty"`
+
+	CreatedAt   time.Time  `gorm:"not null" json:"createdAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+}
+
+// The three ways a command request can stand. They are the stored spellings, so
+// a repeat and the writer that recorded it cannot disagree about one of them.
+const (
+	// JobCommandStatusRunning is a command that has been claimed and whose effect
+	// is being attempted. A repeat while it stands is refused rather than run
+	// again: the first attempt may already have had an effect, and this table
+	// cannot tell.
+	JobCommandStatusRunning = "running"
+	// JobCommandStatusSucceeded is a command whose effect is durable.
+	JobCommandStatusSucceeded = "succeeded"
+	// JobCommandStatusFailed is a command that was attempted and did not succeed.
+	// The failure is recorded rather than erased, because a repeat must be
+	// answered with it rather than with a second attempt.
+	JobCommandStatusFailed = "failed"
+)
+
 // JobPinGuard is the per-viewer row preference admission serializes on, and the
 // durable record of whether that viewer still exists to admit one.
 //

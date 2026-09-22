@@ -34,6 +34,7 @@ func jobCoreTables() []any {
 		&models.JobClaim{}, &models.JobCapacityLease{},
 		&models.JobPreference{},
 		&models.JobPinGuard{},
+		&models.JobCommandRequest{},
 	}
 }
 

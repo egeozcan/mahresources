@@ -1,3 +1,254 @@
+# Job Center Task 6 — advertised idempotent commands and immutable lineage (2026-09-22)
+
+**Goal:** Land Task 6 of the unified Job Center plan: the command surface a Job
+advertises, the idempotency that makes running one repeatable, the durable
+control intent behind cancel and pause, and the immutable lineage a Retry or a
+Repeat creates — without touching any executor's own work (Tasks 7-10) or the
+HTTP layer (Task 13).
+
+## Plan
+
+- [x] Read the complete plan (Task 6's Interface/Red/Green/Verify), the approved
+      design (§1, §4, §8, §9, §12, §13, §16, §17), ADRs 0006/0007, `CLAUDE.md`, the
+      current `jobs/` code and tests, and the ten Task 1-5 correction records before
+      editing. Recorded the preceding GPT-6 Astra checkpoint (OK, two P2 notes, no
+      P0/P1) at the top of this file.
+- [x] `models/job_model.go`: `JobCommandRequest` — the idempotency record — with the
+      unique `(job, command, actor, idempotency key)` tuple, the request hash, the
+      running/succeeded/failed status, the bounded outcome, and created/completed
+      times; registered in `migrateJobCore`, the module's test table list, and
+      retention's prune set.
+- [x] `jobs/types.go`: the command vocabulary (host-owned and Kind-advertised keys),
+      the outcome statuses and result codes, `CommandRequest`, `CommandResult`,
+      `BulkCommandRequest`, the control-intent and phase spellings, the bounds, and
+      the new sentinels (`ErrInvalidCommand`, `ErrCommandNotAdvertised`,
+      `ErrCommandInFlight`, `ErrCommandKeyReused`, `ErrCommandChainConflict`,
+      `ErrCommandFailed`, `ErrControlIntentWon`).
+- [x] `jobs/commands.go`: `AdvertisedCommands`, `ExecuteCommand`,
+      `ExecuteBulkCommand`, the host handlers (dismiss, pin, lineage pin, forget),
+      the lineage handlers (Retry, Repeat), the workload path (control intent then
+      executor), the chain lock, and the idempotency claim/replay mechanics.
+- [x] `jobs/service.go`: the cancellation-wins refusal, the control intent's clear
+      on the state it names, and the one visible-read spelling (`loadVisibleJob`)
+      shared with `Get`.
+- [x] `application_context/job_context.go`: `AdvertisedJobCommands`,
+      `ExecuteJobCommand`, `ExecuteBulkJobCommand` — the principal is bound by the
+      facade, never named by the request — with the runtime test adapter extended to
+      answer commands.
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Advertisement | `undefined: CommandRequest`, `svc.AdvertisedCommands undefined (type *Service has no field or method AdvertisedCommands)`, `undefined: CommandCancel` | `TestCommandAdvertisementFollowsTheAdapterAndTheHostOwnedVocabulary` |
+| Execution rechecks | `h.svc.ExecuteCommand undefined (type *Service has no field or method ExecuteCommand)` | `TestCommandExecutionRechecksWhatItDecidedFrom` |
+| Idempotency | the mechanism landed with the execution cycle, so the proof is the mutation: `claimCommandRequest` treating every read row as its own fails the test with `a failed command = jobs: that command request is already in flight: job … cancel, want ErrCommandFailed` | `TestCommandIdempotencyReturnsTheRecordedOutcomeWithoutRunningItAgain` |
+| Control intent | `a success after a won cancellation = <nil>, want ErrControlIntentWon` | `TestCancelIntentIsDurableBeforeTheExecutorIsAskedAndWinsOverSuccess` |
+| Retry | `repeating a retry request: jobs: the job does not offer that command: job … does not offer retry` — the recorded outcome has to be consulted *before* the advertisement, because a Retry that succeeded leaves the retried Job no longer offering it | `TestRetryCreatesOneLinkedSuccessorFromTheSealedInput` |
+| Retry refusals and the chain | behavioural red: the fixture adapter mirrored the host's state rules, so the host's own rules were unreachable from the test (see the fixture correction below) | `TestRetryRefusesSucceededWorkNonLeafAndUnopenableInput`, `TestRetryChainAdmitsOneSuccessorUnderConcurrentRequests` |
+| Repeat | behavioural red, driven by the mutation battery | `TestRepeatBranchesFromSuccessfulWorkWithItsOwnRelation` |
+| Host commands | behavioural red, driven by the mutation battery | `TestDismissAndPinChangeOnlyTheViewersOwnRelationship`, `TestLineagePinningCoversVisibleRelativesAndNothingHidden`, `TestPinLineageReportsTheRelativesThePinLimitRefused`, `TestForgetThroughTheCommandPurgesInputAndKeepsHistory` |
+| Bulk | `the eligible job of a mixed bulk = failed/not-advertised, want succeeded/applied` — the fixture expected `forget` to be bulk-eligible, which is a host declaration and is deliberately per-Job here | `TestBulkCommandRecordsAnIndependentOutcomePerJob` |
+| Pause, resume and bounds | `pausing queued work: jobs: illegal state transition: queued -> paused` and, after the rule changed, `resuming held work: … does not offer resume` | `TestPauseAndResumeFollowTheExecutorThatConfirmsTheCheckpoint`, `TestCommandRefusesRequestsOutsideItsBounds` |
+| Application facade | written against the exported facade only; green once the facade bound the principal | `TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade` (SQLite and PostgreSQL) |
+| Cross-engine | written after the SQLite cycles, like Tasks 4-5: their red is dialect behaviour, not a compile failure | `TestCommandIdempotencyAdmitsOneExecutionAcrossConnectionsPG`, `TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG`, `TestACancellationThatWonIsNeverOverwrittenByARacingSuccessPG` |
+
+### Mutation checks (each reverted in turn, the source restored afterwards)
+
+Eighteen mutations were applied to the finished implementation; every one of them
+was caught by exactly the test written for its behaviour:
+
+- Retry: dropping the lineage link, dropping the leaf predicate, copying no input
+  into the successor, letting successful work be retryable, applying the retry
+  leaf rule to Repeat.
+- Host commands: `dismiss` writing no preference, `forget` not purging, the
+  lineage pin covering only the Job itself, the adapter deciding the host's own
+  keys.
+- Bulk: ignoring the per-Job bulk declaration, removing the width ceiling.
+- Control intent: the intent not written before the executor is asked, the intent
+  recorded without its event, a queued cancellation waiting for an executor that
+  does not exist, success allowed to overwrite a won cancellation.
+- Pause/resume: pause offered for work nobody runs, a successful resume leaving
+  the Job paused.
+- Bounds and advertisement: a command needing no expected version, a finished Job
+  offering cancel.
+
+The battery found two *test* defects rather than implementation defects, and both
+were fixed rather than papered over: `advertiseStateful` had the fixture adapter
+reproduce the host's own state rules (Retry only for unsuccessful work, Repeat
+only for successful work), which made the host's rules unobservable — a mutation
+adding `StateSucceeded` to the host's retry states passed the test. The fixture
+now declares only what the Kind supports (both commands for every finished Job)
+and the host narrows, which is also what the design means by "a Kind advertises
+only commands it can honor safely". A second mutation (Repeat applying the retry
+leaf rule) was inert under the old fixture for the same reason and is caught now.
+
+## Defects found by self-review (after the cycles)
+
+- **A repeat of a Retry was refused instead of answered.** Found by the retry
+  cycle's own test: the advertisement runs before the command, and a Retry that
+  created a successor leaves the retried Job no longer advertising Retry — so a
+  repeat with the same idempotency key was refused as unadvertised. §12 requires
+  the opposite ("a request carrying an idempotency key returns its recorded
+  outcome on repetition"), so the recorded outcome is now looked up first, after
+  the Job's visibility has been established.
+- **The bulk entry's refusal classification was shadowed.** The first version set
+  `Code: failed` before asking `commandCodeForError`, so a Job refused before it
+  was read (a database failure) would have been reported as an executor failure.
+  The classification now runs first.
+- **`isHostCommandKey`/`hostCommandKeys` and `MaxCommandEndpointBytes` were dead
+  weight** after the dispatch and the endpoint owning were rewritten; both are
+  gone or load-bearing now (the host dispatch is guarded by `isHostCommandKey`,
+  and the endpoint is the host's, so no ceiling for an adapter's is needed).
+- **The cancellation-wins guard was written twice, once unreachably.** A SQL
+  predicate beside the read-time refusal could never fire: recording the intent
+  moves the version, so a success decided before it matches no row. The redundant
+  predicate was removed and the reason recorded where the surviving refusal is.
+
+## Decisions worth recording
+
+- **Retry and Repeat are advertised by the Kind and executed by the host.**
+  Whether a Kind's work may be re-run at all is the Kind's policy — no host fact
+  can answer it — while creating a Job and its lineage link is the control
+  plane's own work, and the lineage/leaf/input conditions are the host's durable
+  facts. So the adapter's answer is required and the host only narrows it, which
+  is also why the host's own four keys (dismiss, pin, lineage pin, forget) ignore
+  an adapter's answer for them entirely.
+- **The host narrows; it never widens.** A finished Job is offered no cancel, a
+  Job nobody runs is offered no pause, a Job that already has a success or is not
+  the quiescent leaf is offered no Retry, and a Job whose sealed input cannot be
+  opened here is offered neither.
+- **Pause is narrowed rather than the state machine widened.** §1 defines
+  `paused` as "executor confirmed a resumable checkpoint", so pausing a Job no
+  execution owns would be a state nobody confirmed. §4's "queued or scheduled
+  work with no executor may transition immediately" is therefore read as the
+  cancellation case, which is the one where a state can be reached without an
+  executor: a queued or scheduled Job is cancelled by the command itself. Task
+  1's independently written transition table is unchanged.
+- **Recording the intent moves the Job's version.** A control request is a
+  durable change every reader may have decided from, so a client's stale command,
+  an executor about to publish success, and a page render all re-decide against
+  it. It is also what makes the cancellation-wins rule hold for every
+  interleaving and not only for the ones a read happens to see.
+- **Resume is the one workload command whose success the host makes durable.**
+  Pause and cancel are published by the execution that owns the Job, which is the
+  thing that reaches the checkpoint or stops; a paused Job has no execution left
+  to publish anything, so the command's own accepted outcome returns it to the
+  queue. Otherwise a successful resume would be a message that changed nothing.
+- **Bulk eligibility is per Job, and the destructive host commands are not bulk.**
+  The plan's "intersection of advertised bulk commands" is implemented as the
+  selection's intersection with the Jobs that offer the command *in bulk*, so one
+  unsuitable Job refuses itself and the rest proceed. `dismiss` and `pin` are
+  declared bulk (the panel's own operations); `forget` and `pin-lineage` are not,
+  which the advertisement states so no client has to guess.
+- **The recorded outcome is stored as bounded columns, not one JSON blob.** The
+  plan's "serialized bounded result" is the outcome; writing its code, message,
+  detail and successor into their own columns gives each field its own ceiling at
+  the boundary that accepts it and leaves the tuple answerable in SQL.
+- **The idempotency actor is a plain uint, and 0 is the host principal.** A NULL
+  would make every host request a new tuple (NULLs compare equal to nothing),
+  which is the one thing the table exists to prevent. The column is deliberately
+  *not* swept on account deletion for the same reason: it is the identity the
+  tuple is keyed on, and nulling it would let a later user of the same numeric id
+  replay somebody else's recorded outcome.
+- **A refusal that wrote nothing is not recorded.** The row is claimed before the
+  effect is attempted, so a repeat of a request that was refused before it ran
+  (a version conflict, an unadvertised command) proceeds normally, while a
+  repeat of a request whose effect may already have happened is refused with
+  `ErrCommandInFlight` instead of being run twice.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs ./application_context ./internal/arch . -count=1`
+  — passed (1.5s / 61.6s / 2.2s / 0.3s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go test -race --tags 'json1 fts5' ./jobs -run 'Test(Command|Retry|Repeat|Lineage|CancelIntent|Bulk|Dismiss|Pin|Forget|Pause|ACancellation)' -count=10`
+  — passed (4.4s). `… ./application_context -run TestCommandSurfaceFollowsTheBoundPrincipalAtTheFacade -count=5`
+  — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed (7.0s);
+  `… ./application_context -count=1` — passed (76.7s); the plan's filtered
+  cross-engine gate `-run 'Test(Command|Retry|Repeat|Lineage|CancelIntent|Bulk)'`
+  — passed.
+- `go vet --tags 'json1 fts5' ./...` and `go vet --tags 'json1 fts5 postgres' ./jobs ./application_context`
+  — clean. `go build --tags 'json1 fts5' ./...` — clean. `gofmt -l` on every
+  changed file — clean. `git diff --check` — clean.
+- No frontend source, template, CLI command or runtime setting changed, so no
+  bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Review
+
+Task 6 is complete. A Job now answers what it offers the person asking, the host
+performs the four controls only it can, a Kind's adapter performs its own, a
+repeat of any request is answered from the record rather than run twice, and a
+Retry or a Repeat creates a new linked Job without touching the one it continues.
+
+The parts worth the most scrutiny are the negative ones, and each is pinned: an
+unadvertised command writes nothing; a stale request is refused with the fresh
+snapshot; a hidden Job is not-found through the advertisement, the execution and
+the bulk surface alike; a repeat does not reach the executor; a second Retry of a
+non-leaf does not fork the chain; a cancellation that won is not overwritten by a
+success; and a failed Retry leaves the ancestor's row byte-for-byte as it was.
+
+Residual risks and handoffs carried forward:
+
+- **`Filter.Command` is still refused** (Task 5's `ErrInvalidFilter`), and this
+  task did not make it answerable. The dimension needs a durable predicate, and
+  an adapter's availability is a live, per-process policy answer — two processes
+  with different registrations would answer a listing and its counts differently,
+  which is exactly the drift the constructor exists to prevent. Making it
+  answerable means either compiling only the host-owned keys (a partial, silently
+  wrong answer) or making a Kind's supported commands durable at acceptance; the
+  decision belongs with Task 13, where the Job Center's filter bar is built. The
+  refusal is preserved and still asserted.
+- **A command a process dies holding is in flight forever.** The claim is
+  committed before the effect is attempted, which is what stops a repeat from
+  duplicating an effect, so a crash between the claim and its completion leaves a
+  request that is refused as in-flight for that key. A caller recovers with a new
+  idempotency key; nothing reclaims the old one, deliberately, because a claim
+  taken over could be a second side effect. A bounded takeover needs a Kind's own
+  idempotence proof and belongs with the adapters.
+- **`ErrControlIntentWon`, `ErrCommandChainConflict`, `ErrCommandInFlight` and
+  their neighbours have no HTTP mapping yet** — the Job Center handlers are Task
+  13's. They are typed refusals in the jobs vocabulary, like every other sentinel
+  in this module, and a later task maps them.
+- **Inspect-output and download-artifact are not host commands.** The design's
+  command vocabulary lists them, and they are Kind-specific by construction: what
+  an output *is* and how it is opened belongs to the Kind that published it, and
+  the artifact route is authorized separately from the Job (`Outputs` is the
+  read). Task 7's download adapter is where they first have something to open.
+- **A Retry's successor is accepted queued whatever the ancestor was doing.**
+  That is right for work whose input fully describes it, and insufficient for a
+  Kind with its own scheduling (a deferred download): the adapter must reschedule
+  from the copied input when it dispatches, which is Task 7's to prove.
+- **The lineage lock's ancestor walk is bounded at 64 hops** (`maxRetryChainHops`).
+  The chain is linear, so a longer one is corruption rather than history, and the
+  walk stops instead of following it: the predicate that matters is the successor
+  check on the Job itself.
+
+# Job Center checkpoint review, GPT-6 Astra after Task 5 (2026-09-22)
+
+**Goal:** Record the outcome of the GPT-6 Astra checkpoint review of Job Center
+Tasks 1-5 before Task 6 begins.
+
+## Review
+
+The checkpoint review of the completed scope — the durable lifecycle core,
+events/progress/links/outputs, encrypted replay, fenced dispatch, and visible
+history/preferences/retention — returned **OK**: no concrete P0/P1 finding was
+identified, and it recorded two P2 notes. Tests were inspected rather than
+executed, so its evidence is a reading of the committed Tasks 1-5 state
+(`4c3333ba`) rather than a reproduced failure.
+
+That is the first checkpoint review of these five tasks to return without a
+P0/P1. The ten correction rounds recorded below each closed the findings of an
+earlier checkpoint review with a red-then-green cycle at the seam the finding
+named, and the tenth was the last one outstanding. Task 6 is the next handoff
+point.
+
+No production code, schema, generated asset or test was changed for this record;
+it is a documentation entry for a review performed on the committed Tasks 1-5
+state. Nothing is staged by it, and `git diff --check` is clean.
+
 # Job Center checkpoint review corrections, round 10 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct the P1 finding from the tenth GPT-6 Astra checkpoint review of Tasks 1-5 — a preference admitted for a viewer whose account is being deleted, leaving an orphaned permanent pin that exempts the Job's metadata and events from retention for everybody forever — without widening scope into Tasks 6-18.
