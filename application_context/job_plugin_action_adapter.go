@@ -96,12 +96,6 @@ const (
 	// succeeds — the output is optional by construction, so a result nobody can
 	// store must not fail the work that produced it.
 	maxPluginActionResultBytes = 6 << 10
-	// maxPluginActionRuntimeWait bounds how long a dispatched execution waits for
-	// the plugin manager to finish reporting. It is deliberately the manager's own
-	// allowance plus a margin: the Lua call is already bounded by
-	// plugin_system.MaxAsyncJobDuration, and a wait longer than that would only
-	// hold a claim for work the manager has already given up on.
-	maxPluginActionRuntimeWait = plugin_system.MaxAsyncJobDuration + 30*time.Second
 	// pluginActionFailureCode and pluginActionFailureMessage are the bounded,
 	// host-owned failure one plugin execution records. The code is what a reader
 	// groups on and the message is what the Job Center shows: neither is derived
@@ -112,6 +106,9 @@ const (
 	// pluginActionRedactionMarker replaces any value of the Job's own parameters
 	// that a plugin puts into a message the host persists.
 	pluginActionRedactionMarker = "[redacted]"
+	// pluginActionWaitPollInterval is how often a dispatched execution looks at its
+	// Job while waiting for the plugin manager's report.
+	pluginActionWaitPollInterval = 25 * time.Millisecond
 	// minRedactedParamBytes is the shortest parameter value worth replacing. Below
 	// it a value is a fragment of ordinary prose — "1", "on" — and replacing it
 	// would mangle every message without hiding anything a person would call a
@@ -299,7 +296,7 @@ func (a *pluginActionAdapter) Dispatch(ctx context.Context, execution jobs.Execu
 		// blocked, failed or withdrawn by the executor and owns no running state.
 		return nil
 	}
-	if _, err := a.ctx.awaitPluginActionRun(execution); err != nil {
+	if _, err := a.ctx.awaitPluginActionRun(ctx, execution); err != nil {
 		return err
 	}
 	return nil
@@ -424,7 +421,7 @@ type pluginActionRun struct {
 // runPluginActionExecution is the one executor path for all three subtypes: it
 // re-validates, hands the work to the plugin manager, and reports back what the
 // manager did with it.
-func (ctx *MahresourcesContext) runPluginActionExecution(_ context.Context, execution jobs.Execution, input *pluginActionJobInput) (pluginActionRun, error) {
+func (ctx *MahresourcesContext) runPluginActionExecution(runCtx context.Context, execution jobs.Execution, input *pluginActionJobInput) (pluginActionRun, error) {
 	pm := ctx.PluginManager()
 	if pm == nil {
 		return pluginActionRun{JobID: execution.JobID}, ctx.blockPluginActionJob(execution, "plugins-unavailable")
@@ -449,7 +446,7 @@ func (ctx *MahresourcesContext) runPluginActionExecution(_ context.Context, exec
 		// instead of blocking a Job that is about to succeed.
 		if handle := ctx.pluginActionHandleFor(execution.JobID); handle != "" {
 			if running := pm.GetActionJob(handle); running != nil && !actionJobTerminal(running.Status) {
-				return ctx.awaitPluginActionRun(execution)
+				return ctx.awaitPluginActionRun(runCtx, execution)
 			}
 		}
 		if err := ctx.blockPluginActionJob(execution, "closure-callback-gone"); err != nil {
@@ -539,27 +536,45 @@ func (ctx *MahresourcesContext) runScheduledPluginOccurrence(pm *plugin_system.P
 		return pluginActionRun{JobID: execution.JobID}, nil
 	}
 	// RunScheduleForHost blocks until the handler has finished, so the Job's own
-	// outcome is already recorded by the time this returns.
-	return ctx.awaitPluginActionRun(execution)
+	// outcome is already recorded by the time this returns; the wait here is the
+	// confirmation of that, and the scheduler holds its own row claim for it.
+	return ctx.awaitPluginActionRun(context.Background(), execution)
 }
 
 // awaitPluginActionRun waits for the Job's own terminal state and reports it.
 //
-// The wait is a poll because the plugin manager's completion is a sink call, not
-// a channel this layer can select on, and it is bounded because a Job left
-// running with nobody owning it would never be resolved by anything.
-func (ctx *MahresourcesContext) awaitPluginActionRun(execution jobs.Execution) (pluginActionRun, error) {
+// There is deliberately no wall-clock bound, because there is no honest one. The
+// executor does not report on the dispatcher's schedule: the plugin manager
+// accepts the work and runs it when a VM and a job slot are free, which can be
+// behind another plugin's five-minute Lua call (plugin_system's own job-slot wait
+// is deliberate and unbounded for exactly that reason). A bound here would
+// therefore expire while the callback was still queued or running, and the
+// runtime would record `dispatch-failed` on a Job whose work was alive — a Job the
+// Job Center then offers to Retry while the original handler can still run.
+//
+// So the wait has exactly two ends: the Job reaching an outcome, and the runtime
+// that owns the execution being told to stop. While it waits the claim is held and
+// heartbeated, so the work is not handed to anybody else; if the runtime stops,
+// the Job keeps its state, its claim and its lease, and the next process
+// reconciles it with the proof §3 requires rather than with a guess from a clock.
+// It is a poll because the plugin manager's completion is a sink call rather than
+// a channel this layer can select on.
+func (ctx *MahresourcesContext) awaitPluginActionRun(runCtx context.Context, execution jobs.Execution) (pluginActionRun, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return pluginActionRun{JobID: execution.JobID, Started: true}, nil
 	}
-	deadline := time.Now().Add(maxPluginActionRuntimeWait)
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	for {
 		snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
 		if err != nil {
-			return pluginActionRun{JobID: execution.JobID}, err
-		}
-		if snap.State.Terminal() {
+			// A read that failed is not a Job that failed: the execution is still
+			// alive, so the honest thing is to keep waiting for its report rather
+			// than to end work somebody is running.
+			log.Printf("warning: could not read plugin job %s while waiting for it: %v", execution.JobID, err)
+		} else if snap.State.Terminal() {
 			run := pluginActionRun{
 				JobID:   execution.JobID,
 				Started: true,
@@ -570,11 +585,13 @@ func (ctx *MahresourcesContext) awaitPluginActionRun(execution jobs.Execution) (
 			}
 			return run, nil
 		}
-		if time.Now().After(deadline) {
-			return pluginActionRun{JobID: execution.JobID, Started: true},
-				fmt.Errorf("the plugin's execution for job %s did not report an outcome", execution.JobID)
+		select {
+		case <-runCtx.Done():
+			// The runtime is stopping (or the fence released this execution): the Job
+			// is left exactly where it is, owned by nobody here, for reconciliation.
+			return pluginActionRun{JobID: execution.JobID, Started: true}, nil
+		case <-time.After(pluginActionWaitPollInterval):
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -1229,7 +1246,7 @@ func (ctx *MahresourcesContext) runScheduledOccurrenceJob(reg plugin_system.Sche
 		// acceptance and this call. It will run — with the same input, through
 		// the same adapter — so this waits for the outcome it produces rather
 		// than running a second copy of one tick.
-		return ctx.awaitPluginActionRun(jobs.Execution{JobID: accepted.ID})
+		return ctx.awaitPluginActionRun(context.Background(), jobs.Execution{JobID: accepted.ID})
 	}
 	if !claim.Owned {
 		if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: accepted.ID},

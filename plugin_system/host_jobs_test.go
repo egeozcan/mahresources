@@ -205,23 +205,26 @@ end
 	t.Fatal("mah.start_job accepted no host job")
 }
 
-// TestClosingTheManagerReportsEveryLostCallback is the graceful-shutdown proof:
-// stopping the VMs is a fact this process establishes about its own callbacks,
-// and every execution still in flight has to be told that it can never finish.
-func TestClosingTheManagerReportsEveryLostCallback(t *testing.T) {
-	dir := t.TempDir()
-	writePlugin(t, dir, "slow-plugin", `
+// shutdownFixture is the plugin the shutdown tests drive: one handler that takes a
+// moment and then completes, declared beside one that is only ever queued.
+const shutdownFixture = `
 plugin = { name = "slow-plugin", version = "1.0", api_version = 1, capabilities = { "actions" } }
 
 function work(ctx)
-    mah.sleep(0.5)
+    mah.sleep(0.4)
     mah.job_complete(ctx.job_id, { message = "done" })
 end
 
 function init()
     mah.action({ id = "work", label = "Work", entity = "resource", async = true, handler = work })
 end
-`)
+`
+
+// newShutdownPlugin builds the shutdown fixture's manager, enabled.
+func newShutdownPlugin(t *testing.T) *PluginManager {
+	t.Helper()
+	dir := t.TempDir()
+	writePlugin(t, dir, "slow-plugin", shutdownFixture)
 	pm, err := NewPluginManager(dir)
 	if err != nil {
 		t.Fatalf("plugin manager: %v", err)
@@ -229,26 +232,78 @@ end
 	if err := pm.EnablePlugin("slow-plugin"); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
+	return pm
+}
+
+// TestClosingTheManagerReportsWorkItCanProveCannotFinish is the graceful-shutdown
+// proof, in the only shape that is a proof.
+//
+// Stopping the VMs is a fact this process establishes about its own callbacks —
+// but only for the callbacks that stopping the VMs actually stopped. A job that
+// never got a slot, on a manager that is being closed, is the case: its VM is
+// closed underneath it, so its *lua.LFunction can never be entered, and the host
+// has to be told so the Job does not sit running forever behind a claim.
+func TestClosingTheManagerReportsWorkItCanProveCannotFinish(t *testing.T) {
+	pm := newShutdownPlugin(t)
+	// Every job slot is taken, so the work below is accepted and never started.
+	release := pm.FillJobBudgetForTest()
+	defer release()
 
 	sink := &recordingSink{}
 	if _, err := pm.RunActionAsyncForHost(
-		&HostJobRef{JobID: "slow-job", Handle: "slow-handle", Sink: sink},
+		&HostJobRef{JobID: "queued-job", Handle: "queued-handle", Sink: sink},
 		nil, "slow-plugin", "work", 5, nil, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	// The handler sleeps, so it is certainly still running when the manager is
-	// closed: this is the state a deployment is in when it stops with work in
-	// flight, not a race.
+
 	pm.Close()
 
 	sink.mu.Lock()
 	lost := append([]string(nil), sink.lost...)
+	completed := sink.completed
 	sink.mu.Unlock()
+	if completed != 0 {
+		t.Fatalf("a handler that never started reported %d completions", completed)
+	}
 	if len(lost) != 1 {
 		t.Fatalf("the host was told about %d lost callbacks, want 1", len(lost))
 	}
 	if lost[0] != "plugin-runtime-stopping" {
 		t.Fatalf("the loss reason is %q, want the shutdown reason", lost[0])
+	}
+}
+
+// TestClosingTheManagerLetsARunningCallbackFinish is the other half, and the one
+// the order exists for.
+//
+// A handler that is mid-execution when shutdown begins is not lost work: the VM
+// teardown waits for it, and it gets to perform its final mutation and report the
+// outcome it actually reached. Interrupting it first — which is what reporting
+// loss before stopping the VMs did — records `interrupted` for work that then
+// succeeds, and leaves an unsuccessful terminal Job that a Kind declaring safe
+// replay will offer to Retry while the original callback is still running.
+func TestClosingTheManagerLetsARunningCallbackFinish(t *testing.T) {
+	pm := newShutdownPlugin(t)
+	sink := &recordingSink{}
+	if _, err := pm.RunActionAsyncForHost(
+		&HostJobRef{JobID: "running-job", Handle: "running-handle", Sink: sink},
+		nil, "slow-plugin", "work", 5, nil, ""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// The handler sleeps for 400ms, so this is certainly mid-execution.
+	time.Sleep(50 * time.Millisecond)
+
+	pm.Close()
+
+	sink.mu.Lock()
+	lost := append([]string(nil), sink.lost...)
+	completed := sink.completed
+	sink.mu.Unlock()
+	if len(lost) != 0 {
+		t.Fatalf("a handler that was still running was declared lost (%v)", lost)
+	}
+	if completed != 1 {
+		t.Fatalf("the host was told about %d completions, want the one the handler reached", completed)
 	}
 }
 

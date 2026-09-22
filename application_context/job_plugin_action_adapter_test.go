@@ -1024,3 +1024,81 @@ func TestAPluginRetryExistsOnlyWhereTheRegistrationDeclaresIt(t *testing.T) {
 		t.Fatalf("a Retry was accepted for an action whose registration no longer exists")
 	}
 }
+
+// TestADispatchedPluginExecutionWaitsForItsOwnReportNotForAClock pins the
+// observer's contract: waiting for a plugin's report is not the same job as
+// running it, and a wait that expires must never become the Job's failure.
+//
+// The executor does not report on the dispatcher's schedule. The manager accepts
+// the work and runs it when a VM and a job slot are free, which can be behind
+// another plugin's five-minute Lua call — its own job-slot wait is unbounded for
+// exactly that reason. A wall-clock bound in the adapter therefore expires while
+// the callback is still queued, and the runtime records `dispatch-failed` on a Job
+// whose handler can still run and still mutate data. What the wait is bounded by
+// is the execution's own lifecycle, and a cancelled runtime leaves the Job
+// unresolved — with its claim and its lease — for reconciliation.
+func TestADispatchedPluginExecutionWaitsForItsOwnReportNotForAClock(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+
+	// Every plugin job slot is taken, so the manager accepts this work and cannot
+	// start it: the state a dispatched execution has to wait through.
+	releaseBudget := ctx.PluginManager().FillJobBudgetForTest()
+	defer releaseBudget()
+
+	input, err := json.Marshal(pluginActionJobInput{
+		Subtype:  pluginActionSubtypeRegistered,
+		Plugin:   pluginActionTestPlugin,
+		Action:   "async-work",
+		EntityID: 3,
+		Runtime:  plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil {
+		t.Fatalf("encode the input: %v", err)
+	}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay: jobs.ReplayInput{Input: input},
+	})
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
+		JobID: accepted.ID, Claimant: plugin_system.CurrentRuntimeIdentity().String(),
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim the accepted job: claimed=%v err=%v", claimed, err)
+	}
+
+	adapter := &pluginActionAdapter{ctx: ctx}
+	dispatchCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- adapter.Dispatch(dispatchCtx, execution) }()
+
+	// The execution is waiting for a report that cannot come yet, and it is still
+	// the execution's to wait for.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the dispatch reported a failure for work that is still live: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dispatch outlived the runtime that owns it")
+	}
+
+	// Nothing was decided about the Job: it is still running, still owned by the
+	// execution that is still holding the callback, and still occupying capacity.
+	snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, accepted.ID)
+	if err != nil {
+		t.Fatalf("read the job: %v", err)
+	}
+	if snap.State != jobs.StateRunning {
+		t.Fatalf("the job is %s after its runtime stopped waiting, want running and unresolved", snap.State)
+	}
+	if snap.Failure != nil {
+		t.Fatalf("the job recorded the failure %+v: a wait ending is not work failing", snap.Failure)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateHeld {
+		t.Fatalf("the claim is %s, want held for reconciliation", claim.State)
+	}
+}

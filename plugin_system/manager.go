@@ -2714,14 +2714,18 @@ func (pm *PluginManager) TryLockVMWithin(ctx context.Context, L *lua.LState, wai
 // it replaces), but if shutdown needs a hard ceiling it should get one of its
 // own, in the shape DownloadManager.ShutdownDrainTimeout already uses.
 func (pm *PluginManager) Close() {
-	// Every in-flight execution's callback dies with this process, and that is the
-	// one proof of runtime loss nothing else can supply: a lease expiry only says
-	// nobody renewed it, while stopping the VM says the *lua.LFunction that was
-	// running can never run again. Reported before the VMs are closed, because
-	// after that there is nothing left to ask and a Job left running would be
-	// reconciled by a process that cannot know which callback it belonged to.
-	pm.reportLostCallbacks("plugin-runtime-stopping")
-
+	// Admissions stop first, and the callbacks that were already running are given
+	// their chance to finish before anything is declared lost.
+	//
+	// The order is the whole contract, and the reverse of it was wrong: reporting a
+	// callback lost while the VM that is running it is still running interrupts a
+	// Job whose handler is about to complete and about to mutate data. The record
+	// then says `interrupted` for work that succeeded, and — because an interrupted
+	// Job is terminal and unsuccessful — a Kind that declares safe replay can be
+	// Retried while the original handler is still executing. Stopping the VMs first
+	// makes the statement true: after the teardown below, no *lua.LFunction can be
+	// entered again, so what is still unfinished is what can never finish.
+	//
 	// Under pm.mu so it is exclusive with a load registering itself: a load
 	// that got in first is in loadWg and waited for below; one that arrives
 	// after sees closed and stops before creating anything.
@@ -2787,6 +2791,16 @@ func (pm *PluginManager) Close() {
 	pm.httpPending = make(map[*lua.LState][]httpCallback)
 	pm.httpDraining = make(map[*lua.LState]bool)
 	pm.httpMu.Unlock()
+
+	// Only now can this process say a callback will never finish, and that is what
+	// it says: every execution still unfinished had its VM closed underneath it, so
+	// its *lua.LFunction can never be entered again. An execution that completed
+	// during the teardown above has already reported its own outcome — the
+	// in-memory entry is terminal, so it is not named here — and a Job whose
+	// callback never started is named just as one that was running is: neither can
+	// finish. The host decides what that means per Job, and only the host can, since
+	// it is the one holding the durable record.
+	pm.reportLostCallbacks("plugin-runtime-stopping")
 
 	// Emptied, not niled. init() is unbounded and the wait above is not, so a
 	// load can still be running here — and every registration function writes
