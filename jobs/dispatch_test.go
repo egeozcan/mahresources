@@ -609,12 +609,18 @@ func TestHeartbeatExtendsOnlyTheClaimItsTokenOwns(t *testing.T) {
 	}
 }
 
-// TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob covers the
-// half of ownership the state machine does not own: a runtime that stops
-// running an execution hands the claim back, and the durable evidence of what it
-// held is freed rather than left occupying a budget.
-func TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob(t *testing.T) {
-	_, deps := newDispatchDatabase(t, "release.db")
+// TestQuiescedReleaseMovesTheJobAndClaimsItBack is the restart contract: a runtime
+// that stops running an execution hands the Job back in a state the next process can
+// pick up, and the durable evidence of what it held is freed rather than left
+// occupying a budget.
+//
+// The state is the adapter's decision and it is written with the release, in one
+// transaction. Two writes would leave the instant in between — a Job that is running
+// with no token — and a Job in that state is neither claimable (Claim takes queued
+// or scheduled work) nor reconciled (the expiry scan looks for held claims): work
+// stranded by a graceful stop, which is the one thing a graceful stop must not do.
+func TestQuiescedReleaseMovesTheJobAndClaimsItBack(t *testing.T) {
+	deps := newTestDeps(t)
 	svc := NewService()
 	registerTestAdapter(t, svc, testDefinition())
 	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
@@ -625,14 +631,17 @@ func TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob(t *testing.T
 	if !ok {
 		t.Fatal("the queued Job was not claimed")
 	}
-	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
 
-	released, err := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded)
+	released, err := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		Reason:       ReleaseReasonExecutionEnded,
+		To:           StateQueued,
+	})
 	if err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}
-	if released.State != StateRunning {
-		t.Fatalf("release moved the Job to %s; releasing ownership is not a state change", released.State)
+	if released.State != StateQueued {
+		t.Fatalf("released Job is %s, want the state the adapter decided: queued", released.State)
 	}
 
 	claim := claimRow(t, deps, accepted.ID)
@@ -643,7 +652,7 @@ func TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob(t *testing.T
 		t.Fatalf("released_at = %v, want %v", claim.ReleasedAt, clock)
 	}
 	if claim.ReleaseReason != ReleaseReasonExecutionEnded {
-		t.Fatalf("release reason = %q", claim.ReleaseReason)
+		t.Fatalf("release reason = %q, want the reason the releasing runtime gave", claim.ReleaseReason)
 	}
 	if leases := capacityRows(t, deps, accepted.ID); len(leases) != 0 {
 		t.Fatalf("capacity leases after release = %d, want none", len(leases))
@@ -652,16 +661,89 @@ func TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob(t *testing.T
 		t.Fatalf("job token after release = %q, want cleared", stored.ExecutionToken)
 	}
 
-	// A second release under the same token is a no-op rather than an error, and
-	// a foreign token cannot release somebody else's claim.
-	if _, err := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded); err != nil {
+	// The next process is a new Service over the same database: it reconciles what
+	// nobody owns and claims what is waiting. Nothing here needs the abandoned
+	// runtime to answer, which is the property a graceful handoff has to have.
+	reconciled, err := svc.ReconcileExpired(context.Background(), deps, "runtime-b", DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ReconcileExpired: %v", err)
+	}
+	if len(reconciled.Resume) != 0 || reconciled.Examined != 0 {
+		t.Fatalf("a released claim was reconciled: %+v", reconciled)
+	}
+
+	clock = clock.Add(time.Minute)
+	second := NewService()
+	registerTestAdapter(t, second, testDefinition())
+	resumed, ok := claimOnce(t, second, deps, "runtime-b")
+	if !ok {
+		t.Fatal("the Job a runtime handed back was not claimable by the next one")
+	}
+	if resumed.JobID != accepted.ID || resumed.ExecutionToken == execution.ExecutionToken {
+		t.Fatalf("the second claim = %+v, want the same Job under a fresh token", resumed)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) {
+		t.Fatalf("re-claimed Job is %s, want running", stored.State)
+	}
+
+	// A release under a token that owns nothing stays what it always was: a no-op,
+	// because releasing is idempotent and a runtime must be able to report what it
+	// already reported. The token the abandoned runtime held is not the one that
+	// owns the Job any more, so it cannot take the Job away from its successor.
+	if _, err := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		Reason:       ReleaseReasonExecutionEnded,
+	}); err != nil {
 		t.Fatalf("second ReleaseClaim: %v", err)
 	}
-	if err := func() error {
-		_, err := svc.ReleaseClaim(deps, ExecutionRef{JobID: accepted.ID, ExecutionToken: "foreign"}, ReleaseReasonExecutionEnded)
-		return err
-	}(); err != nil {
-		t.Fatalf("ReleaseClaim with a foreign token: %v", err)
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) ||
+		stored.ExecutionToken != resumed.ExecutionToken {
+		t.Fatalf("a release under a token that owns nothing moved the Job to %s token %q",
+			stored.State, stored.ExecutionToken)
+	}
+}
+
+// TestReleaseClaimRefusesToStrandARunningJob is the other half of the same rule.
+//
+// A release that names no state leaves a running Job running with no token, no claim
+// and no capacity: nothing can claim it, no reconciliation reaches it, and the work
+// it was doing is invisible to every path that could resolve it. So the release is
+// refused and nothing is written — the Job keeps its execution until the runtime
+// says where it goes.
+func TestReleaseClaimRefusesToStrandARunningJob(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	clock := time.Date(2033, 5, 7, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a", CapacityRef{Group: CapacityGroupGlobal, Limit: 1})
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	decidedFrom := jobRow(t, deps, accepted.ID)
+	admitted := capacityRows(t, deps, accepted.ID)
+	if len(admitted) == 0 {
+		t.Fatal("the claim admitted the Job without occupying any capacity")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+
+	_, err := svc.ReleaseClaim(deps, ReleaseRequest{ExecutionRef: ref, Reason: ReleaseReasonExecutionEnded})
+	if !errors.Is(err, ErrReleaseNeedsState) {
+		t.Fatalf("release of a running execution = %v, want ErrReleaseNeedsState", err)
+	}
+
+	stored := jobRow(t, deps, accepted.ID)
+	if stored.State != string(StateRunning) || stored.Version != decidedFrom.Version || stored.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("a refused release wrote %s v%d token %q", stored.State, stored.Version, stored.ExecutionToken)
+	}
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateHeld || claim.ReleasedAt != nil {
+		t.Fatalf("a refused release changed the claim: %+v", claim)
+	}
+	if leases := capacityRows(t, deps, accepted.ID); len(leases) != len(admitted) {
+		t.Fatalf("a refused release freed the capacity that admitted the Job: %d leases, want %d",
+			len(leases), len(admitted))
 	}
 }
 
@@ -1322,15 +1404,17 @@ func TestReconcileRefusesADecisionOutsideTheVocabulary(t *testing.T) {
 	}
 }
 
-// TestFinishingIsFencedByTheClaimTheExecutionStillHolds is the atomic half of
-// the execution fence. The token was checked before the lifecycle transaction
-// opened but not inside its UPDATE predicate, and ReleaseClaim clears the token
-// without touching the state or the version — so a transition decided while the
-// claim was still held could commit after that claim had been handed back.
+// TestAWriteDecidedBeforeTheReleaseCannotCommitAfterIt is the atomic half of the
+// execution fence, under the interleaving a release leaves: an execution decides how
+// its Job ends, and its runtime quiesces that execution — releasing the claim and
+// leaving the Job in the state the adapter decided — before the write lands.
 //
-// The check has to be in the same statement as the write, or the gap between the
-// read and the write is exactly where a released claim lands.
-func TestFinishingIsFencedByTheClaimTheExecutionStillHolds(t *testing.T) {
+// The write may not commit. The Job it was decided from is not the Job that is there
+// any more, and an execution that no longer owns a Job does not get to publish an
+// outcome into it: the guard carries the state, the version and the token the caller
+// read, and the check has to be in the same statement as the write, or the gap
+// between the read and the write is exactly where a released claim lands.
+func TestAWriteDecidedBeforeTheReleaseCannotCommitAfterIt(t *testing.T) {
 	_, deps := newDispatchDatabase(t, "finish-after-release.db")
 	svc := NewService()
 	registerTestAdapter(t, svc, testDefinition())
@@ -1355,41 +1439,49 @@ func TestFinishingIsFencedByTheClaimTheExecutionStillHolds(t *testing.T) {
 		To: StateFailed, Failure: &Failure{Code: "gave-up", Class: FailureClassInternal},
 	}
 
-	// The interleaving: the decision is taken, and the claim is handed back
-	// before the write lands. A release moves neither the version nor the state,
-	// so the guarded update alone cannot tell the difference.
+	// The interleaving: the decision is taken, and the runtime releases the
+	// execution — handing the Job back into the queue for the next process —
+	// before the write lands.
 	prepared, err := prepareTransition(deps, transition)
 	if err != nil {
 		t.Fatalf("prepareTransition: %v", err)
 	}
-	if _, err := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded); err != nil {
+	released, err := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ref, Reason: ReleaseReasonExecutionEnded, To: StateQueued,
+	})
+	if err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}
-	if released := jobRow(t, deps, accepted.ID); released.Version != decidedFrom.Version || released.State != decidedFrom.State {
-		t.Fatalf("release changed the row to v%d %s; the fence is the whole point of it not doing that",
-			released.Version, released.State)
+	if released.State != StateQueued {
+		t.Fatalf("released Job is %s, want queued", released.State)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateQueued) || stored.ExecutionToken != "" {
+		t.Fatalf("released Job = %s token %q, want the decided state with no execution owning it",
+			stored.State, stored.ExecutionToken)
 	}
 
 	if _, err := svc.commitTransition(deps, prepared, nil); err == nil {
-		t.Fatal("a transition decided before the claim was released committed after it")
+		t.Fatal("a transition decided before the release committed after it")
 	}
-	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) {
-		t.Fatalf("state = %s, want the Job left where the released execution found it", stored.State)
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateQueued) {
+		t.Fatalf("state = %s, want the Job left where the release put it", stored.State)
 	}
 
-	// The same write through the public seam, where the token check before the
-	// transaction is what refuses it: nothing is written and nothing is appended.
+	// The same write through the public seam, in the shape an executor that re-read
+	// the Job would send it: the version it names is the current one, so what
+	// refuses it is the token — the execution that was released does not own the Job
+	// any more, whatever it thinks it knows about it.
 	_, err = svc.Finish(deps, FinishRequest{
 		ExecutionRef:    ref,
-		ExpectedVersion: decidedFrom.Version,
+		ExpectedVersion: released.Version,
 		Outcome:         StateFailed,
 		Failure:         &Failure{Code: "gave-up", Class: FailureClassInternal},
 	})
 	if !errors.Is(err, ErrStaleExecution) {
 		t.Fatalf("Finish after the claim was released = %v, want ErrStaleExecution", err)
 	}
-	if events := jobEvents(t, deps, accepted.ID); len(events) != 2 {
-		t.Fatalf("timeline has %d events, want only acceptance and the started event", len(events))
+	if events := jobEvents(t, deps, accepted.ID); len(events) != 3 {
+		t.Fatalf("timeline has %d events, want acceptance, the started event and the release's queueing", len(events))
 	}
 }
 

@@ -254,6 +254,14 @@ type JobOutput struct {
 	ExpiresAt    *time.Time `gorm:"index:idx_job_outputs_expiry" json:"expiresAt,omitempty"`
 	RemovedAt    *time.Time `json:"removedAt,omitempty"`
 
+	// NextCleanupAt is when a sweep may next ask the Kind that published an
+	// artifact to remove it, after a pass could not establish that its bytes are
+	// gone — a Job an unresolved claim protects, or a Kind this process cannot
+	// run. Deferral is what keeps a candidate nothing can act on from holding the
+	// head of every batch; a publication of the same key is a new artifact and
+	// clears it.
+	NextCleanupAt *time.Time `json:"nextCleanupAt,omitempty"`
+
 	Version   uint64    `gorm:"not null;default:1" json:"version"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

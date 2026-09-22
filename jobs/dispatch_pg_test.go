@@ -85,18 +85,15 @@ func TestClaimTakesOverAReleasedClaimRowPG(t *testing.T) {
 	if !ok {
 		t.Fatal("the queued Job was not claimed")
 	}
-	if _, err := svc.ReleaseClaim(deps, ExecutionRef{
-		JobID: accepted.ID, ExecutionToken: first.ExecutionToken,
-	}, ReleaseReasonExecutionEnded); err != nil {
-		t.Fatalf("ReleaseClaim: %v", err)
-	}
-
-	// The Job is still running, so it is not claimable until it is back in the
-	// queue — which is what the release plus a transition models.
-	if _, err := svc.Transition(deps, Transition{
-		JobID: accepted.ID, ExpectedVersion: first.Version, To: StateQueued,
+	// A quiesced release: the runtime hands the claim back and leaves the Job in
+	// the state it decided, in one write, which is the only way a running Job stops
+	// running under an execution that is giving it up.
+	if _, err := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ExecutionRef{JobID: accepted.ID, ExecutionToken: first.ExecutionToken},
+		Reason:       ReleaseReasonExecutionEnded,
+		To:           StateQueued,
 	}); err != nil {
-		t.Fatalf("Transition to queued: %v", err)
+		t.Fatalf("ReleaseClaim: %v", err)
 	}
 
 	second, ok := claimOnce(t, svc, deps, "runtime-b")
@@ -146,19 +143,16 @@ func TestCapacityIsObservedAcrossServiceInstancesPG(t *testing.T) {
 	if err := deps.DB.Where("state = ?", models.JobClaimStateHeld).First(&claim).Error; err != nil {
 		t.Fatalf("load the held claim: %v", err)
 	}
-	if _, err := first.ReleaseClaim(deps, ExecutionRef{
-		JobID: claim.JobID, ExecutionToken: claim.ExecutionToken,
-	}, ReleaseReasonExecutionEnded); err != nil {
-		t.Fatalf("ReleaseClaim: %v", err)
-	}
 	var held models.Job
 	if err := deps.DB.Where("id = ?", claim.JobID).First(&held).Error; err != nil {
 		t.Fatalf("load the held job: %v", err)
 	}
-	if _, err := first.Transition(deps, Transition{
-		JobID: claim.JobID, ExpectedVersion: held.Version, To: StateQueued,
+	if _, err := first.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ExecutionRef{JobID: claim.JobID, ExecutionToken: claim.ExecutionToken},
+		Reason:       ReleaseReasonExecutionEnded,
+		To:           StateQueued,
 	}); err != nil {
-		t.Fatalf("Transition to queued: %v", err)
+		t.Fatalf("ReleaseClaim: %v", err)
 	}
 	if _, ok := claimOnce(t, second, deps, "runtime-b"); !ok {
 		t.Fatal("the freed budget was not available to the other runtime")
@@ -212,7 +206,9 @@ func TestLifecycleReleaseAndQuarantineTakeTheJobLockFirstPG(t *testing.T) {
 		})
 	})
 
-	_, releaseErr := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded)
+	_, releaseErr := svc.ReleaseClaim(deps, ReleaseRequest{
+		ExecutionRef: ref, Reason: ReleaseReasonExecutionEnded, To: StateQueued,
+	})
 	var finishErr error
 	select {
 	case finishErr = <-finish:

@@ -517,8 +517,14 @@ func (s *Service) sealReplay(deps Deps, job models.Job, input ReplayInput, now t
 	}
 	summary, err := codec.Sanitize(input.Input)
 	if err != nil {
-		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: %s v%d sanitize: %v",
-			ErrInvalidReplay, job.Kind, job.KindVersion, err)
+		// As for Decode at the other end of the envelope: the codec's own text is
+		// deliberately not carried. Sanitize runs on the input the caller just
+		// *submitted*, in the clear, so its error can quote a URL query string, a
+		// Cookie header or a plugin value — and this error reaches Accept's caller
+		// and the runtime log. The classification is what a reader acts on, and the
+		// Kind and version are what an operator needs to find it.
+		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: %s v%d could not be sanitized",
+			ErrInvalidReplay, job.Kind, job.KindVersion)
 	}
 	if err := validateReplayJSON("summary", summary, MaxSummaryBytes); err != nil {
 		return models.JobReplayEnvelope{}, nil, err
@@ -526,8 +532,9 @@ func (s *Service) sealReplay(deps Deps, job models.Job, input ReplayInput, now t
 
 	payload, err := codec.Encode(input.Input)
 	if err != nil {
-		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: %s v%d encode: %v",
-			ErrInvalidReplay, job.Kind, job.KindVersion, err)
+		// The same, for the hook that produces the bytes about to be encrypted.
+		return models.JobReplayEnvelope{}, nil, fmt.Errorf("%w: %s v%d could not be encoded",
+			ErrInvalidReplay, job.Kind, job.KindVersion)
 	}
 	if err := validateReplayJSON("input", payload, MaxReplayPayloadBytes); err != nil {
 		return models.JobReplayEnvelope{}, nil, err

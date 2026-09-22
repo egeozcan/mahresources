@@ -343,7 +343,11 @@ func (r *JobRuntime) finishExecution(execution jobs.Execution, dispatchErr error
 	}
 
 	if snap.State != jobs.StateRunning {
-		if _, err := r.service.ReleaseClaim(deps, ref, jobs.ReleaseReasonExecutionEnded); err != nil {
+		// The adapter ended its own Job, so the state is its decision and all that is
+		// left is to hand the claim back.
+		if _, err := r.service.ReleaseClaim(deps, jobs.ReleaseRequest{
+			ExecutionRef: ref, Reason: jobs.ReleaseReasonExecutionEnded,
+		}); err != nil {
 			log.Printf("job runtime: releasing job %s failed: %v", execution.JobID, err)
 		}
 		return

@@ -18,6 +18,9 @@ import (
 
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/types"
+
+	"gorm.io/gorm"
 )
 
 // The exact values a replay fixture must never leak: the query string of a URL,
@@ -641,11 +644,23 @@ func TestReplayKeyringFileIsPrivateAndStableAcrossRestarts(t *testing.T) {
 	}
 }
 
-// advanceReplayJob walks one Job from queued to running and returns the version
-// a caller must name to move it again.
+// advanceReplayJob walks one Job one step through its lifecycle and returns the
+// version a caller must name to move it again.
+//
+// Running is the one step no transition may make: entering running is what a claim
+// does, and the Job this helper is given is not necessarily the Job a claim would
+// pick. So the step is written rather than transitioned, by startTestExecution.
+// Every other step is made as the execution that owns the Job — the token is read
+// from the row — which is what the fence on a write that leaves running is about.
 func advanceReplayJob(t *testing.T, svc *Service, deps Deps, snap Snapshot, to State) Snapshot {
 	t.Helper()
-	transition := Transition{JobID: snap.ID, ExpectedVersion: snap.Version, To: to}
+	if to == StateRunning {
+		return startTestExecution(t, deps, snap)
+	}
+	transition := Transition{
+		JobID: snap.ID, ExpectedVersion: snap.Version, To: to,
+		ExecutionToken: executionTokenOf(t, deps, snap.ID),
+	}
 	if to == StateFailed {
 		transition.Failure = &Failure{Code: "test-failure", Class: FailureClassInternal, Message: "the executor gave up"}
 	}
@@ -654,6 +669,60 @@ func advanceReplayJob(t *testing.T, svc *Service, deps Deps, snap Snapshot, to S
 		t.Fatalf("Transition %s -> %s: %v", snap.State, to, err)
 	}
 	return next
+}
+
+// executionTokenOf reads the token that owns a Job right now: what a write from
+// running is fenced by, and what a test acting as the Job's execution names.
+func executionTokenOf(t *testing.T, deps Deps, jobID string) string {
+	t.Helper()
+	return jobRow(t, deps, jobID).ExecutionToken
+}
+
+// startTestExecution establishes a Job in the state a claim leaves it in: running,
+// owned by a fresh execution token, with the started event a claim records.
+//
+// A test whose subject is the lifecycle itself claims its Job — that is the only
+// way in, and the refusals are tested where they belong. A test whose subject is
+// something else needs a running Job it can name, which a claim cannot give it: Claim
+// takes the oldest waiting Job of a Kind, and these jobs share Kinds. So the helper
+// writes what a claim leaves, exactly as seedJob writes a state the lifecycle could
+// otherwise only reach by walking to it, and it derives the row through the
+// lifecycle's own applyTransition so the timestamps and durations a test goes on to
+// assert are the ones an admitted execution would have.
+//
+// The claim row itself is not written. These Jobs are fixtures for what their own
+// state, timeline and outputs do next, and a held claim row would make every one of
+// them protected from the retention paths the tests exist to exercise.
+func startTestExecution(t *testing.T, deps Deps, snap Snapshot) Snapshot {
+	t.Helper()
+	job := jobRow(t, deps, snap.ID)
+	now := deps.now()
+	next, updates := applyTransition(job, Transition{To: StateRunning}, deps.retention(), now)
+	token := types.NewUUIDv7()
+	updates["execution_token"] = token
+
+	err := deps.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Job{}).
+			Where("id = ? AND version = ? AND state = ?", job.ID, job.Version, job.State).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("job %s moved while it was being started", job.ID)
+		}
+		sequence, err := nextEventSequence(tx, job.ID)
+		if err != nil {
+			return err
+		}
+		event := newEvent(job.ID, sequence, next.Version, EventStarted, nil, true, now)
+		return tx.Create(&event).Error
+	})
+	if err != nil {
+		t.Fatalf("start the execution of %s: %v", job.ID, err)
+	}
+	next.ExecutionToken = token
+	return snapshot(next)
 }
 
 // TestReplayExpiryStartsAtTerminalCompletionNotAcceptance is the retention
@@ -1468,6 +1537,79 @@ func TestReplayCodecFailuresNeverQuoteTheDecryptedInput(t *testing.T) {
 			if strings.Contains(err.Error(), secret) {
 				t.Fatalf("the migration failure quoted a secret: %v", err)
 			}
+		}
+	})
+}
+
+// TestReplayAcceptanceCodecFailuresNeverQuoteTheSubmittedInput is the same §5
+// boundary on the write side of the envelope.
+//
+// Sanitize and Encode run on the input the caller *submitted* — the one place a
+// URL query string, a Cookie header, an Authorization header and a plugin value
+// are all present in the clear — and a codec that cannot read its input reports
+// what it could not read. Service.Accept returns that error to its caller and the
+// runtime logs it, so carrying the codec's own text is exactly the leak the read
+// side already refuses: a secret that is about to be encrypted written out in
+// plaintext instead.
+func TestReplayAcceptanceCodecFailuresNeverQuoteTheSubmittedInput(t *testing.T) {
+	accept := func(t *testing.T, codec ReplayCodec, svc *Service, deps Deps) error {
+		t.Helper()
+		if err := svc.RegisterReplayCodec("remote-download", 1, codec); err != nil {
+			t.Fatalf("register codec: %v", err)
+		}
+		deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+		_, err := svc.Accept(deps, Acceptance{
+			Kind:        "remote-download",
+			KindVersion: 1,
+			State:       StateQueued,
+			Origin:      "api",
+			Title:       "clip.mp4",
+			Replay:      ReplayInput{Input: fixtureReplayInput()},
+		})
+		return err
+	}
+
+	// Sanitize: the codec reports what it could not summarize, quoting its input.
+	t.Run("a failure sanitizing the input", func(t *testing.T) {
+		deps, _ := newReplayDeps(t)
+		svc := NewService()
+		codec := fixtureReplayCodec()
+		codec.Sanitize = func(input json.RawMessage) (json.RawMessage, error) {
+			return nil, fmt.Errorf("cannot summarize %s", input)
+		}
+
+		err := accept(t, codec, svc, deps)
+		if !errors.Is(err, ErrInvalidReplay) {
+			t.Fatalf("Accept = %v, want ErrInvalidReplay", err)
+		}
+		requireSecretsAbsent(t, "the sanitize failure", err.Error())
+		if !strings.Contains(err.Error(), "remote-download v1") {
+			t.Errorf("the refusal = %q, want the Kind and version a reader acts on", err)
+		}
+		if jobs := countRows(t, deps, &models.Job{}, "1 = 1"); jobs != 0 {
+			t.Fatalf("a refused acceptance stored %d Jobs", jobs)
+		}
+	})
+
+	// Encode: the same, on the hook that produces the bytes that get encrypted.
+	t.Run("a failure encoding the input", func(t *testing.T) {
+		deps, _ := newReplayDeps(t)
+		svc := NewService()
+		codec := fixtureReplayCodec()
+		codec.Encode = func(input json.RawMessage) (json.RawMessage, error) {
+			return nil, fmt.Errorf("cannot encode payload %s", input)
+		}
+
+		err := accept(t, codec, svc, deps)
+		if !errors.Is(err, ErrInvalidReplay) {
+			t.Fatalf("Accept = %v, want ErrInvalidReplay", err)
+		}
+		requireSecretsAbsent(t, "the encode failure", err.Error())
+		if !strings.Contains(err.Error(), "remote-download v1") {
+			t.Errorf("the refusal = %q, want the Kind and version a reader acts on", err)
+		}
+		if envelopes := countRows(t, deps, &models.JobReplayEnvelope{}, "1 = 1"); envelopes != 0 {
+			t.Fatalf("a refused acceptance stored %d envelopes", envelopes)
 		}
 	})
 }

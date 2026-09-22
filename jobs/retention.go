@@ -445,25 +445,19 @@ func expireOutputsOfJob(deps Deps, jobID string, due []models.JobOutput, now tim
 // promising an hour kept its bytes for the thirty days that history had left, and
 // a pinned Job kept them indefinitely.
 //
-// Two things still hold it back, and both are about what is known rather than about
-// what is due: a Job an unresolved claim protects, because that claim means the
-// process may still be producing the file and §9 says no expiry may write through
-// it; and a Kind this process has no adapter for, because nobody here can establish
-// that the bytes are gone. Neither is a refusal to expire an output — the deadline
-// pass records that regardless — only a refusal to delete what nobody accounted
-// for.
+// What still holds it back is what is known rather than what is due, and neither
+// refusal may become a candidate's standing: a Job an unresolved claim protects,
+// because that claim means the process may still be producing the file and §9 says
+// no expiry may write through it, and a Kind this process has no adapter for,
+// because nobody here can establish that the bytes are gone. The first is excluded
+// from the batch itself and re-checked under the Job's own row, and the second is
+// deferred, so an artifact nothing can act on waits its turn rather than holding the
+// head of every pass. Neither is a refusal to expire an output — the deadline pass
+// records that regardless — only a refusal to delete what nobody accounted for.
 func (s *Service) cleanupExpiredArtifacts(deps Deps, limit int, now time.Time) (int, error) {
-	var due []models.JobOutput
-	if err := deps.DB.Model(&models.JobOutput{}).
-		Where("type = ?", OutputTypeArtifact).
-		Where("availability <> ?", string(OutputRemoved)).
-		Where("expires_at IS NOT NULL AND expires_at <= ?", now).
-		Order("expires_at ASC, id ASC").Limit(limit).
-		Find(&due).Error; err != nil {
-		return 0, fmt.Errorf("jobs: read artifacts past their deadline: %w", err)
-	}
-	if len(due) == 0 {
-		return 0, nil
+	due, err := dueArtifactsForCleanup(deps.DB, limit, now)
+	if err != nil {
+		return 0, err
 	}
 
 	recorded := 0
@@ -476,21 +470,74 @@ func (s *Service) cleanupExpiredArtifacts(deps Deps, limit int, now time.Time) (
 			}
 			return recorded, err
 		}
-		protected, err := protectedByUnresolvedClaim(deps.DB, job.ID)
-		if err != nil {
-			return recorded, err
-		}
-		if protected {
-			continue
-		}
 
-		_, removed, err := s.askForArtifactRemoval(deps, job, batch.rows, now)
+		removed, unaccounted, err := s.removeJobArtifacts(deps, job, batch.rows, now)
 		if err != nil {
 			return recorded, err
 		}
 		recorded += removed
+		if len(unaccounted) > 0 {
+			// The bytes are still there and still due. Asking about them again on the
+			// very next pass would keep the artifacts behind them from ever being
+			// reached, which is what a batch of one makes visible.
+			if err := deferArtifactCleanup(deps.DB, unaccounted, now.Add(DefaultArtifactCleanupRetry)); err != nil {
+				return recorded, err
+			}
+		}
 	}
 	return recorded, nil
+}
+
+// dueArtifactsForCleanup reads the expired artifacts a pass may act on: their own
+// deadline has passed, no earlier pass has deferred them, and the Job that
+// published them is not one an unresolved claim still protects.
+//
+// The claim predicate is in the selection as well as in the fence below, because a
+// candidate the pass can never act on must not be the only thing a bounded batch
+// reads: with a batch of one, an older protected artifact was selected on every
+// pass forever, and the artifact that came due behind it was never reached. It is
+// re-asserted under the Job's own row before anything is deleted, because a claim
+// can land between this read and that deletion — the selection decides what to look
+// at, and the fence decides what may go.
+func dueArtifactsForCleanup(db *gorm.DB, limit int, now time.Time) ([]models.JobOutput, error) {
+	var due []models.JobOutput
+	err := db.Model(&models.JobOutput{}).
+		Where("type = ?", OutputTypeArtifact).
+		Where("availability <> ?", string(OutputRemoved)).
+		Where("expires_at IS NOT NULL AND expires_at <= ?", now).
+		Where("(next_cleanup_at IS NULL OR next_cleanup_at <= ?)", now).
+		Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = job_outputs.job_id AND c.state IN ?)",
+			unresolvedClaimStates()).
+		Order("COALESCE(next_cleanup_at, expires_at) ASC, id ASC").
+		Limit(limit).
+		Find(&due).Error
+	if err != nil {
+		return nil, fmt.Errorf("jobs: read artifacts past their deadline: %w", err)
+	}
+	return due, nil
+}
+
+// deferArtifactCleanup gives artifacts this pass could not establish are gone a
+// later instant to be asked about again.
+//
+// The write is guarded by the row each candidate was selected as — its id and its
+// own version — so an artifact published again while the pass ran is not deferred
+// under a decision that belonged to the row it replaced; the publication cleared
+// any deferral of its own. The rows are left out of the batch until then, which is
+// what keeps one candidate nothing can act on from being the head of every pass.
+func deferArtifactCleanup(db *gorm.DB, rows []models.JobOutput, until time.Time) error {
+	for _, row := range rows {
+		// UpdateColumn rather than Update: a deferral is cleanup bookkeeping, not a
+		// publication of the row, so it neither moves the output's own version nor
+		// rewrites the instant a reader sees as the row's last change.
+		result := db.Model(&models.JobOutput{}).
+			Where("id = ? AND version = ?", row.ID, row.Version).
+			UpdateColumn("next_cleanup_at", until)
+		if result.Error != nil {
+			return fmt.Errorf("jobs: defer cleanup of artifact %s: %w", row.Key, result.Error)
+		}
+	}
+	return nil
 }
 
 // outputBatch is the outputs one pass decided about, grouped by the Job whose
@@ -549,21 +596,114 @@ func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) 
 	if len(rows) == 0 {
 		return true, 0, nil
 	}
-	return s.askForArtifactRemoval(deps, job, rows, now)
+	removed, unaccounted, err := s.removeJobArtifacts(deps, job, rows, now)
+	if err != nil {
+		return false, 0, err
+	}
+	return len(unaccounted) == 0, removed, nil
 }
 
-// askForArtifactRemoval puts one Job's artifacts to the Kind that published them
-// and records the removals it confirms. It reports whether every one of them was
-// accounted for, and how many rows it recorded.
+// removeJobArtifacts puts one Job's artifacts to the Kind that published them,
+// records the removals it confirms, and reports which of them it could not account
+// for. It is the only place this module deletes artifact bytes, and it runs under
+// the Job's own row.
 //
-// A Kind this process cannot run and an adapter that failed both answer nothing,
-// and neither may be read as "gone": the caller keeps whatever names the artifact.
-// An adapter's own error text is discarded on purpose — it is a failure to answer,
-// not a fact about the bytes.
-func (s *Service) askForArtifactRemoval(deps Deps, job models.Job, rows []models.JobOutput, now time.Time) (bool, int, error) {
+// The row is what makes the deletion admission rather than a hope. A candidate is
+// selected outside any transaction, and a Job waiting to run can be claimed at any
+// instant — a claim is a new execution, and a new execution publishes, the same key
+// again among them. A check before the call is therefore not enough: the claim
+// commits in the gap and the bytes go underneath it. Taking the Job's row is the
+// cheap half of that claim (an UPDATE on SQLite, the row lock on PostgreSQL), and
+// re-reading the protection under it is the expensive half: a claim that committed
+// while this waited is visible by the time the reading statement starts, so the
+// pass stands down instead of deleting. In the other order the claim simply waits
+// for the deletion, which is the direction that cannot delete a published file.
+//
+// Every answer but a complete accounting is a no, and a Kind this process cannot
+// run and an adapter that failed both answer nothing. Neither may be read as
+// "gone": the caller keeps whatever names the artifact — the history, where the
+// metadata path asked, and the deferral, where the deadline path did.
+func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
+	removed := 0
+	var unaccounted []models.JobOutput
+	err := deps.DB.Transaction(func(tx *gorm.DB) error {
+		admitted, err := lockArtifactCleanupTarget(tx, job.ID, now)
+		if err != nil {
+			return err
+		}
+		if !admitted {
+			// The Job is gone, or an unresolved claim took it between the selection
+			// and this transaction: either way nothing of its own may be deleted.
+			unaccounted = rows
+			return nil
+		}
+
+		protected, err := protectedByUnresolvedClaim(tx, job.ID)
+		if err != nil {
+			return err
+		}
+		if protected {
+			unaccounted = rows
+			return nil
+		}
+
+		removed, unaccounted, err = s.askForArtifactRemoval(tx, job, rows, now)
+		return err
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+	return removed, unaccounted, nil
+}
+
+// lockArtifactCleanupTarget takes the Job's own row before the adapter is asked
+// about its artifacts, and reports whether the row was there to take.
+//
+// The two engines say it differently, exactly as lockPruneTarget does. SQLite has
+// no row locks, so the transaction's first statement has to be the write that takes
+// the writer lock — the alternative is a read snapshot promoted to a write after
+// another connection has committed, which SQLite refuses without running the busy
+// handler — and that statement carries the protection predicate as well, so a
+// protected Job is not even touched. PostgreSQL has row locks, so the row is taken
+// first and the protection re-read as its own statement, which is what gives that
+// read a snapshot taken after a claim that was already waiting on the row had
+// committed.
+func lockArtifactCleanupTarget(tx *gorm.DB, jobID string, now time.Time) (bool, error) {
+	if tx.Dialector.Name() == "sqlite" {
+		result := tx.Model(&models.Job{}).
+			Where("id = ? AND NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)",
+				jobID, unresolvedClaimStates()).
+			Update("updated_at", now)
+		if result.Error != nil {
+			return false, fmt.Errorf("jobs: take job %s for artifact cleanup: %w", jobID, result.Error)
+		}
+		return result.RowsAffected == 1, nil
+	}
+
+	var job models.Job
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).First(&job).Error
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("jobs: lock job %s for artifact cleanup: %w", jobID, err)
+	}
+	return true, nil
+}
+
+// askForArtifactRemoval asks one Kind to remove one Job's artifacts, inside the
+// caller's transaction, and records each removal it acknowledges. It reports how
+// many rows it recorded and which artifacts it could not account for.
+//
+// The caller has taken the Job's row. That is what makes asking and recording one
+// decision: the publication of an artifact under this Job waits on that row too, so
+// the answer this Kind gives is about the artifacts that are there rather than
+// about a set that changed while it was being asked. An adapter's own error text is
+// discarded on purpose — it is a failure to answer, not a fact about the bytes.
+func (s *Service) askForArtifactRemoval(tx *gorm.DB, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
 	adapter, _, err := s.adapterFor(job.Kind, job.KindVersion)
 	if err != nil {
-		return false, 0, nil
+		return 0, rows, nil
 	}
 	artifacts := make([]ArtifactRef, 0, len(rows))
 	for _, row := range rows {
@@ -573,34 +713,34 @@ func (s *Service) askForArtifactRemoval(deps Deps, job models.Job, rows []models
 		JobID: job.ID, Kind: job.Kind, KindVersion: job.KindVersion, Artifacts: artifacts,
 	})
 	if err != nil {
-		return false, 0, nil
+		return 0, rows, nil
 	}
 	removed := make(map[string]bool, len(result.Removed))
 	for _, key := range result.Removed {
 		removed[key] = true
 	}
 
-	accounted := true
 	acknowledged := make([]models.JobOutput, 0, len(rows))
+	unaccounted := make([]models.JobOutput, 0, len(rows))
 	for _, row := range rows {
 		if removed[row.Key] {
 			acknowledged = append(acknowledged, row)
 			continue
 		}
-		accounted = false
+		unaccounted = append(unaccounted, row)
 	}
 
-	recorded, err := recordArtifactRemovals(deps, job, acknowledged, now)
+	recorded, err := recordArtifactRemovals(tx, job, acknowledged, now)
 	if err != nil {
-		return false, 0, err
+		return 0, nil, err
 	}
-	return accounted, recorded, nil
+	return recorded, unaccounted, nil
 }
 
 // recordArtifactRemovals records the artifacts one cleanup acknowledged as gone:
 // each output row's own availability, and one Job Event saying the bytes are gone.
 //
-// The transaction opens with the parent Job's own row — a write on SQLite, the row
+// Its caller's transaction has taken the Job's own row — a write on SQLite, the row
 // lock on PostgreSQL — because the position it allocates is a position on that
 // Job's timeline, and store.go's rule is that the count, the maximum and the insert
 // are only serialized by holding it. Without it two writers of one timeline read
@@ -608,66 +748,49 @@ func (s *Service) askForArtifactRemoval(deps Deps, job models.Job, rows []models
 // first was about to commit into, and one of the two facts was rolled back — an
 // artifact the Kind had confirmed gone, lost along with the record of it. Taking
 // that row first is also the order every other writer uses: the prune, the deadline
-// pass and the publication all take it before the rows that hang off it.
+// pass and the publication all take it before the rows that hang off it. The same
+// row is what fences the deletion itself against a claim, which is why it is taken
+// before the Kind is asked rather than only before the recording.
 //
 // Each output write carries that row's own version, so an artifact published again
 // while the cleanup ran is not marked with an outcome that belongs to the row it
 // replaced, and a row already recorded removed is not recorded twice — which is
 // also what keeps a repeated pass over one Job from growing its timeline. The
-// transaction is this one rather than the pruning one on purpose: an artifact that
-// is really gone is gone whether or not the history naming it may follow.
-func recordArtifactRemovals(deps Deps, job models.Job, removed []models.JobOutput, now time.Time) (int, error) {
+// recording is this transaction rather than the pruning one on purpose: an artifact
+// that is really gone is gone whether or not the history naming it may follow.
+func recordArtifactRemovals(tx *gorm.DB, job models.Job, removed []models.JobOutput, now time.Time) (int, error) {
 	if len(removed) == 0 {
 		return 0, nil
 	}
 	recorded := 0
-	err := deps.DB.Transaction(func(tx *gorm.DB) error {
-		// The first statement is a write, and it is on the parent Job's row: it is
-		// what takes the writer lock before anything is read on SQLite, and what
-		// serializes this against every other writer of the same timeline on
-		// PostgreSQL.
-		result := tx.Model(&models.Job{}).Where("id = ?", job.ID).Update("updated_at", now)
+	for _, output := range removed {
+		result := tx.Model(&models.JobOutput{}).
+			Where("id = ? AND version = ? AND availability <> ?",
+				output.ID, output.Version, string(OutputRemoved)).
+			Updates(map[string]any{
+				"availability":    string(OutputRemoved),
+				"removed_at":      now,
+				"next_cleanup_at": nil,
+				"version":         gorm.Expr("version + 1"),
+				"updated_at":      now,
+			})
 		if result.Error != nil {
-			return fmt.Errorf("jobs: touch job %s: %w", job.ID, result.Error)
+			return 0, fmt.Errorf("jobs: record artifact removal for %s: %w", output.Key, result.Error)
 		}
 		if result.RowsAffected == 0 {
-			// The Job is gone, and its outputs went with it: there is no timeline
-			// left to record a removal on.
-			return nil
+			continue
 		}
+		recorded++
 
-		for _, output := range removed {
-			result := tx.Model(&models.JobOutput{}).
-				Where("id = ? AND version = ? AND availability <> ?",
-					output.ID, output.Version, string(OutputRemoved)).
-				Updates(map[string]any{
-					"availability": string(OutputRemoved),
-					"removed_at":   now,
-					"version":      gorm.Expr("version + 1"),
-					"updated_at":   now,
-				})
-			if result.Error != nil {
-				return fmt.Errorf("jobs: record artifact removal for %s: %w", output.Key, result.Error)
-			}
-			if result.RowsAffected == 0 {
-				continue
-			}
-			recorded++
-
-			detail, err := json.Marshal(map[string]string{
-				"key": output.Key, "availability": string(OutputRemoved),
-			})
-			if err != nil {
-				return fmt.Errorf("jobs: encode artifact removal detail: %w", err)
-			}
-			if err := appendEventTx(tx, job, EventInput{Type: EventOutputRemoved, Detail: detail}, now); err != nil {
-				return err
-			}
+		detail, err := json.Marshal(map[string]string{
+			"key": output.Key, "availability": string(OutputRemoved),
+		})
+		if err != nil {
+			return 0, fmt.Errorf("jobs: encode artifact removal detail: %w", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
+		if err := appendEventTx(tx, job, EventInput{Type: EventOutputRemoved, Detail: detail}, now); err != nil {
+			return 0, err
+		}
 	}
 	return recorded, nil
 }

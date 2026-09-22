@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -75,23 +76,55 @@ func acceptJobFor(t *testing.T, ctx *MahresourcesContext, acceptance jobs.Accept
 	return snap
 }
 
-// finishJobFor walks one Job to a terminal state through the real lifecycle.
+// registerClaimableKind teaches the context's control plane to run one Kind, so a
+// test can walk a Job through the lifecycle the way a runtime does. A Kind that is
+// already registered is left as it is: registering it again is what the second
+// caller would be doing.
+func registerClaimableKind(t *testing.T, ctx *MahresourcesContext, kind string, version uint) {
+	t.Helper()
+	if _, ok := ctx.JobService().AdapterFor(kind, version); ok {
+		return
+	}
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = kind
+	adapter.def.KindVersion = version
+	if err := ctx.JobService().RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register %s v%d: %v", kind, version, err)
+	}
+}
+
+// finishJobFor walks one Job to a terminal state through the real lifecycle: a Job
+// reaches running through a claim and nothing else, so the helper claims it — the
+// Kind is registered for the test — and then ends it as the execution that owns it.
 func finishJobFor(t *testing.T, ctx *MahresourcesContext, snap jobs.Snapshot, outcome jobs.State) jobs.Snapshot {
 	t.Helper()
 	deps := ctx.jobDeps()
-	running, err := ctx.JobService().Transition(deps, jobs.Transition{
-		JobID: snap.ID, ExpectedVersion: snap.Version, To: jobs.StateRunning,
+	registerClaimableKind(t, ctx, snap.Kind, snap.KindVersion)
+
+	execution, ok, err := ctx.JobService().Claim(context.Background(), deps, jobs.ClaimRequest{
+		Kind: snap.Kind, KindVersion: snap.KindVersion, Claimant: "test-runtime",
 	})
 	if err != nil {
-		t.Fatalf("transition to running: %v", err)
+		t.Fatalf("claim %s: %v", snap.ID, err)
 	}
-	transition := jobs.Transition{JobID: running.ID, ExpectedVersion: running.Version, To: outcome}
+	if !ok {
+		t.Fatalf("the accepted Job %s was not claimable", snap.ID)
+	}
+	if execution.JobID != snap.ID {
+		t.Fatalf("claimed %s while finishing %s", execution.JobID, snap.ID)
+	}
+
+	request := jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: snap.ID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: execution.Version,
+		Outcome:         outcome,
+	}
 	if outcome == jobs.StateFailed {
-		transition.Failure = &jobs.Failure{Code: "boom", Class: jobs.FailureClassInternal}
+		request.Failure = &jobs.Failure{Code: "boom", Class: jobs.FailureClassInternal}
 	}
-	finished, err := ctx.JobService().Transition(deps, transition)
+	finished, err := ctx.JobService().Finish(deps, request)
 	if err != nil {
-		t.Fatalf("transition to %s: %v", outcome, err)
+		t.Fatalf("finish as %s: %v", outcome, err)
 	}
 	return finished
 }

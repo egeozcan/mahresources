@@ -255,6 +255,32 @@ type FinishRequest struct {
 	RequiredOutputs []string
 }
 
+// ReleaseRequest is one execution's decision to stop owning a Job: which execution
+// it is, why it is stopping, and — when the Job is still running — the state the
+// releasing runtime decided the Job is left in.
+//
+// It is a request rather than three arguments because the reason and the state are
+// one decision: the reason is what the claim records about the execution that gave
+// the Job up, and the state is what the Job is left as. A Job that already left
+// running is only handed back — its state is whatever the adapter that ended it
+// decided — so To is read when the Job is still running and nowhere else.
+type ReleaseRequest struct {
+	ExecutionRef
+	// Reason is the bounded, classified reason the release records on the claim. It
+	// is the runtime's own word for why it stopped, which is why it is kept: a
+	// claim released by a state change records "state-changed", and a claim handed
+	// back because its execution ended, quiesced or was superseded records that
+	// instead.
+	Reason string
+	// To is the state a running Job is left in: whether the work belongs back in the
+	// queue for the next process, or paused, blocked, or ended by the runtime that
+	// knows what its own execution did. It is applied atomically with the release,
+	// because the two separately would leave a running Job owned by nobody. It is
+	// read only where the named execution owns a running Job, so it is required
+	// there and ignored by a release that owns nothing.
+	To State
+}
+
 // Failure classes: a bounded taxonomy, because aggregates group on it and raw
 // error text is neither a taxonomy nor command policy.
 const (
@@ -404,6 +430,15 @@ const (
 	DefaultSweepBatch = 100
 	// MaxSweepBatch is the largest batch a caller may ask a sweep to delete.
 	MaxSweepBatch = 1000
+	// DefaultArtifactCleanupRetry is how long an artifact a cleanup could not
+	// establish was gone waits before a sweep asks about it again: a Job an
+	// unresolved claim protects, and a Kind this process cannot run, both leave
+	// the bytes where they are, and the artifact that comes due next must not wait
+	// behind them. It is deliberately shorter than the reconcile retry that
+	// follows a claim, because an artifact's deadline has its own clock: bytes
+	// promised gone an hour ago should not wait long for the pass that can remove
+	// them.
+	DefaultArtifactCleanupRetry = 15 * time.Minute
 )
 
 // Bounds on the typed outputs one Job may publish.
@@ -993,6 +1028,19 @@ var (
 	ErrUnknownState = errors.New("jobs: unknown job state")
 	// ErrIllegalTransition is a transition the state machine does not permit.
 	ErrIllegalTransition = errors.New("jobs: illegal state transition")
+	// ErrRunningRequiresClaim refuses a transition into running. Entering running
+	// is what a claim does: Claim writes the state, the fencing token, the claim
+	// and the capacity that admitted the Job together, so a Job that is running is
+	// one an execution owns, one a heartbeat keeps alive, and one a reconciliation
+	// can find. A transition that entered running on its own would leave work
+	// nobody owns and nothing reconciles.
+	ErrRunningRequiresClaim = errors.New("jobs: entering running is what a claim does")
+	// ErrReleaseNeedsState refuses a release of an execution whose Job is still
+	// running, when the release names no state to leave it in. A release that wrote
+	// only the token would leave a running Job owned by nobody: not claimable, since
+	// Claim takes queued or scheduled work, and not reconcilable, since the expiry
+	// scan looks for held claims.
+	ErrReleaseNeedsState = errors.New("jobs: a release of a running job must name the state it is left in")
 	// ErrVersionConflict is an optimistic-concurrency conflict. The caller read
 	// a stale Job and must re-read and re-decide.
 	ErrVersionConflict = errors.New("jobs: job version conflict")

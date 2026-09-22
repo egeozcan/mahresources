@@ -632,17 +632,18 @@ func copyUint(v *uint) *uint {
 // legalTargets is the state machine, written once. Terminal states have no
 // targets at all: an end state is final, and continuation is a new Job.
 //
-// The shape of it follows the design: work is accepted queued or scheduled,
-// reaches running through dispatch, and may be paused, blocked, returned to the
-// queue, or finished. A reconciliation may send a running Job back to the queue
-// rather than guessing that it is still alive, and blocked work returns to the
-// queue when policy or an operator unblocks it — never straight to running,
-// because entering running is what a claim does.
+// The shape of it follows the design: work is accepted queued or scheduled, reaches
+// running through a claim, and may be paused, blocked, returned to the queue, or
+// finished. A reconciliation may send a running Job back to the queue rather than
+// guessing that it is still alive, and blocked work returns to the queue when policy
+// or an operator unblocks it. Running is deliberately absent from every target set,
+// including running's own: entering running is what a claim does, and
+// validateTransition refuses it here before the table is consulted.
 var legalTargets = map[State][]State{
-	StateScheduled: {StateQueued, StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
-	StateQueued:    {StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StateScheduled: {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StateQueued:    {StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateRunning:   {StateQueued, StatePaused, StateBlocked, StateSucceeded, StateFailed, StateCancelled, StateInterrupted},
-	StatePaused:    {StateQueued, StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StatePaused:    {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateBlocked:   {StateQueued, StateCancelled, StateFailed, StateInterrupted},
 }
 
@@ -726,12 +727,16 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 		Event:           request.Event,
 		Failure:         request.Failure,
 	}
-	if err := validateTransition(&transition); err != nil {
-		return Snapshot{}, err
-	}
+	// The outcome is checked before the transition is validated: "Finish ends a
+	// Job" is this entry point's own contract, and a caller that named a
+	// non-terminal outcome is told that rather than one of the lifecycle's other
+	// refusals.
 	if !request.Outcome.Terminal() {
 		return Snapshot{}, fmt.Errorf("%w: Finish ends a Job, and %q is not a terminal state",
 			ErrInvalidTransition, request.Outcome)
+	}
+	if err := validateTransition(&transition); err != nil {
+		return Snapshot{}, err
 	}
 
 	prepared, err := prepareTransition(deps, transition)
@@ -767,6 +772,10 @@ type preparedTransition struct {
 	eventType   string
 	eventDetail json.RawMessage
 	at          time.Time
+	// releaseReason is what the claim records when leaving running hands it back. A
+	// transition's own reason is that it moved the Job; a release made as the
+	// adapter's decision records the reason that decision gave.
+	releaseReason string
 }
 
 // prepareTransition loads the Job, applies every precondition, and derives what
@@ -790,12 +799,13 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 	now := deps.now()
 	next, updates := applyTransition(job, transition, deps.retention(), now)
 	return preparedTransition{
-		job:         job,
-		next:        next,
-		updates:     updates,
-		eventType:   eventTypeFor(transition, job.StartedAt != nil),
-		eventDetail: transition.Event.Detail,
-		at:          now,
+		job:           job,
+		next:          next,
+		updates:       updates,
+		eventType:     eventTypeFor(transition, job.StartedAt != nil),
+		eventDetail:   transition.Event.Detail,
+		at:            now,
+		releaseReason: ReleaseReasonStateChanged,
 	}, nil
 }
 
@@ -850,7 +860,7 @@ func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verif
 		// no-op, which is what makes this safe for a host-side transition on a
 		// Job no claim ever touched.
 		if prepared.next.State != string(StateRunning) {
-			if err := releaseClaimTx(tx, prepared.job.ID, prepared.job.ExecutionToken, ReleaseReasonStateChanged, deps.now()); err != nil {
+			if err := releaseClaimTx(tx, prepared.job.ID, prepared.job.ExecutionToken, prepared.releaseReason, deps.now()); err != nil {
 				return err
 			}
 		}
@@ -1028,6 +1038,14 @@ func validateTransition(transition *Transition) error {
 	}
 	if !transition.To.Valid() {
 		return fmt.Errorf("%w: %q", ErrUnknownState, transition.To)
+	}
+	// Running is admitted by a claim and nothing else. Checked here, before the
+	// state machine, because it is true whatever the Job is in now: a Job that is
+	// running has an execution, a token, a claim and the capacity that admitted
+	// it, and a transition that minted the state without any of them would leave
+	// work nothing can claim, nothing reconciles and no release can free.
+	if transition.To == StateRunning {
+		return fmt.Errorf("%w: job %s", ErrRunningRequiresClaim, transition.JobID)
 	}
 	if len(transition.Phase) > MaxPhaseBytes {
 		return invalid("phase is %d bytes, over the %d-byte ceiling", len(transition.Phase), MaxPhaseBytes)

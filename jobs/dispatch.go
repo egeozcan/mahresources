@@ -79,7 +79,9 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 		// statement (so SQLite takes the writer lock before it reads anything),
 		// it is predicated on the state and version the candidate read saw, and
 		// it requires an unowned Job — so a Job another runtime claimed in the
-		// meantime matches no row.
+		// meantime matches no row. Moving the Job into running is this protocol's
+		// own step: validateTransition refuses that target for every caller, and
+		// this is the one admission that is allowed to write it.
 		next, updates := applyTransition(job, Transition{To: StateRunning}, deps.retention(), now)
 		updates["execution_token"] = token
 		result := tx.Model(&models.Job{}).
@@ -548,8 +550,7 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 	return nil
 }
 
-// ReleaseClaim ends one execution's ownership of a Job without changing the
-// Job's state.
+// ReleaseClaim ends one execution's ownership of a Job.
 //
 // It is the graceful half of the fence: an execution that stops — because its
 // work ended, or because the runtime is shutting down and has quiesced the work
@@ -558,34 +559,77 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 // owns nothing is a no-op: releasing is idempotent, and the alternative would be
 // a runtime that cannot safely report what it already reported.
 //
-// It deliberately does not move the Job's state. Where a Job that is no longer
-// running belongs is the Kind's decision, made through its adapter's
-// reconciliation or its own transitions.
-func (s *Service) ReleaseClaim(deps Deps, ref ExecutionRef, reason string) (Snapshot, error) {
-	if err := validateExecutionRef(ref); err != nil {
+// A Job that is still running is left in the state the request names, in the same
+// transaction that hands the claim back, and a request that names none is refused:
+// releasing the ownership of a running Job without ending its running would leave
+// work that nothing can claim and nothing reconciles. Where a Job that already
+// left running belongs was the decision of whatever ended it, so only ownership
+// changes here — which is the ordinary case, and the one every adapter that moves
+// its own Job through the lifecycle leaves behind.
+func (s *Service) ReleaseClaim(deps Deps, request ReleaseRequest) (Snapshot, error) {
+	if err := validateReleaseRequest(request); err != nil {
 		return Snapshot{}, err
 	}
-	if strings.TrimSpace(reason) == "" {
-		return Snapshot{}, fmt.Errorf("%w: a release needs a reason", ErrInvalidClaim)
+
+	job, err := loadJob(deps.DB, request.JobID)
+	if err != nil {
+		return Snapshot{}, err
 	}
-	if len(reason) > MaxReleaseReasonBytes {
-		return Snapshot{}, fmt.Errorf("%w: release reason is %d bytes, over the %d-byte ceiling",
-			ErrInvalidClaim, len(reason), MaxReleaseReasonBytes)
+
+	// Only the execution that owns a running Job may end its running, so only that
+	// request has to name the state to leave it in. A release under a token that owns
+	// nothing is a no-op whatever state the Job is in: releasing is idempotent, and a
+	// runtime must be able to report what it already reported.
+	if State(job.State) == StateRunning && job.ExecutionToken == request.ExecutionToken && request.ExecutionToken != "" {
+		if request.To == "" {
+			return Snapshot{}, fmt.Errorf("%w: job %s", ErrReleaseNeedsState, job.ID)
+		}
+		// One write: the transition leaves running and hands the claim back
+		// inside its own transaction, and it is what makes "the Job is in the state
+		// the adapter decided" and "this execution no longer owns it" the same
+		// instant rather than two.
+		prepared, err := prepareTransition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: request.ExecutionToken,
+			To: request.To,
+		})
+		if err != nil {
+			return Snapshot{}, err
+		}
+		prepared.releaseReason = request.Reason
+		return s.commitTransition(deps, prepared, nil)
 	}
 
 	now := deps.now()
-	err := deps.DB.Transaction(func(tx *gorm.DB) error {
-		return releaseClaimTx(tx, ref.JobID, ref.ExecutionToken, reason, now)
+	err = deps.DB.Transaction(func(tx *gorm.DB) error {
+		return releaseClaimTx(tx, job.ID, request.ExecutionToken, request.Reason, now)
 	})
 	if err != nil {
 		return Snapshot{}, err
 	}
 
-	job, err := loadJob(deps.DB, ref.JobID)
+	released, err := loadJob(deps.DB, job.ID)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return snapshot(job), nil
+	return snapshot(released), nil
+}
+
+// validateReleaseRequest checks and normalizes a release request.
+func validateReleaseRequest(request ReleaseRequest) error {
+	if err := validateExecutionRef(request.ExecutionRef); err != nil {
+		return err
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		return fmt.Errorf("%w: a release needs a reason", ErrInvalidClaim)
+	}
+	if len(request.Reason) > MaxReleaseReasonBytes {
+		return fmt.Errorf("%w: release reason is %d bytes, over the %d-byte ceiling",
+			ErrInvalidClaim, len(request.Reason), MaxReleaseReasonBytes)
+	}
+	if request.To != "" && !request.To.Valid() {
+		return fmt.Errorf("%w: %q", ErrUnknownState, request.To)
+	}
+	return nil
 }
 
 // loadClaim reads one Job's claim.

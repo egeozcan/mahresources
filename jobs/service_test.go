@@ -354,6 +354,63 @@ func TestJobAcceptUsesTheDeclaredTables(t *testing.T) {
 	}
 }
 
+// TestJobRunningAdmissionIsTheClaimProtocol pins the one door into running.
+//
+// §3 makes the claim atomic with the state: the row moves to running, the fencing
+// token, the claim and the capacity that admitted it are written together, so a
+// running Job is always one an execution owns and one a reconciliation can find.
+// A transition that entered running on its own would leave a Job that is neither
+// claimable — Claim takes queued or scheduled work — nor reconciled, because the
+// expiry scan looks for held claims: work stranded with nobody able to pick it up,
+// across a restart or not.
+func TestJobRunningAdmissionIsTheClaimProtocol(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 5, 7, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	registerTestAdapter(t, svc, testDefinition())
+
+	for _, from := range []State{StateScheduled, StateQueued, StatePaused, StateRunning} {
+		t.Run(string(from), func(t *testing.T) {
+			job := seedJob(t, deps, from, clock, 1)
+
+			_, err := svc.Transition(deps, Transition{JobID: job.ID, ExpectedVersion: 1, To: StateRunning})
+			if !errors.Is(err, ErrRunningRequiresClaim) {
+				t.Fatalf("transition %s -> running = %v, want ErrRunningRequiresClaim", from, err)
+			}
+			stored := jobRow(t, deps, job.ID)
+			if stored.State != string(from) || stored.Version != 1 || stored.ExecutionToken != "" {
+				t.Fatalf("a refused admission wrote %s v%d token %q", stored.State, stored.Version, stored.ExecutionToken)
+			}
+			if events := jobEvents(t, deps, job.ID); len(events) != 0 {
+				t.Fatalf("a refused admission recorded %d events", len(events))
+			}
+		})
+	}
+
+	// The protocol itself is what admits work: a queued Job reaches running with
+	// the token, the claim and the capacity a reconciliation and a release are
+	// about, in one write.
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	if execution.JobID != accepted.ID {
+		t.Fatalf("claimed %s, want the queued Job %s", execution.JobID, accepted.ID)
+	}
+	stored := jobRow(t, deps, accepted.ID)
+	if stored.State != string(StateRunning) || stored.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("claimed Job = %s token %q, want running under the claim's token", stored.State, stored.ExecutionToken)
+	}
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateHeld {
+		t.Fatalf("claimed Job's claim = %s, want held", claim.State)
+	}
+	if leases := capacityRows(t, deps, accepted.ID); len(leases) != 1 {
+		t.Fatalf("claimed Job holds %d capacity leases, want the one that admitted it", len(leases))
+	}
+}
+
 func TestJobStateVocabularyIsClosed(t *testing.T) {
 	if len(AllStates) != 9 {
 		t.Fatalf("AllStates has %d entries, want the nine normalized states", len(AllStates))
@@ -381,12 +438,13 @@ func TestJobStateVocabularyIsClosed(t *testing.T) {
 // legalTransitionSpec is the state machine as the design states it, written out
 // independently of the implementation so the two have to agree. Terminal states
 // appear with empty targets: a terminal Job never reopens, and continuation is a
-// new Job.
+// new Job. Running is a target of nothing — it is what a claim writes, and
+// TestJobRunningAdmissionIsTheClaimProtocol is the test that says so.
 var legalTransitionSpec = map[State][]State{
-	StateScheduled:   {StateQueued, StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
-	StateQueued:      {StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StateScheduled:   {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StateQueued:      {StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateRunning:     {StateQueued, StatePaused, StateBlocked, StateSucceeded, StateFailed, StateCancelled, StateInterrupted},
-	StatePaused:      {StateQueued, StateRunning, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
+	StatePaused:      {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateBlocked:     {StateQueued, StateCancelled, StateFailed, StateInterrupted},
 	StateSucceeded:   {},
 	StateFailed:      {},
@@ -454,6 +512,20 @@ func TestJobTransitionAppliesExactlyTheLegalTransitions(t *testing.T) {
 
 				stored := jobRow(t, deps, job.ID)
 				events := jobEvents(t, deps, job.ID)
+				// Running is refused whatever the Job is in now, and by its own rule:
+				// a claim is what admits it.
+				if to == StateRunning {
+					if !errors.Is(err, ErrRunningRequiresClaim) {
+						t.Fatalf("transition %s -> running = %v, want ErrRunningRequiresClaim", from, err)
+					}
+					if stored.State != string(from) || stored.Version != 1 {
+						t.Fatalf("a refused admission changed the row to %s v%d", stored.State, stored.Version)
+					}
+					if len(events) != 0 {
+						t.Fatalf("a refused admission recorded %d events", len(events))
+					}
+					return
+				}
 				if !specAllows(from, to) {
 					if !errors.Is(err, ErrIllegalTransition) {
 						t.Fatalf("transition %s -> %s = %v, want ErrIllegalTransition", from, to, err)
@@ -527,19 +599,30 @@ func TestJobTransitionAccumulatesDurationsAndStartTimestamps(t *testing.T) {
 	svc := NewService()
 	clock := time.Date(2031, 5, 6, 7, 8, 9, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
+	registerTestAdapter(t, svc, testDefinition())
 
-	job := seedJob(t, deps, StateRunning, clock.Add(-10*time.Second), 1)
-	if err := deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).
+	// The Job reaches running the only way a Job reaches running: a claim, which
+	// names the execution every write from here on is fenced by.
+	accepted := acceptQueued(t, svc, deps, nil)
+	first, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", accepted.ID).
 		Update("running_duration", 90*time.Second).Error; err != nil {
 		t.Fatalf("seed running duration: %v", err)
 	}
+	started := jobRow(t, deps, accepted.ID).StartedAt
 
 	// running -> paused: the elapsed running time is banked, and the pause
 	// begins at the injected clock rather than at wall-clock now.
-	if _, err := svc.Transition(deps, Transition{JobID: job.ID, ExpectedVersion: 1, To: StatePaused}); err != nil {
+	clock = clock.Add(10 * time.Second)
+	if _, err := svc.Transition(deps, Transition{
+		JobID: accepted.ID, ExpectedVersion: first.Version, ExecutionToken: first.ExecutionToken, To: StatePaused,
+	}); err != nil {
 		t.Fatalf("running -> paused: %v", err)
 	}
-	paused := jobRow(t, deps, job.ID)
+	paused := jobRow(t, deps, accepted.ID)
 	if paused.RunningDuration != 100*time.Second {
 		t.Errorf("RunningDuration = %v, want 100s", paused.RunningDuration)
 	}
@@ -548,33 +631,41 @@ func TestJobTransitionAccumulatesDurationsAndStartTimestamps(t *testing.T) {
 	}
 
 	clock = clock.Add(25 * time.Second)
-	if _, err := svc.Transition(deps, Transition{JobID: job.ID, ExpectedVersion: 2, To: StateQueued}); err != nil {
+	if _, err := svc.Transition(deps, Transition{
+		JobID: accepted.ID, ExpectedVersion: paused.Version, To: StateQueued,
+	}); err != nil {
 		t.Fatalf("paused -> queued: %v", err)
 	}
-	queued := jobRow(t, deps, job.ID)
+	queued := jobRow(t, deps, accepted.ID)
 	if queued.PausedDuration != 25*time.Second {
 		t.Errorf("PausedDuration = %v, want 25s", queued.PausedDuration)
 	}
-	if queued.QueuedAt == nil || !queued.QueuedAt.Equal(clock) {
-		t.Errorf("QueuedAt = %v, want %v", queued.QueuedAt, clock)
+	if queued.QueuedAt == nil || accepted.QueuedAt == nil || !queued.QueuedAt.Equal(*accepted.QueuedAt) {
+		t.Errorf("QueuedAt = %v, want the first instant the Job was queueable (%v)", queued.QueuedAt, accepted.QueuedAt)
 	}
-	if queued.StartedAt == nil || job.StartedAt == nil || !queued.StartedAt.Equal(*job.StartedAt) {
-		t.Errorf("StartedAt = %v, want the first start %v kept", queued.StartedAt, job.StartedAt)
+	if queued.StartedAt == nil || started == nil || !queued.StartedAt.Equal(*started) {
+		t.Errorf("StartedAt = %v, want the first start %v kept", queued.StartedAt, started)
+	}
+	if queued.ExecutionToken != "" {
+		t.Errorf("a Job that left running still holds the token %q", queued.ExecutionToken)
 	}
 
+	// A queued Job is claimed again rather than transitioned into running: the
+	// second execution is what resumes it, and the queue wait it banked is the
+	// gap between leaving running and being admitted once more.
 	clock = clock.Add(6 * time.Second)
-	if _, err := svc.Transition(deps, Transition{JobID: job.ID, ExpectedVersion: 3, To: StateRunning}); err != nil {
-		t.Fatalf("queued -> running: %v", err)
+	if _, ok := claimOnce(t, svc, deps, "runtime-b"); !ok {
+		t.Fatal("the requeued Job was not claimed again")
 	}
-	resumed := jobRow(t, deps, job.ID)
+	resumed := jobRow(t, deps, accepted.ID)
 	if resumed.QueueDuration != 6*time.Second {
 		t.Errorf("QueueDuration = %v, want 6s", resumed.QueueDuration)
 	}
 	if resumed.LastResumedAt == nil || !resumed.LastResumedAt.Equal(clock) {
 		t.Errorf("LastResumedAt = %v, want %v", resumed.LastResumedAt, clock)
 	}
-	if resumed.StartedAt == nil || job.StartedAt == nil || !resumed.StartedAt.Equal(*job.StartedAt) {
-		t.Errorf("StartedAt = %v, want the first start %v", resumed.StartedAt, job.StartedAt)
+	if resumed.StartedAt == nil || started == nil || !resumed.StartedAt.Equal(*started) {
+		t.Errorf("StartedAt = %v, want the first start %v", resumed.StartedAt, started)
 	}
 }
 
@@ -625,8 +716,14 @@ func TestJobTerminalStateCannotChange(t *testing.T) {
 				request.Failure = &Failure{Code: "test-failure", Class: FailureClassInternal}
 			}
 			_, err := svc.Transition(deps, request)
-			if !errors.Is(err, ErrIllegalTransition) {
-				t.Fatalf("%s -> %s = %v, want ErrIllegalTransition", terminal, to, err)
+			// Running is refused by its own rule, whatever the Job is in: a claim is
+			// what admits it, and a terminal Job is no exception to that.
+			want := ErrIllegalTransition
+			if to == StateRunning {
+				want = ErrRunningRequiresClaim
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("%s -> %s = %v, want %v", terminal, to, err, want)
 			}
 		}
 		stored := jobRow(t, deps, job.ID)

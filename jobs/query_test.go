@@ -235,7 +235,8 @@ func TestListSearchMatchesSanitizedTextAndExcludesSecretsAndDiagnostics(t *testi
 	})
 	failed = advanceReplayJob(t, svc, deps, failed, StateRunning)
 	finished, err := svc.Finish(deps, FinishRequest{
-		ExecutionRef: ExecutionRef{JobID: failed.ID}, ExpectedVersion: failed.Version, Outcome: StateFailed,
+		ExecutionRef:    ExecutionRef{JobID: failed.ID, ExecutionToken: executionTokenOf(t, deps, failed.ID)},
+		ExpectedVersion: failed.Version, Outcome: StateFailed,
 		Failure: &Failure{
 			Code: "disk-full", Class: FailureClassDependency,
 			Message: "the storage volume was full", DiagnosticRef: "/var/lib/internal/path-4f2a.log",
@@ -1022,6 +1023,7 @@ func TestSummaryCountsStatesKindsDurationsAndFailures(t *testing.T) {
 		clock = clock.Add(run)
 		next, err := svc.Transition(deps, Transition{
 			JobID: job.ID, ExpectedVersion: job.Version, To: outcome, Failure: failure,
+			ExecutionToken: executionTokenOf(t, deps, job.ID),
 		})
 		if err != nil {
 			t.Fatalf("transition to %s: %v", outcome, err)
@@ -1171,6 +1173,7 @@ func TestProtectedDiagnosticsStayOutOfOrdinaryProjections(t *testing.T) {
 	failed = advanceReplayJob(t, svc, deps, failed, StateRunning)
 	failed, err := svc.Transition(deps, Transition{
 		JobID: failed.ID, ExpectedVersion: failed.Version, To: StateFailed,
+		ExecutionToken: executionTokenOf(t, deps, failed.ID),
 		Failure: &Failure{
 			Code: "export-failed", Class: FailureClassInternal,
 			Message: "the export could not be assembled", DiagnosticRef: diagnostic,

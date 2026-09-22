@@ -143,17 +143,20 @@ func upsertOutput(tx *gorm.DB, job models.Job, input OutputInput, availability O
 		// The publication is the current truth about this key, so the removal
 		// instant is cleared with it: an output produced again is not still
 		// recorded as gone, and an availability of "available" beside a removal
-		// instant would be a row that contradicts itself.
+		// instant would be a row that contradicts itself. The cleanup deferral goes
+		// with it for the same reason: what a pass could not establish about the
+		// artifact that was here says nothing about the one that replaced it.
 		updates := map[string]any{
-			"type":         input.Type,
-			"label":        input.Label,
-			"reference":    types.JSON(input.Reference),
-			"required":     input.Required,
-			"availability": string(availability),
-			"expires_at":   expiresAt,
-			"removed_at":   nil,
-			"version":      existing.Version + 1,
-			"updated_at":   now,
+			"type":            input.Type,
+			"label":           input.Label,
+			"reference":       types.JSON(input.Reference),
+			"required":        input.Required,
+			"availability":    string(availability),
+			"expires_at":      expiresAt,
+			"removed_at":      nil,
+			"next_cleanup_at": nil,
+			"version":         existing.Version + 1,
+			"updated_at":      now,
 		}
 		if err := tx.Model(&models.JobOutput{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 			return models.JobOutput{}, fmt.Errorf("jobs: replace output: %w", err)
@@ -165,6 +168,7 @@ func upsertOutput(tx *gorm.DB, job models.Job, input OutputInput, availability O
 		existing.Availability = string(availability)
 		existing.ExpiresAt = expiresAt
 		existing.RemovedAt = nil
+		existing.NextCleanupAt = nil
 		existing.Version++
 		existing.UpdatedAt = now
 		return existing, nil

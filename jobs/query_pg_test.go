@@ -3,6 +3,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -127,14 +128,23 @@ func TestRetentionSweepPrunesExpiredWorkOnPostgres(t *testing.T) {
 	}
 	finish := func(job Snapshot) Snapshot {
 		clock = clock.Add(time.Minute)
-		running, err := svc.Transition(deps, Transition{JobID: job.ID, ExpectedVersion: job.Version, To: StateRunning})
+		execution, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+			Kind: job.Kind, KindVersion: job.KindVersion, Claimant: "test-runtime",
+		})
 		if err != nil {
-			t.Fatalf("transition to running: %v", err)
+			t.Fatalf("claim: %v", err)
+		}
+		if !ok || execution.JobID != job.ID {
+			t.Fatalf("claimed %s while finishing %s", execution.JobID, job.ID)
 		}
 		clock = clock.Add(time.Minute)
-		done, err := svc.Transition(deps, Transition{JobID: running.ID, ExpectedVersion: running.Version, To: StateSucceeded})
+		done, err := svc.Finish(deps, FinishRequest{
+			ExecutionRef:    ExecutionRef{JobID: job.ID, ExecutionToken: execution.ExecutionToken},
+			ExpectedVersion: execution.Version,
+			Outcome:         StateSucceeded,
+		})
 		if err != nil {
-			t.Fatalf("transition to succeeded: %v", err)
+			t.Fatalf("finish: %v", err)
 		}
 		return done
 	}
@@ -152,13 +162,20 @@ func TestRetentionSweepPrunesExpiredWorkOnPostgres(t *testing.T) {
 	if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: pinned.ID, Pinned: boolPtr(true)}); err != nil {
 		t.Fatalf("pin: %v", err)
 	}
-	if err := deps.DB.Create(&models.JobClaim{
-		JobID: protected.ID, Kind: protected.Kind, KindVersion: protected.KindVersion,
-		Claimant: "host:gone", ExecutionToken: "00000000-0000-7000-8000-000000000002",
-		State:     models.JobClaimStateQuarantined,
-		ClaimedAt: clock, HeartbeatAt: clock, LeaseExpiresAt: clock,
-	}).Error; err != nil {
-		t.Fatalf("seed quarantined claim: %v", err)
+	// A claim that reached a terminal state while still unresolved. The lifecycle
+	// releases a claim its own execution still owns, so the row the claim of this
+	// Job left behind is turned into the state a quarantined execution leaves when
+	// the process that held it never came back.
+	if err := deps.DB.Model(&models.JobClaim{}).Where("job_id = ?", protected.ID).
+		Updates(map[string]any{
+			"claimant":         "host:gone",
+			"execution_token":  "00000000-0000-7000-8000-000000000002",
+			"state":            models.JobClaimStateQuarantined,
+			"released_at":      nil,
+			"release_reason":   "",
+			"lease_expires_at": clock,
+		}).Error; err != nil {
+		t.Fatalf("quarantine the claim: %v", err)
 	}
 
 	clock = clock.Add(24 * time.Hour)
@@ -300,12 +317,21 @@ func TestRetentionSweepCannotPruneAJobPinnedByAnOpenTransactionPG(t *testing.T) 
 		OwnerUserID: uintPtr(7), Title: "pinned while it was being swept",
 		Replay: ReplayInput{NonReplayable: true},
 	})
-	running, err := svc.Transition(deps, Transition{JobID: accepted.ID, ExpectedVersion: accepted.Version, To: StateRunning})
+	execution, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+		Kind: accepted.Kind, KindVersion: accepted.KindVersion, Claimant: "test-runtime",
+	})
 	if err != nil {
-		t.Fatalf("transition to running: %v", err)
+		t.Fatalf("claim: %v", err)
 	}
-	if _, err := svc.Transition(deps, Transition{JobID: running.ID, ExpectedVersion: running.Version, To: StateSucceeded}); err != nil {
-		t.Fatalf("transition to succeeded: %v", err)
+	if !ok || execution.JobID != accepted.ID {
+		t.Fatalf("claimed %s while finishing %s", execution.JobID, accepted.ID)
+	}
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: execution.Version,
+		Outcome:         StateSucceeded,
+	}); err != nil {
+		t.Fatalf("finish: %v", err)
 	}
 	// Past its window, so the sweep's selection includes it.
 	clock = clock.Add(24 * time.Hour)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -78,7 +79,10 @@ func TestRetentionSweepStartsAtFinishedAtAndLeavesNonterminalWorkAlone(t *testin
 		clock = clock.Add(time.Minute)
 		job = advanceReplayJob(t, svc, deps, job, StateRunning)
 		clock = clock.Add(time.Minute)
-		transition := Transition{JobID: job.ID, ExpectedVersion: job.Version, To: outcome}
+		transition := Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, To: outcome,
+			ExecutionToken: executionTokenOf(t, deps, job.ID),
+		}
 		if outcome == StateFailed {
 			transition.Failure = &Failure{Code: "boom", Class: FailureClassInternal, Message: "it broke"}
 		}
@@ -775,7 +779,7 @@ func TestRetentionOutputExpiryRechecksTheRowItSelected(t *testing.T) {
 // expiry of its own is forever. The same loss happens when every artifact goes but
 // the metadata cannot: a pin landing while the cleanup runs is enough.
 func TestRetentionSweepRecordsEachAcknowledgedArtifactRemoval(t *testing.T) {
-	deps := newTestDeps(t)
+	deps, dsn := newFileDeps(t)
 	svc := NewService()
 	policy := expiredHistory(time.Hour)
 	deps.Retention = &policy
@@ -783,14 +787,7 @@ func TestRetentionSweepRecordsEachAcknowledgedArtifactRemoval(t *testing.T) {
 	deps.Now = func() time.Time { return clock }
 
 	adapter := registerTestAdapter(t, svc, testDefinition())
-	pinDuringCleanup := ""
 	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
-		if pinDuringCleanup == request.JobID {
-			if err := svc.SetPreference(deps, Access{UserID: 7},
-				PreferenceRequest{JobID: request.JobID, Pinned: boolPtr(true)}); err != nil {
-				return ArtifactCleanupResult{}, err
-			}
-		}
 		// One artifact of every Job is left where it is; the rest are gone.
 		result := ArtifactCleanupResult{}
 		for _, artifact := range request.Artifacts {
@@ -834,7 +831,36 @@ func TestRetentionSweepRecordsEachAcknowledgedArtifactRemoval(t *testing.T) {
 
 	partial := settle("one of two artifacts is gone", "artifact-gone", "artifact-kept")
 	pinnedDuring := settle("pinned while its artifacts were being cleaned up", "artifact")
-	pinDuringCleanup = pinnedDuring.ID
+
+	// The pin lands between the sweep's own protection read and the cleanup that
+	// records the removals: after the Job has been decided about as unpinned and
+	// before anything of its own is written. It is driven from the accounting read
+	// of that Job rather than from inside the Kind's cleanup, because the cleanup
+	// now runs under the Job's own row — a write from there is the cleanup waiting
+	// for itself rather than an interleaving — and it goes through a second
+	// connection, because two writes on one handle would be a sequence.
+	pinner := Deps{DB: openSecondHandle(t, dsn), Now: deps.Now}
+	var once sync.Once
+	const hook = "test:pin-before-cleanup"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "job_outputs" {
+			return
+		}
+		for _, variable := range tx.Statement.Vars {
+			if named, ok := variable.(string); ok && named == pinnedDuring.ID {
+				once.Do(func() {
+					if err := svc.SetPreference(pinner, Access{UserID: 7},
+						PreferenceRequest{JobID: pinnedDuring.ID, Pinned: boolPtr(true)}); err != nil {
+						t.Errorf("pin the Job while the sweep was reading its artifacts: %v", err)
+					}
+				})
+				return
+			}
+		}
+	}); err != nil {
+		t.Fatalf("register the interleaving hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
 
 	clock = clock.Add(48 * time.Hour)
 	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
@@ -1090,5 +1116,289 @@ func TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays(t *testing
 		if jobID == protected.ID {
 			t.Fatal("the sweep asked about a Job an unresolved claim still protects")
 		}
+	}
+}
+
+// TestRetentionArtifactCleanupReachesTheArtifactsBehindOneItCannotRemove is §9's
+// "cleanup is bounded and resumable" read as fairness rather than as a single
+// batch.
+//
+// The artifact pass takes the oldest expired candidates, one batch at a time, and
+// two kinds of candidate it cannot act on do not move: a Job an unresolved claim
+// protects, whose bytes no expiry may go around, and an artifact no adapter could
+// account for, whose Kind this process cannot run at all. Either of them sat at the
+// head of every pass, so with a batch of one the artifacts behind it were never
+// reached at all — not late, never.
+func TestRetentionArtifactCleanupReachesTheArtifactsBehindOneItCannotRemove(t *testing.T) {
+	t.Run("a Job an unresolved claim protects", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		policy := expiredHistory(30 * 24 * time.Hour)
+		deps.Retention = &policy
+		clock := time.Date(2031, 7, 13, 9, 0, 0, 0, time.UTC)
+		deps.Now = func() time.Time { return clock }
+
+		adapter := registerTestAdapter(t, svc, testDefinition())
+		var askedMu sync.Mutex
+		var asked []string
+		adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+			askedMu.Lock()
+			asked = append(asked, request.JobID)
+			askedMu.Unlock()
+			result := ArtifactCleanupResult{}
+			for _, artifact := range request.Artifacts {
+				result.Removed = append(result.Removed, artifact.Key)
+			}
+			return result, nil
+		}
+
+		expireArtifact := func(t *testing.T, job Snapshot, at time.Time) {
+			t.Helper()
+			if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: job.ID}, OutputInput{
+				Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+				Reference: json.RawMessage(`{"name":"export.tar"}`), ExpiresAt: &at,
+			}); err != nil {
+				t.Fatalf("publish artifact of %s: %v", job.Title, err)
+			}
+		}
+
+		// The older artifact belongs to a Job an unresolved claim protects: the one
+		// thing §9 says no expiry may write through.
+		protected := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "a claim-protected Job", Replay: ReplayInput{NonReplayable: true},
+		})
+		expireArtifact(t, protected, clock.Add(-2*time.Hour))
+		// The claim its own execution would have released becomes one nobody could
+		// resolve: the state a quarantined execution leaves behind when the process
+		// that held it never came back.
+		if err := deps.DB.Create(&models.JobClaim{
+			JobID: protected.ID, Kind: testKind, KindVersion: 1,
+			Claimant: "host:gone", ExecutionToken: "00000000-0000-7000-8000-000000000002",
+			State:     models.JobClaimStateQuarantined,
+			ClaimedAt: clock, HeartbeatAt: clock, LeaseExpiresAt: clock,
+			CreatedAt: clock, UpdatedAt: clock,
+		}).Error; err != nil {
+			t.Fatalf("seed the quarantined claim: %v", err)
+		}
+
+		// The later artifact belongs to a Job that is pinned — which §9 exempts
+		// metadata and events for, and nothing else — so its bytes are due.
+		pinned := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "a pinned Job", Replay: ReplayInput{NonReplayable: true},
+		})
+		expireArtifact(t, pinned, clock.Add(-time.Hour))
+		if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: pinned.ID, Pinned: boolPtr(true)}); err != nil {
+			t.Fatalf("pin: %v", err)
+		}
+
+		// Both artifacts are past their own deadline, and the pass is allowed to act
+		// on one: the protected Job's is older, so it is the head of the batch.
+		result := sweepFor(t, svc, deps, policy, SweepCursor{}, 1)
+
+		var cleanable models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", pinned.ID, "artifact").First(&cleanable).Error; err != nil {
+			t.Fatalf("read the pinned Job's artifact: %v", err)
+		}
+		if cleanable.Availability != string(OutputRemoved) || cleanable.RemovedAt == nil {
+			t.Fatalf("the artifact behind the protected one is %s (removed at %v), want the bytes gone and recorded",
+				cleanable.Availability, cleanable.RemovedAt)
+		}
+		if result.Outputs != 1 {
+			t.Fatalf("the pass recorded %d output availabilities, want the one removal", result.Outputs)
+		}
+
+		// And the protected Job was never asked about: it keeps its artifact
+		// reference, its bytes and the claim nothing could prove dead.
+		var kept models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", protected.ID, "artifact").First(&kept).Error; err != nil {
+			t.Fatalf("the protected Job lost its artifact reference: %v", err)
+		}
+		if kept.RemovedAt != nil {
+			t.Fatal("a Job an unresolved claim still protects had its artifact removed")
+		}
+		askedMu.Lock()
+		defer askedMu.Unlock()
+		for _, jobID := range asked {
+			if jobID == protected.ID {
+				t.Fatal("the pass asked about a Job an unresolved claim still protects")
+			}
+		}
+	})
+
+	t.Run("an artifact no adapter can account for", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		policy := expiredHistory(30 * 24 * time.Hour)
+		deps.Retention = &policy
+		clock := time.Date(2031, 7, 14, 9, 0, 0, 0, time.UTC)
+		deps.Now = func() time.Time { return clock }
+
+		// One Kind this process can run, and one it has no adapter for at all: an
+		// artifact of an unregistered Kind can never be established as gone here.
+		adapter := registerTestAdapter(t, svc, testDefinition())
+
+		expireArtifact := func(t *testing.T, job Snapshot, at time.Time) {
+			t.Helper()
+			if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: job.ID}, OutputInput{
+				Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+				Reference: json.RawMessage(`{"name":"export.tar"}`), ExpiresAt: &at,
+			}); err != nil {
+				t.Fatalf("publish artifact of %s: %v", job.Title, err)
+			}
+		}
+
+		unaccountable := acceptFor(t, svc, deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "a Kind this process cannot run",
+			Replay: ReplayInput{NonReplayable: true},
+		})
+		expireArtifact(t, unaccountable, clock.Add(-2*time.Hour))
+		cleanable := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: "a Kind this process can run",
+			Replay: ReplayInput{NonReplayable: true},
+		})
+		expireArtifact(t, cleanable, clock.Add(-time.Hour))
+
+		// The pass that can only ask about the unaccountable artifact gets no
+		// further than it: nothing is removed and nothing is pruned.
+		first := sweepFor(t, svc, deps, policy, SweepCursor{}, 1)
+		if first.Outputs != 0 {
+			t.Fatalf("the first pass recorded %d output availabilities, want none", first.Outputs)
+		}
+		if adapter.cleanupCount() != 0 {
+			t.Fatalf("the unaccountable Kind's artifact was handed to another Kind's adapter")
+		}
+
+		// The next pass reaches past it: a candidate that could not be cleaned
+		// waits its turn instead of holding the head of every batch.
+		sweepFor(t, svc, deps, policy, SweepCursor{}, 1)
+
+		var removed models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", cleanable.ID, "artifact").First(&removed).Error; err != nil {
+			t.Fatalf("read the cleanable Job's artifact: %v", err)
+		}
+		if removed.Availability != string(OutputRemoved) || removed.RemovedAt == nil {
+			t.Fatalf("the artifact behind the unaccountable one is %s (removed at %v), want the bytes gone and recorded",
+				removed.Availability, removed.RemovedAt)
+		}
+
+		// The artifact nobody could account for is untouched and still advertised
+		// as expired rather than gone.
+		var kept models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", unaccountable.ID, "artifact").First(&kept).Error; err != nil {
+			t.Fatalf("read the unaccountable Job's artifact: %v", err)
+		}
+		if kept.RemovedAt != nil {
+			t.Fatal("an artifact no adapter accounted for was recorded as removed")
+		}
+	})
+}
+
+// TestRetentionArtifactCleanupIsFencedAgainstANewClaim is the ordering half of the
+// same contract, and it is the one a check before the deletion cannot provide.
+//
+// An artifact's own deadline is not the Job's: a queued Job can carry an expired
+// artifact from an earlier attempt, and a runtime may claim it at any instant. A
+// claim is a new execution, and a new execution publishes — the same key again, if
+// the Kind does. So the decision to delete and the deletion itself have to be
+// admitted under the same row a claim is admitted under, or the bytes are deleted
+// underneath an execution that has just taken the Job.
+func TestRetentionArtifactCleanupIsFencedAgainstANewClaim(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 15, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+
+	// A queued Job — claimable, by definition — whose artifact's own deadline has
+	// already passed.
+	accepted := acceptQueued(t, svc, deps, nil)
+	expires := clock.Add(-time.Hour)
+	if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: accepted.ID}, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+		Reference: json.RawMessage(`{"name":"export.tar"}`), ExpiresAt: &expires,
+	}); err != nil {
+		t.Fatalf("publish artifact: %v", err)
+	}
+
+	// The cleanup is where the pass is inside its deletion: while it runs, the
+	// runtime claims the Job.
+	inCleanup := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		close(inCleanup)
+		<-releaseCleanup
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			result.Removed = append(result.Removed, artifact.Key)
+		}
+		return result, nil
+	}
+
+	var orderMu sync.Mutex
+	var order []string
+	record := func(what string) {
+		orderMu.Lock()
+		order = append(order, what)
+		orderMu.Unlock()
+	}
+
+	swept := make(chan error, 1)
+	go func() {
+		_, err := svc.Sweep(deps, policy, SweepCursor{}, 100)
+		swept <- err
+	}()
+	<-inCleanup
+
+	claimed := make(chan error, 1)
+	go func() {
+		_, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+			Kind: testKind, KindVersion: 1, Claimant: "runtime-b",
+		})
+		if err == nil && !ok {
+			err = fmt.Errorf("the queued Job was not claimable")
+		}
+		if err == nil {
+			record("claimed")
+		}
+		claimed <- err
+	}()
+
+	select {
+	case err := <-claimed:
+		t.Fatalf("a claim committed while the artifact's bytes were still being deleted: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	record("cleanup")
+	close(releaseCleanup)
+
+	if err := <-swept; err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if err := <-claimed; err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	if len(order) != 2 || order[0] != "cleanup" || order[1] != "claimed" {
+		t.Fatalf("the pass and the claim ordered as %v, want the deletion finished before the claim was admitted", order)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) {
+		t.Fatalf("state = %s, want the claim's running", stored.State)
+	}
+	var artifact models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", accepted.ID, "artifact").First(&artifact).Error; err != nil {
+		t.Fatalf("read the artifact: %v", err)
+	}
+	if artifact.Availability != string(OutputRemoved) {
+		t.Fatalf("artifact availability = %s, want the removal the adapter acknowledged recorded", artifact.Availability)
 	}
 }

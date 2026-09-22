@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -136,5 +137,100 @@ func TestArtifactRemovalSerializesOnTheJobTimelinePG(t *testing.T) {
 	}
 	if result.Outputs == 0 {
 		t.Error("the sweep reported no output record for the removal it performed")
+	}
+}
+
+// TestRetentionArtifactCleanupIsFencedAgainstANewClaimPG is the PostgreSQL half of
+// the cleanup fence. On SQLite the writer lock is the exclusion, which is what the
+// untagged test proves; here the exclusion is the Job's own row, and the ordering
+// the dialect takes it in is different: the row is locked first and the protection
+// is re-read under it as its own statement, so a claim already waiting on that row
+// commits before the read and the pass stands down, while a claim that arrives later
+// waits for the deletion instead of racing it.
+//
+// Without the fence the claim commits in the gap between the check and the call, and
+// the bytes go while a new execution holds the Job — which is the whole reason a
+// check before the deletion is not enough.
+func TestRetentionArtifactCleanupIsFencedAgainstANewClaimPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2034, 3, 4, 5, 6, 7, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	adapter := registerTestAdapter(t, svc, Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Lease: time.Minute,
+	})
+
+	// A queued Job — claimable, by definition — whose artifact's own deadline has
+	// already passed.
+	accepted := acceptQueued(t, svc, deps, nil)
+	expires := clock.Add(-time.Hour)
+	if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: accepted.ID}, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+		Reference: json.RawMessage(`{"path":"exports/18.tar"}`), ExpiresAt: &expires,
+	}); err != nil {
+		t.Fatalf("publish the artifact: %v", err)
+	}
+
+	inCleanup := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		close(inCleanup)
+		<-releaseCleanup
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			result.Removed = append(result.Removed, artifact.Key)
+		}
+		return result, nil
+	}
+
+	swept := make(chan error, 1)
+	go func() {
+		_, err := svc.Sweep(deps, policy, SweepCursor{}, 100)
+		swept <- err
+	}()
+	<-inCleanup
+
+	// A second connection claims the Job while the pass is inside its deletion. The
+	// guarded update it is admitted by and the pass's own row lock are the same row,
+	// so it cannot commit until the deletion has.
+	claimed := make(chan error, 1)
+	go func() {
+		_, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+			Kind: testKind, KindVersion: 1, Claimant: "runtime-b",
+		})
+		if err == nil && !ok {
+			err = errors.New("the queued Job was not claimable")
+		}
+		claimed <- err
+	}()
+
+	select {
+	case err := <-claimed:
+		t.Fatalf("a claim committed while the artifact's bytes were still being deleted: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(releaseCleanup)
+
+	if err := <-swept; err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if err := <-claimed; err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	// The removal landed before the claim did, and the Job the claim admitted is the
+	// one the pass had finished with.
+	var artifact models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", accepted.ID, "artifact").First(&artifact).Error; err != nil {
+		t.Fatalf("read the artifact: %v", err)
+	}
+	if artifact.Availability != string(OutputRemoved) {
+		t.Fatalf("artifact is %s, want the acknowledged removal recorded", artifact.Availability)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) {
+		t.Fatalf("state = %s, want the claim's running", stored.State)
 	}
 }
