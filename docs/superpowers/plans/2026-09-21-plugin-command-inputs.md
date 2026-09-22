@@ -395,5 +395,28 @@ git commit -m "test: prove plugin command inputs end to end"
 - [x] Spec §6 consent maps to Task 2 (grant, display, label phrases, both panel sites, CLI, docs).
 - [x] Spec §7 retention and secrets maps to Tasks 4 and 6 (queued cancellation writes nothing, worst-case docs sentence, discard/read-back).
 - [x] Spec §8 what must not change has no task that touches `Prepare`, `BuildInvocation`, `mah.fs` writes or the Windows refusal.
-- [x] Every test in spec §9 with a §9 number is named in Task 4 or Task 6; §9.7 and §9.14 are in Tasks 2, 3 and 5.
+- [x] Every test in spec §9 maps to a named test, per the coverage map below.
+
+## Spec §9 coverage map
+
+| §9 | Test |
+| --- | --- |
+| 1 present before spawn | `TestRunnerWritesSuppliedInputsBeforeTheSpawn`, e2e `supplied input files reach the program and never reach a record` |
+| 2 undeclared name | `TestValidateInputsRefusals`, `TestCommandsRunRefusesInputsItCannotHonour`, `TestCommandsRunRefusesInputsForACommandThatDeclaresNone`, `TestSubmitRefusesInputsBeforeAnyDurableWork`, e2e `refuses an input file the command does not declare` |
+| 3 name grammar | `TestInputFileNameGrammar`, `TestValidateDeclarationChecksInputNames`, `TestValidateInputsRefusals`, the manifest malformed-declaration table |
+| 4 limits | `TestValidateInputsRefusals` (including the at-limit acceptance), `TestSubmitRefusesInputsBeforeAnyDurableWork` |
+| 5 quota | per-run: `TestSubmitRefusesInputsBeforeAnyDurableWork`; global sample: `TestSuppliedInputsCountTowardTheGlobalStagingSample` |
+| 6 nothing leaks | `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (params, argv, output, error, record JSON, run-view JSON, captured log lines), `TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes`, e2e page assertion |
+| 7 consent | `TestCommandInputsArePartOfConsentIdentity`, `TestCommandManifestInputIdentity`, `TestCommandCapabilityCataloguesDescribeTheHostPrivilege`, `TestPluginEnableCommandConfirmationPrintsEveryCommandAndRequiresTheFlag`, `TestPluginEnableCommandConfirmationReturnsStructuredJSONWithoutConfirming` |
+| 8 retention and discard | `TestSuppliedInputsAreDiscardableAndSweptWithTheFolder` |
+| 9 crash safety | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten` (partial scratch, declared name absent, debris unlistable and unreadable), `TestRecoverySettlesARunLeftMidWrite` (durable row settled, declared name absent) — state-level, see the spec's §9.9 |
+| 10 failure path | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten`, `TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort` |
+| 11 options shape | `TestCommandsRunRefusesInputsItCannotHonour`, `TestCommandsRunRefusesAFifthArgument`, `TestCommandsRunRefusesANonFunctionCallbackBesideOptions` |
+| 12 zero bytes | `TestRunnerWritesAZeroByteInput`, `TestValidateInputsAcceptsDeclaredNamesInDeclarationOrder` |
+| 13 queued cancellation | `TestRunnerWritesNothingWhenTheRunIsCancelledBeforeItStarts`, `TestRunnerCancellationDuringTheWriteStopsTheSpawn` |
+| 14 record shape | `TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes`, `TestRunViewToLuaExposesSuppliedInputNamesAndSizes`, `TestPluginCommandHistoryTemplateShowsInputNamesAndSizesWithoutContents`, e2e |
+| 15 doomed spawn writes nothing | `TestRunnerWritesNothingForADoomedSpawn` |
+| 16 short write refused | `TestRunnerRefusesTheSpawnWhenTheWrittenInputIsShort` |
+| 17 scratch isolation | `TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten`, `TestRunnerLeavesNoScratchBehindOnASuccessfulWrite`, `TestRecoverySettlesARunLeftMidWrite` |
+| 18 in-memory residency | `TestRunnerWritesSuppliedInputsBeforeTheSpawn` (shared map and backing array), `TestDispatcherRetirementPathsDropSuppliedContents` |
 - [x] `CONTEXT.md` terms (Command Declaration, Declared Input File, Run Parameter, Command Import, Exchange Folder) appear in the new docs prose, and "input file" is never used for a Command Import.

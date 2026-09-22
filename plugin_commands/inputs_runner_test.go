@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -30,6 +32,9 @@ type inputRunnerFixture struct {
 	// share: the submission map and the validated slice's backing array.
 	callerMap   map[string]string
 	callerSlice []InputFile
+	// logLines returns everything the executor logged during the run, so a test
+	// can prove supplied contents never reach the application log.
+	logLines func() []string
 }
 
 func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixture {
@@ -38,7 +43,13 @@ func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixtur
 	helperExecutable(t, commandDir, "mah-helper")
 	store := newRunnerTestStore()
 	settings := runnerTestSettings{root: root, commandDir: commandDir, perRun: 1 << 20, global: 1 << 21}
-	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings}).(*commandExecutor)
+	var logMu sync.Mutex
+	var logs []string
+	executor := NewExecutor(RunnerDependencies{Store: store, Settings: settings, Logf: func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}}).(*commandExecutor)
 
 	declaration := Declaration{
 		Name: "read", Timeout: time.Minute,
@@ -68,13 +79,18 @@ func newInputRunnerFixture(t *testing.T, inputs ...InputFile) *inputRunnerFixtur
 	}
 	params, _ := json.Marshal(invocation.ParamView)
 	argv, _ := json.Marshal(invocation.RedactedArgv)
-	if err := store.CreateRun(RunRecord{ID: runID, PluginName: "plug", Status: RunStatusQueued, ParamsJSON: string(params)}, RunOutput{RunID: runID, ArgvJSON: string(argv)}); err != nil {
+	if err := store.CreateRun(RunRecord{ID: runID, PluginName: "plug", Status: RunStatusQueued, ParamsJSON: string(params), Inputs: suppliedInputs(inputs)}, RunOutput{RunID: runID, ArgvJSON: string(argv)}); err != nil {
 		t.Fatal(err)
 	}
 	return &inputRunnerFixture{
 		executor: executor, store: store, settings: settings, declaration: declaration,
 		run: run, exchange: exchange, secret: inputs[0].Content,
 		callerMap: submissionInputs, callerSlice: inputs,
+		logLines: func() []string {
+			logMu.Lock()
+			defer logMu.Unlock()
+			return append([]string(nil), logs...)
+		},
 	}
 }
 
@@ -133,6 +149,29 @@ func TestRunnerWritesSuppliedInputsBeforeTheSpawn(t *testing.T) {
 	} {
 		if strings.Contains(text, "SID") {
 			t.Fatalf("%s leaked the supplied contents: %q", name, text)
+		}
+	}
+	// The record keeps the name and the size, and the surfaces built from it
+	// (the admin history, the JSON API, the application log) carry nothing else.
+	if len(record.Inputs) != 1 || record.Inputs[0].Name != "cookies.txt" || record.Inputs[0].Bytes != int64(len(secret)) {
+		t.Fatalf("recorded inputs = %+v", record.Inputs)
+	}
+	encodedRecord, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedOutput, err := json.Marshal(RunView{RunRecord: record, Output: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, encoded := range map[string][]byte{"run record JSON": encodedRecord, "run view JSON": encodedOutput} {
+		if strings.Contains(string(encoded), "SID") {
+			t.Fatalf("%s leaked the supplied contents: %s", name, encoded)
+		}
+	}
+	for _, line := range f.logLines() {
+		if strings.Contains(line, "SID") {
+			t.Fatalf("the application log leaked the supplied contents: %q", line)
 		}
 	}
 	if !strings.Contains(output.OutputTail, "read-ok") {

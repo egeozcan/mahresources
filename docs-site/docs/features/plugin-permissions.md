@@ -129,9 +129,10 @@ Supplied contents stay in the run's exchange folder until it is swept, 7 days by
 default, unless the plugin discards them sooner. A credential handed to a run
 this way therefore lives in the staging root for up to that window, including
 after a plugin disable that dropped the plugin's completion callback. Cancelling
-a run before the host begins writing its inputs leaves no file at all; a
-cancellation that arrives once writing has begun cannot un-write it, and those
-files stay until the plugin discards them or the folder is swept.
+a run while it is still queued leaves no file, because the runner observes that
+cancellation before it writes anything — but cancelling is not a way to remove a
+supplied credential: once the host has begun preparing the run, the files it
+staged stay until the plugin discards them or the folder is swept.
 
 `commands` alone installs `mah.commands` and the read/list/discard parts of
 `mah.fs`. `mah.fs.create_resource` additionally requires `db:write`. Imports

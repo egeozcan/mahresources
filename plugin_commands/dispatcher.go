@@ -1321,6 +1321,12 @@ func (d *Dispatcher) retryDispatchFailures(state *dispatcherState) {
 }
 
 func (d *Dispatcher) persistQueuedCancellation(state *dispatcherState, cancellation *queuedCancellation) (bool, error) {
+	// A queued cancellation is never dispatched again — it was removed from the
+	// private queue before this was built — and this call is retried against a
+	// failing store until it succeeds, so the supplied bytes do not need to sit
+	// in memory for that long. The map and the slice's backing array are shared
+	// with every other copy of this run, so this reaches them all.
+	dropInputContents(&cancellation.run)
 	finish := RunFinish{Status: RunStatusCancelled, Error: cancellation.reason, FinishedAt: time.Now().UTC()}
 	won, err := d.deps.Store.FinishRun(cancellation.run.RunID, finish)
 	if err != nil {
@@ -1346,6 +1352,12 @@ func (d *Dispatcher) persistQueuedCancellation(state *dispatcherState, cancellat
 }
 
 func (d *Dispatcher) persistCommandDispatchFailure(state *dispatcherState, failure *commandDispatchFailure) (bool, error) {
+	// The managed job lane returns an error only before its worker goroutine
+	// starts (download_queue.SubmitManagedJob), so this run has no executor and
+	// never will: nothing below writes the files, and this call is retried
+	// against a failing store until it succeeds. Drop the supplied bytes now
+	// rather than holding them through that.
+	dropInputContents(&failure.run)
 	if failure.status == RunStatusFailed && !failure.markedRunning {
 		won, err := d.deps.Store.MarkRunRunning(failure.run.RunID, time.Now().UTC())
 		if err != nil {

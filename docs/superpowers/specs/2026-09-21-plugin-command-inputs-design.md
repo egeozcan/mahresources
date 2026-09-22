@@ -314,8 +314,12 @@ Consequences, all of them wanted:
   it as soon as the run is terminal.
 - Documentation must state the worst case plainly: a supplied file can outlive
   the plugin's completion callback, a plugin disable (which unloads the VM and
-  so may drop the callback), and a cancellation that arrived after the write, up
-  to the retention window. A cancellation before the write leaves no file at all.
+  so may drop the callback), and a cancellation, up to the retention window. A
+  run cancelled while it is still queued leaves no file, because the runner
+  observes that cancellation before it writes anything; a cancellation arriving
+  once the run has begun preparing cannot un-write what is already staged, so
+  cancelling is not a way to remove a supplied credential — the plugin discards
+  it, or the sweep removes it.
 - No per-run guaranteed deletion, no encryption at rest: the retention window is
   the price of the plugin being able to read a rewritten file back.
 
@@ -366,7 +370,12 @@ Against the real runner and store, not a mock:
 9. **Crash safety.** Killing the host between the write and the spawn leaves a
    state the existing recovery path resolves without new stuck states; a kill
    between the scratch create and the rename leaves the declared name absent
-   rather than partial, and leaves no listable or readable debris.
+   rather than partial, and leaves no listable or readable debris. The state
+   such a kill must leave is exactly: a durable nonterminal row, the exchange
+   folder, and either a completed input file or a partial file inside `.tmp`
+   with no declared name. That artifact set is what the tests pin, at the state
+   level; the window itself is sub-millisecond, so it is not reproduced by a
+   real signal from another process.
 10. **Failure path.** An injected write error finishes the run as failed, names
     the file in the error, spawns nothing, and leaves the exchange folder to the
     existing retention sweep.

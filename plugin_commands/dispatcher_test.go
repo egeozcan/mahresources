@@ -1,6 +1,7 @@
 package plugin_commands
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -311,6 +312,69 @@ func startTestDispatcher(t *testing.T, pending int) (*Dispatcher, *dispatcherTes
 		_ = d.Stop(ctx)
 	})
 	return d, store, jobs
+}
+
+func TestDispatcherRetirementPathsDropSuppliedContents(t *testing.T) {
+	// Both of these paths are terminal-by-intent and are retried against a
+	// failing store, so the supplied bytes must not survive in the dispatcher's
+	// own copies while that retrying happens.
+	shareSupplied := func(name string) (map[string]string, []InputFile) {
+		secret := []byte("SID=secret-" + name)
+		return map[string]string{"cookies.txt": string(secret)},
+			[]InputFile{{Name: "cookies.txt", Content: append([]byte(nil), secret...)}}
+	}
+
+	t.Run("queued cancellation", func(t *testing.T) {
+		store := newDispatcherTestStore()
+		store.finishRunErr = errors.New("store unavailable")
+		d := NewDispatcher(Dependencies{Store: store, Executor: dispatcherTestExecutor{store: store}, Settings: dispatcherTestSettings{pending: 10}})
+		submission, files := shareSupplied("cancel")
+		cancellation := &queuedCancellation{
+			run:    QueuedRun{RunID: "queued-cancel", Request: CommandRequest{PluginName: "plug", Inputs: submission}, Inputs: files},
+			plugin: "plug", reason: "operator cancelled",
+		}
+		state := &dispatcherState{queuedCancellations: map[string]*queuedCancellation{"queued-cancel": cancellation}}
+		if _, err := d.persistQueuedCancellation(state, cancellation); err == nil {
+			t.Fatal("expected the failing store to be reported")
+		}
+		assertRetiredInputs(t, cancellation.run, submission, files)
+		// The retry does not need the bytes and must not resurrect them.
+		assertRetiredInputs(t, cancellation.run, submission, files)
+	})
+
+	t.Run("dispatch failure", func(t *testing.T) {
+		store := newDispatcherTestStore()
+		store.markRunErr = errors.New("store unavailable")
+		d := NewDispatcher(Dependencies{Store: store, Executor: dispatcherTestExecutor{store: store}, Settings: dispatcherTestSettings{pending: 10}})
+		submission, files := shareSupplied("dispatch")
+		failure := &commandDispatchFailure{
+			run:         QueuedRun{RunID: "dispatch-failure", Request: CommandRequest{PluginName: "plug", Inputs: submission}, Inputs: files},
+			dispatchErr: errors.New("managed job lane is full"),
+			status:      RunStatusFailed, reason: "managed job lane is full",
+		}
+		state := &dispatcherState{failedCommandDispatch: map[string]*commandDispatchFailure{"dispatch-failure": failure}}
+		if _, err := d.persistCommandDispatchFailure(state, failure); err == nil {
+			t.Fatal("expected the failing store to be reported")
+		}
+		assertRetiredInputs(t, failure.run, submission, files)
+	})
+}
+
+func assertRetiredInputs(t *testing.T, run QueuedRun, submission map[string]string, files []InputFile) {
+	t.Helper()
+	for name, content := range submission {
+		if content != "" {
+			t.Errorf("the dispatcher still holds contents for %q", name)
+		}
+	}
+	if len(run.Inputs) != 0 {
+		t.Errorf("the retired run still claims %d supplied inputs", len(run.Inputs))
+	}
+	for i, file := range files {
+		if !bytes.Equal(file.Content, make([]byte, len(file.Content))) {
+			t.Errorf("input %d still holds contents", i)
+		}
+	}
 }
 
 func TestSubmitRefusesInputsBeforeAnyDurableWork(t *testing.T) {
