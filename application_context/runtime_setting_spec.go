@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mahresources/hostfetch"
+	"mahresources/jobs"
 )
 
 // SettingType discriminates value encoding on disk.
@@ -181,6 +182,9 @@ const (
 	KeyUploadWidgetFileCount    = "upload_widget_file_threshold"
 	KeyUploadWidgetSizeBytes    = "upload_widget_size_threshold"
 	KeyJobReplayRetention       = "job_replay_retention"
+	KeyJobHistoryRetention      = "job_history_retention"
+	KeyJobAttentionRetention    = "job_attention_retention"
+	KeyJobPinLimit              = "job_pin_limit"
 )
 
 // buildSpecs returns the registry of runtime-editable settings.
@@ -270,6 +274,24 @@ func buildSpecs() map[string]SettingSpec {
 			Description: "How long a finished Job's encrypted replay input stays readable. The window starts when the Job finishes, never when it was accepted, and nonterminal work is never purged whatever this says. The resource or artifact a Job produced is unaffected.",
 			Group:       GroupJobs, Type: SettingTypeDuration,
 			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
+		},
+		KeyJobHistoryRetention: {
+			Key: KeyJobHistoryRetention, Label: "Job history retention",
+			Description: "How long a succeeded or cancelled Job's history stays after it finishes. The window starts at terminal completion, never at acceptance, and blocked or otherwise nonterminal work is never swept whatever this says. The resource or artifact a Job produced is unaffected.",
+			Group:       GroupJobs, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
+		},
+		KeyJobAttentionRetention: {
+			Key: KeyJobAttentionRetention, Label: "Job attention retention",
+			Description: "How long a failed or interrupted Job's history stays after it finishes. Deliberately longer than the ordinary window, because work that did not succeed is what someone comes back to look at. It starts at terminal completion.",
+			Group:       GroupJobs, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
+		},
+		KeyJobPinLimit: {
+			Key: KeyJobPinLimit, Label: "Pinned jobs per user",
+			Description: "How many Jobs one user may pin. Pinning exempts a Job's history from ordinary retention, so this bounds how much history one account can keep forever.",
+			Group:       GroupJobs, Type: SettingTypeInt,
+			MinNumeric: 1, MaxNumeric: 10000,
 		},
 		KeySharePublicURL: {
 			Key: KeySharePublicURL, Label: "Share public URL",
@@ -410,11 +432,44 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyUploadConcurrency:     defaultUploadConcurrency,
 		KeyUploadWidgetFileCount: defaultUploadWidgetFileCount,
 		KeyUploadWidgetSizeBytes: int64(defaultUploadWidgetSizeBytes),
-		// Runtime-only, for the same shape of reason: it bounds how long the Job
-		// control plane keeps an encrypted envelope, which is a decision an
-		// operator makes about their own disk, not a flag to restart for.
+		// Runtime-only, for the same shape of reason: they bound how long the Job
+		// control plane keeps finished work and its sealed input, which is a
+		// decision an operator makes about their own disk, not a flag to restart
+		// for — and an operator shortening a window should see it apply to the
+		// next sweep rather than to the next boot.
 		KeyJobReplayRetention: defaultJobReplayRetention,
+		// Seeded from the boot flags, and editable at runtime afterwards: an
+		// operator shortening a window, or raising a pin limit, should not have
+		// to restart the process they are watching.
+		KeyJobHistoryRetention:   jobHistoryDefault(cfg),
+		KeyJobAttentionRetention: jobAttentionDefault(cfg),
+		KeyJobPinLimit:           jobPinLimitDefault(cfg),
 	}
+}
+
+// The three Job retention defaults come from the boot configuration when it names
+// one and from the design's own values otherwise, so a flag, an environment
+// variable and a runtime override all end up in one place.
+
+func jobHistoryDefault(cfg *MahresourcesConfig) time.Duration {
+	if cfg != nil && cfg.JobHistoryRetention > 0 {
+		return cfg.JobHistoryRetention
+	}
+	return defaultJobHistoryRetention
+}
+
+func jobAttentionDefault(cfg *MahresourcesConfig) time.Duration {
+	if cfg != nil && cfg.JobAttentionRetention > 0 {
+		return cfg.JobAttentionRetention
+	}
+	return defaultJobAttentionRetention
+}
+
+func jobPinLimitDefault(cfg *MahresourcesConfig) int {
+	if cfg != nil && cfg.JobPinLimit > 0 {
+		return cfg.JobPinLimit
+	}
+	return jobs.DefaultPinLimit
 }
 
 // NewStdlibSettingsLogger returns a SettingsLogger backed by the stdlib log package.

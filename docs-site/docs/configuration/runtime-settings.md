@@ -47,6 +47,9 @@ boot value.
 | `hash_ahash_threshold` | uint64 | 0–64; 0 disables | `-hash-ahash-threshold` | next hash comparison |
 | `hash_backfill_paused` | int | 0–1; 1 pauses the v2 backfill | (runtime only) | next backfill cycle |
 | `job_replay_retention` | duration | 1h–365d | (runtime only) | next Job replay sweep |
+| `job_history_retention` | duration | 1h–365d | `-job-history-retention` | next Job history sweep |
+| `job_attention_retention` | duration | 1h–365d | `-job-attention-retention` | next Job history sweep |
+| `job_pin_limit` | int | 1–10000 | `-job-pin-limit` | next pin |
 
 ## Metadata index build status
 

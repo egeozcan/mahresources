@@ -124,9 +124,11 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.PluginSchedule{},
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
-		// The durable job core. Deleting a user nulls a Job's owner and actor,
-		// so the table exists wherever the suite exercises user deletion.
+		// The durable job core. Deleting a user nulls a Job's owner and actor and
+		// removes the viewer-keyed preferences beside it, so these tables exist
+		// wherever the suite exercises user deletion.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobPreference{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

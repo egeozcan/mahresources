@@ -315,6 +315,56 @@ const (
 	MaxOptionalEventsPerJob = MaxEventsPerJob - ReservedHostEventCapacity
 )
 
+// Listing bounds. A page is bounded because the history it walks is expected to
+// hold millions of Jobs: a caller asks for what it can render, and one that asks
+// for more than the ceiling is refused rather than served a page it did not ask
+// for.
+const (
+	// DefaultPageSize is the page one listing returns when it names no size.
+	DefaultPageSize = 50
+	// MaxPageSize is the largest page a caller may ask for.
+	MaxPageSize = 200
+	// DefaultPinLimit is how many Jobs one viewer may pin when the deployment
+	// configures no limit. Pinning exempts a Job's metadata and events from
+	// ordinary retention, so an unbounded pin list is unbounded history.
+	DefaultPinLimit = 100
+)
+
+// Event-scan bounds. A timeline and a catch-up page are bounded for the same
+// reason a listing is: the durable stream is a cursor a client walks, not a
+// response that carries a Job's whole history.
+const (
+	// DefaultEventPageSize is how many events one scan returns when it names no
+	// size.
+	DefaultEventPageSize = 200
+	// MaxEventPageSize is the largest event page a caller may ask for.
+	MaxEventPageSize = 1000
+)
+
+// Analysis window bounds. The default is what an interactive question means, and
+// the ceiling is where a longer answer stops being an interactive aggregate and
+// becomes an export Job.
+const (
+	// DefaultSummaryWindow is the window an aggregate covers when it names none.
+	DefaultSummaryWindow = 30 * 24 * time.Hour
+	// MaxSummaryWindow is the longest window an interactive aggregate accepts.
+	MaxSummaryWindow = 90 * 24 * time.Hour
+)
+
+// Retention defaults and bounds. The two windows are the design's: a month of
+// ordinary history, three months for work that did not succeed.
+const (
+	// DefaultHistoryRetention is how long succeeded and cancelled Jobs stay when
+	// nothing configures a window.
+	DefaultHistoryRetention = 30 * 24 * time.Hour
+	// DefaultAttentionRetention is how long failed and interrupted Jobs stay.
+	DefaultAttentionRetention = 90 * 24 * time.Hour
+	// DefaultSweepBatch bounds one retention pass when it names no batch.
+	DefaultSweepBatch = 100
+	// MaxSweepBatch is the largest batch a caller may ask a sweep to delete.
+	MaxSweepBatch = 1000
+)
+
 // Bounds on the typed outputs one Job may publish.
 const (
 	// MaxOutputsPerJob bounds one Job's output list. Publishing a key the Job
@@ -333,6 +383,17 @@ const (
 type Deps struct {
 	DB  *gorm.DB
 	Now func() time.Time
+	// PinLimit is how many Jobs the asking viewer may pin in this deployment. 0
+	// means "not configured", which selects DefaultPinLimit rather than
+	// "unlimited": a limit a missing value removed would be no limit at all.
+	PinLimit int
+	// Retention is the ordinary history retention this deployment configured. It
+	// rides on the handle for the same reason Replay does — a facade reads it
+	// live, so an operator's change applies to the next terminal transition — and
+	// a terminal Job's deadline is stamped from it in the terminal transition's
+	// own transaction. A nil policy means "not configured", which selects the
+	// design's defaults rather than stamping no deadline at all.
+	Retention *RetentionPolicy
 	// Replay is the deployment's replay configuration for this call: the keyring
 	// the module seals and opens envelopes with, and how long finished work's
 	// input stays readable. It rides on the handle for the same reason the
@@ -354,6 +415,16 @@ type ReplayConfig struct {
 	Retention time.Duration
 }
 
+// retention is the policy a call was made with, with the design's defaults
+// standing in for an unconfigured one: a terminal Job must always acquire a
+// deadline, because a Job that never expires is a Job nobody may ever remove.
+func (d Deps) retention() RetentionPolicy {
+	if d.Retention == nil {
+		return RetentionPolicy{}
+	}
+	return *d.Retention
+}
+
 // now returns the current instant in UTC. Every stored instant is normalized to
 // UTC on the way in, so the two supported databases agree about what a stored
 // timestamp means.
@@ -370,6 +441,230 @@ func (d Deps) now() time.Time {
 type Access struct {
 	UserID        uint
 	Administrator bool
+}
+
+// Filter selects the Jobs one visible listing, summary or event scan returns.
+//
+// Every dimension is a durable relational fact — columns and the preference and
+// lineage rows — because a listing that filtered in Go would answer its page and
+// its counts from different sets, which is how an aggregate leaks a Job its list
+// hides. A zero field means "not asked": no predicate is added for it.
+type Filter struct {
+	// States, Kinds and Origins narrow on the normalized stored spellings. An
+	// unknown state is refused rather than matching nothing, because a typo is a
+	// question the caller meant to ask and an empty page would hide the mistake.
+	States  []string
+	Kinds   []string
+	Origins []string
+
+	OwnerID *uint
+	ActorID *uint
+
+	AcceptedAfter  *time.Time
+	AcceptedBefore *time.Time
+
+	// Relationship narrows to Jobs that are the FROM endpoint of a lineage link
+	// of that type — the successor a Retry or Repeat created, or the parent of a
+	// child stage. It takes a LinkType spelling, so there is one name per
+	// relation.
+	Relationship string
+
+	// Search matches the bounded, sanitized text a viewer may read: the UUID,
+	// title, sanitized summary, sanitized failure message and output labels. It
+	// never reaches ciphertext or a protected diagnostic reference.
+	Search string
+
+	// Pinned and Dismissed are the asking viewer's own preferences. They are
+	// pointers because "not asked" is a third state: nil adds no predicate,
+	// false asks for the Jobs the viewer has not pinned or dismissed, and true
+	// for the ones they have. Dismissal belongs to one viewer's default list, so
+	// it is always asked of Access.UserID and never of the Job's owner.
+	Pinned    *bool
+	Dismissed *bool
+
+	// Command narrows to Jobs currently offering a command key. It is refused:
+	// a command's availability is advertised by its Kind adapter at read time
+	// and is not a durable column, so a listing could not answer it without
+	// post-filtering in Go — which is exactly the drift the constructor exists
+	// to prevent. The command surface is what makes this dimension answerable,
+	// and until it does a request naming it is refused rather than silently
+	// matching nothing.
+	Command string
+}
+
+// Cursor is the keyset position a listing continues from: the accepted instant
+// and identity of the last Job the previous page returned. It is a value rather
+// than an offset because history grows under the reader — a Job accepted while a
+// page is open moves every later row down an offset and silently skips one.
+type Cursor struct {
+	AcceptedAt time.Time
+	ID         string
+}
+
+// PreferenceRequest is one viewer's change to one Job: whether they dismiss it
+// from their default list, whether they pin it, or both. A nil field leaves the
+// viewer's answer to that question exactly as it was — which is why the two are
+// pointers: "set this" and "clear this" are different requests, and a request
+// that names neither is refused rather than doing nothing quietly.
+type PreferenceRequest struct {
+	JobID     string
+	Dismissed *bool
+	Pinned    *bool
+}
+
+// RetentionPolicy is the ordinary history retention an operator configured: how
+// long finished work stays after it reached a terminal state. It is two windows
+// because §9 draws that line — succeeded and cancelled work ages out sooner than
+// failed and interrupted work, which someone may still be analyzing.
+//
+// A zero window means "not configured" and selects the design's default, never
+// "expire now": a deployment that has not set a value must not delete history on
+// the next sweep.
+type RetentionPolicy struct {
+	History   time.Duration
+	Attention time.Duration
+}
+
+// windowFor is the retention one terminal state is measured by.
+func (p RetentionPolicy) windowFor(state State) time.Duration {
+	if state == StateFailed || state == StateInterrupted {
+		return p.attention()
+	}
+	return p.history()
+}
+
+func (p RetentionPolicy) history() time.Duration {
+	if p.History <= 0 {
+		return DefaultHistoryRetention
+	}
+	return p.History
+}
+
+func (p RetentionPolicy) attention() time.Duration {
+	if p.Attention <= 0 {
+		return DefaultAttentionRetention
+	}
+	return p.Attention
+}
+
+// SweepCursor is where a bounded retention sweep continues from: the finish
+// instant and identity of the last Job it examined. Like a listing cursor it is
+// a keyset rather than an offset, and for the same reason — the rows in front of
+// it are being deleted while it is used.
+type SweepCursor struct {
+	FinishedAt time.Time
+	ID         string
+}
+
+// SweepResult is one bounded pass.
+type SweepResult struct {
+	// Examined is how many expired Jobs the pass looked at, pruned or not.
+	Examined int
+	// Pruned is how many it took out of ordinary history.
+	Pruned int
+	// Skipped is how many it left alone: pinned work, and work an unresolved
+	// claim still protects.
+	Skipped int
+	// Outputs is how many output rows had their availability recorded before the
+	// history that pointed at them was pruned.
+	Outputs int
+	// Envelopes is how many replay envelopes the pass purged.
+	Envelopes int
+	// Next continues the walk, or is nil when this pass reached the end of the
+	// expired range.
+	Next *SweepCursor
+}
+
+// Summary is the bounded aggregate over the Jobs one filter and one window
+// match, under the same visibility predicate the listing uses.
+type Summary struct {
+	// Window, From and To say what the numbers describe: the analysis window,
+	// with From and To the instants it covers. AcceptedAt is the column it
+	// measures, because the cohort a question is asked about is the work that was
+	// accepted in that period.
+	Window time.Duration
+	From   time.Time
+	To     time.Time
+
+	Total   int64
+	ByState map[string]int64
+	ByKind  map[string]int64
+
+	// Succeeded, Failed and Terminal are the settled outcomes the rate is drawn
+	// from. SuccessRate is zero when nothing settled, rather than a division by
+	// an empty set.
+	Succeeded   int64
+	Failed      int64
+	Terminal    int64
+	SuccessRate float64
+
+	// Queue is measured over every Job in the window; Run over the Jobs that
+	// started, because a Job that never ran has no run duration to report rather
+	// than a zero one.
+	Queue DurationStats
+	Run   DurationStats
+
+	// Failures groups the settled failures by their bounded classification,
+	// commonest first. It never carries an error message.
+	Failures []FailureClassCount
+}
+
+// DurationStats is a median and a high percentile, which is what a duration
+// question is actually asking: an average over a long tail describes nothing a
+// person recognizes.
+type DurationStats struct {
+	Median time.Duration
+	P95    time.Duration
+}
+
+// FailureClassCount is one line of a failure breakdown.
+type FailureClassCount struct {
+	Class string
+	Count int64
+}
+
+// Page is one bounded, newest-first page of visible Jobs. Next is the cursor to
+// continue from, or nil when the listing reached its end.
+type Page struct {
+	Jobs []Snapshot
+	Next *Cursor
+}
+
+// Event is the bounded public view of one Job Event: the sanitized fact and
+// where it sits in the Job's timeline. It never carries executor-internal state,
+// and its Detail is the bounded sanitized JSON the recording site wrote.
+type Event struct {
+	ID         string
+	JobID      string
+	Sequence   uint64
+	JobVersion uint64
+	Type       string
+	Detail     json.RawMessage
+	// ReservedHost marks the facts optional adapter traffic may never displace.
+	ReservedHost bool
+	// DeliverySequence is the commit-safe stream position, and it is nil until
+	// the post-commit publisher has assigned one. The per-Job timeline is
+	// readable without it.
+	DeliverySequence *uint64
+	CreatedAt        time.Time
+}
+
+// Lineage is one visible Job's relatives, as far as the asker may see them: one
+// hop of each relation, with every relative authorized independently.
+//
+// It is deliberately one hop. Lineage does not grant transitive visibility, and
+// a hidden relative is neither named nor counted — so a list here says which
+// Jobs are related, never how many were withheld.
+type Lineage struct {
+	Job Snapshot
+	// Ancestors are the Jobs this one directly retries or repeats, newest first.
+	Ancestors []Snapshot
+	// Successors are the Jobs that directly retry or repeat this one.
+	Successors []Snapshot
+	// Parents are the Jobs this one is a child stage of.
+	Parents []Snapshot
+	// Children are this Job's child stages.
+	Children []Snapshot
 }
 
 // ReplayAvailability is what a viewer can do with a Job's replay input right
@@ -602,6 +897,26 @@ var (
 	// links a Job to itself. Naming a Job that does not exist is ErrNotFound:
 	// there is nothing to relate it to.
 	ErrInvalidLink = errors.New("jobs: invalid job link")
+	// ErrInvalidFilter is a listing, summary or event-scan filter outside the
+	// vocabulary this release can answer — an unknown state, a relationship that
+	// is not a LinkType, or a dimension that is not a durable fact.
+	ErrInvalidFilter = errors.New("jobs: invalid filter")
+	// ErrInvalidCursor is a keyset position that cannot be continued from.
+	ErrInvalidCursor = errors.New("jobs: invalid cursor")
+	// ErrInvalidPage is a page size outside the bound a listing accepts.
+	ErrInvalidPage = errors.New("jobs: invalid page size")
+	// ErrInvalidPreference is a preference request that cannot be acted on: one
+	// that names nothing to change, or one made by a principal with no user to
+	// belong to.
+	ErrInvalidPreference = errors.New("jobs: invalid job preference")
+	// ErrPinLimitReached refuses a pin that would take a viewer past the
+	// deployment's per-viewer limit. Nothing is written: the viewer unpins
+	// something first, or an operator raises the limit.
+	ErrPinLimitReached = errors.New("jobs: the pin limit is reached")
+	// ErrInvalidWindow is an aggregate window past the interactive ceiling.
+	// Refused rather than clamped: a caller asking for a year of history is
+	// asking a different question, and one that should become an export Job.
+	ErrInvalidWindow = errors.New("jobs: invalid aggregate window")
 	// ErrNotFound covers both "no such Job" and "a Job you may not see". The two
 	// are deliberately indistinguishable, so an unauthorized probe learns
 	// nothing from the difference.

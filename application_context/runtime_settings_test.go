@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/jobs"
 	"mahresources/models"
 
 	"gorm.io/driver/sqlite"
@@ -248,6 +249,94 @@ func TestRuntimeSettings_ConcurrentSetGet(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = rs.getRaw(KeyMRQLDefaultLimit) }()
 	}
 	wg.Wait()
+}
+
+// TestRuntimeSettings_JobRetentionDefaultsAndOverrides pins the three Job
+// retention settings at the registry seam: their defaults come from the boot
+// configuration, an operator's override is visible on the next read without a
+// restart, a settings service that was never given them answers "not
+// configured" rather than a typed zero, and nonsense values are refused by
+// bounds rather than published.
+func TestRuntimeSettings_JobRetentionDefaultsAndOverrides(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), BuildDefaultsFromConfig(&MahresourcesConfig{}))
+	if err := rs.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := rs.JobHistoryRetention(); got != defaultJobHistoryRetention {
+		t.Errorf("default history retention = %v, want %v", got, defaultJobHistoryRetention)
+	}
+	if got := rs.JobAttentionRetention(); got != defaultJobAttentionRetention {
+		t.Errorf("default attention retention = %v, want %v", got, defaultJobAttentionRetention)
+	}
+	if got := rs.JobPinLimit(); got != jobs.DefaultPinLimit {
+		t.Errorf("default pin limit = %d, want %d", got, jobs.DefaultPinLimit)
+	}
+
+	// The boot configuration is what seeds them, which is the path a flag or an
+	// environment variable reaches this registry through.
+	boot := BuildDefaultsFromConfig(&MahresourcesConfig{
+		JobHistoryRetention: 6 * time.Hour, JobAttentionRetention: 12 * time.Hour, JobPinLimit: 5,
+	})
+	if boot[KeyJobHistoryRetention] != 6*time.Hour || boot[KeyJobAttentionRetention] != 12*time.Hour || boot[KeyJobPinLimit] != 5 {
+		t.Fatalf("boot defaults = %v %v %v", boot[KeyJobHistoryRetention], boot[KeyJobAttentionRetention], boot[KeyJobPinLimit])
+	}
+	fromBoot := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), boot)
+	if err := fromBoot.Load(); err != nil {
+		t.Fatalf("load boot settings: %v", err)
+	}
+	if got := fromBoot.JobHistoryRetention(); got != 6*time.Hour {
+		t.Errorf("history retention from the boot flag = %v, want 6h", got)
+	}
+	if got := fromBoot.JobPinLimit(); got != 5 {
+		t.Errorf("pin limit from the boot flag = %d, want 5", got)
+	}
+
+	// An operator's change applies to the next read.
+	if err := rs.Set(KeyJobHistoryRetention, "2h", "shorter", "127.0.0.1"); err != nil {
+		t.Fatalf("set history retention: %v", err)
+	}
+	if got := rs.JobHistoryRetention(); got != 2*time.Hour {
+		t.Errorf("history retention after the override = %v, want 2h", got)
+	}
+	if err := rs.Set(KeyJobPinLimit, "7", "more pins", "127.0.0.1"); err != nil {
+		t.Fatalf("set pin limit: %v", err)
+	}
+	if got := rs.JobPinLimit(); got != 7 {
+		t.Errorf("pin limit after the override = %d, want 7", got)
+	}
+
+	// A settings service built without them answers 0, which the context
+	// accessors read as "not configured" and resolve to the design's default.
+	freshDB, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s-unconfigured?mode=memory&cache=private", t.Name())), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("open unconfigured database: %v", err)
+	}
+	if err := freshDB.AutoMigrate(&models.RuntimeSetting{}, &models.LogEntry{}); err != nil {
+		t.Fatalf("migrate unconfigured database: %v", err)
+	}
+	partial := NewRuntimeSettings(freshDB, &stubLogger{}, buildSpecs(), map[string]any{})
+	if err := partial.Load(); err != nil {
+		t.Fatalf("load partial settings: %v", err)
+	}
+	if got := partial.JobHistoryRetention(); got != 0 {
+		t.Errorf("unconfigured history retention = %v, want 0", got)
+	}
+	if got := partial.JobAttentionRetention(); got != 0 {
+		t.Errorf("unconfigured attention retention = %v, want 0", got)
+	}
+	if got := partial.JobPinLimit(); got != 0 {
+		t.Errorf("unconfigured pin limit = %d, want 0", got)
+	}
+
+	// Bounds, not a silent acceptance: a pin limit of zero would mean nobody may
+	// pin, and a retention window under an hour is a mistake worth naming.
+	if err := rs.Set(KeyJobPinLimit, "0", "no pins", "127.0.0.1"); err == nil {
+		t.Error("a pin limit of zero must be refused")
+	}
+	if err := rs.Set(KeyJobHistoryRetention, "30s", "too short", "127.0.0.1"); err == nil {
+		t.Error("a retention window under the floor must be refused")
+	}
 }
 
 func TestRuntimeSettings_TypedGetters_Defaults(t *testing.T) {

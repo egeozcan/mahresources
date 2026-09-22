@@ -155,6 +155,13 @@ type MahresourcesConfig struct {
 	DownloadHistoryRetention time.Duration
 	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
 	DownloadCockpitLimit int
+	// JobHistoryRetention is how long a succeeded or cancelled Job's history
+	// stays after it finishes. JobAttentionRetention is the longer window for
+	// work that did not succeed.
+	JobHistoryRetention   time.Duration
+	JobAttentionRetention time.Duration
+	// JobPinLimit is how many Jobs one user may pin.
+	JobPinLimit int
 	// PluginScheduleTick is how often the plugin scheduler looks for due work.
 	// It bounds the resolution of every schedule.
 	PluginScheduleTick time.Duration
@@ -340,6 +347,13 @@ type MahresourcesInputConfig struct {
 	DownloadHistoryRetention time.Duration
 	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
 	DownloadCockpitLimit int
+	// JobHistoryRetention is how long a succeeded or cancelled Job's history
+	// stays after it finishes. JobAttentionRetention is the longer window for
+	// work that did not succeed.
+	JobHistoryRetention   time.Duration
+	JobAttentionRetention time.Duration
+	// JobPinLimit is how many Jobs one user may pin.
+	JobPinLimit int
 	// PluginScheduleTick is how often the plugin scheduler looks for due work.
 	// It bounds the resolution of every schedule.
 	PluginScheduleTick time.Duration
@@ -557,6 +571,17 @@ type MahresourcesContext struct {
 	// key", which the Job control plane treats as a refusal to store secret input
 	// — never as a licence to store it in the clear.
 	jobReplayKeyring *jobs.Keyring
+	// jobService is the Job control plane this process installed, installed by
+	// main.go with the same instance the dispatch runtime registers its Kind
+	// adapters on.
+	//
+	// It is a shared pointer for the same reason the keyring is: the facade and
+	// the runtime must be looking at one control plane, or registrations would be
+	// invisible to every read path. Like the keyring it is process-lifetime state
+	// rather than scoped data — the module takes its database handle per call — and
+	// nil means "this context has no control plane", which a facade call reports
+	// rather than dereferencing.
+	jobService *jobs.Service
 	// shareServerListening records that the public share server bound its port and
 	// has not stopped serving. Finding 51: a bind failure was logged and swallowed,
 	// so /admin/settings went on advertising the share port and the note sidebar
@@ -618,6 +643,13 @@ func (ctx *MahresourcesContext) DeferredSigningKey() []byte {
 // stays readable when nothing configures one: seven days, the design's replay
 // window. It is only ever measured from terminal completion.
 const defaultJobReplayRetention = 168 * time.Hour
+
+// The ordinary history windows, for a context with no settings service: a month
+// of succeeded and cancelled work, three months of work that did not succeed.
+const (
+	defaultJobHistoryRetention   = jobs.DefaultHistoryRetention
+	defaultJobAttentionRetention = jobs.DefaultAttentionRetention
+)
 
 // SetJobReplayKeyring installs the replay keyring the Job control plane seals
 // and opens envelope input with.
@@ -683,6 +715,11 @@ func (ctx *MahresourcesContext) jobDeps() jobs.Deps {
 			Keys:      ctx.JobReplayKeyring(),
 			Retention: ctx.JobReplayRetention(),
 		},
+		Retention: &jobs.RetentionPolicy{
+			History:   ctx.JobHistoryRetention(),
+			Attention: ctx.JobAttentionRetention(),
+		},
+		PinLimit: ctx.JobPinLimit(),
 	}
 }
 
@@ -1644,6 +1681,9 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		DownloadFailedRetention:      cfg.DownloadFailedRetention,
 		DownloadHistoryRetention:     cfg.DownloadHistoryRetention,
 		DownloadCockpitLimit:         cfg.DownloadCockpitLimit,
+		JobHistoryRetention:          cfg.JobHistoryRetention,
+		JobAttentionRetention:        cfg.JobAttentionRetention,
+		JobPinLimit:                  cfg.JobPinLimit,
 		PluginScheduleTick:           cfg.PluginScheduleTick,
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,

@@ -555,6 +555,41 @@ func (s *RuntimeSettings) JobReplayRetention() time.Duration {
 	return d
 }
 
+// JobHistoryRetention is how long a succeeded or cancelled Job's history stays
+// after it finishes. Read with the two-value form for the reason
+// JobReplayRetention documents: this value is read on the Job lifecycle path, and
+// a settings service built without it must answer "not configured" so the caller
+// falls back to the default, not panic inside a terminal transition.
+func (s *RuntimeSettings) JobHistoryRetention() time.Duration {
+	v, ok := s.getRaw(KeyJobHistoryRetention)
+	if !ok {
+		return 0
+	}
+	d, _ := v.(time.Duration)
+	return d
+}
+
+// JobAttentionRetention is how long a failed or interrupted Job's history stays
+// after it finishes.
+func (s *RuntimeSettings) JobAttentionRetention() time.Duration {
+	v, ok := s.getRaw(KeyJobAttentionRetention)
+	if !ok {
+		return 0
+	}
+	d, _ := v.(time.Duration)
+	return d
+}
+
+// JobPinLimit is how many Jobs one user may pin.
+func (s *RuntimeSettings) JobPinLimit() int {
+	v, ok := s.getRaw(KeyJobPinLimit)
+	if !ok {
+		return 0
+	}
+	n, _ := v.(int)
+	return n
+}
+
 // UploadConcurrency is how many files the bulk upload widget sends at once.
 func (s *RuntimeSettings) UploadConcurrency() int {
 	v, _ := s.getRaw(KeyUploadConcurrency)

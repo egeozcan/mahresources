@@ -56,6 +56,9 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		// The durable job core: DeleteUser's sweep nulls a Job's owner and
 		// actor, so these tables exist wherever a user can be deleted.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		// ... and preferences are keyed by the viewer, so the sweep removes them
+		// outright rather than nulling a column.
+		&models.JobPreference{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -80,7 +80,7 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 		// it is predicated on the state and version the candidate read saw, and
 		// it requires an unowned Job — so a Job another runtime claimed in the
 		// meantime matches no row.
-		next, updates := applyTransition(job, Transition{To: StateRunning}, now)
+		next, updates := applyTransition(job, Transition{To: StateRunning}, deps.retention(), now)
 		updates["execution_token"] = token
 		result := tx.Model(&models.Job{}).
 			Where("id = ? AND version = ? AND state = ? AND (execution_token IS NULL OR execution_token = '')",
@@ -945,7 +945,7 @@ func (s *Service) quarantineClaim(deps Deps, job models.Job, claim models.JobCla
 		return Snapshot{}, fmt.Errorf("jobs: encode quarantine detail: %w", err)
 	}
 
-	next, updates := applyTransition(job, Transition{To: StateBlocked}, now)
+	next, updates := applyTransition(job, Transition{To: StateBlocked}, deps.retention(), now)
 	var snap Snapshot
 	err = deps.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.JobClaim{}).

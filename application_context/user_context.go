@@ -222,6 +222,13 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 		if uErr := tx.Where("user_id = ?", id).Delete(&models.UserSetting{}).Error; uErr != nil {
 			return uErr
 		}
+		// Job preferences are viewer-keyed for the same reason, and dropping them
+		// is load-bearing rather than tidy: a surviving pin would exempt that
+		// Job's history from retention for everybody, forever, and a surviving
+		// dismissal would be inherited by whichever account later holds the id.
+		if pErr := tx.Where("user_id = ?", id).Delete(&models.JobPreference{}).Error; pErr != nil {
+			return pErr
+		}
 
 		// Conditional delete: allowed unless the target is an enabled admin with no
 		// other enabled admin remaining.

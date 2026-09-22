@@ -28,6 +28,9 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	modelsToMigrate := append(stampedModels(),
+		// The viewer-keyed Job preferences DeleteUser removes: cited here rather
+		// than in stampedModels because nothing about them is nulled.
+		&models.JobPreference{},
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.User{}, &models.Session{}, &models.ApiToken{}, &models.SavedSearch{}, &models.UserSetting{},

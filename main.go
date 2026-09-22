@@ -200,6 +200,9 @@ func main() {
 	downloadFailedRetention := flag.Duration("download-failed-retention", parseDurationEnv("DOWNLOAD_FAILED_RETENTION", 7*24*time.Hour), "How long a failed or cancelled download stays in the download history (env: DOWNLOAD_FAILED_RETENTION)")
 	downloadHistoryRetention := flag.Duration("download-history-retention", parseDurationEnv("DOWNLOAD_HISTORY_RETENTION", 24*time.Hour), "How long a completed download stays in the download history (env: DOWNLOAD_HISTORY_RETENTION)")
 	downloadCockpitLimit := flag.Int("download-cockpit-limit", parseIntEnv("DOWNLOAD_COCKPIT_LIMIT", 10), "How many finished downloads the jobs panel renders; active work and non-download jobs are never capped (env: DOWNLOAD_COCKPIT_LIMIT)")
+	jobHistoryRetention := flag.Duration("job-history-retention", parseDurationEnv("JOB_HISTORY_RETENTION", jobs.DefaultHistoryRetention), "How long a succeeded or cancelled job's history stays after it finishes (env: JOB_HISTORY_RETENTION)")
+	jobAttentionRetention := flag.Duration("job-attention-retention", parseDurationEnv("JOB_ATTENTION_RETENTION", jobs.DefaultAttentionRetention), "How long a failed or interrupted job's history stays after it finishes (env: JOB_ATTENTION_RETENTION)")
+	jobPinLimit := flag.Int("job-pin-limit", parseIntEnv("JOB_PIN_LIMIT", jobs.DefaultPinLimit), "How many jobs one user may pin; pinning exempts a job's history from ordinary retention (env: JOB_PIN_LIMIT)")
 	pluginScheduleTick := flag.Duration("plugin-schedule-tick", parseDurationEnv("PLUGIN_SCHEDULE_TICK", application_context.DefaultScheduleTick), "How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule (env: PLUGIN_SCHEDULE_TICK)")
 	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
 	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
@@ -438,6 +441,9 @@ func main() {
 		DownloadFailedRetention:      *downloadFailedRetention,
 		DownloadHistoryRetention:     *downloadHistoryRetention,
 		DownloadCockpitLimit:         *downloadCockpitLimit,
+		JobHistoryRetention:          *jobHistoryRetention,
+		JobAttentionRetention:        *jobAttentionRetention,
+		JobPinLimit:                  *jobPinLimit,
 		PluginScheduleTick:           *pluginScheduleTick,
 		MaxImportSize:                *maxImportSize,
 		MaxUploadSize:                *maxUploadSize,
@@ -878,6 +884,11 @@ func main() {
 	// work at all. The deployment-wide concurrency budget is the shared job
 	// budget, and every Kind's own budget is taken on top of it.
 	jobService := jobs.NewService()
+	// Installed on the context as well as handed to the runtime: the runtime
+	// registers the Kind adapters, and a facade holding a second control plane
+	// would read one with no adapters registered. One process, one control
+	// plane.
+	context.SetJobService(jobService)
 	jobRuntime := application_context.NewJobRuntime(context, jobService, application_context.JobRuntimeConfig{
 		GlobalCapacity: *maxJobConcurrency,
 	})
@@ -964,6 +975,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobReplayEnvelope{},
 		&models.JobClaim{},
 		&models.JobCapacityLease{},
+		&models.JobPreference{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err

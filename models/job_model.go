@@ -398,6 +398,35 @@ const (
 	JobReplayPurgeExpired = "expired"
 )
 
+// JobPreference is one viewer's relationship to one Job: whether they dismissed
+// it from their default list and whether they pinned it.
+//
+// It is deliberately not part of the Job row. Dismissal belongs to a viewer —
+// it hides the Job from *their* default list and changes nothing about what
+// happened — and pinning exempts the Job's metadata and events from automatic
+// expiry for everybody, so it has to be answerable as "is anybody pinning this",
+// which a column per viewer cannot be. Both are recorded as instants rather than
+// booleans so the fact of when a viewer dismissed or pinned something survives;
+// clearing one NULLs its instant.
+//
+// The primary key is the pair, which is what makes a preference a row rather
+// than a list: setting one twice replaces it instead of accumulating. UserID is
+// indexed on its own because the per-user pin limit counts one viewer's pins,
+// which the (job_id, user_id) key cannot answer.
+type JobPreference struct {
+	JobID  string `gorm:"primaryKey;size:36" json:"jobId"`
+	UserID uint   `gorm:"primaryKey;index:idx_job_preferences_user" json:"userId"`
+
+	// DismissedAt is when this viewer hid the Job from their default list.
+	DismissedAt *time.Time `json:"dismissedAt,omitempty"`
+	// PinnedAt is when this viewer pinned the Job. A pinned Job is exempt from
+	// ordinary metadata retention for as long as any viewer holds one.
+	PinnedAt *time.Time `json:"pinnedAt,omitempty"`
+
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // JobWriterEpoch is the single row recording the minimum writer epoch this
 // database accepts: the oldest release permitted to write to it.
 //

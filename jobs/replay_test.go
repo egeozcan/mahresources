@@ -91,7 +91,7 @@ func newReplayDeps(t *testing.T) (Deps, string) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	if err := db.AutoMigrate(&models.Job{}, &models.JobEvent{}, &models.JobReplayEnvelope{}); err != nil {
+	if err := db.AutoMigrate(jobCoreTables()...); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
 	return Deps{DB: db}, dsn

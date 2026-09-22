@@ -10936,3 +10936,192 @@ Residual risks and handoffs carried forward:
   wrong Job half the time (`-count=20` exposed it as `examined 1 claims`).
   `expireClaim` now fails on a zero-row update, and the test ages the Job the
   claim actually names.
+
+# Job Center Task 5 — visibility, cursor queries, preferences, retention and aggregates (2026-09-22)
+
+**Goal:** Land Task 5 of the unified Job Center plan: one query constructor every
+Job read goes through, a keyset-paginated listing with filters and a bounded
+search, the timeline/output/lineage/resumable-event readers, per-viewer
+dismiss/pin preferences, a bounded aggregate, and a bounded resumable retention
+sweep — with the two new boot flags and three new runtime settings that configure
+it, every red test written first and observed failing.
+
+## Plan
+
+- [x] Read the complete plan, the approved design (§7, §8, §9, §10, §14, §19),
+      ADRs 0006/0007, `CLAUDE.md`, and the existing download-history
+      query/sweep, migration and runtime-settings patterns before editing.
+- [x] `models/job_model.go`: `JobPreference` — one row per (viewer, Job) with
+      dismissed/pinned instants, keyed on the pair so a preference is a row
+      rather than an accumulating list.
+- [x] `jobs/types.go`: `Filter`, `Cursor`, `Page`, `Event`, `Lineage`,
+      `PreferenceRequest`, `DurationStats`, `FailureClassCount`, `Summary`,
+      `RetentionPolicy`, `SweepCursor`, `SweepResult`, `Deps.PinLimit`,
+      `Deps.Retention`, the page/event/window/retention/pin bounds and the new
+      sentinels.
+- [x] `jobs/query.go`: `jobQuery` (the constructor), `List`, `Timeline`,
+      `PublishedEvents`, `Outputs`, `Lineage`, `Summary`, `SetPreference`, the
+      filter application and its refusals.
+- [x] `jobs/retention.go`: `Sweep`, the guarded per-Job prune, the output
+      availability recording, and the deadline stamp for rows that predate
+      deadlines.
+- [x] `jobs/service.go`: `Get` reads through the constructor; a terminal
+      transition stamps the Job's own `expires_at` from the policy in effect.
+- [x] `jobs/replay.go`: `replayAvailabilityFrom`, so a listing answers a whole
+      page's replay question with one query instead of one per row.
+- [x] `application_context/job_context.go`: `SetJobService`/`JobService` and the
+      authorization-aware facade (`ListJobs`, `GetJob`, `GetJobTimeline`,
+      `GetPublishedJobEvents`, `GetJobOutputs`, `GetJobLineage`,
+      `GetJobSummary`, `SetJobPreference`, `SweepJobHistory`) plus the three
+      accessors.
+- [x] `application_context/runtime_setting_spec.go`, `runtime_settings.go`,
+      `context.go`, `main.go`: `job_history_retention`, `job_attention_retention`
+      and `job_pin_limit` with boot flags, env vars, `MahresourcesConfig` fields
+      and live-settings reads; `SetJobService` wired to the same control plane
+      the dispatch runtime registers its adapters on; `JobPreference` joined to
+      the startup migration.
+- [x] `application_context/user_context.go`: `DeleteUser` removes the deleted
+      viewer's preference rows.
+- [x] `.env.template` and the two docs-site configuration pages describe the new
+      flags and settings (their freshness is otherwise Task 16's).
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Visibility and listing | `undefined: Filter`, `undefined: Cursor`, `undefined: Page`, `svc.List undefined (type *Service has no field or method List)` | `TestVisibilityShowsAnOrdinaryUserOnlyTheirOwnOwnerClassJobs`, `TestListFiltersByTheStoredDimensions`, `TestListFiltersByLineageRelationship`, `TestListSearchMatchesSanitizedTextAndExcludesSecretsAndDiagnostics`, `TestListRefusesQuestionsItCannotAnswer`, `TestCursorPagesNewestFirstAndSkipsNothingWhenHistoryGrows` |
+| Preferences | `svc.SetPreference undefined`, `undefined: PreferenceRequest`, `undefined: ErrInvalidPreference`, `deps.PinLimit undefined (type Deps has no field or method PinLimit)` | `TestDismissChangesOnlyThatViewersDefaultList`, `TestPinObservesThePerUserLimitAndAnswersTheViewersOwnRows` |
+| The other readers | `svc.Timeline undefined`, `svc.Outputs undefined`, `svc.Lineage undefined`, `svc.PublishedEvents undefined` | `TestVisibilityHidesAJobFromEveryOtherReadPath`, `TestTimelineReturnsTheJobsOrderedBoundedTimeline`, `TestOutputsReturnsTheJobsTypedOutputsAndRefusesAHiddenJob`, `TestLineageNamesOnlyVisibleRelatives`, `TestPublishedEventsCatchesUpFromACursorInDeliveryOrder` |
+| Summary | `svc.Summary undefined (type *Service has no field or method Summary)`, `undefined: DefaultSummaryWindow`, `undefined: MaxSummaryWindow`, `undefined: ErrInvalidWindow` | `TestSummarySharesTheListingsVisibilityPredicateAndFilters`, `TestSummaryWindowDefaultsToThirtyDaysAndRefusesALongerOne`, `TestSummaryCountsStatesKindsDurationsAndFailures` |
+| Retention | `undefined: RetentionPolicy`, `undefined: SweepCursor`, `undefined: SweepResult`, `svc.Sweep undefined`, `deps.Retention undefined` | `TestRetentionSweepStartsAtFinishedAtAndLeavesNonterminalWorkAlone`, `TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim`, `TestRetentionSweepIsBoundedAndResumesFromItsCursor`, `TestRetentionPinExemptsMetadataButNotArtifacts`, `TestRetentionSweepPurgesExpiredReplayEnvelopes`, `TestRetentionDeadlinesAreComputedOnceForRowsThatPredateThem` |
+| Application facade | `ctx.SetJobService undefined`, `ctx.ListJobs undefined`, `ctx.GetJob undefined`, `ctx.GetJobTimeline undefined`, `ctx.JobPinLimit undefined` | `TestVisibilityFollowsTheBoundPrincipalAtTheFacade`, `TestPreferenceAndRetentionFollowTheDeploymentSettings`, `TestRetentionSweepUsesTheFacadesConfiguredWindows` |
+| Deletion sweep | `a deleted viewer's preferences survived: 1` | `TestDeleteUserRemovesTheirJobPreferences` |
+| Cross-engine | written after the SQLite cycles, like Task 4's `*_pg_test.go`: their red is dialect regression, not a compile failure | `TestListSearchCursorAndAggregatesOnPostgres`, `TestRetentionSweepPrunesExpiredWorkOnPostgres` |
+
+Mutation checks confirm the new tests are not vacuous — each defect was caught by
+exactly the test written for it, and the source was restored afterwards:
+
+- removing the search predicate fails `TestListSearchMatchesSanitizedText…`;
+- removing the relationship predicate fails `TestListFiltersByLineageRelationship`;
+- returning the query unchanged from `continueAfter` fails
+  `TestCursorPagesNewestFirstAndSkipsNothingWhenHistoryGrows`;
+- returning the query unmodified from `jobQuery` fails
+  `TestVisibilityShowsAnOrdinaryUserOnlyTheirOwnOwnerClassJobs`;
+- making `protectedByUnresolvedClaim` always answer false fails
+  `TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim` (the sweep then writes
+  to a claimed Job's output).
+
+## Defects found by self-review (after the cycles)
+
+- **The sweep wrote to a Job an unresolved claim protects.** The guarded delete
+  matching no rows has two causes — a pin, and a claim nobody could resolve — and
+  the first version treated them alike and recorded the outputs' expiry for both.
+  §9 says no expiry may write through unresolved work, and "does not touch it" has
+  to mean no row of its own either, so the skip path now asks why and leaves a
+  claim-protected Job entirely alone. The regression is the output assertion in
+  `TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim`.
+- **A listing would have spent a query per row on the replay question.**
+  `replayAvailabilityOf` loads one envelope; a page of two hundred would have
+  been two hundred reads. `replayAvailabilityFrom` is the one implementation,
+  used by both the single read and the page-wide fill.
+
+## Decisions worth recording
+
+- **`Filter.Command` is refused rather than guessed.** A command's availability
+  is advertised by its Kind adapter at read time (`Adapter.Commands`), not stored
+  on the Job, so a listing could only answer "does this Job offer `pause`" by
+  post-filtering in Go — exactly the drift the constructor exists to prevent, and
+  it would make pagination and aggregates answer different sets. Until the
+  command surface gives that dimension a durable predicate, a request naming it
+  is refused with `ErrInvalidFilter` instead of silently matching everything.
+- **A Job carries its own deadline.** The terminal transition stamps `expires_at`
+  from the retention policy in effect at that instant, and the sweep deletes on
+  `expires_at` — so retention starts at `finished_at` (never at acceptance), a
+  later policy change does not retroactively re-expire history, and the planned
+  expiry is visible in advance. A Job that finished before deadlines existed gets
+  the policy's window once, from its own finish instant, which is what migration
+  must do for backfilled rows.
+- **`Pinned`/`Dismissed` are the asker's rows, and `nil` is a third state.**
+  Dismissal belongs to one viewer's default list and never to the Job, so the
+  predicate is always asked of `Access.UserID`. Pinning is the exception in reach
+  rather than in ownership: it exempts the Job's metadata and events from
+  retention for everybody, which is why it is bounded per viewer — and why it
+  exempts nothing else. An artifact keeps its own expiry, and a relative is a
+  different Job.
+- **Pagination, timeline and the event stream share one predicate but not one
+  order.** A listing and a sweep page on `(accepted_at, id)` and
+  `(finished_at, id)`; a Job's timeline orders by its own sequence, because it is
+  one Job's history; the resumable stream orders by delivery sequence, which is
+  what makes a reconnect whole. All four read visibility from the constructor.
+- **`DELETE` is the transaction's first statement.** The retention decision is
+  carried by a guarded delete whose predicates include the two `NOT EXISTS`
+  subqueries, so the pin and the claim cannot land between the decision and the
+  write — and on SQLite the write-first shape is what avoids promoting a read
+  snapshot to a write.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs ./application_context -run 'Test(Visibility|List|Cursor|Preference|Pin|Dismiss|Retention|Summary)' -count=1`
+  — passed (Task 5's focused gate: 18 tests in `jobs`, 3 at the application
+  facade).
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -run 'Test(Visibility|List|Cursor|Preference|Retention|Summary)' -count=1`
+  — passed against PostgreSQL (Task 5's cross-engine gate).
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1`
+  — passed, including the two new dialect regressions and every earlier task's
+  PostgreSQL suite.
+- `go test --tags 'json1 fts5' ./jobs ./application_context ./internal/arch . -count=1`
+  — passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go test -race --tags 'json1 fts5' ./jobs ./application_context -run 'Test(Visibility|List|Cursor|Preference|Pin|Dismiss|Retention|Summary)' -count=1`
+  — passed. The *unfiltered* `-race` run of `./application_context` needs
+  `-timeout 25m` (it takes ~10m at 613s, over the default ceiling); it passes at
+  that timeout, and the package was already the slowest one in the tree.
+- `go vet --tags 'json1 fts5' ./...` — clean. `go build --tags 'json1 fts5' ./...`
+  — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source changed, so no bundle rebuild.
+
+## Review
+
+Task 5 is complete. Every Job read now starts from one constructor, and the
+property that matters is negative and testable: a Job the listing hides is not in
+the timeline, not in the outputs, not in the lineage, not in the resumable stream
+and not in the aggregate. The aggregate is built from `applyFilter` over the same
+predicate rather than from a page of rows, which is what keeps a page from
+announcing "3 failed" beside two rows.
+
+The sweep is bounded in three directions — the batch, the per-Job transaction and
+the keyset cursor — and refuses the three things §9 protects: nonterminal work,
+work an unresolved claim holds, and a pinned Job's metadata and events. Its
+ordering requirement is real rather than ceremonial: the outputs' availability is
+recorded before the history that points at them goes, and a Job an unresolved
+claim protects is not written to at all.
+
+Residual risks and handoffs carried forward:
+
+- **`Filter.Command` is unimplemented by design** (see the decisions above). Task
+  6's command surface and Task 13's HTTP layer must give the dimension a durable
+  predicate before the Job Center's "available command" filter can work; until
+  then the refusal is the honest answer and is asserted.
+- **The sweep has no scheduler.** `ctx.SweepJobHistory` is a bounded call an
+  operator or a loop drives, and nothing in this task ticks it: the cutover
+  release is where a process-lifetime owner appears (Task 17's checklist), and
+  the replay purge is on the same clock only when a sweep runs.
+- **Artifact deletion remains Kind-specific.** The sweep records what happened to
+  an output — `expired` for a Job that stays, `removed` for one whose history is
+  going — but it deletes no files: the export/import adapters own their artifacts'
+  retention (Task 8), and "adapter cleanup outcome" is that adapter's answer
+  until it lands.
+- **The percentage views are exact but sort inside the window.** Median and p95
+  are two indexed-predicate seeks with `ORDER BY <duration> LIMIT 1 OFFSET n`,
+  which is portable across both engines and materializes nothing in the process;
+  no index exists on the duration columns, so a 90-day window with millions of
+  Jobs sorts that window. Query-plan evidence belongs with Task 18's
+  million-row fixtures.
+- **A pinned Job is re-examined by every pass** (it is a candidate forever). A
+  caller that drives the cursor to completion makes progress; one that calls
+  `Sweep` with a tiny batch and no cursor will spend batch slots on pinned rows
+  before reaching the rest.
+- **`DeleteUser` now depends on the `job_preferences` table existing**, so every
+  test context that exercises user deletion had to grow it (the same shape of
+  change Task 1 made for `jobs`). Production is unaffected: `migrateJobCore`
+  creates it.

@@ -31,22 +31,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// jobCoreTables is every table one test database for the durable job core needs,
-// in the order they are migrated. It is the whole core rather than the subset a
-// single test happens to write: on PostgreSQL a statement against a table that
-// does not exist *aborts the surrounding transaction*, so a helper that migrates
-// only what the test asserts on turns an unrelated read into a mysterious
-// rollback at commit — which is exactly what Accept's post-commit availability
-// read did to TestJobPublishOrdersOutOfOrderCommitsPG once replay envelopes
-// arrived.
-func jobCoreTables() []any {
-	return []any{
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobOutput{}, &models.JobReplayEnvelope{},
-		&models.JobClaim{}, &models.JobCapacityLease{},
-	}
-}
-
 func newPGDeps(t *testing.T) Deps {
 	t.Helper()
 	db := pgContainer.CreateTestDB(t)

@@ -642,6 +642,14 @@ func (s *Service) replayAvailabilityOf(db *gorm.DB, keys *Keyring, job models.Jo
 	if err != nil {
 		return ReplayUnreadable
 	}
+	return s.replayAvailabilityFrom(keys, envelope, now)
+}
+
+// replayAvailabilityFrom answers the same question from an already-loaded
+// envelope row, so a listing can answer a whole page with one query instead of
+// one per Job. The two answers cannot drift because there is one implementation
+// and the loader is the only difference.
+func (s *Service) replayAvailabilityFrom(keys *Keyring, envelope models.JobReplayEnvelope, now time.Time) ReplayAvailability {
 	switch {
 	case envelope.PurgedAt != nil && envelope.PurgeReason == models.JobReplayPurgeForgotten:
 		return ReplayForgotten

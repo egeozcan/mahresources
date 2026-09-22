@@ -67,6 +67,9 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-download-failed-retention` | `DOWNLOAD_FAILED_RETENTION` | How long a failed or cancelled download stays in the download history | `168h` |
 | `-download-history-retention` | `DOWNLOAD_HISTORY_RETENTION` | How long a completed download stays in the download history (the resource it created is unaffected) | `24h` |
 | `-download-cockpit-limit` | `DOWNLOAD_COCKPIT_LIMIT` | How many finished downloads the jobs panel renders, newest first | `10` |
+| `-job-history-retention` | `JOB_HISTORY_RETENTION` | How long a succeeded or cancelled Job's history stays after it finishes (the resource or artifact it produced is unaffected) | `720h` |
+| `-job-attention-retention` | `JOB_ATTENTION_RETENTION` | How long a failed or interrupted Job's history stays after it finishes | `2160h` |
+| `-job-pin-limit` | `JOB_PIN_LIMIT` | How many Jobs one user may pin; a pin exempts a Job's history from ordinary retention | `100` |
 | `-plugin-schedule-tick` | `PLUGIN_SCHEDULE_TICK` | How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule | `30s` |
 | `-max-action-entities` | `MAX_ACTION_ENTITIES` | Maximum entities one plugin-action run may name; `0` selects the default rather than meaning unlimited | `1000` |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash workers | `4` |

@@ -122,7 +122,7 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 		return Snapshot{}, fmt.Errorf("%w: empty job id", ErrNotFound)
 	}
 	var job models.Job
-	err := visibleTo(deps.DB, access).Where("id = ?", jobID).First(&job).Error
+	err := jobQuery(deps.DB, access).Where("jobs.id = ?", jobID).First(&job).Error
 	if err != nil {
 		if isNotFound(err) {
 			return Snapshot{}, fmt.Errorf("%w: %s", ErrNotFound, jobID)
@@ -634,7 +634,7 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 	}
 
 	now := deps.now()
-	next, updates := applyTransition(job, transition, now)
+	next, updates := applyTransition(job, transition, deps.retention(), now)
 	event := newEvent(
 		job.ID,
 		sequence,
@@ -710,7 +710,12 @@ func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verif
 // applyTransition derives the next stored row and the column values to write for
 // one legal transition. It is pure: the transaction below is what makes it
 // durable.
-func applyTransition(job models.Job, transition Transition, now time.Time) (models.Job, map[string]any) {
+//
+// The retention policy is passed in because a terminal transition is where a Job
+// acquires its deadline: the window that governs this Job is the one in effect
+// when it finished, stamped from finished_at, so a later policy change does not
+// retroactively rewrite history and a Job's own expiry is visible in advance.
+func applyTransition(job models.Job, transition Transition, policy RetentionPolicy, now time.Time) (models.Job, map[string]any) {
 	next := job
 	next.State = string(transition.To)
 	next.Phase = transition.Phase
@@ -753,6 +758,10 @@ func applyTransition(job models.Job, transition Transition, now time.Time) (mode
 	}
 	if transition.To.Terminal() {
 		next.FinishedAt = &now
+		// Retention starts at terminal completion, never at acceptance: a Job
+		// that spent a month queued is not a Job whose history is a month old.
+		expires := now.Add(policy.windowFor(transition.To)).UTC()
+		next.ExpiresAt = &expires
 	}
 	if transition.Failure != nil {
 		next.FailureCode = transition.Failure.Code
@@ -774,6 +783,7 @@ func applyTransition(job models.Job, transition Transition, now time.Time) (mode
 		"started_at":             next.StartedAt,
 		"last_resumed_at":        next.LastResumedAt,
 		"finished_at":            next.FinishedAt,
+		"expires_at":             next.ExpiresAt,
 		"failure_code":           next.FailureCode,
 		"failure_class":          next.FailureClass,
 		"failure_message":        next.FailureMessage,

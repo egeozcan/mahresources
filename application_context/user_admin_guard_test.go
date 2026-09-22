@@ -42,8 +42,10 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		&models.ResourceReduction{},
 		&models.PluginCommandRun{}, &models.PluginCommandImport{},
 		// The durable job core: DeleteUser's sweep nulls a Job's owner and
-		// actor, so these tables exist wherever a user can be deleted.
+		// actor, and deletes the viewer-keyed preferences beside it, so these
+		// tables exist wherever a user can be deleted.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobPreference{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -238,6 +240,68 @@ func TestDeleteUser_NullsCreatorReferences(t *testing.T) {
 		t.Fatalf("creator reference must be NULL after user deletion, got %v", *got.CreatedByUserId)
 	}
 }
+
+// A Job preference belongs to the viewer rather than to the Job, so deleting the
+// viewer removes it. Two reasons make the sweep load-bearing rather than tidy: a
+// surviving pin exempts the Job's history from retention for everybody, forever,
+// and a surviving dismissal would be inherited by whichever account later holds
+// that id.
+func TestDeleteUserRemovesTheirJobPreferences(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	makeAdmin(t, ctx, "keeper")
+	viewer, err := ctx.CreateUser(&UserInput{Username: "viewer", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+	svc := jobs.NewService()
+	snap, err := svc.Accept(jobs.Deps{DB: ctx.db}, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: &viewer.ID, Title: "the download this viewer asked for",
+	})
+	if err != nil {
+		t.Fatalf("accept job: %v", err)
+	}
+	admin := jobs.Access{Administrator: true}
+	if err := svc.SetPreference(jobs.Deps{DB: ctx.db}, jobs.Access{UserID: viewer.ID}, jobs.PreferenceRequest{
+		JobID: snap.ID, Pinned: boolPointer(true), Dismissed: boolPointer(true),
+	}); err != nil {
+		t.Fatalf("set preference: %v", err)
+	}
+	var before int64
+	if err := ctx.db.Model(&models.JobPreference{}).Where("user_id = ?", viewer.ID).Count(&before).Error; err != nil {
+		t.Fatalf("count preferences: %v", err)
+	}
+	if before != 1 {
+		t.Fatalf("recorded %d preferences, want 1", before)
+	}
+
+	if err := ctx.DeleteUser(viewer.ID); err != nil {
+		t.Fatalf("delete viewer: %v", err)
+	}
+
+	var after int64
+	if err := ctx.db.Model(&models.JobPreference{}).Where("user_id = ?", viewer.ID).Count(&after).Error; err != nil {
+		t.Fatalf("count preferences: %v", err)
+	}
+	if after != 0 {
+		t.Fatalf("a deleted viewer's preferences survived: %d", after)
+	}
+	// The Job itself is untouched — the sweep removes a view, not history — and
+	// it is now ownerless, which is what keeps a deleted account from leaving a
+	// pin behind that exempts it from retention for everybody.
+	if _, err := svc.Get(jobs.Deps{DB: ctx.db}, admin, snap.ID); err != nil {
+		t.Fatalf("the job must survive: %v", err)
+	}
+	var job models.Job
+	if err := ctx.db.Where("id = ?", snap.ID).First(&job).Error; err != nil {
+		t.Fatalf("reload job: %v", err)
+	}
+	if job.OwnerUserID != nil {
+		t.Fatalf("the deleted viewer still owns the job: %v", *job.OwnerUserID)
+	}
+}
+
+func boolPointer(v bool) *bool { return &v }
 
 // Phase 5b: a Job carries two live user references, and deleting its owner
 // nulls both. The Job survives as admin-only history — its outcome and sanitized

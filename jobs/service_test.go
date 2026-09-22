@@ -20,6 +20,22 @@ import (
 // encodes no kind, owner, state or authorization decision.
 var uuidV7Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+// jobCoreTables is every table one test database for the durable job core needs,
+// in the order they are migrated. It is the whole core rather than the subset a
+// single test happens to write: a statement against a table that does not exist
+// is an error rather than a missing match, and on PostgreSQL it aborts the
+// surrounding transaction — which is exactly what Accept's post-commit
+// availability read did to TestJobPublishOrdersOutOfOrderCommitsPG once replay
+// envelopes arrived.
+func jobCoreTables() []any {
+	return []any{
+		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobOutput{}, &models.JobReplayEnvelope{},
+		&models.JobClaim{}, &models.JobCapacityLease{},
+		&models.JobPreference{},
+	}
+}
+
 // newTestDeps opens a real file-backed SQLite database through the production
 // driver configuration — the same PRAGMAs (WAL, foreign keys, busy timeout) a
 // deployment runs with — and migrates the durable job core plus one domain model
@@ -43,10 +59,7 @@ func newTestDeps(t *testing.T) Deps {
 	sqlDB.SetMaxOpenConns(4)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	if err := db.AutoMigrate(
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobOutput{}, &models.JobClaim{}, &models.JobCapacityLease{}, &models.PluginKV{},
-	); err != nil {
+	if err := db.AutoMigrate(append(jobCoreTables(), &models.PluginKV{})...); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
 	return Deps{DB: db}
