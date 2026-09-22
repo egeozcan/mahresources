@@ -981,6 +981,22 @@ func applyTransition(job models.Job, transition Transition, policy RetentionPoli
 		}
 	}
 
+	// A pause request is resolved by the Job leaving running — whether it reached the
+	// checkpoint it asked for or went somewhere else instead. Only the execution that
+	// owns a running Job can confirm a checkpoint, so a Job that ends up blocked or
+	// back in the queue has none, and an intent left standing there is a request no
+	// execution can ever resolve: it would read as outstanding for the rest of the
+	// Job's life, and the command that moves the Job on would report itself as merely
+	// requested because of it.
+	//
+	// A cancellation's intent is deliberately not resolved this way: §4 resolves it by
+	// cancellation, which is why a Job that blocks while being cancelled still refuses
+	// every success and is still the Job a cancel command ends.
+	if State(job.State) == StateRunning && next.ControlIntent == ControlIntentPause {
+		next.ControlIntent = ""
+		next.ControlRequestedAt = nil
+	}
+
 	switch transition.To {
 	case StateQueued:
 		// QueuedAt is the first instant the Job became queueable; the cumulative
@@ -993,14 +1009,6 @@ func applyTransition(job models.Job, transition Transition, policy RetentionPoli
 			next.StartedAt = &now
 		} else {
 			next.LastResumedAt = &now
-		}
-	case StatePaused:
-		// A pause request is resolved by the state it asked for. A cancellation's
-		// intent is not: it is resolved by cancellation, which is why this is not
-		// an unconditional clear.
-		if next.ControlIntent == ControlIntentPause {
-			next.ControlIntent = ""
-			next.ControlRequestedAt = nil
 		}
 	case StateCancelled, StateFailed, StateInterrupted, StateSucceeded:
 		// Any end state resolves whatever control was asked for: the intent records

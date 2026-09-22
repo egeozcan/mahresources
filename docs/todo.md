@@ -1,3 +1,109 @@
+# Job Center Task 6 correction — the lifetime of a control intent (2026-09-22)
+
+**Goal:** Correct two defects in Task 6's own control-intent surface, found while
+re-verifying the committed task at `d27370f8` — a resume offered for a Job a
+cancellation already owns, and a pause request left standing on a Job that left
+running without reaching its checkpoint — without widening scope into Tasks 7-18.
+
+## Plan
+
+- [x] Re-read Task 6's Interface/Red/Green/Verify in the plan, the approved design
+      (§1, §4, §8, §9, §12, §16, §17), ADRs 0006/0007, `CLAUDE.md`, the committed
+      task, and the two probe paths at the module's public seam.
+- [x] Reproduce both as behaviour tests through the exported `jobs.Service` seam
+      before touching production code: the advertisement a blocked Job whose
+      cancellation has won offers, and the intent a Job keeps when it leaves
+      running for somewhere other than the checkpoint it asked for.
+- [x] Implement one minimal correction per half — the host's narrowing of resume,
+      and the resolution of a pause request when its execution's ownership ends —
+      then re-run the focused, package-level, race, cross-engine and whole-tree
+      suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit,
+      clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| A resume is offered — and accepted — for a Job a cancellation already owns | At the module seam, before the correction: `TestCommandResumeIsNotOfferedOnceACancellationHasWon` reported `a blocked job whose cancellation has won offers [cancel resume inspect pin pin-lineage], want [cancel inspect pin pin-lineage]`, and the same probe drove the accepted resume to `state=queued intent="cancel"` followed by `finish(succeeded) after the resumed cancellation = jobs: a cancellation already owns this job`. §3 makes the blocked Job the ordinary outcome of a cancellation nobody could prove stopped, so the intent outlives its execution; the resumed work could then never publish a success, which makes the command's own accepted outcome a lie | `commandHonorable` narrows resume behind the same rule pause already carried: a cancellation that has won refuses both (`jobs/commands.go`). Pinned by `TestCommandResumeIsNotOfferedOnceACancellationHasWon` (advertisement, refusal with nothing written, no executor contacted, and the requeued-job refusal it exists to prevent) |
+| A pause request outlives the execution it needs to be confirmed by | `TestCommandPauseIntentIsResolvedWhenWorkLeavesRunning` reported `the blocked job kept the pause request it can never resolve (intent "pause")`; the probe that followed the same path then showed the later resume of that Job answered `Code:requested` with `state=queued intent="pause"` — a command the host applied reporting itself as merely requested, and an intent no execution could ever resolve | `applyTransition` resolves a pause intent whenever the Job leaves running, rather than only when it reaches `paused`, because only an execution that owns a running Job can confirm a checkpoint (`jobs/service.go`). A cancellation's intent is deliberately untouched by that rule. Pinned by `TestCommandPauseIntentIsResolvedWhenWorkLeavesRunning` (intent recorded, resolved on the block, and the resume that follows classified as applied) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs ./application_context ./internal/arch . -count=1`
+  — passed (1.3s / 81.4s / 1.9s / 0.5s).
+- The plan's focused race gate, re-run after the correction:
+  `go test -race --tags 'json1 fts5' ./jobs ./application_context -run 'Test(Command|Retry|Repeat|Lineage|CancelIntent|Bulk)' -count=10`
+  — passed (4.0s / 12.7s), and both new tests are inside that filter because
+  they name the surface they are about.
+- The plan's cross-engine gate, re-run after the correction:
+  `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -run 'Test(Command|Retry|Repeat|Lineage|CancelIntent|Bulk)' -count=1`
+  — passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go vet --tags 'json1 fts5' ./...` and
+  `go vet --tags 'json1 fts5 postgres' ./jobs ./application_context` — clean.
+  `go build --tags 'json1 fts5' ./...` — clean. `gofmt -l` on every changed file —
+  clean. `git diff --check` — clean.
+- Both halves were reverted in turn and the suite re-run: dropping the resume
+  narrowing fails the first test on the advertisement line alone, and restoring
+  the intent clear to the `paused` case fails the second on the intent left
+  standing. The source was restored after each.
+- No frontend source, template, CLI command or runtime setting changed, so no
+  bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The refusal is at the advertisement, not beside it.** The command surface is
+  what a client offers a person, and the execution path rechecks the same
+  advertisement against the row it holds before dispatching, so one rule covers
+  both doors. A second guard inside `applyResume` would be the second spelling of
+  one rule the module has already declined twice.
+- **A cancellation's intent is not resolved by leaving running; a pause's is.**
+  The asymmetry is §4's: a cancellation that won still owns the Job's outcome, so
+  a Job that blocks while being cancelled must keep refusing success, while a
+  pause is a request only the execution that owns a running Job can confirm. A
+  Job that leaves running for anything but `paused` therefore has no execution
+  left to confirm one, and the intent is resolved where its confirmation became
+  impossible rather than at the states that happen to reach it.
+- **Resume is refused rather than reinterpreted as revoking the cancellation.**
+  The design has no command that withdraws control intent, and inventing one here
+  — clearing the intent because somebody asked to resume — would let a resume
+  undo §4's "once cancellation intent wins, later success cannot overwrite it".
+  What a cancelled Job offers is the control that ends it, which is also the one
+  an operator wants when a blocked cancellation is resolved.
+- **The paused-and-cancelled Job is left as it is.** An execution that publishes
+  `paused` after a cancellation won is legal in Task 1's transition table and
+  remains so: the intent survives, resume is refused for it, and cancel resolves
+  it to `cancelled` immediately because a paused Job has no execution left to
+  stop. Narrowing that transition belongs to whatever owns pause semantics, not
+  to this correction.
+
+## Review
+
+Both halves are at the seam the defect was observed through — the exported
+advertisement and the exported transition — and both are pinned by behaviour
+rather than by statements about code: the first by the exact set of commands a
+blocked, cancelled Job offers plus the requeued-job success it refuses to allow,
+the second by the intent a leaving Job keeps and the classification of the resume
+that follows it. Nothing already asserted was weakened: the pause/resume cycle,
+the cancellation-wins race on both engines, and every Task 6 test still pass
+unchanged.
+
+Residual risks and handoffs:
+
+- **A paused Job can carry a won cancellation.** It offers cancel and refuses
+  resume, so it is resolvable, but the window in which its executor chose to reach
+  a checkpoint instead of stopping is a state Task 1 permits and this correction
+  does not narrow. Task 7's download adapter is where "a cancelled execution may
+  not pause" can be enforced by the Kind that knows what stopping means.
+- **The intent's own vocabulary is unchanged.** Resolution is expressed as an
+  empty intent, so nothing distinguishes "never asked" from "asked and resolved"
+  except the Job's event timeline, which records `control-requested` when the
+  request was made. A client that needs the distinction reads the timeline; a
+  column for it would be a second spelling of history.
+- **`ErrCommandNotAdvertised` still has no HTTP mapping** — the Job Center
+  handlers are Task 13's, and this correction adds no sentinel.
+
 # Job Center Task 6 — advertised idempotent commands and immutable lineage (2026-09-22)
 
 **Goal:** Land Task 6 of the unified Job Center plan: the command surface a Job
@@ -181,6 +287,12 @@ Task 6 is complete. A Job now answers what it offers the person asking, the host
 performs the four controls only it can, a Kind's adapter performs its own, a
 repeat of any request is answered from the record rather than run twice, and a
 Retry or a Repeat creates a new linked Job without touching the one it continues.
+
+Two defects in the control intent's own lifetime were found while the committed
+task was re-verified — a resume offered for a Job a cancellation already owned,
+and a pause request left standing on a Job that left running without reaching its
+checkpoint. Both are corrected by the record at the top of this file, at the same
+seam and with the same tests extended rather than weakened.
 
 The parts worth the most scrutiny are the negative ones, and each is pinned: an
 unadvertised command writes nothing; a stale request is refused with the fresh

@@ -193,7 +193,7 @@ func commandEndpoint(jobID, key string) string {
 // advertised. The host narrows only where it owns a durable fact the adapter
 // cannot see: a finished Job offers no cancellation or pause, its retry lineage
 // is what decides whether a Retry is possible, and a cancellation that has
-// already won refuses a pause.
+// already won refuses a pause and a resume alike.
 //
 // A key the host knows nothing about is left to the adapter, which is the only
 // thing that can answer for it. Narrowing is all the host does: nothing here can
@@ -210,7 +210,10 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 		// nobody agreed to. A cancellation that already won refuses it too.
 		return state == StateRunning && job.ControlIntent != ControlIntentCancel, nil
 	case CommandResume:
-		return state == StatePaused || state == StateBlocked, nil
+		// Held work returns to the queue only while a cancellation has not won it: a
+		// Job a cancellation owns ends cancelled, and handing its work back to the
+		// queue would be resuming work that can never publish a success again.
+		return (state == StatePaused || state == StateBlocked) && job.ControlIntent != ControlIntentCancel, nil
 	case CommandRetry:
 		return s.retryableLeaf(deps, job)
 	case CommandRepeat:

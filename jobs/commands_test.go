@@ -1339,6 +1339,151 @@ func TestPauseAndResumeFollowTheExecutorThatConfirmsTheCheckpoint(t *testing.T) 
 	}
 }
 
+// TestCommandResumeIsNotOfferedOnceACancellationHasWon is §4's "once cancellation
+// intent wins, later success cannot overwrite it" read at the command surface: a
+// Job a cancellation owns ends cancelled, and the work it would newly hold is
+// work that can never succeed again — so a resume is not offered for it, exactly
+// as a pause is not.
+//
+// The path is the one a cancellation that cannot be carried out takes: §3 keeps
+// such a Job nonterminal and blocked rather than assuming its external work has
+// stopped, so a cancellation's intent can outlive the execution that owned it.
+// Offering resume there would return the Job to the queue carrying an intent that
+// refuses every success it then reaches.
+func TestCommandResumeIsNotOfferedOnceACancellationHasWon(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+
+	running := h.acceptReplayable(&owner)
+	execution := h.claim(running.ID)
+	h.adapter.execute = func(context.Context, CommandExecution) (CommandOutcome, error) {
+		return CommandOutcome{Status: CommandStatusSucceeded}, nil
+	}
+	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(running.ID, CommandCancel, "idem-won-cancel", viewer)); err != nil {
+		t.Fatalf("cancelling a running job: %v", err)
+	}
+
+	blocked, err := h.svc.Transition(h.deps, Transition{
+		JobID:           running.ID,
+		ExpectedVersion: jobRow(t, h.deps, running.ID).Version,
+		ExecutionToken:  execution.ExecutionToken,
+		To:              StateBlocked,
+	})
+	if err != nil {
+		t.Fatalf("blocking a cancelling job: %v", err)
+	}
+	if blocked.State != StateBlocked || blocked.ControlIntent != ControlIntentCancel {
+		t.Fatalf("the blocked job = %s with intent %q, want blocked and still cancelled",
+			blocked.State, blocked.ControlIntent)
+	}
+
+	// The cancellation still owns the Job, so what it offers is the control that ends
+	// it — and not the one that would put its work back in the queue.
+	requireCommandKeys(t, "a blocked job whose cancellation has won", h.advertise(running.ID, viewer),
+		CommandCancel, "inspect", CommandPin, CommandPinLineage)
+
+	before := h.adapter.commandCount()
+	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(running.ID, CommandResume, "idem-resume-won", viewer)); !errors.Is(err, ErrCommandNotAdvertised) {
+		t.Fatalf("resuming a job a cancellation owns = %v, want ErrCommandNotAdvertised", err)
+	}
+	if h.adapter.commandCount() != before {
+		t.Fatal("a refused resume reached the executor")
+	}
+	row := jobRow(t, h.deps, running.ID)
+	if row.State != string(StateBlocked) || row.ControlIntent != ControlIntentCancel {
+		t.Fatalf("the refused resume left the job %s with intent %q, want it where it was",
+			row.State, row.ControlIntent)
+	}
+	if rows := commandRequestRows(t, h.deps, running.ID); len(rows) != 1 {
+		t.Fatalf("a refused resume recorded %d command requests, want only the cancellation's", len(rows))
+	}
+
+	// What the refusal is for: once a cancellation owns a Job, no later success can
+	// overwrite it, wherever the Job is sent in the meantime. Returning this Job to
+	// the queue by hand — which is what the resume would have done — leaves work that
+	// runs and can never publish its success, so refusing the command is the honest
+	// answer rather than a lost control.
+	queued, err := h.svc.Transition(h.deps, Transition{
+		JobID:           running.ID,
+		ExpectedVersion: jobRow(t, h.deps, running.ID).Version,
+		To:              StateQueued,
+	})
+	if err != nil {
+		t.Fatalf("returning the cancelled job to the queue: %v", err)
+	}
+	if queued.ControlIntent != ControlIntentCancel {
+		t.Fatalf("a requeued job lost the cancellation that owns it (intent %q)", queued.ControlIntent)
+	}
+	resumed := h.claim(running.ID)
+	if _, err := h.svc.Finish(h.deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: running.ID, ExecutionToken: resumed.ExecutionToken},
+		ExpectedVersion: jobRow(t, h.deps, running.ID).Version,
+		Outcome:         StateSucceeded,
+	}); !errors.Is(err, ErrControlIntentWon) {
+		t.Fatalf("a success after a requeue of a cancelled job = %v, want ErrControlIntentWon", err)
+	}
+}
+
+// TestCommandPauseIntentIsResolvedWhenWorkLeavesRunning is the other half of the
+// intent's lifetime: a pause request is confirmed by the execution that owns a
+// running Job, so a Job that leaves running for anything but the checkpoint it
+// asked for has no execution left to confirm one and the request can never reach
+// its outcome. Resolving it there is what keeps a stored intent meaning "this is
+// still outstanding" rather than "this was once asked for", which is what the
+// command that resumes the Job is classified against.
+func TestCommandPauseIntentIsResolvedWhenWorkLeavesRunning(t *testing.T) {
+	h := newCommandHarness(t)
+	h.advertiseStateful()
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+
+	running := h.acceptReplayable(&owner)
+	execution := h.claim(running.ID)
+	h.adapter.execute = func(context.Context, CommandExecution) (CommandOutcome, error) {
+		return CommandOutcome{Status: CommandStatusSucceeded}, nil
+	}
+	if _, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(running.ID, CommandPause, "idem-pause-then-block", viewer)); err != nil {
+		t.Fatalf("pausing a running job: %v", err)
+	}
+	if intent := jobRow(t, h.deps, running.ID).ControlIntent; intent != ControlIntentPause {
+		t.Fatalf("the pause request recorded intent %q, want %q", intent, ControlIntentPause)
+	}
+
+	// The execution blocks instead of reaching a resumable checkpoint.
+	blocked, err := h.svc.Transition(h.deps, Transition{
+		JobID:           running.ID,
+		ExpectedVersion: jobRow(t, h.deps, running.ID).Version,
+		ExecutionToken:  execution.ExecutionToken,
+		To:              StateBlocked,
+	})
+	if err != nil {
+		t.Fatalf("blocking a pausing job: %v", err)
+	}
+	if blocked.ControlIntent != "" {
+		t.Fatalf("the blocked job kept the pause request it can never resolve (intent %q)", blocked.ControlIntent)
+	}
+	if blocked.Phase != "" {
+		t.Fatalf("the blocked job kept the phase %q of a request nothing can follow through", blocked.Phase)
+	}
+
+	// The resume that unblocks it is applied rather than merely requested: the host is
+	// the one that moved the Job, and there is no outstanding control left to report.
+	result, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(running.ID, CommandResume, "idem-resume-blocked", viewer))
+	if err != nil {
+		t.Fatalf("resuming blocked work: %v", err)
+	}
+	requireResult(t, "a resume of work whose pause never reached a checkpoint", result, CommandStatusSucceeded, CommandCodeApplied)
+	if row := jobRow(t, h.deps, running.ID); row.State != string(StateQueued) || row.ControlIntent != "" {
+		t.Fatalf("the resumed job is %s with intent %q, want queued and resolved", row.State, row.ControlIntent)
+	}
+}
+
 // --- helpers shared by the later cycles -------------------------------------
 
 // commandRequestRows is how many command requests are recorded for one Job. A
