@@ -469,9 +469,22 @@ type Deps struct {
 	// rides on the handle for the same reason Replay does — a facade reads it
 	// live, so an operator's change applies to the next terminal transition — and
 	// a terminal Job's deadline is stamped from it in the terminal transition's
-	// own transaction. A nil policy means "not configured", which selects the
-	// design's defaults rather than stamping no deadline at all.
+	// own transaction. A handle that outlives the call that made it re-reads the
+	// setting instead (RetentionLive). A nil policy means "not configured", which
+	// selects the design's defaults rather than stamping no deadline at all.
 	Retention *RetentionPolicy
+	// RetentionLive, when set, answers the history retention in effect at the
+	// instant a Job acquires its deadline, rather than the one this handle was
+	// built with.
+	//
+	// A handle is per-call, but one call lasts as long as an execution does: the
+	// report an adapter finishes through was built when the Job was claimed, and a
+	// window captured there would govern a Job that finished hours — or a setting
+	// change — later. §9 makes the window that governs a Job the one in effect at
+	// terminal completion, so the terminal write asks here. A handle that cannot
+	// re-read the deployment's settings (a test, the CLI) leaves this nil and gets
+	// the snapshot above.
+	RetentionLive func() RetentionPolicy
 	// Replay is the deployment's replay configuration for this call: the keyring
 	// the module seals and opens envelopes with, and how long finished work's
 	// input stays readable. It rides on the handle for the same reason the
@@ -479,6 +492,11 @@ type Deps struct {
 	// nil value means replay is not configured here, which is a refusal to seal
 	// (never a licence to store input in the clear).
 	Replay *ReplayConfig
+	// ReplayRetentionLive is the same re-read as RetentionLive for the other
+	// window a terminal write stamps: how long a finished Job's sealed input stays
+	// readable. It is a separate answer because it is a separate setting, and a nil
+	// value means "fall back to Replay.Retention" rather than "no window".
+	ReplayRetentionLive func() time.Duration
 }
 
 // ReplayConfig is what a caller must know to store and read replay input: the
@@ -489,18 +507,45 @@ type ReplayConfig struct {
 	// Retention is how long a finished Job's envelope stays readable. Zero means
 	// "not configured", which keeps it indefinitely rather than expiring it on
 	// write — the same rule the download retentions follow, and the safe
-	// direction for input that a nonterminal Job may still need.
+	// direction for input that a nonterminal Job may still need. A handle that can
+	// re-read the deployment's settings answers this question live instead
+	// (Deps.ReplayRetentionLive), so this is what a caller with no settings to
+	// read stamps from.
 	Retention time.Duration
 }
 
 // retention is the policy a call was made with, with the design's defaults
 // standing in for an unconfigured one: a terminal Job must always acquire a
 // deadline, because a Job that never expires is a Job nobody may ever remove.
+//
+// A handle that can re-read the deployment's settings answers with the windows in
+// effect now rather than the ones it was built with, because a handle outlives the
+// call that made it: an execution claimed under one policy may finish under
+// another, and the window that governs a Job is the one in effect when it
+// finished.
 func (d Deps) retention() RetentionPolicy {
+	if d.RetentionLive != nil {
+		return d.RetentionLive()
+	}
 	if d.Retention == nil {
 		return RetentionPolicy{}
 	}
 	return *d.Retention
+}
+
+// replayRetention is how long a finished Job's sealed input stays readable, as of
+// the instant it is stamped — the live setting where the handle can re-read it,
+// and its own configuration otherwise. Zero means "not configured" and leaves the
+// envelope without a deadline, which is the safe direction for input a nonterminal
+// Job may still need.
+func (d Deps) replayRetention() time.Duration {
+	if d.ReplayRetentionLive != nil {
+		return d.ReplayRetentionLive()
+	}
+	if d.Replay == nil {
+		return 0
+	}
+	return d.Replay.Retention
 }
 
 // now returns the current instant in UTC. Every stored instant is normalized to
@@ -626,10 +671,34 @@ func (p RetentionPolicy) attention() time.Duration {
 }
 
 // SweepCursor is where a bounded retention sweep continues from: the finish
-// instant and identity of the last Job it examined. Like a listing cursor it is
-// a keyset rather than an offset, and for the same reason — the rows in front of
-// it are being deleted while it is used.
+// instant and identity of the last Job it examined, and the fixed boundary of the
+// cycle that position belongs to. Like a listing cursor it is a keyset rather
+// than an offset, and for the same reason — the rows in front of it are being
+// deleted while it is used.
 type SweepCursor struct {
+	FinishedAt time.Time
+	ID         string
+	// Bound is the inclusive upper boundary of the cycle this position is walking:
+	// the newest Job that was due when the cycle began. It is what makes the walk a
+	// finite amount of work rather than a direction — see SweepBound and Sweep —
+	// and it is carried through every checkpoint of the cycle so that a caller which
+	// persists one resumes the cycle it was in rather than starting a new one
+	// wherever the position happens to be. A position without it is refused: only a
+	// cycle says where the walk ends.
+	Bound *SweepBound
+}
+
+// SweepBound is the far end of one retention cycle's key range: the
+// `(finished_at, id)` of the newest Job that was due when the cycle began.
+//
+// A keyset position alone cannot bound a walk. Work the sweep may not take — a
+// pinned Job, a Job an unresolved claim still protects — is skipped and stays
+// behind the cursor, and under sustained expiry another Job is always due ahead of
+// it, so "there is more" stays true for ever and the skipped Job is never asked
+// about again. Fixing the range at the instant the cycle starts makes each cycle
+// finite and makes reaching its end mean "start again from the oldest due work",
+// which is what gives the skipped Job a next pass.
+type SweepBound struct {
 	FinishedAt time.Time
 	ID         string
 }
@@ -651,8 +720,9 @@ type SweepResult struct {
 	Outputs int
 	// Envelopes is how many replay envelopes the pass purged.
 	Envelopes int
-	// Next continues the walk, or is nil when this pass reached the end of the
-	// expired range.
+	// Next continues the walk inside the cycle this pass belongs to, or is nil when
+	// this pass reached the end of that cycle's range — which is the cue for the
+	// caller to start a new one from the oldest expired work.
 	Next *SweepCursor
 }
 

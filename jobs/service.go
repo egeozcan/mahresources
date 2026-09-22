@@ -847,7 +847,7 @@ func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verif
 		// nonterminal Job, whose envelope is execution-required, never acquires
 		// a deadline at all.
 		if prepared.next.FinishedAt != nil {
-			if err := stampReplayExpiry(tx, prepared.next, deps.Replay, deps.now()); err != nil {
+			if err := stampReplayExpiry(tx, prepared.next, deps.replayRetention(), deps.now()); err != nil {
 				return err
 			}
 		}

@@ -127,14 +127,21 @@ func newJobRuntimeContext(t *testing.T) *MahresourcesContext {
 	if err := db.AutoMigrate(
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
-		&models.JobClaim{}, &models.JobCapacityLease{},
+		&models.JobClaim{}, &models.JobCapacityLease{}, &models.RuntimeSetting{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
 
-	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), &MahresourcesConfig{
-		DbType: constants.DbTypeSqlite,
-	})
+	cfg := &MahresourcesConfig{DbType: constants.DbTypeSqlite}
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
+	// A live settings service, so a runtime here reads the deployment's Job
+	// configuration the way a deployment does — including after an operator
+	// changes one while work is running.
+	settings := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), BuildDefaultsFromConfig(cfg))
+	if err := settings.Load(); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	ctx.SetSettings(settings)
 	ring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
 	if err != nil {
 		t.Fatalf("build replay keyring: %v", err)
@@ -256,6 +263,116 @@ func TestJobRuntimeClaimsAndDispatchesWhatTheAdapterReports(t *testing.T) {
 	}
 	if held := storedCapacity(t, app, jobs.CapacityGroupGlobal) + storedCapacity(t, app, runtimeTestKind); held != 0 {
 		t.Fatalf("capacity rows = %d, want none after the Job finished", held)
+	}
+}
+
+// TestTerminalDeadlinesFollowTheSettingsInEffectAtCompletion is §9's "metadata
+// retention starts at terminal completion", read as the setting the deployment
+// had at that instant rather than the one it had when the work was handed out.
+//
+// The handle an execution publishes through is built when the Job is claimed and
+// is the handle it finishes through — an execution may run for hours — so a window
+// captured there is the operator's answer from before the change. Both deadlines
+// the terminal write stamps are asserted, because they come from two different
+// settings and are stamped by two different statements: the Job's own
+// expires_at, and the sealed input's.
+func TestTerminalDeadlinesFollowTheSettingsInEffectAtCompletion(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		outcome jobs.State
+		window  time.Duration
+	}{
+		{"a success follows the history window", jobs.StateSucceeded, time.Hour},
+		{"a failure follows the attention window", jobs.StateFailed, 3 * time.Hour},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			app := newJobRuntimeContext(t)
+			svc := jobs.NewService()
+			if err := svc.RegisterReplayCodec(runtimeTestKind, 1, runtimeTestCodec()); err != nil {
+				t.Fatalf("RegisterReplayCodec: %v", err)
+			}
+
+			claimed := make(chan jobs.Execution, 1)
+			release := make(chan struct{})
+			adapter := newRuntimeTestAdapter()
+			adapter.dispatch = func(_ context.Context, execution jobs.Execution) error {
+				claimed <- execution
+				<-release
+				request := jobs.FinishRequest{ExpectedVersion: execution.Version, Outcome: testCase.outcome}
+				if testCase.outcome == jobs.StateFailed {
+					request.Failure = &jobs.Failure{Code: "boom", Class: jobs.FailureClassInternal, Message: "it broke"}
+				}
+				_, err := execution.Finish(request)
+				return err
+			}
+			if err := svc.RegisterAdapter(adapter); err != nil {
+				t.Fatalf("RegisterAdapter: %v", err)
+			}
+
+			accepted, err := svc.Accept(app.jobDeps(), jobs.Acceptance{
+				Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+				Title:  "work in flight",
+				Replay: jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://files.example.test/clip.mp4"}`)},
+			})
+			if err != nil {
+				t.Fatalf("Accept: %v", err)
+			}
+
+			runtime := NewJobRuntime(app, svc, JobRuntimeConfig{Claimant: "runtime-test", Interval: time.Hour})
+			runtime.Start()
+			defer runtime.Stop()
+
+			// The execution is claimed and paused inside its adapter: this is the
+			// window an operator's change lands in.
+			<-claimed
+			for key, value := range map[string]string{
+				KeyJobHistoryRetention:   "1h",
+				KeyJobAttentionRetention: "3h",
+				KeyJobReplayRetention:    "2h",
+			} {
+				if err := app.settings.Set(key, value, "test", "127.0.0.1"); err != nil {
+					t.Fatalf("set %s: %v", key, err)
+				}
+			}
+			close(release)
+
+			waitFor(t, "the Job to finish", func() bool {
+				return jobSnapshot(t, svc, app, accepted.ID).State == testCase.outcome
+			})
+
+			snap := jobSnapshot(t, svc, app, accepted.ID)
+			if snap.FinishedAt == nil || snap.ExpiresAt == nil {
+				t.Fatalf("the finished Job carries no deadline: %+v", snap)
+			}
+			if want := snap.FinishedAt.Add(testCase.window); !snap.ExpiresAt.Equal(want) {
+				t.Fatalf("the Job's deadline = %v, want finished_at + the window in effect while it ran (%v)",
+					snap.ExpiresAt, want)
+			}
+
+			var envelope models.JobReplayEnvelope
+			if err := app.db.Where("job_id = ?", accepted.ID).First(&envelope).Error; err != nil {
+				t.Fatalf("read the replay envelope: %v", err)
+			}
+			if envelope.ExpiresAt == nil {
+				t.Fatal("the finished Job's sealed input carries no deadline")
+			}
+			if want := snap.FinishedAt.Add(2 * time.Hour); !envelope.ExpiresAt.Equal(want) {
+				t.Fatalf("the envelope's deadline = %v, want finished_at + the replay window in effect while it ran (%v)",
+					envelope.ExpiresAt, want)
+			}
+		})
+	}
+}
+
+// runtimeTestCodec is the codec a runtime test's replayable Kind registers: it
+// seals and opens the input unchanged, so the test is about what the runtime does
+// with a Job rather than about a migration.
+func runtimeTestCodec() jobs.ReplayCodec {
+	return jobs.ReplayCodec{
+		Sanitize: func(value json.RawMessage) (json.RawMessage, error) { return value, nil },
+		Encode:   func(value json.RawMessage) (json.RawMessage, error) { return value, nil },
+		Decode:   func(payload json.RawMessage, _ uint) (json.RawMessage, error) { return payload, nil },
+		Migrate:  func(payload json.RawMessage, _, _ uint) (json.RawMessage, error) { return payload, nil },
 	}
 }
 

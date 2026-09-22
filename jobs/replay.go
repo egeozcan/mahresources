@@ -675,14 +675,16 @@ func newReplayAEAD(key []byte) (cipher.AEAD, error) {
 // It is called from the terminal transition that produced finished_at, so the
 // deadline exists the moment the outcome does, and it is anchored on the
 // finished instant rather than on acceptance — a Job that ran for a week must
-// not lose its input while it was still running. A Job with no envelope, a
-// purged one, or a retention of zero ("not configured", never "expire now")
-// is left exactly as it is.
-func stampReplayExpiry(tx *gorm.DB, job models.Job, replay *ReplayConfig, now time.Time) error {
-	if replay == nil || replay.Retention <= 0 || job.FinishedAt == nil {
+// not lose its input while it was still running. The window is the one in effect
+// at that instant, not the one the caller's handle was built with, for the same
+// reason the Job's own deadline is: an execution outlives the setting it started
+// under. A Job with no envelope, a purged one, or a retention of zero ("not
+// configured", never "expire now") is left exactly as it is.
+func stampReplayExpiry(tx *gorm.DB, job models.Job, retention time.Duration, now time.Time) error {
+	if retention <= 0 || job.FinishedAt == nil {
 		return nil
 	}
-	expires := job.FinishedAt.Add(replay.Retention).UTC()
+	expires := job.FinishedAt.Add(retention).UTC()
 	result := tx.Model(&models.JobReplayEnvelope{}).
 		Where("job_id = ? AND purged_at IS NULL", job.ID).
 		Updates(map[string]any{"expires_at": expires, "updated_at": now.UTC()})

@@ -285,6 +285,104 @@ func TestRetentionSweepIsBoundedAndResumesFromItsCursor(t *testing.T) {
 	if _, err := svc.Sweep(deps, policy, SweepCursor{}, MaxSweepBatch+1); !errors.Is(err, ErrInvalidPage) {
 		t.Fatalf("an oversized sweep batch = %v, want ErrInvalidPage", err)
 	}
+	// Nor may it walk from a position with no cycle: the boundary is what says
+	// where the walk ends, and a caller that drops it would be asking for the
+	// open-ended walk this cursor shape exists to remove.
+	if _, err := svc.Sweep(deps, policy, SweepCursor{
+		FinishedAt: time.Date(2031, 7, 3, 9, 0, 0, 0, time.UTC), ID: "a-job-id",
+	}, 10); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("a sweep position without its cycle = %v, want ErrInvalidCursor", err)
+	}
+}
+
+// TestRetentionSweepRevisitsWorkItsFirstCycleLeftBehind covers the property a
+// keyset position cannot have on its own: a bounded walk ends.
+//
+// A Job the sweep may not take — a pinned one here — stays where it is and the
+// cursor moves past it. Under sustained expiry there is always another due Job
+// ahead of that cursor, so a pass that reports "there is more" whenever its batch
+// was full reports it for ever, the walk never returns to the beginning, and the
+// Job an earlier pass left alone is never asked about again however long the
+// deployment keeps finishing work. The regression drives exactly that: a Job the
+// first pass may not take, and as many arrivals between two passes as one batch
+// can hold, so a walk with no end always has somewhere further to go.
+func TestRetentionSweepRevisitsWorkItsFirstCycleLeftBehind(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 7, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// finish accepts one Job and settles it as a success at the current instant.
+	finish := func(title string) Snapshot {
+		clock = clock.Add(time.Minute)
+		job := acceptFor(t, svc, deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			OwnerUserID: uintPtr(7), Replay: ReplayInput{NonReplayable: true},
+		})
+		job = advanceReplayJob(t, svc, deps, job, StateRunning)
+		return advanceReplayJob(t, svc, deps, job, StateSucceeded)
+	}
+
+	// A batch of two, and three Jobs due when the walk starts. The oldest is
+	// pinned, so the pass that has room for two takes the second and leaves the
+	// first behind its cursor.
+	const batch = 2
+	behind := finish("left behind")
+	finish("the batch's second")
+	finish("the range's end")
+	if err := svc.SetPreference(deps, Access{UserID: 7},
+		PreferenceRequest{JobID: behind.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	clock = clock.Add(24 * time.Hour)
+
+	cursor := SweepCursor{}
+	pruned := 0
+	cycleEnded := false
+	for pass := 0; pass < 20 && jobExists(t, deps, behind.ID); pass++ {
+		result := sweepFor(t, svc, deps, policy, cursor, batch)
+		pruned += result.Pruned
+		if result.Next == nil {
+			cycleEnded = true
+			// The pass had nothing left inside its range, which is where a caller
+			// starts again from the oldest expired work.
+			cursor = SweepCursor{}
+		} else {
+			// A continued pass carries the cycle it belongs to, or the position it
+			// returns is one the next call refuses: the boundary is the only thing
+			// that says where the walk ends.
+			if result.Next.Bound == nil {
+				t.Fatalf("a continued pass carries no cycle boundary: %+v", result.Next)
+			}
+			cursor = *result.Next
+		}
+		if pass == 0 {
+			// The pin is lifted between batches, so the Job the first pass could not
+			// take is due from the second pass onwards.
+			if err := svc.SetPreference(deps, Access{UserID: 7},
+				PreferenceRequest{JobID: behind.ID, Pinned: boolPtr(false)}); err != nil {
+				t.Fatalf("unpin: %v", err)
+			}
+		}
+		// Two later Jobs become due before every pass after this one — a whole batch
+		// of them — so a walk that never reaches the end of its range always has
+		// somewhere further to go.
+		finish(fmt.Sprintf("arrival %d", pass))
+		finish(fmt.Sprintf("arrival %d again", pass))
+		clock = clock.Add(2 * time.Hour)
+	}
+
+	if jobExists(t, deps, behind.ID) {
+		t.Fatalf("a Job an earlier pass left behind was never revisited: %d pruned over 20 passes", pruned)
+	}
+	if !cycleEnded {
+		t.Fatal("no pass ever reached the end of its range, so the walk never restarted from the oldest work")
+	}
+	if pruned < 3 {
+		t.Fatalf("the sweep pruned %d jobs, want the due work it walked past", pruned)
+	}
 }
 
 // TestRetentionPinExemptsMetadataButNotArtifacts covers both halves of pinning:

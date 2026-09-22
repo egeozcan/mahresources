@@ -705,6 +705,12 @@ func (ctx *MahresourcesContext) JobReplayRetention() time.Duration {
 // documents: transaction membership and request scope ride on the handle, and the
 // Job module deliberately holds none. A caller with a transaction passes its own
 // handle instead; this is the process-level handle a runtime and an adapter use.
+//
+// The two windows a terminal write stamps are attached as re-reads as well as as
+// values, because this handle is not only per-call for everybody: an execution
+// keeps the one it was claimed with until it finishes, which can be hours later.
+// The values are what a caller with no settings service reads; the re-reads are
+// what makes the window governing a Job the one in effect when it finished.
 func (ctx *MahresourcesContext) jobDeps() jobs.Deps {
 	if ctx == nil {
 		return jobs.Deps{}
@@ -719,7 +725,9 @@ func (ctx *MahresourcesContext) jobDeps() jobs.Deps {
 			History:   ctx.JobHistoryRetention(),
 			Attention: ctx.JobAttentionRetention(),
 		},
-		PinLimit: ctx.JobPinLimit(),
+		PinLimit:            ctx.JobPinLimit(),
+		RetentionLive:       ctx.jobRetentionPolicy,
+		ReplayRetentionLive: ctx.JobReplayRetention,
 	}
 }
 

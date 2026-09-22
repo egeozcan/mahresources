@@ -138,6 +138,10 @@ func (ctx *MahresourcesContext) SetJobPreference(request jobs.PreferenceRequest)
 // not a view of somebody's Jobs. Its caller is whatever owns a process lifetime —
 // main's cleanup loop, or an operator's command — and the three things that must
 // never be swept are enforced inside the sweep rather than by who calls it.
+//
+// The cursor is a position inside one cycle of the walk, and a caller that keeps
+// it must keep the cycle with it: the returned result says where to continue, or
+// that the cycle is over and the next pass starts a new one.
 func (ctx *MahresourcesContext) SweepJobHistory(cursor jobs.SweepCursor, limit int) (jobs.SweepResult, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {

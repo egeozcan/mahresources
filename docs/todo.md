@@ -1,3 +1,50 @@
+# Job Center checkpoint review corrections, round 6 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct both P1 findings from the sixth GPT-6 Astra checkpoint review of Tasks 1-5 — a resumable history sweep with no fixed end boundary, so work an earlier pass left behind is never revisited under sustained expiry, and retention configuration captured when an execution is claimed, so an operator's change during a run has no effect on the deadlines that run's completion stamps — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§7, §9), ADRs 0006/0007, the plan's Task 5 contract, `CLAUDE.md`, and the current `jobs/` and `application_context/` code.
+- [x] Reproduce both findings as behaviour tests at the confirmed public seams — `Service.Sweep` with `SetPreference` for the sweep, `JobRuntime` with a paused adapter and the live settings service for the deadlines — and record the red failures before touching production code.
+- [x] Implement one minimal correction per finding, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| History sweeps have no fixed end boundary | `a Job an earlier pass left behind was never revisited: 39 pruned over 20 passes` — an expired Job pinned, then unpinned between batches, a batch as wide as the repeat rate, and a whole batch of arrivals due before every pass: every pass reported `Next`, so the position never came back to the oldest due work | A cycle fixes its range when it starts: `SweepBound` is the `(finished_at, id)` of the newest Job that was due then, the candidate selection is capped by it, and it rides on every cursor the pass returns (`SweepCursor.Bound`) so a persisted checkpoint resumes the cycle it was in. A pass that could not fill its batch has reached the end of that range, so `Next` is nil and the next pass starts a new cycle at the oldest due work — which is the next chance for whatever was left behind. A position without its boundary is refused (`ErrInvalidCursor`) rather than walked open-ended (`TestRetentionSweepRevisitsWorkItsFirstCycleLeftBehind`, plus the refusal assertion in `TestRetentionSweepIsBoundedAndResumesFromItsCursor`) |
+| Retention settings are not re-read when an execution finishes | `the Job's deadline = 2026-10-22 … , want finished_at + the window in effect while it ran (2026-09-22 …)` for the history window and again for the attention window, and `the envelope's deadline = 2026-09-29 …` for the replay window: an adapter paused across the change finished under the windows its handle was built with | The two windows a terminal write stamps are attached to the handle as re-reads (`Deps.RetentionLive`, `Deps.ReplayRetentionLive`) beside their values, `Deps.retention()`/`Deps.replayRetention()` prefer them, and `jobDeps()` supplies the deployment's live settings accessors. The execution's bound DB handle, its context binding and its fencing token are untouched: only the policy values are re-resolved (`TestTerminalDeadlinesFollowTheSettingsInEffectAtCompletion`, both end states) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed; `-race -run TestRetentionSweep -count=2` — passed.
+- `go test --tags 'json1 fts5' ./application_context -count=1` — passed (61s); `-race` on the new and adjacent tests — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1` — passed (6s / 77s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each defect is caught by the test written for it, and the source was restored): dropping the cycle predicate fails `TestRetentionSweepRevisitsWorkItsFirstCycleLeftBehind`; restoring the open-ended walk (no boundary at all) fails it too; making `Deps.retention()` ignore the live re-read fails both subtests of `TestTerminalDeadlinesFollowTheSettingsInEffectAtCompletion` on the Job's own deadline; stamping the envelope from `Deps.Replay.Retention` fails them on the envelope's.
+- `go vet --tags 'json1 fts5' ./...` and `--tags 'json1 fts5 postgres' ./jobs ./application_context` — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source, CLI command, generated asset or documented setting changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The cycle is the unit, and the boundary is what makes it finite.** The finding's correction asks for a fixed `finished_at/id` watermark carried through the checkpoint; that is what `SweepBound` is. It is read with the same due-work predicate the candidates are selected with rather than from the wall clock, because "due" is a Job's own deadline: a Job that finished months ago may still be inside its window, and a legacy row acquires its deadline in this very pass — so the boundary is taken *after* `stampMissingDeadlines`, and everything that pass made due belongs to the cycle that made it due.
+- **A range that is empty is an empty cycle.** Nothing was due when it began, so the pass examines nothing rather than the work that arrived while it was reading; that work belongs to the next cycle, which starts immediately afterwards. The alternative — falling back to the open-ended selection — is exactly the walk this correction removes.
+- **The end of the range is not a separate rule.** A pass that fills its batch reports where to continue; a pass that cannot has nothing left inside the range, so it reports none and the caller starts again. Keeping the two in one rule is what keeps a walk with arrivals streaming past it finite: the range is capped, the position advances strictly, and the batch eventually does not fill. The alternative shape — ending the cycle only at the boundary row itself — was written first and dropped: it needs a whole extra branch to save one cheap empty pass, and the row it keys on may have been pruned by the pass before.
+- **A position without its cycle is refused.** The boundary is the only thing that says where a walk ends, so a cursor that drops it would be a request for the open-ended walk. Nothing in the tree persists a sweep cursor yet (Task 5's sweep has no scheduler), so the refusal is fail-closed rather than a migration.
+- **The live re-read is a handle capability, not a second policy.** `Deps.Retention`/`Deps.Replay.Retention` stay the values a caller built the handle with — every `jobs` test and the CLI keep working exactly as before — and the re-reads are attached only where a deployment has settings to read, which is the same split `Deps.Now` already has. The alternative considered and rejected was having `executionReport` rebuild a whole `Deps`: it would have made a report able to swap the DB handle out from under its own transaction and token, which is the one thing the finding said must be preserved.
+- **Only the two deadlines are re-resolved.** A publication's own expiry comes from the Kind's `OutputInput.ExpiresAt` — the design makes an artifact's retention its own — so nothing else on the execution path reads the deployment's settings, and nothing else changed.
+
+## Review
+
+Both corrections are at the seams their findings named, and both are pinned by behaviour rather than by statements about code: the sweep by a walk that has somewhere further to go on every pass and a Job it must come back for, and the deadlines by an execution paused across a settings change, asserted on both windows and for both end states.
+
+Residual risks and handoffs:
+
+- **A cycle's boundary is re-captured per cycle, so a cycle that is never driven to its end grows stale.** A caller that persists a position *and* its boundary resumes correctly; one that keeps only the position is refused rather than silently starved.
+- **One extra indexed query per cycle**, not per pass: the boundary read is only taken when the cursor does not carry one.
+- **The sweep still has no scheduler** (carried forward from Task 5): `ctx.SweepJobHistory` is a bounded call a loop or an operator drives, and it is where the cycle boundary and the resumable checkpoint meet.
+
 # Job Center checkpoint review corrections, round 5 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct both P1 findings from the fifth GPT-6 Astra checkpoint review of Tasks 1-5 — a release that could reach a terminal outcome around the validation and required-output verification every other path to an ending carries, and an artifact cleanup that could delete the bytes of an output republished between its selection and the Job's row — without widening scope into Tasks 6-18.

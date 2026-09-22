@@ -44,9 +44,18 @@ import (
 // the same thing migration does for backfilled history.
 //
 // The caller drives it with the returned cursor until Next is nil; a pass with
-// no cursor starts again from the oldest expired work, which is safe because a
-// pass is idempotent and because pruning is what removes the rows in front of
-// it.
+// no cursor starts a new cycle from the oldest expired work, which is safe
+// because a pass is idempotent and because pruning is what removes the rows in
+// front of it.
+//
+// A cycle fixes its range when it starts (sweepBound): the newest Job that was due
+// then is where the walk ends. That is not an optimization but the difference
+// between finishing and not: work this pass may not take — a pinned Job, a Job an
+// unresolved claim protects — is skipped and left behind the cursor, and with
+// deletions and arrivals on both sides of it a purely positional walk would have
+// something ahead of it for ever and never come back. Reaching the end of the
+// range ends the cycle and the next pass starts again at the oldest due work,
+// which is the next chance for whatever was left behind.
 func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, limit int) (SweepResult, error) {
 	size, err := sweepBatchSize(limit)
 	if err != nil {
@@ -97,16 +106,17 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 		return result, err
 	}
 
-	var candidates []models.Job
-	err = deps.DB.Model(&models.Job{}).
-		Where("state IN ?", terminalStates()).
-		Where("finished_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?", now).
-		Where("(jobs.finished_at > ? OR (jobs.finished_at = ? AND jobs.id > ?))", cursor.FinishedAt, cursor.FinishedAt, cursor.ID).
-		Order("finished_at ASC, jobs.id ASC").
-		Limit(size).
-		Find(&candidates).Error
+	// The cycle's range is fixed here, after the deadlines this pass stamped: a
+	// legacy Job that just acquired one is due now, and belongs to the cycle that
+	// made it due.
+	bound, err := sweepBound(deps.DB, cursor, now)
 	if err != nil {
-		return result, fmt.Errorf("jobs: select expired jobs: %w", err)
+		return result, err
+	}
+
+	candidates, err := expiredJobs(deps.DB, cursor, bound, size, now)
+	if err != nil {
+		return result, err
 	}
 	result.Examined = len(candidates)
 
@@ -156,9 +166,62 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 	}
 	if len(candidates) == size {
 		last := candidates[len(candidates)-1]
-		result.Next = &SweepCursor{FinishedAt: last.FinishedAt.UTC(), ID: last.ID}
+		result.Next = &SweepCursor{FinishedAt: last.FinishedAt.UTC(), ID: last.ID, Bound: bound}
 	}
 	return result, nil
+}
+
+// expiredJobs reads the due Jobs one pass examines: those the cursor has not
+// passed, within the range the cycle fixed when it started, oldest first.
+// An empty boundary is an empty cycle — nothing was due when it began — and the
+// pass therefore examines nothing at all rather than the work that arrived while
+// it was reading, which belongs to the cycle after this one.
+func expiredJobs(db *gorm.DB, cursor SweepCursor, bound *SweepBound, size int, now time.Time) ([]models.Job, error) {
+	if bound == nil {
+		return nil, nil
+	}
+	var candidates []models.Job
+	err := db.Model(&models.Job{}).
+		Where("state IN ?", terminalStates()).
+		Where("finished_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?", now).
+		Where("(jobs.finished_at > ? OR (jobs.finished_at = ? AND jobs.id > ?))", cursor.FinishedAt, cursor.FinishedAt, cursor.ID).
+		Where("(jobs.finished_at < ? OR (jobs.finished_at = ? AND jobs.id <= ?))", bound.FinishedAt, bound.FinishedAt, bound.ID).
+		Order("finished_at ASC, jobs.id ASC").
+		Limit(size).
+		Find(&candidates).Error
+	if err != nil {
+		return nil, fmt.Errorf("jobs: select expired jobs: %w", err)
+	}
+	return candidates, nil
+}
+
+// sweepBound is the upper boundary of the cycle this pass belongs to: the one a
+// continued cursor carries, or — for a pass that starts a cycle — the newest Job
+// that is due right now.
+//
+// A pass reads it with the same due-work predicate the candidates are selected
+// with rather than with the wall clock, because "due" is a Job's own deadline and
+// not an instant: a Job that finished long ago may still have months of its window
+// left, and a legacy row gets its deadline in this very pass.
+func sweepBound(db *gorm.DB, cursor SweepCursor, now time.Time) (*SweepBound, error) {
+	if cursor.Bound != nil {
+		return cursor.Bound, nil
+	}
+	var newest []models.Job
+	err := db.Model(&models.Job{}).
+		Where("state IN ?", terminalStates()).
+		Where("finished_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?", now).
+		Order("finished_at DESC, jobs.id DESC").
+		Limit(1).
+		Find(&newest).Error
+	if err != nil {
+		return nil, fmt.Errorf("jobs: select the sweep cycle's boundary: %w", err)
+	}
+	if len(newest) == 0 {
+		// Nothing is due: the cycle has no range and the pass has no candidates.
+		return nil, nil
+	}
+	return &SweepBound{FinishedAt: newest[0].FinishedAt.UTC(), ID: newest[0].ID}, nil
 }
 
 // expiredJobPredicate is the retention decision, written once: a terminal Job
@@ -899,14 +962,25 @@ func sweepBatchSize(limit int) (int, error) {
 }
 
 // validateSweepCursor checks a sweep position the same way a listing checks one:
-// the zero value starts at the oldest expired work, and anything else names both
-// halves of the key.
+// the zero value starts a cycle at the oldest expired work, and anything else
+// names the position and the cycle's own boundary — a position alone is a walk
+// with no end, which is the shape the boundary exists to remove.
 func validateSweepCursor(cursor SweepCursor) error {
-	if cursor.ID == "" && cursor.FinishedAt.IsZero() {
+	empty := cursor.ID == "" && cursor.FinishedAt.IsZero()
+	if empty {
+		if cursor.Bound != nil {
+			return fmt.Errorf("%w: a sweep cycle boundary needs the position it is walked from", ErrInvalidCursor)
+		}
 		return nil
 	}
 	if cursor.ID == "" || cursor.FinishedAt.IsZero() {
 		return fmt.Errorf("%w: a sweep cursor needs both the finish instant and the job id", ErrInvalidCursor)
+	}
+	if cursor.Bound == nil {
+		return fmt.Errorf("%w: a sweep cursor needs the cycle it belongs to", ErrInvalidCursor)
+	}
+	if cursor.Bound.ID == "" || cursor.Bound.FinishedAt.IsZero() {
+		return fmt.Errorf("%w: a sweep cycle boundary needs both the finish instant and the job id", ErrInvalidCursor)
 	}
 	return nil
 }
