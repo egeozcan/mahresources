@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1116,6 +1118,150 @@ func TestRetentionExpiredArtifactIsRemovedWhateverTheJobsMetadataSays(t *testing
 		if jobID == protected.ID {
 			t.Fatal("the sweep asked about a Job an unresolved claim still protects")
 		}
+	}
+}
+
+// TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifact is the window the
+// deletion fence does not cover: a candidate selected, then replaced, before the
+// pass reaches the Job's row.
+//
+// The pass selects the artifacts whose own deadline has passed outside any
+// transaction, and a queued Job carrying one is claimable at any instant. An
+// execution that claims it publishes the same key again — the same bytes, since a
+// Kind that produced the export once produces the same file — with a deadline of
+// its own, and finishes, which releases the claim the fence looks for. The Job the
+// fence admits is therefore no longer the Job the artifacts were selected from,
+// and the reference the pass is holding names bytes an output still promises.
+// Deleting them is the defect the version guard on the recording cannot undo: it
+// can only decline to record a deletion that already happened.
+func TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifact(t *testing.T) {
+	deps, dsn := newFileDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 16, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// The runtime's writes run on their own connection, so the republication is an
+	// interleaving rather than a step of the pass.
+	other := Deps{DB: openSecondHandle(t, dsn), Now: deps.Now, Retention: deps.Retention}
+
+	runArtifactCleanupRepublication(t, svc, deps, other, policy)
+}
+
+// runArtifactCleanupRepublication drives the selection → claim/republication/finish
+// → cleanup interleaving for one engine. deps is the connection the pass reads on
+// and other is where the runtime's writes run: a second handle on SQLite, the
+// engine's own pool on PostgreSQL.
+func runArtifactCleanupRepublication(t *testing.T, svc *Service, deps Deps, other Deps, policy RetentionPolicy) {
+	t.Helper()
+	now := deps.Now()
+
+	// The artifact's bytes. The Kind's cleanup deletes the file it is asked about,
+	// so "the artifact was deleted" is a fact about the bytes rather than about a
+	// column — the column says what a stale decision left behind either way.
+	bytes := filepath.Join(t.TempDir(), "export.tar")
+	if err := os.WriteFile(bytes, []byte("the export"), 0o600); err != nil {
+		t.Fatalf("write the artifact: %v", err)
+	}
+	reference := json.RawMessage(fmt.Sprintf(`{"path":%q}`, bytes))
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		result := ArtifactCleanupResult{}
+		for _, artifact := range request.Artifacts {
+			// The Kind deletes the file its reference names, so what the bytes
+			// assertion above reads is whether anything that still promises them asked
+			// for them to go.
+			var published struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(artifact.Reference, &published); err == nil && published.Path == bytes {
+				if err := os.Remove(bytes); err != nil {
+					t.Errorf("remove the artifact the Kind was asked about: %v", err)
+				}
+			}
+			result.Removed = append(result.Removed, artifact.Key)
+		}
+		return result, nil
+	}
+
+	// A queued Job — claimable, by definition — whose artifact's own deadline has
+	// already passed.
+	accepted := acceptQueued(t, svc, deps, nil)
+	deadline := now.Add(-time.Hour)
+	if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: accepted.ID}, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+		Reference: reference, ExpiresAt: &deadline,
+	}); err != nil {
+		t.Fatalf("publish the artifact: %v", err)
+	}
+
+	// The window: the pass has read the output rows past their deadline and has not
+	// yet reached the Job's row, so the claim this runtime takes is admitted and the
+	// publication replaces the row the pass is holding.
+	fresh := now.Add(24 * time.Hour)
+	var once sync.Once
+	republished := false
+	const hook = "test:republish-artifact-under-cleanup"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
+		// The pass's artifact selection is the only query here that names the
+		// deferral column, which is what places this write after it and before the
+		// transaction that acts on it.
+		if tx.Statement == nil || tx.Statement.Table != "job_outputs" ||
+			!strings.Contains(tx.Statement.SQL.String(), "next_cleanup_at") {
+			return
+		}
+		once.Do(func() {
+			execution, ok, err := svc.Claim(context.Background(), other, ClaimRequest{
+				Kind: testKind, KindVersion: 1, Claimant: "runtime-b",
+			})
+			if err != nil || !ok {
+				t.Errorf("claim the Job the pass was about to clean up: claimed %v, %v", ok, err)
+				return
+			}
+			ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+			if _, err := svc.PublishOutput(other, ref, OutputInput{
+				Key: "artifact", Type: OutputTypeArtifact, Label: "the tar",
+				Reference: reference, ExpiresAt: &fresh,
+			}); err != nil {
+				t.Errorf("republish the artifact while the pass was running: %v", err)
+				return
+			}
+			if _, err := svc.Finish(other, FinishRequest{
+				ExecutionRef: ref, ExpectedVersion: execution.Version, Outcome: StateSucceeded,
+			}); err != nil {
+				t.Errorf("finish the Job the pass was about to clean up: %v", err)
+				return
+			}
+			republished = true
+		})
+	}); err != nil {
+		t.Fatalf("register the interleaving hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
+
+	sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+
+	if !republished {
+		t.Fatal("the interleaving never ran: the pass did not select an artifact past its deadline")
+	}
+	if _, err := os.Stat(bytes); err != nil {
+		t.Fatalf("the artifact republished while the pass ran was deleted: %v", err)
+	}
+	var artifact models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", accepted.ID, "artifact").First(&artifact).Error; err != nil {
+		t.Fatalf("read the artifact: %v", err)
+	}
+	if artifact.Availability != string(OutputAvailable) || artifact.RemovedAt != nil {
+		t.Fatalf("the artifact the pass skipped is %s (removed at %v), want it still available",
+			artifact.Availability, artifact.RemovedAt)
+	}
+	if artifact.ExpiresAt == nil || !artifact.ExpiresAt.Equal(fresh) {
+		t.Fatalf("artifact deadline = %v, want the republication's %v", artifact.ExpiresAt, fresh)
+	}
+	if asked := adapter.cleanupCount(); asked != 0 {
+		t.Fatalf("the Kind was asked to clean up %d artifact sets, want none: nothing the pass decided about is left", asked)
 	}
 }
 

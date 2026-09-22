@@ -234,3 +234,25 @@ func TestRetentionArtifactCleanupIsFencedAgainstANewClaimPG(t *testing.T) {
 		t.Fatalf("state = %s, want the claim's running", stored.State)
 	}
 }
+
+// TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifactPG is the same
+// interleaving on the engine whose pool is the second connection: a candidate
+// selected, then replaced by a runtime that claimed the Job, published the same
+// key — and the same bytes — with a deadline of its own, and finished.
+//
+// The Job's row the fence takes is the exclusion between a claim and a deletion,
+// and it is not an exclusion between a deletion and a claim that has already
+// committed and released. PostgreSQL takes that row before the Kind is asked, so
+// the republication is visible by the time the pass decides what to hand over —
+// which is exactly why the decision has to be re-made from the rows as they are
+// rather than from the ones the selection read.
+func TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifactPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2034, 3, 5, 5, 6, 7, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	runArtifactCleanupRepublication(t, svc, deps, deps, policy)
+}

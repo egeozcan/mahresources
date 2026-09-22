@@ -256,8 +256,8 @@ type FinishRequest struct {
 }
 
 // ReleaseRequest is one execution's decision to stop owning a Job: which execution
-// it is, why it is stopping, and — when the Job is still running — the state the
-// releasing runtime decided the Job is left in.
+// it is, why it is stopping, and — when the Job is still running — the nonterminal
+// state the releasing runtime decided the Job is left in.
 //
 // It is a request rather than three arguments because the reason and the state are
 // one decision: the reason is what the claim records about the execution that gave
@@ -272,12 +272,14 @@ type ReleaseRequest struct {
 	// back because its execution ended, quiesced or was superseded records that
 	// instead.
 	Reason string
-	// To is the state a running Job is left in: whether the work belongs back in the
-	// queue for the next process, or paused, blocked, or ended by the runtime that
-	// knows what its own execution did. It is applied atomically with the release,
-	// because the two separately would leave a running Job owned by nobody. It is
-	// read only where the named execution owns a running Job, so it is required
-	// there and ignored by a release that owns nothing.
+	// To is the nonterminal state a running Job is left in: whether the work belongs
+	// back in the queue for the next process, or paused, or blocked for a person. It
+	// is applied atomically with the release, because the two separately would leave a
+	// running Job owned by nobody. It is read only where the named execution owns a
+	// running Job, so it is required there and ignored by a release that owns nothing.
+	// An end state is refused here (ErrReleaseTerminalState) rather than applied:
+	// ending a Job is Finish's decision, and Finish is where the failure taxonomy and
+	// the required-output verification a terminal outcome needs belong.
 	To State
 }
 
@@ -1041,6 +1043,15 @@ var (
 	// Claim takes queued or scheduled work, and not reconcilable, since the expiry
 	// scan looks for held claims.
 	ErrReleaseNeedsState = errors.New("jobs: a release of a running job must name the state it is left in")
+	// ErrReleaseTerminalState refuses a release that names an end state. A release
+	// is the graceful half of the claim fence: it hands a Job back to whoever comes
+	// next, so the state it names is one the next process can pick the work up in.
+	// Ending a Job is Finish's decision, and Finish is the entry point that carries
+	// the terminal contract — the failure taxonomy a failed Job must record, and the
+	// required outputs a success is verified against (see successVerification). A
+	// release that could name an end state would be a second way for work to end,
+	// reached around both.
+	ErrReleaseTerminalState = errors.New("jobs: a release may not end a job; ending one is what Finish does")
 	// ErrVersionConflict is an optimistic-concurrency conflict. The caller read
 	// a stale Job and must re-read and re-decide.
 	ErrVersionConflict = errors.New("jobs: job version conflict")

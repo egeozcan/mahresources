@@ -619,6 +619,14 @@ func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) 
 // pass stands down instead of deleting. In the other order the claim simply waits
 // for the deletion, which is the direction that cannot delete a published file.
 //
+// The row does not fence the deletion against a claim that has already committed
+// and been released, and neither does the protection read: a queued Job can be
+// claimed, run, publish the same key — the same artifact produced again, with a
+// deadline of its own — and finish, all between the selection and this
+// transaction. So the candidates are re-read under that row and the ones the pass
+// was not looking at are dropped: the deletion is decided from the rows as they
+// are, never from the rows the selection read.
+//
 // Every answer but a complete accounting is a no, and a Kind this process cannot
 // run and an adapter that failed both answer nothing. Neither may be read as
 // "gone": the caller keeps whatever names the artifact — the history, where the
@@ -647,13 +655,66 @@ func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.Jo
 			return nil
 		}
 
-		removed, unaccounted, err = s.askForArtifactRemoval(tx, job, rows, now)
+		candidates, err := currentArtifacts(tx, job.ID, rows)
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			// Every candidate was replaced while the pass was running, so there is
+			// nothing here to ask the Kind about and nothing to defer: the artifacts
+			// that replaced them carry their own deadlines.
+			return nil
+		}
+
+		removed, unaccounted, err = s.askForArtifactRemoval(tx, job, candidates, now)
 		return err
 	})
 	if err != nil {
 		return 0, nil, err
 	}
 	return removed, unaccounted, nil
+}
+
+// currentArtifacts re-reads the candidates a pass selected, under the Job's own row,
+// and keeps the ones that are still the rows that pass decided about.
+//
+// The row's own version is what makes it the same artifact, and it is the whole of
+// the check: every column that says what an output promises — its reference, its
+// availability, its deadline — is changed only by a write that moves the version
+// with it, so a row still at the version the pass read is the row the pass decided
+// about, reference, deadline and availability included. A row that is not is one a
+// reader would be served differently: the same key produced again with a deadline of
+// its own, or one already recorded gone. Handing a reference like that to the Kind
+// deletes bytes an output still advertises, and the version guard on the recording
+// cannot undo it — it can only decline to record what already happened.
+//
+// A deferral is the one write to these rows that deliberately moves no version, and
+// it is not a reason to skip a candidate here: it says a pass could not establish
+// that the bytes are gone, which is the question this pass is answering.
+func currentArtifacts(tx *gorm.DB, jobID string, rows []models.JobOutput) ([]models.JobOutput, error) {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+
+	var stored []models.JobOutput
+	if err := tx.Where("job_id = ? AND id IN ?", jobID, ids).Find(&stored).Error; err != nil {
+		return nil, fmt.Errorf("jobs: re-read artifacts before cleanup: %w", err)
+	}
+	byID := make(map[string]models.JobOutput, len(stored))
+	for _, row := range stored {
+		byID[row.ID] = row
+	}
+
+	current := make([]models.JobOutput, 0, len(rows))
+	for _, row := range rows {
+		here, found := byID[row.ID]
+		if !found || here.Version != row.Version {
+			continue
+		}
+		current = append(current, here)
+	}
+	return current, nil
 }
 
 // lockArtifactCleanupTarget takes the Job's own row before the adapter is asked

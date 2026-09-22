@@ -1,3 +1,48 @@
+# Job Center checkpoint review corrections, round 5 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct both P1 findings from the fifth GPT-6 Astra checkpoint review of Tasks 1-5 — a release that could reach a terminal outcome around the validation and required-output verification every other path to an ending carries, and an artifact cleanup that could delete the bytes of an output republished between its selection and the Job's row — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§7, §9), ADRs 0006/0007, the plan's Task 4/5 contracts, `CLAUDE.md`, and the current `jobs/` code.
+- [x] Reproduce each finding as a red behavior test at the confirmed public seam before changing production code, including the selection → claim/republication/finish → cleanup interleaving on both engines.
+- [x] Implement one minimal correction per finding, then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| `ReleaseClaim` bypasses terminal-outcome validation | `a release naming succeeded ended the Job as succeeded (<nil>), applied without the validation the outcome needs` — and the same for failed, cancelled and interrupted; the failed one recorded a failure with no taxonomy, and the succeeded one committed beside a required artifact whose deadline had already passed | `ReleaseRequest.To` names a nonterminal state, and an end state is refused before anything is read (`ErrReleaseTerminalState`); ending a Job stays `Finish`'s, which carries the failure taxonomy and the required-output verification (`TestReleaseClaimNeverEndsAJob`) |
+| Artifact cleanup can delete a freshly republished output | `the artifact republished while the pass ran was deleted: stat .../export.tar: no such file or directory` on SQLite, and again on PostgreSQL with the reload removed | The candidates are re-read under the Job's own row and the ones the pass was not looking at are dropped, so the Kind is asked only about rows still at the version the pass decided about (`TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifact`, `TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifactPG`) |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed; `-race`, `-count=1` — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed, including the new PostgreSQL regression.
+- `go test --tags 'json1 fts5' ./application_context -count=1` — passed (61s); with `postgres` — passed (76s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each defect is caught by the test written for it, and the source was restored): reverting the terminal-state refusal fails all four subtests of `TestReleaseClaimNeverEndsAJob`; replacing the reload with the selected rows fails `TestRetentionArtifactCleanupDoesNotDeleteARepublishedArtifact` and its PostgreSQL twin.
+- `go vet --tags 'json1 fts5' ./jobs` and `--tags 'json1 fts5 postgres' ./jobs` — clean. `gofmt -l` on every changed file — clean. `git diff --check` — clean.
+- No frontend source, CLI command or generated asset changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The release refuses end states rather than carrying them through the validated transition.** The finding allows either. Routing them through it would have made a release a second way to end a Job, and a weaker one: `Finish` is where a caller names the required outputs it promised, which a scan of the stored rows cannot see. So a release keeps its documented purpose — handing a Job back in a state the next process can pick the work up in — and exactly one entry point ends a Job, with the whole contract: `Transition` and `Finish` both verify a success, and only a failure that carries a taxonomy is recordable.
+- **The refusal is state-independent.** It is checked in `validateReleaseRequest`, before the Job is read, so a request that names an end state changes nothing whatever state the Job is in: `To` is read only for a running Job, which makes a target that can never be applied malformed in every state.
+- **A version is the whole supersession check.** Every write that changes what an output promises — a publication, an expiry, a removal — moves the row's version with it, so version, reference, availability and deadline are one check rather than four statements of the same rule. The one version-less write is the cleanup deferral, which says only that a pass could not establish the bytes are gone — the question this pass is answering, and therefore not a reason to skip the candidate.
+- **A candidate that is dropped is not deferred.** Nothing about the row that replaced it is waiting for a later pass: a republished artifact carries its own deadline and its own cleanup, and the publication that replaced it cleared the deferral beside it.
+
+## Review
+
+Both corrections are at the seams their findings named, and both are pinned by behaviour rather than by statements about code: the release by four end states that must leave state, timeline, claim and capacity exactly as they were, and the cleanup by an interleaving that drives a claim, a publication and a finish from inside the pass's own selection, on a second connection — the window between a decision and the row that admits it.
+
+Residual risks and handoffs:
+
+- **The cleanup re-reads one Job's candidate rows inside the transaction that holds its row.** That is a read after the first write, which the module's ordering rule allows, and it is bounded by the batch (one Job's artifacts).
+- **The metadata prune path still asks the Kind about every artifact of the Job whose history is expiring, whatever those artifacts' own deadlines say** (pre-existing and unchanged): the reload drops only rows the pass was not looking at, and a terminal Job cannot be republished to.
+- **The sweep still has no scheduler** (carried forward from Task 5): `ctx.SweepJobHistory` is a bounded call a loop or an operator drives.
+
 # Job Center checkpoint review corrections, round 4 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct every P0/P1 finding from the fourth GPT-6 Astra checkpoint review of Tasks 1-5 — artifact cleanup starving on a candidate it cannot act on, the artifact deletion not being fenced against a claim that lands just afterwards, `Accept` carrying a codec's own error text for `Sanitize`/`Encode`, and the public lifecycle paths that could leave a running Job outside claim recovery — without widening scope into Tasks 6-18.

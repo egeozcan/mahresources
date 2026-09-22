@@ -559,13 +559,20 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 // owns nothing is a no-op: releasing is idempotent, and the alternative would be
 // a runtime that cannot safely report what it already reported.
 //
-// A Job that is still running is left in the state the request names, in the same
-// transaction that hands the claim back, and a request that names none is refused:
-// releasing the ownership of a running Job without ending its running would leave
-// work that nothing can claim and nothing reconciles. Where a Job that already
-// left running belongs was the decision of whatever ended it, so only ownership
-// changes here — which is the ordinary case, and the one every adapter that moves
-// its own Job through the lifecycle leaves behind.
+// A Job that is still running is left in the nonterminal state the request names,
+// in the same transaction that hands the claim back, and a request that names none
+// is refused: releasing the ownership of a running Job without ending its running
+// would leave work that nothing can claim and nothing reconciles. Where a Job that
+// already left running belongs was the decision of whatever ended it, so only
+// ownership changes here — which is the ordinary case, and the one every adapter
+// that moves its own Job through the lifecycle leaves behind.
+//
+// A release never ends a Job. The state it may name is one the next process can
+// pick the work up in, and an end state is refused rather than applied
+// (ErrReleaseTerminalState): the terminal contract belongs to Finish — the failure
+// taxonomy a failed Job records, and the required outputs a successful one is
+// verified against — and Transition carries the same verification for the running
+// -> succeeded it permits, so no path to success is left unguarded.
 func (s *Service) ReleaseClaim(deps Deps, request ReleaseRequest) (Snapshot, error) {
 	if err := validateReleaseRequest(request); err != nil {
 		return Snapshot{}, err
@@ -626,8 +633,17 @@ func validateReleaseRequest(request ReleaseRequest) error {
 		return fmt.Errorf("%w: release reason is %d bytes, over the %d-byte ceiling",
 			ErrInvalidClaim, len(request.Reason), MaxReleaseReasonBytes)
 	}
-	if request.To != "" && !request.To.Valid() {
-		return fmt.Errorf("%w: %q", ErrUnknownState, request.To)
+	if request.To != "" {
+		if !request.To.Valid() {
+			return fmt.Errorf("%w: %q", ErrUnknownState, request.To)
+		}
+		// Ending a Job is Finish's decision, whatever the Job's state is now: the
+		// state is read only where an execution owns a running Job, and a request
+		// that names an end state is the one thing that would apply a terminal
+		// outcome without the validation and verification Finish carries.
+		if request.To.Terminal() {
+			return fmt.Errorf("%w: %q", ErrReleaseTerminalState, request.To)
+		}
 	}
 	return nil
 }

@@ -747,6 +747,106 @@ func TestReleaseClaimRefusesToStrandARunningJob(t *testing.T) {
 	}
 }
 
+// TestReleaseClaimNeverEndsAJob is the other half of the same rule, and it is
+// §7's contract read at this seam.
+//
+// A release that could name an end state would be a terminal transition reached
+// around everything that makes one honest: the failure taxonomy a failed Job must
+// record, and the required outputs a success is verified against. An execution
+// holding a required artifact it cannot serve — its deadline had already passed
+// when it was published — could release its way to succeeded, which is exactly the
+// invariant Finish and Transition both enforce and the one entry point that could
+// not. Ending a Job is Finish's decision, and a release names a nonterminal state
+// the Job is left in for whoever comes next.
+func TestReleaseClaimNeverEndsAJob(t *testing.T) {
+	for _, terminal := range []State{StateSucceeded, StateFailed, StateCancelled, StateInterrupted} {
+		t.Run(string(terminal), func(t *testing.T) {
+			deps := newTestDeps(t)
+			svc := NewService()
+			registerTestAdapter(t, svc, testDefinition())
+			clock := time.Date(2033, 5, 8, 7, 8, 9, 0, time.UTC)
+			deps.Now = func() time.Time { return clock }
+
+			accepted := acceptQueued(t, svc, deps, nil)
+			execution, ok := claimOnce(t, svc, deps, "runtime-a", CapacityRef{Group: CapacityGroupGlobal, Limit: 1})
+			if !ok {
+				t.Fatal("the queued Job was not claimed")
+			}
+			ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+
+			// A required artifact whose deadline had already passed when it was
+			// published: the shape §7 refuses to call a success.
+			past := clock.Add(-time.Hour)
+			if _, err := svc.PublishOutput(deps, ref, OutputInput{
+				Key: "artifact", Type: OutputTypeArtifact, Required: true,
+				Reference: json.RawMessage(`{"path":"exports/late.tar"}`), ExpiresAt: &past,
+			}); err != nil {
+				t.Fatalf("PublishOutput: %v", err)
+			}
+
+			decidedFrom := jobRow(t, deps, accepted.ID)
+			events := len(jobEvents(t, deps, accepted.ID))
+			admitted := capacityRows(t, deps, accepted.ID)
+
+			_, err := svc.ReleaseClaim(deps, ReleaseRequest{
+				ExecutionRef: ref, Reason: ReleaseReasonExecutionEnded, To: terminal,
+			})
+			if !errors.Is(err, ErrReleaseTerminalState) {
+				t.Fatalf("release naming %s = %v, want ErrReleaseTerminalState", terminal, err)
+			}
+
+			// Nothing moved: not the state, not the timeline, not the claim, not the
+			// capacity — which is what makes the refusal a refusal rather than an ending
+			// that happened to be reported.
+			stored := jobRow(t, deps, accepted.ID)
+			if stored.State != string(StateRunning) || stored.Version != decidedFrom.Version ||
+				stored.ExecutionToken != execution.ExecutionToken {
+				t.Fatalf("a refused release left the Job %s v%d token %q", stored.State, stored.Version, stored.ExecutionToken)
+			}
+			if got := len(jobEvents(t, deps, accepted.ID)); got != events {
+				t.Fatalf("a refused release recorded %d events, want the %d that were there", got, events)
+			}
+			if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateHeld || claim.ReleasedAt != nil {
+				t.Fatalf("a refused release changed the claim: %+v", claim)
+			}
+			if leases := capacityRows(t, deps, accepted.ID); len(leases) != len(admitted) {
+				t.Fatalf("a refused release freed the capacity that admitted the Job: %d leases, want %d",
+					len(leases), len(admitted))
+			}
+
+			// The decision is still available where it belongs, with the contract this
+			// Job cannot satisfy: the same success is refused, and the failure that does
+			// end it carries a taxonomy. Only the artifact's bytes survive either way —
+			// nothing here deleted what the output still promises.
+			if _, err := svc.Finish(deps, FinishRequest{
+				ExecutionRef: ref, ExpectedVersion: decidedFrom.Version, Outcome: StateSucceeded,
+			}); !errors.Is(err, ErrRequiredOutputUnavailable) {
+				t.Fatalf("Finish as succeeded over an exhausted required artifact = %v, want ErrRequiredOutputUnavailable", err)
+			}
+			failed, err := svc.Finish(deps, FinishRequest{
+				ExecutionRef: ref, ExpectedVersion: decidedFrom.Version, Outcome: StateFailed,
+				Failure: &Failure{Code: "gave-up", Class: FailureClassInternal},
+			})
+			if err != nil {
+				t.Fatalf("Finish as failed: %v", err)
+			}
+			if failed.State != StateFailed {
+				t.Fatalf("finished Job is %s, want failed", failed.State)
+			}
+			if stored := jobRow(t, deps, accepted.ID); stored.FailureCode != "gave-up" {
+				t.Fatalf("failure code = %q, want the taxonomy the outcome records", stored.FailureCode)
+			}
+			var artifact models.JobOutput
+			if err := deps.DB.Where("job_id = ? AND key = ?", accepted.ID, "artifact").First(&artifact).Error; err != nil {
+				t.Fatalf("read the artifact: %v", err)
+			}
+			if artifact.RemovedAt != nil {
+				t.Fatal("ending the Job removed the artifact it published")
+			}
+		})
+	}
+}
+
 // TestLeavingTheRunningStateReleasesTheClaimAndItsCapacity ties the two halves
 // together: a Job that is no longer running is not owned by an execution, so its
 // claim and capacity are freed in the same transaction that moved it, and no
