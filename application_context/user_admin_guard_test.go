@@ -305,6 +305,78 @@ func TestDeleteUserRemovesTheirJobPreferences(t *testing.T) {
 
 func boolPointer(v bool) *bool { return &v }
 
+// jobPreferenceRows counts one viewer's preference rows, which is what "did this
+// admission land" is asked as.
+func jobPreferenceRows(t *testing.T, ctx *MahresourcesContext, userID uint) int64 {
+	t.Helper()
+	var rows int64
+	if err := ctx.db.Model(&models.JobPreference{}).Where("user_id = ?", userID).Count(&rows).Error; err != nil {
+		t.Fatalf("count preferences for %d: %v", userID, err)
+	}
+	return rows
+}
+
+// The sweep above removes the preferences of a viewer who is deleted. This is the
+// same rule read as a race, at the seam a request reaches it through: the
+// administrator's context is in flight — authenticated before the account was
+// removed, writing after it — and nothing else in the preference path notices.
+//
+// The Job belongs to somebody else and stays visible to the captured identity,
+// because the visibility predicate is asked as the *captured* access, so the
+// recheck inside the transaction passes and the row is viewer-keyed. A surviving
+// pin would then exempt that Job's metadata and events from retention for
+// everybody, forever, with no viewer left who could ever unpin it.
+func TestJobPreferenceIsRefusedAfterTheViewerIsDeleted(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	ctx.SetJobService(jobs.NewService())
+	makeAdmin(t, ctx, "keeper") // so removing the other admin is not the last-admin case
+	doomed := makeAdmin(t, ctx, "doomed")
+	owner, err := ctx.CreateUser(&UserInput{Username: "owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	job, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: &owner.ID, Title: "another user's download",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept job: %v", err)
+	}
+
+	// The administrator's request context, authenticated and in flight.
+	inFlight := ctx.WithPrincipal(&auth.Principal{UserID: doomed.ID, Username: doomed.Username, Role: models.RoleAdmin})
+
+	if err := ctx.DeleteUser(doomed.ID); err != nil {
+		t.Fatalf("delete the administrator: %v", err)
+	}
+
+	// Nothing about the Job refuses this write: it is another user's Job, and the
+	// access the check inside the transaction is asked with is a captured
+	// administrator's.
+	if _, err := inFlight.GetJob(job.ID); err != nil {
+		t.Fatalf("the captured administrator cannot see the Job: %v", err)
+	}
+
+	err = inFlight.SetJobPreference(jobs.PreferenceRequest{JobID: job.ID, Pinned: boolPointer(true)})
+	if rows := jobPreferenceRows(t, ctx, doomed.ID); err == nil || rows != 0 {
+		t.Fatalf("a preference for the deleted administrator was written (err = %v, %d rows): a surviving pin exempts the Job from retention for everybody, forever", err, rows)
+	}
+	if !errors.Is(err, jobs.ErrViewerDeleted) {
+		t.Fatalf("the refusal for a deleted viewer = %v, want ErrViewerDeleted", err)
+	}
+
+	// The refusal is durable rather than a snapshot of a row that happens to be
+	// gone by now, so it holds however long after the deletion the write lands.
+	var guard models.JobPinGuard
+	if err := ctx.db.Where("user_id = ?", doomed.ID).First(&guard).Error; err != nil {
+		t.Fatalf("the deleted viewer left no preference fence: %v", err)
+	}
+	if guard.DeletedAt == nil {
+		t.Fatal("the deleted viewer's preference fence carries no tombstone, so a later admission would be admitted")
+	}
+}
+
 // Phase 5b: a Job carries two live user references, and deleting its owner
 // nulls both. The Job survives as admin-only history — its outcome and sanitized
 // summary are facts about what happened — while the deleted identity keeps no

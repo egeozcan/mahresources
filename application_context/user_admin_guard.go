@@ -108,7 +108,8 @@ func nullCreatorReferences(tx *gorm.DB, userID uint) error {
 // concurrent last-admin mutations serialize: under read-committed two txns could
 // otherwise each observe two enabled admins and each remove a different one down
 // to zero. A no-op on SQLite, which serializes writers within a write
-// transaction (and where the conditional mutation below is the first write).
+// transaction — where the Job preference fence the delete opens with is the
+// first write, and this one follows it.
 func lockEnabledAdmins(ctx *MahresourcesContext, tx *gorm.DB) error {
 	if ctx.Config.DbType != constants.DbTypePosgres {
 		return nil

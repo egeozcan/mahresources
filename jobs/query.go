@@ -354,7 +354,9 @@ func knownLinkType(value string) bool {
 //
 // A hidden Job is refused exactly as a missing one, and the request is refused
 // outright when the principal has no user to belong to: a preference on nobody's
-// list cannot be answered.
+// list cannot be answered. A viewer whose account has been deleted is refused the
+// same way, on the durable tombstone their deletion left rather than on a read of
+// the account row — see lockPinAdmission.
 func (s *Service) SetPreference(deps Deps, access Access, request PreferenceRequest) error {
 	if access.UserID == 0 {
 		return fmt.Errorf("%w: a preference belongs to a user, and this principal has none", ErrInvalidPreference)
@@ -368,16 +370,25 @@ func (s *Service) SetPreference(deps Deps, access Access, request PreferenceRequ
 
 	now := deps.now()
 	return deps.DB.Transaction(func(tx *gorm.DB) error {
-		// Two guards are taken before anything is decided, because both decisions
-		// this write makes are reads that another writer can invalidate: the pin
-		// limit is a count of the viewer's rows, and the Job's existence is a
-		// fact retention removes on its own schedule.
+		// Three guards are taken before anything is decided, because every decision
+		// this write makes is a read another writer can invalidate: whether the
+		// viewer still exists, the pin limit — a count of the viewer's rows — and
+		// the Job's existence, which retention removes on its own schedule.
 		//
 		// The per-viewer admission row is inserted first — a write, so SQLite's
 		// writer lock is taken before anything is read — and locked for the rest
-		// of the transaction where the engine has row locks at all.
-		if err := lockPinAdmission(tx, access.UserID, now); err != nil {
+		// of the transaction where the engine has row locks at all. It is also the
+		// durable answer to whether this viewer exists: the account deletion takes
+		// the same row and tombstones it in the transaction that sweeps their
+		// preferences, so a request authenticated before that deletion and writing
+		// after it finds the tombstone rather than an account nobody asked about
+		// — and the fence is what keeps the two from committing in either order.
+		deleted, err := lockPinAdmission(tx, access.UserID, now)
+		if err != nil {
 			return err
+		}
+		if deleted {
+			return fmt.Errorf("%w: this viewer's account has been deleted", ErrViewerDeleted)
 		}
 		// The Job's own row is locked where the engine can: retention's delete
 		// takes the same row, so a Job removed between the check above and this
@@ -442,33 +453,75 @@ func (s *Service) SetPreference(deps Deps, access Access, request PreferenceRequ
 	})
 }
 
-// lockPinAdmission serializes one viewer's pin admission on that viewer's own
-// durable guard row, creating it on first use.
+// lockPinAdmission takes one viewer's admission fence, creating it on first use,
+// and reports whether that fence is tombstoned — the durable answer to "has this
+// viewer been deleted".
 //
 // A count is not a guard: two admissions for one viewer at the limit's edge read
 // the same count, and nothing about the rows they are inserting conflicts — they
 // are different Jobs. Holding one row per viewer across the count is what makes
-// the second admission see the first one's committed pin.
+// the second admission see the first one's committed pin. The same row is what
+// the account deletion takes before it sweeps that viewer's preferences, so an
+// admission and a deletion of one viewer can only ever be ordered one way.
 //
 // It is deliberately not the viewer's account row: this is a lock with an
 // identity rather than a fact about the account, so it exists in every
 // deployment, including the no-auth one where the acting principal's id is the
 // root account's, and it puts no new lock edge between retention and user
-// administration.
-func lockPinAdmission(tx *gorm.DB, userID uint, now time.Time) error {
+// administration. The tombstone it also carries is a fact about the viewer, and
+// it is written where the account layer deletes one rather than derived from the
+// account row here.
+func lockPinAdmission(tx *gorm.DB, userID uint, now time.Time) (bool, error) {
 	guard := models.JobPinGuard{UserID: userID, CreatedAt: now, UpdatedAt: now}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&guard).Error; err != nil {
-		return fmt.Errorf("jobs: open pin admission: %w", err)
+		return false, fmt.Errorf("jobs: open pin admission: %w", err)
 	}
-	if tx.Dialector.Name() == "sqlite" {
-		// SQLite has no row locks and serializes writers anyway: the insert above
-		// took the writer lock, which is the whole guard there.
-		return nil
+	// The row is read back in both dialects, because it now carries an answer
+	// rather than being a lock alone. On SQLite that read is safe for the module's
+	// usual reason — the insert above took the writer lock, so nothing can commit
+	// between the two — and on an engine with row locks it is what holds the fence
+	// for the rest of the transaction.
+	query := tx.Where("user_id = ?", userID)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	var held models.JobPinGuard
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id = ?", userID).First(&held).Error; err != nil {
-		return fmt.Errorf("jobs: lock pin admission: %w", err)
+	if err := query.First(&held).Error; err != nil {
+		return false, fmt.Errorf("jobs: lock pin admission: %w", err)
+	}
+	return held.DeletedAt != nil, nil
+}
+
+// DeleteViewerPreferences removes one viewer's preference rows and leaves a
+// durable tombstone on that viewer's admission fence, so no preference can be
+// admitted for them afterwards.
+//
+// It is a pair rather than a DELETE for the reason the fence exists. A
+// preference is written by an admission that serializes on this viewer's guard
+// row, and a deletion that only deletes can lose that race: a request
+// authenticated before the deletion whose write lands after it inserts a row
+// whose viewer no longer exists — and if it is a pin, the Job is exempt from
+// retention for everybody, forever, with nobody left who could unpin it. Taking
+// the fence first, tombstones included, leaves exactly two orders: either the
+// admission committed first and this call sweeps what it wrote, or this call
+// committed first and the admission is refused by ErrViewerDeleted.
+//
+// The caller holds the transaction. It runs inside the account deletion, so the
+// tombstone, the swept rows and the removal of the account commit together — and
+// it is the first thing that transaction does with any of the viewer's rows,
+// because an admission waiting on this fence must never be waiting behind a
+// transaction that is itself waiting for a row the admission holds.
+func DeleteViewerPreferences(tx *gorm.DB, userID uint, now time.Time) error {
+	guard := models.JobPinGuard{UserID: userID, CreatedAt: now, UpdatedAt: now}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&guard).Error; err != nil {
+		return fmt.Errorf("jobs: open the deleted viewer's preference fence: %w", err)
+	}
+	if err := tx.Model(&models.JobPinGuard{}).Where("user_id = ?", userID).
+		Updates(map[string]any{"deleted_at": now, "updated_at": now}).Error; err != nil {
+		return fmt.Errorf("jobs: tombstone the deleted viewer's preference fence: %w", err)
+	}
+	if err := tx.Where("user_id = ?", userID).Delete(&models.JobPreference{}).Error; err != nil {
+		return fmt.Errorf("jobs: delete the deleted viewer's preferences: %w", err)
 	}
 	return nil
 }

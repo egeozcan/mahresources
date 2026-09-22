@@ -452,7 +452,8 @@ type JobPreference struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// JobPinGuard is the per-viewer row pin admission serializes on.
+// JobPinGuard is the per-viewer row preference admission serializes on, and the
+// durable record of whether that viewer still exists to admit one.
 //
 // The per-user pin limit is a count of one viewer's committed pin rows, and a
 // count is not itself a guard: two admissions that read it at the same time both
@@ -461,12 +462,24 @@ type JobPreference struct {
 // viewer, created on that viewer's first admission — is held, which is what makes
 // the second admission see the first one's pin.
 //
-// It carries no state beyond the viewer it belongs to: it is a lock with an
-// identity, not a record of anything.
+// DeletedAt is the tombstone: the instant the viewer's account was removed.
+// Deleting an account marks this row — under the same lock every admission takes
+// — and sweeps that viewer's preferences in the same transaction, so an
+// admission that arrives afterwards is refused instead of writing a row whose
+// viewer nobody can ask about. Without it an account deletion and a preference
+// in flight could not be ordered against each other, and a pin that outlived its
+// viewer would exempt the Job's metadata and events from retention for
+// everybody, forever, with no one left who could unpin it. It is the same row as
+// the fence rather than a second fact, because that is what leaves exactly one
+// thing for the two operations to serialize on.
+//
+// It is a plain timestamp, not gorm.DeletedAt: the row is never hidden from a
+// query — it is read to answer whether an admission may proceed.
 type JobPinGuard struct {
-	UserID    uint      `gorm:"primaryKey" json:"userId"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	UserID    uint       `gorm:"primaryKey" json:"userId"`
+	DeletedAt *time.Time `json:"deletedAt,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 // JobWriterEpoch is the single row recording the minimum writer epoch this

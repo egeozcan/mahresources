@@ -9,6 +9,7 @@ import (
 
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 
 	"gorm.io/gorm"
@@ -183,18 +184,20 @@ func (ctx *MahresourcesContext) RootAdmin() (*models.User, error) {
 	return &user, nil
 }
 
-// DeleteUser removes a user along with their sessions and API tokens, and nulls
-// the creator on any content they stamped. Runs in a single transaction so the
-// last-admin guard and the referential cleanup are atomic. The dependent rows
-// are deleted explicitly so removal works regardless of whether the database
-// enforces ON DELETE CASCADE (SQLite leaves FK enforcement off by default).
+// DeleteUser removes a user along with their sessions, API tokens and Job
+// preferences, and nulls the creator on any content they stamped. Runs in a
+// single transaction so the last-admin guard and the referential cleanup are
+// atomic. The dependent rows are deleted explicitly so removal works regardless
+// of whether the database enforces ON DELETE CASCADE (SQLite leaves FK
+// enforcement off by default).
 //
 // Last-admin guard: the delete is a conditional statement that only removes the
 // row when the target is not the last enabled admin, verified via RowsAffected.
 // On Postgres the enabled-admin row set is additionally locked FOR UPDATE so two
 // concurrent deletions of different admins serialize (read-committed would
-// otherwise let both succeed down to zero admins). On SQLite the conditional
-// DELETE is the first write, so writers serialize on it.
+// otherwise let both succeed down to zero admins). On SQLite the transaction's
+// first write — the Job preference fence — takes the writer lock, so writers
+// serialize on it.
 func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if lockErr := ctx.lockUserManagementMutation(tx); lockErr != nil {
@@ -204,7 +207,28 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 			return lockErr
 		}
 
-		// Referential cleanup (also the first write → serializes SQLite writers).
+		// Job preferences are viewer-keyed, and dropping them is load-bearing
+		// rather than tidy: a surviving pin would exempt that Job's history from
+		// retention for everybody, forever, and a surviving dismissal would be
+		// inherited by whichever account later holds the id.
+		//
+		// The removal is the Job control plane's rather than a plain DELETE,
+		// because it has to take and tombstone the same per-viewer fence a
+		// preference admission takes. Without that, an admission authenticated
+		// before this deletion whose write lands after it inserts a preference for
+		// an account that no longer exists — and a pinned one exempts the Job from
+		// retention for everybody, forever.
+		//
+		// It comes before the referential cleanup, which locks rows of the viewer's
+		// own content: taking the fence first means an admission waiting on it can
+		// never be waiting behind a transaction that is itself waiting for a row
+		// the admission holds.
+		if pErr := jobs.DeleteViewerPreferences(tx, id, time.Now()); pErr != nil {
+			return pErr
+		}
+
+		// Referential cleanup. The transaction's first write is above, so on SQLite
+		// the writer lock is already held by the time these run.
 		if cErr := nullCreatorReferences(tx, id); cErr != nil {
 			return cErr
 		}
@@ -221,13 +245,6 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 		}
 		if uErr := tx.Where("user_id = ?", id).Delete(&models.UserSetting{}).Error; uErr != nil {
 			return uErr
-		}
-		// Job preferences are viewer-keyed for the same reason, and dropping them
-		// is load-bearing rather than tidy: a surviving pin would exempt that
-		// Job's history from retention for everybody, forever, and a surviving
-		// dismissal would be inherited by whichever account later holds the id.
-		if pErr := tx.Where("user_id = ?", id).Delete(&models.JobPreference{}).Error; pErr != nil {
-			return pErr
 		}
 
 		// Conditional delete: allowed unless the target is an enabled admin with no

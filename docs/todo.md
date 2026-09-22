@@ -1,3 +1,47 @@
+# Job Center checkpoint review corrections, round 10 (GPT-6 Astra, after Task 5)
+
+**Goal:** Correct the P1 finding from the tenth GPT-6 Astra checkpoint review of Tasks 1-5 — a preference admitted for a viewer whose account is being deleted, leaving an orphaned permanent pin that exempts the Job's metadata and events from retention for everybody forever — without widening scope into Tasks 6-18.
+
+## Plan
+
+- [x] Read the approved design (§9), ADRs 0006/0007, the plan's Task 5 contract, `CLAUDE.md`, and the current `jobs/query.go`, `jobs/retention.go`, `models/job_model.go` and `application_context/user_context.go` code and tests.
+- [x] Reproduce the finding as behaviour tests at the confirmed public seams before touching production code: the facade regression (`ctx.DeleteUser` across a captured administrator context that then pins another user's Job) on SQLite and PostgreSQL, the PostgreSQL one driven as a real interleaving through a held admission on a second connection.
+- [x] Implement one minimal correction per half of the finding's correction (a shared per-viewer fence, and a refusal on the durable tombstone that fence carries), then re-run the focused, package-level, cross-engine and whole-tree suites.
+- [x] `gofmt`, `go vet`, `git diff --check`, self-review of the whole diff, commit, clean worktree.
+
+## Red → green evidence
+
+| Finding | Red (observed failure) | Correction and its test |
+|---|---|---|
+| A preference racing administrator deletion leaves an orphaned permanent pin | SQLite, before the correction: `a preference for the deleted administrator was written (err = <nil>, 1 rows): a surviving pin exempts the Job from retention for everybody, forever` (`user_admin_guard_test.go`). PostgreSQL, with the same code: `the deletion and the admission in flight did not serialize: 1 preference rows survive for the viewer it removed (the deletion waited on the fence: false)` (`user_admin_guard_pg_test.go`). In the SQLite case the administrator's context was authenticated before `DeleteUser` and its write landed after it; the Job belonged to somebody else and stayed visible to the captured access, so the in-transaction visibility recheck passed. In the PostgreSQL case the admission was *held* once it held the viewer's fence and was about to take the Job's row, `DeleteUser` ran from another connection, and the two committed without ever serializing — the deletion swept nothing, the admission landed after it, and the pin survived with no viewer left who could unpin it | Preference admission and account deletion now share one per-viewer fence, and the deletion leaves a durable tombstone on it (`models/job_model.go`'s `JobPinGuard.DeletedAt`, `jobs.DeleteViewerPreferences`, `lockPinAdmission` reporting the tombstone, `SetPreference` refusing with `ErrViewerDeleted`). `DeleteUser` calls the control plane's removal instead of issuing its own `DELETE`, before its referential cleanup, so an admission waiting on the fence can never be waiting behind a transaction that is itself waiting for a row the admission holds. Pinned by `TestJobPreferenceIsRefusedAfterTheViewerIsDeleted` and `TestJobPreferenceIsFencedAgainstUserDeletionPG` (public facade, SQLite and PostgreSQL), and by `TestPreferenceIsRefusedOnceTheViewerIsDeleted` at the module seam |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs ./application_context ./internal/arch -count=1` — passed (1.2s / 61.1s / 1.9s).
+- `go test --tags 'json1 fts5' ./jobs -race -run 'TestPreference|TestPin|TestDismiss|TestRetention|TestDelete' -count=2` — passed (2.6s); `go test --tags 'json1 fts5' ./application_context -race -run 'TestJobPreference|TestDeleteUser' -count=2` — passed (15.1s).
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -count=1` — passed (6.1s / 75.5s); the new PostgreSQL regression `-run 'TestJobPreferenceIsFencedAgainstUserDeletionPG' -count=2` — passed (3.9s).
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- Mutation checks (each half was reverted in turn, the other left in place, and the source restored): replacing `DeleteUser`'s fence call with the old plain `DELETE FROM job_preferences` makes the SQLite regression red with `a preference for the deleted administrator was written (err = <nil>, 1 rows)` and the PostgreSQL interleaving red with `1 preference rows survive for the viewer it removed (the deletion waited on the fence: false)`; dropping the refusal in `SetPreference` (`_ = deleted`) makes all three tests red with `an admission for a deleted viewer = <nil>, want ErrViewerDeleted`; dropping the tombstone write from `DeleteViewerPreferences` fails the module test the same way; and dropping the admission's own row lock (`FOR UPDATE` on the guard read on PostgreSQL) fails the interleaving alone with the orphan surviving — the lock, not the insert, is what holds the fence once the viewer already has a preference, which is why the test dismisses a Job first.
+- `go vet --tags 'json1 fts5' ./...` and `--tags 'json1 fts5 postgres' ./jobs ./application_context` — clean. `gofmt -l` on every changed file — clean (`models/query_models/filter_decode.go` is gofmt-dirty on `main` and untouched here). `git diff --check` — clean.
+- No frontend source, CLI command, generated asset or documented setting changed, so no bundle rebuild, docs regeneration or `skills/` refresh was needed.
+
+## Decisions worth recording
+
+- **The tombstone is the fence's own row, not a second fact.** The finding allows either "a durable tombstone" or "an appropriately locked existence check". A check against the account row would have made the control plane depend on the accounts table — `jobs/` deliberately does not, and its own tests build preferences for viewers that have no account row at all — and would have added a lock edge between user administration and retention. Marking the row every admission already takes leaves exactly one thing for the two operations to serialize on, and it is written where the account layer deletes one rather than derived here.
+- **The deletion takes the fence rather than only tombstoning it.** The tombstone alone answers the sequential case the finding names (an admission that arrives after the deletion). It cannot answer the concurrent one: an admission authenticated before the deletion whose write lands after it has already read the tombstone and passed. Only a deletion that takes the same lock before sweeping makes the two orders the only two that exist — admission commits first and is swept, or deletion commits first and the admission is refused.
+- **A deletion that cannot act writes nothing.** `DeleteViewerPreferences` runs inside `DeleteUser`'s transaction, so a refused deletion (the last enabled admin, an id that does not exist) rolls the tombstone, the swept rows and the account removal back together.
+- **Retention is unchanged.** `expiredJobPredicate`'s pin clause is not taught about tombstones, because after this correction a pinned preference whose viewer is gone cannot exist: the deletion sweeps every one of them in the transaction that tombstones the fence, and no admission can create one afterwards. A second predicate for a state the first rule makes unreachable would be a second spelling of one rule.
+
+## Review
+
+Both halves are at the seams their finding named and both are pinned by behaviour rather than by statements about code: the sequential half by a captured administrator context writing across its own account's deletion, and the concurrent half by an interleaving driven from a held admission on a second connection — the window the defect lived in, and the only one SQLite's single writer cannot express. Test coverage that encoded the old behaviour was extended rather than weakened: the existing `TestDeleteUserRemovesTheirJobPreferences` still passes unchanged, and the new facade regression asserts the same sweep plus the refusal and the tombstone beside it.
+
+Residual risks and handoffs:
+
+- **The tombstone row is per viewer and never removed, including for a viewer who never set a preference.** One row per deleted account, with no state beyond the instant: it is the same row the pin limit already keeps for every viewer who ever admitted one.
+- **`ErrViewerDeleted` has no HTTP mapping yet** — the Job Center handlers are Tasks 6+. It is a refusal in the jobs vocabulary like `ErrInvalidPreference` and `ErrPinLimitReached` beside it, and a later task maps it.
+- **A preference row that predates this release and whose viewer was already deleted is not swept by anything** (the pre-fix defect could create one). Retention still honours it. It is not reachable through any path this release has — the fence and the tombstone are both in this release — and repairing state a released build could not have written was not worth a second retention predicate; if the feature ever ships past a deployment that ran the defect, the repair is a one-off sweep of `job_preferences` against the account table.
+
 # Job Center checkpoint review corrections, round 9 (GPT-6 Astra, after Task 5)
 
 **Goal:** Correct the P1 finding from the ninth GPT-6 Astra checkpoint review of Tasks 1-5 — a superseded artifact candidate read as a completed cleanup, so a metadata prune could delete the only durable reference to bytes that are still there — without widening scope into Tasks 6-18.

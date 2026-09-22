@@ -534,6 +534,56 @@ func TestPinObservesThePerUserLimitAndAnswersTheViewersOwnRows(t *testing.T) {
 	}
 }
 
+// TestPreferenceIsRefusedOnceTheViewerIsDeleted is the rule at the seam that
+// carries it out: an admission belongs to a viewer who still exists, and the
+// viewer's deletion says so durably — the tombstone it leaves on the very fence
+// admission takes, written in the transaction that sweeps their preferences.
+//
+// The property is not "the account row is gone": an admission is a viewer-keyed
+// row that grants no visibility, so a deleted viewer's id would still be a valid
+// key for it, and a pin among those rows exempts the Job's metadata and events
+// from retention for everybody, forever, with nobody left who could unpin it.
+func TestPreferenceIsRefusedOnceTheViewerIsDeleted(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 6, 10, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := acceptQueued(t, svc, deps, uintPtr(7))
+	viewer := Access{UserID: 7}
+	if err := svc.SetPreference(deps, viewer, PreferenceRequest{JobID: job.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+
+	// The deletion's own transaction: the fence is tombstoned and the viewer's
+	// preferences go with it, atomically and before anything else about the
+	// viewer is touched.
+	if err := deps.DB.Transaction(func(tx *gorm.DB) error {
+		return DeleteViewerPreferences(tx, viewer.UserID, clock.Add(time.Hour))
+	}); err != nil {
+		t.Fatalf("delete the viewer's preferences: %v", err)
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "user_id = ?", viewer.UserID); rows != 0 {
+		t.Fatalf("the deleted viewer kept %d preference rows", rows)
+	}
+
+	// The next admission is refused, and writes nothing: a refusal is a refusal
+	// rather than a row that arrives anyway.
+	if err := svc.SetPreference(deps, viewer, PreferenceRequest{JobID: job.ID, Pinned: boolPtr(true)}); !errors.Is(err, ErrViewerDeleted) {
+		t.Fatalf("an admission for a deleted viewer = %v, want ErrViewerDeleted", err)
+	}
+	if err := svc.SetPreference(deps, viewer, PreferenceRequest{JobID: job.ID, Dismissed: boolPtr(true)}); !errors.Is(err, ErrViewerDeleted) {
+		t.Fatalf("a dismissal for a deleted viewer = %v, want ErrViewerDeleted", err)
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "user_id = ?", viewer.UserID); rows != 0 {
+		t.Fatalf("the refused admissions wrote %d preference rows", rows)
+	}
+	// Another viewer's admission is untouched by it.
+	if err := svc.SetPreference(deps, Access{UserID: 8, Administrator: true}, PreferenceRequest{JobID: job.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("another viewer's pin: %v", err)
+	}
+}
+
 // TestVisibilityHidesAJobFromEveryOtherReadPath is the same predicate reached
 // through the readers that join onto a Job. A hidden Job's timeline, outputs,
 // lineage and published events are indistinguishable from a Job that does not

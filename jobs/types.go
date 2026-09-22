@@ -1074,6 +1074,14 @@ var (
 	// that names nothing to change, or one made by a principal with no user to
 	// belong to.
 	ErrInvalidPreference = errors.New("jobs: invalid job preference")
+	// ErrViewerDeleted refuses a preference for a viewer whose account has been
+	// removed. Deleting an account tombstones that viewer's admission fence and
+	// sweeps their preferences in one transaction (DeleteViewerPreferences), so
+	// this refusal is what stops an admission that was authenticated before the
+	// deletion — or that arrives after it — from writing a row whose viewer
+	// nobody can ask about: a surviving pin exempts the Job's metadata and events
+	// from retention for everybody, forever.
+	ErrViewerDeleted = errors.New("jobs: the preference's viewer has been deleted")
 	// ErrPinLimitReached refuses a pin that would take a viewer past the
 	// deployment's per-viewer limit. Nothing is written: the viewer unpins
 	// something first, or an operator raises the limit.
