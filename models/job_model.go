@@ -252,6 +252,91 @@ type JobOutput struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// JobClaim is the durable claim one execution holds on one Job: who owns it,
+// under which fencing token, and until when.
+//
+// It is a row rather than more columns on the Job because it is the thing a
+// runtime heartbeats and a reconciler scans: the lease and the last heartbeat
+// are claim state, not Job state, and a released claim stays as the evidence of
+// the execution that held it.
+//
+// JobID is the primary key — one Job has at most one claim — and the row is
+// written in the same transaction as the Job's move to running, so there is no
+// instant in which a Job is running without the claim that admits it. Releasing
+// stamps ReleasedAt and clears the Job's execution token; a Job claimed again
+// after reconciliation takes the same row over under a fresh token.
+//
+// State distinguishes the three ways a claim can stand: held (an execution owns
+// the Job), quarantined (a lease expired and nobody could prove the external
+// work stopped, so the claim and its capacity are kept, and the claim leaves the
+// expiry scan so it is not reconciled in a loop), and released.
+type JobClaim struct {
+	JobID string `gorm:"primaryKey;size:36" json:"jobId"`
+
+	Kind        string `gorm:"size:120;not null" json:"kind"`
+	KindVersion uint   `gorm:"not null" json:"kindVersion"`
+
+	// Claimant identifies the runtime that owns the execution: a process, or a
+	// named worker inside one. It is evidence, not authority — the token is what
+	// fences publication.
+	Claimant       string `gorm:"size:120;not null" json:"claimant"`
+	ExecutionToken string `gorm:"size:36;not null" json:"executionToken"`
+
+	State string `gorm:"size:20;not null;index:idx_job_claims_expiry,priority:1" json:"state"`
+
+	ClaimedAt   time.Time `gorm:"not null" json:"claimedAt"`
+	HeartbeatAt time.Time `gorm:"not null" json:"heartbeatAt"`
+	// LeaseExpiresAt is the instant the claim stops being trusted without a
+	// heartbeat. Reaching it permits reconciliation; it never proves the external
+	// work stopped.
+	LeaseExpiresAt time.Time `gorm:"not null;index:idx_job_claims_expiry,priority:2" json:"leaseExpiresAt"`
+
+	ReleasedAt    *time.Time `json:"releasedAt,omitempty"`
+	ReleaseReason string     `gorm:"size:40" json:"releaseReason,omitempty"`
+
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// The three ways a claim can stand. They are the stored spellings, so a scan and
+// a writer cannot disagree about one of them.
+const (
+	// JobClaimStateHeld is a claim an execution owns.
+	JobClaimStateHeld = "held"
+	// JobClaimStateQuarantined is a claim whose lease expired in a way no
+	// reconciler could resolve: it is kept, with its capacity, and is no longer
+	// reconciled until an operator or a command resolves it.
+	JobClaimStateQuarantined = "quarantined"
+	// JobClaimStateReleased is a claim whose execution ended.
+	JobClaimStateReleased = "released"
+)
+
+// JobCapacityLease occupies one numbered slot in one capacity budget.
+//
+// Capacity is occupancy rather than history: a row exists exactly while its
+// execution holds the slot, and a released slot is deleted so it can be taken
+// again. The unique index on (capacity_group, slot) is what makes admission
+// race-free — two processes taking the last slot of a budget contend on the same
+// index entry, and the loser falls through to a higher slot or to
+// "budget full" — without a counter that could drift from the claims it is
+// supposed to describe.
+//
+// A claim occupies one slot per budget it draws on, which is how a Kind's own
+// budget and the deployment-wide budget are both enforced.
+type JobCapacityLease struct {
+	ID            string `gorm:"primaryKey;size:36" json:"id"`
+	CapacityGroup string `gorm:"size:120;not null;uniqueIndex:idx_job_capacity_slot,priority:1;uniqueIndex:idx_job_capacity_job,priority:2" json:"capacityGroup"`
+	Slot          int    `gorm:"not null;uniqueIndex:idx_job_capacity_slot,priority:2" json:"slot"`
+	// A Job occupies at most one slot per budget, which is why (job_id,
+	// capacity_group) is the unique pair rather than (job_id, token): one claim
+	// draws on several budgets at once, and that is several rows.
+	JobID          string    `gorm:"size:36;not null;uniqueIndex:idx_job_capacity_job,priority:1" json:"jobId"`
+	ExecutionToken string    `gorm:"size:36;not null" json:"executionToken"`
+	AcquiredAt     time.Time `gorm:"not null" json:"acquiredAt"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
 // JobReplayEnvelope is one Job's sealed replay input: the opaque half of what
 // the Job was accepted with, kept apart from the bounded searchable summary so
 // that no ordinary Job read, event, log line or JSON view can reach it.

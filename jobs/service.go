@@ -19,13 +19,16 @@ import (
 // that handle. A Service is therefore safe to keep for the life of the process.
 //
 // What it does hold is process-lifetime configuration that is not a database
-// handle: the Kind-owned replay codecs. Those are built once at startup and are
-// not scoped, transactional or per-caller, so they belong here rather than on
-// the handle — the same line groupio and search draw for their filesystems and
-// backends.
+// handle: the Kind-owned replay codecs, and the Kind adapters that fix how each
+// Kind's work is dispatched. Those are built once at startup and are not scoped,
+// transactional or per-caller, so they belong here rather than on the handle —
+// the same line groupio and search draw for their filesystems and backends.
 type Service struct {
 	replayMu     sync.Mutex
 	replayCodecs map[replayCodecKey]ReplayCodec
+
+	adapterMu sync.Mutex
+	adapters  map[kindVersion]AdapterRegistration
 }
 
 // NewService returns the Job control plane.
@@ -676,6 +679,19 @@ func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verif
 		// a deadline at all.
 		if prepared.next.FinishedAt != nil {
 			if err := stampReplayExpiry(tx, prepared.next, deps.Replay, deps.now()); err != nil {
+				return err
+			}
+		}
+		// An execution owns a Job only while it is running, so a transition that
+		// leaves that state ends the ownership: the claim is released, its
+		// capacity slots are freed, and the fencing token is cleared so a
+		// stopped execution cannot publish under it any more. A paused, queued,
+		// blocked or finished Job therefore never holds a slot or a token that
+		// no execution can use. A release under a token that owns nothing is a
+		// no-op, which is what makes this safe for a host-side transition on a
+		// Job no claim ever touched.
+		if prepared.next.State != string(StateRunning) {
+			if err := releaseClaimTx(tx, prepared.job.ID, prepared.job.ExecutionToken, ReleaseReasonStateChanged, deps.now()); err != nil {
 				return err
 			}
 		}

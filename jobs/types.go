@@ -18,6 +18,7 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"mahresources/models"
@@ -664,4 +665,361 @@ var (
 	// to a terminal state, because purging it would leave a Job that can neither
 	// run nor be recovered.
 	ErrReplayExecutionRequired = errors.New("jobs: replay input is still required by a nonterminal job")
+
+	// ErrInvalidDefinition is a Kind definition this release cannot dispatch:
+	// missing or oversized identity, a version below one, a negative budget, or a
+	// (Kind, version) pair that already has an adapter.
+	ErrInvalidDefinition = errors.New("jobs: invalid kind definition")
+	// ErrAdapterUnregistered means no adapter in this process can run the Kind.
+	// It is a refusal rather than a fallback: work whose Kind this release cannot
+	// execute is never handed to another Kind's adapter.
+	ErrAdapterUnregistered = errors.New("jobs: no adapter is registered for this job kind")
+	// ErrInvalidClaim is a malformed claim request.
+	ErrInvalidClaim = errors.New("jobs: invalid claim request")
+	// ErrCapacityExhausted means every budget a claim asked to occupy is full.
+	// Nothing is written: a Job is never left running without the capacity that
+	// admitted it.
+	ErrCapacityExhausted = errors.New("jobs: the capacity budget is full")
+	// ErrInvalidReconcileDecision is a reconciliation answer outside the
+	// vocabulary, or one this Kind may not be given.
+	ErrInvalidReconcileDecision = errors.New("jobs: invalid reconciliation decision")
 )
+
+// Dispatch vocabulary. The defaults are what a Kind that declares nothing
+// gets, and they are chosen to be safe rather than convenient: a claim lives
+// two minutes without a heartbeat, and reconciliation runs in bounded batches
+// so one pass over a large backlog is a series of small writes.
+const (
+	// DefaultClaimLease is how long a claim survives without a heartbeat when
+	// the Kind declares no lease of its own.
+	DefaultClaimLease = 2 * time.Minute
+	// CapacityGroupGlobal is the deployment-wide concurrency budget, shared by
+	// every Kind whose runtime takes it. A Kind that names its own group draws
+	// on a per-Kind budget instead.
+	CapacityGroupGlobal = "global"
+	// DefaultReconcileBatch bounds one reconciliation pass.
+	DefaultReconcileBatch = 50
+	// DefaultClaimBatch bounds how many Jobs one pass over one Kind claims, so a
+	// runtime that falls behind does not claim an unbounded amount of work in a
+	// single tick.
+	DefaultClaimBatch = 8
+	// MaxClaimantBytes bounds the claimant identity a claim records.
+	MaxClaimantBytes = 120
+	// MaxCapacityGroupBytes bounds a concurrency budget's name, which is stored
+	// on every capacity row that occupies it and on nothing else.
+	MaxCapacityGroupBytes = 120
+	// MaxReleaseReasonBytes bounds the bounded reason a release records.
+	MaxReleaseReasonBytes = 40
+)
+
+// Release reasons the control plane records. They are stable codes rather than
+// prose, because "why did this execution stop owning the Job" is what an
+// operator filters on, and free text is not a taxonomy.
+const (
+	// ReleaseReasonStateChanged is a transition that left the running state: a
+	// Job that is finished, paused, blocked or queued is not owned by an
+	// execution.
+	ReleaseReasonStateChanged = "state-changed"
+	// ReleaseReasonExecutionEnded is an execution that returned without ending
+	// itself, so the runtime ended its ownership.
+	ReleaseReasonExecutionEnded = "execution-ended"
+)
+
+// Definition is what a Kind fixes about itself before the control plane
+// dispatches any of its work: identity, whether its work may be redispatched
+// after runtime loss, which concurrency budget it draws on, and how long a claim
+// on it survives without a heartbeat.
+type Definition struct {
+	Kind        string
+	KindVersion uint
+	// Restorable marks work a fresh runtime may run again after the one that
+	// claimed it disappeared. Closure-backed work — a mah.start_job whose Lua
+	// function died with its process — is not restorable, and the control plane
+	// refuses to re-queue it on a lease expiry alone: the Job stays blocked with
+	// its claim held until something proves the external work stopped.
+	Restorable bool
+	// CapacityGroup names the concurrency budget the Kind's executions draw on.
+	// An empty group means the Kind's own budget; a Kind that names a group
+	// shares it with every other Kind naming it.
+	CapacityGroup string
+	// MaxConcurrent caps executions inside that budget across the deployment. 0
+	// means the budget is not enforced.
+	MaxConcurrent int
+	// Lease is how long a claim on this Kind survives without a heartbeat. 0
+	// selects DefaultClaimLease.
+	Lease time.Duration
+}
+
+// capacityGroup is the budget the Kind actually draws on, with the empty group
+// resolved to the Kind's own.
+func (d Definition) capacityGroup() string {
+	if d.CapacityGroup == "" {
+		return d.Kind
+	}
+	return d.CapacityGroup
+}
+
+// claimLease is the lease the Kind actually uses.
+func (d Definition) claimLease() time.Duration {
+	if d.Lease <= 0 {
+		return DefaultClaimLease
+	}
+	return d.Lease
+}
+
+// EffectiveLease is how long a claim on this Kind survives without a heartbeat,
+// with the default applied when the Kind declares none.
+//
+// It is exported because more than the claim needs the number: a runtime that
+// heartbeats a running execution has to extend the lease the claim was created
+// with, and a Kind that declared a short lease would otherwise be reconciled out
+// from under a runtime that thought it had the default.
+func (d Definition) EffectiveLease() time.Duration { return d.claimLease() }
+
+// CapacityRef names one concurrency budget a claim must occupy and how many
+// executions that budget allows across the deployment. A limit of 0 means the
+// budget is not enforced.
+//
+// A claim takes its budgets in a deterministic order, so two claims holding
+// several of them cannot take them in opposite orders and deadlock.
+type CapacityRef struct {
+	Group string
+	Limit int
+}
+
+// ClaimRequest asks the Service to claim the next Job of one Kind that is
+// waiting to run, and to hand it back as an Execution.
+type ClaimRequest struct {
+	Kind        string
+	KindVersion uint
+	// Claimant identifies the runtime taking the claim: a process, or a named
+	// worker inside one. It is recorded as evidence, never as authority — the
+	// execution token is what fences publication.
+	Claimant string
+	// Capacity names every budget the claim must occupy. A claim that cannot
+	// occupy all of them is refused and writes nothing at all.
+	Capacity []CapacityRef
+	// Lease overrides the Kind's declared lease for this claim.
+	Lease time.Duration
+}
+
+// Execution is everything a Kind adapter is given to run one claimed Job: its
+// identity, the fencing token, the decoded input, the principal the work acts
+// as, and the report it publishes through.
+//
+// It deliberately carries no database handle and no lifecycle table: an adapter
+// runs work and reports facts, and the Service owns every write. A zero
+// Execution has no report, so every publish through one is refused rather than
+// silently dropped.
+type Execution struct {
+	JobID       string
+	Kind        string
+	KindVersion uint
+	// Version is the Job version the claim created. It is the version an adapter
+	// reports its first transition against; every transition and finish returns
+	// the next one.
+	Version        uint64
+	ExecutionToken string
+	Claimant       string
+	// Access is the principal the work acts as: the Job's actor when it recorded
+	// one, otherwise its owner. A zero UserID means the Job has no acting
+	// identity — the host itself is running the work.
+	Access Access
+	// Input is the decoded, migrated replay input the Job was accepted with, or
+	// nil for work that stores none.
+	Input json.RawMessage
+
+	report ExecutionReport
+}
+
+// ExecutionReport is the write seam a running execution publishes through. Every
+// method is bound to one Job and one execution token, so an adapter cannot aim a
+// publish at another Job even if it names one.
+type ExecutionReport interface {
+	Progress(Progress) (Snapshot, error)
+	Event(EventInput) error
+	Output(OutputInput) (Output, error)
+	Transition(Transition) (Snapshot, error)
+	Finish(FinishRequest) (Snapshot, error)
+}
+
+// reportOr returns the report this execution publishes through, or a refusal
+// when it has none — a zero Execution is not a way to write unattributed facts.
+func (e Execution) reportOr() (ExecutionReport, error) {
+	if e.report == nil {
+		return nil, fmt.Errorf("%w: execution %s has no report", ErrInvalidExecution, e.JobID)
+	}
+	return e.report, nil
+}
+
+// Progress replaces the execution's bounded progress snapshot.
+func (e Execution) Progress(progress Progress) (Snapshot, error) {
+	report, err := e.reportOr()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return report.Progress(progress)
+}
+
+// Event appends one significant event to the execution's Job.
+func (e Execution) Event(event EventInput) error {
+	report, err := e.reportOr()
+	if err != nil {
+		return err
+	}
+	return report.Event(event)
+}
+
+// Output publishes one typed output on the execution's Job.
+func (e Execution) Output(output OutputInput) (Output, error) {
+	report, err := e.reportOr()
+	if err != nil {
+		return Output{}, err
+	}
+	return report.Output(output)
+}
+
+// Transition applies one lifecycle transition under the execution's own token.
+func (e Execution) Transition(transition Transition) (Snapshot, error) {
+	report, err := e.reportOr()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return report.Transition(transition)
+}
+
+// Finish ends the execution with a terminal outcome.
+func (e Execution) Finish(request FinishRequest) (Snapshot, error) {
+	report, err := e.reportOr()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return report.Finish(request)
+}
+
+// ReconcileDecision is what a Kind adapter answers when a claim's lease expired
+// and the control plane asks what should happen to the Job.
+//
+// It exists because only the Kind knows whether the external work the claim
+// started is still running: expiry permits reconciliation, it never proves that
+// execution stopped. The Service applies the answer; it never chooses one
+// itself.
+type ReconcileDecision string
+
+const (
+	// ReconcileResume keeps the Job running under a fresh token owned by the
+	// reconciling runtime, which dispatches it again. Capacity is kept, because
+	// the execution is continuing rather than being re-admitted.
+	ReconcileResume ReconcileDecision = "resume"
+	// ReconcileQueue returns the Job to the queue and frees its claim and
+	// capacity, so normal dispatch runs it again.
+	ReconcileQueue ReconcileDecision = "queue"
+	// ReconcileSucceed ends the Job successfully, verifying the required outputs
+	// exactly as an executor's own Finish does.
+	ReconcileSucceed ReconcileDecision = "succeed"
+	// ReconcileFail ends the Job unsuccessfully with a bounded reconciliation
+	// failure.
+	ReconcileFail ReconcileDecision = "fail"
+	// ReconcileBlock blocks the Job and frees its claim and capacity: the adapter
+	// knows the execution is not running and is not safe to rerun.
+	ReconcileBlock ReconcileDecision = "block"
+	// ReconcileInterrupt ends the Job as interrupted: the execution ended
+	// unexpectedly and continuing it would require a new Job.
+	ReconcileInterrupt ReconcileDecision = "interrupt"
+	// ReconcileRemainRunning leaves the Job and its token exactly as they are and
+	// extends the lease: the adapter proved the owning runtime is still working,
+	// so nobody else may take the Job over.
+	ReconcileRemainRunning ReconcileDecision = "remain-running"
+	// ReconcileExternalWorkUnproven is the answer for an adapter that cannot
+	// prove the external work the expired claim started has stopped. The Job
+	// becomes blocked but keeps its claim, its lease and its capacity, and it
+	// leaves the expiry scan, so no replacement is ever dispatched over work that
+	// may still be running. This is failure-safe, not failure-free: the Job stays
+	// blocked until an operator resolves it.
+	ReconcileExternalWorkUnproven ReconcileDecision = "blocked-external-work-unproven"
+)
+
+// ReconcileDecisions lists the vocabulary. A decision outside it is refused
+// rather than guessed at.
+var ReconcileDecisions = []ReconcileDecision{
+	ReconcileResume, ReconcileQueue, ReconcileSucceed, ReconcileFail,
+	ReconcileBlock, ReconcileInterrupt, ReconcileRemainRunning,
+	ReconcileExternalWorkUnproven,
+}
+
+// ReconcileRequest is what an adapter is told about a claim whose lease expired:
+// the Job as the Service read it, who held it, when its lease ran out, the input
+// it was running with when that could still be opened, and the same report seam
+// a live execution gets — still under the expired claim's token, because until
+// the decision is applied that token is still what owns the Job.
+type ReconcileRequest struct {
+	Snapshot       Snapshot
+	Claimant       string
+	LeaseExpiredAt time.Time
+	// Input is the decoded replay input the expired execution ran with, or nil
+	// when it cannot be produced (a missing key, a purged envelope, work that
+	// stores none). An adapter that needs it must not guess.
+	Input     json.RawMessage
+	Access    Access
+	Execution Execution
+}
+
+// ReconcileReport is what one reconciliation pass did.
+type ReconcileReport struct {
+	// Examined is how many expired claims the pass looked at.
+	Examined int
+	// Outcomes records the applied decisions, in the order they were applied.
+	Outcomes []ReconcileOutcome
+	// Resume holds the executions the caller must dispatch: a resume keeps the
+	// Job running under a fresh token, and only the runtime can run it.
+	Resume []Execution
+}
+
+// ReconcileOutcome records one applied decision.
+type ReconcileOutcome struct {
+	JobID    string
+	Decision ReconcileDecision
+	Snapshot Snapshot
+}
+
+// Command is one control a Job currently offers. It is advertised by the Job
+// rather than inferred by a client from its state or Kind, and it names the
+// version it was computed from so a stale call can be refused.
+//
+// The command surface is implemented on top of this seam; an adapter answers
+// which commands its Jobs offer and runs the ones the host invokes.
+type Command struct {
+	Key          string
+	Label        string
+	Endpoint     string
+	JobVersion   uint64
+	Destructive  bool
+	Bulk         bool
+	Confirmation string
+	Presentation json.RawMessage
+}
+
+// CommandContext is what an adapter is told when the host asks which commands a
+// Job offers.
+type CommandContext struct {
+	Snapshot Snapshot
+	Access   Access
+}
+
+// CommandExecution is one command the host is running against a Job an adapter
+// owns.
+type CommandExecution struct {
+	JobID           string
+	Key             string
+	IdempotencyKey  string
+	ExpectedVersion uint64
+	Snapshot        Snapshot
+	Access          Access
+}
+
+// CommandOutcome is what an adapter reports about one command it ran.
+type CommandOutcome struct {
+	Status  string
+	Message string
+	Detail  json.RawMessage
+}

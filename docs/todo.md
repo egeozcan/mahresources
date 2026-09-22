@@ -10736,3 +10736,203 @@ marker is honoured by nothing but this module until the migration/plaintext
 retirement tasks read it; and the new PostgreSQL/rootless-SQLite startup refusal
 changes deployment configuration — a PostgreSQL deployment must now set
 `JOB_REPLAY_KEY`, which the docs-site page and `.env.template` state.
+
+# Job Center Task 4 — database claims, leases, fencing and reconciliation (2026-09-22)
+
+**Goal:** Land Task 4 of the unified Job Center plan: durable, database-backed
+claims with leases and heartbeats, fence-based capacity accounting, a Kind
+adapter registry, dispatch that hands an execution (and nothing else) to an
+adapter, reconciliation that asks the adapter what an expired claim means, and
+one application-owned runtime loop that starts and stops in `main.go` — every red
+test written first and observed failing.
+
+## Plan
+
+- [x] Read the complete plan, the approved design (§2, §3, §8, §10, §11), ADRs
+      0006/0007, `CLAUDE.md`, and the Task 1–3 durable core, plus the existing
+      download-queue semaphore, plugin-command staging lease and scheduler
+      patterns before editing.
+- [x] `models/job_model.go`: `JobClaim` (one row per Job, holding the fencing
+      token, claimant, heartbeat, lease and release evidence) and
+      `JobCapacityLease` (one numbered slot per budget an execution occupies),
+      with the expiry-scan index and the two unique indexes admission depends on.
+- [x] `jobs/registry.go`: the `Adapter` interface, `Registration`,
+      `RegisterAdapter` (one adapter per Kind/version, definitions validated),
+      `Registrations`, `AdapterFor`, `Definition` validation.
+- [x] `jobs/types.go`: `Definition`, `CapacityRef`, `ClaimRequest`, `Execution`
+      with its report seam, the `ReconcileDecision` vocabulary, `ReconcileRequest`,
+      `ReconcileReport`/`ReconcileOutcome`, the command seam types the adapter
+      interface names, and the new sentinels and bounds.
+- [x] `jobs/dispatch.go`: `Claim`, `Heartbeat`, `ReleaseClaim`,
+      `ReconcileExpired`, the slot-based capacity admission, the claim takeover,
+      the token-fenced release, and `resume`/quarantine as their own transactions.
+- [x] `jobs/service.go`: a transition that leaves the running state releases the
+      claim, its capacity and its token in the same transaction.
+- [x] `application_context/job_runtime.go`: `JobRuntime` — the poll loop, the
+      per-execution heartbeat, the post-dispatch reconciliation of an adapter that
+      returned without ending its execution, and the bounded shutdown contract.
+- [x] `application_context/context.go`: `jobDeps()`, the per-call handle the
+      control plane and the runtime run on.
+- [x] `main.go`: the runtime built, started and stopped; the claim and capacity
+      tables joined to `migrateJobCore`.
+- [x] `jobs/service_pg_test.go`: `jobCoreTables()` — the whole core, migrated by
+      the PostgreSQL helper (see the defect below).
+
+## Red → green
+
+Each cycle is one vertical slice: the test was written first, run, and observed
+failing on the symbols the implementation was about to add.
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Claim, execution and capacity | `jobs/dispatch_test.go:30:12: undefined: Definition` … `undefined: Execution`, `undefined: ReconcileRequest` (build failed) | `TestClaimMovesTheJobAndItsLeaseCapacityAndStartedEventInOneTransaction`, `TestClaimAdmitsOneWinnerWhenTwoConnectionsRace` (5 iterations, two handles on one file), `TestClaimRefusesAFullBudgetWithoutClaimingAnything` (second Service, second connection), `TestClaimRefusesAKindNoAdapterIsRegisteredFor`, `TestExecutionHandsTheAdapterTheInputActorAndReport`, `TestClaimBlocksAJobWhoseInputCannotBeOpened` |
+| Heartbeats, release and registration | `svc.Heartbeat undefined`, `svc.ReleaseClaim undefined` | `TestHeartbeatExtendsOnlyTheClaimItsTokenOwns`, `TestReleaseClaimFreesTheCapacityAndTheTokenWithoutMovingTheJob`, `TestLeavingTheRunningStateReleasesTheClaimAndItsCapacity`, `TestRegisterAdapterRefusesDuplicatesAndMalformedDefinitions` |
+| Reconciliation | `svc.ReconcileExpired undefined`, `undefined: ReconcileFailureCode` | `TestReconcileAsksTheAdapterAndAppliesOnlyWhatItAnswers` (all eight decisions), `TestReconcileRefusesTheTokenItReplaced` (and the resumed execution's capacity), `TestReconcileKeepsAClaimItCannotProveDead`, `TestReconcileBlocksAJobWhoseAdapterIsGone`, `TestReconcileNeverRerunsNonRestorableWorkOnExpiryAlone`, `TestReconcileAppliesNothingWhenTheAdapterCannotAnswer`, `TestReconcileBlocksADecisionItCannotApply` |
+| Runtime loop | `app.jobDeps undefined`, `undefined: NewJobRuntime`, `undefined: JobRuntimeConfig` | `TestJobRuntimeClaimsAndDispatchesWhatTheAdapterReports`, `TestJobRuntimeBoundsDispatchByTheDeploymentCapacity`, `TestJobRuntimeReconcilesAnExpiredClaimBeforeItDispatches`, `TestJobRuntimeDispatchesWhatAReconciliationResumes`, `TestJobRuntimeLeavesUnresolvedWorkDurableAcrossShutdown` |
+| PostgreSQL dialects | `jobs/dispatch_pg_test.go:41:23: svc.Claim undefined`, `undefined: ClaimRequest` (build failed against the pre-task tree in a scratch worktree) | `TestClaimAdmitsOneWinnerAcrossTwoConnectionsPG`, `TestClaimTakesOverAReleasedClaimRowPG`, `TestCapacityIsObservedAcrossServiceInstancesPG` |
+
+The PostgreSQL file was written after the SQLite cycles rather than in its own
+red-first pass, and that is recorded as a deviation: its red run is the
+compile failure above, reproduced against `HEAD` in a scratch worktree, and its
+purpose is dialect regression for behavior already proven on SQLite — the
+conditional `ON CONFLICT … DO UPDATE … WHERE` takeover and the slot occupancy are
+the two statements SQLite would have tolerated in a spelling PostgreSQL rejects.
+
+## Defects found while the cycles ran
+
+- **The capacity unique index made one claim impossible.** `JobCapacityLease`
+  was first unique on `(job_id, execution_token)`, which forbids the second budget
+  of a single claim — the atomicity test found it immediately (a Job taking the
+  global *and* the Kind budget failed its second insert with "budget full"). The
+  unique pair is `(job_id, capacity_group)`, which is what "one slot per budget
+  per Job" actually means.
+- **A re-claim collided with its own released row.** The shutdown test found
+  `UNIQUE constraint failed: job_claims.job_id` when a requeued Job was claimed
+  again: one row per Job means claiming is a takeover, not an insert. It is a
+  conditional upsert whose `WHERE` admits only a released row, so a held or
+  quarantined claim is never overwritten even if the Job guard were bypassed.
+- **A resume would have leaked the capacity it kept.** Capacity survives a
+  resume by design, and the rows carried the expired token, which the
+  replacement's own completion could not free. `resumeClaim` re-tokens them in
+  the same transaction, and `TestReconcileRefusesTheTokenItReplaced` finishes the
+  resumed execution and asserts the budgets come back to zero.
+- **A pre-existing PostgreSQL test was already failing, for a reason this task
+  had to understand.** `TestJobPublishOrdersOutOfOrderCommitsPG` failed on `HEAD`
+  with `commit unexpectedly resulted in rollback`. The cause is that `Accept`
+  reads the envelope table after its transaction, and `newPGDeps` migrated only
+  the tables Task 1's tests asserted on — so the missing `job_replay_envelopes`
+  SELECT aborted the caller's transaction on PostgreSQL, which pgx reports as a
+  rollback at commit. Task 3's PostgreSQL gate was filtered to `Test.*Replay` and
+  never ran this test. Fixed by migrating the whole core
+  (`jobCoreTables()`), which is also why the helper now lists every job table.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -count=1` — passed.
+- `go test --tags 'json1 fts5' ./application_context -count=1` — passed.
+- `go test -race --tags 'json1 fts5' ./jobs ./application_context -run 'Test(Claim|Lease|Heartbeat|Reconcile|Capacity|JobRuntime)' -count=10`
+  — passed (Task 4's focused gate, exactly as the plan writes it).
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed, including the
+  whole Task 1–3 PostgreSQL suite and the pre-existing test above.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -run 'Test(Claim|Lease|Heartbeat|Reconcile|Capacity)' -count=1`
+  — passed (Task 4's cross-engine gate).
+- `go test -race --tags 'json1 fts5' ./jobs ./application_context ./internal/arch -count=1`
+  — passed, including `TestJobsStaysBelowItsConsumers`.
+- `go test --tags 'json1 fts5' ./... -count=1` — every package passed.
+- `go vet --tags 'json1 fts5' ./...` and `go vet --tags 'json1 fts5 postgres' ./jobs ./application_context`
+  — clean; `go build --tags 'json1 fts5' ./...` clean; `gofmt -l` clean.
+- `git diff --check` — clean. No frontend source changed, so no bundle rebuild.
+
+## Review
+
+Task 4 is complete. The admission decision is a single guarded write and the
+occupancy is rows, so two runtimes contending for one Job admit exactly one and a
+budget that is full is full for everybody — including a second process with its
+own Service instance, which is what the cross-instance tests pin. Nothing an
+adapter receives can write a lifecycle row: it gets an `Execution` with the Job's
+identity, its token, the decoded input, the principal it acts as, and a report
+bound to that Job and that token.
+
+Four readings of the plan worth recording:
+
+- **`blocked-external-work-unproven` is the fail-safe default, not an edge case.**
+  A missing adapter and a non-restorable Kind that asked to be re-queued both land
+  there too: the Job is blocked, the claim and its capacity are kept, the token is
+  kept — because it is what an executor that is in fact alive can still finish
+  under — and the claim leaves the expiry scan so an unresolvable Job cannot become
+  a reconciliation loop. What that buys is the design's central safety property:
+  no replacement is dispatched over work nobody proved had stopped. The Job being
+  nonterminal is also what keeps it out of ordinary retention and out of every
+  record-deleting path, which is asserted rather than assumed.
+- **Leaving the running state ends ownership, in one transaction.** Paused,
+  queued, blocked, terminal — whichever state the Job moved to, the claim, the
+  capacity and the token go with it, so no slot is ever held by an execution that
+  is not running and no stopped execution can publish. The reasoning is written
+  where the release happens, because the obvious alternative (releasing only on
+  terminal states) leaks a budget on every pause.
+- **A dispatch error is a failure, not a silent retry.** At-least-once dispatch
+  with a blocker that returns an error would otherwise re-run forever, and a Job
+  left `running` with nobody owning it would never be resolved by anything at
+  all — not a claim expiry, not a queue. The runtime ends it with a bounded code
+  (`dispatch-failed`, `execution-unfinished`) and never records the adapter's own
+  error text: only the adapter knows what in it is safe, and the durable record is
+  a taxonomy. An adapter that wants to explain itself appends a bounded event
+  before returning.
+- **Shutdown writes nothing.** The loop stops, the executions are cancelled, and a
+  Job that did not finish keeps its state, claim, lease and capacity for the next
+  process to reconcile. A graceful stop does *not* hand claims back, because a
+  running Job with no claim is a Job nothing will ever resolve; the delay until
+  the lease runs out is the price of never assuming a stopped process's work is
+  gone.
+
+Residual risks and handoffs carried forward:
+
+- **`ReconcileExpired`, `PublishPendingEvents` and the runtime have no in-tree
+  caller of their own beyond `main`'s loop** — no Kind adapter is registered until
+  Tasks 7–10, so the loop's only work today is reconciliation of claims left by a
+  previous process. The loop polls unconditionally by design.
+- **No command path yet**, so `ControlIntent` is still unwritten and a Job that
+  is queued cannot be cancelled before it is claimed; a quarantined claim has no
+  operator surface to resolve it. Both are Task 6's, and the claim's
+  `quarantined` state plus the Job's `blocked` event are the evidence it will
+  read.
+- **Deleting a Job is not implemented anywhere yet** (Task 5's retention owns
+  it). "A blocked Job with an unresolved claim cannot be deleted" is therefore
+  enforced today by the Job being nonterminal, and must be enforced explicitly by
+  whatever sweep arrives — a quarantined claim's row and capacity are the records
+  it must consult.
+- **The runtime's deployment-wide budget is `-max-job-concurrency`**, the shared
+  background-job budget, rather than a new flag. If Task 7 finds that conflates
+  two budgets whose coordination it needs, the budget travels on the
+  `ClaimRequest` and needs no schema change.
+- **A heartbeat from a quarantined claim's owner is refused** rather than treated
+  as proof of life that clears the quarantine. That proof belongs with Task 9's
+  runtime-loss inspection, which has the process and boot identity to make it.
+
+### Addendum: two behaviors self-review changed after the cycles
+
+- **A quarantined claim is released when its own execution ends.** `releaseClaimTx`
+  first released only a `held` claim, which meant the one thing that *does* prove
+  the external work stopped — the execution that owned it writing an outcome, or
+  its runtime reporting that it returned — left a claim and its capacity held
+  forever. It now releases any non-released claim its token still owns, which is
+  still token-fenced. `TestAQuarantinedClaimIsReleasedWhenItsOwnerFinishesTheJob`
+  pins it, and the runtime's own release does the same when a quarantined
+  execution returns.
+- **A quarantined Job cannot reach success directly.** The Task 1 state machine
+  has no `blocked -> succeeded` edge, so an execution that wakes up after being
+  quarantined can record a failure, cancel, interrupt or re-queue — not a
+  success. That is the approved table, not a new decision, and it is fail-safe:
+  the Job stays blocked for a person, the runtime's heartbeat refusal cancels the
+  work, and capacity is freed as soon as that execution returns. A Kind that needs
+  the success path can re-queue and finish on the next, unquarantined run. Task 9's
+  runtime-loss proof is where "this owner is alive after all" becomes something
+  the control plane can act on rather than merely observe.
+
+- **A test helper that aged a claim silently did nothing when there was no row**
+  to age, and the reconcile-vocabulary test assumed claims arrive in acceptance
+  order. Two Jobs accepted inside one injected clock tick are ordered by their
+  UUIDv7 tiebreak, not by the order they were accepted, so the test aged the
+  wrong Job half the time (`-count=20` exposed it as `examined 1 claims`).
+  `expireClaim` now fails on a zero-row update, and the test ages the Job the
+  claim actually names.

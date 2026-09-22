@@ -665,6 +665,27 @@ func (ctx *MahresourcesContext) JobReplayRetention() time.Duration {
 	return defaultJobReplayRetention
 }
 
+// jobDeps builds the per-call handle the Job control plane runs on: the
+// context's database handle, and the deployment's replay configuration read
+// live so an operator's retention change applies to the next call.
+//
+// It is rebuilt for every call rather than cached, for the reason the module
+// documents: transaction membership and request scope ride on the handle, and the
+// Job module deliberately holds none. A caller with a transaction passes its own
+// handle instead; this is the process-level handle a runtime and an adapter use.
+func (ctx *MahresourcesContext) jobDeps() jobs.Deps {
+	if ctx == nil {
+		return jobs.Deps{}
+	}
+	return jobs.Deps{
+		DB: ctx.db,
+		Replay: &jobs.ReplayConfig{
+			Keys:      ctx.JobReplayKeyring(),
+			Retention: ctx.JobReplayRetention(),
+		},
+	}
+}
+
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a
 // previous run. Separated from NewMahresourcesContext so main.go can call it
 // AFTER SetSettings + DownloadManager.SetSettings, ensuring the first-pass

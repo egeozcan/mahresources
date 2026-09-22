@@ -45,7 +45,7 @@ func newTestDeps(t *testing.T) Deps {
 
 	if err := db.AutoMigrate(
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobOutput{}, &models.PluginKV{},
+		&models.JobOutput{}, &models.JobClaim{}, &models.JobCapacityLease{}, &models.PluginKV{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}

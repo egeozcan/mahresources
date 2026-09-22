@@ -867,6 +867,23 @@ func main() {
 	defer jobEvents.Stop()
 	context.SetJobEventSink(jobEvents)
 
+	// The durable dispatch loop: the application-owned half of the Job control
+	// plane. Started here for the same reason the scheduler and the event
+	// dispatcher are — it owns goroutines, so the place that can defer its Stop
+	// is the place that starts it.
+	//
+	// It is inert until a Kind registers an adapter with it, and it runs
+	// regardless: reconciliation is not optional, because a claim left by a
+	// previous process still has to be resolved even when this one cannot run the
+	// work at all. The deployment-wide concurrency budget is the shared job
+	// budget, and every Kind's own budget is taken on top of it.
+	jobService := jobs.NewService()
+	jobRuntime := application_context.NewJobRuntime(context, jobService, application_context.JobRuntimeConfig{
+		GlobalCapacity: *maxJobConcurrency,
+	})
+	jobRuntime.Start()
+	defer jobRuntime.Stop()
+
 	// Start share server if configured.
 	//
 	// Start binds synchronously, so the "available at" line is printed only
@@ -945,6 +962,8 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobLink{},
 		&models.JobOutput{},
 		&models.JobReplayEnvelope{},
+		&models.JobClaim{},
+		&models.JobCapacityLease{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err
