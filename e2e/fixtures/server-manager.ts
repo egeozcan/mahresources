@@ -251,6 +251,15 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
     ...process.env,
     FILE_ALT_COUNT: '0',
     PLUGIN_COMMAND_PATH: deterministicCommandPath,
+    // The Job control plane refuses to start a deployment that could accept
+    // durable secret work with no replay key it will still hold after a restart:
+    // PostgreSQL for the multi-process reason, and a persistent SQLite database
+    // with no data root to keep a private key file in. The harness runs both of
+    // those shapes — a per-worker PostgreSQL database, and an opt-in persistent
+    // SQLite database — and neither is a multi-process deployment, so one fixed
+    // test key is the honest configuration. It is a fixture value, never a
+    // production key.
+    JOB_REPLAY_KEY: 'ZTJlLWhhcm5lc3MtcmVwbGF5LWtleS0zMmJ5dGUhISE=',
   };
   for (const key of Object.keys(childEnv)) {
     if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {

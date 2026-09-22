@@ -252,6 +252,67 @@ type JobOutput struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// JobReplayEnvelope is one Job's sealed replay input: the opaque half of what
+// the Job was accepted with, kept apart from the bounded searchable summary so
+// that no ordinary Job read, event, log line or JSON view can reach it.
+//
+// It is deliberately one row per Job, and that row is both the envelope and the
+// durable purge marker. Purge never deletes the row: it clears the ciphertext
+// and nonce and stamps PurgedAt/PurgeReason, so a reader can tell "this Job's
+// input was forgotten" or "it expired" from "this Job never had any", and
+// backfill can never resurrect input a purge removed (see the migration and
+// plaintext-retirement tasks). An envelope that carries ciphertext therefore has
+// no PurgedAt, and one with PurgedAt has none.
+//
+// Ciphertext is bound to the Job, Kind and Kind version by AES-256-GCM
+// associated data, so a row moved to another Job — or read under another Kind's
+// decoder — fails authentication rather than decrypting into the wrong
+// execution. KeyID is a non-secret SHA-256 fingerprint of the key that sealed
+// it: rotation reads old envelopes by their own key ID and always writes with
+// the active one.
+//
+// ExpiresAt is replay retention, and it is stamped from terminal completion
+// (finished_at) rather than acceptance. It stays NULL for every nonterminal
+// state — scheduled, queued, running, paused and blocked work keeps
+// execution-required input for as long as it needs it.
+type JobReplayEnvelope struct {
+	JobID string `gorm:"primaryKey;size:36" json:"jobId"`
+	// Kind and KindVersion are the input semantics the sealed bytes were
+	// written for, and part of what the ciphertext authenticates against.
+	Kind        string `gorm:"size:120;not null" json:"kind"`
+	KindVersion uint   `gorm:"not null" json:"kindVersion"`
+	// SchemaVersion is the envelope encoding this module wrote, not the Kind's
+	// input version.
+	SchemaVersion uint `gorm:"not null" json:"schemaVersion"`
+	// KeyID names the key that sealed the ciphertext. It is an identifier, not a
+	// secret: the key itself is never stored.
+	KeyID string `gorm:"size:64;not null" json:"keyId"`
+
+	Nonce      []byte `json:"-"`
+	Ciphertext []byte `json:"-"`
+
+	CreatedAt time.Time  `gorm:"not null" json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	ExpiresAt *time.Time `gorm:"index:idx_job_replay_expiry" json:"expiresAt,omitempty"`
+
+	PurgedAt    *time.Time `json:"purgedAt,omitempty"`
+	PurgeReason string     `gorm:"size:20" json:"purgeReason,omitempty"`
+}
+
+// JobReplayEnvelopeTable is the envelope table's name, spelled once because the
+// purge sweep and the migrations both address it.
+const JobReplayEnvelopeTable = "job_replay_envelopes"
+
+// Why a replay envelope was purged. The reason is durable because it is what a
+// reader is told: "forgotten" is an operator or owner decision, "expired" is
+// retention, and the two are not interchangeable evidence.
+const (
+	// JobReplayPurgeForgotten is an explicit Forget of finished work's input.
+	JobReplayPurgeForgotten = "forgotten"
+	// JobReplayPurgeExpired is replay retention reached from terminal completion.
+	JobReplayPurgeExpired = "expired"
+)
+
 // JobWriterEpoch is the single row recording the minimum writer epoch this
 // database accepts: the oldest release permitted to write to it.
 //

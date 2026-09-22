@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"mahresources/constants"
 	"mahresources/hash_worker"
 	"mahresources/hostfetch"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/seed"
 	"mahresources/plugin_system"
@@ -125,6 +127,32 @@ func getEnvOrDefault(envVar string, defaultVal string) string {
 		return defaultVal
 	}
 	return val
+}
+
+// jobReplayKeyConfig turns the boot configuration into the replay keyring
+// configuration the Job control plane is loaded with.
+//
+// Every input is a boot fact, and the key is env-only (never a flag, never a
+// runtime setting): a key is not a tuning knob, and a key that could be changed
+// from /admin/settings is a key an administrator could use to render every
+// stored envelope unreadable.
+//
+// Ephemeral is the in-memory database, which is the one deployment whose Jobs
+// die with the process and may therefore generate a key it throws away.
+// KeyFilePath is only consulted for a persistent SQLite deployment: PostgreSQL
+// may have several processes and hosts writing one database, so a file beside
+// one of them is not shared state.
+func jobReplayKeyConfig(fileSavePath, dbType string, ephemeral bool) jobs.ReplayKeyConfig {
+	keyPath := ""
+	if strings.TrimSpace(fileSavePath) != "" {
+		keyPath = filepath.Join(fileSavePath, jobs.JobReplayKeyFileName)
+	}
+	return jobs.ReplayKeyConfig{
+		Keys:        os.Getenv("JOB_REPLAY_KEY"),
+		Dialect:     dbType,
+		Ephemeral:   ephemeral,
+		KeyFilePath: keyPath,
+	}
 }
 
 func main() {
@@ -441,11 +469,22 @@ func main() {
 	cfg.PluginCommandOutputRetention = pluginCommandConfig.OutputRetention
 	cfg.PluginCommandStagingTemporary = pluginCommandConfig.TemporaryStaging
 
+	// Loaded before the context exists, so a deployment that could accept
+	// durable secret work without a replay key it will still hold after a
+	// restart refuses to start rather than discovering it when a Retry cannot
+	// work. Nothing below this line is reached on that failure.
+	jobReplayKeyring, err := jobs.LoadReplayKeyring(jobReplayKeyConfig(*fileSavePath, *dbType, useMemoryDB))
+	if err != nil {
+		fail("failed to load the job replay key: %v", err)
+		return
+	}
+
 	context, db, mainFs, err := application_context.OpenContextWithConfig(cfg)
 	if err != nil {
 		fail("failed to create application context: %v", err)
 		return
 	}
+	context.SetJobReplayKeyring(jobReplayKeyring)
 	if context.Config.DeepSeekAPIKey != "" {
 		provider := application_context.NewDeepSeekMRQLDraftProvider(
 			application_context.DefaultDeepSeekChatCompletionsURL,
@@ -905,6 +944,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobEventSequence{},
 		&models.JobLink{},
 		&models.JobOutput{},
+		&models.JobReplayEnvelope{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err

@@ -332,6 +332,25 @@ const (
 type Deps struct {
 	DB  *gorm.DB
 	Now func() time.Time
+	// Replay is the deployment's replay configuration for this call: the keyring
+	// the module seals and opens envelopes with, and how long finished work's
+	// input stays readable. It rides on the handle for the same reason the
+	// handle does — a facade builds it from live settings on every call — and a
+	// nil value means replay is not configured here, which is a refusal to seal
+	// (never a licence to store input in the clear).
+	Replay *ReplayConfig
+}
+
+// ReplayConfig is what a caller must know to store and read replay input: the
+// keys, and the retention that starts at terminal completion.
+type ReplayConfig struct {
+	// Keys seals and opens envelopes. Nil refuses acceptance of any input.
+	Keys *Keyring
+	// Retention is how long a finished Job's envelope stays readable. Zero means
+	// "not configured", which keeps it indefinitely rather than expiring it on
+	// write — the same rule the download retentions follow, and the safe
+	// direction for input that a nonterminal Job may still need.
+	Retention time.Duration
 }
 
 // now returns the current instant in UTC. Every stored instant is normalized to
@@ -350,6 +369,49 @@ func (d Deps) now() time.Time {
 type Access struct {
 	UserID        uint
 	Administrator bool
+}
+
+// ReplayAvailability is what a viewer can do with a Job's replay input right
+// now. It is the only thing an ordinary snapshot says about the envelope:
+// whether it can be opened, never what it holds. It is independent of the Job's
+// outcome — a succeeded Job whose input expired still succeeded — and a value
+// other than available is what suppresses Retry and Repeat.
+type ReplayAvailability string
+
+const (
+	// ReplayAvailabilityNone means there is no input to replay at all: the Job
+	// declared non-replayable input, so no envelope exists and none ever will.
+	ReplayAvailabilityNone ReplayAvailability = ""
+	// ReplayAvailable means a sealed envelope exists and this process holds the
+	// key and the Kind codec needed to open it.
+	ReplayAvailable ReplayAvailability = "available"
+	// ReplayExpired means replay retention passed. The input is gone; history is
+	// not.
+	ReplayExpired ReplayAvailability = "expired"
+	// ReplayForgotten means the input was explicitly purged.
+	ReplayForgotten ReplayAvailability = "forgotten"
+	// ReplayUnreadable means the input cannot be produced here: no envelope was
+	// stored, this process does not hold the key that sealed it, or the Kind
+	// version has no registered codec to decode it. It is deliberately one value
+	// for three causes — a viewer is entitled to know that Retry is unavailable,
+	// not to distinguish a missing key from a corrupt row — while the errors the
+	// host gets from OpenReplay do distinguish them.
+	ReplayUnreadable ReplayAvailability = "unreadable"
+)
+
+// OpenedReplay is one Job's decrypted, migrated input, handed to the executor
+// that is about to run it. It is the only value that ever carries the opened
+// bytes, and it is never part of a snapshot.
+type OpenedReplay struct {
+	JobID         string
+	Kind          string
+	KindVersion   uint
+	SchemaVersion uint
+	// Input is the Kind's own input, decoded by its registered codec.
+	Input json.RawMessage
+	// MigratedFrom names the Kind version the envelope was written at when the
+	// codec had to migrate it. Nil means it was decoded at its own version.
+	MigratedFrom *uint
 }
 
 // ExecutionRef names the execution that owns a Job's writes: which Job, and the
@@ -403,8 +465,15 @@ type LegacyRef struct {
 // with. NonReplayable marks work whose input cannot be replayed at all; the
 // default is that the input is replayable, and acceptance records which of the
 // two it is.
+//
+// Input is the already validated JSON the adapter wants stored opaquely — the
+// Kind's own shape, which this module neither interprets nor stores in the
+// clear. It is only ever supplied for replayable work: a non-replayable
+// classification that still carried input would be a licence to store bytes
+// nothing may replay, so acceptance refuses the pair.
 type ReplayInput struct {
 	NonReplayable bool
+	Input         json.RawMessage
 }
 
 // Acceptance is one durable acceptance request. It is produced by a Kind
@@ -433,33 +502,40 @@ type Acceptance struct {
 // an adapter sees. It never carries the replay envelope or any executor-internal
 // state.
 type Snapshot struct {
-	ID              string
-	Kind            string
-	KindVersion     uint
-	State           State
-	Phase           string
-	Title           string
-	Summary         json.RawMessage
-	OwnerUserID     *uint
-	ActorUserID     *uint
-	Origin          string
-	Visibility      VisibilityClass
-	ReplayClass     ReplayClass
-	Version         uint64
-	ControlIntent   string
-	Failure         *Failure
-	Progress        Progress
-	AcceptedAt      time.Time
-	ScheduledFor    *time.Time
-	QueuedAt        *time.Time
-	StartedAt       *time.Time
-	LastResumedAt   *time.Time
-	FinishedAt      *time.Time
-	RunningDuration time.Duration
-	PausedDuration  time.Duration
-	BlockedDuration time.Duration
-	QueueDuration   time.Duration
-	ExpiresAt       *time.Time
+	ID          string
+	Kind        string
+	KindVersion uint
+	State       State
+	Phase       string
+	Title       string
+	Summary     json.RawMessage
+	OwnerUserID *uint
+	ActorUserID *uint
+	Origin      string
+	Visibility  VisibilityClass
+	ReplayClass ReplayClass
+	// ReplayAvailability says whether this viewer can open the input. A snapshot
+	// never carries the envelope itself.
+	//
+	// It is answered by the reader paths — Get, Accept, Forget — and left empty
+	// by an executor-side transition, which reports the Job's own new state and
+	// has no viewer to answer for.
+	ReplayAvailability ReplayAvailability
+	Version            uint64
+	ControlIntent      string
+	Failure            *Failure
+	Progress           Progress
+	AcceptedAt         time.Time
+	ScheduledFor       *time.Time
+	QueuedAt           *time.Time
+	StartedAt          *time.Time
+	LastResumedAt      *time.Time
+	FinishedAt         *time.Time
+	RunningDuration    time.Duration
+	PausedDuration     time.Duration
+	BlockedDuration    time.Duration
+	QueueDuration      time.Duration
+	ExpiresAt          *time.Time
 }
 
 // Terminal reports whether the snapshot's Job reached an end state.
@@ -543,4 +619,49 @@ var (
 	// ErrStaleExecution is a transition from an executor whose token no longer
 	// owns the Job.
 	ErrStaleExecution = errors.New("jobs: stale execution token")
+
+	// ErrInvalidReplayKey is a JOB_REPLAY_KEY value that is not one or more
+	// base64-encoded 32-byte keys, or that repeats one.
+	ErrInvalidReplayKey = errors.New("jobs: invalid replay key")
+	// ErrReplayKeyRequired reports a deployment that could accept durable secret
+	// work without a key it will still hold after a restart. It is refused at
+	// startup rather than at the first acceptance, because the failure it
+	// prevents is silent: envelopes written under a per-boot key are unreadable
+	// once that process is gone.
+	ErrReplayKeyRequired = errors.New("jobs: a stable replay key is required")
+	// ErrInvalidReplayCodec is a Kind codec registration missing a hook or
+	// repeating a Kind/version pair.
+	ErrInvalidReplayCodec = errors.New("jobs: invalid replay codec")
+	// ErrInvalidReplay is a malformed replay request: input where none may be
+	// stored, or input beyond its bound.
+	ErrInvalidReplay = errors.New("jobs: invalid replay input")
+	// ErrReplayAbsent means the Job has no sealed input: it declared
+	// non-replayable input, or it was accepted without any.
+	ErrReplayAbsent = errors.New("jobs: no replay input is stored")
+	// ErrReplayKeyUnavailable means the envelope names a key this process does
+	// not hold. It is distinguishable from corruption on purpose: a rotation
+	// that has not been rolled out everywhere, or a key file lost with the data
+	// root, is an operator problem, while failed authentication is a data
+	// problem.
+	ErrReplayKeyUnavailable = errors.New("jobs: the replay key for this envelope is unavailable")
+	// ErrReplayCodecUnregistered means no Kind codec is registered that can
+	// decode the envelope — no decoder, or no migration from the version it was
+	// written at.
+	ErrReplayCodecUnregistered = errors.New("jobs: no replay codec is registered for this job kind")
+	// ErrReplayCorrupt means the ciphertext failed authentication: it was
+	// tampered with, or it was read under a different Job, Kind or Kind version
+	// than the one that sealed it.
+	ErrReplayCorrupt = errors.New("jobs: replay envelope failed authentication")
+	// ErrReplayDecodeFailed means the sealed bytes opened but the Kind's own
+	// codec refused them (a payload its decoder or migration cannot read).
+	ErrReplayDecodeFailed = errors.New("jobs: replay input could not be decoded")
+	// ErrReplayExpired means replay retention passed for a finished Job.
+	ErrReplayExpired = errors.New("jobs: replay input has expired")
+	// ErrReplayForgotten means the input was explicitly purged.
+	ErrReplayForgotten = errors.New("jobs: replay input was forgotten")
+	// ErrReplayExecutionRequired refuses a purge while the input is still
+	// execution-required: nonterminal work must first be cancelled or reconciled
+	// to a terminal state, because purging it would leave a Job that can neither
+	// run nor be recovered.
+	ErrReplayExecutionRequired = errors.New("jobs: replay input is still required by a nonterminal job")
 )

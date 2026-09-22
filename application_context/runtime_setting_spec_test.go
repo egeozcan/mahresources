@@ -63,6 +63,7 @@ func TestBuildSpecs_AllKeys(t *testing.T) {
 		KeyDocsSiteBaseURL, KeyDocsLinksDisabled, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 		KeyDownloadFailedRetention, KeyDownloadHistoryRetention, KeyDownloadCockpitLimit,
 		KeyUploadConcurrency, KeyUploadWidgetFileCount, KeyUploadWidgetSizeBytes,
+		KeyJobReplayRetention,
 	}
 	// Counted from the list rather than written as a literal: the claim is that
 	// the registry holds exactly these keys, and a separate number only ever

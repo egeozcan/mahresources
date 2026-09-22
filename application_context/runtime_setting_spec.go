@@ -38,6 +38,7 @@ const (
 	GroupDocs            SettingGroup = "docs"
 	GroupDeduplication   SettingGroup = "deduplication"
 	GroupExports         SettingGroup = "exports"
+	GroupJobs            SettingGroup = "jobs"
 )
 
 // SettingSpec carries type, display metadata, and validation bounds for one key.
@@ -179,6 +180,7 @@ const (
 	KeyUploadConcurrency        = "upload_concurrency"
 	KeyUploadWidgetFileCount    = "upload_widget_file_threshold"
 	KeyUploadWidgetSizeBytes    = "upload_widget_size_threshold"
+	KeyJobReplayRetention       = "job_replay_retention"
 )
 
 // buildSpecs returns the registry of runtime-editable settings.
@@ -262,6 +264,12 @@ func buildSpecs() map[string]SettingSpec {
 			Description: "How many *finished downloads* the jobs panel renders, newest first. Older ones stay reachable on the downloads page, which is why only they are capped: anything still working, and every export, import or plugin action, is always shown, because their controls exist nowhere else.",
 			Group:       GroupRemoteDownloads, Type: SettingTypeInt,
 			MinNumeric: 1, MaxNumeric: 200,
+		},
+		KeyJobReplayRetention: {
+			Key: KeyJobReplayRetention, Label: "Job replay retention",
+			Description: "How long a finished Job's encrypted replay input stays readable. The window starts when the Job finishes, never when it was accepted, and nonterminal work is never purged whatever this says. The resource or artifact a Job produced is unaffected.",
+			Group:       GroupJobs, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
 		},
 		KeySharePublicURL: {
 			Key: KeySharePublicURL, Label: "Share public URL",
@@ -402,6 +410,10 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyUploadConcurrency:     defaultUploadConcurrency,
 		KeyUploadWidgetFileCount: defaultUploadWidgetFileCount,
 		KeyUploadWidgetSizeBytes: int64(defaultUploadWidgetSizeBytes),
+		// Runtime-only, for the same shape of reason: it bounds how long the Job
+		// control plane keeps an encrypted envelope, which is a decision an
+		// operator makes about their own disk, not a flag to restart for.
+		KeyJobReplayRetention: defaultJobReplayRetention,
 	}
 }
 

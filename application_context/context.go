@@ -26,6 +26,7 @@ import (
 	"mahresources/download_queue"
 	"mahresources/groupio"
 	"mahresources/idlock"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_system"
 	"mahresources/search"
@@ -542,6 +543,20 @@ type MahresourcesContext struct {
 	// [lazy]/[details] deferred-render shortcodes (lib/deferredtoken). Derived from
 	// Config.TemplateSigningKey when set, otherwise a per-boot random 32 bytes.
 	deferredSigningKey []byte
+	// jobReplayKeyring is the replay keyring the Job control plane seals and
+	// opens envelope input with, installed by main.go from JOB_REPLAY_KEY (or the
+	// deployment's private 0600 key file) before anything can accept work.
+	//
+	// It is process-lifetime key material and nothing else: the Job module takes
+	// its database handle per call and holds no key of its own, so the keyring is
+	// handed to it on the handle a request builds. A pointer for the same reason
+	// rootAdmin is one — WithRequest/WithPrincipal/WithTransaction shallow-copy
+	// this struct, and every copy has to see the keyring the process installed.
+	//
+	// It is nil until installed, and nil means "this process holds no replay
+	// key", which the Job control plane treats as a refusal to store secret input
+	// — never as a licence to store it in the clear.
+	jobReplayKeyring *jobs.Keyring
 	// shareServerListening records that the public share server bound its port and
 	// has not stopped serving. Finding 51: a bind failure was logged and swallowed,
 	// so /admin/settings went on advertising the share port and the note sidebar
@@ -597,6 +612,57 @@ func (ctx *MahresourcesContext) ShareServerListening() bool {
 // by NewMahresourcesContext.
 func (ctx *MahresourcesContext) DeferredSigningKey() []byte {
 	return ctx.deferredSigningKey
+}
+
+// defaultJobReplayRetention is how long a finished Job's encrypted replay input
+// stays readable when nothing configures one: seven days, the design's replay
+// window. It is only ever measured from terminal completion.
+const defaultJobReplayRetention = 168 * time.Hour
+
+// SetJobReplayKeyring installs the replay keyring the Job control plane seals
+// and opens envelope input with.
+//
+// It is set from main.go rather than derived in NewMahresourcesContext, for the
+// same reason the runtime settings service is: the failure it guards against is
+// a deployment that could accept durable secret work with no key it will still
+// hold after a restart, and that is a boot decision made against the boot
+// configuration (dialect, ephemerality, data root) rather than against a
+// programmatic config a test built by hand. A context that never receives one
+// holds no key, and the Job control plane refuses to seal rather than storing
+// input unencrypted.
+func (ctx *MahresourcesContext) SetJobReplayKeyring(keyring *jobs.Keyring) {
+	if ctx == nil {
+		return
+	}
+	ctx.jobReplayKeyring = keyring
+}
+
+// JobReplayKeyring returns the installed replay keyring, or nil when this
+// process holds no replay key.
+func (ctx *MahresourcesContext) JobReplayKeyring() *jobs.Keyring {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.jobReplayKeyring
+}
+
+// JobReplayRetention is how long a finished Job's encrypted replay input stays
+// readable after it finishes. It is read per call by whatever builds the Job
+// module's per-call handle, so an operator's change applies to the next
+// terminal transition without a restart.
+//
+// Read through the live settings with the zero-guard the download retentions
+// document: a context built from a raw MahresourcesConfig{} carries no settings
+// service, and a published 0 must mean "not configured" rather than "expire on
+// write" — for execution-required input, expiring it immediately would be the
+// worst available reading of a missing value.
+func (ctx *MahresourcesContext) JobReplayRetention() time.Duration {
+	if s := ctx.settings; s != nil {
+		if d := s.JobReplayRetention(); d > 0 {
+			return d
+		}
+	}
+	return defaultJobReplayRetention
 }
 
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a

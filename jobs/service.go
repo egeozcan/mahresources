@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"mahresources/models"
@@ -16,7 +17,16 @@ import (
 // Service is the Job control plane. It holds no database handle: every entry
 // point takes a Deps, because transaction membership and request scope ride on
 // that handle. A Service is therefore safe to keep for the life of the process.
-type Service struct{}
+//
+// What it does hold is process-lifetime configuration that is not a database
+// handle: the Kind-owned replay codecs. Those are built once at startup and are
+// not scoped, transactional or per-caller, so they belong here rather than on
+// the handle — the same line groupio and search draw for their filesystems and
+// backends.
+type Service struct {
+	replayMu     sync.Mutex
+	replayCodecs map[replayCodecKey]ReplayCodec
+}
 
 // NewService returns the Job control plane.
 func NewService() *Service {
@@ -61,7 +71,21 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 		job.QueuedAt = &now
 	}
 
-	var snap Snapshot
+	// The input is encoded and sealed before the transaction opens, so a Kind
+	// codec that cannot summarize or encode its own input refuses acceptance
+	// rather than leaving a Job whose Retry could never work. The sealed bytes
+	// are the only form of it that reaches the database.
+	var envelope *models.JobReplayEnvelope
+	if len(acceptance.Replay.Input) > 0 {
+		sealed, summary, err := s.sealReplay(deps, job, acceptance.Replay, now)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		envelope = &sealed
+		job.Summary = types.JSON(summary)
+	}
+
+	var stored Snapshot
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&job).Error; err != nil {
 			return fmt.Errorf("jobs: store job: %w", err)
@@ -70,13 +94,22 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 		if err := tx.Create(&event).Error; err != nil {
 			return fmt.Errorf("jobs: store accepted event: %w", err)
 		}
-		snap = snapshot(job)
+		if envelope != nil {
+			if err := tx.Create(envelope).Error; err != nil {
+				return fmt.Errorf("jobs: store replay envelope: %w", err)
+			}
+		}
+		stored = snapshot(job)
 		return nil
 	})
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return snap, nil
+	// Filled after commit rather than inside it: the envelope's availability is
+	// a read of the row that has just been written, and answering it on the
+	// caller's own handle keeps the transaction's statements to writes.
+	stored.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), job, deps.now())
+	return stored, nil
 }
 
 // Get returns one visible Job. A Job the caller may not see is reported exactly
@@ -93,7 +126,31 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 		}
 		return Snapshot{}, fmt.Errorf("jobs: load job: %w", err)
 	}
-	return snapshot(job), nil
+	return s.snapshotFor(deps, job), nil
+}
+
+// snapshotFor projects a stored row and answers the one question about replay
+// input a public snapshot carries: whether this process can open it. It never
+// returns the envelope and never decrypts it — a listing or a detail read must
+// not spend a key operation per row to render a boolean.
+//
+// It is for the reader paths (Get, Accept, Forget). Executor-side transitions
+// deliberately use plain snapshot(): they run inside a write transaction, and
+// answering this question there would take a second database connection while
+// the first is held, which is the shape that deadlocks a pool of one.
+func (s *Service) snapshotFor(deps Deps, job models.Job) Snapshot {
+	snap := snapshot(job)
+	snap.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), job, deps.now())
+	return snap
+}
+
+// replayKeys is the keyring a call was made with, or nil when the caller
+// configured none.
+func replayKeys(deps Deps) *Keyring {
+	if deps.Replay == nil {
+		return nil
+	}
+	return deps.Replay.Keys
 }
 
 // validateAcceptance checks and normalizes an acceptance in place.
@@ -154,6 +211,15 @@ func validateAcceptance(a *Acceptance) error {
 	}
 	if a.ActorUserID != nil && *a.ActorUserID == 0 {
 		return invalid("actor user id 0 is not an identity")
+	}
+	if len(a.Replay.Input) > 0 && a.Replay.NonReplayable {
+		return invalid("input cannot be supplied for work that declares non-replayable input")
+	}
+	if len(a.Replay.Input) > 0 && len(a.Summary) > 0 {
+		// The summary is the only text a reader sees, so it is derived from the
+		// input by the Kind's own sanitizer. Letting a request name it as well
+		// would be a second path into the one place a secret must never reach.
+		return invalid("a replayable Job's summary is produced by its Kind's sanitizer, not named by the request")
 	}
 	a.ScheduledFor = utcPtr(a.ScheduledFor)
 
@@ -481,7 +547,7 @@ func (s *Service) Transition(deps Deps, transition Transition) (Snapshot, error)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return commitTransition(deps, prepared, nil)
+	return s.commitTransition(deps, prepared, nil)
 }
 
 // Finish ends a Job an execution owns, and is the only way success is recorded.
@@ -524,7 +590,7 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 			return verifyRequiredOutputs(tx, prepared.job.ID, request.RequiredOutputs)
 		}
 	}
-	return commitTransition(deps, prepared, verify)
+	return s.commitTransition(deps, prepared, verify)
 }
 
 // preparedTransition is a transition that has passed every precondition, with
@@ -585,7 +651,7 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 // a write transaction from its first statement. Its refusal rolls the update
 // back, so the outcome and the evidence for it still commit together or not at
 // all.
-func commitTransition(deps Deps, prepared preparedTransition, verify func(tx *gorm.DB) error) (Snapshot, error) {
+func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verify func(tx *gorm.DB) error) (Snapshot, error) {
 	var snap Snapshot
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.Job{}).
@@ -599,6 +665,17 @@ func commitTransition(deps Deps, prepared preparedTransition, verify func(tx *go
 		}
 		if verify != nil {
 			if err := verify(tx); err != nil {
+				return err
+			}
+		}
+		// A Job that just reached an end state gives its sealed input its replay
+		// deadline. It is stamped here, in the terminal transition's own
+		// transaction, so that "expiry starts at finished_at" is a property of
+		// the write rather than of a sweep that might run much later — and so a
+		// nonterminal Job, whose envelope is execution-required, never acquires
+		// a deadline at all.
+		if prepared.next.FinishedAt != nil {
+			if err := stampReplayExpiry(tx, prepared.next, deps.Replay, deps.now()); err != nil {
 				return err
 			}
 		}

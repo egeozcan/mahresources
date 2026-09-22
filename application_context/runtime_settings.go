@@ -443,6 +443,7 @@ var groupDisplayOrder = []SettingGroup{
 	GroupUploads,
 	GroupQueries,
 	GroupRemoteDownloads,
+	GroupJobs,
 	GroupSharing,
 	GroupDocs,
 	GroupDeduplication,
@@ -535,6 +536,23 @@ func (s *RuntimeSettings) DownloadHistoryRetention() time.Duration {
 func (s *RuntimeSettings) DownloadCockpitLimit() int {
 	v, _ := s.getRaw(KeyDownloadCockpitLimit)
 	return v.(int)
+}
+
+// JobReplayRetention is how long a finished Job's encrypted replay input stays
+// readable after it finishes. It bounds the envelope, never the Job's history.
+//
+// Read with the two-value form the way RemoteUserAgent is, rather than the
+// panicking one the numeric accessors use: this value is read on the Job
+// lifecycle path, and a settings service built without it — a test fixture, an
+// embed — must answer "not configured" so the caller falls back to the boot
+// default, not panic inside a terminal transition.
+func (s *RuntimeSettings) JobReplayRetention() time.Duration {
+	v, ok := s.getRaw(KeyJobReplayRetention)
+	if !ok {
+		return 0
+	}
+	d, _ := v.(time.Duration)
+	return d
 }
 
 // UploadConcurrency is how many files the bulk upload widget sends at once.

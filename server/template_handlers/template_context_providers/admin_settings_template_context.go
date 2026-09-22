@@ -85,6 +85,7 @@ var settingsGroupLabels = map[application_context.SettingGroup]string{
 	application_context.GroupDocs:            "Docs",
 	application_context.GroupDeduplication:   "Deduplication",
 	application_context.GroupExports:         "Exports",
+	application_context.GroupJobs:            "Jobs",
 }
 
 // settingsGroupLabel falls back to the key itself, so a group added without a

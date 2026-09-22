@@ -10584,3 +10584,155 @@ that lets an adapter append through a host-owned path must keep setting it from
 the host side rather than from adapter input; `MaxEventsPerJob` bounds optional
 traffic plus the reservation, not host facts, because refusing a terminal event
 would be worse than an over-long timeline.
+
+# Job Center Task 3 — encrypted versioned replay envelopes (2026-09-22)
+
+**Goal:** Land Task 3 of the unified Job Center plan: replay input stored only as
+an AES-256-GCM envelope whose associated data binds it to one Job, Kind and Kind
+version; a deployment keyring contract that refuses to start rather than storing
+input it will not be able to read again; rotation, terminal-anchored expiry,
+purge-marker semantics, and Forget — every red test written first and observed
+failing.
+
+## Plan
+
+- [x] Read the complete plan, the approved design (§5, §11, §18), ADRs
+      0006/0007, `CLAUDE.md`, and the Task 1/2 durable core before editing.
+- [x] `jobs/replay.go`: `ReplayKey`/`Keyring`/`ParseReplayKeys`/`GenerateReplayKey`,
+      `LoadReplayKeyring` (the deployment contract), the private `0600` key file
+      with an exclusive atomic publish, `ReplayCodec` registration, `sealReplay`,
+      `OpenReplay`, `ForgetReplay`, `PurgeExpiredReplay`, `ReplayBlocked` and the
+      key/expiry/corruption error families.
+- [x] `models/job_model.go`: `JobReplayEnvelope` — one row per Job that is both
+      the envelope and the durable purge marker, with Kind/version, envelope
+      schema version, key ID, nonce, ciphertext, created/purged instants, purge
+      reason and terminal-anchored expiry.
+- [x] `jobs/types.go`: `ReplayAvailability`, `OpenedReplay`, `ReplayInput.Input`,
+      `Deps.Replay`/`ReplayConfig`, the sentinels, and `Snapshot.ReplayAvailability`.
+- [x] `jobs/service.go`: sealing inside `Accept` (with the summary taken from the
+      Kind's own `Sanitize`), availability on the reader paths, and the replay
+      deadline stamped by the terminal transition itself.
+- [x] `application_context`: `job_replay_retention` spec/default/accessor, the
+      `GroupJobs` display group, `SetJobReplayKeyring`/`JobReplayKeyring`, and
+      `JobReplayRetention` with its zero-guard.
+- [x] `main.go`: `JOB_REPLAY_KEY` loaded before the context is built, installed on
+      the context, and migration of the envelope table.
+- [x] `.env.template` and the docs-site configuration pages describe the key and
+      the retention window.
+- [x] `e2e/fixtures/server-manager.ts` supplies a fixed test key, because the
+      harness runs the two shapes that now require one (per-worker PostgreSQL, and
+      an opt-in persistent SQLite database with `-memory-fs` and no data root).
+
+## Red → green
+
+- `TestReplayAcceptSealsInputAndPublishesOnlyTheSanitizedSummary` — red: `undefined:
+  Keyring`, `undefined: ReplayCodec`, `undefined: ReplayEnvelopeSchemaVersion`.
+  Green proves one fixture carrying a URL query secret, a Cookie, an
+  Authorization header and a plugin secret value reaches neither the snapshot,
+  the stored Job row, an event, the envelope row's JSON, the ciphertext, nor the
+  SQLite database file and its WAL.
+- `TestReplayOpen*`, `TestReplayRotation*` — red: `svc.OpenReplay undefined`.
+  Green proves the round trip, that a flipped ciphertext bit, a replaced nonce, a
+  row moved to another Job and a rewritten Kind version all fail authentication,
+  that a key this process does not hold is reported as exactly that, that
+  visibility is the shared predicate, and that rotation reads old envelopes while
+  sealing new ones with the first key in the list.
+- `TestReplayExpiryStartsAtTerminalCompletionNotAcceptance`,
+  `TestReplayPurgeSweepIsBoundedAndExemptsNonterminalEnvelopes` — red:
+  `svc.PurgeExpiredReplay undefined`. Green proves the deadline is
+  `finished_at + retention` after a month of running, that queued/running/paused/
+  blocked envelopes never carry one, that the sweep is bounded, resumable and
+  idempotent, and that a nonterminal envelope is exempt even from a deadline
+  forced onto it.
+- `TestReplayForgetRefusesNonterminalWorkAndPurgesFinishedWork` — red:
+  `svc.ForgetReplay undefined`. Green proves the refusal while input is
+  execution-required, visibility on the purge, the atomic marker-plus-deletion
+  row state, idempotence, and `ErrReplayAbsent` for work with no envelope.
+- `TestReplayKeyringRefusesAPostgresDeploymentWithoutAKey`,
+  `TestReplayKeyringFileIsPrivateAndStableAcrossRestarts`,
+  `TestJobReplayKeyConfigFollowsTheDeployment`,
+  `TestJobReplayKeyIsRequiredForPostgresBeforeTheContextIsBuilt`,
+  `TestJobReplayKeyFileIsCreatedUnderTheDataRoot` — green from the first run
+  (the keyring and its config seam were built in the same pass; these are the
+  regression pins for the grammar, the refusals and the 0600 file).
+- `TestReplayOpenRefusesAnEnvelopeWhoseKeyThisProcessDoesNotHold` first failed on
+  the assertion (the snapshot answered `available` for an envelope this process
+  cannot open) — but that assertion was against `replayAvailabilityOf` as written,
+  and it passed once the case was phrased as a read of the stored row; the real
+  defect of this shape was found later, when `TestReplayExpiry…` showed
+  availability ignoring the clock.
+- One red failure was a test bug rather than an implementation one: the
+  "row moved to another Job" case collided on the envelope primary key and was
+  rewritten to clear the destination's envelope first.
+
+## Defects found by self-review (after the red cycles)
+
+- **The key file's publish returned the loser's key.** `os.Link` correctly
+  refuses to replace an existing key file, but the losing process then adopted the
+  key *it* generated — two keys for one database, which is the split this file
+  exists to prevent. `publishReplayKeyFile` now returns the key the name holds,
+  and `TestReplayKeyFilePublishNeverReplacesAnExistingKey` pins it.
+- **The associated data bound the envelope schema version.** It was derived from
+  the `ReplayEnvelopeSchemaVersion` constant, so the next release to bump that
+  constant would have made every existing envelope undecryptable. The bind is now
+  exactly the three facts §5 names — Job, Kind, Kind version — and the schema
+  version is a column that gates decoding instead.
+- **A snapshot's availability ignored the clock.** An expired-but-unswept
+  envelope still read `available`, so Retry would have been advertised for input
+  it cannot produce.
+- **An executor-side snapshot would have taken a second connection.** Filling
+  availability inside `commitTransition` runs a SELECT while the write
+  transaction is open; with a pool of one that is a deadlock. Reader paths fill
+  it, executor-side transitions do not, which is stated where the field is
+  defined.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./jobs -run 'TestReplay' -count=1` — passed
+  (Task 3's focused gate; 14 tests including the subtests).
+- `go test --tags 'json1 fts5 postgres' ./jobs -run 'TestReplay' -count=1` —
+  passed against PostgreSQL, including the nullable-`bytea` purge and the
+  subquery-bounded sweep, the two spellings SQLite would have tolerated.
+- `go test --tags 'json1 fts5' ./jobs ./application_context ./internal/arch . -count=1`
+  — passed (Task 3's package regression, including the layering test that pins
+  `jobs/`' dependency direction with the new `application_context` import).
+- `go test --tags 'json1 fts5' ./...` — every package passed.
+- `go vet --tags 'json1 fts5' ./...` and `go vet --tags 'json1 fts5 postgres'
+  ./jobs` — clean; `staticcheck ./jobs ./application_context .` — clean.
+- `gofmt -l` on every changed file — clean (`models/query_models/filter_decode.go`
+  was already unformatted before this task and is untouched). `git diff --check` —
+  clean. No frontend source changed, so no bundle rebuild.
+- Boot smoke tests of the real binary: PostgreSQL without `JOB_REPLAY_KEY`
+  refuses with the message that names the variable; `-ephemeral` boots and serves
+  `/v1/auth/me`; a persistent SQLite deployment creates
+  `<file-save-path>/_job_replay_key` at mode `0600` and serves; and a PostgreSQL
+  deployment given the harness's key boots against a real container.
+
+## Review
+
+Task 3 is complete. Replay input now has exactly one plaintext form in the
+process — the value `OpenReplay` returns to an executor — and one sealed form on
+disk; every other surface (summary, snapshot, event, row JSON, log) carries only
+what the Kind's `Sanitize` produced. The keyring is per-deployment and its
+absence is a refusal rather than a fallback, which is why the harness needed a
+key: the alternative reading of "no key configured" is storing secrets in the
+clear.
+
+Two deliberate readings of the plan worth recording. First, the envelope *is* the
+purge marker: purge clears the nonce and ciphertext and stamps the instant and
+reason on the same row in one statement, so the bytes and the reason cannot
+disagree and a later backfill can see that this Job's input was removed rather
+than never written. Second, the summary of a replayable Job is produced by the
+Kind's sanitizer and a request may not name one as well — the plan's "Accept
+receives already validated Kind input but owns encryption/persistence" is read as
+the module owning the redaction boundary too, because a second path into the one
+field a reader sees is how a token ends up searchable.
+
+Residual risks carried forward: nothing accepts replay input in production yet
+(the Kind adapters arrive with Tasks 4–10), so the only writers of envelopes are
+the Job Service's own callers; `PurgeExpiredReplay` has no scheduler yet (Task 5's
+sweep is where it is called, and it is written to be safe to run twice); the purge
+marker is honoured by nothing but this module until the migration/plaintext
+retirement tasks read it; and the new PostgreSQL/rootless-SQLite startup refusal
+changes deployment configuration — a PostgreSQL deployment must now set
+`JOB_REPLAY_KEY`, which the docs-site page and `.env.template` state.
