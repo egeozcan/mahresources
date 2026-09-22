@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -54,15 +56,27 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 	now := deps.now()
 	var result SweepResult
 
-	// Replay retention runs on its own clock, from terminal completion, and it is
-	// bounded the same way: an envelope whose window passed is purged whether or
-	// not the Job's metadata is due, and a Job whose metadata goes takes its
-	// envelope row with it.
+	// Three clocks run here, and none of them is the Job's metadata deadline.
+	//
+	// Replay retention runs from terminal completion: an envelope whose window
+	// passed is purged whether or not the Job's metadata is due, and a Job whose
+	// metadata goes takes its envelope row with it.
 	envelopes, err := s.PurgeExpiredReplay(deps, size)
 	if err != nil {
 		return result, err
 	}
 	result.Envelopes = envelopes
+
+	// Output deadlines run from publication: an artifact that expires in an hour
+	// is gone in an hour, whether its Job finished a minute ago, has a month of
+	// history left, or is still running. Leaving that to the metadata pass made
+	// "available" a claim about the Job's retention rather than about the
+	// artifact.
+	expiredOutputs, err := expireOutputsOnTheirDeadline(deps, size, now)
+	if err != nil {
+		return result, err
+	}
+	result.Outputs += expiredOutputs
 
 	if err := s.stampMissingDeadlines(deps, policy, size); err != nil {
 		return result, err
@@ -82,6 +96,34 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 	result.Examined = len(candidates)
 
 	for _, candidate := range candidates {
+		// A Job retention may not take at all is decided before anything is asked
+		// of its artifacts: a pin or an unresolved claim keeps the history, and
+		// cleaning up what that history points at would destroy the only thing
+		// naming the artifact while leaving the record that named it.
+		protected, err := sweepProtected(deps.DB, candidate.ID)
+		if err != nil {
+			return result, err
+		}
+		if protected {
+			result.Skipped++
+			continue
+		}
+
+		// The artifacts go next, and the answer has to be yes before the history
+		// that points at them may: §9 requires the removal to be established, and
+		// nobody but the Kind that published an artifact can establish it. A
+		// refusal — an artifact still in use, an adapter that cannot answer, a
+		// Kind this process has no adapter for at all — keeps the Job, which is
+		// the only thing still naming what was left behind.
+		accounted, err := s.artifactsAccountedFor(deps, candidate)
+		if err != nil {
+			return result, err
+		}
+		if !accounted {
+			result.Skipped++
+			continue
+		}
+
 		pruned, outputs, err := s.pruneExpiredJob(deps, candidate, now)
 		if err != nil {
 			return result, err
@@ -224,6 +266,114 @@ func recordOutputAvailability(tx *gorm.DB, jobID string, pruned bool, now time.T
 		return 0, fmt.Errorf("jobs: record output availability for %s: %w", jobID, result.Error)
 	}
 	return int(result.RowsAffected), nil
+}
+
+// sweepProtected reports whether a candidate Job is one ordinary retention may
+// not take: a Job somebody pinned, or one an unresolved claim still protects.
+//
+// It is asked before the sweep destroys anything belonging to the Job, and it is
+// asked again — as the predicate of the deleting statement — before the Job's own
+// row goes, because a pin or a claim landing in between is exactly what the
+// guarded delete exists to catch.
+func sweepProtected(db *gorm.DB, jobID string) (bool, error) {
+	var pinned int64
+	err := db.Model(&models.JobPreference{}).
+		Where("job_id = ? AND pinned_at IS NOT NULL", jobID).Count(&pinned).Error
+	if err != nil {
+		return false, fmt.Errorf("jobs: read pins for %s: %w", jobID, err)
+	}
+	if pinned > 0 {
+		return true, nil
+	}
+	return protectedByUnresolvedClaim(db, jobID)
+}
+
+// expireOutputsOnTheirDeadline records the expiry of every output whose own
+// deadline has passed, whatever its Job's state or retention says.
+//
+// It is one bounded statement pair rather than a per-Job walk: the rows it is
+// about are the ones an executor promised a viewer, and the sweep is the only
+// sane place to turn "past its deadline" into the recorded fact that every reader
+// agrees about. The update is guarded on the availability it is replacing, so two
+// sweeps racing each other record one expiry once.
+func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, error) {
+	var due []models.JobOutput
+	if err := deps.DB.Model(&models.JobOutput{}).
+		Where("availability = ?", string(OutputAvailable)).
+		Where("expires_at IS NOT NULL AND expires_at <= ?", now).
+		Order("expires_at ASC, id ASC").Limit(limit).
+		Find(&due).Error; err != nil {
+		return 0, fmt.Errorf("jobs: read outputs past their deadline: %w", err)
+	}
+	if len(due) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, 0, len(due))
+	for _, row := range due {
+		ids = append(ids, row.ID)
+	}
+
+	result := deps.DB.Model(&models.JobOutput{}).
+		Where("id IN ? AND availability = ?", ids, string(OutputAvailable)).
+		Updates(map[string]any{
+			"availability": string(OutputExpired),
+			"version":      gorm.Expr("version + 1"),
+			"updated_at":   now,
+		})
+	if result.Error != nil {
+		return 0, fmt.Errorf("jobs: record output expiry: %w", result.Error)
+	}
+	return int(result.RowsAffected), nil
+}
+
+// artifactsAccountedFor asks the Kind's adapter whether every artifact one expired
+// Job published is really gone, and reports whether the history that names them
+// may be pruned.
+//
+// The question is not answerable from the output rows: their availability is what
+// this database believes, and the bytes may live anywhere the adapter put them.
+// So the answer comes from the only thing that knows — and every answer but a
+// complete accounting is a no: an artifact still there, an adapter that failed, a
+// Kind this process cannot run at all. An already-missing artifact is a yes,
+// because that is one of the outcomes §7 names.
+//
+// The call is bounded by the batch it belongs to — one Job's artifacts, at most
+// one cleanup per candidate — and runs without a cancellation source because a
+// sweep has none. An adapter whose cleanup can take a long time bounds itself.
+func (s *Service) artifactsAccountedFor(deps Deps, job models.Job) (bool, error) {
+	var rows []models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND type = ?", job.ID, OutputTypeArtifact).
+		Order("key ASC").Find(&rows).Error; err != nil {
+		return false, fmt.Errorf("jobs: read artifacts of %s: %w", job.ID, err)
+	}
+	if len(rows) == 0 {
+		return true, nil
+	}
+
+	adapter, _, err := s.adapterFor(job.Kind, job.KindVersion)
+	if err != nil {
+		return false, nil
+	}
+	artifacts := make([]ArtifactRef, 0, len(rows))
+	for _, row := range rows {
+		artifacts = append(artifacts, ArtifactRef{Key: row.Key, Reference: json.RawMessage(copyJSON(row.Reference))})
+	}
+	result, err := adapter.CleanupArtifacts(context.Background(), ArtifactCleanupRequest{
+		JobID: job.ID, Kind: job.Kind, KindVersion: job.KindVersion, Artifacts: artifacts,
+	})
+	if err != nil {
+		return false, nil
+	}
+	removed := make(map[string]bool, len(result.Removed))
+	for _, key := range result.Removed {
+		removed[key] = true
+	}
+	for _, artifact := range artifacts {
+		if !removed[artifact.Key] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // stampMissingDeadlines gives the policy's window to terminal Jobs that carry no

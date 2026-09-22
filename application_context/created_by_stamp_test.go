@@ -56,10 +56,15 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		// actor, so these tables exist wherever a user can be deleted.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
+		// A Job's owner or actor being deleted must not stop it from being
+		// claimed, blocked or released, so the claim half of the core is here
+		// too: the property under test is what dispatch decides about a Job whose
+		// principal is gone.
+		&models.JobClaim{}, &models.JobCapacityLease{},
 		// Preferences are the third arm of the same sweep: they belong to the
 		// viewer, so deleting the viewer removes them rather than nulling
 		// anything.
-		&models.JobPreference{},
+		&models.JobPreference{}, &models.JobPinGuard{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

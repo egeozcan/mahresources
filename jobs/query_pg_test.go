@@ -4,6 +4,7 @@ package jobs
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ func TestListSearchCursorAndAggregatesOnPostgres(t *testing.T) {
 		acceptance := Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: owner, Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		}
 		if summary != "" {
 			acceptance.Summary = json.RawMessage(summary)
@@ -108,12 +110,16 @@ func TestRetentionSweepPrunesExpiredWorkOnPostgres(t *testing.T) {
 	deps.Retention = &policy
 	clock := time.Date(2032, 4, 2, 9, 0, 0, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
+	// The Kind has to be one this process can run, because pruning a Job that
+	// published an artifact asks its adapter to account for it first.
+	registerTestAdapter(t, svc, Definition{Kind: "group-export", KindVersion: 1, Restorable: true})
 
 	accept := func(title string, owner *uint) Snapshot {
 		clock = clock.Add(time.Minute)
 		return acceptForPG(t, svc, deps, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: owner, Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	finish := func(job Snapshot) Snapshot {
@@ -177,5 +183,91 @@ func TestRetentionSweepPrunesExpiredWorkOnPostgres(t *testing.T) {
 	}
 	if !jobExists(t, deps, protected.ID) {
 		t.Error("a job with an unresolved claim was pruned")
+	}
+}
+
+// TestPinAdmissionSerializesOnTheViewersGuardPG covers §9's per-viewer pin limit
+// as the admission question it is.
+//
+// The limit is a count of one viewer's committed pin rows, and two admissions
+// that count at the same time both see the limit unmet — no foreign key or unique
+// index objects, because the rows are different Jobs. The count therefore has to
+// happen under a durable per-viewer guard, which only PostgreSQL can show: SQLite
+// serializes writers, so the race cannot form there.
+func TestPinAdmissionSerializesOnTheViewersGuardPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	clock := time.Date(2032, 9, 10, 11, 12, 13, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	deps.PinLimit = 2
+
+	const viewerID = uint(7)
+	viewer := viewerID
+
+	accept := func(title string) Snapshot {
+		clock = clock.Add(time.Minute)
+		return acceptForPG(t, svc, deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &viewer, Title: title,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	held := accept("already pinned")
+	first := accept("one of the last two slots")
+	second := accept("the other of the last two slots")
+
+	access := Access{UserID: viewerID}
+	if err := svc.SetPreference(deps, access, PreferenceRequest{JobID: held.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("pin the first: %v", err)
+	}
+
+	// A transaction holds the viewer's own admission row, exactly as an in-flight
+	// pin admission for that viewer does. An admission that counts without the
+	// guard runs straight past it.
+	var guard models.JobPinGuard
+	if err := deps.DB.Where("user_id = ?", viewerID).First(&guard).Error; err != nil {
+		t.Fatalf("the first pin did not open the viewer's admission row: %v", err)
+	}
+	holder := deps.DB.Begin()
+	if holder.Error != nil {
+		t.Fatalf("begin: %v", holder.Error)
+	}
+	if err := holder.Exec("SELECT user_id FROM job_pin_guards WHERE user_id = ? FOR UPDATE", viewerID).Error; err != nil {
+		t.Fatalf("hold the admission row: %v", err)
+	}
+
+	admitted := make(chan error, 1)
+	go func() {
+		admitted <- svc.SetPreference(deps, access, PreferenceRequest{JobID: first.ID, Pinned: boolPtr(true)})
+	}()
+	select {
+	case err := <-admitted:
+		t.Fatalf("a pin admission did not wait for the viewer's guard: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := holder.Commit().Error; err != nil {
+		t.Fatalf("commit the holder: %v", err)
+	}
+	select {
+	case err := <-admitted:
+		if err != nil {
+			t.Fatalf("pin after the guard was released: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pin never completed after the guard was released")
+	}
+
+	// And the limit itself holds under concurrent admission of the last slot:
+	// with one pin held and one admitted, the second admission is refused.
+	if err := svc.SetPreference(deps, access, PreferenceRequest{JobID: second.ID, Pinned: boolPtr(true)}); !errors.Is(err, ErrPinLimitReached) {
+		t.Fatalf("pinning past the limit = %v, want ErrPinLimitReached", err)
+	}
+	var pinned int64
+	if err := deps.DB.Model(&models.JobPreference{}).
+		Where("user_id = ? AND pinned_at IS NOT NULL", viewerID).Count(&pinned).Error; err != nil {
+		t.Fatalf("count pins: %v", err)
+	}
+	if pinned != 2 {
+		t.Fatalf("%d pins are held under a limit of %d", pinned, deps.PinLimit)
 	}
 }

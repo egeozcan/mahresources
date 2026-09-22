@@ -47,7 +47,7 @@ func newJobContext(t *testing.T) *MahresourcesContext {
 	if err := db.AutoMigrate(
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
-		&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobPreference{},
+		&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
@@ -106,10 +106,12 @@ func TestVisibilityFollowsTheBoundPrincipalAtTheFacade(t *testing.T) {
 	mine := acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(7), Title: "mine",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	adminOnly := acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "plugin-command", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(7), Title: "a command run", Visibility: jobs.VisibilityAdmin,
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 
 	asUser := ctx.WithPrincipal(&auth.Principal{UserID: 7, Username: "user", Role: models.RoleUser})
@@ -162,10 +164,12 @@ func TestPreferenceAndRetentionFollowTheDeploymentSettings(t *testing.T) {
 	first := acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(7), Title: "first",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	second := acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: jobUintPtr(7), Title: "second",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	viewer := ctx.WithPrincipal(&auth.Principal{UserID: 7, Username: "user", Role: models.RoleUser})
 
@@ -204,6 +208,7 @@ func TestPreferenceAndRetentionFollowTheDeploymentSettings(t *testing.T) {
 	}
 	finished := finishJobFor(t, ctx, acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "group-export", KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "an export",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	}), jobs.StateSucceeded)
 	if finished.ExpiresAt == nil {
 		t.Fatal("a finished job carries no deadline")
@@ -222,6 +227,7 @@ func TestRetentionSweepUsesTheFacadesConfiguredWindows(t *testing.T) {
 
 	kept := finishJobFor(t, ctx, acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "group-export", KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "kept",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	}), jobs.StateSucceeded)
 
 	// Nothing is due: the default window is a month.
@@ -237,6 +243,7 @@ func TestRetentionSweepUsesTheFacadesConfiguredWindows(t *testing.T) {
 	// for work that already finished — is what the next pass takes.
 	due := finishJobFor(t, ctx, acceptJobFor(t, ctx, jobs.Acceptance{
 		Kind: "group-export", KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "due",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	}), jobs.StateSucceeded)
 	if err := ctx.db.Model(&models.Job{}).Where("id = ?", due.ID).
 		Update("expires_at", due.FinishedAt.Add(-time.Minute)).Error; err != nil {

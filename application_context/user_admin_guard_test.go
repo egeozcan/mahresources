@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -45,7 +46,7 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		// actor, and deletes the viewer-keyed preferences beside it, so these
 		// tables exist wherever a user can be deleted.
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
-		&models.JobPreference{},
+		&models.JobPreference{}, &models.JobPinGuard{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -257,6 +258,7 @@ func TestDeleteUserRemovesTheirJobPreferences(t *testing.T) {
 	snap, err := svc.Accept(jobs.Deps{DB: ctx.db}, jobs.Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: &viewer.ID, Title: "the download this viewer asked for",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept job: %v", err)
@@ -319,7 +321,8 @@ func TestDeleteUser_NullsJobOwnershipAndActor(t *testing.T) {
 	snap, err := svc.Accept(jobs.Deps{DB: ctx.db}, jobs.Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
 		OwnerUserID: &u.ID, ActorUserID: &u.ID,
-		Title: "the download this user asked for",
+		Title:  "the download this user asked for",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept job: %v", err)
@@ -345,5 +348,77 @@ func TestDeleteUser_NullsJobOwnershipAndActor(t *testing.T) {
 	}
 	if _, err := svc.Get(jobs.Deps{DB: ctx.db}, jobs.Access{UserID: u.ID}, snap.ID); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("a deleted owner's id must grant nothing, got %v", err)
+	}
+}
+
+// Phase 5c: deleting the actor of a Job must not hand its execution to whoever
+// remains. Owner and actor are separate provenance facts, and the durable
+// principal class is what tells "an actor was recorded and is gone" apart from
+// "this work was never anyone's" — the live column alone cannot, because user
+// deletion nulls it.
+//
+// So the Job whose actor is deleted is refused at dispatch and blocked, rather
+// than running as the surviving owner (which would transfer authority) or as the
+// host (which would grant the work an identity nobody recorded).
+func TestDeleteUser_RefusesDispatchOfAJobWhoseActorIsGone(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	makeAdmin(t, ctx, "keeper")
+	owner, err := ctx.CreateUser(&UserInput{Username: "jobowner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	actor, err := ctx.CreateUser(&UserInput{Username: "jobactor", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create actor: %v", err)
+	}
+
+	svc := jobs.NewService()
+	adapter := newRuntimeTestAdapter()
+	if err := svc.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	deps := jobs.Deps{DB: ctx.db}
+	snap, err := svc.Accept(deps, jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: &owner.ID, ActorUserID: &actor.ID,
+		Title:  "work the actor asked for",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept job: %v", err)
+	}
+
+	if err := ctx.DeleteUser(actor.ID); err != nil {
+		t.Fatalf("delete actor: %v", err)
+	}
+
+	execution, claimed, err := svc.Claim(context.Background(), deps, jobs.ClaimRequest{
+		Kind: runtimeTestKind, KindVersion: 1, Claimant: "runtime-a",
+	})
+	if claimed {
+		t.Fatalf("a Job whose actor was deleted was claimed as %+v", execution)
+	}
+	if err == nil {
+		t.Fatal("claiming a Job whose actor was deleted reported no reason")
+	}
+	if dispatched := adapter.dispatched(); len(dispatched) != 0 {
+		t.Fatalf("the work ran anyway: %+v", dispatched)
+	}
+
+	var job models.Job
+	if err := ctx.db.Where("id = ?", snap.ID).First(&job).Error; err != nil {
+		t.Fatalf("reload job: %v", err)
+	}
+	if job.State != string(jobs.StateBlocked) {
+		t.Fatalf("state = %s, want blocked", job.State)
+	}
+	if job.OwnerUserID == nil || *job.OwnerUserID != owner.ID {
+		t.Fatalf("the owner must survive the actor's deletion: %v", job.OwnerUserID)
+	}
+	if job.ActorUserID != nil {
+		t.Fatalf("the deleted actor's reference survived: %v", *job.ActorUserID)
+	}
+	if job.ExecutionToken != "" {
+		t.Fatalf("a blocked Job must not keep an execution token: %q", job.ExecutionToken)
 	}
 }

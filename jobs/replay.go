@@ -505,11 +505,23 @@ func (s *Service) sealReplay(deps Deps, job models.Job, input ReplayInput, now t
 	}, summary, nil
 }
 
-// requireReplayCodec resolves the codec registered for a Kind version or refuses
-// with the reason no codec is available.
+// requireReplayCodec resolves the codec registered for exactly this Kind
+// version, or refuses with the reason no codec is available.
+//
+// It deliberately does not fall back to the newest registered version, which is
+// what replayCodecFor does for *reading*. Sealing under a borrowed encoder would
+// store one version's bytes under another version's label, and every later read
+// trusts that label: OpenReplay would migrate bytes that are already the newer
+// shape as though they were the older one. Migration is for envelopes that
+// already exist, never for input being accepted now.
 func (s *Service) requireReplayCodec(kind string, version uint) (ReplayCodec, error) {
-	codec, _, err := s.replayCodecFor(kind, version)
-	return codec, err
+	s.replayMu.Lock()
+	codec, ok := s.replayCodecs[replayCodecKey{kind: kind, version: version}]
+	s.replayMu.Unlock()
+	if !ok {
+		return ReplayCodec{}, fmt.Errorf("%w: %s v%d", ErrReplayCodecUnregistered, kind, version)
+	}
+	return codec, nil
 }
 
 // validateReplayJSON checks a codec's output before it is stored: it must be
@@ -570,6 +582,15 @@ func openReplayPayload(ring *Keyring, envelope models.JobReplayEnvelope, additio
 	aead, err := newReplayAEAD(ring.keys[envelope.KeyID].Key)
 	if err != nil {
 		return nil, err
+	}
+	// The nonce length is checked here because the AEAD does not return an
+	// error for a wrong one: crypto/cipher panics. A truncated, NULL or
+	// oversized nonce in the row is a corrupt envelope like any other, and it
+	// must be that refusal rather than a panic that takes the runtime goroutine
+	// with it.
+	if len(envelope.Nonce) != aead.NonceSize() {
+		return nil, fmt.Errorf("%w: envelope %s carries a %d-byte nonce, want %d",
+			ErrReplayCorrupt, envelope.JobID, len(envelope.Nonce), aead.NonceSize())
 	}
 	plaintext, err := aead.Open(nil, envelope.Nonce, envelope.Ciphertext, additionalData)
 	if err != nil {
@@ -700,6 +721,13 @@ func (s *Service) OpenReplay(deps Deps, access Access, jobID string) (OpenedRepl
 
 	envelope, err := replayEnvelope(deps.DB, job.ID)
 	if err != nil {
+		if errors.Is(err, ErrReplayAbsent) {
+			// The Job's durable class says its input is replayable, so the
+			// absence is not "nothing to run with" but "the input this Job
+			// requires is gone". The two are different answers, and only the
+			// second one blocks dispatch.
+			return OpenedReplay{}, fmt.Errorf("%w: job %s", ErrReplayEnvelopeMissing, job.ID)
+		}
 		return OpenedReplay{}, err
 	}
 	if envelope.PurgedAt != nil {
@@ -778,7 +806,8 @@ func ReplayBlocked(state State, err error) bool {
 	case errors.Is(err, ErrReplayKeyUnavailable),
 		errors.Is(err, ErrReplayCodecUnregistered),
 		errors.Is(err, ErrReplayCorrupt),
-		errors.Is(err, ErrReplayDecodeFailed):
+		errors.Is(err, ErrReplayDecodeFailed),
+		errors.Is(err, ErrReplayEnvelopeMissing):
 		return true
 	default:
 		return false
@@ -921,5 +950,5 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("jobs: forget replay input: %w", err)
 	}
-	return s.snapshotFor(deps, job), nil
+	return s.snapshotFor(deps, access, job), nil
 }

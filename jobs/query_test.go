@@ -3,10 +3,14 @@ package jobs
 import (
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // acceptFor accepts one Job through the real Service with every field a
@@ -69,6 +73,7 @@ func TestVisibilityShowsAnOrdinaryUserOnlyTheirOwnOwnerClassJobs(t *testing.T) {
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: owner, Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 
@@ -120,6 +125,7 @@ func TestListFiltersByTheStoredDimensions(t *testing.T) {
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: kind, KindVersion: 1, State: StateQueued, Origin: origin,
 			OwnerUserID: owner, ActorUserID: actor, Title: kind,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	alpha := accept("group-export", "ui", uintPtr(7), uintPtr(7))
@@ -164,6 +170,7 @@ func TestListFiltersByLineageRelationship(t *testing.T) {
 		clock = clock.Add(time.Minute)
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	first := accept("first")
@@ -224,6 +231,7 @@ func TestListSearchMatchesSanitizedTextAndExcludesSecretsAndDiagnostics(t *testi
 	// is for an administrator.
 	failed := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: "an export",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	failed = advanceReplayJob(t, svc, deps, failed, StateRunning)
 	finished, err := svc.Finish(deps, FinishRequest{
@@ -241,6 +249,7 @@ func TestListSearchMatchesSanitizedTextAndExcludesSecretsAndDiagnostics(t *testi
 	// An output label is searchable text too.
 	labeled := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: "a second export",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if _, err := svc.PublishOutput(deps, ExecutionRef{JobID: labeled.ID}, OutputInput{
 		Key: "report", Type: OutputTypeReport, Label: "quarterly summary report",
@@ -290,6 +299,7 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 	admin := Access{UserID: 1, Administrator: true}
 	acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: "one job",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 
 	cases := []struct {
@@ -340,6 +350,7 @@ func TestCursorPagesNewestFirstAndSkipsNothingWhenHistoryGrows(t *testing.T) {
 		clock = clock.Add(time.Minute)
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	oldest := accept("1")
@@ -404,6 +415,7 @@ func TestDismissChangesOnlyThatViewersDefaultList(t *testing.T) {
 	job := acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "one finished job",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	viewer := Access{UserID: 7}
 	other := Access{UserID: 1, Administrator: true}
@@ -461,6 +473,7 @@ func TestPinObservesThePerUserLimitAndAnswersTheViewersOwnRows(t *testing.T) {
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: uintPtr(owner), Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	first := accept(7, "first")
@@ -533,10 +546,12 @@ func TestVisibilityHidesAJobFromEveryOtherReadPath(t *testing.T) {
 	hidden := acceptFor(t, svc, deps, Acceptance{
 		Kind: "plugin-command", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "a command run", Visibility: VisibilityAdmin,
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	relative := acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "its retry",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err := svc.Link(deps, LinkRequest{Type: LinkRetryOf, FromJobID: relative.ID, ToJobID: hidden.ID}); err != nil {
 		t.Fatalf("link: %v", err)
@@ -594,6 +609,7 @@ func TestTimelineReturnsTheJobsOrderedBoundedTimeline(t *testing.T) {
 	job := acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "a job",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	viewer := Access{UserID: 7}
 	job = advanceReplayJob(t, svc, deps, job, StateRunning)
@@ -660,6 +676,7 @@ func TestOutputsReturnsTheJobsTypedOutputsAndRefusesAHiddenJob(t *testing.T) {
 	job := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "an export",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	ref := ExecutionRef{JobID: job.ID}
 	if _, err := svc.PublishOutput(deps, ref, OutputInput{
@@ -707,6 +724,7 @@ func TestLineageNamesOnlyVisibleRelatives(t *testing.T) {
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: owner, Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	ancestor := accept("ancestor", uintPtr(7), "")
@@ -784,10 +802,12 @@ func TestPublishedEventsCatchesUpFromACursorInDeliveryOrder(t *testing.T) {
 	first := acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "first",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	second := acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "second",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	admin := Access{UserID: 1, Administrator: true}
 
@@ -882,6 +902,7 @@ func TestSummarySharesTheListingsVisibilityPredicateAndFilters(t *testing.T) {
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: kind, KindVersion: 1, State: StateQueued, Origin: "api",
 			OwnerUserID: owner, Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	visible := accept("remote-download", uintPtr(7), "", "a visible download")
@@ -933,6 +954,7 @@ func TestSummaryWindowDefaultsToThirtyDaysAndRefusesALongerOne(t *testing.T) {
 	deps.Now = func() time.Time { return now }
 	acceptFor(t, svc, deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", Title: "recent",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 
 	admin := Access{UserID: 1, Administrator: true}
@@ -990,6 +1012,7 @@ func TestSummaryCountsStatesKindsDurationsAndFailures(t *testing.T) {
 		clock = clock.Add(time.Minute)
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: kind, KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	// wait is the queue time, run is the time spent running.
@@ -1052,5 +1075,251 @@ func TestSummaryCountsStatesKindsDurationsAndFailures(t *testing.T) {
 	}
 	if empty.Total != 0 || empty.SuccessRate != 0 || empty.Queue.Median != 0 || len(empty.Failures) != 0 {
 		t.Errorf("empty summary = %+v", empty)
+	}
+}
+
+// TestListFiltersByLineageRelationshipWithoutRevealingAHiddenRelative is §8's
+// lineage rule applied to the filter dimension.
+//
+// Lineage does not grant transitive visibility, and a hidden relative is
+// neither named nor counted — but the relationship filter tested only that a
+// link row existed, so a visible Job whose only relative was hidden still
+// matched "is a parent" and the hidden relationship became visible by its
+// existence. The predicate asks the shared visibility question about the far
+// endpoint, so a listing, an aggregate and the lineage view all answer alike.
+func TestListFiltersByLineageRelationshipWithoutRevealingAHiddenRelative(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accept := func(title string, class VisibilityClass) Snapshot {
+		clock = clock.Add(time.Minute)
+		return acceptFor(t, svc, deps, Acceptance{
+			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(7), Title: title, Visibility: class,
+			Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	parent := accept("the visible parent", VisibilityOwner)
+	hidden := accept("the child nobody may read", VisibilityAdmin)
+	if err := svc.Link(deps, LinkRequest{Type: LinkParentChild, FromJobID: parent.ID, ToJobID: hidden.ID}); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+
+	viewer := Access{UserID: 7}
+	filter := Filter{Relationship: string(LinkParentChild)}
+
+	page := listFor(t, svc, deps, viewer, filter, Cursor{}, 0)
+	if len(page.Jobs) != 0 {
+		t.Fatalf("a parent whose only child is hidden matched the relationship filter: %v", pageIDs(page))
+	}
+
+	summary, err := svc.Summary(deps, viewer, filter, 0)
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if summary.Total != 0 {
+		t.Fatalf("the aggregate counted %d Jobs whose only relationship is hidden", summary.Total)
+	}
+
+	// The lineage view already agreed; the filter now agrees with it.
+	lineage, err := svc.Lineage(deps, viewer, parent.ID)
+	if err != nil {
+		t.Fatalf("Lineage: %v", err)
+	}
+	if len(lineage.Children) != 0 {
+		t.Fatalf("lineage named %d hidden children", len(lineage.Children))
+	}
+
+	// An administrator sees the relationship, because they can see both ends.
+	adminPage := listFor(t, svc, deps, Access{Administrator: true}, filter, Cursor{}, 0)
+	if len(adminPage.Jobs) != 1 || adminPage.Jobs[0].ID != parent.ID {
+		t.Fatalf("an administrator matched %v, want the parent", pageIDs(adminPage))
+	}
+
+	// A visible child keeps the parent matching for everybody: the predicate
+	// narrows on the relative's visibility, it does not hide the relation.
+	visibleChild := accept("a child the owner may read", VisibilityOwner)
+	if err := svc.Link(deps, LinkRequest{Type: LinkParentChild, FromJobID: parent.ID, ToJobID: visibleChild.ID}); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	page = listFor(t, svc, deps, viewer, filter, Cursor{}, 0)
+	if len(page.Jobs) != 1 || page.Jobs[0].ID != parent.ID {
+		t.Fatalf("with a visible child the parent matched %v, want the parent", pageIDs(page))
+	}
+}
+
+// TestProtectedDiagnosticsStayOutOfOrdinaryProjections is §8's split between
+// what a viewer may read and what an administrator's audit keeps. A failure's
+// diagnostic reference is an operator-facing pointer into the deployment's own
+// infrastructure, and a snapshot is what every ordinary read returns — so a
+// projection that carried it handed an internal path to every owner.
+func TestProtectedDiagnosticsStayOutOfOrdinaryProjections(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2032, 7, 8, 9, 10, 11, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	const diagnostic = "/var/lib/mahresources/plugin-commands/run-9/stderr.log"
+	owner := uintPtr(7)
+	failed := acceptFor(t, svc, deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: owner, Title: "an export that broke",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	failed = advanceReplayJob(t, svc, deps, failed, StateRunning)
+	failed, err := svc.Transition(deps, Transition{
+		JobID: failed.ID, ExpectedVersion: failed.Version, To: StateFailed,
+		Failure: &Failure{
+			Code: "export-failed", Class: FailureClassInternal,
+			Message: "the export could not be assembled", DiagnosticRef: diagnostic,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transition to failed: %v", err)
+	}
+	related := acceptFor(t, svc, deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: owner, Title: "a later export",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	if err := svc.Link(deps, LinkRequest{Type: LinkParentChild, FromJobID: related.ID, ToJobID: failed.ID}); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+
+	viewer := Access{UserID: 7}
+	assertNoDiagnostic := func(what string, snap Snapshot) {
+		t.Helper()
+		if snap.Failure == nil {
+			t.Fatalf("%s: the failure itself must survive", what)
+		}
+		if snap.Failure.Code != "export-failed" || snap.Failure.Message != "the export could not be assembled" {
+			t.Fatalf("%s: the sanitized failure is what a viewer reads: %+v", what, snap.Failure)
+		}
+		if snap.Failure.DiagnosticRef != "" {
+			t.Fatalf("%s: an ordinary projection carried the protected diagnostic %q", what, snap.Failure.DiagnosticRef)
+		}
+		encoded, err := json.Marshal(snap)
+		if err != nil {
+			t.Fatalf("%s: marshal snapshot: %v", what, err)
+		}
+		if strings.Contains(string(encoded), "plugin-commands") {
+			t.Fatalf("%s: the serialized snapshot leaked the diagnostic: %s", what, encoded)
+		}
+	}
+
+	got, err := svc.Get(deps, viewer, failed.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	assertNoDiagnostic("Get", got)
+
+	page := listFor(t, svc, deps, viewer, Filter{}, Cursor{}, 0)
+	if len(page.Jobs) != 2 {
+		t.Fatalf("the owner listed %d jobs, want both", len(page.Jobs))
+	}
+	for _, job := range page.Jobs {
+		if job.ID == failed.ID {
+			assertNoDiagnostic("List", job)
+		}
+	}
+
+	lineage, err := svc.Lineage(deps, viewer, related.ID)
+	if err != nil {
+		t.Fatalf("Lineage: %v", err)
+	}
+	if len(lineage.Children) != 1 {
+		t.Fatalf("lineage named %d children, want the failed one", len(lineage.Children))
+	}
+	assertNoDiagnostic("Lineage", lineage.Children[0])
+
+	// An administrator's read is where the pointer belongs: it is the address of
+	// the detail an operator goes to look at.
+	adminRead, err := svc.Get(deps, Access{Administrator: true}, failed.ID)
+	if err != nil {
+		t.Fatalf("administrator Get: %v", err)
+	}
+	if adminRead.Failure == nil || adminRead.Failure.DiagnosticRef != diagnostic {
+		t.Fatalf("an administrator lost the diagnostic reference: %+v", adminRead.Failure)
+	}
+}
+
+// TestPreferenceMutationRechecksTheJobItIsWrittenAgainst covers §9's other half:
+// a preference is a viewer's row about a Job, so it may not outlive the Job.
+//
+// The visibility check ran before the transaction opened, and these tables carry
+// no foreign keys, so a sweep that removed the Job in that window left the write
+// with nothing to point at — and it succeeded, because inserting a row that
+// references a Job nobody can read is not an error anywhere.
+func TestPreferenceMutationRechecksTheJobItIsWrittenAgainst(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2032, 8, 9, 10, 11, 12, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := acceptFor(t, svc, deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Title: "an export that finished long ago",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	job = advanceReplayJob(t, svc, deps, job, StateRunning)
+	job = advanceReplayJob(t, svc, deps, job, StateSucceeded)
+	clock = clock.Add(48 * time.Hour)
+
+	// The interleaving: retention takes the Job away between the visibility check
+	// and the preference write. The flag is set before the sweep runs, because
+	// the sweep's own statements are queries on this table too.
+	var pruning atomic.Bool
+	deps.DB.Callback().Query().After("gorm:query").Register("test:prune-in-window", func(tx *gorm.DB) {
+		if tx.Statement.Table != "jobs" || !pruning.CompareAndSwap(false, true) {
+			return
+		}
+		sweepFor(t, svc, deps, policy, SweepCursor{}, 10)
+	})
+	err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: job.ID, Pinned: boolPtr(true)})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("pinning a Job retention removed = %v, want ErrNotFound", err)
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "job_id = ?", job.ID); rows != 0 {
+		t.Fatalf("an orphan pin survived the Job it was about: %d rows", rows)
+	}
+}
+
+// TestPreferenceRowsGoWithTheJobTheyAreAbout is the pin-before-prune ordering:
+// when the viewer's row is there first, retention takes it with the Job rather
+// than leaving a row pointing at nothing.
+func TestPreferenceRowsGoWithTheJobTheyAreAbout(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2032, 8, 10, 10, 11, 12, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := acceptFor(t, svc, deps, Acceptance{
+		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Title: "a dismissed export",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	job = advanceReplayJob(t, svc, deps, job, StateRunning)
+	job = advanceReplayJob(t, svc, deps, job, StateSucceeded)
+	if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: job.ID, Dismissed: boolPtr(true)}); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "job_id = ?", job.ID); rows != 1 {
+		t.Fatalf("the dismissal was not stored: %d rows", rows)
+	}
+
+	clock = clock.Add(48 * time.Hour)
+	sweepFor(t, svc, deps, policy, SweepCursor{}, 10)
+
+	if jobExists(t, deps, job.ID) {
+		t.Fatal("the expired Job survived the sweep")
+	}
+	if rows := countRows(t, deps, &models.JobPreference{}, "job_id = ?", job.ID); rows != 0 {
+		t.Fatalf("the viewer's row outlived the Job: %d rows", rows)
 	}
 }

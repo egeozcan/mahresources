@@ -33,6 +33,7 @@ func jobCoreTables() []any {
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{},
 		&models.JobPreference{},
+		&models.JobPinGuard{},
 	}
 }
 
@@ -104,6 +105,7 @@ func TestJobAcceptStoresUUIDv7IdentityAndAcceptedEventAtomically(t *testing.T) {
 		Origin:      "api",
 		Title:       "an example download",
 		Summary:     json.RawMessage(`{"scheme":"https","host":"example.test"}`),
+		Replay:      ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
@@ -144,8 +146,12 @@ func TestJobAcceptStoresUUIDv7IdentityAndAcceptedEventAtomically(t *testing.T) {
 	if job.QueuedAt == nil || !job.QueuedAt.Equal(accepted) {
 		t.Errorf("stored QueuedAt = %v, want the acceptance instant %v", job.QueuedAt, accepted)
 	}
-	if job.ReplayClass != string(ReplayClassReplayable) {
-		t.Errorf("stored ReplayClass = %q, want %q", job.ReplayClass, ReplayClassReplayable)
+	// The acceptance declared its input non-replayable, which is the only way a
+	// Job is stored without an envelope and the only way a caller may name the
+	// summary itself: a replayable Job's summary comes from its Kind's
+	// sanitizer.
+	if job.ReplayClass != string(ReplayClassNonReplayable) {
+		t.Errorf("stored ReplayClass = %q, want %q", job.ReplayClass, ReplayClassNonReplayable)
 	}
 	if job.Summary == nil {
 		t.Error("stored summary is empty")
@@ -179,6 +185,7 @@ func TestJobAcceptRefusesMalformedAcceptance(t *testing.T) {
 	scheduledFor := now.Add(time.Hour)
 	valid := Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+		Replay: ReplayInput{NonReplayable: true},
 	}
 
 	tests := []struct {
@@ -257,6 +264,7 @@ func TestJobAcceptRollsBackWithTheCallersTransaction(t *testing.T) {
 		}
 		if _, err := svc.Accept(Deps{DB: tx}, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+			Replay: ReplayInput{NonReplayable: true},
 		}); err != nil {
 			return err
 		}
@@ -682,6 +690,7 @@ func TestJobGetHonoursVisibility(t *testing.T) {
 	owner := uint(11)
 	ownerJob, err := svc.Accept(deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", OwnerUserID: &owner,
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept owner job: %v", err)
@@ -689,12 +698,14 @@ func TestJobGetHonoursVisibility(t *testing.T) {
 	adminOnly, err := svc.Accept(deps, Acceptance{
 		Kind: "plugin-command", KindVersion: 1, State: StateQueued, Origin: "plugin",
 		OwnerUserID: &owner, Visibility: VisibilityAdmin,
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept admin-class job: %v", err)
 	}
 	ownerless, err := svc.Accept(deps, Acceptance{
 		Kind: "similarity-recompute", KindVersion: 1, State: StateQueued, Origin: "system",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept ownerless job: %v", err)
@@ -759,6 +770,7 @@ func TestJobPublishAssignsDeliverySequencesOnlyAfterCommit(t *testing.T) {
 	}
 	first, err := svc.Accept(Deps{DB: uncommitted, Now: deps.Now}, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept uncommitted job: %v", err)
@@ -794,6 +806,7 @@ func TestJobPublishAssignsDeliverySequencesOnlyAfterCommit(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	second, err := svc.Accept(deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept committed job: %v", err)
@@ -828,6 +841,7 @@ func TestJobPublishIsBoundedAndIdempotent(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		if _, err := svc.Accept(deps, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+			Replay: ReplayInput{NonReplayable: true},
 		}); err != nil {
 			t.Fatalf("accept %d: %v", i, err)
 		}
@@ -868,5 +882,112 @@ func TestJobPublishIsBoundedAndIdempotent(t *testing.T) {
 		if sequence != uint64(i+1) {
 			t.Fatalf("delivery sequences = %v, want consecutive values from 1", sequences)
 		}
+	}
+}
+
+// TestJobTerminalTransitionAllocatesItsEventSequenceInsideTheTransaction covers
+// the one write in a terminal transition that must not be decided outside the
+// transaction that performs it.
+//
+// The event sequence is a Job's timeline position, and an executor appending a
+// phase event between the decision and the commit takes that same position:
+// AppendEvent reads the maximum inside its own transaction and does not move the
+// Job version, so the terminal transition's guarded update still matches and the
+// insert then collides on (job_id, sequence). The whole completion rolls back —
+// a Job that cannot finish because its own executor was reporting progress.
+func TestJobTerminalTransitionAllocatesItsEventSequenceInsideTheTransaction(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2031, 8, 9, 10, 11, 12, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := seededExecution(t, deps, StateRunning, "claim-a")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-a"}
+	transition := Transition{
+		JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: "claim-a",
+		To: StateFailed, Failure: &Failure{Code: "gave-up", Class: FailureClassInternal},
+	}
+
+	prepared, err := prepareTransition(deps, transition)
+	if err != nil {
+		t.Fatalf("prepareTransition: %v", err)
+	}
+
+	// The interleaving: an event that lands after the transition was decided and
+	// before it commits. This is the real concurrency the sequence has to
+	// survive, driven here through the same public append an adapter uses.
+	if err := svc.AppendEvent(deps, ref, EventInput{
+		Type: "phase", Detail: json.RawMessage(`{"segment":9}`),
+	}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	if _, err := svc.commitTransition(deps, prepared, nil); err != nil {
+		t.Fatalf("commitTransition: %v", err)
+	}
+
+	events := jobEvents(t, deps, job.ID)
+	if len(events) != 2 {
+		t.Fatalf("timeline has %d events, want the appended phase event and the terminal one", len(events))
+	}
+	if events[0].Type != "phase" || events[1].Type != EventFailed {
+		t.Fatalf("timeline = %s, %s; want the appended event first and the terminal event after it",
+			events[0].Type, events[1].Type)
+	}
+	if events[1].Sequence != events[0].Sequence+1 {
+		t.Fatalf("terminal event sequence = %d after %d, want the next position",
+			events[1].Sequence, events[0].Sequence)
+	}
+	if stored := jobRow(t, deps, job.ID); stored.State != string(StateFailed) {
+		t.Fatalf("state = %s, want failed", stored.State)
+	}
+}
+
+// TestJobVisibilityIsFixedByTheRegisteredKind closes the one way a Kind's
+// visibility could be escaped: the class was a field on the acceptance, so an
+// admin-only Kind whose adapter omitted it produced owner-visible Jobs, and a
+// Job's class is exactly what the shared visibility predicate reads.
+//
+// The registered Definition is the only thing that knows whether a Kind is
+// operator-only, so acceptance takes the class from it — and refuses an
+// acceptance that claims something else.
+func TestJobVisibilityIsFixedByTheRegisteredKind(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, Definition{
+		Kind: testKind, KindVersion: 1, Restorable: true, Visibility: VisibilityAdmin,
+	})
+
+	accepted, err := svc.Accept(deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), ActorUserID: uintPtr(7), Title: "an operator-only run",
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if accepted.Visibility != VisibilityAdmin {
+		t.Fatalf("visibility = %q, want %q from the Kind's own definition", accepted.Visibility, VisibilityAdmin)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.VisibilityClass != string(VisibilityAdmin) {
+		t.Fatalf("stored visibility class = %q, want %q", stored.VisibilityClass, VisibilityAdmin)
+	}
+
+	// The submitter cannot see it, whatever they asked for.
+	if _, err := svc.Get(deps, Access{UserID: 7}, accepted.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the submitter read an admin-class Job: %v", err)
+	}
+	if _, err := svc.Get(deps, Access{Administrator: true}, accepted.ID); err != nil {
+		t.Fatalf("an administrator could not read it: %v", err)
+	}
+
+	// An acceptance that contradicts its own Kind is refused rather than
+	// believed: nothing may name a class the registered Kind does not have.
+	if _, err := svc.Accept(deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), Visibility: VisibilityOwner,
+		Replay: ReplayInput{NonReplayable: true},
+	}); !errors.Is(err, ErrInvalidAcceptance) {
+		t.Fatalf("an acceptance that contradicts its Kind's visibility = %v, want ErrInvalidAcceptance", err)
 	}
 }

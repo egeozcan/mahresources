@@ -101,7 +101,7 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 		if i == size {
 			break
 		}
-		page.Jobs = append(page.Jobs, snapshot(row))
+		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
 	}
 	if len(rows) > size {
 		last := rows[size-1]
@@ -215,7 +215,12 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 		db = db.Where("jobs.accepted_at <= ?", filter.AcceptedBefore.UTC())
 	}
 	if filter.Relationship != "" {
-		db = db.Where(relationshipPredicate, filter.Relationship)
+		// The subquery is built on a fresh statement so it carries the visibility
+		// predicate and nothing else: inherited conditions would ask the far
+		// endpoint to satisfy the asker's own filters, which would hide relations
+		// rather than authorize them.
+		visible := visibleJobIDs(db.Session(&gorm.Session{NewDB: true}), access)
+		db = db.Where(relationshipPredicate, filter.Relationship, visible)
 	}
 	if filter.Pinned != nil {
 		db = db.Where(preferencePredicate("pinned_at", *filter.Pinned), access.UserID)
@@ -230,12 +235,21 @@ func applyFilter(db *gorm.DB, access Access, filter Filter) (*gorm.DB, error) {
 }
 
 // relationshipPredicate selects the Jobs that are the FROM endpoint of a lineage
-// relation: the successor a Retry or Repeat created, or the parent of a child
-// stage. The endpoint is the relation's own spelling — FromJobID means the
-// successor or the parent everywhere else — so a filter and a write agree about
-// what "this Job is a retry of that one" points at.
+// relation *and* whose far endpoint the asker may see: the successor a Retry or
+// Repeat created, or the parent of a child stage. The endpoint is the relation's
+// own spelling — FromJobID means the successor or the parent everywhere else —
+// so a filter and a write agree about what "this Job is a retry of that one"
+// points at.
+//
+// The far endpoint is filtered by the same visibility subquery every other read
+// uses, because a relation is a fact about two Jobs: matching on the link row
+// alone made a visible Job whose only relative was hidden answer "yes" to "does
+// this have a relative", which is the existence of the hidden relationship
+// published as a filter result — and counted as one in an aggregate. Lineage
+// already drops those relatives; the filter has to agree with it.
 const relationshipPredicate = `EXISTS (
-	SELECT 1 FROM job_links l WHERE l.type = ? AND l.from_job_id = jobs.id
+	SELECT 1 FROM job_links l
+	WHERE l.type = ? AND l.from_job_id = jobs.id AND l.to_job_id IN (?)
 )`
 
 // preferencePredicate is one viewer-preference predicate over the asker's own
@@ -354,12 +368,38 @@ func (s *Service) SetPreference(deps Deps, access Access, request PreferenceRequ
 
 	now := deps.now()
 	return deps.DB.Transaction(func(tx *gorm.DB) error {
+		// Two guards are taken before anything is decided, because both decisions
+		// this write makes are reads that another writer can invalidate: the pin
+		// limit is a count of the viewer's rows, and the Job's existence is a
+		// fact retention removes on its own schedule.
+		//
+		// The per-viewer admission row is inserted first — a write, so SQLite's
+		// writer lock is taken before anything is read — and locked for the rest
+		// of the transaction where the engine has row locks at all.
+		if err := lockPinAdmission(tx, access.UserID, now); err != nil {
+			return err
+		}
+		// The Job's own row is locked where the engine can: retention's delete
+		// takes the same row, so a Job removed between the check above and this
+		// write is seen by the recheck below rather than by a race.
+		if err := lockPreferenceTarget(tx, access, request.JobID); err != nil {
+			return err
+		}
+
 		// The row is created on first use and replaced afterwards, because a
 		// preference is the pair (job, user) rather than a log of changes.
 		preference := models.JobPreference{JobID: request.JobID, UserID: access.UserID, CreatedAt: now, UpdatedAt: now}
 		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "job_id"}, {Name: "user_id"}}, DoNothing: true}).
 			Create(&preference).Error; err != nil {
 			return fmt.Errorf("jobs: create preference: %w", err)
+		}
+
+		// The Job is asked again inside the transaction that writes about it: a
+		// preference row referencing a Job nobody can read would outlive the Job
+		// it is about — these tables carry no foreign keys, so nothing else would
+		// notice.
+		if err := requireVisibleJob(tx, access, request.JobID); err != nil {
+			return err
 		}
 
 		stored := map[string]any{"updated_at": now}
@@ -400,6 +440,56 @@ func (s *Service) SetPreference(deps Deps, access Access, request PreferenceRequ
 		}
 		return nil
 	})
+}
+
+// lockPinAdmission serializes one viewer's pin admission on that viewer's own
+// durable guard row, creating it on first use.
+//
+// A count is not a guard: two admissions for one viewer at the limit's edge read
+// the same count, and nothing about the rows they are inserting conflicts — they
+// are different Jobs. Holding one row per viewer across the count is what makes
+// the second admission see the first one's committed pin.
+//
+// It is deliberately not the viewer's account row: this is a lock with an
+// identity rather than a fact about the account, so it exists in every
+// deployment, including the no-auth one where the acting principal's id is the
+// root account's, and it puts no new lock edge between retention and user
+// administration.
+func lockPinAdmission(tx *gorm.DB, userID uint, now time.Time) error {
+	guard := models.JobPinGuard{UserID: userID, CreatedAt: now, UpdatedAt: now}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&guard).Error; err != nil {
+		return fmt.Errorf("jobs: open pin admission: %w", err)
+	}
+	if tx.Dialector.Name() == "sqlite" {
+		// SQLite has no row locks and serializes writers anyway: the insert above
+		// took the writer lock, which is the whole guard there.
+		return nil
+	}
+	var held models.JobPinGuard
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ?", userID).First(&held).Error; err != nil {
+		return fmt.Errorf("jobs: lock pin admission: %w", err)
+	}
+	return nil
+}
+
+// lockPreferenceTarget locks the Job a preference is about, where the engine has
+// row locks at all. It resolves the Job through the shared visibility predicate,
+// so a Job the asker may not see is a refusal here exactly as it is above.
+func lockPreferenceTarget(tx *gorm.DB, access Access, jobID string) error {
+	if tx.Dialector.Name() == "sqlite" {
+		return nil
+	}
+	var job models.Job
+	err := jobQuery(tx.Model(&models.Job{}), access).Where("jobs.id = ?", jobID).
+		Clauses(clause.Locking{Strength: "UPDATE"}).First(&job).Error
+	if err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("%w: %s", ErrNotFound, jobID)
+		}
+		return fmt.Errorf("jobs: lock preference target: %w", err)
+	}
+	return nil
 }
 
 // enforcePinLimit refuses a pin that would take a viewer past the deployment's
@@ -581,7 +671,7 @@ func visibleLinks(db *gorm.DB, access Access, condition string, jobID string) ([
 	}
 	visible := make(map[string]Snapshot, len(rows))
 	for _, row := range rows {
-		visible[row.ID] = snapshot(row)
+		visible[row.ID] = viewerSnapshot(row, access)
 	}
 
 	out := make([]relativeLink, 0, len(links))

@@ -4,11 +4,14 @@ package jobs
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // These tests run the dialect-sensitive halves of dispatch against PostgreSQL:
@@ -159,5 +162,70 @@ func TestCapacityIsObservedAcrossServiceInstancesPG(t *testing.T) {
 	}
 	if _, ok := claimOnce(t, second, deps, "runtime-b"); !ok {
 		t.Fatal("the freed budget was not available to the other runtime")
+	}
+}
+
+// TestLifecycleReleasAndQuarantineTakeTheJobLockFirstPG is a lock-order
+// regression, and only PostgreSQL can show it: SQLite serializes writers, so two
+// transactions can never hold the rows the other needs.
+//
+// Every lifecycle, release and reconciliation transaction has to take the Job's
+// row before the claim's, because a release and a quarantine used to take them
+// in the opposite order from the terminal transition. A terminal transition holds
+// the Job row and then wants the claim row; a release or a quarantine held the
+// claim row and then wanted the Job row — so a release racing a finish deadlocked
+// with 40P01, and PostgreSQL resolved it by killing one of them.
+//
+// The competing finish is started the moment the release takes its first row
+// lock, which is the only way to place two transactions inside each other's
+// window deterministically.
+func TestLifecycleReleaseAndQuarantineTakeTheJobLockFirstPG(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	clock := time.Date(2034, 2, 3, 4, 5, 6, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+	decidedFrom := jobRow(t, deps, accepted.ID)
+
+	finish := make(chan error, 1)
+	var once sync.Once
+	deps.DB.Callback().Update().After("gorm:update").Register("test:competing-finish", func(tx *gorm.DB) {
+		once.Do(func() {
+			go func() {
+				_, err := svc.Finish(deps, FinishRequest{
+					ExecutionRef:    ref,
+					ExpectedVersion: decidedFrom.Version,
+					Outcome:         StateFailed,
+					Failure:         &Failure{Code: "gave-up", Class: FailureClassInternal},
+				})
+				finish <- err
+			}()
+			// Give it enough time to reach whatever row it needs and block there.
+			time.Sleep(200 * time.Millisecond)
+		})
+	})
+
+	_, releaseErr := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded)
+	var finishErr error
+	select {
+	case finishErr = <-finish:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the competing finish never returned; the two transactions are waiting on each other")
+	}
+
+	for _, result := range []struct {
+		name string
+		err  error
+	}{{"release", releaseErr}, {"finish", finishErr}} {
+		if result.err != nil && strings.Contains(result.err.Error(), "deadlock") {
+			t.Fatalf("the %s transaction deadlocked: %v", result.name, result.err)
+		}
 	}
 }

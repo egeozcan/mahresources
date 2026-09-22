@@ -976,6 +976,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobClaim{},
 		&models.JobCapacityLease{},
 		&models.JobPreference{},
+		&models.JobPinGuard{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err

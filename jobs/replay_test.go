@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -417,7 +419,7 @@ func TestReplayOpenRefusesAnEnvelopeWhoseKeyThisProcessDoesNotHold(t *testing.T)
 	if _, err := svc.OpenReplay(otherProcess, Access{Administrator: true}, snap.ID); !errors.Is(err, ErrReplayKeyUnavailable) {
 		t.Fatalf("OpenReplay with the wrong keyring = %v, want ErrReplayKeyUnavailable", err)
 	}
-	if snapshot := svc.snapshotFor(otherProcess, jobRow(t, deps, snap.ID)); snapshot.ReplayAvailability != ReplayUnreadable {
+	if snapshot := svc.snapshotFor(otherProcess, Access{Administrator: true}, jobRow(t, deps, snap.ID)); snapshot.ReplayAvailability != ReplayUnreadable {
 		t.Fatalf("availability without the key = %q, want %q", snapshot.ReplayAvailability, ReplayUnreadable)
 	}
 }
@@ -678,7 +680,7 @@ func TestReplayExpiryStartsAtTerminalCompletionNotAcceptance(t *testing.T) {
 	if envelope := replayEnvelopeRow(t, deps, snap.ID); envelope.ExpiresAt != nil {
 		t.Fatalf("a running Job's envelope acquired a deadline: %v", envelope.ExpiresAt)
 	}
-	if availability := svc.snapshotFor(deps, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayAvailable {
+	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayAvailable {
 		t.Fatalf("availability after a month of running = %q, want %q", availability, ReplayAvailable)
 	}
 	if _, err := svc.OpenReplay(deps, Access{Administrator: true}, snap.ID); err != nil {
@@ -714,7 +716,7 @@ func TestReplayExpiryStartsAtTerminalCompletionNotAcceptance(t *testing.T) {
 		t.Fatalf("OpenReplay just before the deadline: %v", err)
 	}
 	clock = want.Add(time.Minute)
-	if availability := svc.snapshotFor(deps, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayExpired {
+	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayExpired {
 		t.Fatalf("availability after the deadline = %q, want %q", availability, ReplayExpired)
 	}
 	if _, err := svc.OpenReplay(deps, Access{Administrator: true}, snap.ID); !errors.Is(err, ErrReplayExpired) {
@@ -736,7 +738,7 @@ func TestReplayExpiryStartsAtTerminalCompletionNotAcceptance(t *testing.T) {
 	if envelope.Ciphertext != nil || envelope.Nonce != nil {
 		t.Fatalf("the purged envelope still holds bytes: %+v", envelope)
 	}
-	if availability := svc.snapshotFor(deps, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayExpired {
+	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, snap.ID)).ReplayAvailability; availability != ReplayExpired {
 		t.Fatalf("availability after the sweep = %q, want %q", availability, ReplayExpired)
 	}
 }
@@ -1164,5 +1166,171 @@ func TestReplayKeyFilePublishNeverReplacesAnExistingKey(t *testing.T) {
 	}
 	if _, err := LoadReplayKeyring(ReplayKeyConfig{Dialect: constants.DbTypeSqlite, KeyFilePath: path}); !errors.Is(err, ErrInvalidReplayKey) {
 		t.Fatalf("load of a two-key file = %v, want ErrInvalidReplayKey", err)
+	}
+}
+
+// TestReplayMalformedStoredNoncesFailClosed covers the one stored value that
+// reaches a primitive which does not return an error: AES-GCM panics on a nonce
+// that is not its own size, so a truncated, NULL or oversized nonce in the row
+// would take the runtime goroutine down instead of being reported as corruption.
+//
+// The envelope table is a durable store that a partial migration, a truncating
+// copy or a hostile write can all reach, and the refusal has to be the same
+// refusal tampered ciphertext gets: ErrReplayCorrupt, with nothing run.
+func TestReplayMalformedStoredNoncesFailClosed(t *testing.T) {
+	cases := []struct {
+		name  string
+		nonce any
+	}{
+		{name: "a NULL nonce", nonce: nil},
+		{name: "an empty nonce", nonce: []byte{}},
+		{name: "a truncated nonce", nonce: []byte{1, 2, 3, 4}},
+		{name: "an oversized nonce", nonce: bytes.Repeat([]byte{7}, 32)},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			deps, _ := newReplayDeps(t)
+			svc := NewService()
+			if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+				t.Fatalf("register codec: %v", err)
+			}
+			deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+			adapter := registerTestAdapter(t, svc, Definition{
+				Kind: "remote-download", KindVersion: 1, Restorable: true,
+			})
+			snap := acceptFixtureReplayJob(t, svc, deps)
+
+			if err := deps.DB.Model(&models.JobReplayEnvelope{}).
+				Where("job_id = ?", snap.ID).Updates(map[string]any{"nonce": testCase.nonce}).Error; err != nil {
+				t.Fatalf("store a malformed nonce: %v", err)
+			}
+
+			if _, err := svc.OpenReplay(deps, Access{Administrator: true}, snap.ID); !errors.Is(err, ErrReplayCorrupt) {
+				t.Fatalf("OpenReplay with a malformed nonce = %v, want ErrReplayCorrupt", err)
+			}
+
+			// The same row through dispatch: the refusal blocks the Job rather
+			// than handing an executor input nobody can open.
+			if _, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+				Kind: "remote-download", KindVersion: 1, Claimant: "runtime-a",
+			}); err == nil {
+				t.Fatalf("Claim of a Job whose envelope cannot be opened returned no error (ok=%v)", ok)
+			}
+			if adapter.dispatchedCount() != 0 {
+				t.Fatalf("a Job with a malformed envelope reached the adapter %d times", adapter.dispatchedCount())
+			}
+			if stored := jobRow(t, deps, snap.ID); stored.State != string(StateBlocked) {
+				t.Fatalf("state = %s, want blocked", stored.State)
+			}
+		})
+	}
+}
+
+// TestReplayAcceptanceRequiresTheExactKindVersionCodec is the sealing half of
+// versioned envelopes: what is sealed must be encoded by the codec registered
+// for *that* Kind version, because the envelope records that version and every
+// later read — including a migration — trusts the label.
+//
+// A fallback to the newest registered version would run v2's encoder and store
+// the result under a v1 label, and OpenReplay would then migrate bytes that are
+// already v2 as though they were v1.
+func TestReplayAcceptanceRequiresTheExactKindVersionCodec(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 2, fixtureReplayCodec()); err != nil {
+		t.Fatalf("register the v2 codec: %v", err)
+	}
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+
+	_, err := svc.Accept(deps, Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: fixtureReplayInput()},
+	})
+	if !errors.Is(err, ErrReplayCodecUnregistered) {
+		t.Fatalf("accepting v1 with only a v2 codec registered = %v, want ErrReplayCodecUnregistered", err)
+	}
+	if rows := countRows(t, deps, &models.Job{}, "kind_version = ?", 1); rows != 0 {
+		t.Fatalf("a refused acceptance stored %d Job rows", rows)
+	}
+	if rows := countRows(t, deps, &models.JobReplayEnvelope{}, "kind_version = ?", 1); rows != 0 {
+		t.Fatalf("a refused acceptance stored %d envelopes", rows)
+	}
+}
+
+// TestReplayAcceptanceRequiresAnEnvelopeOrANonReplayableClass pins the
+// acceptance contract §3 states: a Job is persisted with a replay envelope or
+// with an explicit non-replayable classification, never with neither.
+//
+// The class defaults to replayable, so "no input supplied" used to be stored as
+// replayable work with no envelope — a Job that can never be replayed and whose
+// dispatch ran with incomplete input.
+func TestReplayAcceptanceRequiresAnEnvelopeOrANonReplayableClass(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatalf("register codec: %v", err)
+	}
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+
+	_, err := svc.Accept(deps, Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), ActorUserID: uintPtr(7),
+	})
+	if !errors.Is(err, ErrInvalidAcceptance) {
+		t.Fatalf("accepting replayable work with no envelope = %v, want ErrInvalidAcceptance", err)
+	}
+	if rows := countRows(t, deps, &models.Job{}, "origin = ?", "api"); rows != 0 {
+		t.Fatalf("a refused acceptance stored %d Job rows", rows)
+	}
+
+	// The other honest answer: work whose input cannot be replayed says so.
+	declared, err := svc.Accept(deps, Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: uintPtr(7), ActorUserID: uintPtr(7),
+		Replay: ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("Accept with an explicit non-replayable class: %v", err)
+	}
+	if declared.ReplayClass != ReplayClassNonReplayable {
+		t.Fatalf("replay class = %q, want %q", declared.ReplayClass, ReplayClassNonReplayable)
+	}
+	if rows := countRows(t, deps, &models.JobReplayEnvelope{}, "job_id = ?", declared.ID); rows != 0 {
+		t.Fatalf("non-replayable acceptance stored %d envelopes", rows)
+	}
+}
+
+// TestReplayableJobWithoutItsEnvelopeIsBlockedRatherThanRun is the dispatch half
+// of the same contract. Whatever removed the envelope — a purge, a migration
+// that could not convert it, a restore from a partial backup — the Job's durable
+// class still says its input is replayable, and running it with no input at all
+// is the one thing §3 forbids outright.
+func TestReplayableJobWithoutItsEnvelopeIsBlockedRatherThanRun(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatalf("register codec: %v", err)
+	}
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "primary-key-material")}
+	adapter := registerTestAdapter(t, svc, Definition{
+		Kind: "remote-download", KindVersion: 1, Restorable: true,
+	})
+	snap := acceptFixtureReplayJob(t, svc, deps)
+
+	if err := deps.DB.Where("job_id = ?", snap.ID).Delete(&models.JobReplayEnvelope{}).Error; err != nil {
+		t.Fatalf("remove the envelope: %v", err)
+	}
+
+	if _, ok, err := svc.Claim(context.Background(), deps, ClaimRequest{
+		Kind: "remote-download", KindVersion: 1, Claimant: "runtime-a",
+	}); err == nil {
+		t.Fatalf("Claim of a replayable Job with no envelope returned no error (ok=%v)", ok)
+	}
+	if adapter.dispatchedCount() != 0 {
+		t.Fatalf("a replayable Job ran with no envelope %d times", adapter.dispatchedCount())
+	}
+	if stored := jobRow(t, deps, snap.ID); stored.State != string(StateBlocked) {
+		t.Fatalf("state = %s, want blocked", stored.State)
 	}
 }

@@ -62,6 +62,7 @@ func TestJobPublishOrdersOutOfOrderCommitsPG(t *testing.T) {
 	}
 	jobA, err := svc.Accept(Deps{DB: txA}, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept A: %v", err)
@@ -73,6 +74,7 @@ func TestJobPublishOrdersOutOfOrderCommitsPG(t *testing.T) {
 	}
 	jobB, err := svc.Accept(Deps{DB: txB}, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept B: %v", err)
@@ -137,6 +139,7 @@ func TestJobPublishSerializesConcurrentPublishersPG(t *testing.T) {
 	for i := 0; i < jobs; i++ {
 		if _, err := svc.Accept(deps, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "ui",
+			Replay: ReplayInput{NonReplayable: true},
 		}); err != nil {
 			t.Fatalf("accept %d: %v", i, err)
 		}

@@ -217,10 +217,12 @@ func TestEventAppendTruncatesOptionalTrafficIntoOneReservedWarning(t *testing.T)
 	}
 
 	// And an adapter cannot take the reserved headroom for itself by claiming
-	// its own event is a host fact.
+	// its own event is a host fact. Once the Job is terminal the refusal is the
+	// token's, not the capacity's: finishing a Job ends the execution's ownership
+	// of it, so the append is refused outright rather than silently truncated.
 	for i := 0; i < 3; i++ {
-		if err := svc.AppendEvent(deps, ref, EventInput{Type: "post-terminal"}); err != nil {
-			t.Fatalf("post-terminal append: %v", err)
+		if err := svc.AppendEvent(deps, ref, EventInput{Type: "post-terminal"}); !errors.Is(err, ErrStaleExecution) {
+			t.Fatalf("post-terminal append = %v, want ErrStaleExecution", err)
 		}
 	}
 	if after := jobEvents(t, deps, job.ID); len(after) != len(events) {
@@ -332,7 +334,8 @@ func TestLinkDoesNotMakeHiddenRelativesVisibleOrCountable(t *testing.T) {
 	owner := uint(7)
 	visible, err := svc.Accept(deps, Acceptance{
 		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api", OwnerUserID: &owner,
-		Title: "mine",
+		Title:  "mine",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept visible job: %v", err)
@@ -340,6 +343,7 @@ func TestLinkDoesNotMakeHiddenRelativesVisibleOrCountable(t *testing.T) {
 	hidden, err := svc.Accept(deps, Acceptance{
 		Kind: "plugin-command", KindVersion: 1, State: StateQueued, Origin: "plugin",
 		OwnerUserID: &owner, Visibility: VisibilityAdmin, Title: "not theirs to read",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept admin-class job: %v", err)

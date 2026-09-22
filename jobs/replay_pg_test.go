@@ -56,7 +56,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	if envelope.Ciphertext != nil || envelope.Nonce != nil {
 		t.Fatalf("the purged envelope still holds a bytea value: %+v", envelope)
 	}
-	if availability := svc.snapshotFor(deps, jobRow(t, deps, expired.ID)).ReplayAvailability; availability != ReplayExpired {
+	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, expired.ID)).ReplayAvailability; availability != ReplayExpired {
 		t.Fatalf("availability = %q, want %q", availability, ReplayExpired)
 	}
 	if _, err := svc.OpenReplay(deps, Access{Administrator: true}, expired.ID); err == nil {

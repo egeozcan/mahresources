@@ -31,9 +31,12 @@ type runtimeTestAdapter struct {
 	dispatch  func(context.Context, jobs.Execution) error
 	reconcile func(context.Context, jobs.ReconcileRequest) (jobs.ReconcileDecision, error)
 
+	cleanup func(context.Context, jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error)
+
 	mu         sync.Mutex
 	executions []jobs.Execution
 	requests   []jobs.ReconcileRequest
+	cleanups   []jobs.ArtifactCleanupRequest
 }
 
 func newRuntimeTestAdapter() *runtimeTestAdapter {
@@ -62,6 +65,20 @@ func (a *runtimeTestAdapter) Reconcile(ctx context.Context, request jobs.Reconci
 		return a.reconcile(ctx, request)
 	}
 	return jobs.ReconcileRemainRunning, nil
+}
+
+func (a *runtimeTestAdapter) CleanupArtifacts(ctx context.Context, request jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error) {
+	a.mu.Lock()
+	a.cleanups = append(a.cleanups, request)
+	a.mu.Unlock()
+	if a.cleanup != nil {
+		return a.cleanup(ctx, request)
+	}
+	removed := make([]string, 0, len(request.Artifacts))
+	for _, artifact := range request.Artifacts {
+		removed = append(removed, artifact.Key)
+	}
+	return jobs.ArtifactCleanupResult{Removed: removed}, nil
 }
 
 func (a *runtimeTestAdapter) Commands(context.Context, jobs.CommandContext) ([]jobs.Command, error) {
@@ -126,6 +143,7 @@ func acceptRuntimeJob(t *testing.T, svc *jobs.Service, app *MahresourcesContext)
 	t.Helper()
 	snap, err := svc.Accept(app.jobDeps(), jobs.Acceptance{
 		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		Replay: jobs.ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept job: %v", err)
@@ -481,5 +499,61 @@ func TestJobRuntimeLeavesUnresolvedWorkDurableAcrossShutdown(t *testing.T) {
 	}
 	if recovered[0].Claimant != "runtime-b" {
 		t.Fatalf("recovered claimant = %q, want the recovery runtime", recovered[0].Claimant)
+	}
+}
+
+// TestJobRuntimeStopsWhileReconciliationIsWaitingOnItsContext is the shutdown
+// contract against an adapter that does what the interface says it may: it
+// honors its context and waits for cancellation.
+//
+// Stop closed the loop's stop channel and then waited for the loop to return
+// before cancelling the lifecycle context, so a reconciliation waiting on that
+// context kept the wait open forever — the request to stop was never delivered
+// because delivering it came after the wait.
+func TestJobRuntimeStopsWhileReconciliationIsWaitingOnItsContext(t *testing.T) {
+	app := newJobRuntimeContext(t)
+	svc := jobs.NewService()
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Lease = 20 * time.Millisecond
+	entered := make(chan struct{})
+	adapter.reconcile = func(ctx context.Context, _ jobs.ReconcileRequest) (jobs.ReconcileDecision, error) {
+		close(entered)
+		<-ctx.Done()
+		return jobs.ReconcileQueue, nil
+	}
+	if err := svc.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+
+	// A Job claimed with a lease that has already run out, so the loop's next
+	// pass finds an expired claim and asks the adapter what to do with it.
+	acceptRuntimeJob(t, svc, app)
+	if _, ok, err := svc.Claim(context.Background(), app.jobDeps(), jobs.ClaimRequest{
+		Kind: runtimeTestKind, KindVersion: 1, Claimant: "runtime-a", Lease: time.Millisecond,
+	}); err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+
+	runtime := NewJobRuntime(app, svc, JobRuntimeConfig{
+		Interval: 5 * time.Millisecond, QuiesceTimeout: 250 * time.Millisecond,
+	})
+	runtime.Start()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runtime never asked the adapter to reconcile the expired claim")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		runtime.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop waited for the reconciliation it was supposed to cancel")
 	}
 }

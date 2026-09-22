@@ -31,9 +31,12 @@ type testAdapter struct {
 	dispatch  func(context.Context, Execution) error
 	reconcile func(context.Context, ReconcileRequest) (ReconcileDecision, error)
 
+	cleanup func(context.Context, ArtifactCleanupRequest) (ArtifactCleanupResult, error)
+
 	mu         sync.Mutex
 	dispatched []Execution
 	reconciled []ReconcileRequest
+	cleanups   []ArtifactCleanupRequest
 }
 
 func newTestAdapter(def Definition) *testAdapter { return &testAdapter{def: def} }
@@ -60,10 +63,32 @@ func (a *testAdapter) Reconcile(ctx context.Context, request ReconcileRequest) (
 	return ReconcileRemainRunning, nil
 }
 
+func (a *testAdapter) CleanupArtifacts(ctx context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+	a.mu.Lock()
+	a.cleanups = append(a.cleanups, request)
+	a.mu.Unlock()
+	if a.cleanup != nil {
+		return a.cleanup(ctx, request)
+	}
+	// The default is the honest answer for a Kind whose artifacts the host owns:
+	// every one of them is gone.
+	removed := make([]string, 0, len(request.Artifacts))
+	for _, artifact := range request.Artifacts {
+		removed = append(removed, artifact.Key)
+	}
+	return ArtifactCleanupResult{Removed: removed}, nil
+}
+
 func (a *testAdapter) Commands(context.Context, CommandContext) ([]Command, error) { return nil, nil }
 
 func (a *testAdapter) ExecuteCommand(context.Context, CommandExecution) (CommandOutcome, error) {
 	return CommandOutcome{}, nil
+}
+
+func (a *testAdapter) cleanupCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.cleanups)
 }
 
 func (a *testAdapter) dispatchedCount() int {
@@ -142,6 +167,7 @@ func openDispatchDatabase(t *testing.T, dsn string) Deps {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{},
+		&models.JobPreference{}, &models.JobPinGuard{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)
 	}
@@ -154,6 +180,7 @@ func acceptQueued(t *testing.T, svc *Service, deps Deps, owner *uint) Snapshot {
 	snap, err := svc.Accept(deps, Acceptance{
 		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: owner, ActorUserID: owner,
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	if err != nil {
 		t.Fatalf("accept queued job: %v", err)
@@ -539,23 +566,23 @@ func TestHeartbeatExtendsOnlyTheClaimItsTokenOwns(t *testing.T) {
 	deps.Now = func() time.Time { return clock }
 
 	accepted := acceptQueued(t, svc, deps, nil)
-	claimedAt := clock
 	execution, ok := claimOnce(t, svc, deps, "runtime-a")
 	if !ok {
 		t.Fatal("the queued Job was not claimed")
 	}
 	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
 
-	// A heartbeat inside the lease extends the lease the claim already has: the
-	// point is to keep a claim alive, not to shorten it.
+	// A heartbeat inside the lease keeps the claim alive: the point is to have a
+	// usable lease ahead of the last proof of life, not to shorten it and not to
+	// carry the old expiry forward as well.
 	clock = clock.Add(10 * time.Second)
 	if err := svc.Heartbeat(deps, ref, time.Minute); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 	claim := claimRow(t, deps, accepted.ID)
-	if !claim.LeaseExpiresAt.Equal(claimedAt.Add(2 * time.Minute)) {
-		t.Fatalf("lease = %v, want the stored expiry plus one minute (%v)",
-			claim.LeaseExpiresAt, claimedAt.Add(2*time.Minute))
+	if !claim.LeaseExpiresAt.Equal(clock.Add(time.Minute)) {
+		t.Fatalf("lease = %v, want one lease past the heartbeat (%v)",
+			claim.LeaseExpiresAt, clock.Add(time.Minute))
 	}
 	if !claim.HeartbeatAt.Equal(clock) {
 		t.Fatalf("heartbeat = %v, want %v", claim.HeartbeatAt, clock)
@@ -1292,5 +1319,135 @@ func TestReconcileRefusesADecisionOutsideTheVocabulary(t *testing.T) {
 	}
 	if adapter.reconciledCount() != 2 {
 		t.Fatalf("the adapter was asked %d times, want both claims", adapter.reconciledCount())
+	}
+}
+
+// TestFinishingIsFencedByTheClaimTheExecutionStillHolds is the atomic half of
+// the execution fence. The token was checked before the lifecycle transaction
+// opened but not inside its UPDATE predicate, and ReleaseClaim clears the token
+// without touching the state or the version — so a transition decided while the
+// claim was still held could commit after that claim had been handed back.
+//
+// The check has to be in the same statement as the write, or the gap between the
+// read and the write is exactly where a released claim lands.
+func TestFinishingIsFencedByTheClaimTheExecutionStillHolds(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "finish-after-release.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+
+	// What an executor has in hand when it decides to finish: the version and
+	// state it read after its own claim.
+	decidedFrom := jobRow(t, deps, accepted.ID)
+	if decidedFrom.State != string(StateRunning) {
+		t.Fatalf("state after the claim = %s, want running", decidedFrom.State)
+	}
+	transition := Transition{
+		JobID: accepted.ID, ExpectedVersion: decidedFrom.Version, ExecutionToken: execution.ExecutionToken,
+		To: StateFailed, Failure: &Failure{Code: "gave-up", Class: FailureClassInternal},
+	}
+
+	// The interleaving: the decision is taken, and the claim is handed back
+	// before the write lands. A release moves neither the version nor the state,
+	// so the guarded update alone cannot tell the difference.
+	prepared, err := prepareTransition(deps, transition)
+	if err != nil {
+		t.Fatalf("prepareTransition: %v", err)
+	}
+	if _, err := svc.ReleaseClaim(deps, ref, ReleaseReasonExecutionEnded); err != nil {
+		t.Fatalf("ReleaseClaim: %v", err)
+	}
+	if released := jobRow(t, deps, accepted.ID); released.Version != decidedFrom.Version || released.State != decidedFrom.State {
+		t.Fatalf("release changed the row to v%d %s; the fence is the whole point of it not doing that",
+			released.Version, released.State)
+	}
+
+	if _, err := svc.commitTransition(deps, prepared, nil); err == nil {
+		t.Fatal("a transition decided before the claim was released committed after it")
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateRunning) {
+		t.Fatalf("state = %s, want the Job left where the released execution found it", stored.State)
+	}
+
+	// The same write through the public seam, where the token check before the
+	// transaction is what refuses it: nothing is written and nothing is appended.
+	_, err = svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ref,
+		ExpectedVersion: decidedFrom.Version,
+		Outcome:         StateFailed,
+		Failure:         &Failure{Code: "gave-up", Class: FailureClassInternal},
+	})
+	if !errors.Is(err, ErrStaleExecution) {
+		t.Fatalf("Finish after the claim was released = %v, want ErrStaleExecution", err)
+	}
+	if events := jobEvents(t, deps, accepted.ID); len(events) != 2 {
+		t.Fatalf("timeline has %d events, want only acceptance and the started event", len(events))
+	}
+}
+
+// TestHeartbeatKeepsTheLeaseNearTheLastHeartbeatRatherThanAccumulatingIt covers
+// the recovery delay a long-running execution accumulates.
+//
+// The extension used to be measured from the *later of* now and the stored
+// expiry and then added to it, so every healthy heartbeat banked another whole
+// lease: an hour-long execution with two-minute leases ended up with an expiry
+// about three hours out. A claim whose runtime then died was not reconcilable at
+// its lease — it waited for all of the banked time, and the capacity it held was
+// frozen for just as long.
+func TestHeartbeatKeepsTheLeaseNearTheLastHeartbeatRatherThanAccumulatingIt(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "heartbeat-drift.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileQueue, nil
+	}
+	clock := time.Date(2033, 9, 10, 11, 12, 13, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+
+	// An hour of healthy heartbeats at the cadence the runtime uses: one every
+	// third of the lease.
+	lease := testDefinition().EffectiveLease()
+	for heartbeats := 0; heartbeats < 180; heartbeats++ {
+		clock = clock.Add(lease / 3)
+		if err := svc.Heartbeat(deps, ref, lease); err != nil {
+			t.Fatalf("Heartbeat %d: %v", heartbeats, err)
+		}
+	}
+
+	// The runtime dies here. What it leaves behind must become reconcilable one
+	// lease after its last heartbeat, however long it had been running.
+	abandoned := clock
+	claim := claimRow(t, deps, accepted.ID)
+	if claim.LeaseExpiresAt.After(abandoned.Add(lease)) {
+		t.Fatalf("after an hour of heartbeats the lease runs to %v, %v past the last heartbeat: "+
+			"every heartbeat banked another lease", claim.LeaseExpiresAt, claim.LeaseExpiresAt.Sub(abandoned))
+	}
+
+	clock = claim.LeaseExpiresAt.Add(time.Second)
+	report, err := svc.ReconcileExpired(context.Background(), deps, "runtime-b", DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ReconcileExpired: %v", err)
+	}
+	if report.Examined != 1 {
+		t.Fatalf("examined %d expired claims one lease after the last heartbeat, want the abandoned one",
+			report.Examined)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateQueued) {
+		t.Fatalf("state after reconciliation = %s, want queued", stored.State)
 	}
 }

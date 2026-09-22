@@ -73,6 +73,13 @@ type Job struct {
 	// VisibilityClass is "owner" or "admin". See the type comment.
 	VisibilityClass string `gorm:"size:10;not null;index:idx_jobs_visible,priority:1" json:"visibilityClass"`
 
+	// ExecutionPrincipal records which principal the Job's execution acts as:
+	// "actor", "owner" or "host". It is durable because the user references
+	// beside it are nulled when an account is deleted, and the class is what
+	// distinguishes "an actor was recorded and is gone" — which blocks the Job
+	// — from "this work intentionally has no actor" — which runs as the host.
+	ExecutionPrincipal string `gorm:"size:10;not null" json:"executionPrincipal"`
+
 	// ReplayClass records whether acceptance carried a replayable input
 	// ("replayable") or an explicit non-replayable classification
 	// ("non-replayable"). It is the durable half of "a replay envelope or an
@@ -423,6 +430,23 @@ type JobPreference struct {
 	// ordinary metadata retention for as long as any viewer holds one.
 	PinnedAt *time.Time `json:"pinnedAt,omitempty"`
 
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// JobPinGuard is the per-viewer row pin admission serializes on.
+//
+// The per-user pin limit is a count of one viewer's committed pin rows, and a
+// count is not itself a guard: two admissions that read it at the same time both
+// see the limit unmet, because the rows they are about are different Jobs and
+// nothing about them conflicts. So the count happens while this row — one per
+// viewer, created on that viewer's first admission — is held, which is what makes
+// the second admission see the first one's pin.
+//
+// It carries no state beyond the viewer it belongs to: it is a lock with an
+// identity, not a record of anything.
+type JobPinGuard struct {
+	UserID    uint      `gorm:"primaryKey" json:"userId"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }

@@ -95,6 +95,31 @@ const (
 	VisibilityAdmin VisibilityClass = "admin"
 )
 
+// PrincipalClass names the principal a Job's execution acts as, fixed at
+// acceptance and durable from then on. It exists because the live user
+// references are nulled when an account is deleted, which makes "an actor was
+// recorded and has since been removed" indistinguishable from "no actor was
+// ever recorded" — and the two must not resolve the same way. A recorded actor
+// that is gone blocks the Job; an intentionally actorless one runs as the host.
+type PrincipalClass string
+
+const (
+	// PrincipalActor acts as the Job's actor: the principal whose authority the
+	// execution or a command uses.
+	PrincipalActor PrincipalClass = "actor"
+	// PrincipalOwner acts as the Job's owner, for work whose submitter and actor
+	// are the same person and whose adapter recorded only the owner.
+	PrincipalOwner PrincipalClass = "owner"
+	// PrincipalHost is intentional actorlessness: the host runs the work as
+	// itself, which is what a system-originated Job declares. It is a declaration,
+	// never a fallback for a principal that disappeared.
+	PrincipalHost PrincipalClass = "host"
+)
+
+// PrincipalClasses lists the vocabulary. A class outside it is refused rather
+// than stored under a new spelling nothing can resolve.
+var PrincipalClasses = []PrincipalClass{PrincipalActor, PrincipalOwner, PrincipalHost}
+
 // ReplayClass records whether acceptance carried replayable input.
 type ReplayClass string
 
@@ -562,8 +587,9 @@ type SweepResult struct {
 	Examined int
 	// Pruned is how many it took out of ordinary history.
 	Pruned int
-	// Skipped is how many it left alone: pinned work, and work an unresolved
-	// claim still protects.
+	// Skipped is how many it left alone: pinned work, work an unresolved claim
+	// still protects, and work whose artifacts nothing could establish were
+	// removed.
 	Skipped int
 	// Outputs is how many output rows had their availability recorded before the
 	// history that pointed at them was pruned.
@@ -773,25 +799,32 @@ type ReplayInput struct {
 }
 
 // Acceptance is one durable acceptance request. It is produced by a Kind
-// adapter — never by request input — which is why Visibility is a field here
-// rather than something the Service guesses: the adapter's registered
-// Definition is the only thing that knows whether its Kind is owner-visible or
-// admin-only.
+// adapter rather than by request input.
+//
+// Visibility is validated against the Kind's registered Definition and replaced
+// by it: the Definition is what fixes whether the Kind is owner-visible or
+// admin-only, and the field is only an adapter's claim about its own Kind, which
+// is refused when it disagrees.
 type Acceptance struct {
 	Kind        string
 	KindVersion uint
 	// State is the initial state, always a nonterminal one: execution begins
 	// after commit, so acceptance cannot claim work is already running.
-	State        State
-	OwnerUserID  *uint
-	ActorUserID  *uint
-	Origin       string
-	Visibility   VisibilityClass
-	Title        string
-	Summary      json.RawMessage
-	Replay       ReplayInput
-	ScheduledFor *time.Time
-	LegacyRefs   []LegacyRef
+	State       State
+	OwnerUserID *uint
+	ActorUserID *uint
+	Origin      string
+	Visibility  VisibilityClass
+	// ExecutionPrincipal is the principal the execution acts as. An empty value
+	// is derived from the recorded references — the actor when there is one, else
+	// the owner, else the host — which is what every adapter that does not need
+	// to say anything explicit gets.
+	ExecutionPrincipal PrincipalClass
+	Title              string
+	Summary            json.RawMessage
+	Replay             ReplayInput
+	ScheduledFor       *time.Time
+	LegacyRefs         []LegacyRef
 }
 
 // Snapshot is the bounded public view of one Job: what a list, a detail page or
@@ -809,7 +842,11 @@ type Snapshot struct {
 	ActorUserID *uint
 	Origin      string
 	Visibility  VisibilityClass
-	ReplayClass ReplayClass
+	// ExecutionPrincipal is the principal this execution acts as. It is a
+	// durable fact, not a live lookup: an account deleted since acceptance still
+	// names the class, which is what the dispatch refusal reads.
+	ExecutionPrincipal PrincipalClass
+	ReplayClass        ReplayClass
 	// ReplayAvailability says whether this viewer can open the input. A snapshot
 	// never carries the envelope itself.
 	//
@@ -923,6 +960,12 @@ var (
 	ErrNotFound = errors.New("jobs: job not found")
 	// ErrInvalidAcceptance is a malformed acceptance request.
 	ErrInvalidAcceptance = errors.New("jobs: invalid acceptance")
+	// ErrExecutionPrincipalUnavailable refuses execution of a Job whose recorded
+	// principal no longer exists. Authority is never transferred on user
+	// deletion: a Job that was accepted to act as an actor or an owner that has
+	// since been removed is blocked, rather than running as the surviving owner,
+	// as root, or as the host.
+	ErrExecutionPrincipalUnavailable = errors.New("jobs: the principal this job acts as is gone")
 	// ErrInvalidTransition is a malformed transition request.
 	ErrInvalidTransition = errors.New("jobs: invalid transition")
 	// ErrUnknownState is a state this release does not know.
@@ -954,6 +997,12 @@ var (
 	// ErrReplayAbsent means the Job has no sealed input: it declared
 	// non-replayable input, or it was accepted without any.
 	ErrReplayAbsent = errors.New("jobs: no replay input is stored")
+	// ErrReplayEnvelopeMissing means a Job whose durable class says its input is
+	// replayable has no envelope to run with. Whatever removed it — a purge, a
+	// migration that could not convert it, a partial restore — the Job may not be
+	// executed without it: running work with incomplete input is the one thing
+	// §3 forbids outright, so the Job is blocked for a person to resolve.
+	ErrReplayEnvelopeMissing = errors.New("jobs: a replayable job has no replay envelope")
 	// ErrReplayKeyUnavailable means the envelope names a key this process does
 	// not hold. It is distinguishable from corruption on purpose: a rotation
 	// that has not been rolled out everywhere, or a key file lost with the data
@@ -1053,6 +1102,14 @@ type Definition struct {
 	// refuses to re-queue it on a lease expiry alone: the Job stays blocked with
 	// its claim held until something proves the external work stopped.
 	Restorable bool
+	// Visibility is the durable visibility class every Job of this Kind is
+	// accepted with. It is declared here rather than chosen per acceptance
+	// because it is a property of the work — a plugin command run is an operator
+	// concern nobody but an administrator inspects, whatever account submitted it
+	// — and a class a caller could omit would be a class that Kind did not
+	// actually fix. The zero value is VisibilityOwner, the class of ordinary
+	// user-facing work; an admin-only Kind must say so.
+	Visibility VisibilityClass
 	// CapacityGroup names the concurrency budget the Kind's executions draw on.
 	// An empty group means the Kind's own budget; a Kind that names a group
 	// shares it with every other Kind naming it.
@@ -1295,6 +1352,46 @@ type ReconcileOutcome struct {
 	JobID    string
 	Decision ReconcileDecision
 	Snapshot Snapshot
+}
+
+// ArtifactRef names one artifact a Job published, by the output key it was
+// published under and the bounded reference its publisher wrote. The control
+// plane never interprets the reference; it hands it back to the Kind that wrote
+// it.
+type ArtifactRef struct {
+	Key       string
+	Reference json.RawMessage
+}
+
+// ArtifactCleanupRequest asks a Kind's adapter to remove — or to confirm the
+// absence of — the artifacts one expired Job published, before the history that
+// points at them is pruned.
+//
+// It exists because "available" and "removed" are two different facts: a sweep
+// marking an output removed says what the database believes, and only the Kind
+// knows whether the bytes an artifact reference names are still on a disk, in a
+// bucket, or held open by something else. §9 requires the removal to be
+// established before the reference to it goes.
+type ArtifactCleanupRequest struct {
+	JobID       string
+	Kind        string
+	KindVersion uint
+	// Artifacts is every artifact output the Job published.
+	Artifacts []ArtifactRef
+}
+
+// ArtifactCleanupResult is the adapter's acknowledgement of one cleanup.
+//
+// A result that does not account for every artifact is a refusal: the reference
+// stays, and with it the Job, so an operator can still find what was left
+// behind. An already-missing artifact is reported as removed — §7 treats it as
+// removed rather than as an error.
+type ArtifactCleanupResult struct {
+	// Removed lists the keys whose artifact is confirmed gone.
+	Removed []string
+	// Retained lists the keys whose artifact is still there: still in use, held
+	// by an external service, or refused by policy.
+	Retained []string
 }
 
 // Command is one control a Job currently offers. It is advertised by the Job

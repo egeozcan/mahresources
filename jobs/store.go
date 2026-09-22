@@ -90,6 +90,13 @@ func visibleTo(db *gorm.DB, access Access) *gorm.DB {
 	return db.Where("visibility_class = ? AND owner_user_id = ?", string(VisibilityOwner), access.UserID)
 }
 
+// executionTokenMatch is the predicate a lifecycle write carries so that it can
+// only commit while the execution that decided it still owns the Job. The token
+// is compared alongside the version and state because a release clears the token
+// without moving either of the other two, and COALESCE tolerates the NULL a row
+// written before the column existed can hold.
+const executionTokenMatch = "COALESCE(execution_token, '') = ?"
+
 // utcPtr normalizes an optional instant to UTC, allocating a fresh pointer so a
 // caller's value can never be written through by a later mutation.
 func utcPtr(t *time.Time) *time.Time {
@@ -108,34 +115,63 @@ func replayClassOf(r ReplayInput) ReplayClass {
 	return ReplayClassReplayable
 }
 
+// viewerSnapshot projects a stored row for one viewer's sight.
+//
+// A Job's failure carries two texts: the sanitized message a person reads, and a
+// protected diagnostic reference — an internal path, a run id — that §8 keeps for
+// administrative audit. The second one is what this withholds from everybody who
+// is not an administrator, so no ordinary read, listing or lineage projection can
+// turn an infrastructure pointer into a viewer-visible fact.
+func viewerSnapshot(job models.Job, access Access) Snapshot {
+	snap := snapshot(job)
+	if access.Administrator {
+		return snap
+	}
+	return withoutDiagnosticRef(snap)
+}
+
+// withoutDiagnosticRef returns the snapshot with the protected diagnostic
+// reference removed. It copies the failure rather than mutating it, so a
+// projection never rewrites the row another reader is holding.
+func withoutDiagnosticRef(snap Snapshot) Snapshot {
+	if snap.Failure == nil || snap.Failure.DiagnosticRef == "" {
+		return snap
+	}
+	redacted := *snap.Failure
+	redacted.DiagnosticRef = ""
+	snap.Failure = &redacted
+	return snap
+}
+
 // snapshot projects a stored row onto the bounded public view.
 func snapshot(job models.Job) Snapshot {
 	snap := Snapshot{
-		ID:              job.ID,
-		Kind:            job.Kind,
-		KindVersion:     job.KindVersion,
-		State:           State(job.State),
-		Phase:           job.Phase,
-		Title:           job.Title,
-		Summary:         json.RawMessage(job.Summary),
-		OwnerUserID:     job.OwnerUserID,
-		ActorUserID:     job.ActorUserID,
-		Origin:          job.Origin,
-		Visibility:      VisibilityClass(job.VisibilityClass),
-		ReplayClass:     ReplayClass(job.ReplayClass),
-		Version:         job.Version,
-		ControlIntent:   job.ControlIntent,
-		AcceptedAt:      job.AcceptedAt,
-		ScheduledFor:    job.ScheduledFor,
-		QueuedAt:        job.QueuedAt,
-		StartedAt:       job.StartedAt,
-		LastResumedAt:   job.LastResumedAt,
-		FinishedAt:      job.FinishedAt,
-		RunningDuration: job.RunningDuration,
-		PausedDuration:  job.PausedDuration,
-		BlockedDuration: job.BlockedDuration,
-		QueueDuration:   job.QueueDuration,
-		ExpiresAt:       job.ExpiresAt,
+		ID:                 job.ID,
+		Kind:               job.Kind,
+		KindVersion:        job.KindVersion,
+		State:              State(job.State),
+		Phase:              job.Phase,
+		Title:              job.Title,
+		Summary:            json.RawMessage(job.Summary),
+		OwnerUserID:        job.OwnerUserID,
+		ActorUserID:        job.ActorUserID,
+		Origin:             job.Origin,
+		Visibility:         VisibilityClass(job.VisibilityClass),
+		ReplayClass:        ReplayClass(job.ReplayClass),
+		ExecutionPrincipal: executionPrincipalOf(job),
+		Version:            job.Version,
+		ControlIntent:      job.ControlIntent,
+		AcceptedAt:         job.AcceptedAt,
+		ScheduledFor:       job.ScheduledFor,
+		QueuedAt:           job.QueuedAt,
+		StartedAt:          job.StartedAt,
+		LastResumedAt:      job.LastResumedAt,
+		FinishedAt:         job.FinishedAt,
+		RunningDuration:    job.RunningDuration,
+		PausedDuration:     job.PausedDuration,
+		BlockedDuration:    job.BlockedDuration,
+		QueueDuration:      job.QueueDuration,
+		ExpiresAt:          job.ExpiresAt,
 		Progress: Progress{
 			Phase:     job.Phase,
 			Completed: job.ProgressCompleted,

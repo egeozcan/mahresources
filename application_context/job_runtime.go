@@ -143,6 +143,13 @@ func (r *JobRuntime) Start() {
 // Stop ends the loop, asks every running execution to quiesce, and leaves
 // whatever did not finish exactly where it is.
 //
+// Cancellation comes first, because it is the *request* to stop: an adapter that
+// waits on its context — which is what the interface tells it to do — is holding
+// the loop inside a reconciliation, and waiting for that loop to return before
+// cancelling it is a wait that can never end. Only after the request has been
+// delivered is anything waited for, and both waits are bounded: an executor that
+// ignores its context must not hold a deployment open.
+//
 // Nothing is written on the way out. A Job that was still running keeps its
 // state, its claim and its lease, so the next process reconciles it with the
 // evidence intact — and a blocked or quarantined Job keeps its capacity, because
@@ -153,10 +160,11 @@ func (r *JobRuntime) Stop() {
 	}
 	r.stopOnce.Do(func() {
 		close(r.stop)
-		r.loopWG.Wait()
 		// Cancelling the lifecycle context is the request to quiesce: it reaches
-		// every execution's context and every publish bound to it.
+		// the loop's own database work, every execution's context and every
+		// publish bound to it.
 		r.cancelLife()
+		waitForWaitGroup(&r.loopWG, r.quiesceTimeout)
 		waitForWaitGroup(&r.execWG, r.quiesceTimeout)
 	})
 }
@@ -192,7 +200,7 @@ func (r *JobRuntime) tick(ctx context.Context) {
 		return
 	}
 
-	report, err := r.service.ReconcileExpired(ctx, r.deps(), r.claimant, jobs.DefaultReconcileBatch)
+	report, err := r.service.ReconcileExpired(ctx, r.depsFor(ctx), r.claimant, jobs.DefaultReconcileBatch)
 	if err != nil {
 		log.Printf("job runtime: reconciliation failed: %v", err)
 	}
@@ -207,7 +215,7 @@ func (r *JobRuntime) tick(ctx context.Context) {
 
 	for _, registration := range r.service.Registrations() {
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
-			execution, ok, err := r.service.Claim(ctx, r.deps(), jobs.ClaimRequest{
+			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:        registration.Definition.Kind,
 				KindVersion: registration.Definition.KindVersion,
 				Claimant:    r.claimant,
@@ -359,6 +367,18 @@ func (r *JobRuntime) deps() jobs.Deps {
 		return jobs.Deps{}
 	}
 	return r.ctx.jobDeps()
+}
+
+// depsFor binds the per-call handle to the context whose work it is doing, so
+// the database work of a cancelled loop stops with the loop rather than
+// continuing behind a request nobody is waiting for any more. It is what makes
+// the shutdown request reach the queries as well as the adapters.
+func (r *JobRuntime) depsFor(ctx context.Context) jobs.Deps {
+	deps := r.deps()
+	if ctx != nil && deps.DB != nil {
+		deps.DB = deps.DB.WithContext(ctx)
+	}
+	return deps
 }
 
 // defaultJobRuntimeClaimant names this runtime: the host and process that holds

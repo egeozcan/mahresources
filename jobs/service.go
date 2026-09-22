@@ -44,6 +44,9 @@ func NewService() *Service {
 // it — and opens one of its own when it does not. Execution begins after
 // commit; acceptance never claims work that is already running.
 func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
+	if err := s.applyRegisteredVisibility(&acceptance); err != nil {
+		return Snapshot{}, err
+	}
 	if err := validateAcceptance(&acceptance); err != nil {
 		return Snapshot{}, err
 	}
@@ -60,11 +63,14 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 		ActorUserID:     copyUint(acceptance.ActorUserID),
 		Origin:          acceptance.Origin,
 		VisibilityClass: string(acceptance.Visibility),
-		ReplayClass:     string(replayClassOf(acceptance.Replay)),
-		Version:         1,
-		AcceptedAt:      now,
-		ScheduledFor:    utcPtr(acceptance.ScheduledFor),
-		StateEnteredAt:  &now,
+		// The class the execution acts as is durable from here, because the live
+		// references beside it are cleared when an account is deleted.
+		ExecutionPrincipal: string(principalClassOf(acceptance)),
+		ReplayClass:        string(replayClassOf(acceptance.Replay)),
+		Version:            1,
+		AcceptedAt:         now,
+		ScheduledFor:       utcPtr(acceptance.ScheduledFor),
+		StateEnteredAt:     &now,
 		// Set explicitly rather than letting GORM's time.Now() through: every
 		// stored instant in this module is UTC, and these two are stored instants.
 		CreatedAt: now,
@@ -110,7 +116,10 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 	}
 	// Filled after commit rather than inside it: the envelope's availability is
 	// a read of the row that has just been written, and answering it on the
-	// caller's own handle keeps the transaction's statements to writes.
+	// caller's own handle keeps the transaction's statements to writes. The
+	// projection is the stored row whole: an adapter is the producer of this
+	// acceptance rather than a viewer of it, and a Job that has just been
+	// accepted cannot carry a protected failure diagnostic.
 	stored.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), job, deps.now())
 	return stored, nil
 }
@@ -129,7 +138,7 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 		}
 		return Snapshot{}, fmt.Errorf("jobs: load job: %w", err)
 	}
-	return s.snapshotFor(deps, job), nil
+	return s.snapshotFor(deps, access, job), nil
 }
 
 // snapshotFor projects a stored row and answers the one question about replay
@@ -141,8 +150,8 @@ func (s *Service) Get(deps Deps, access Access, jobID string) (Snapshot, error) 
 // deliberately use plain snapshot(): they run inside a write transaction, and
 // answering this question there would take a second database connection while
 // the first is held, which is the shape that deadlocks a pool of one.
-func (s *Service) snapshotFor(deps Deps, job models.Job) Snapshot {
-	snap := snapshot(job)
+func (s *Service) snapshotFor(deps Deps, access Access, job models.Job) Snapshot {
+	snap := viewerSnapshot(job, access)
 	snap.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), job, deps.now())
 	return snap
 }
@@ -215,8 +224,33 @@ func validateAcceptance(a *Acceptance) error {
 	if a.ActorUserID != nil && *a.ActorUserID == 0 {
 		return invalid("actor user id 0 is not an identity")
 	}
+	switch a.ExecutionPrincipal {
+	case "":
+		a.ExecutionPrincipal = principalClassOf(*a)
+	case PrincipalActor:
+		if a.ActorUserID == nil {
+			return invalid("an execution that acts as its actor must name one")
+		}
+	case PrincipalOwner:
+		if a.OwnerUserID == nil {
+			return invalid("an execution that acts as its owner must name one")
+		}
+	case PrincipalHost:
+	default:
+		return invalid("unknown execution principal %q", a.ExecutionPrincipal)
+	}
 	if len(a.Replay.Input) > 0 && a.Replay.NonReplayable {
 		return invalid("input cannot be supplied for work that declares non-replayable input")
+	}
+	if len(a.Replay.Input) == 0 && !a.Replay.NonReplayable {
+		// §3: acceptance persists a replay envelope *or* an explicit
+		// non-replayable classification. The class defaults to replayable, so
+		// accepting without either stored a Job that promised replayable input
+		// and had none — unreplayable by construction and, once dispatch refused
+		// to run it, blocked for a reason nobody chose. Work with no input of its
+		// own passes an explicit empty payload (JSON null) if it is genuinely
+		// replayable.
+		return invalid("replayable work must be accepted with its input; supply it or declare the work non-replayable")
 	}
 	if len(a.Replay.Input) > 0 && len(a.Summary) > 0 {
 		// The summary is the only text a reader sees, so it is derived from the
@@ -237,6 +271,95 @@ func validateAcceptance(a *Acceptance) error {
 		seen[ref] = struct{}{}
 	}
 	return nil
+}
+
+// applyRegisteredVisibility fixes the visibility class an acceptance is stored
+// with from the Kind's registered definition.
+//
+// The class is a durable property of the work, and it is what the one shared
+// visibility predicate reads — so it cannot be request input. Deriving it here
+// is what makes "an admin-only Kind cannot produce owner-visible Jobs" true by
+// construction rather than by every adapter remembering to pass the field, and
+// an acceptance that contradicts its own Kind's declaration is refused rather
+// than believed.
+//
+// A Kind this process has no adapter for is left exactly as it was declared:
+// nothing here can run the work, so nothing here can fix its class either, and
+// dispatch refuses it on that same ground.
+func (s *Service) applyRegisteredVisibility(acceptance *Acceptance) error {
+	_, definition, err := s.adapterFor(acceptance.Kind, acceptance.KindVersion)
+	if err != nil {
+		return nil
+	}
+	if acceptance.Visibility != "" && acceptance.Visibility != definition.Visibility {
+		return fmt.Errorf("%w: %s v%d is registered %s-visible, and the acceptance names %s",
+			ErrInvalidAcceptance, acceptance.Kind, acceptance.KindVersion, definition.Visibility, acceptance.Visibility)
+	}
+	acceptance.Visibility = definition.Visibility
+	return nil
+}
+
+// principalClassOf is which principal an acceptance's execution acts as: what it
+// declared, or — when it declared nothing — the actor it recorded, else the owner
+// it recorded, else the host.
+//
+// The order is the one dispatch used to apply at run time, moved to acceptance
+// where the references still exist. Deciding it later is what let a deleted actor
+// silently become the owner, and a deleted owner silently become the host.
+func principalClassOf(a Acceptance) PrincipalClass {
+	if a.ExecutionPrincipal != "" {
+		return a.ExecutionPrincipal
+	}
+	switch {
+	case a.ActorUserID != nil:
+		return PrincipalActor
+	case a.OwnerUserID != nil:
+		return PrincipalOwner
+	default:
+		return PrincipalHost
+	}
+}
+
+// executionPrincipalOf reads the class of a stored row, deriving it for rows
+// written before the column existed: those carry the same references the
+// derivation reads, and they were accepted under the same rule.
+func executionPrincipalOf(job models.Job) PrincipalClass {
+	if job.ExecutionPrincipal != "" {
+		return PrincipalClass(job.ExecutionPrincipal)
+	}
+	switch {
+	case job.ActorUserID != nil:
+		return PrincipalActor
+	case job.OwnerUserID != nil:
+		return PrincipalOwner
+	default:
+		return PrincipalHost
+	}
+}
+
+// executionAccess is the principal an execution acts as, or the refusal that
+// replaces the fallback it used to make.
+//
+// A recorded principal that is gone is a refusal, never a substitution: the Job
+// was accepted to act as that account, and running the work as the owner, as
+// root or as the host would transfer authority that user deletion removed.
+func executionAccess(job models.Job) (Access, error) {
+	switch executionPrincipalOf(job) {
+	case PrincipalHost:
+		return Access{}, nil
+	case PrincipalOwner:
+		if job.OwnerUserID == nil {
+			return Access{}, fmt.Errorf("%w: job %s was accepted to act as its owner, and that account is gone",
+				ErrExecutionPrincipalUnavailable, job.ID)
+		}
+		return Access{UserID: *job.OwnerUserID}, nil
+	default:
+		if job.ActorUserID == nil {
+			return Access{}, fmt.Errorf("%w: job %s was accepted to act as its actor, and that account is gone",
+				ErrExecutionPrincipalUnavailable, job.ID)
+		}
+		return Access{UserID: *job.ActorUserID}, nil
+	}
 }
 
 // UpdateProgress replaces the current progress snapshot of a Job an execution
@@ -294,7 +417,7 @@ func (s *Service) UpdateProgress(deps Deps, ref ExecutionRef, progress Progress)
 		// lock before anything is read and is what serialises this against a
 		// transition racing the same Job.
 		result := tx.Model(&models.Job{}).
-			Where("id = ? AND execution_token = ? AND state = ?", job.ID, job.ExecutionToken, job.State).
+			Where("id = ? AND "+executionTokenMatch+" AND state = ?", job.ID, job.ExecutionToken, job.State).
 			Updates(updates)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: update progress: %w", result.Error)
@@ -346,7 +469,7 @@ func (s *Service) AppendEvent(deps Deps, ref ExecutionRef, event EventInput) err
 		// (PostgreSQL) — which is also what serialises two events racing for the
 		// same position on one Job's timeline.
 		result := tx.Model(&models.Job{}).
-			Where("id = ? AND execution_token = ? AND state = ?", job.ID, job.ExecutionToken, job.State).
+			Where("id = ? AND "+executionTokenMatch+" AND state = ?", job.ID, job.ExecutionToken, job.State).
 			Update("updated_at", now)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: touch job: %w", result.Error)
@@ -550,15 +673,38 @@ func (s *Service) Transition(deps Deps, transition Transition) (Snapshot, error)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return s.commitTransition(deps, prepared, nil)
+	return s.commitTransition(deps, prepared, successVerification(deps, prepared, transition.To))
 }
 
-// Finish ends a Job an execution owns, and is the only way success is recorded.
+// successVerification is the output check §7 attaches to the outcome itself
+// rather than to one entry point: a Job becomes succeeded only after every
+// required output is durable and available.
+//
+// Transition permits running -> succeeded, so a check that lived only in Finish
+// would leave one success boundary unguarded — an adapter could publish an
+// artifact it cannot serve and then record success by transitioning. The check
+// is the same function in both calls, and it runs inside the same transaction as
+// the state it is about to justify.
+func successVerification(deps Deps, prepared preparedTransition, to State) func(tx *gorm.DB) error {
+	if to != StateSucceeded {
+		return nil
+	}
+	now := deps.now()
+	return func(tx *gorm.DB) error {
+		return verifyRequiredOutputs(tx, prepared.job.ID, nil, now)
+	}
+}
+
+// Finish ends a Job an execution owns, and is the way an executor ends one
+// deliberately.
 //
 // It is a terminal transition plus the verification §7 requires: when the
 // outcome is success, every required output the Job published — and every key
 // the caller names — must be durable and available, and that check runs inside
-// the same transaction as the terminal state and its event. A Job therefore
+// the same transaction as the terminal state and its event. Transition carries
+// the same check for the same outcome, because the contract belongs to success
+// rather than to this entry point; Finish is where a caller declares *which*
+// outputs it promised. A Job therefore
 // never commits a success beside an output it cannot honestly claim, and a
 // refused finish writes nothing at all: the Job stays where it is until its
 // executor can satisfy the contract or records a failure instead.
@@ -589,8 +735,9 @@ func (s *Service) Finish(deps Deps, request FinishRequest) (Snapshot, error) {
 
 	var verify func(tx *gorm.DB) error
 	if request.Outcome == StateSucceeded {
+		now := deps.now()
 		verify = func(tx *gorm.DB) error {
-			return verifyRequiredOutputs(tx, prepared.job.ID, request.RequiredOutputs)
+			return verifyRequiredOutputs(tx, prepared.job.ID, request.RequiredOutputs, now)
 		}
 	}
 	return s.commitTransition(deps, prepared, verify)
@@ -607,7 +754,13 @@ type preparedTransition struct {
 	job     models.Job
 	next    models.Job
 	updates map[string]any
-	event   models.JobEvent
+	// The event is described rather than built: its position on the Job's
+	// timeline is allocated inside the transaction, after the guarded write, so
+	// it is the next position at commit time rather than the next position at
+	// decision time.
+	eventType   string
+	eventDetail json.RawMessage
+	at          time.Time
 }
 
 // prepareTransition loads the Job, applies every precondition, and derives what
@@ -628,23 +781,16 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 		return preparedTransition{}, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, job.State, transition.To)
 	}
 
-	sequence, err := nextEventSequence(deps.DB, job.ID)
-	if err != nil {
-		return preparedTransition{}, err
-	}
-
 	now := deps.now()
 	next, updates := applyTransition(job, transition, deps.retention(), now)
-	event := newEvent(
-		job.ID,
-		sequence,
-		next.Version,
-		eventTypeFor(transition, job.StartedAt != nil),
-		transition.Event.Detail,
-		true,
-		now,
-	)
-	return preparedTransition{job: job, next: next, updates: updates, event: event}, nil
+	return preparedTransition{
+		job:         job,
+		next:        next,
+		updates:     updates,
+		eventType:   eventTypeFor(transition, job.StartedAt != nil),
+		eventDetail: transition.Event.Detail,
+		at:          now,
+	}, nil
 }
 
 // commitTransition writes one decided transition, its event, and — when the
@@ -657,8 +803,15 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verify func(tx *gorm.DB) error) (Snapshot, error) {
 	var snap Snapshot
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
+		// The predicate carries the execution token as well as the version and
+		// state the caller read, because a release clears the token without
+		// moving either of them: an execution whose claim was handed back in the
+		// window between the decision and this write must not commit it. A Job
+		// with no token matches an empty one, so a host-side transition on work no
+		// claim ever touched still applies.
 		result := tx.Model(&models.Job{}).
-			Where("id = ? AND version = ? AND state = ?", prepared.job.ID, prepared.job.Version, prepared.job.State).
+			Where("id = ? AND version = ? AND state = ? AND "+executionTokenMatch,
+				prepared.job.ID, prepared.job.Version, prepared.job.State, prepared.job.ExecutionToken).
 			Updates(prepared.updates)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: apply transition: %w", result.Error)
@@ -695,7 +848,18 @@ func (s *Service) commitTransition(deps Deps, prepared preparedTransition, verif
 				return err
 			}
 		}
-		if err := tx.Create(&prepared.event).Error; err != nil {
+		// The event's position is allocated here rather than where the transition
+		// was decided: the guarded update above has locked the Job's row by now,
+		// so an executor appending its own phase event is either before this
+		// position or behind the lock — never on it. Reading the maximum outside
+		// the transaction let an append take the position the terminal event was
+		// about to claim, and the unique index then rolled the completion back.
+		sequence, err := nextEventSequence(tx, prepared.job.ID)
+		if err != nil {
+			return err
+		}
+		event := newEvent(prepared.job.ID, sequence, prepared.next.Version, prepared.eventType, prepared.eventDetail, true, prepared.at)
+		if err := tx.Create(&event).Error; err != nil {
 			return fmt.Errorf("jobs: store lifecycle event: %w", err)
 		}
 		snap = snapshot(prepared.next)

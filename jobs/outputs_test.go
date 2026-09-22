@@ -552,3 +552,99 @@ func TestFinishRefusesANonTerminalOutcomeAndAStaleExecutionToken(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 }
+
+// TestOutputSuccessThroughATransitionVerifiesRequiredOutputs closes the hole a
+// second success boundary opened: Execution.Transition permits running ->
+// succeeded, and it used to commit that success without the output verification
+// Finish performs, so an adapter could publish an artifact that is not available
+// and then record success by transitioning rather than finishing.
+//
+// §7 states the contract at the outcome, not at one entry point: a Job becomes
+// succeeded only after its required outputs are durable and available, whichever
+// call records it.
+func TestOutputSuccessThroughATransitionVerifiesRequiredOutputs(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	t.Run("an unavailable required output refuses a success recorded by a transition", func(t *testing.T) {
+		job := seededExecution(t, deps, StateRunning, "claim-a")
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-a"}
+		past := clock.Add(-time.Hour)
+		if _, err := svc.PublishOutput(deps, ref, OutputInput{
+			Key: "artifact", Type: OutputTypeArtifact, Required: true,
+			Reference: json.RawMessage(`{"path":"exports/21.tar"}`), ExpiresAt: &past,
+		}); err != nil {
+			t.Fatalf("PublishOutput: %v", err)
+		}
+
+		_, err := svc.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: "claim-a", To: StateSucceeded,
+		})
+		if !errors.Is(err, ErrRequiredOutputUnavailable) {
+			t.Fatalf("Transition to succeeded = %v, want ErrRequiredOutputUnavailable", err)
+		}
+		if stored := jobRow(t, deps, job.ID); stored.State != string(StateRunning) || stored.Version != job.Version {
+			t.Fatalf("a refused success left the Job in %s v%d", stored.State, stored.Version)
+		}
+		if events := jobEvents(t, deps, job.ID); len(events) != 0 {
+			t.Fatalf("a refused success recorded %d events", len(events))
+		}
+	})
+
+	t.Run("a Job with no required outputs still succeeds through a transition", func(t *testing.T) {
+		job := seededExecution(t, deps, StateRunning, "claim-b")
+		snap, err := svc.Transition(deps, Transition{
+			JobID: job.ID, ExpectedVersion: job.Version, ExecutionToken: "claim-b", To: StateSucceeded,
+		})
+		if err != nil {
+			t.Fatalf("Transition to succeeded: %v", err)
+		}
+		if snap.State != StateSucceeded {
+			t.Fatalf("state = %s, want succeeded", snap.State)
+		}
+	})
+}
+
+// TestOutputRequiredOutputsAreVerifiedAgainstTheirDeadlineNotOnlyTheStoredString
+// is §7's "required artifact availability is verified" read as a fact about now
+// rather than about a string some earlier write recorded.
+//
+// An artifact may expire at any moment, and a sweep that records that fact runs
+// on its own cadence — so between the two there is a window in which the row
+// still says available and the artifact is gone. Verifying the string alone
+// commits success over an artifact nobody can fetch.
+func TestOutputRequiredOutputsAreVerifiedAgainstTheirDeadlineNotOnlyTheStoredString(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	clock := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := seededExecution(t, deps, StateRunning, "claim-a")
+	ref := ExecutionRef{JobID: job.ID, ExecutionToken: "claim-a"}
+	expiresAt := clock.Add(time.Hour)
+	published, err := svc.PublishOutput(deps, ref, OutputInput{
+		Key: "artifact", Type: OutputTypeArtifact, Required: true,
+		Reference: json.RawMessage(`{"path":"exports/22.tar"}`), ExpiresAt: &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("PublishOutput: %v", err)
+	}
+	if published.Availability != OutputAvailable {
+		t.Fatalf("published availability = %s, want available while the deadline is ahead", published.Availability)
+	}
+
+	// The artifact's own deadline passes and no sweep has recorded it yet.
+	clock = clock.Add(2 * time.Hour)
+
+	_, err = svc.Finish(deps, FinishRequest{
+		ExecutionRef: ref, ExpectedVersion: job.Version, Outcome: StateSucceeded,
+	})
+	if !errors.Is(err, ErrRequiredOutputUnavailable) {
+		t.Fatalf("Finish over an artifact past its deadline = %v, want ErrRequiredOutputUnavailable", err)
+	}
+	if stored := jobRow(t, deps, job.ID); stored.State != string(StateRunning) {
+		t.Fatalf("a refused success left the Job in %s", stored.State)
+	}
+}

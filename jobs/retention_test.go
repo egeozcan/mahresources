@@ -1,12 +1,14 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"mahresources/models"
+	"mahresources/models/types"
 )
 
 // expiredHistory is a policy with windows short enough to drive with an injected
@@ -64,6 +66,7 @@ func TestRetentionSweepStartsAtFinishedAtAndLeavesNonterminalWorkAlone(t *testin
 		clock = clock.Add(time.Minute)
 		return acceptFor(t, svc, deps, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			Replay: ReplayInput{NonReplayable: true},
 		})
 	}
 	// finishedAt settles a Job and reports the instant it ended.
@@ -145,6 +148,7 @@ func TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim(t *testing.T) {
 	job := acceptFor(t, svc, deps, Acceptance{
 		Kind: "plugin-command", KindVersion: 1, State: StateQueued, Origin: "api", Title: "a command run",
 		Visibility: VisibilityAdmin,
+		Replay:     ReplayInput{NonReplayable: true},
 	})
 	// An output of that Job whose own expiry has passed. It is not recorded by the
 	// sweep: a claim nothing could prove dead is the one thing no expiry may write
@@ -176,6 +180,7 @@ func TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim(t *testing.T) {
 	// rather than to stop at the first obstacle.
 	other := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: "a due job",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	other = advanceReplayJob(t, svc, deps, other, StateRunning)
 	other = advanceReplayJob(t, svc, deps, other, StateSucceeded)
@@ -194,12 +199,22 @@ func TestRetentionSweepNeverPrunesAJobWithAnUnresolvedClaim(t *testing.T) {
 	if result.Skipped == 0 {
 		t.Error("the sweep did not report the job it left alone")
 	}
+	// What the protection covers is the execution record: the Job, its history
+	// and the claim all stay exactly as they were, and nothing is deleted. The
+	// artifact's own deadline is not the Job's retention — §7 makes availability
+	// independent of the outcome — so the one thing the sweep does write is that
+	// promised expiry, which is a fact about the file rather than about the
+	// quarantined process.
 	outputs, err := svc.Outputs(deps, Access{UserID: 1, Administrator: true}, job.ID)
 	if err != nil {
 		t.Fatalf("Outputs: %v", err)
 	}
-	if len(outputs) != 1 || outputs[0].Availability != OutputAvailable {
-		t.Fatalf("the sweep wrote to a claimed job's outputs: %+v", outputs)
+	if len(outputs) != 1 {
+		t.Fatalf("the sweep deleted a claimed job's output row: %+v", outputs)
+	}
+	if outputs[0].Availability != OutputExpired {
+		t.Fatalf("artifact availability = %s, want the deadline it was published with recorded",
+			outputs[0].Availability)
 	}
 }
 
@@ -218,6 +233,7 @@ func TestRetentionSweepIsBoundedAndResumesFromItsCursor(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		job := acceptFor(t, svc, deps, Acceptance{
 			Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api", Title: "export",
+			Replay: ReplayInput{NonReplayable: true},
 		})
 		job = advanceReplayJob(t, svc, deps, job, StateRunning)
 		job = advanceReplayJob(t, svc, deps, job, StateSucceeded)
@@ -276,6 +292,7 @@ func TestRetentionPinExemptsMetadataButNotArtifacts(t *testing.T) {
 	pinned := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "a pinned export",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	// The artifact expires before the metadata does, which is the case the
 	// ordering in the sweep exists for.
@@ -293,6 +310,7 @@ func TestRetentionPinExemptsMetadataButNotArtifacts(t *testing.T) {
 	relative := acceptFor(t, svc, deps, Acceptance{
 		Kind: "group-export", KindVersion: 1, State: StateQueued, Origin: "api",
 		OwnerUserID: uintPtr(7), Title: "its retry",
+		Replay: ReplayInput{NonReplayable: true},
 	})
 	relative = advanceReplayJob(t, svc, deps, relative, StateRunning)
 	relative = advanceReplayJob(t, svc, deps, relative, StateSucceeded)
@@ -410,5 +428,206 @@ func TestRetentionDeadlinesAreComputedOnceForRowsThatPredateThem(t *testing.T) {
 	}
 	if result.Pruned != 1 {
 		t.Fatalf("pruned %d jobs, want 1", result.Pruned)
+	}
+}
+
+// TestRetentionSweepExpiresOutputsOnTheirOwnDeadline is §10's "artifact expiry is
+// independent of the Job's outcome and retention".
+//
+// Output availability used to be recorded only for the Jobs the sweep was
+// already pruning, so an artifact that expired an hour after it was published
+// kept advertising itself as available until its Job's history came due — a
+// month later for a success, three months later for a failure, and never for a
+// Job that was still running.
+func TestRetentionSweepExpiresOutputsOnTheirOwnDeadline(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(30 * 24 * time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 5, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	// A still-running Job with an artifact that expires in an hour, and a setted
+	// Job whose metadata window is a month out.
+	running := seededExecution(t, deps, StateRunning, "claim-a")
+	settled := seededExecution(t, deps, StateRunning, "claim-b")
+
+	expires := clock.Add(time.Hour)
+	for _, job := range []models.Job{running, settled} {
+		ref := ExecutionRef{JobID: job.ID, ExecutionToken: job.ExecutionToken}
+		if _, err := svc.PublishOutput(deps, ref, OutputInput{
+			Key: "artifact", Type: OutputTypeArtifact, Label: "group-export.tar",
+			Reference: json.RawMessage(`{"path":"exports/9.tar"}`), ExpiresAt: &expires,
+		}); err != nil {
+			t.Fatalf("PublishOutput for %s: %v", job.ID, err)
+		}
+	}
+	// The second Job reaches an outcome of its own, which starts its metadata
+	// window; the artifact it published keeps the deadline it was given.
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: settled.ID, ExecutionToken: "claim-b"},
+		ExpectedVersion: settled.Version,
+		Outcome:         StateSucceeded,
+	}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	// The artifacts' own deadline passes; neither Job's metadata is anywhere near
+	// its own.
+	clock = clock.Add(2 * time.Hour)
+	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+	if result.Outputs != 2 {
+		t.Fatalf("recorded %d output availabilities, want both expired artifacts", result.Outputs)
+	}
+
+	for _, job := range []models.Job{running, settled} {
+		var output models.JobOutput
+		if err := deps.DB.Where("job_id = ? AND key = ?", job.ID, "artifact").First(&output).Error; err != nil {
+			t.Fatalf("read output of %s: %v", job.ID, err)
+		}
+		if output.Availability != string(OutputExpired) {
+			t.Fatalf("artifact of %s is %s, want expired", job.ID, output.Availability)
+		}
+	}
+
+	// The Job itself is untouched: its own window has not started, or has not
+	// passed, and an expired artifact never rewrites an outcome.
+	if !jobExists(t, deps, running.ID) || !jobExists(t, deps, settled.ID) {
+		t.Fatal("expiring an artifact pruned the Job that published it")
+	}
+	if stored := jobRow(t, deps, settled.ID); stored.State != string(StateSucceeded) {
+		t.Fatalf("state = %s, want succeeded", stored.State)
+	}
+}
+
+// TestRetentionSweepConfirmsArtifactCleanupBeforePruningHistory is §9's "sweep
+// work records output removal before pruning the relevant history", read as the
+// requirement that the removal be *established* rather than assumed.
+//
+// Marking an output removed says what the database believes; only the Kind knows
+// whether the bytes are really gone. So the sweep asks, and a Job whose artifacts
+// nobody could account for keeps its history — and the reference to what was left
+// behind.
+func TestRetentionSweepConfirmsArtifactCleanupBeforePruningHistory(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2031, 7, 6, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	retain := map[string]bool{}
+	adapter.cleanup = func(_ context.Context, request ArtifactCleanupRequest) (ArtifactCleanupResult, error) {
+		if retain[request.JobID] {
+			return ArtifactCleanupResult{Retained: []string{"artifact"}}, nil
+		}
+		return ArtifactCleanupResult{Removed: []string{"artifact"}}, nil
+	}
+
+	// A Job that published an artifact and finished cleanly.
+	settle := func(title string) Snapshot {
+		clock = clock.Add(time.Minute)
+		accepted := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: title,
+			OwnerUserID: uintPtr(7),
+			Replay:      ReplayInput{NonReplayable: true},
+		})
+		execution, ok := claimOnce(t, svc, deps, "runtime-a")
+		if !ok {
+			t.Fatalf("claim for %s: nothing was claimed", title)
+		}
+		if execution.JobID != accepted.ID {
+			t.Fatalf("claimed %s while settling %s", execution.JobID, title)
+		}
+		if _, err := execution.Output(OutputInput{
+			Key: "artifact", Type: OutputTypeArtifact, Label: "group-export.tar",
+			Reference: json.RawMessage(`{"path":"exports/keep.tar"}`),
+		}); err != nil {
+			t.Fatalf("publish artifact of %s: %v", title, err)
+		}
+		finished, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateSucceeded})
+		if err != nil {
+			t.Fatalf("finish %s: %v", title, err)
+		}
+		return finished
+	}
+
+	cleaned := settle("the artifacts go")
+	retained := settle("the artifacts stay")
+	retain[retained.ID] = true
+	// A pinned Job is not due at all, so nothing of its own may be destroyed on
+	// its way past — including the artifact its history points at.
+	pinned := settle("the pinned one")
+	if err := svc.SetPreference(deps, Access{UserID: 7}, PreferenceRequest{JobID: pinned.ID, Pinned: boolPtr(true)}); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+
+	// A Job of a Kind this process has no adapter for: no cleanup authority at
+	// all, which is the same answer as a refusal.
+	orphan := seedJob(t, deps, StateSucceeded, clock.Add(-2*time.Hour), 1)
+	if err := deps.DB.Model(&models.Job{}).Where("id = ?", orphan.ID).
+		Updates(map[string]any{"finished_at": clock.Add(-2 * time.Hour), "expires_at": clock.Add(-time.Hour)}).Error; err != nil {
+		t.Fatalf("settle the adapter-less job: %v", err)
+	}
+	if err := deps.DB.Create(&models.JobOutput{
+		ID: types.NewUUIDv7(), JobID: orphan.ID, Key: "artifact", Type: OutputTypeArtifact,
+		Label: "group-export.tar", Reference: types.JSON(`{"path":"exports/orphan.tar"}`),
+		Availability: string(OutputAvailable), Version: 1, CreatedAt: clock, UpdatedAt: clock,
+	}).Error; err != nil {
+		t.Fatalf("publish the adapter-less job's artifact: %v", err)
+	}
+
+	clock = clock.Add(48 * time.Hour)
+	result := sweepFor(t, svc, deps, policy, SweepCursor{}, 100)
+
+	if adapter.cleanupCount() != 2 {
+		t.Fatalf("the sweep asked for cleanup %d times, want once per Job with artifacts it can reach",
+			adapter.cleanupCount())
+	}
+	if jobExists(t, deps, cleaned.ID) {
+		t.Fatal("a Job whose artifacts were confirmed removed survived the sweep")
+	}
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ?", cleaned.ID); rows != 0 {
+		t.Fatalf("the pruned Job's output rows survived: %d", rows)
+	}
+
+	if !jobExists(t, deps, retained.ID) {
+		t.Fatal("a Job whose artifact could not be removed was pruned anyway")
+	}
+	var output models.JobOutput
+	if err := deps.DB.Where("job_id = ? AND key = ?", retained.ID, "artifact").First(&output).Error; err != nil {
+		t.Fatalf("the retained Job lost its artifact reference: %v", err)
+	}
+	if output.Availability != string(OutputAvailable) {
+		t.Fatalf("retained artifact availability = %s, want it still advertised", output.Availability)
+	}
+
+	if !jobExists(t, deps, orphan.ID) {
+		t.Fatal("a Job whose Kind this process cannot run was pruned without any cleanup authority")
+	}
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ?", orphan.ID); rows != 1 {
+		t.Fatalf("the adapter-less Job's artifact reference is gone: %d rows", rows)
+	}
+
+	// The pinned Job was never asked about: a Job retention may not take keeps
+	// everything it points at.
+	if !jobExists(t, deps, pinned.ID) {
+		t.Fatal("a pinned Job was pruned")
+	}
+	if rows := countRows(t, deps, &models.JobOutput{}, "job_id = ?", pinned.ID); rows != 1 {
+		t.Fatalf("the pinned Job's artifact reference is gone: %d rows", rows)
+	}
+	if adapter.cleanupCount() != 2 {
+		t.Fatalf("the sweep asked for cleanup %d times, want neither the pinned nor the adapter-less Job",
+			adapter.cleanupCount())
+	}
+
+	if result.Pruned != 1 {
+		t.Fatalf("pruned %d Jobs, want only the one whose artifacts were confirmed gone", result.Pruned)
+	}
+	if result.Skipped < 3 {
+		t.Fatalf("skipped %d Jobs, want the retained artifact, the pinned one and the adapter-less one",
+			result.Skipped)
 	}
 }

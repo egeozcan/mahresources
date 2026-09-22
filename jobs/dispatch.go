@@ -292,6 +292,20 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 	if token == "" {
 		return nil
 	}
+	// The Job's row first, always: every transaction that touches a Job's claim
+	// or capacity takes it in this order, so a release racing a terminal
+	// transition cannot leave each holding the row the other needs. The guarded
+	// clear is also the "does this token own anything" question — a Job whose
+	// token is not this one owns nothing, and a repeated release therefore writes
+	// nothing more.
+	job := tx.Model(&models.Job{}).Where("id = ? AND execution_token = ?", jobID, token).
+		Update("execution_token", "")
+	if job.Error != nil {
+		return fmt.Errorf("jobs: clear execution token: %w", job.Error)
+	}
+	if job.RowsAffected == 0 {
+		return nil
+	}
 	// Any claim this token still owns is released, quarantined ones included: a
 	// quarantine says nobody could prove what happened to the work, and the
 	// execution that owned it finishing the Job is that proof. Leaving it behind
@@ -310,11 +324,7 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 	if result.RowsAffected == 0 {
 		return nil
 	}
-	if err := releaseCapacityTx(tx, jobID, token); err != nil {
-		return err
-	}
-	return tx.Model(&models.Job{}).Where("id = ? AND execution_token = ?", jobID, token).
-		Update("execution_token", "").Error
+	return releaseCapacityTx(tx, jobID, token)
 }
 
 // executionFor builds the Execution for a claim and opens the input the
@@ -326,25 +336,50 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 // payload that fails authentication — the Job is blocked, fenced by the token
 // that was just taken, and the claim is released with it.
 func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim) (Execution, error) {
+	// Who the work acts as is settled before what it runs with: a Job whose
+	// recorded principal has been deleted may not be handed to an adapter at all,
+	// because every adapter receives that identity as the authority its work
+	// runs under.
+	access, err := executionAccess(job)
+	if err != nil {
+		return Execution{}, s.blockUnrunnableJob(deps, job, claim, blockedReasonPrincipalMissing, err)
+	}
 	input, err := s.executionInput(deps, job)
 	if err != nil {
 		if ReplayBlocked(State(job.State), err) {
-			return Execution{}, s.blockUnrunnableJob(deps, job, claim, err)
+			return Execution{}, s.blockUnrunnableJob(deps, job, claim, blockedReasonInputUnavailable, err)
 		}
 		return Execution{}, err
 	}
-	return newExecution(ctx, deps, s, job, claim, input), nil
+	return newExecution(ctx, deps, s, job, claim, access, input), nil
 }
 
-// executionInput opens the replay input an execution runs with. Work that stores
-// no input — an explicitly non-replayable Kind, or a Job accepted without any —
-// is not a failure: it runs with none.
+// Reasons a claimed Job is blocked by the control plane itself rather than by
+// its adapter. They are stable codes on the Job's own timeline.
+const (
+	// blockedReasonInputUnavailable: the execution-required input cannot be
+	// opened here, so the Job cannot run with what it was accepted with.
+	blockedReasonInputUnavailable = "input-unavailable"
+	// blockedReasonPrincipalMissing: the principal the Job's execution acts as
+	// no longer exists, and no other principal may be substituted for it.
+	blockedReasonPrincipalMissing = "principal-missing"
+)
+
+// executionInput opens the replay input an execution runs with. Work whose
+// durable class says its input cannot be replayed — an explicitly non-replayable
+// Kind — runs with none, because there is nothing to open and no promise was
+// made about it.
+//
+// A Job whose class says its input *is* replayable and which has no envelope to
+// open is the opposite case: it is refused, and the refusal blocks the Job.
+// Running it with no input at all would execute incomplete work, which §3
+// forbids outright.
 func (s *Service) executionInput(deps Deps, job models.Job) (json.RawMessage, error) {
 	opened, err := s.OpenReplay(deps, Access{Administrator: true}, job.ID)
 	switch {
 	case err == nil:
 		return opened.Input, nil
-	case errors.Is(err, ErrReplayAbsent):
+	case errors.Is(err, ErrReplayAbsent) && ReplayClass(job.ReplayClass) == ReplayClassNonReplayable:
 		return nil, nil
 	default:
 		return nil, err
@@ -355,8 +390,8 @@ func (s *Service) executionInput(deps Deps, job models.Job) (json.RawMessage, er
 // under the claim's own token. It is the one place dispatch decides a Job's
 // state itself, and it does so because the alternative — leaving it running with
 // an executor that never started — is a Job nothing would ever resolve.
-func (s *Service) blockUnrunnableJob(deps Deps, job models.Job, claim models.JobClaim, cause error) error {
-	detail, err := json.Marshal(map[string]string{"reason": "input-unavailable"})
+func (s *Service) blockUnrunnableJob(deps Deps, job models.Job, claim models.JobClaim, reason string, cause error) error {
+	detail, err := json.Marshal(map[string]string{"reason": reason})
 	if err != nil {
 		return fmt.Errorf("jobs: encode blocked detail: %w", err)
 	}
@@ -374,11 +409,7 @@ func (s *Service) blockUnrunnableJob(deps Deps, job models.Job, claim models.Job
 }
 
 // newExecution builds the Execution an adapter is handed.
-func newExecution(ctx context.Context, deps Deps, service *Service, job models.Job, claim models.JobClaim, input json.RawMessage) Execution {
-	access := Access{}
-	if actor := actingUser(job); actor != nil {
-		access.UserID = *actor
-	}
+func newExecution(ctx context.Context, deps Deps, service *Service, job models.Job, claim models.JobClaim, access Access, input json.RawMessage) Execution {
 	ref := ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken}
 	return Execution{
 		JobID:          job.ID,
@@ -391,16 +422,6 @@ func newExecution(ctx context.Context, deps Deps, service *Service, job models.J
 		Input:          input,
 		report:         &executionReport{service: service, deps: deps.withContext(ctx), ref: ref},
 	}
-}
-
-// actingUser is the principal an execution acts as: the Job's actor when it
-// recorded one, otherwise its owner. Nil means the Job has no acting identity,
-// and the host itself is running the work.
-func actingUser(job models.Job) *uint {
-	if job.ActorUserID != nil {
-		return job.ActorUserID
-	}
-	return job.OwnerUserID
 }
 
 // withContext binds a context to the handle a report publishes through, so a
@@ -453,10 +474,17 @@ func (r *executionReport) Finish(request FinishRequest) (Snapshot, error) {
 // heartbeat is refused. A runtime that sees this refusal knows its execution was
 // fenced and can stop it.
 //
-// The extension is measured from the later of now and the stored expiry, so a
-// heartbeat arriving inside the lease keeps the lease it already had — the point
-// is to keep a claim alive, not to shorten it — and one arriving after the lease
-// ran out still leaves a usable lease rather than one in the past.
+// The new expiry is the later of the stored one and now plus the extension, so
+// a heartbeat arriving inside the lease never shortens it and one arriving after
+// the lease ran out still leaves a usable lease rather than one in the past.
+//
+// Adding the extension *to* the stored expiry — which is what measuring from the
+// later of now and the stored expiry and then adding to it amounts to — banks a
+// whole lease per heartbeat: a runtime heartbeating every third of a lease builds
+// an expiry hours in the future, and the abandoned claim it leaves behind is not
+// reconcilable, and does not free its capacity, until all of that time passes.
+// The lease means "this long since the last proof of life", and that is what the
+// extension has to express.
 func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration) error {
 	if err := validateExecutionRef(ref); err != nil {
 		return err
@@ -474,16 +502,17 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 		return fmt.Errorf("%w: job %s is not owned by this execution", ErrStaleExecution, ref.JobID)
 	}
 
-	base := claim.LeaseExpiresAt
-	if now.After(base) {
-		base = now
-	}
+	// The comparison happens in the statement rather than on the value read
+	// above, so two heartbeats racing cannot each compute an expiry from the same
+	// stale one and write whichever landed last.
+	extended := now.Add(extension)
 	result := deps.DB.Model(&models.JobClaim{}).
 		Where("job_id = ? AND execution_token = ? AND state = ?", ref.JobID, ref.ExecutionToken, models.JobClaimStateHeld).
 		Updates(map[string]any{
-			"lease_expires_at": base.Add(extension),
-			"heartbeat_at":     now,
-			"updated_at":       now,
+			"lease_expires_at": gorm.Expr(
+				"CASE WHEN lease_expires_at > ? THEN lease_expires_at ELSE ? END", extended, extended),
+			"heartbeat_at": now,
+			"updated_at":   now,
 		})
 	if result.Error != nil {
 		return fmt.Errorf("jobs: extend claim lease: %w", result.Error)
@@ -571,6 +600,10 @@ const (
 	// quarantineReasonUnprovenWork: the adapter could not prove the external work
 	// the claim started has stopped.
 	quarantineReasonUnprovenWork = "external-work-unproven"
+	// quarantineReasonPrincipalMissing: the principal the Job's execution acts as
+	// was deleted. No adapter answer could be carried out, because every one of
+	// them would run the work as a principal the Job was not accepted under.
+	quarantineReasonPrincipalMissing = "principal-missing"
 )
 
 // ReconcileExpired asks each expired claim's adapter what should happen to its
@@ -621,6 +654,24 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			continue
 		}
 
+		access, accessErr := executionAccess(job)
+		if accessErr != nil {
+			// The principal this execution acts as is gone. No adapter answer
+			// could be executed — every one of them would run the work as
+			// somebody the deleted account was not — and the conservative answer
+			// is the same one a missing adapter gets: the Job is blocked with its
+			// claim and capacity held, because releasing them would be releasing
+			// work nobody has proved stopped.
+			snap, err := s.quarantineClaim(deps, job, claim, quarantineReasonPrincipalMissing, now)
+			if err != nil {
+				return report, err
+			}
+			report.Outcomes = append(report.Outcomes, ReconcileOutcome{
+				JobID: job.ID, Decision: ReconcileExternalWorkUnproven, Snapshot: snap,
+			})
+			continue
+		}
+
 		adapter, definition, err := s.adapterFor(claim.Kind, claim.KindVersion)
 		if err != nil {
 			snap, err := s.quarantineClaim(deps, job, claim, quarantineReasonAdapterMissing, now)
@@ -633,7 +684,7 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			continue
 		}
 
-		decision, err := adapter.Reconcile(ctx, s.reconcileRequest(ctx, deps, job, claim))
+		decision, err := adapter.Reconcile(ctx, s.reconcileRequest(ctx, deps, job, claim, access))
 		if err != nil {
 			// An adapter that could not answer has not decided anything, and
 			// nothing may be applied on its behalf: an error here is a
@@ -737,14 +788,10 @@ func expiredClaims(db *gorm.DB, now time.Time, limit int) ([]models.JobClaim, er
 // input is best effort: a Kind whose input cannot be produced here is told so by
 // a nil Input rather than by an error, because it still has to answer what
 // should happen to the Job.
-func (s *Service) reconcileRequest(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim) ReconcileRequest {
+func (s *Service) reconcileRequest(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, access Access) ReconcileRequest {
 	input, err := s.executionInput(deps, job)
 	if err != nil {
 		input = nil
-	}
-	access := Access{}
-	if actor := actingUser(job); actor != nil {
-		access.UserID = *actor
 	}
 	ref := ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken}
 	execution := Execution{
@@ -948,22 +995,26 @@ func (s *Service) quarantineClaim(deps Deps, job models.Job, claim models.JobCla
 	next, updates := applyTransition(job, Transition{To: StateBlocked}, deps.retention(), now)
 	var snap Snapshot
 	err = deps.DB.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&models.JobClaim{}).
-			Where("job_id = ? AND execution_token = ? AND state = ?", job.ID, claim.ExecutionToken, models.JobClaimStateHeld).
-			Updates(map[string]any{"state": models.JobClaimStateQuarantined, "updated_at": now})
-		if result.Error != nil {
-			return fmt.Errorf("jobs: quarantine claim: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return errReconcileSuperseded
-		}
-
-		result = tx.Model(&models.Job{}).
+		// The Job's row first, as every lifecycle, release and reconciliation
+		// transaction takes it: quarantining in the opposite order from the
+		// terminal transition is what let a quarantine and a finish hold the two
+		// rows each other needed.
+		result := tx.Model(&models.Job{}).
 			Where("id = ? AND version = ? AND state = ? AND execution_token = ?",
 				job.ID, job.Version, job.State, claim.ExecutionToken).
 			Updates(updates)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: block quarantined job: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return errReconcileSuperseded
+		}
+
+		result = tx.Model(&models.JobClaim{}).
+			Where("job_id = ? AND execution_token = ? AND state = ?", job.ID, claim.ExecutionToken, models.JobClaimStateHeld).
+			Updates(map[string]any{"state": models.JobClaimStateQuarantined, "updated_at": now})
+		if result.Error != nil {
+			return fmt.Errorf("jobs: quarantine claim: %w", result.Error)
 		}
 		if result.RowsAffected == 0 {
 			return errReconcileSuperseded

@@ -38,6 +38,11 @@ type Adapter interface {
 	// asked rather than told because only the Kind knows whether the external
 	// work the claim started is still running.
 	Reconcile(context.Context, ReconcileRequest) (ReconcileDecision, error)
+	// CleanupArtifacts removes, or confirms the absence of, the artifacts one
+	// expired Job published, before its history is pruned. An adapter that
+	// publishes no artifacts never sees one of these; an adapter that does is
+	// the only thing that can say whether one is really gone.
+	CleanupArtifacts(context.Context, ArtifactCleanupRequest) (ArtifactCleanupResult, error)
 	// Commands reports the controls one Job offers right now, under the asking
 	// principal's current access.
 	Commands(context.Context, CommandContext) ([]Command, error)
@@ -74,6 +79,9 @@ func (s *Service) RegisterAdapter(adapter Adapter) error {
 	definition := adapter.Definition()
 	if err := validateDefinition(definition); err != nil {
 		return err
+	}
+	if definition.Visibility == "" {
+		definition.Visibility = VisibilityOwner
 	}
 
 	s.adapterMu.Lock()
@@ -158,6 +166,17 @@ func validateDefinition(definition Definition) error {
 	}
 	if definition.Lease < 0 {
 		return invalid("lease is negative")
+	}
+	switch definition.Visibility {
+	case "":
+		// The zero value is ordinary user-facing work, which is what most Kinds
+		// are. An operator-only Kind declares VisibilityAdmin and is refused
+		// every other spelling.
+	default:
+		if definition.Visibility != VisibilityOwner && definition.Visibility != VisibilityAdmin {
+			return invalid("visibility %q is not one of %s, %s",
+				definition.Visibility, VisibilityOwner, VisibilityAdmin)
+		}
 	}
 	return nil
 }

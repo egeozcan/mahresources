@@ -66,7 +66,7 @@ func (s *Service) PublishOutput(deps Deps, ref ExecutionRef, input OutputInput) 
 		// anything is read (SQLite), locks the Job row (PostgreSQL), and is what
 		// serialises two publications of one key against each other.
 		result := tx.Model(&models.Job{}).
-			Where("id = ? AND execution_token = ? AND state = ?", job.ID, job.ExecutionToken, job.State).
+			Where("id = ? AND "+executionTokenMatch+" AND state = ?", job.ID, job.ExecutionToken, job.State).
 			Update("updated_at", now)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: touch job: %w", result.Error)
@@ -259,10 +259,23 @@ func copyJSON(raw types.JSON) types.JSON {
 // the row is the durable authority, whatever the caller remembered to pass.
 // Optional outputs are deliberately not verified: their inability to be opened
 // is a warning, not a reason for finished work to be reported as unfinished.
-func verifyRequiredOutputs(tx *gorm.DB, jobID string, named []string) error {
+func verifyRequiredOutputs(tx *gorm.DB, jobID string, named []string, now time.Time) error {
 	var rows []models.JobOutput
 	if err := tx.Where("job_id = ?", jobID).Find(&rows).Error; err != nil {
 		return fmt.Errorf("jobs: read outputs for verification: %w", err)
+	}
+
+	unavailable := func(row models.JobOutput) error {
+		// The stored availability is what a sweep recorded, and a sweep runs on
+		// its own cadence: between an artifact's deadline and the pass that
+		// records it, the row still says available while the artifact is not. So
+		// the deadline is asked too, and the answer is the one that counts.
+		if row.ExpiresAt != nil && !row.ExpiresAt.After(now) {
+			return fmt.Errorf("%w: required output %q of job %s expired at %s",
+				ErrRequiredOutputUnavailable, row.Key, jobID, row.ExpiresAt.UTC())
+		}
+		return fmt.Errorf("%w: required output %q of job %s is %s",
+			ErrRequiredOutputUnavailable, row.Key, jobID, row.Availability)
 	}
 
 	byKey := make(map[string]models.JobOutput, len(rows))
@@ -274,14 +287,16 @@ func verifyRequiredOutputs(tx *gorm.DB, jobID string, named []string) error {
 		if !published {
 			return fmt.Errorf("%w: job %s never published its %q output", ErrRequiredOutputUnavailable, jobID, key)
 		}
-		if row.Availability != string(OutputAvailable) {
-			return fmt.Errorf("%w: job %s output %q is %s", ErrRequiredOutputUnavailable, jobID, key, row.Availability)
+		if row.Availability != string(OutputAvailable) || (row.ExpiresAt != nil && !row.ExpiresAt.After(now)) {
+			return unavailable(row)
 		}
 	}
 	for _, row := range rows {
-		if row.Required && row.Availability != string(OutputAvailable) {
-			return fmt.Errorf("%w: required output %q of job %s is %s",
-				ErrRequiredOutputUnavailable, row.Key, jobID, row.Availability)
+		if !row.Required {
+			continue
+		}
+		if row.Availability != string(OutputAvailable) || (row.ExpiresAt != nil && !row.ExpiresAt.After(now)) {
+			return unavailable(row)
 		}
 	}
 	return nil
