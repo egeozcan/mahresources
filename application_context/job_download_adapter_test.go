@@ -43,6 +43,17 @@ import (
 // submitted transfer and lets it publish.
 func newDownloadJobContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
+	return newJobHarnessContext(t, true)
+}
+
+// newJobHarnessContext builds the same context, with the dispatch loop optional.
+//
+// The loop is what a test needs when it is about work being *run*; a test about what
+// happens to work nobody is running — reconciliation, above all — needs the Job to stay
+// exactly as it was left, and a running loop would adopt it a tick later and finish it
+// first. One harness with one switch, rather than two fixtures that drift.
+func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
+	t.Helper()
 
 	dsn := filepath.Join(t.TempDir(), "download-jobs.db")
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
@@ -109,9 +120,15 @@ function init() end
 	service := jobs.NewService()
 	ctx.SetJobService(service)
 
+	if !withRuntime {
+		return ctx
+	}
+	// 50ms rather than 20ms, for the reason the api_tests harness gives: one claim query
+	// per registered Kind per tick against a shared-cache in-memory database, where a
+	// reader and a writer of one table can collide in a way the production DSN does not.
 	runtime := NewJobRuntime(ctx, service, JobRuntimeConfig{
 		Claimant: "download-adapter-test",
-		Interval: 20 * time.Millisecond,
+		Interval: 50 * time.Millisecond,
 	})
 	runtime.Start()
 	t.Cleanup(runtime.Stop)

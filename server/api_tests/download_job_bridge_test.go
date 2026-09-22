@@ -42,9 +42,13 @@ func installJobControlPlane(t *testing.T, tc *TestContext) {
 	// The dispatch loop is what adopts a submitted transfer and publishes its
 	// progress and outcome into the Job; a deployment always runs one, and a test
 	// without it would be asserting against a Job nobody is executing.
+	// 100ms rather than 20ms: a runtime claims once per registered Kind per tick, and
+	// this fixture's database is a shared-cache in-memory one where a reader and a writer
+	// of one table can collide in a way the file-backed production DSN never sees. The
+	// tests that need the loop wait seconds, so a slower tick costs them nothing.
 	runtime := application_context.NewJobRuntime(tc.AppCtx, service, application_context.JobRuntimeConfig{
 		Claimant: "api-bridge-test",
-		Interval: 20 * time.Millisecond,
+		Interval: 100 * time.Millisecond,
 	})
 	runtime.Start()
 	t.Cleanup(runtime.Stop)

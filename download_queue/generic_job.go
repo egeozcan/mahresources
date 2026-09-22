@@ -113,6 +113,16 @@ type JobOptions struct {
 	URL string
 	// OwnerUserID is the submitting user, or nil for the auth-off super-user.
 	OwnerUserID *uint
+	// JobID, when set, is the id the queue entry must take. An admission path that
+	// has already accepted a durable Job needs it: the id a client was handed is
+	// the one the queue entry has to answer to, or the same export would be one row
+	// in the Job Center and another in the panel. See SubmissionOptions.JobID.
+	JobID string
+	// Canonical names the durable Job this job publishes into. The execution token
+	// may be empty at submission: the admission path dispatches the work before any
+	// execution owns the Job, and the runtime adopts it a tick later. See
+	// SubmissionOptions.Canonical.
+	Canonical *CanonicalRef
 }
 
 // SubmitJob enqueues an unowned generic background job.
@@ -136,8 +146,12 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	jobID := opts.JobID
+	if jobID == "" {
+		jobID = generateShortID()
+	}
 	job := &DownloadJob{
-		ID:              generateShortID(),
+		ID:              jobID,
 		URL:             opts.URL,
 		Status:          JobStatusPending,
 		Progress:        0,
@@ -151,6 +165,29 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 		cancel:          cancel,
 		runFn:           runFn,
 		ownerUserID:     opts.OwnerUserID,
+	}
+	if opts.Canonical != nil {
+		if opts.Canonical.JobID == "" {
+			m.mu.Unlock()
+			cancel()
+			return nil, fmt.Errorf("a canonical submission needs the job it publishes into")
+		}
+		// A legacy id is a handle, and a Retry moves it onto the new attempt, so the
+		// finished entry it named is the durable ancestor's record — which the Job
+		// Center keeps under its own identity. Replacing the queue row is what keeps
+		// one legacy id meaning one current execution. Identical in shape to the
+		// download submission's, deliberately: one rule for one id space.
+		if existing, taken := m.jobs[jobID]; taken {
+			if !downloadQueueStatusTerminal(existing.GetStatus()) {
+				m.mu.Unlock()
+				cancel()
+				return nil, fmt.Errorf("the queue already has a live job with id %s", jobID)
+			}
+			m.evictJob(jobID, existing)
+		}
+		ref := *opts.Canonical
+		job.canonical = &ref
+		job.CanonicalJobID = ref.JobID
 	}
 
 	m.jobs[job.ID] = job

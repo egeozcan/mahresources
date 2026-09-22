@@ -44,39 +44,54 @@ type principalBinder interface {
 	WithPrincipal(p *auth.Principal) *application_context.MahresourcesContext
 }
 
-// importJobDenied reports whether the import job identified by jobID may not be
-// touched by the caller. Parse/apply jobs are owner-tagged at submit; the lifecycle
-// handlers (plan/apply/result/delete) must not let another user inspect, apply, or
-// delete them by guessing the ID. Reported as 404 (not 403) so IDs cannot be
-// enumerated.
+// importJobDenied reports whether the import identified by jobID may not be touched
+// by the caller. The lifecycle handlers (plan/apply/result/delete) must not let
+// another user inspect, apply, or delete an import by guessing the id. Reported as 404
+// (not 403) so IDs cannot be enumerated.
 //
-// **An unknown job is denied, not allowed.** The ownership tag lives only on the
-// in-memory queue record, and that record is ephemeral: "Clear completed" removes it
-// immediately and the retention sweep removes it an hour later. The files it
-// authorised — the staged tar, the plan, the result — outlive it on disk, and the
-// handlers below work from those files by id. So an unknown job used to mean "fall
-// through to the handler's own not-found path", and the handler's own path is to read
-// the plan, or apply it, or delete the files. Under -auth that is an authorization
-// check that expires: any other authenticated user holding the id could act on
-// someone else's import as soon as the job was cleared.
-//
-// Denying is the fail-closed reading of "there is no evidence you own this". It costs
-// the owner nothing in the flow the endpoints exist for — parse, review, apply, all
-// within one sitting — and admins (and the auth-off super-user) are unaffected,
-// because jobVisibleToPrincipal answers true for them whatever the owner is.
+// **The authorization is durable wherever a durable Job stands behind the id.** The
+// in-memory queue record is removed by "Clear completed" at once and by the retention
+// sweep within the hour, while the files it authorised — the staged tar, the plan, the
+// result — outlive it on disk, and these handlers work from those files by id. So an
+// unknown or cleared job is answered from the canonical Job the handle resolves to,
+// whose own visibility predicate is admin-or-owner; only a deployment with no control
+// plane, or an id from before this release, falls back to the queue record and to the
+// fail-closed reading of "there is no evidence you own this".
 func importJobDenied(ctx GroupImporter, r *http.Request, jobID string) bool {
-	p := auth.PrincipalFromContext(r.Context())
+	principal := auth.PrincipalFromContext(r.Context())
+	// The durable answer is asked of a context bound to *this request's* principal. The
+	// route is mounted on the unscoped singleton, whose principal is the implicit
+	// super-user, so asking the captured context would answer "authorized" for everyone.
+	// The rebinding is local — this function's own copy of the interface — and never the
+	// shared one.
+	if binder, ok := ctx.(principalBinder); ok {
+		ctx = binder.WithPrincipal(principal)
+	}
+	if durable, ok := ctx.(importAuthorization); ok && durable != nil {
+		if authorized, answered := durable.ImportJobAuthorized(jobID); answered {
+			return !authorized
+		}
+	}
 	dm := ctx.DownloadManager()
 	if dm == nil {
-		return !jobVisibleToPrincipal(p, nil)
+		return !jobVisibleToPrincipal(principal, nil)
 	}
 	job, ok := dm.GetJob(jobID)
 	if !ok {
 		// No owner to check against, so only a principal that may see *every* job may
 		// proceed. For everyone else this is the 404 the doc comment promises.
-		return !jobVisibleToPrincipal(p, nil)
+		return !jobVisibleToPrincipal(principal, nil)
 	}
-	return !jobVisibleToPrincipal(p, job.GetOwnerUserID())
+	return !jobVisibleToPrincipal(principal, job.GetOwnerUserID())
+}
+
+// importAuthorization is the optional capability (implemented by
+// *application_context.MahresourcesContext, not by test mocks) that answers the
+// import authorization from the durable Job behind a parse handle. `answered`
+// distinguishes "a Job decided this" from "there is no Job to ask", which is what
+// lets a deployment without a control plane keep the legacy answer.
+type importAuthorization interface {
+	ImportJobAuthorized(parseHandle string) (authorized bool, answered bool)
 }
 
 // GetImportParseHandler — POST /v1/groups/import/parse
@@ -132,78 +147,54 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 		}
 		stagingFile.Close()
 
-		// Generate a stable import ID and rename the staging file BEFORE
-		// enqueuing the job. SubmitJob may dispatch the worker immediately
-		// (if a semaphore slot is free), so the tar must be at its final
-		// path before the job function can reference it.
+		// The request's principal is bound onto a *copy* of the context before the
+		// submission reaches the application layer: this route is mounted on the
+		// unscoped singleton, and the Job it accepts has to record the person who asked
+		// rather than the implicit super-user. A copy, never the captured ctx — that one
+		// is shared by every request this factory serves. Test mocks don't implement the
+		// binder and fall through unchanged.
+		requestCtx := ctx
+		if binder, ok := ctx.(principalBinder); ok {
+			requestCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
+		}
+
+		// Generate a stable import id, hand the staged upload to the application
+		// layer, and let it accept the durable Job and dispatch the parse. The whole
+		// submission is one call because the order it happens in is a correctness
+		// property — the Job is accepted before anything runs, and the archive is in
+		// its final path before the Job's input names it.
 		importID := fmt.Sprintf("imp-%d", time.Now().UnixNano())
-		finalPath := filepath.Join("_imports", importID+".tar")
-		if renErr := fs.Rename(stagingPath, finalPath); renErr != nil {
-			_ = fs.Remove(stagingPath)
-			http.Error(w, "failed to finalize upload: "+renErr.Error(), http.StatusInternalServerError)
+		if submitter, ok := requestCtx.(importSubmitter); ok && submitter != nil {
+			submission := submitter.SubmitImportParse(importID, stagingPath, "api")
+			if submission.Err != nil {
+				_ = fs.Remove(stagingPath)
+				http.Error(w, submission.Err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jobId":          submission.QueueJobID,
+				"canonicalJobId": submission.CanonicalJobID,
+			})
 			return
 		}
 
-		runFn := buildImportParseRunFn(ctx, finalPath)
-		// Both the owner and the staging path are given at construction rather than
-		// set on the returned job. SubmitJob broadcasts "added" and starts the worker
-		// before it returns, so a setter afterwards races both: under -auth the
-		// ownerless "added" is filtered out of the submitter's own SSE stream, and a
-		// cancel landing in that moment would find no source path to clean up.
-		//
-		// URL is unused for generic jobs; it is repurposed as "source file path" so
-		// the delete handler can find the tar by job id even before the worker has
-		// renamed it to <jobID>.tar.
-		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
-			Source:       download_queue.JobSourceGroupImportParse,
-			InitialPhase: "queued",
-			URL:          finalPath,
-			OwnerUserID:  principalOwnerID(auth.PrincipalFromContext(r.Context())),
-		}, runFn)
-		if err != nil {
-			_ = fs.Remove(finalPath)
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-
-		w.Header().Set("Content-Type", constants.JSON)
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
+		// No durable submission is available in this context — the package's own
+		// handler tests mount a fake that names no queue at all. Answering is better
+		// than a panic and better than a legacy path with a second copy of the
+		// executor in it: every real deployment reaches the branch above.
+		_ = fs.Remove(stagingPath)
+		http.Error(w, "this deployment cannot accept an import right now", http.StatusServiceUnavailable)
 	}
 }
 
-func buildImportParseRunFn(ctx GroupImporter, stagingTarPath string) download_queue.JobRunFn {
-	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
-		sink.SetPhase("parsing")
-
-		// Normalize to _imports/<jobID>.tar so DeleteImportFiles can find
-		// it by job ID. On first run the file is at the staging path; on
-		// retry it is already at the canonical path (the first attempt
-		// renamed it), so skip the rename if the staging path is gone.
-		fs := ctx.GetDefaultFs()
-		canonicalPath := filepath.Join("_imports", j.ID+".tar")
-		if stagingTarPath != canonicalPath {
-			if exists, _ := afero.Exists(fs, stagingTarPath); exists {
-				if err := fs.Rename(stagingTarPath, canonicalPath); err != nil {
-					return fmt.Errorf("rename staged tar: %w", err)
-				}
-			}
-		}
-
-		plan, err := ctx.ParseImport(jobCtx, j.ID, canonicalPath)
-		if err != nil {
-			return err
-		}
-
-		sink.SetResultPath(filepath.Join("_imports", j.ID+".plan.json"))
-		sink.SetPhase("completed")
-
-		for _, w := range plan.Warnings {
-			sink.AppendWarning(w)
-		}
-
-		return nil
-	}
+// importSubmitter is the optional capability (implemented by
+// *application_context.MahresourcesContext, not by test mocks) that accepts the
+// durable Job behind an import submission and dispatches it.
+type importSubmitter interface {
+	SubmitImportParse(handle, stagingTarPath, origin string) application_context.QueueJobSubmission
+	SubmitImportApply(parseHandle, consumedPlanPath string, decisions *application_context.ImportDecisions, origin string) application_context.QueueJobSubmission
 }
 
 // GetImportPlanHandler — GET /v1/imports/{jobId}/plan
@@ -323,106 +314,46 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			return
 		}
 
-		// 5. Consume the plan by renaming to .plan.applied.json.
-		consumedPath := filepath.Join("_imports", parseJobID+".plan.applied.json")
-		if err := fs.Rename(planPath, consumedPath); err != nil {
-			http.Error(w, "failed to consume plan: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 6. Enqueue the apply job. Bind the request principal now (the job runs on
-		// a background goroutine, so r.Context() is gone by then) so imported rows
-		// are attributed to the importer. Test mocks don't implement principalBinder
-		// and fall through unchanged.
-		importCtx := ctx
+		// 5. Enqueue the apply. The application layer consumes the plan, accepts the
+		// durable Job as a child of the parse it decided on, binds the request
+		// principal (the job runs on a background goroutine, so r.Context() is gone by
+		// then) and dispatches it. Test mocks don't implement that capability and fall
+		// through to the legacy submission below.
+		// The request's principal, bound onto a copy for the reason the parse handler
+		// gives: the apply runs on a background goroutine, and what it creates is
+		// attributed to whoever asked for it.
+		requestCtx := ctx
 		if binder, ok := ctx.(principalBinder); ok {
-			importCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
+			requestCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
 		}
-		runFn := buildImportApplyRunFn(importCtx, parseJobID, consumedPath, &decisions)
-		// Owner at construction, for the reason the parse handler gives above.
-		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
-			Source:       download_queue.JobSourceGroupImportApply,
-			InitialPhase: "queued",
-			OwnerUserID:  principalOwnerID(auth.PrincipalFromContext(r.Context())),
-		}, runFn)
-		if err != nil {
-			// Restore the plan file on enqueue failure.
-			_ = fs.Rename(consumedPath, planPath)
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		if submitter, ok := requestCtx.(importSubmitter); ok && submitter != nil {
+			consumedPath, consumeErr := application_context.ConsumeImportPlan(fs, parseJobID)
+			if consumeErr != nil {
+				if errors.Is(consumeErr, application_context.ErrImportPlanConsumed) {
+					http.Error(w, "already applied or expired", http.StatusConflict)
+					return
+				}
+				http.Error(w, consumeErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			submission := submitter.SubmitImportApply(parseJobID, consumedPath, &decisions, "api")
+			if submission.Err != nil {
+				// Restore the plan file on enqueue failure.
+				_ = fs.Rename(consumedPath, planPath)
+				http.Error(w, submission.Err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jobId":          submission.QueueJobID,
+				"canonicalJobId": submission.CanonicalJobID,
+			})
 			return
 		}
 
-		w.Header().Set("Content-Type", constants.JSON)
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
-	}
-}
-
-// shouldRestorePlan decides whether a failed apply's consumed plan should
-// be renamed back to .plan.json so the user can POST /apply again. Restore
-// in three cases:
-//
-//   - result == nil: ApplyImport failed before Phase 1 finished, so no
-//     DB writes happened (safe to replay regardless of archive format).
-//
-//   - result.HasMutations() is false: Phase 1 succeeded but Phase 2 aborted
-//     before any row was committed (e.g., cancelled context at the
-//     inter-phase checkpoint). Still a clean DB, safe to replay.
-//
-//   - result.RetrySafe: Phase 2 mutated rows, but the archive carries
-//     GUIDs on every group/note and the policy isn't "skip", so replay
-//     is idempotent via GUID collision handling and schema-def
-//     GUID/name lookups.
-//
-// Otherwise (legacy archive mid-apply, or skip policy mid-apply), leave
-// the plan at .plan.applied.json and force the user to re-upload.
-func shouldRestorePlan(result *application_context.ImportApplyResult) bool {
-	if result == nil {
-		return true
-	}
-	if !result.HasMutations() {
-		return true
-	}
-	return result.RetrySafe
-}
-
-func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath string, decisions *application_context.ImportDecisions) download_queue.JobRunFn {
-	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
-		// ctx is already principal-bound (see GetImportApplyHandler), so every
-		// s.ctx.db.Create in ApplyImport inherits the acting-user context and
-		// stamps CreatedByUserId. One binding covers every entity the import creates.
-		result, err := ctx.ApplyImport(jobCtx, parseJobID, decisions, sink)
-
-		// Persist the result even on failure (partial-failure results list
-		// created IDs for manual cleanup).
-		if result != nil {
-			resultPath := filepath.Join("_imports", parseJobID+".result.json")
-			if data, marshalErr := json.Marshal(result); marshalErr == nil {
-				_ = afero.WriteFile(ctx.GetDefaultFs(), resultPath, data, 0644)
-				sink.SetResultPath(resultPath)
-			}
-		}
-
-		if err != nil {
-			if shouldRestorePlan(result) {
-				planPath := filepath.Join("_imports", parseJobID+".plan.json")
-				if renameErr := ctx.GetDefaultFs().Rename(consumedPlanPath, planPath); renameErr != nil {
-					sink.AppendWarning(fmt.Sprintf("could not restore plan for retry: %v", renameErr))
-				}
-			}
-			return err
-		}
-
-		// Forward warnings to the job sink.
-		for _, w := range result.Warnings {
-			sink.AppendWarning(w)
-		}
-
-		// Clean up the consumed plan on success.
-		_ = ctx.GetDefaultFs().Remove(consumedPlanPath)
-
-		sink.SetPhase("completed")
-		return nil
+		// No durable submission is available in this context. See the parse handler.
+		http.Error(w, "this deployment cannot apply an import right now", http.StatusServiceUnavailable)
 	}
 }
 

@@ -942,7 +942,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
 
 	// Admin similarity maintenance jobs (image similarity v2)
-	router.Methods(http.MethodPost).Path("/v1/admin/similarity/recompute").HandlerFunc(api_handlers.GetRecomputeSimilaritiesHandler(appContext))
+	// Request-scoped, because the durable Job the recompute accepts records the person
+	// who asked for it as its owner and actor: the singleton's principal is the implicit
+	// super-user, and a Job created from it would name nobody.
+	router.Methods(http.MethodPost).Path("/v1/admin/similarity/recompute").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetRecomputeSimilaritiesHandler(scopedCtx(appContext, r))(w, r)
+	})
 	router.Methods(http.MethodPost).Path("/v1/admin/similarity/retry-failed").HandlerFunc(api_handlers.GetRetryFailedHashesHandler(appContext))
 
 	// Admin runtime settings routes

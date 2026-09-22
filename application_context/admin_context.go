@@ -1,7 +1,6 @@
 package application_context
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 	"mahresources/constants"
-	"mahresources/download_queue"
 	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -866,26 +864,14 @@ func (ctx *MahresourcesContext) RetryFailedHashes() (int64, error) {
 }
 
 // RecomputeSimilarities submits a background job that deletes all v2-v2 similarity
-// pairs and rebuilds them from the stored v2 hashes (no image decoding). Returns
-// the job ID, or ErrRecomputeInProgress when a recompute is already running (the
+// pairs and rebuilds them from the stored v2 hashes (no image decoding). Returns the
+// job ID, or ErrRecomputeInProgress when a recompute is already running (the
 // handler maps it to HTTP 409). The pre-check makes the conflict synchronous;
 // the CompareAndSwap inside RecomputeV2Pairs stays authoritative for races.
+//
+// It goes through the submission funnel, so the Job is durable before the queue runs
+// anything and the id it answers is the id the Job's own handle records. A deployment
+// with no control plane submits exactly as it always has.
 func (ctx *MahresourcesContext) RecomputeSimilarities() (string, error) {
-	if hash_worker.RecomputeInProgress() {
-		return "", hash_worker.ErrRecomputeInProgress
-	}
-	batchSize := ctx.Config.HashBatchSize
-	if batchSize <= 0 {
-		batchSize = 500
-	}
-	job, err := ctx.downloadManager.SubmitJob("recompute-similarities", "recomputing", func(c context.Context, _ *download_queue.DownloadJob, p download_queue.ProgressSink) error {
-		return hash_worker.RecomputeV2Pairs(ctx.db, batchSize,
-			func() bool { return c.Err() != nil },
-			func(done, total int64) { p.UpdateProgress(done, total) },
-		)
-	})
-	if err != nil {
-		return "", err
-	}
-	return job.ID, nil
+	return ctx.SubmitSimilarityRecompute()
 }

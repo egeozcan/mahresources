@@ -41,6 +41,14 @@ func (ctx *MahresourcesContext) SetJobService(service *jobs.Service) {
 	if err := ctx.registerDownloadJobKinds(service); err != nil {
 		log.Printf("warning: could not register the download job kinds: %v", err)
 	}
+	// The queue-backed Kinds are registered here for the same reason: this is the
+	// one place a process's control plane is installed, so it is the one place the
+	// executors this context owns can be declared to it. A second registration of a
+	// Kind already present is skipped rather than refused, so a context handed a
+	// populated service — a test, a re-wire — does not fail on wiring order.
+	if err := ctx.registerWorkflowJobKinds(service); err != nil {
+		log.Printf("warning: could not register the workflow job kinds: %v", err)
+	}
 }
 
 // JobService returns the installed control plane, or nil when this context was

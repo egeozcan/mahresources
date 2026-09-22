@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
+	"mahresources/jobs"
 )
 
 // GroupExporter is the application_context capability the export estimate
@@ -50,10 +50,14 @@ func ensureGroupsVisible(ctx GroupExporter, ids []uint, w http.ResponseWriter) b
 }
 
 // GroupExporterWithManager extends GroupExporter with access to the download
-// manager needed by the submit and download handlers.
+// manager needed by the submit and download handlers, and with the submission
+// funnel that accepts the durable Job behind an export before anything runs.
 type GroupExporterWithManager interface {
 	GroupExporter
 	DownloadManager() *download_queue.DownloadManager
+	// SubmitGroupExport accepts the export and dispatches it, answering the queue
+	// id the client polls with and the durable Job it stands for.
+	SubmitGroupExport(req *application_context.ExportRequest, origin string) application_context.QueueJobSubmission
 }
 
 // GetExportEstimateHandler — POST /v1/groups/export/estimate
@@ -81,8 +85,13 @@ func GetExportEstimateHandler(ctx GroupExporter) func(http.ResponseWriter, *http
 
 // GetExportSubmitHandler — POST /v1/groups/export
 //
-// Body: ExportRequest. Returns {"jobId": "..."} (HTTP 202).
-func GetExportSubmitHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http.ResponseWriter, *http.Request) {
+// Body: ExportRequest. Returns {"jobId": "...", "canonicalJobId": "..."} (HTTP 202).
+//
+// The whole submission is one call into the application layer, because the order it
+// happens in is a correctness property rather than a handler detail: the durable Job
+// is accepted first and the export is dispatched second, and a handler that did
+// either itself would be a second place that order could be got wrong.
+func GetExportSubmitHandler(ctx GroupExporterWithManager, _ afero.Fs) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req application_context.ExportRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -97,97 +106,18 @@ func GetExportSubmitHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http
 			return
 		}
 
-		// The owner is recorded at construction, not on the returned job: SubmitJob
-		// broadcasts "added" and starts the worker, and under -auth the SSE stream
-		// drops every event whose job the principal may not see — which an ownerless
-		// job is, for a non-admin. Setting it afterwards meant the submitter's own
-		// export never appeared in their panel until the next reconnect.
-		var owner *uint
-		if p := ctx.Principal(); p != nil && !p.SuperUser && p.UserID != 0 {
-			id := p.UserID
-			owner = &id
-		}
-
-		runFn := buildExportRunFn(ctx, fs, &req)
-		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
-			Source:       download_queue.JobSourceGroupExport,
-			InitialPhase: "queued",
-			OwnerUserID:  owner,
-		}, runFn)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		submission := ctx.SubmitGroupExport(&req, "api")
+		if submission.Err != nil {
+			http.Error(w, submission.Err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
-	}
-}
-
-func buildExportRunFn(ctx GroupExporter, fs afero.Fs, req *application_context.ExportRequest) download_queue.JobRunFn {
-	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
-		// fs is already rooted at FileSavePath (BasePathFs in disk mode), so
-		// the tar path stays root-relative — matching resource_upload_context.
-		if err := fs.MkdirAll("_exports", 0755); err != nil {
-			return fmt.Errorf("mkdir _exports: %w", err)
-		}
-		ext := ".tar"
-		if req.Gzip {
-			ext = ".tar.gz"
-		}
-		tarPath := filepath.Join("_exports", j.ID+ext)
-
-		f, err := fs.Create(tarPath)
-		if err != nil {
-			return fmt.Errorf("create tar: %w", err)
-		}
-
-		// Estimate first so TotalSize (bytes) is seeded for the UI's bytes-
-		// written bar. EstimateExport walks the scope without reading blob
-		// bytes, so it's cheap even for large tars. If it fails we still
-		// stream — the progress bar will just stay open-ended (total=-1).
-		var estimatedBytes int64 = -1
-		if est, estErr := ctx.EstimateExport(req); estErr == nil && est != nil {
-			estimatedBytes = est.EstimatedBytes
-			sink.UpdateProgress(0, estimatedBytes)
-		}
-
-		sink.SetPhase("preparing")
-
-		// Adapter: translate StreamExport's ProgressEvent into the sink's
-		// four discrete calls. Each incoming event may carry any combination
-		// of phase, item count, bytes, and warning — route each to the
-		// matching sink method so every change broadcasts independently.
-		report := func(ev application_context.ProgressEvent) {
-			if ev.Phase != "" {
-				sink.SetPhase(ev.Phase)
-			}
-			if ev.PhaseTotal > 0 || ev.PhaseCurrent > 0 {
-				sink.SetPhaseProgress(int64(ev.PhaseCurrent), int64(ev.PhaseTotal))
-			}
-			if ev.BytesWritten > 0 {
-				sink.UpdateProgress(ev.BytesWritten, estimatedBytes)
-			}
-			if ev.Warning != "" {
-				sink.AppendWarning(ev.Warning)
-			}
-		}
-
-		streamErr := ctx.StreamExport(jobCtx, req, f, report)
-		closeErr := f.Close()
-		if streamErr != nil {
-			_ = fs.Remove(tarPath)
-			return streamErr
-		}
-		if closeErr != nil {
-			_ = fs.Remove(tarPath)
-			return closeErr
-		}
-
-		sink.SetResultPath(tarPath)
-		sink.SetPhase("completed")
-		return nil
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jobId":          submission.QueueJobID,
+			"canonicalJobId": submission.CanonicalJobID,
+		})
 	}
 }
 
@@ -203,16 +133,46 @@ func ExportContentTypeAndFilename(resultPath string) (contentType, filename stri
 
 // GetExportDownloadHandler — GET /v1/exports/{jobId}/download
 //
-// Looks up the job (via gorilla mux path param), verifies completed status,
-// streams the tar.
-func GetExportDownloadHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http.ResponseWriter, *http.Request) {
+// Authorization comes from the durable Job when one stands behind the id, and the
+// bytes come from the artifact the Job published. Both halves matter: the queue
+// entry is memory that "Clear completed" and the retention sweep remove, and a
+// capability that expires while the archive it guards is still on disk is not a
+// capability. A deployment with no control plane keeps the queue's own answer,
+// unchanged.
+func GetExportDownloadHandler(ctx *application_context.MahresourcesContext, fs afero.Fs) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		jobID := vars["jobId"]
+		jobID := mux.Vars(r)["jobId"]
 		if jobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
 			return
 		}
+
+		if archive, durable, err := ctx.ExportArchiveFor(jobID); durable {
+			if err != nil {
+				if errors.Is(err, jobs.ErrNotFound) {
+					http.Error(w, "job not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if archive.Available() {
+				serveExportArchive(w, archive, fs)
+				return
+			}
+			// The Job has an answer only once its execution has published the artifact,
+			// and the queue's own row says "completed" as soon as the archive is written —
+			// so there is a window in which the bytes are there and the durable record has
+			// not caught up. The queue entry is that same execution's report, so while the
+			// Job has not finished the legacy answer is the fresher one; once it has, the
+			// Job's own answer is the only one (an expired artifact must not be served just
+			// because the entry it came from is still in memory).
+			if archive.State.Terminal() {
+				serveExportArchive(w, archive, fs)
+				return
+			}
+		}
+
 		job, ok := ctx.DownloadManager().GetJob(jobID)
 		if !ok {
 			http.Error(w, "job not found", http.StatusNotFound)
@@ -236,21 +196,41 @@ func GetExportDownloadHandler(ctx GroupExporterWithManager, fs afero.Fs) func(ht
 			http.Error(w, "job has no result file", http.StatusInternalServerError)
 			return
 		}
+		serveExportFile(w, fs, resultPath)
+	}
+}
 
-		f, err := fs.Open(resultPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				http.Error(w, "export tar no longer exists (likely retention expired)", http.StatusGone)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+// serveExportArchive answers one durable Job's artifact: 409 while the export is not
+// finished, 410 once the artifact's own deadline has passed or its bytes are gone, and
+// the archive itself otherwise.
+func serveExportArchive(w http.ResponseWriter, archive application_context.ExportArchive, fs afero.Fs) {
+	if !archive.Available() && archive.State != jobs.StateSucceeded {
+		http.Error(w, "job not completed (status: "+string(archive.State)+")", http.StatusConflict)
+		return
+	}
+	if archive.Availability != jobs.OutputAvailable || archive.Path == "" {
+		http.Error(w, "export archive is no longer available", http.StatusGone)
+		return
+	}
+	serveExportFile(w, fs, archive.Path)
+}
+
+// serveExportFile streams one archive, distinguishing "the retention window took it"
+// from a real read failure.
+func serveExportFile(w http.ResponseWriter, fs afero.Fs, resultPath string) {
+	f, err := fs.Open(resultPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "export tar no longer exists (likely retention expired)", http.StatusGone)
 			return
 		}
-		defer f.Close()
-
-		contentType, filename := ExportContentTypeAndFilename(resultPath)
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-		_, _ = io.Copy(w, f)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	defer f.Close()
+
+	contentType, filename := ExportContentTypeAndFilename(resultPath)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = io.Copy(w, f)
 }

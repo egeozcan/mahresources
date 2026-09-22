@@ -1,3 +1,202 @@
+# Job Center Task 8 — adapt export, import parse/apply, Resource Reduction, and maintenance Jobs (2026-09-22)
+
+**Goal:** Land Task 8 of the unified Job Center plan: the four queue-backed workflow
+families — group export, import parse and apply, Resource Reduction clustering, and the
+similarity recompute — accept a durable Job before anything is dispatched, publish what
+they produced as typed outputs, and reach their controls through the canonical command
+surface, without touching the download/plugin executors of Tasks 7 and 9.
+
+## Plan
+
+- [x] Re-read Task 8's Files/Red/Green/Verify, the approved design (§2, §3, §4, §6, §7,
+      §9, §12, §16, §17), ADRs 0006/0007, `CLAUDE.md`, the committed Tasks 1-7, the task 6
+      correction, and every existing caller of the four families before editing.
+- [x] `download_queue/generic_job.go`: `JobOptions.JobID` and `JobOptions.Canonical`, so a
+      generic queue entry can be the projection of a Job that already exists — the same two
+      fields, and the same "replace a terminal entry under the same id" rule, that the
+      download submission has. Task 7's file list named this file; nothing else in
+      `download_queue` changed.
+- [x] `application_context/job_queue_bridge.go` (new, shared by the four Kinds): handle
+      namespaces, acceptance, submission (including the both-writers-race resolution),
+      the wait-and-mirror-progress loop, the bounded finish/block helpers, artifact and
+      report publication, artifact removal, and the refusal classification. One file
+      because all four Kinds need exactly these and a copy per Kind is four places to
+      drift.
+- [x] `application_context/job_export_adapter.go`: `group-export@1`, its codec and
+      sanitized summary, the artifact it stages and publishes, cooperative cancel,
+      Retry/Repeat, `CleanupArtifacts`, reconciliation, `SubmitGroupExport`, and the
+      `ExportArchiveFor` reader the download route uses.
+- [x] `application_context/job_import_adapter.go`: `group-import-parse@1` and
+      `group-import-apply@1`, their codecs, the executor bodies moved out of
+      `server/api_handlers` (so a Retry builds *the same* runFn), `ConsumeImportPlan`,
+      `ImportApplyPlanShouldBeRestored` (the predicate both the executor and the Retry
+      advertisement read), the child link, and `ImportJobAuthorized`.
+- [x] `application_context/job_reduction_adapter.go`: `resource-reduction-compute@1`, the
+      extracted `beginReductionCompute` claim, `startReductionComputeQueueJob`, the
+      Reduction output, and the row-governed Retry advertisement.
+- [x] `application_context/job_maintenance_adapter.go`: `similarity-recompute@1`,
+      admin-only by Definition, `SubmitSimilarityRecompute`.
+- [x] `application_context/resource_reduction_compute.go`, `admin_context.go`: the two
+      request paths accept the Job and dispatch by canonical identity.
+- [x] `application_context/job_context.go`: `SetJobService` registers the four Kinds
+      beside the download pair.
+- [x] `server/api_handlers/export_api_handlers.go`, `import_api_handlers.go`,
+      `server/routes.go`: the submit routes go through the funnels, the export download
+      route authorizes from the Job and serves the artifact, the import lifecycle routes
+      authorize through the Job behind the parse handle, and the recompute route runs
+      request-scoped.
+- [x] `auth/principal.go`: `PrincipalMayActOnOwnedWork`, so the HTTP layer's rule and the
+      application layer's rule for "may this principal act on this owned thing" are one
+      predicate rather than two.
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Export acceptance and artifact | `--- FAIL: TestGroupExportSubmissionAcceptsADurableJobBeforeDispatch (0.02s)` / `export_job_bridge_test.go:90: the export created no durable job: legacy id 43b9a5d045563f48`; `--- FAIL: TestGroupExportJobPublishesAVerifiedArtifactAndSucceeds (15.02s)` / `timed out waiting for the export to finish; the job is /` | `TestGroupExportSubmissionAcceptsADurableJobBeforeDispatch`, `TestGroupExportJobPublishesAVerifiedArtifactAndSucceeds` |
+| Reduction compute | `--- FAIL: TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction (10.07s)` / `no durable resource-reduction-compute job was ever accepted` (both reduction tests, taken through `RequestReductionCompute`) | `TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction`, `TestAReductionJobsRetryIsGovernedByTheRowsOwnState` |
+| Maintenance | `--- FAIL: TestASimilarityRecomputeAcceptsAnAdminOnlyJob (10.08s)` / `no durable similarity-recompute job was ever accepted` (both tests, taken through `RecomputeSimilarities`) | `TestASimilarityRecomputeAcceptsAnAdminOnlyJob`, `TestAMaintenanceJobAdvertisesNoRepeat` |
+| Import authorization | `--- FAIL: TestAnImportsAuthorizationOutlivesItsQueueEntry (0.16s)` / `job_import_adapter_test.go:474: no durable job answered for the cleared import` | `TestAnImportParseAcceptsADurableJobAndPublishesItsPlan`, `TestAnImportParseRetryIsAdvertisedOnlyWhileTheArchiveRemains`, `TestAnImportApplyIsAChildOfItsParseAndRetriesOnlyOnRestoredEvidence`, `TestAnImportsAuthorizationOutlivesItsQueueEntry` |
+| Deployed routes | the browser suite answered `expect(downloadResp.ok()).toBeTruthy()` with a **409** at `e2e/tests/admin-import/import.spec.ts:49` and `import-apply.spec.ts` (2 failed) — see the first defect below | the same specs pass; `TestImportParseRouteAcceptsADurableJob`, `TestImportPlanReadSurvivesTheQueueEntryBeingCleared`, `TestRecomputeSimilaritiesRouteAcceptsADurableJob`, `TestExportSubmitRouteKeepsTheQueueIdAsItsHandle` |
+| Reconciliation and lineage (implemented with the Kinds; mutation-checked) | removing the "publish the staged archive" branch from `Reconcile` fails `TestACrashedExportIsSettledFromItsArchiveRatherThanRerun` with `the reconciler decided "queue", want "succeed"` | `TestACrashedExportIsSettledFromItsArchiveRatherThanRerun`, `TestACrashedExportWithNothingStagedIsQueuedAgain`, `TestAnExportWhosePublishedArchiveIsGoneIsFailedNotSucceeded`, `TestAnExportCancelAsksTheExecutorRatherThanEndingTheJob`, `TestAnExportRetryIsANewJobAndMovesTheHandle`, `TestAnExportRepeatIsANewJobThatLeavesTheHandleAlone`, `TestAnExportJobsArtifactExpiryDoesNotChangeItsOutcome` |
+
+## Defects found while the cycles ran
+
+- **The export download route went 409 on an export the client had just been told was
+  finished.** The queue's own row says `completed` the moment the archive is written, while
+  the Job acquires its artifact only when a dispatch tick publishes it — so the deployed
+  sequence (poll `/v1/jobs/get` until `completed`, then fetch the archive) met a Job that
+  was still running and got a 409. Found by `e2e/tests/admin-import/import.spec.ts` and
+  `import-apply.spec.ts`, not by inspection. The route now falls back to the queue entry
+  while the Job is still nonterminal — the same execution's own record — and answers from
+  the Job alone once it is terminal, so an expired artifact is still a 410 rather than a
+  stale entry's bytes.
+- **The durable authorization was asked of the singleton.** The import routes are mounted on
+  the unscoped `appContext`, whose `Principal()` is the implicit super-user, so
+  `ImportJobAuthorized` answered "authorized" for everyone — the exact hole the durable
+  check exists to close, in the other direction. `importJobDenied` now binds the request's
+  principal onto a local copy of the context before asking, and the parse/apply submissions
+  bind it before reaching the funnel (the Job has to record the person who asked, not the
+  system principal). Found by the new HTTP test, which asserted the stranger's 404.
+- **Both writers can create the queue entry of one execution.** The request path submits the
+  entry, and the runtime's dispatch starts one for a Job whose admission is still in flight
+  (or whose entry died with a previous process). Whichever lost was answered "the queue
+  already has a live job with id …" and the submission failed — seen once as
+  `the export created no durable job` in a full-package run. `submitQueueEntry` now answers
+  the loser with what the winner created when the entry publishes into the same Job.
+- **A parse whose entry already finished was blocked for its missing archive.** The archive
+  check ran before the entry lookup, so a Job that had parsed successfully and whose staged
+  archive was then deleted would be blocked rather than published. The check now applies
+  only where it decides something: when there is no entry to publish from.
+- **The api_tests fixture's shared-cache locks made the new tests flaky under load.** With
+  seven Kinds registered the runtime claims seven times per tick, and on the fixture's
+  `cache=shared` in-memory database a reader can lose a table lock to a writer
+  (`jobs: load visible job: database table is locked: jobs`) — the hazard
+  `RequestReductionCompute` already documents for the same DSN, which the file-backed
+  production configuration never sees. The two test harnesses tick every 50-100ms instead of
+  20ms, and the one test that reads the handle table right after a submission retries.
+
+## Decisions worth recording
+
+- **The artifact is named after the canonical Job, not the legacy handle.** Naming it after
+  the handle would give an ancestor and the Job a Repeat created the same path, and the
+  repeat would rewrite the file the ancestor's output row still names. The handle stays what
+  a client polls with; the file belongs to the execution that produced it. Reconcile derives
+  the same path without needing a handle at all.
+- **The archive is written to `<path>.part` and renamed into place.** That single rename is
+  what makes "a file at the published path" mean "a complete archive", and it is why
+  reconciliation can tell a finished-but-unrecorded export from one that died mid-stream —
+  no blind rerun, and a rerun only where nothing was produced.
+- **An import parse is restorable only while its staged archive exists, and an apply only
+  while the plan is back at its unconsumed path *and* the archive is there.** The archive is
+  the input a re-parse reads and the bytes an apply reads; the restored plan is the durable
+  evidence the executor itself produced when it decided replay was safe
+  (`ImportApplyPlanShouldBeRestored`). A partially applied, replay-unsafe import therefore
+  offers no Retry at all — it publishes its report and stays failed, which is the honest
+  answer to a question the row cannot prove.
+- **The import executor bodies moved out of `server/api_handlers`.** The adapter of a Retry
+  has no request and no handler, so the runFn it builds has to be the one definition of what
+  applying an import is; leaving a copy behind would be two executors for one Kind. The same
+  reason moved `shouldRestorePlan` and the four executor tests that covered it.
+- **A clustering run's claim stays the domain's.** Accepting a Job does not claim the
+  Reduction row: the compare-and-set with its generation nonce does, exactly as before this
+  Kind had a durable identity, and a Retry reads the row as it stands and takes it under a
+  fresh generation. That is what makes a superseded run discard its own plan instead of
+  overwriting a newer one, and it is why the Kind advertises Retry from the *row's* state
+  rather than from the Job's.
+- **Maintenance is admin-only through its Definition, not through its caller.** The Kind
+  fixes the visibility class, so a Job accepted by an administrator stays unreadable by a
+  plain user; dispatch rechecks the acting principal's role with the new
+  `requireAdminRole`, because a Retry runs as whoever asked for the retry.
+- **No Repeat for maintenance or for a download.** Re-running a rebuild that just succeeded
+  is the same work twice over the same rows, which the executor's own process-wide guard
+  refuses; advertising a control the executor would refuse is the button-that-lies the
+  command surface exists to prevent. Export keeps Repeat: a second archive of the same
+  groups duplicates nothing in the library.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — twice, clean both times.
+- The task's exact focused command,
+  `go test -race --tags 'json1 fts5' ./application_context ./server/api_handlers ./groupio -run 'Test.*(Export|Import|Reduction|Similarity|Maintenance|Job)' -count=5`:
+  `./application_context` and `./server/api_handlers` pass;
+  **`./groupio` fails under `-count=5` for a pre-existing reason** — its tests open
+  fixed-name `cache=shared` in-memory databases, so iteration 2 attaches to iteration 1's
+  rows (`TestApplyImport_FullRoundTrip` and 15 siblings fail at ~0.08s). Nothing in this
+  task's diff touches `groupio` (`git status` lists no `groupio` file) and `-count=1` passes
+  there; the application_context/api_handlers half reproduces cleanly on a re-run.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./server/api_tests -count=1`
+  — the whole PG suites, passed.
+- `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests -run 'Test.*(Export|Import|Reduction|Similarity)' -count=1`
+  — passed (Task 8's cross-engine gate).
+- Browser: `tests/admin-export` + `tests/admin-import` (6 passed),
+  `tests/resource-reduction.spec.ts` (32 passed with `admin-overview` and the two export
+  regression specs).
+- CLI: `cli-jobs`, `group-export`, `group-import-apply`, `group-import-dry-run`,
+  `admin-similarity` (22 passed).
+- `go vet --tags 'json1 fts5' ./...` clean, `gofmt -l` on every changed file clean,
+  `git diff --check` clean. No frontend source or template changed, so no bundle rebuild.
+
+## Review
+
+Task 8 is complete. The four workflow families are now durable Jobs as well as queue entries:
+each submission accepts the Job first and then dispatches, the queue entry answers to the
+handle the client already holds, the executor's outcome becomes the Job's outcome with the
+artifact, plan, report or Reduction published as a typed output, and every control is
+advertised by the Kind and bounded by what its executor can actually prove — a parse whose
+archive is gone, an apply that is not replay-safe, a Reduction somebody else recomputed, a
+rebuild that would be the same work twice.
+
+Residual risks and handoffs carried forward:
+
+- **The request path's claim and the Job's acceptance are two writes, compensated rather than
+  atomic.** `RequestReductionCompute` compare-and-sets the row and then accepts the Job; the
+  undo re-reads the row and restores it when the acceptance is refused, and a crash between
+  them leaves the row `computing` under a `pending:<uuid>` generation, which the existing
+  `ReductionComputeDeadline` recovers (the same window the submission itself already had).
+  Putting the pair in one transaction is possible — acceptance is explicitly
+  transaction-friendly — and is the natural follow-up if a reviewer wants the pair atomic.
+- **Generic queue entries still publish no lifecycle into their Job except the outcome.** The
+  adapter polls the entry (`queueJobPollInterval`, 100ms) and publishes progress from it, so
+  a Job's progress is as fresh as the poll; the queue's own `CanonicalSink` remains
+  download-only. Wiring the sink into `managedSink` is a `download_queue` change Task 7
+  scoped to itself and would remove the poll.
+- **`groupio` exposes no CLI-style reconciliation evidence beyond the files.** The import
+  Kinds read the plan/archive/result paths directly with the same helpers the delete handler
+  uses; the plan's "modify `groupio` only where idempotency/reconciliation evidence must be
+  exposed" turned out to be nowhere, because the evidence is the files the executor already
+  writes. If a future Kind needs the plan's parsed content at reconciliation time, that
+  becomes a `groupio` API rather than a file check.
+- **A legacy export id from before this release has no handle row.** `ExportArchiveFor`
+  answers "not durable" for it and the route keeps the queue-entry path, which is the same
+  behavior it had; Task 11's backfill is what gives those rows durable identity.
+- **The maintenance Kind's reconciliation reads a process-local guard.**
+  `hash_worker.RecomputeInProgress()` is the only evidence this process has, and a rebuild
+  running in *another* process is invisible — the queue is memory, so a reconciler cannot see
+  that execution either. Same multi-process caveat Task 7 records for downloads.
+- **`Filter.Command` is still unimplemented**, so a Job Center listing cannot filter by
+  advertised command — unchanged from Task 7's handoff.
+
 # Job Center Task 7 — dual-publish remote and deferred downloads (2026-09-22)
 
 **Goal:** Land Task 7 of the unified Job Center plan: a submission that durably

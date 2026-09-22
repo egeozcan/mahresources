@@ -93,3 +93,20 @@ func (p *Principal) IsScoped() bool {
 func (p *Principal) RequiresScope() bool {
 	return p != nil && !p.SuperUser && p.Role.RequiresScopeGroup()
 }
+
+// PrincipalMayActOnOwnedWork reports whether a principal may inspect or control work
+// recorded against one owner id: administrators (and the auth-off super-user) may act
+// on every job, every other principal only on what it submitted, and an ownerless
+// row is nobody's.
+//
+// It lives here rather than beside either caller because both layers need the same
+// answer from the same inputs: the HTTP layer decides what a route may reach with it,
+// and the application layer decides whether a durable Job stands behind a legacy
+// import handle. Two copies of a four-line predicate are two answers waiting to
+// disagree — the same reason a listing and the mutation it leads to share one.
+func PrincipalMayActOnOwnedWork(p *Principal, owner *uint) bool {
+	if p == nil || p.IsAdmin() {
+		return true
+	}
+	return owner != nil && *owner == p.UserID
+}

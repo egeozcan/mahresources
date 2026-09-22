@@ -2,13 +2,14 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/models"
-	"mahresources/models/types"
 )
 
 // ReductionComputeDeadline is how long a clustering job may hold a Reduction at
@@ -63,31 +64,13 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		return nil, ErrReductionBusy
 	}
 
-	now := time.Now()
-	deadline := now.Add(ReductionComputeDeadline)
-	// A nonce written before the job exists, and swapped for the job's own id when
-	// the worker starts. Without it the worker's claim asks only "is the slot
-	// empty", which a run delayed past its deadline answers yes to — taking the
-	// slot of the newer run that replaced it, and then computing under the subtree
-	// scope it captured an hour ago while the accepted recompute is turned away as
-	// superseded.
-	generation := "pending:" + string(types.NewUUIDv7())
 	// The caller's version, not the one just read. Recompute replaces the plan,
 	// so a request made from a page that predates somebody else's decisions would
 	// discard them without their author ever seeing a refusal — and "every write
 	// is a compare-and-set" has to mean this write too.
-	ok, err := ctx.casReduction(reduction.ID, version, map[string]any{
-		"status":               models.ReductionStatusComputing,
-		"computing_started_at": now,
-		"compute_deadline":     deadline,
-		"compute_job_id":       generation,
-		"compute_error":        "",
-	})
+	generation, err := ctx.beginReductionCompute(reduction.ID, version)
 	if err != nil {
 		return nil, err
-	}
-	if !ok {
-		return nil, ErrReductionConflict
 	}
 
 	dm := ctx.DownloadManager()
@@ -101,49 +84,44 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
 	}
 
+	// The durable Job is accepted before anything is dispatched, and the queue entry
+	// that runs the clustering takes the id the Job's own handle records — the same
+	// order and the same one-id rule every other queue-backed Kind follows.
+	legacyID := ""
+	ref := jobs.ExecutionRef{}
+	if service := ctx.JobService(); service != nil {
+		input, marshalErr := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: version})
+		if marshalErr != nil {
+			ctx.undoRefusedReductionCompute(reduction.ID, generation, marshalErr)
+			return nil, marshalErr
+		}
+		legacyID = download_queue.NewJobID()
+		accepted, acceptErr := ctx.acceptQueueJob(jobs.Acceptance{
+			Kind:        JobKindReductionCompute,
+			KindVersion: jobReductionKindVersion,
+			State:       jobs.StateQueued,
+			OwnerUserID: actorUserID,
+			ActorUserID: actorUserID,
+			Origin:      "api",
+			Title:       "Cluster a Resource Reduction",
+			Replay:      jobs.ReplayInput{Input: input},
+			LegacyRefs:  []jobs.LegacyRef{{Namespace: ReductionComputeHandleNamespace, Handle: legacyID}},
+		})
+		if acceptErr != nil {
+			ctx.undoRefusedReductionCompute(reduction.ID, generation, acceptErr)
+			return nil, acceptErr
+		}
+		ref = jobs.ExecutionRef{JobID: accepted.ID}
+	}
+
 	// The owner is named at construction rather than set afterwards: under -auth
 	// the SSE stream drops any event whose job the principal may not see, so a
 	// job with no owner yet never reaches its own submitter's jobs panel — which
 	// is the only place the progress of this run is visible.
-	_, err = dm.SubmitJobWithOptions(download_queue.JobOptions{
-		Source:       download_queue.JobSourceResourceReduction,
-		InitialPhase: "clustering",
-		OwnerUserID:  actorUserID,
-	}, func(jobCtx context.Context, j *download_queue.DownloadJob, p download_queue.ProgressSink) error {
-		// The row is told which job owns it here, from inside the worker, and not
-		// by the caller after SubmitJobWithOptions returns. SubmitJobWithOptions
-		// starts the goroutine before it returns, so a fast run could finish and
-		// find compute_job_id still empty — read that as "a newer job owns this
-		// row", discard its own finished plan, and leave the Reduction at
-		// `computing` with nothing alive to move it off. Measured: one run in three
-		// of the whole api_tests package.
-		if claimErr := ctx.claimReductionComputeJob(reduction.ID, generation, j.ID); claimErr != nil {
-			// A superseded run leaves the row alone: the newer request owns it and
-			// will report its own outcome. Every other failure has to be recorded
-			// here, because nothing downstream will — this run never reached
-			// runReductionCompute, and an unrecorded refusal leaves the Reduction at
-			// `computing` with nothing alive to move it until its deadline.
-			if !errors.Is(claimErr, ErrReductionComputeSuperseded) {
-				if writeErr := ctx.recordReductionComputeFailure(reduction.ID, generation, claimErr); writeErr != nil {
-					ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name,
-						"Could not record a clustering job that failed to claim its slot: "+writeErr.Error(), nil)
-				}
-			}
-			return claimErr
-		}
-		return ctx.runReductionCompute(jobCtx, reduction.ID, j.ID, p)
-	})
-	if err != nil {
+	if _, err := ctx.startReductionComputeQueueJob(reduction.ID, generation, legacyID, ref, actorUserID); err != nil {
 		// The queue refused it, so nothing is going to compute this. Put the row
 		// back rather than leaving it at `computing` until the deadline.
-		// Re-read rather than assuming the version is the claim's + 1: a widening
-		// or a settings edit can land between the claim and the queue's refusal, and
-		// a compare-and-set against a guessed version quietly affects zero rows —
-		// leaving the Reduction at `computing` with nothing running, until its
-		// deadline. Retried, and reported when it cannot be done.
-		if undoErr := ctx.recordReductionComputeFailure(reduction.ID, "", err); undoErr != nil {
-			ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reduction.ID, reduction.Name, "Could not record a refused clustering job: "+undoErr.Error(), nil)
-		}
+		ctx.undoRefusedReductionCompute(reduction.ID, generation, err)
 		return nil, err
 	}
 
@@ -172,6 +150,26 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		waitOutContention(attempt)
 	}
 	return nil, lastErr
+}
+
+// undoRefusedReductionCompute puts a Reduction back after a submission that never
+// reached the queue.
+//
+// It re-reads rather than assuming the version is the claim's + 1: a widening or a
+// settings edit can land between the claim and the refusal, and a compare-and-set
+// against a guessed version quietly affects zero rows — leaving the Reduction at
+// `computing` with nothing running until its deadline. The generation is what tells a
+// refusal the row has since been handed to somebody else apart from one that is still
+// this request's to undo.
+func (ctx *MahresourcesContext) undoRefusedReductionCompute(reductionID uint, generation string, cause error) {
+	var name string
+	if reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false); err == nil {
+		name = reduction.Name
+	}
+	if undoErr := ctx.recordReductionComputeFailure(reductionID, generation, cause); undoErr != nil {
+		ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, name,
+			"Could not record a refused clustering job: "+undoErr.Error(), nil)
+	}
 }
 
 // claimReductionComputeJob records which queue job owns the row's `computing`

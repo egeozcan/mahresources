@@ -41,7 +41,6 @@ func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 }
 
 // requireWriteRole refuses op unless the acting principal may write at all.
-//
 // The role guards above name capabilities above ordinary writing, because the
 // URL-path rule already refuses a guest every mutating endpoint. That rule is
 // the thing a plugin does not go through: a shortcode or an injection runs on
@@ -56,6 +55,19 @@ func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 // reach are already covered by the path rule.
 func (ctx *MahresourcesContext) requireWriteRole(op string) error {
 	return ctx.requireRole(op, func() bool { return ctx.Principal().CanWrite() })
+}
+
+// requireAdminRole refuses op unless the acting principal is an administrator.
+//
+// It is for the operations whose own *kind* is administrative rather than for
+// writes on administrator-owned data: a similarity rebuild over the whole
+// library is offered only from the admin surface, and the durable Job that
+// carries a re-run is executed as whoever asked for the re-run rather than as
+// whoever asked for the original. A capability between "may write" and "may
+// administer" would not answer it — either the work is the deployment's own
+// maintenance or it is somebody's data, and this one is the former.
+func (ctx *MahresourcesContext) requireAdminRole(op string) error {
+	return ctx.requireRole(op, func() bool { return ctx.Principal().IsAdmin() })
 }
 
 // requireRole is the shared body, and the one place the fail-open rule is
