@@ -42,6 +42,11 @@ type ScheduleRegistration struct {
 	ScheduleID string        `json:"scheduleId"`
 	Every      time.Duration `json:"-"`
 	Overlap    string        `json:"overlap"`
+	// Retryable is the author's explicit declaration that running this handler
+	// again — same schedule, whatever input it derives — is safe. An occurrence's
+	// Retry runs the handler once more, so an undeclared schedule offers none for
+	// the reason an undeclared action does not.
+	Retryable bool `json:"retryable,omitempty"`
 
 	// EverySeconds is the wire form of Every, for the manage page.
 	EverySeconds int64 `json:"everySeconds"`
@@ -120,6 +125,18 @@ func parseScheduleRegistration(L *lua.LState, tbl *lua.LTable, pluginName string
 		}
 	default:
 		return reg, fmt.Errorf("overlap must be a string, got %s", overlapVal.Type())
+	}
+
+	// Optional: retry — one occurrence's handler is the work a Retry would run
+	// again, so the declaration belongs on the schedule for the same reason it
+	// belongs on an action: the host cannot know whether arbitrary Lua is safe to
+	// repeat, and a scheduled Job therefore inherits nothing by default.
+	if retryVal := tbl.RawGetString("retry"); retryVal != lua.LNil {
+		declared, ok := retryVal.(lua.LBool)
+		if !ok {
+			return reg, fmt.Errorf("retry must be a boolean, got %s", retryVal.Type())
+		}
+		reg.Retryable = bool(declared)
 	}
 
 	handlerVal := tbl.RawGetString("handler")

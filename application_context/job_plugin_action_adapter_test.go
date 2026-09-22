@@ -60,6 +60,17 @@ function parent_work(ctx)
     mah.job_complete(ctx.job_id, { message = "parent done" })
 end
 
+function leaky_work(ctx)
+    mah.job_progress(ctx.job_id, 10, "touching " .. ctx.params.secret)
+    mah.job_fail(ctx.job_id, "failed on " .. ctx.params.secret ..
+                 " at https://signed.example/x?token=" .. ctx.params.secret)
+end
+
+function chatty_work(ctx)
+    mah.job_progress(ctx.job_id, 50, "halfway through " .. ctx.params.secret)
+    mah.job_complete(ctx.job_id, { message = "finished " .. ctx.params.secret })
+end
+
 function burst_work(ctx)
     for i = 1, 400 do
         mah.job_progress(ctx.job_id, i % 100, string.rep("x", 900))
@@ -81,10 +92,18 @@ function init()
                  handler = async_work })
     mah.action({ id = "failing-work", label = "Failing Work", entity = "resource", async = true,
                  handler = failing_work })
+    mah.action({ id = "retryable-work", label = "Retryable Work", entity = "resource", async = true,
+                 retry = true, handler = failing_work })
     mah.action({ id = "parent-work", label = "Parent Work", entity = "resource", async = true,
                  handler = parent_work })
     mah.action({ id = "burst-work", label = "Burst Work", entity = "resource", async = true,
                  handler = burst_work })
+    mah.action({ id = "leaky-work", label = "Leaky Work", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = leaky_work })
+    mah.action({ id = "chatty-work", label = "Chatty Work", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = chatty_work })
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
@@ -404,7 +423,7 @@ func TestAStartJobFromAnActionIsANonReplayableChildJob(t *testing.T) {
 func TestAFailedPluginActionOffersARetryAndTheRetryIsANewJob(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 
-	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "failing-work", 4, nil, "")
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "retryable-work", 4, nil, "")
 	if err != nil {
 		t.Fatalf("run the failing action: %v", err)
 	}
@@ -851,5 +870,157 @@ func TestAClosureJobIsNeverClaimableByTheDispatchLoop(t *testing.T) {
 			t.Fatalf("closure %s was claimed by %q, want the process holding the callback (%q)",
 				job.ID, claim.Claimant, owned)
 		}
+	}
+}
+
+// TestAPluginJobKeepsItsOwnTextOutOfDurableHistory is the redaction boundary for
+// plugin background work.
+//
+// A Job's input is sealed, but its failure, its progress snapshots, its terminal
+// event and the hook payload built from them are ordinary durable history: a
+// handler whose validator saw `context.params.secret`, or an HTTP error carrying a
+// signed URL, must not be able to write that value into a surface every authorized
+// reader can search. What the Job records is a bounded host-owned classification —
+// the same shape every other Kind records — and the plugin's own words, with the
+// Job's parameter values replaced, stay out of anything a viewer can list.
+func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
+	const secret = "top-secret-token-value"
+	ctx := newPluginActionJobContext(t)
+
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "leaky-work", 9,
+		map[string]any{"secret": secret}, "")
+	if err != nil {
+		t.Fatalf("run the failing action: %v", err)
+	}
+	job := waitForJobState(t, ctx, canonical, "the action to fail", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if job.State != jobs.StateFailed {
+		t.Fatalf("the action ended %s, want failed", job.State)
+	}
+	if job.Failure == nil {
+		t.Fatalf("the failed action records no failure")
+	}
+	if job.Failure.Code != pluginActionFailureCode {
+		t.Fatalf("the failure is classified %q, want %q", job.Failure.Code, pluginActionFailureCode)
+	}
+	if job.Failure.Message != pluginActionFailureMessage {
+		t.Fatalf("the failure message is %q: it has to be host-owned text, not the handler's own",
+			job.Failure.Message)
+	}
+	if strings.Contains(job.Failure.Message, secret) {
+		t.Fatalf("the durable failure carries a parameter value: %q", job.Failure.Message)
+	}
+	if job.Failure.DiagnosticRef != "" {
+		t.Fatalf("the failure points at a stored diagnostic %q: the plugin's text is not durable anywhere",
+			job.Failure.DiagnosticRef)
+	}
+
+	assertNoSecretInJobSurfaces(t, ctx, canonical, secret)
+
+	// The same rule for a successful run: the completion message and the progress
+	// snapshot are as durable as a failure is.
+	_, chatty, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "chatty-work", 9,
+		map[string]any{"secret": secret}, "")
+	if err != nil {
+		t.Fatalf("run the chatty action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, chatty, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the chatty action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
+}
+
+// assertNoSecretInJobSurfaces reads every surface a viewer can list and refuses a
+// job whose text carries the value.
+func assertNoSecretInJobSurfaces(t *testing.T, ctx *MahresourcesContext, jobID, secret string) {
+	t.Helper()
+	job, err := ctx.GetJob(jobID)
+	if err != nil {
+		t.Fatalf("read the job: %v", err)
+	}
+	if strings.Contains(string(job.Summary), secret) {
+		t.Fatalf("the summary carries the value: %s", job.Summary)
+	}
+	if strings.Contains(job.Progress.Message, secret) {
+		t.Fatalf("the progress snapshot carries the value: %q", job.Progress.Message)
+	}
+	events, err := ctx.JobService().Timeline(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID, 0, 200)
+	if err != nil {
+		t.Fatalf("read the timeline: %v", err)
+	}
+	for _, event := range events {
+		if strings.Contains(string(event.Detail), secret) {
+			t.Fatalf("the %s event carries the value: %s", event.Type, event.Detail)
+		}
+	}
+	page, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+		jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 50)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	for _, listed := range page.Jobs {
+		if strings.Contains(listed.Title, secret) || strings.Contains(string(listed.Summary), secret) {
+			t.Fatalf("the listing carries the value: %s / %s", listed.Title, listed.Summary)
+		}
+	}
+}
+
+// TestAPluginRetryExistsOnlyWhereTheRegistrationDeclaresIt is §16's row for
+// registered actions and scheduled occurrences: "Cancel or Retry only when
+// registration explicitly declares support".
+//
+// The host cannot know whether arbitrary Lua is idempotent — this Kind's own
+// contract says it is not — so a Retry is an author's declaration rather than a
+// consequence of a Job having failed. Both halves matter: an ordinary
+// side-effecting action must offer nothing, and an action that *does* declare it
+// must lose the option the moment the registration that declared it is gone,
+// because the declaration is current policy rather than a property of the record.
+func TestAPluginRetryExistsOnlyWhereTheRegistrationDeclaresIt(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+
+	failedAction := func(actionID string) jobs.Snapshot {
+		t.Helper()
+		_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, actionID, 4, nil, "")
+		if err != nil {
+			t.Fatalf("run %s: %v", actionID, err)
+		}
+		return waitForJobState(t, ctx, canonical, "the action to fail", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+	}
+
+	// An action that says nothing about replay is not retryable, however it ended.
+	ordinary := failedAction("failing-work")
+	if ordinary.State != jobs.StateFailed {
+		t.Fatalf("the ordinary action ended %s, want failed", ordinary.State)
+	}
+	if offersCommand(advertisedForTest(t, ctx, ordinary.ID), jobs.CommandRetry) {
+		t.Fatalf("an action that never declared safe replay offered a Retry")
+	}
+
+	// An action that declares it is retryable, and stays so for as long as the
+	// registration is there.
+	declared := failedAction("retryable-work")
+	if !offersCommand(advertisedForTest(t, ctx, declared.ID), jobs.CommandRetry) {
+		t.Fatalf("an action declaring safe replay offered no Retry")
+	}
+
+	// Disabling the plugin removes the registration, and with it the declaration:
+	// the option is current policy, not a property of the finished Job.
+	if err := ctx.PluginManager().DisablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("disable the plugin: %v", err)
+	}
+	if offersCommand(advertisedForTest(t, ctx, declared.ID), jobs.CommandRetry) {
+		t.Fatalf("a disabled plugin's action still offered a Retry")
+	}
+	if _, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: declared.ID, Key: jobs.CommandRetry, IdempotencyKey: "retry-disabled",
+		ExpectedVersion: declared.Version, Actor: jobs.Access{Administrator: true},
+	}); err == nil {
+		t.Fatalf("a Retry was accepted for an action whose registration no longer exists")
 	}
 }

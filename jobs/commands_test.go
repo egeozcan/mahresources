@@ -1666,3 +1666,91 @@ func describeErrors(errs []error) string {
 	}
 	return strings.Join(parts, " | ")
 }
+
+// TestACommandRechecksTheKindAdvertisementInsideItsTransaction is §4's atomic
+// recheck, in the one place a version cannot cover.
+//
+// An advertisement is a statement about current policy — a plugin that is enabled,
+// a registration that still exists, an artifact that is still there. Between the
+// read that offered a command and the transaction that acts on it, any of those
+// can change, and none of them moves the Job's version. So the Kind is asked again
+// *inside* the transaction: a mutation committed on the strength of a decision
+// that is no longer true is exactly the successor the Astra review found, one that
+// could only block afterwards.
+func TestACommandRechecksTheKindAdvertisementInsideItsTransaction(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+
+	// The advertisement answers differently the second time it is asked, which is
+	// what "policy changed between the page render and the click" looks like from
+	// here. The first answer is the one the requester decided from.
+	var calls int
+	var mu sync.Mutex
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		mu.Lock()
+		calls++
+		call := calls
+		mu.Unlock()
+		if call == 1 {
+			base := []Command{{Key: CommandCancel, Label: "Cancel"}, {Key: CommandRetry, Label: "Retry"}}
+			return base, nil
+		}
+		return nil, nil
+	}
+
+	ancestor := h.acceptReplayable(&owner)
+	h.fail(ancestor.ID)
+
+	_, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(ancestor.ID, CommandRetry, "idem-revoked", viewer))
+	if !errors.Is(err, ErrCommandNotAdvertised) {
+		t.Fatalf("a Retry the Kind stopped offering was applied (err = %v)", err)
+	}
+	successors, err := retrySuccessors(h.deps.DB, ancestor.ID)
+	if err != nil {
+		t.Fatalf("read the retry lineage: %v", err)
+	}
+	if len(successors) != 0 {
+		t.Fatalf("a refused Retry still created %v", successors)
+	}
+}
+
+// TestAControlIntentIsRecheckedInsideItsTransaction is the same seam for the other
+// half of §4: a cancellation or pause persists a durable intent *before* the
+// executor is told, and that record may not be written for a command the Kind no
+// longer supports.
+func TestAControlIntentIsRecheckedInsideItsTransaction(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+
+	h.advertiseStateful()
+	job := h.acceptReplayable(&owner)
+	execution := h.claim(job.ID)
+
+	// From here on the Kind offers nothing, which is what a plugin disabled or a
+	// registration replaced looks like once the request has already been prepared.
+	var calls int
+	var mu sync.Mutex
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls == 1 {
+			return []Command{{Key: CommandCancel, Label: "Cancel", Destructive: true}}, nil
+		}
+		return nil, nil
+	}
+
+	_, err := h.svc.ExecuteCommand(context.Background(), h.deps, h.request(job.ID, CommandCancel, "idem-cancel-revoked", viewer))
+	if !errors.Is(err, ErrCommandNotAdvertised) {
+		t.Fatalf("a cancellation the Kind stopped offering was recorded (err = %v)", err)
+	}
+	row := jobRow(t, h.deps, job.ID)
+	if row.ControlIntent != "" {
+		t.Fatalf("the Job records control intent %q for a command the Kind refused", row.ControlIntent)
+	}
+	if row.State != string(StateRunning) || row.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the Job moved to %s under token %q", row.State, row.ExecutionToken)
+	}
+}

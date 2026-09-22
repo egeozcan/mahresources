@@ -828,7 +828,7 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 			return nil
 		}
 
-		current, err := s.recheckCommand(tx, request)
+		current, err := s.recheckCommand(ctx, deps, tx, request)
 		if err != nil {
 			return err
 		}
@@ -887,9 +887,23 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 }
 
 // recheckCommand re-reads the Job a command is about inside the transaction that
-// acts on it, under the caller's own visibility, and refuses a Job that moved
-// since the request was prepared.
-func (s *Service) recheckCommand(tx *gorm.DB, request CommandRequest) (models.Job, error) {
+// acts on it, under the caller's own visibility, and asks the Kind again whether
+// the Job still offers the command.
+//
+// Both halves are the same question — "is the decision this request was prepared
+// from still true?" — and the second half is the one that cannot be answered by a
+// version. An adapter's advertisement is a statement about *current* policy and
+// current state of the world: a plugin disabled, a registration replaced by a
+// newer plugin.lua, a signed artifact removed, an operator's setting changed, a
+// principal's scope narrowed. None of those move the Job's version, so a command
+// that trusted the advertisement it read before the transaction could create a
+// successor for work that is no longer admissible — §4's rule is that command
+// execution atomically rechecks authorization, version, state, control intent and
+// Kind policy, and this is where the last three are asked.
+//
+// The refusals are typed and write nothing: the claim, the effect and the
+// outcome still commit together or not at all.
+func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest) (models.Job, error) {
 	current, err := loadVisibleJob(tx, request.Actor, request.JobID)
 	if err != nil {
 		return models.Job{}, err
@@ -897,6 +911,15 @@ func (s *Service) recheckCommand(tx *gorm.DB, request CommandRequest) (models.Jo
 	if current.Version != request.ExpectedVersion {
 		return models.Job{}, fmt.Errorf("%w: job %s changed while the command was being claimed",
 			ErrVersionConflict, current.ID)
+	}
+	scoped := deps
+	scoped.DB = tx
+	offered, err := s.advertisedCommands(ctx, scoped, request.Actor, current)
+	if err != nil {
+		return models.Job{}, err
+	}
+	if !offersCommand(offered, request.Key) {
+		return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, current.ID, request.Key)
 	}
 	return current, nil
 }
@@ -1135,7 +1158,7 @@ func (s *Service) executeHostCommand(ctx context.Context, deps Deps, request Com
 			recorded = existing
 			return nil
 		}
-		current, err := s.recheckCommand(tx, request)
+		current, err := s.recheckCommand(ctx, deps, tx, request)
 		if err != nil {
 			return err
 		}
@@ -1311,7 +1334,7 @@ func (s *Service) executeLineageCommand(ctx context.Context, deps Deps, request 
 // createSuccessor accepts the linked Job one Retry or Repeat asks for, inside the
 // transaction that claimed the command.
 func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest, linkType LinkType, claimID string, now time.Time, settled **CommandResult) error {
-	job, err := s.recheckCommand(tx, request)
+	job, err := s.recheckCommand(ctx, deps, tx, request)
 	if err != nil {
 		return err
 	}

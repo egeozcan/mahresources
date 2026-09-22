@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,21 @@ const (
 	// plugin_system.MaxAsyncJobDuration, and a wait longer than that would only
 	// hold a claim for work the manager has already given up on.
 	maxPluginActionRuntimeWait = plugin_system.MaxAsyncJobDuration + 30*time.Second
+	// pluginActionFailureCode and pluginActionFailureMessage are the bounded,
+	// host-owned failure one plugin execution records. The code is what a reader
+	// groups on and the message is what the Job Center shows: neither is derived
+	// from what the plugin said, because a script's own words are arbitrary text
+	// and a Job's failure is durable history the sealed input cannot protect.
+	pluginActionFailureCode    = "plugin-action-failed"
+	pluginActionFailureMessage = "the plugin's handler failed"
+	// pluginActionRedactionMarker replaces any value of the Job's own parameters
+	// that a plugin puts into a message the host persists.
+	pluginActionRedactionMarker = "[redacted]"
+	// minRedactedParamBytes is the shortest parameter value worth replacing. Below
+	// it a value is a fragment of ordinary prose — "1", "on" — and replacing it
+	// would mangle every message without hiding anything a person would call a
+	// secret.
+	minRedactedParamBytes = 3
 )
 
 // pluginActionJobInput is what a plugin-action Job is accepted with.
@@ -658,10 +674,20 @@ func (a *pluginActionAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifac
 // Commands reports what one plugin-action Job offers.
 //
 // A Retry only, and only where a replay would mean something: an unsuccessful
-// registered action or scheduled occurrence, whose input is a plugin, an action
-// and the params to validate again. A closure-backed Job offers nothing — its Lua
-// function died with its process and no input can bring it back — and nothing
-// here offers a Cancel, for the reason the file comment gives.
+// registered action or scheduled occurrence whose registration *declares* that
+// re-running the handler with the same input is safe. Nothing here happens by
+// state alone. The host cannot know whether arbitrary Lua is idempotent — the
+// adapter's own contract says it is not — so Retry is an opt-in an author
+// writes (ActionRegistration.Retryable / ScheduleRegistration.Retryable) and the
+// host enforces by advertising nothing without it. A closure-backed Job offers
+// nothing either way: its Lua function died with its process and no input can
+// bring it back. No Cancel, for the reason the file comment gives.
+//
+// Reading the registration is also what makes this a *current* answer rather
+// than a recorded one: a disabled plugin, a replaced generation and an action
+// deleted from a newer plugin.lua all take the option away the moment they
+// happen, and the command plane re-asks this question inside the transaction
+// that would create the successor.
 //
 // The control plane decides the rest: a terminal Job, a Job whose successor is
 // already running, and a Job whose lineage is hidden from this viewer are all
@@ -676,7 +702,26 @@ func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.Co
 	// input: an advertisement is a read, and a read path that opened every Job's
 	// replay envelope to answer "does this offer Retry?" would decrypt history on
 	// every list render.
-	if pluginActionSubtypeOf(commandContext.Snapshot.Summary) == pluginActionSubtypeClosure {
+	summary, ok := pluginActionSummaryDecoded(commandContext.Snapshot.Summary)
+	if !ok || a.ctx == nil {
+		return nil, nil
+	}
+	pm := a.ctx.PluginManager()
+	if pm == nil {
+		return nil, nil
+	}
+	switch summary.Subtype {
+	case pluginActionSubtypeRegistered:
+		action, _, err := pm.FindAction(summary.Plugin, summary.Action)
+		if err != nil || !action.Retryable {
+			return nil, nil
+		}
+	case pluginActionSubtypeScheduled:
+		reg, found := a.ctx.pluginScheduleRegistration(pm, summary.Plugin, summary.ScheduleID)
+		if !found || !reg.Retryable {
+			return nil, nil
+		}
+	default:
 		return nil, nil
 	}
 	return []jobs.Command{{Key: jobs.CommandRetry, Label: "Retry"}}, nil
@@ -713,12 +758,15 @@ func (s *pluginActionSink) ref() jobs.ExecutionRef {
 
 // Started records that the handler is about to be entered.
 func (s *pluginActionSink) Started(message string) {
-	s.progress(jobs.Progress{Phase: "running", Message: truncateTo(message, jobs.MaxProgressMessageBytes)})
+	s.progress(jobs.Progress{Phase: "running", Message: s.safeText(message, jobs.MaxProgressMessageBytes)})
 }
 
 // Progress replaces the bounded progress snapshot. It is not an event: the plugin
 // manager throttles these calls, and a Job's timeline is not the place to record
 // that a loop was at 43 percent.
+//
+// The plugin's own text is redacted first, because a progress snapshot is durable
+// and searchable in exactly the way a Job's sealed input is not.
 func (s *pluginActionSink) Progress(percent int, message string) {
 	completed := int64(percent)
 	total := int64(100)
@@ -726,8 +774,65 @@ func (s *pluginActionSink) Progress(percent int, message string) {
 		Completed: &completed,
 		Total:     &total,
 		Unit:      "percent",
-		Message:   truncateTo(message, jobs.MaxProgressMessageBytes),
+		Message:   s.safeText(message, jobs.MaxProgressMessageBytes),
 	})
+}
+
+// safeText is the one redaction policy for text a plugin supplies: every value of
+// this Job's own parameters is replaced before the text is persisted.
+//
+// It is deliberately about values the host *knows* rather than about guessing at
+// what looks secret. The parameters are the plugin's own inputs — the Job's
+// summary refuses to carry them, and its envelope is the only durable copy — so a
+// string built out of one of them is the concrete leak a redaction rule can
+// actually close: `error(ctx.params.token)` reaching the timeline, the progress
+// snapshot or a hook payload. Values too short to be worth replacing are left
+// alone, and a Job with no parameters has nothing to redact.
+func (s *pluginActionSink) safeText(message string, limit int) string {
+	return truncateTo(redactPluginParamValues(message, s.input), limit)
+}
+
+// redactPluginParamValues replaces every occurrence of a parameter value in a
+// plugin-supplied string. Longest first, so a value that contains another value is
+// replaced whole rather than in pieces.
+func redactPluginParamValues(message string, input *pluginActionJobInput) string {
+	if message == "" || input == nil || len(input.Params) == 0 {
+		return message
+	}
+	values := make([]string, 0, len(input.Params))
+	for _, value := range input.Params {
+		text, ok := pluginParamText(value)
+		if !ok || len(text) < minRedactedParamBytes {
+			continue
+		}
+		values = append(values, text)
+	}
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	for _, value := range values {
+		message = strings.ReplaceAll(message, value, pluginActionRedactionMarker)
+	}
+	return message
+}
+
+// pluginParamText renders one parameter value the way a plugin's own text would
+// carry it: a string as itself, and everything else through its JSON form, which
+// is how a Lua table comes back.
+func pluginParamText(value any) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		return typed, true
+	case nil:
+		return "", false
+	case bool, float64, int, int64:
+		// A scalar that short is caught by the length rule and is not a secret in
+		// practice; rendering it would only mangle prose.
+		return "", false
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
 }
 
 func (s *pluginActionSink) progress(progress jobs.Progress) {
@@ -763,7 +868,7 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) {
 			s.warn("result-too-large", "the action's result is too large to store")
 		}
 	}
-	_, err := s.finish(jobs.StateSucceeded, nil, message)
+	_, err := s.finish(jobs.StateSucceeded, nil, s.safeText(message, jobs.MaxProgressMessageBytes))
 	if err != nil && !mirrorRefusalIsSilent(err) {
 		log.Printf("warning: could not complete job %s: %v", s.execution.JobID, err)
 		return
@@ -771,21 +876,35 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) {
 	s.announceTerminal("completed", "")
 }
 
-// Failed records an unsuccessful execution with a bounded failure record.
+// Failed records an unsuccessful execution.
+//
+// The failure is a *bounded host-owned classification*, not the plugin's text.
+// A handler's message is arbitrary Lua — `error(ctx.params.secret)`, a signed URL
+// out of an HTTP error — and a Job's failure is durable, searchable history that
+// outlives the sealed envelope the secret was supposed to live in. Every other
+// Kind in this tree already does this ("the download did not complete"); this is
+// the same rule applied to the one executor whose text comes from a script.
+//
+// The executor's own words are not lost: they go to the process's own log, which
+// is not the Job Center and is not a searchable surface, with the Job id that
+// ties them back here.
 func (s *pluginActionSink) Failed(message string) {
 	if s.finished() {
 		return
 	}
+	if raw := s.safeText(message, jobs.MaxFailureMessageBytes); raw != "" {
+		log.Printf("plugin job %s failed: %s", s.execution.JobID, raw)
+	}
 	_, err := s.finish(jobs.StateFailed, &jobs.Failure{
-		Code:    "plugin-action-failed",
+		Code:    pluginActionFailureCode,
 		Class:   jobs.FailureClassInternal,
-		Message: truncateTo(message, jobs.MaxFailureMessageBytes),
-	}, message)
+		Message: pluginActionFailureMessage,
+	}, pluginActionFailureMessage)
 	if err != nil && !mirrorRefusalIsSilent(err) {
 		log.Printf("warning: could not fail job %s: %v", s.execution.JobID, err)
 		return
 	}
-	s.announceTerminal("failed", message)
+	s.announceTerminal("failed", pluginActionFailureMessage)
 }
 
 // announceTerminal tells the deployment's job-event observer that one plugin Job
@@ -1440,15 +1559,27 @@ func pluginActionJobIsQuietOf(summary json.RawMessage) bool {
 }
 
 // pluginActionSubtypeOf reads the subtype out of a sanitized summary. An
+// unreadable summary yields an empty subtype, which matches no executor.
 func pluginActionSubtypeOf(summary json.RawMessage) string {
-	if len(summary) == 0 {
-		return ""
-	}
-	var decoded pluginActionSummary
-	if err := json.Unmarshal(summary, &decoded); err != nil {
+	decoded, ok := pluginActionSummaryDecoded(summary)
+	if !ok {
 		return ""
 	}
 	return decoded.Subtype
+}
+
+// pluginActionSummaryDecoded reads a sanitized summary whole. An unreadable or
+// absent summary is reported as not-decoded rather than as a zero value, so a
+// caller cannot mistake "nothing to read" for "read, and it named no plugin".
+func pluginActionSummaryDecoded(summary json.RawMessage) (pluginActionSummary, bool) {
+	if len(summary) == 0 {
+		return pluginActionSummary{}, false
+	}
+	var decoded pluginActionSummary
+	if err := json.Unmarshal(summary, &decoded); err != nil {
+		return pluginActionSummary{}, false
+	}
+	return decoded, true
 }
 
 // accessUserID reads the acting user id out of an execution's access. A zero id

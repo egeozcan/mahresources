@@ -97,19 +97,26 @@ type ActionFilter struct {
 
 // ActionRegistration represents a plugin-contributed action.
 type ActionRegistration struct {
-	PluginName  string         `json:"plugin_name"`
-	ID          string         `json:"id"`
-	Label       string         `json:"label"`
-	Description string         `json:"description,omitempty"`
-	Icon        string         `json:"icon,omitempty"`
-	Entity      string         `json:"entity"` // resource, note, group
-	Placement   []string       `json:"placement"`
-	Filters     ActionFilter   `json:"filters,omitempty"` // omitempty works because nil slices keep ActionFilter at zero value; avoid initializing empty slices
-	Params      []ActionParam  `json:"params,omitempty"`
-	Async       bool           `json:"async,omitempty"`
-	Confirm     string         `json:"confirm,omitempty"`
-	BulkMax     int            `json:"bulk_max,omitempty"`
-	Handler     *lua.LFunction `json:"-"`
+	PluginName  string        `json:"plugin_name"`
+	ID          string        `json:"id"`
+	Label       string        `json:"label"`
+	Description string        `json:"description,omitempty"`
+	Icon        string        `json:"icon,omitempty"`
+	Entity      string        `json:"entity"` // resource, note, group
+	Placement   []string      `json:"placement"`
+	Filters     ActionFilter  `json:"filters,omitempty"` // omitempty works because nil slices keep ActionFilter at zero value; avoid initializing empty slices
+	Params      []ActionParam `json:"params,omitempty"`
+	Async       bool          `json:"async,omitempty"`
+	Confirm     string        `json:"confirm,omitempty"`
+	BulkMax     int           `json:"bulk_max,omitempty"`
+	// Retryable is the author's explicit declaration that re-running this action
+	// with the same entity and parameters is safe. It is off by default, and it is
+	// deliberately a declaration rather than a guess: the host cannot know whether
+	// arbitrary Lua is idempotent, so a Retry of an undeclared action would be a
+	// second execution of side effects nobody said could be repeated. The host
+	// enforces it by only ever advertising a Retry for an action that declares it.
+	Retryable bool           `json:"retryable,omitempty"`
+	Handler   *lua.LFunction `json:"-"`
 
 	// state is the VM that registered this action. Every registration carries
 	// one so teardown can remove exactly what a dying generation registered:
@@ -173,6 +180,18 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	// Optional: async
 	if v, ok := tbl.RawGetString("async").(lua.LBool); ok {
 		a.Async = bool(v)
+	}
+
+	// Optional: retry — the author's explicit "this handler is safe to run again
+	// with the same input". A non-boolean value is refused by name rather than
+	// read as false: `retry = "safe"` meaning "no" is exactly the silent
+	// opposite the schedule parser's own rule exists to prevent.
+	if retryVal := tbl.RawGetString("retry"); retryVal != lua.LNil {
+		declared, ok := retryVal.(lua.LBool)
+		if !ok {
+			return nil, fmt.Errorf("retry must be a boolean, got %s", retryVal.Type())
+		}
+		a.Retryable = bool(declared)
 	}
 
 	// Optional: confirm
