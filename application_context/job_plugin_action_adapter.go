@@ -655,23 +655,24 @@ func (ctx *MahresourcesContext) pluginActionRefusal(pm *plugin_system.PluginMana
 // expired.
 //
 // The only question it can answer honestly is whether the process that owned the
-// callback is provably gone, and the recorded runtime identity is what it asks.
-// A lease that lapsed says nothing: the runtime can be alive and unreachable, and
-// a fresh process can be running beside it. So:
+// callback is provably gone, and what it asks is the *execution* identity: the
+// claimant the claim recorded, which is the runtime that took the Job when it was
+// dispatched. Not the submission provenance in the sealed input, which names
+// whoever accepted the Job and is immutable — a Retry submitted here and claimed
+// there would otherwise be judged by a process that has nothing to do with the
+// work, and a live execution would be interrupted because a dead one once held
+// the same input.
 //
 //   - proved gone (this host has rebooted since, or the pid no longer exists):
 //     interrupt. The *lua.LFunction cannot run again, and §3's rule for
 //     non-restorable work is that a proven loss ends the execution rather than
 //     restarting it. The Job keeps its history and offers no Retry when its input
 //     cannot be replayed.
-//   - anything else: blocked-external-work-unproven. The Job keeps its claim and
-//     its capacity, no replacement is dispatched, and a person decides.
+//   - anything else (alive, another host, an identity no reconciler can read):
+//     blocked-external-work-unproven. The Job keeps its claim and its capacity,
+//     no replacement is dispatched, and a person decides.
 func (a *pluginActionAdapter) Reconcile(_ context.Context, request jobs.ReconcileRequest) (jobs.ReconcileDecision, error) {
-	// The identity comes from the sanitized summary rather than from the sealed
-	// input, and for closure-backed work that is not a preference: a
-	// non-replayable Job stores no envelope at all, so a reconciler that read the
-	// input would find nothing to read and could never prove anything.
-	identity, ok := plugin_system.ParseRuntimeIdentity(pluginActionRuntimeOf(request.Snapshot.Summary))
+	identity, ok := plugin_system.ParseRuntimeIdentity(request.Claimant)
 	if !ok {
 		return jobs.ReconcileExternalWorkUnproven, nil
 	}

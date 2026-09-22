@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -747,17 +748,110 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 	if ctx == nil || ctx.exportSweepFs == nil || ctx.downloadManager == nil {
 		return
 	}
+	// Age alone is not evidence that a staging file is garbage: a plan, an archive
+	// or a staged result is named after the Job that will read it, and a Job that
+	// has not finished is work this sweep must not delete the input of. The durable
+	// ownership is the authoritative answer and this is the only place that can ask
+	// it, so a failed read skips the sweep rather than deleting on a guess.
+	protected, err := ctx.startupSweepProtectedStems()
+	if err != nil {
+		log.Printf("warning: startup sweep skipped: the staging files a nonterminal job requires could not be read: %v", err)
+		return
+	}
+	keep := func(path string) bool { return stagingPathIsProtected(path, protected) }
 	retention := ctx.downloadManager.ExportRetention()
-	if removed, err := download_queue.SweepOrphanedExports(ctx.exportSweepFs, "_exports", retention); err != nil {
+	if removed, err := download_queue.SweepOrphanedExportsProtected(ctx.exportSweepFs, "_exports", retention, keep); err != nil {
 		log.Printf("warning: SweepOrphanedExports failed: %v", err)
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned export tars", removed)
 	}
-	if removed, err := download_queue.SweepOrphanedExports(ctx.exportSweepFs, "_imports", retention); err != nil {
+	if removed, err := download_queue.SweepOrphanedExportsProtected(ctx.exportSweepFs, "_imports", retention, keep); err != nil {
 		log.Printf("warning: sweep _imports failed: %v", err)
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned import files", removed)
 	}
+}
+
+// startupSweepProtectedStems answers the staging names startup cleanup must leave
+// alone: every stem that names a Job which has not finished, or a Job such a Job
+// still depends on.
+//
+// The naming scheme is the executors' own — a staging file is named after a legacy
+// handle the Job carries (`_imports/<handle>.tar`, `.plan.json`, `.plan.applied.json`,
+// `.result.json`) or after the Job's own id (`_exports/<jobId>.tar`) — so the set is
+// built from those two facts rather than from a list of file names nothing keeps in
+// sync.
+//
+// A nonterminal Job's *parent* is included because a pending apply names its parse's
+// files and the parse is already in a terminal state: the Job that still needs the
+// archive is a child of the Job whose handle the archive is named by.
+func (ctx *MahresourcesContext) startupSweepProtectedStems() (map[string]bool, error) {
+	protected := map[string]bool{}
+	if ctx == nil || ctx.db == nil {
+		return protected, nil
+	}
+	terminal := make([]string, 0, len(jobs.AllStates))
+	for _, state := range jobs.AllStates {
+		if state.Terminal() {
+			terminal = append(terminal, string(state))
+		}
+	}
+
+	var open []models.Job
+	if err := ctx.db.Model(&models.Job{}).Select("id").
+		Where("state NOT IN ?", terminal).Find(&open).Error; err != nil {
+		return nil, err
+	}
+	if len(open) == 0 {
+		return protected, nil
+	}
+	ids := make([]string, 0, len(open))
+	for _, job := range open {
+		ids = append(ids, job.ID)
+		protected[job.ID] = true
+	}
+
+	// The parents of the work in flight, one level: that is the shape every staged
+	// hand-off in this tree has (parse → apply, command run → import).
+	var parents []string
+	if err := ctx.db.Model(&models.JobLink{}).Where("type = ? AND to_job_id IN ?",
+		string(jobs.LinkParentChild), ids).Distinct().Pluck("from_job_id", &parents).Error; err != nil {
+		return nil, err
+	}
+	named := append(append([]string(nil), ids...), parents...)
+
+	var handles []string
+	if err := ctx.db.Model(&models.JobLegacyHandle{}).Where("job_id IN ?", named).
+		Distinct().Pluck("handle", &handles).Error; err != nil {
+		return nil, err
+	}
+	for _, handle := range handles {
+		protected[handle] = true
+	}
+	return protected, nil
+}
+
+// stagingPathIsProtected reports whether one staging path is named after a Job in
+// the protected set.
+//
+// The comparison is a prefix test on the file's name rather than an exact one: the
+// suffix is the executor's own convention (`<stem>.tar`, `<stem>.plan.json`,
+// `<stem>.result.json`), and a suffix this list did not anticipate would otherwise
+// silently become unprotected. The cost of the looser rule is a file that lives a
+// little longer than it had to, which is the direction a cleanup may safely err in;
+// the stems are random ids and handles, so one being a prefix of another is not a
+// case that arises.
+func stagingPathIsProtected(path string, protected map[string]bool) bool {
+	if len(protected) == 0 {
+		return false
+	}
+	name := filepath.Base(path)
+	for stem := range protected {
+		if strings.HasPrefix(name, stem) {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveDeferredSigningKey returns the HMAC key for deferred-render tokens. When

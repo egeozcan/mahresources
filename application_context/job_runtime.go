@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mahresources/jobs"
+	"mahresources/plugin_system"
 )
 
 // This file is the application-owned half of durable dispatch: the loop that
@@ -425,10 +426,24 @@ func (r *JobRuntime) depsFor(ctx context.Context) jobs.Deps {
 }
 
 // defaultJobRuntimeClaimant names this runtime: the host and process that holds
-// a claim, which is what an operator needs to identify an abandoned execution.
+// a claim, which is what an operator needs to identify an abandoned execution —
+// and, for a Kind whose work cannot be restored, what an adapter proves liveness
+// from.
+//
+// It is the same process identity a non-restorable Kind records for its own
+// host-side executions, boot session included, rather than a second spelling of
+// "this process". An identity without a boot session cannot answer the only
+// question a plugin-action Job asks when its claim expires — may that process
+// still be running a *lua.LFunction? — and a claim that cannot answer it leaves
+// the Job blocked for a person instead of resolved. One identity, readable by
+// every reconciler in the deployment.
 func defaultJobRuntimeClaimant() string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
+	identity := plugin_system.CurrentRuntimeIdentity()
+	if identity.Host != "" && identity.BootSession != "" {
+		return identity.String()
+	}
+	host := identity.Host
+	if host == "" {
 		host = "unknown-host"
 	}
 	return fmt.Sprintf("%s:%d", host, os.Getpid())

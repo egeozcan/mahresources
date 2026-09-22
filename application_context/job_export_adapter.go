@@ -221,6 +221,30 @@ func (a *groupExportAdapter) Definition() jobs.Definition {
 	}
 }
 
+// forExecution returns this adapter bound to the principal one execution acts as,
+// so that what is *authorized* and what is *executed* are one view of the
+// subtree.
+//
+// The binding is the export's whole confinement story: groupio resolves scope
+// through the context it is handed (`groupioDeps` reads that context's db and
+// principal on every call), so an export run from the singleton context — which
+// is what a restart dispatch, a Retry and a Repeat are — follows related groups,
+// resources and notes outside the principal's subtree even though the request
+// that asked for it was checked against them. Resolving the actor once and using
+// that context for the authorization check *and* the worker is what makes the two
+// answer the same question; a second resolution, or a check on one context and a
+// run on another, is the defect this method exists to prevent.
+func (a *groupExportAdapter) forExecution(execution jobs.Execution) *groupExportAdapter {
+	if a.ctx == nil || execution.Access.UserID == 0 {
+		return a
+	}
+	principal := a.ctx.principalForPluginActor(execution.Access.UserID)
+	if principal == nil {
+		return a
+	}
+	return &groupExportAdapter{ctx: a.ctx.WithPrincipal(principal), kind: a.kind}
+}
+
 // Dispatch runs one claimed export: it makes sure this process's queue is running
 // it, waits, and publishes the outcome.
 func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execution) error {
@@ -234,6 +258,11 @@ func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	if execution.KindVersion != jobExportKindVersion {
 		return fmt.Errorf("%w: export v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
+
+	// One binding for both halves: the refusal below and the run function built
+	// beneath it read the same context, so an export that passed the check cannot
+	// then stream a tree the check would have refused.
+	a = a.forExecution(execution)
 
 	if reason := a.refusalReason(execution, input); reason != "" {
 		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, reason)

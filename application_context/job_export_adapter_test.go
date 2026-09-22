@@ -1,12 +1,17 @@
 package application_context
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"mahresources/archive"
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -424,5 +429,145 @@ func TestAnExportJobsArtifactExpiryDoesNotChangeItsOutcome(t *testing.T) {
 	}
 	if after.State != jobs.StateSucceeded {
 		t.Fatalf("the artifact's expiry changed the outcome to %s", after.State)
+	}
+}
+
+// scopedExportFixture builds a tree one scoped principal is entitled to export
+// only part of: their own root group, and a group outside it that the root is
+// related to. Without the relation the scoped assertion would hold even if the
+// traversal never ran.
+//
+// It returns the root and the outside group.
+func scopedExportFixture(t *testing.T, ctx *MahresourcesContext) (uint, uint) {
+	t.Helper()
+	root := &models.Group{Name: "scoped-export-root"}
+	if err := ctx.db.Create(root).Error; err != nil {
+		t.Fatalf("create root group: %v", err)
+	}
+	outside := &models.Group{Name: "scoped-export-outside"}
+	if err := ctx.db.Create(outside).Error; err != nil {
+		t.Fatalf("create outside group: %v", err)
+	}
+	if err := ctx.db.Model(root).Association("RelatedGroups").Append(outside); err != nil {
+		t.Fatalf("relate the outside group: %v", err)
+	}
+	return root.ID, outside.ID
+}
+
+// exportedGroupIDs reads one finished export's archive and returns the source ids
+// of the groups it contains.
+func exportedGroupIDs(t *testing.T, ctx *MahresourcesContext, jobID string) map[uint]bool {
+	t.Helper()
+	path := exportArchivePath(jobID, false)
+	content, err := afero.ReadFile(ctx.GetDefaultFs(), path)
+	if err != nil {
+		t.Fatalf("read the export archive %s: %v", path, err)
+	}
+	var manifest archive.Manifest
+	tr := tar.NewReader(bytes.NewReader(content))
+	found := false
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read the archive %s: %v", path, err)
+		}
+		if header.Name != "manifest.json" {
+			continue
+		}
+		payload, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("read the manifest: %v", err)
+		}
+		if err := json.Unmarshal(payload, &manifest); err != nil {
+			t.Fatalf("parse the manifest: %v", err)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("the archive %s has no manifest", path)
+	}
+	ids := make(map[uint]bool, len(manifest.Entries.Groups))
+	for _, entry := range manifest.Entries.Groups {
+		ids[entry.SourceID] = true
+	}
+	return ids
+}
+
+// TestAScopedExportsRepeatKeepsTheExportsSubtree is the export's confinement
+// contract across a second execution.
+//
+// A group-limited principal's export is filtered by *their* subtree, and the
+// filtering lives in the groupio dependencies the run reads — the context's db and
+// its scope resolver — so an execution that builds its run function from the
+// process singleton exports the related tree the request-scoped run deliberately
+// left out. Repeat is where that shows: the successor is a new Job dispatched by
+// the runtime, with no request behind it at all.
+func TestAScopedExportsRepeatKeepsTheExportsSubtree(t *testing.T) {
+	ctx := newJobHarnessContext(t, true)
+	rootID, outsideID := scopedExportFixture(t, ctx)
+
+	// The fixture's control: an unscoped export does follow the relation.
+	unscoped := ctx.SubmitGroupExport(fullBFSRequest(rootID), "api")
+	if unscoped.Err != nil {
+		t.Fatalf("submit the control export: %v", unscoped.Err)
+	}
+	control := waitForSnapshot(t, ctx, unscoped.CanonicalJobID, "the control export to finish",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if control.State != jobs.StateSucceeded {
+		t.Fatalf("the control export ended %s (%+v)", control.State, control.Failure)
+	}
+	if !exportedGroupIDs(t, ctx, control.ID)[outsideID] {
+		t.Fatalf("the unscoped control export did not follow the relation: the scoped assertions would prove nothing")
+	}
+
+	// The scoped principal's own export, submitted through the request-bound path.
+	// The account has to exist: a dispatch resolves the Job's actor to the stored
+	// user, and an actor nobody can read is this tree's deny-all identity.
+	user := &models.User{
+		Username: "scoped-exporter", Role: models.RoleUser,
+		ScopeGroupId: &rootID, PasswordHash: "not-a-real-hash",
+	}
+	if err := ctx.db.Create(user).Error; err != nil {
+		t.Fatalf("create the scoped user: %v", err)
+	}
+	scoped := ctx.WithPrincipal(&auth.Principal{
+		UserID: user.ID, Role: models.RoleUser, ScopeGroupID: &rootID,
+	})
+	submitted := scoped.SubmitGroupExport(fullBFSRequest(rootID), "api")
+	if submitted.Err != nil {
+		t.Fatalf("submit the scoped export: %v", submitted.Err)
+	}
+	first := waitForSnapshot(t, ctx, submitted.CanonicalJobID, "the scoped export to finish",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if first.State != jobs.StateSucceeded {
+		t.Fatalf("the scoped export ended %s (%+v)", first.State, first.Failure)
+	}
+	if exportedGroupIDs(t, ctx, first.ID)[outsideID] {
+		t.Fatalf("the request-bound export followed a relation outside the principal's subtree")
+	}
+
+	// Repeat it. The successor has no request behind it: the runtime claims it and
+	// builds the executor from whatever the adapter binds at dispatch.
+	result, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID:           first.ID,
+		Key:             jobs.CommandRepeat,
+		IdempotencyKey:  "repeat-scoped-export",
+		ExpectedVersion: first.Version,
+		Actor:           jobs.Access{UserID: user.ID},
+	})
+	if err != nil {
+		t.Fatalf("repeat the scoped export: %v", err)
+	}
+	repeated := waitForSnapshot(t, ctx, result.SuccessorID, "the repeated export to finish",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if repeated.State != jobs.StateSucceeded {
+		t.Fatalf("the repeated export ended %s (%+v)", repeated.State, repeated.Failure)
+	}
+	if exportedGroupIDs(t, ctx, repeated.ID)[outsideID] {
+		t.Fatalf("the repeated export followed a relation outside the principal's subtree")
 	}
 }

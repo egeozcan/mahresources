@@ -16,6 +16,7 @@ import (
 	"mahresources/archive"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 )
@@ -475,5 +476,135 @@ func TestAnImportsAuthorizationOutlivesItsQueueEntry(t *testing.T) {
 	}
 	if authorized {
 		t.Fatalf("another user was authorized on somebody else's cleared import")
+	}
+}
+
+// TestStartupCleanupKeepsTheInputsANonterminalJobStillNeeds is the retention
+// invariant the legacy sweep used to break.
+//
+// Startup cleanup deleted every staging file older than the export retention,
+// purely by modtime — including `_imports` archives and the plans a queued apply
+// is going to read. A restart after an outage longer than that window therefore
+// erased the input of work that had not run yet, and the Job could only fail with
+// an error nobody could act on. Age is not ownership: the durable Job is, and this
+// is the sweep asking it.
+func TestStartupCleanupKeepsTheInputsANonterminalJobStillNeeds(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if ctx.exportSweepFs == nil {
+		t.Skip("this harness has no startup sweep filesystem")
+	}
+	// A window the staged files are older than, so the sweep would remove them if
+	// nothing protected them.
+	ctx.DownloadManager().SetSettings(download_queue.NewStaticDownloadSettings(
+		download_queue.TimeoutConfig{}, time.Hour))
+	fs := ctx.GetDefaultFs()
+	if err := fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("mkdir _imports: %v", err)
+	}
+
+	// A parse Job that has not finished, with the archive and plan it will read.
+	const parseHandle = "0123456789abcdef"
+	parse := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportParse, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: json.RawMessage(`{"handle":"` + parseHandle + `","archive":"_imports/` + parseHandle + `.tar"}`)},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportParseHandleNamespace, Handle: parseHandle}},
+	})
+	required := []string{
+		importArchivePathFor(parseHandle),
+		importPlanPathFor(parseHandle),
+	}
+	for _, path := range required {
+		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		ageStagingFileForTest(t, fs, path)
+	}
+	// One file nothing owns, which the sweep must still remove: without this the
+	// test would pass on a sweep that had simply stopped working.
+	orphan := "_imports/feedfacefeedface.tar"
+	if err := afero.WriteFile(fs, orphan, []byte("orphan"), 0o644); err != nil {
+		t.Fatalf("write the orphan: %v", err)
+	}
+	ageStagingFileForTest(t, fs, orphan)
+
+	ctx.RunStartupExportSweep()
+
+	for _, path := range required {
+		exists, err := afero.Exists(fs, path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if !exists {
+			t.Fatalf("startup cleanup deleted %s, which job %s still requires", path, parse.ID)
+		}
+	}
+	if exists, _ := afero.Exists(fs, orphan); exists {
+		t.Fatalf("startup cleanup kept %s, which no job owns", orphan)
+	}
+}
+
+// TestStartupCleanupKeepsAFinishedParentsFilesForItsQueuedChild is the same
+// invariant one link out: a pending apply reads its parse's plan and archive, and
+// the parse Job has already succeeded. Protecting only the nonterminal Job's own
+// name would delete exactly the files the apply is waiting for.
+func TestStartupCleanupKeepsAFinishedParentsFilesForItsQueuedChild(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if ctx.exportSweepFs == nil {
+		t.Skip("this harness has no startup sweep filesystem")
+	}
+	ctx.DownloadManager().SetSettings(download_queue.NewStaticDownloadSettings(
+		download_queue.TimeoutConfig{}, time.Hour))
+	fs := ctx.GetDefaultFs()
+	if err := fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("mkdir _imports: %v", err)
+	}
+
+	const parseHandle = "abcdef0123456789"
+	parse := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportParse, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: json.RawMessage(`{"handle":"` + parseHandle + `","archive":"_imports/` + parseHandle + `.tar"}`)},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportParseHandleNamespace, Handle: parseHandle}},
+	})
+	finished := finishJobFor(t, ctx, parse, jobs.StateSucceeded)
+
+	apply := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay: jobs.ReplayInput{Input: json.RawMessage(
+			`{"parseHandle":"` + parseHandle + `","plan":"` + importConsumedPlanPathFor(parseHandle) + `","decisions":{}}`)},
+	})
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkParentChild, FromJobID: finished.ID, ToJobID: apply.ID,
+	}); err != nil {
+		t.Fatalf("link the apply to its parse: %v", err)
+	}
+
+	archive := importArchivePathFor(parseHandle)
+	consumed := importConsumedPlanPathFor(parseHandle)
+	for _, path := range []string{archive, consumed} {
+		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		ageStagingFileForTest(t, fs, path)
+	}
+
+	ctx.RunStartupExportSweep()
+
+	for _, path := range []string{archive, consumed} {
+		if exists, _ := afero.Exists(fs, path); !exists {
+			t.Fatalf("startup cleanup deleted %s, which the queued apply %s still reads", path, apply.ID)
+		}
+	}
+}
+
+// ageStagingFileForTest makes one staging file older than any retention window, so
+// the sweep would remove it if nothing protected it.
+func ageStagingFileForTest(t *testing.T, fs afero.Fs, path string) {
+	t.Helper()
+	old := time.Now().Add(-72 * time.Hour)
+	if err := fs.Chtimes(path, old, old); err != nil {
+		t.Fatalf("age %s: %v", path, err)
 	}
 }

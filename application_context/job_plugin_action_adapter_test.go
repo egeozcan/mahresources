@@ -469,10 +469,10 @@ func TestAFailedPluginActionOffersARetryAndTheRetryIsANewJob(t *testing.T) {
 func TestAClosureJobWhoseRuntimeIsProvedGoneIsInterrupted(t *testing.T) {
 	ctx := newPluginActionJobContext(t)
 
-	// A runtime identity from another host: unprovable, so the Job must be
+	// A claim held by a process on another host: unprovable, so the Job must be
 	// blocked rather than interrupted or redispatched.
 	foreign := acceptClosureJobForTest(t, ctx, "another-host/boot-1/4242")
-	claimJobForTest(t, ctx, foreign.ID)
+	claimJobForTestAs(t, ctx, foreign.ID, "another-host/boot-1/4242")
 	expireAndReconcile(t, ctx)
 	if got := jobStateForTest(t, ctx, foreign.ID); got != jobs.StateBlocked {
 		t.Fatalf("a job whose runtime is uninspectable is %s, want blocked", got)
@@ -480,11 +480,37 @@ func TestAClosureJobWhoseRuntimeIsProvedGoneIsInterrupted(t *testing.T) {
 
 	// The same host, a boot session this machine is not in: that process cannot
 	// exist any more, so the callback is proved gone.
-	gone := acceptClosureJobForTest(t, ctx, plugin_system.CurrentRuntimeIdentity().Host+"/boot-that-ended/4243")
-	claimJobForTest(t, ctx, gone.ID)
+	goneUntil := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4243"
+	gone := acceptClosureJobForTest(t, ctx, goneUntil)
+	claimJobForTestAs(t, ctx, gone.ID, goneUntil)
 	expireAndReconcile(t, ctx)
 	if got := jobStateForTest(t, ctx, gone.ID); got != jobs.StateInterrupted {
 		t.Fatalf("a job whose runtime is proved gone is %s, want interrupted", got)
+	}
+}
+
+// TestAReconciliationJudgesTheClaimHolderNotTheSubmitter is the identity the
+// question belongs to.
+//
+// A Job's sealed input records who *submitted* the work, and that provenance is
+// immutable: a Retry submitted here and claimed there keeps the input it was
+// accepted with, so judging the execution by it means judging live work by a
+// process that has nothing to do with it — here, a boot session that has ended,
+// which would interrupt a callback this very process is holding. The claim's
+// claimant is the execution identity, recorded when the Job was dispatched.
+func TestAReconciliationJudgesTheClaimHolderNotTheSubmitter(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+
+	// The submission provenance names a process that cannot still exist.
+	submittedBy := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4243"
+	job := acceptClosureJobForTest(t, ctx, submittedBy)
+	// The claim belongs to this process, which is alive and still owns the
+	// callback.
+	claimJobForTestAs(t, ctx, job.ID, plugin_system.CurrentRuntimeIdentity().String())
+	expireAndReconcile(t, ctx)
+
+	if got := jobStateForTest(t, ctx, job.ID); got != jobs.StateBlocked {
+		t.Fatalf("a job whose execution runtime is alive is %s, want blocked for a person to resolve", got)
 	}
 }
 
@@ -514,6 +540,19 @@ func acceptClosureJobForTest(t *testing.T, ctx *MahresourcesContext, runtime str
 		t.Fatalf("accept the closure job: %v", err)
 	}
 	return accepted
+}
+
+// claimJobForTestAs claims one Job in the name of one runtime identity, which is
+// what reconciliation judges the execution by.
+func claimJobForTestAs(t *testing.T, ctx *MahresourcesContext, jobID, claimant string) {
+	t.Helper()
+	_, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindPluginAction, KindVersion: jobPluginActionKindVersion,
+		JobID: jobID, Claimant: claimant,
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim %s: claimed=%v err=%v", jobID, claimed, err)
+	}
 }
 
 // claimJobForTest claims one Job the way a runtime does, so a lease exists for
