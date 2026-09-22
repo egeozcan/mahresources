@@ -608,3 +608,72 @@ func ageStagingFileForTest(t *testing.T, fs afero.Fs, path string) {
 		t.Fatalf("age %s: %v", path, err)
 	}
 }
+
+// TestAQueuedImportApplyRestartsFromItsAdmittedPlan is the crash boundary between
+// durable acceptance and queue creation.
+//
+// The plan is consumed when the apply is *submitted* — that is what makes a second
+// /apply on one review a refusal — and the consumed path is recorded in the sealed
+// input. A process that stops between accepting the Job and enqueuing it, or a
+// dispatch loop that claims the Job first, therefore finds an executor whose only
+// evidence of what to read is that recorded path: consuming the plan again cannot
+// work (the unconsumed one is gone by construction), and failing the Job for it
+// leaves an intact archive and an untouched plan that no command can use.
+func TestAQueuedImportApplyRestartsFromItsAdmittedPlan(t *testing.T) {
+	ctx := newWorkflowJobContext(t)
+	handle := "imp-crash-boundary"
+	staging := writeImportArchiveForTest(t, ctx, handle)
+
+	parse := ctx.SubmitImportParse(handle, staging, "api")
+	if parse.Err != nil {
+		t.Fatalf("submit the parse: %v", parse.Err)
+	}
+	parsed := waitForSnapshot(t, ctx, parse.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if parsed.State != jobs.StateSucceeded {
+		t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
+	}
+
+	// The handler's half: consume the plan, exactly as the applied route does.
+	consumed, err := ConsumeImportPlan(ctx.GetDefaultFs(), handle)
+	if err != nil {
+		t.Fatalf("consume the plan: %v", err)
+	}
+
+	// The crash boundary: the Job is accepted durably and nothing is enqueued. The
+	// runtime's loop is running, so it claims the Job and dispatches it from the
+	// recorded input alone — which is exactly what a restart does.
+	decisions := ImportDecisions{
+		MappingActions:  map[string]MappingAction{},
+		DanglingActions: map[string]DanglingAction{},
+	}
+	input, err := json.Marshal(importApplyJobInput{
+		ParseHandle: handle, Plan: consumed, Decisions: decisions,
+	})
+	if err != nil {
+		t.Fatalf("encode the apply input: %v", err)
+	}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: "crash-boundary-1"}},
+	})
+
+	applied := waitForSnapshot(t, ctx, accepted.ID, "the accepted apply to run", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if applied.State != jobs.StateSucceeded {
+		t.Fatalf("the accepted apply ended %s (%+v): its admitted plan could not be used", applied.State, applied.Failure)
+	}
+
+	// And the import really was applied: the archive's group is in the library.
+	var imported int64
+	if err := ctx.db.Model(&models.Group{}).Where("name = ?", "Imported").Count(&imported).Error; err != nil {
+		t.Fatalf("count the imported group: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("%d groups named Imported, want the one the apply created", imported)
+	}
+}

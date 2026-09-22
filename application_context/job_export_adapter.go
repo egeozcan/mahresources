@@ -421,9 +421,11 @@ func (a *groupExportAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 		}
 		return jobs.ReconcileSucceed, nil
 	}
-	// Nothing was produced, so running the export again is the only way it can
-	// succeed and nothing is overwritten by doing so.
-	return jobs.ReconcileQueue, nil
+	// Nothing was produced here. Running the export again is the only way it can
+	// succeed — and it is only safe once the runtime that claimed it is proved
+	// gone, because a second export started over a live one writes the same tree
+	// twice.
+	return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 }
 
 // CleanupArtifacts removes one expired export's archive, or confirms it is gone.

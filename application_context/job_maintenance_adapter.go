@@ -235,7 +235,10 @@ func (a *similarityRecomputeAdapter) Reconcile(_ context.Context, request jobs.R
 	if hash_worker.RecomputeInProgress() {
 		return jobs.ReconcileExternalWorkUnproven, nil
 	}
-	return jobs.ReconcileQueue, nil
+	// The guard is this process's, so its freedom says nothing about a rebuild
+	// another process is running: the claim's own runtime identity is what decides
+	// whether a replacement may be dispatched.
+	return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 }
 
 // CleanupArtifacts accounts for one maintenance Job's outputs: a rebuild stages no

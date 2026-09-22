@@ -15,6 +15,7 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/plugin_system"
 
 	"github.com/spf13/afero"
 )
@@ -79,8 +80,14 @@ func acceptAndClaimExportForTest(t *testing.T, ctx *MahresourcesContext, handle 
 	execution, claimed, err := service.Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
 		Kind:        JobKindGroupExport,
 		KindVersion: jobExportKindVersion,
-		Claimant:    "test-execution",
-		Lease:       lease,
+		// A runtime that is provably gone, because that is the state these fixtures
+		// stand for: an execution whose process died with the export. Reconciliation
+		// may only dispatch a replacement once the claim's own runtime identity
+		// proves the original cannot still be running (see the download Kind's
+		// TestAQueueBackedReconcileNeedsProofTheExecutorIsGone), so a claim taken in
+		// the name of an unknown process makes "queued again" unreachable.
+		Claimant: goneRuntimeIdentityForTest(),
+		Lease:    lease,
 	})
 	if err != nil {
 		t.Fatalf("claim the export: %v", err)
@@ -132,6 +139,15 @@ func reconcileOnce(t *testing.T, ctx *MahresourcesContext, jobID string) jobs.Re
 		}
 	}
 	return ""
+}
+
+// goneRuntimeIdentityForTest names a process that cannot exist any more: this host,
+// a boot session it is not in, and a pid. Fixtures that stand for "the execution
+// died" claim in this name, because an identity a reconciler cannot read has to
+// leave the Job blocked rather than dispatching a replacement over work that might
+// be live.
+func goneRuntimeIdentityForTest() string {
+	return plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended-for-tests/4242"
 }
 
 // TestACrashedExportIsSettledFromItsArchiveRatherThanRerun is §3's reconciliation

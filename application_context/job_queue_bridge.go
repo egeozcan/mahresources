@@ -11,6 +11,7 @@ import (
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/plugin_system"
 )
 
 // This file is the shared half of every Kind whose work the in-memory download
@@ -229,6 +230,40 @@ func (ctx *MahresourcesContext) queueEntryFor(jobID string) (*download_queue.Dow
 		return nil, false
 	}
 	return ctx.downloadManager.GetJobByCanonicalJobID(jobID)
+}
+
+// queueOnlyIfTheRuntimeIsProvedGone is the honest form of "run it again" for a Kind
+// whose executor lives in one process's memory.
+//
+// The queue is not a database: an entry this process does not hold may be running
+// perfectly well in another one, and "I cannot see it" is not "nobody is running
+// it". Acting on that absence re-runs work a live process is doing — a second
+// transfer of one URL, a second export of one tree — which is why §3 permits a
+// replacement dispatch only once the owning runtime is *proved* quiescent, and why
+// the claim's claimant is what is asked: it names the process that took the Job when
+// it was dispatched, and it is the runtime's own identity rather than a second
+// spelling of "this process".
+//
+// Proved gone — this host has rebooted since, or the pid no longer exists — the Job
+// goes back to the queue and the next process starts the work. Anything else (alive,
+// another host, an identity no reconciler can read) leaves the Job nonterminal and
+// blocked with its claim and its capacity held, for an operator to resolve. That is
+// the fail-safe direction the design takes everywhere: a Job waiting for a person is
+// recoverable, a duplicated side effect is not.
+//
+// It is deliberately not used where a Kind has *positive* durable evidence that its
+// execution ended — an archive at the published path, a plan on disk, a row the run
+// wrote. That is evidence about the work rather than about a process's memory, and
+// acting on it is what §3 means by reconciling durable side effects.
+func (ctx *MahresourcesContext) queueOnlyIfTheRuntimeIsProvedGone(request jobs.ReconcileRequest) jobs.ReconcileDecision {
+	identity, ok := plugin_system.ParseRuntimeIdentity(request.Claimant)
+	if !ok {
+		return jobs.ReconcileExternalWorkUnproven
+	}
+	if identity.Liveness() == plugin_system.RuntimeGone {
+		return jobs.ReconcileQueue
+	}
+	return jobs.ReconcileExternalWorkUnproven
 }
 
 // waitForQueueExecution blocks until one queue entry reaches a terminal status, the

@@ -484,7 +484,9 @@ func (a *downloadJobAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 	}
 	entry, found := a.ctx.downloadManager.GetJobByCanonicalJobID(request.Snapshot.ID)
 	if !found {
-		return jobs.ReconcileQueue, nil
+		// Nothing here is running this transfer, and whether another process is is
+		// the question the claim's own identity answers.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	if downloadTerminal(entry.GetStatus()) {
 		return jobs.ReconcileQueue, nil

@@ -17,6 +17,7 @@ import (
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
@@ -706,5 +707,74 @@ func TestAPluginsImmediateDownloadReportsAnAcceptanceFailure(t *testing.T) {
 	}
 	if after := len(ctx.DownloadManager().GetJobs()); after != before {
 		t.Fatalf("the refused submission left %d queue entries behind", after-before)
+	}
+}
+
+// TestAQueueBackedReconcileNeedsProofTheExecutorIsGone is §3's rule for a Kind whose
+// executor is one process's memory.
+//
+// The queue is not a database: an entry this process cannot see may be running
+// perfectly well in another one, so "no entry here" is not "nobody is running it",
+// and queuing the work again on that absence starts a second transfer of a URL a
+// live process is already fetching. What decides is the claim's own runtime
+// identity — the process that took the Job when it was dispatched — and until that
+// process is proved gone the Job stays nonterminal and blocked with its claim and
+// its capacity held.
+func TestAQueueBackedReconcileNeedsProofTheExecutorIsGone(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	input, err := json.Marshal(downloadJobInput{
+		Creator: &query_models.ResourceFromRemoteCreator{URL: "https://example.invalid/x.bin"},
+	})
+	if err != nil {
+		t.Fatalf("encode the input: %v", err)
+	}
+
+	claimDownloadForTest := func(t *testing.T, jobID, claimant string) {
+		t.Helper()
+		_, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+			Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion,
+			JobID: jobID, Claimant: claimant, Lease: 20 * time.Millisecond,
+		})
+		if err != nil || !claimed {
+			t.Fatalf("claim %s as %q: claimed=%v err=%v", jobID, claimant, claimed, err)
+		}
+	}
+
+	acceptDownloadForTest := func(t *testing.T) jobs.Snapshot {
+		t.Helper()
+		return acceptJobFor(t, ctx, jobs.Acceptance{
+			Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion,
+			State: jobs.StateQueued, Origin: "api",
+			Replay: jobs.ReplayInput{Input: input},
+		})
+	}
+
+	// A process that is still running — this one — holds the transfer. Re-queuing it
+	// would start a second one, so the Job stays blocked with its claim held.
+	live := acceptDownloadForTest(t)
+	claimDownloadForTest(t, live.ID, plugin_system.CurrentRuntimeIdentity().String())
+	time.Sleep(40 * time.Millisecond)
+	if decision := reconcileOnce(t, ctx, live.ID); decision != jobs.ReconcileExternalWorkUnproven {
+		t.Fatalf("a transfer whose runtime is alive was decided %q, want it left unresolved", decision)
+	}
+	held, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, live.ID)
+	if err != nil {
+		t.Fatalf("read the held job: %v", err)
+	}
+	if held.State != jobs.StateBlocked {
+		t.Fatalf("the job is %s, want blocked while its runtime may still be running it", held.State)
+	}
+	if claim := storedClaim(t, ctx, live.ID); claim.State == models.JobClaimStateReleased {
+		t.Fatalf("the claim was released, so a replacement could be dispatched over live work")
+	}
+
+	// A process that cannot exist any more: the work may be queued again, and the
+	// next runtime starts it.
+	goneUntil := plugin_system.CurrentRuntimeIdentity().Host + "/boot-that-ended/4242"
+	gone := acceptDownloadForTest(t)
+	claimDownloadForTest(t, gone.ID, goneUntil)
+	time.Sleep(40 * time.Millisecond)
+	if decision := reconcileOnce(t, ctx, gone.ID); decision != jobs.ReconcileQueue {
+		t.Fatalf("a transfer whose runtime is proved gone was decided %q, want it queued again", decision)
 	}
 }

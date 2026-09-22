@@ -280,6 +280,16 @@ func (ctx *MahresourcesContext) importPlanExists(handle string) bool {
 	return err == nil && exists
 }
 
+// importStagedFileExists reports whether one staging path is readable, which is how
+// this Kind asks whether the file it was admitted with is still there.
+func (ctx *MahresourcesContext) importStagedFileExists(path string) bool {
+	if ctx == nil || path == "" {
+		return false
+	}
+	exists, err := afero.Exists(ctx.GetDefaultFs(), path)
+	return err == nil && exists
+}
+
 // consumeImportPlan moves one plan into its consumed name, refusing when there is
 // no plan left to consume.
 //
@@ -472,8 +482,10 @@ func (a *importParseAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 		return jobs.ReconcileSucceed, nil
 	}
 	if a.ctx.importArchiveExists(input.Handle) {
-		// Nothing was produced and the archive is still there: run it again.
-		return jobs.ReconcileQueue, nil
+		// Nothing was produced and the archive is still there. Running the parse
+		// again is safe once the runtime that claimed it is proved gone: a second
+		// parse over a live one writes the same plan twice.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	// Neither the plan nor the archive: there is no input left and nothing that
 	// could produce one.
@@ -600,16 +612,42 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 }
 
 // start consumes the plan and submits the apply this execution needs.
+//
+// Which plan that is has two answers, and telling them apart is what makes an
+// accepted-but-undispatched apply runnable at all.
+//
+//   - The plan the Job was *admitted* with (`input.Plan`, the consumed one) is
+//     still there: this apply was accepted and never started. The request that
+//     accepted it consumed the plan — which is what makes a second /apply on the
+//     same review a refusal — so nothing has been applied, and the queue entry it
+//     was going to get either never existed (the process stopped between
+//     acceptance and submission) or was claimed away by the very runtime that is
+//     dispatching it now. Reading the recorded plan applies the import exactly
+//     once. Consuming it again cannot work and must not be attempted: the
+//     unconsumed path is empty by construction, and failing the Job for a refusal
+//     nobody made leaves work nobody can run.
+//   - The plan is back at its *unconsumed* path: the executor restored it as its
+//     own replay-safety evidence, so this consumes it now exactly as the handler
+//     would have. A consumed plan without a restored one never reaches here — that
+//     is the uncertain partially-executed apply reconciliation refuses, not work
+//     this Kind may rerun.
+//
+// The archive is required either way: the plan names rows, the archive has their
+// bytes.
 func (a *importApplyAdapter) start(bound *MahresourcesContext, execution jobs.Execution, input *importApplyJobInput) (*download_queue.DownloadJob, error) {
-	consumed, err := consumeImportPlan(a.ctx.GetDefaultFs(), input.ParseHandle)
-	if err != nil {
-		// A plan that is gone is a refusal to *admit* the work: nothing can run it,
-		// and the Job is blocked for a person to decide about rather than failed for
-		// something nobody did wrong.
-		if errors.Is(err, ErrImportPlanConsumed) {
-			return nil, fmt.Errorf("the plan for import %s is no longer there", input.ParseHandle)
+	plan := strings.TrimSpace(input.Plan)
+	if !a.ctx.importStagedFileExists(plan) {
+		consumed, err := consumeImportPlan(a.ctx.GetDefaultFs(), input.ParseHandle)
+		if err != nil {
+			// A plan that is gone is a refusal to *admit* the work: nothing can run it,
+			// and the Job is blocked for a person to decide about rather than failed for
+			// something nobody did wrong.
+			if errors.Is(err, ErrImportPlanConsumed) {
+				return nil, fmt.Errorf("the plan for import %s is no longer there", input.ParseHandle)
+			}
+			return nil, err
 		}
-		return nil, err
+		plan = consumed
 	}
 	if !a.ctx.importArchiveExists(input.ParseHandle) {
 		return nil, fmt.Errorf("the archive for import %s is no longer there", input.ParseHandle)
@@ -627,7 +665,7 @@ func (a *importApplyAdapter) start(bound *MahresourcesContext, execution jobs.Ex
 		opts,
 		handle,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
-		bound.buildImportApplyRunFn(input.ParseHandle, consumed, &input.Decisions),
+		bound.buildImportApplyRunFn(input.ParseHandle, plan, &input.Decisions),
 	)
 }
 
