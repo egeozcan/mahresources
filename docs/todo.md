@@ -1,3 +1,49 @@
+# Job Center implementation planning (2026-09-22)
+
+**Goal:** Map the approved Job Center design to exact modules, files, test seams, migration barriers, and small red/green implementation commits before production code changes.
+
+## Plan
+
+- [x] Inspect every current background-work registry, durable source, route, UI, CLI, migration entry point, and runtime fence.
+- [x] Write a test-first, phased implementation plan at `docs/superpowers/plans/2026-09-22-job-center.md`.
+- [x] Complete the bounded GPT-6 Astra review/correction loop with no P0/P1 findings.
+- [x] Verify links, task/file references, required design properties, and `git diff --check`.
+- [x] Record final review evidence and implementation handoff notes.
+
+## Review
+
+Created `docs/superpowers/plans/2026-09-22-job-center.md`: an 18-task, red/green implementation sequence covering the common relational core, commit-safe durable events, encrypted replay, claims and reconciliation, shared visibility/retention, idempotent commands, every current Job Kind adapter, migration and plaintext retirement, canonical/legacy APIs, UI/CLI, complete-Kind cutover, and crash/security/release verification. The plan defines the public test seams and splits rollout into hidden dual publication, migration/retirement, complete cutover, and compatibility phases.
+
+GPT-6 Astra round 1 (`b5cedb9a-115c-4db6-b99f-86cc233b810a`) found five P1 planning gaps. The correction persists an admin-only visibility class through the one relational predicate used by every read/delivery/aggregate seam; installs and preflight-enforces the writer epoch in Release A rather than the later migration release; moves the essential compatibility-handle/immutable legacy Retry bridge into Release A; separates live graceful command-runtime handoff from dead-owner crash recovery under the staging lease and database fence; and sequences canonical SSE through a post-commit publisher so PostgreSQL commit inversion cannot skip events.
+
+Fresh GPT-6 Astra round 2 (`8fa25826-a15e-4b4f-ac15-c79d2729a3e9`) checked those corrections plus the full plan against the design, ADRs 0006/0007, `CLAUDE.md`, and current submission, compatibility, authorization, scheduling, recovery, and persistence code. It returned `OK` with no P0/P1 findings, so the bounded loop stopped.
+
+Final documentation checks passed: local Markdown links resolve; ADR numbers are unique; all 18 task headings and required correction/cutover probes are present; the plan has no TBD/TODO/FIXME placeholders; changed paths remain documentation-only; and `git diff --check` is clean. No production code, schema, generated assets, or runtime tests were changed or run. Implementation has not begun; Task 1 is the approved handoff point.
+
+# Job Center design (2026-09-22)
+
+**Goal:** Capture the approved replacement of download-specific history with a durable, capability-driven Job Center covering every user- or operator-facing background job kind.
+
+## Plan
+
+- [x] Resolve the Job Center domain language and behavioral decisions with the operator.
+- [x] Write the complete design specification without turning it into an implementation plan.
+- [x] Record the durable-control-plane and immutable-retry decisions as concise ADRs.
+- [x] Check the specification against every accepted design branch and verify documentation consistency.
+- [x] Record review evidence and remaining implementation work.
+- [x] Resolve round-1 P1 contradictions with the approved retention, legacy-callback, and command-runtime constraints; revalidate documentation.
+- [x] Resolve round-2 P1 gaps in legacy plaintext retirement and retry identity compatibility with approved cutover and handle contracts; revalidate documentation.
+
+## Review
+
+Created `docs/superpowers/specs/2026-09-22-job-center-design.md`, covering the approved domain model, immutable lifecycle and lineage, capability-driven commands, durable control plane, specialized executors, at-least-once dispatch, claims/reconciliation, replay encryption, events/progress/logs, outputs, authorization, retention, UI/API contracts, existing-Kind command matrix, migration and complete-cutover strategy. Added ADRs 0006 and 0007 for the two enduring architectural trade-offs, and updated `CONTEXT.md` with glossary-only Job language.
+
+Documentation verification passed: local Markdown links resolve, ADR numbers are unique, every required design section and key decision probe is present, the specification contains no TBD/TODO/FIXME placeholders, and `git diff --check` is clean. No production code, generated assets, database schema, or tests were changed. Round-1 review identified four P1 contradictions, checked against the existing deferred-download payload path, closure-backed `mah.start_job` runner, and command recovery/staging lease. The specification now exempts blocked Jobs and unresolved recovery records from expiry; protects execution-required envelopes/keys in every nonterminal state and starts replay retention at terminal completion; interrupts non-restorable callback Jobs after proven runtime loss without Retry; and restricts command/import execution to one fenced runtime per database/staging namespace, with owner-only recovery, token-checked publication, and quiescence required before capacity release or replacement dispatch. ADR 0006 records these constraints concisely. Administrative purge cannot destroy required execution input before safe termination. These resolutions were approved through supervisory coordination; no new multi-host command API or named-handler API was added.
+
+Round-2 review confirmed plaintext URL/payload persistence in `download_history_context.go` and `scheduled_download_context.go`, including verbatim headers from `ResourceFromRemoteCreator`, and the same-ID Retry contract in `jobs_help/job_retry.md`, `DownloadManager.Retry`, and the legacy status-only handler response. The approved correction requires verified encrypted input, drained/fenced old writers, canonical-only execution/replay readers, resumable source scrubbing before cutover, and atomic purge markers preventing restoration by backfill. Legacy-only durable handles now project the current linear retry leaf across responses, get/list/events/control and successive retries, under current authorization; canonical UUIDs remain immutable. The shared SSE route explicitly keeps unversioned legacy projection and uses `version=2` for canonical identities and separate cursors. ADRs 0006/0007 record these constraints concisely; `CONTEXT.md` remains glossary-only and unchanged by round 2.
+
+Post-correction checks passed for local links, placeholder absence, unique sequential ADR numbers, and `git diff --check`; no files are staged. Production code was only inspected; code and tests were not changed, and runtime tests were not run for these documentation-only corrections. Fresh GPT-6 Astra review round 3 returned `OK` with no findings after checking the corrected design against the current codebase. The bounded loop therefore stopped cleanly after three reviews and two fix passes; implementation has not begun.
+
 # Download completion refresh storm (2026-09-21)
 
 **Goal:** Coalesce background-download completion bursts into bounded, serialized resource-list refreshes without changing list morphing or lightbox reconciliation.
