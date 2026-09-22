@@ -1,3 +1,5 @@
+//go:build !windows
+
 package application_context
 
 import (
@@ -268,6 +270,7 @@ func TestPluginCommandKillDuringInputWriteRecoversAndSweeps(t *testing.T) {
 	now := time.Now().UTC()
 	if err := harness.ctx.CreateRun(plugin_commands.RunRecord{
 		ID: runID, PluginName: "plug", CommandName: "read", ParamsJSON: "{}",
+		Inputs: []plugin_commands.SuppliedInput{{Name: "cookies.txt", Bytes: 9}},
 		Status: plugin_commands.RunStatusQueued, CreatedAt: now,
 	}, plugin_commands.RunOutput{RunID: runID, ArgvJSON: "[]", CreatedAt: now}); err != nil {
 		t.Fatal(err)
@@ -296,14 +299,19 @@ func TestPluginCommandKillDuringInputWriteRecoversAndSweeps(t *testing.T) {
 	if record.Status != plugin_commands.RunStatusInterrupted || !record.OutputUnverified {
 		t.Fatalf("recovered row = status %q unverified=%v err=%q", record.Status, record.OutputUnverified, record.Error)
 	}
-	// The declared name was never renamed into place, and the scratch is not
-	// reachable as an input. Reading it is refused outright because recovery
-	// marked the run's output unverified, which is the fail-closed answer for a
-	// process group that never reached the database.
+	// The metadata admission persisted survives the crash, and the declared name
+	// was never renamed into place: checked directly, because the read path
+	// refuses an unverified run before it looks at any path.
+	if len(record.Inputs) != 1 || record.Inputs[0].Name != "cookies.txt" || record.Inputs[0].Bytes != 9 {
+		t.Fatalf("recovered row inputs = %+v", record.Inputs)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "cookies.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a name that was never renamed exists: %v", err)
+	}
 	exchange := plugin_commands.NewExchange(harness.ctx, harness.settings)
 	access := plugin_commands.Access{PluginName: "plug", Administrator: true}
 	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, plugin_commands.ErrExchangeOutputUnverified) {
-		t.Fatalf("Read of a name that was never renamed = %v, want %v", err, plugin_commands.ErrExchangeOutputUnverified)
+		t.Fatalf("Read of an unverified run = %v, want %v", err, plugin_commands.ErrExchangeOutputUnverified)
 	}
 	if _, err := exchange.Read(access, runID, ".tmp", 1024); err == nil {
 		t.Fatal("the scratch directory is readable as an input")
