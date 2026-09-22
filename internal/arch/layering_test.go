@@ -300,6 +300,46 @@ func TestHLSStaysBelowItsConsumers(t *testing.T) {
 	}
 }
 
+// TestJobsStaysBelowItsConsumers pins the seam the Job control plane is built
+// on. jobs/ owns durable Job lifecycle, and application_context consumes it
+// through adapters and facades; every executor that publishes into it
+// (download_queue, plugin_system, plugin_commands) sits below it too.
+//
+// The import that would undo the seam is the tempting one: jobs/ reaching back
+// up for the context that would give it a scoped handle, or into a specific
+// executor for a type it needs. Both would make the module undependable from
+// below — plugin_commands and download_queue cannot import application_context,
+// so a jobs/ that did could never be used by them — and would let a lifecycle
+// write escape the caller's transaction and scope.
+//
+// It may not import contracts/ either: contracts/ is the boundary between
+// application_context and server, and a Job type living there would be a second
+// spelling of the same concepts.
+func TestJobsStaysBelowItsConsumers(t *testing.T) {
+	forbidden := []string{
+		modulePath + "/application_context",
+		modulePath + "/server",
+		modulePath + "/contracts",
+		modulePath + "/download_queue",
+		modulePath + "/plugin_system",
+		modulePath + "/plugin_commands",
+	}
+	for dir, imports := range pkgImports(t) {
+		if !under(dir, "jobs") {
+			continue
+		}
+		for _, imp := range sorted(imports) {
+			for _, bad := range forbidden {
+				if imp == bad || strings.HasPrefix(imp, bad+"/") {
+					t.Errorf("%s imports %s\n"+
+						"\tjobs/ sits below application_context/ and every executor that publishes\n"+
+						"\tinto it. It may depend on models/, constants/ and standard tooling only.", dir, imp)
+				}
+			}
+		}
+	}
+}
+
 func sorted(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {

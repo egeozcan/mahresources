@@ -52,6 +52,9 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		&models.PluginSchedule{},
 		&models.ResourceReduction{},
 		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+		// The durable job core: DeleteUser's sweep nulls a Job's owner and
+		// actor, so these tables exist wherever a user can be deleted.
+		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -595,6 +595,16 @@ func main() {
 		log.Printf("Warning: ensuring image_hashes.resource_id unique index failed: %v", err)
 	}
 
+	// The durable Job core. Separated from the migration list above because the
+	// step is not only a schema: it also seeds the writer epoch that every
+	// subsequent start preflights against, and keeping the two together is what
+	// makes "the tables exist" and "the epoch is recorded" one fact rather than
+	// two that can drift.
+	if err := migrateJobCore(db); err != nil {
+		fail("failed to migrate the job core: %v", err)
+		return
+	}
+
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
 
@@ -876,6 +886,29 @@ func main() {
 	}
 
 	log.Println("Server exited cleanly")
+}
+
+// migrateJobCore creates the durable job tables and seeds the writer epoch.
+//
+// The job tables carry no foreign keys — a Job's owner and actor are scalar
+// columns, and lineage links address Jobs by their UUID — so they need no place
+// in the dependency-ordered list above, and their migration cannot fail on
+// PostgreSQL's circular-reference ordering.
+//
+// It lives here rather than inline so the startup step is testable without
+// starting a server, and it is idempotent: AutoMigrate is, and
+// EnsureJobWriterEpoch only ever writes a missing row.
+func migrateJobCore(db *gorm.DB) error {
+	if err := db.AutoMigrate(
+		&models.Job{},
+		&models.JobEvent{},
+		&models.JobEventSequence{},
+		&models.JobLink{},
+		&models.JobWriterEpoch{},
+	); err != nil {
+		return err
+	}
+	return models.EnsureJobWriterEpoch(db)
 }
 
 // resolveDefaultResourceCategory finds or creates the default resource category

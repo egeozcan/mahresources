@@ -8,9 +8,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// stampedModels is the set of content models carrying CreatedByUserId. Kept in
-// one place so DeleteUser's referential cleanup stays in sync with the models
-// that the stamp callback writes.
+// stampedModels is the set of models whose live user references are nulled when
+// a user is deleted. Kept in one place so DeleteUser's referential cleanup stays
+// in sync with the models that carry an identity. Most of them carry
+// CreatedByUserId; the columns each one actually holds are named by
+// principalRefColumns.
 func stampedModels() []any {
 	return []any{
 		&models.Resource{},
@@ -59,19 +61,44 @@ func stampedModels() []any {
 		// so deleting the submitter stops pending work rather than running it as
 		// root or another plugin caller.
 		&models.PluginCommandImport{},
+		// A Job carries two user references rather than one, and both are swept:
+		// the owner whose Job Center lists it, and the actor whose authority its
+		// execution uses. Neither is a creator, which is why principalRefColumns
+		// names the columns per model rather than assuming created_by_user_id.
+		//
+		// The sweep is load-bearing rather than tidy. Nulling the owner makes the
+		// Job ownerless, and an ownerless Job is admin-only under the shared
+		// visibility predicate — so deleting a user removes their Jobs from every
+		// ordinary view without transferring them to root or to another account,
+		// while the origin, sanitized summary and outcome survive for an
+		// administrator.
+		&models.Job{},
 	}
 }
 
-// nullCreatorReferences nulls created_by_user_id on every stamped content table
-// for the given user, so deleting the user leaves their content intact with a
-// NULL creator rather than a dangling id. Runs inside the DeleteUser transaction.
+// principalRefColumns names the user-reference columns a swept model carries.
+// Every stamped content model has created_by_user_id; a Job does not, because
+// its two references answer different questions and a Job has no creator to
+// attribute.
+func principalRefColumns(model any) []string {
+	if _, isJob := model.(*models.Job); isJob {
+		return []string{"owner_user_id", "actor_user_id"}
+	}
+	return []string{"created_by_user_id"}
+}
+
+// nullCreatorReferences nulls the live user references on every swept table for
+// the given user, so deleting the user leaves their content intact with a NULL
+// creator rather than a dangling id. Runs inside the DeleteUser transaction.
 // Correct on SQLite + Postgres (both accept UPDATE ... SET col = NULL).
 func nullCreatorReferences(tx *gorm.DB, userID uint) error {
-	for _, m := range stampedModels() {
-		if err := tx.Model(m).
-			Where("created_by_user_id = ?", userID).
-			Update("created_by_user_id", nil).Error; err != nil {
-			return err
+	for _, model := range stampedModels() {
+		for _, column := range principalRefColumns(model) {
+			if err := tx.Model(model).
+				Where(column+" = ?", userID).
+				Update(column, nil).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil

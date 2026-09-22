@@ -10369,3 +10369,102 @@ Verification during implementation (the full Go suite and focused
 - `cd e2e && npm run test:with-server:all` — 2,242 passed, 5 intentionally
   skipped across browser, accessibility, auth, CLI and CLI-doctest projects.
 - `./scripts/css-scan-test.sh` and `git diff --check` — passed.
+
+# Job Center Task 1 — the durable lifecycle core (2026-09-22)
+
+**Goal:** Land the relational core of the unified Job control plane: the Job /
+JobEvent / JobEventSequence / JobLink tables, the writer-epoch fence, one state
+machine with atomic transitions and events, a commit-safe delivery-sequence
+publisher, and the visibility predicate — with every one of Task 1's red tests
+written first and observed failing.
+
+## Plan
+
+- [x] Read the complete plan, the approved design, ADRs 0006/0007, `CLAUDE.md`,
+      and the existing download-history, plugin-schedule and plugin-command
+      storage patterns before editing.
+- [x] `models/job_model.go`: `Job`, `JobEvent`, `JobEventSequence`, `JobLink`,
+      `JobWriterEpoch`, `CheckJobWriterEpoch`, `EnsureJobWriterEpoch`, and the
+      indexes the plan names (visible pagination, admin ordering, Kind/state,
+      terminal retention, actor, origin, unsequenced publication and delivery
+      cursor, Job timeline).
+- [x] `jobs/{types,service,store}.go`: state vocabulary, transition table,
+      `Accept`, `Transition`, `Get`, `PublishPendingEvents`, validation and
+      bounds.
+- [x] `main.go`: `migrateJobCore` creates the job tables and seeds the
+      Release-A-supported epoch after the main migration.
+- [x] `application_context/context.go`: the writer-epoch preflight immediately
+      after the database is opened, before the read-only connection and before
+      the context (and its managers and loops) is built.
+- [x] `application_context/user_admin_guard.go`: `Job` joins the deletion sweep,
+      with its two references (`owner_user_id`, `actor_user_id`) named per model
+      by `principalRefColumns` rather than assumed to be `created_by_user_id`.
+- [x] `internal/arch/layering_test.go`: `TestJobsStaysBelowItsConsumers`.
+
+## Red → green evidence
+
+| Cycle | Red (observed failure) | Green |
+|---|---|---|
+| Acceptance | `undefined: NewService` | `TestJobAcceptStoresUUIDv7IdentityAndAcceptedEventAtomically`, `TestJobAcceptRefusesMalformedAcceptance` (18 cases), `TestJobAcceptRollsBackWithTheCallersTransaction`, `TestJobAcceptUsesTheDeclaredTables` |
+| State machine | `svc.Transition undefined (type *Service has no field or method Transition)` | `TestJobTransitionAppliesExactlyTheLegalTransitions` (81 from/to pairs checked against an independently written policy table), `TestJobTransitionAccumulatesDurationsAndStartTimestamps`, `TestJobTransitionVersionConflictWritesNothing`, `TestJobTerminalStateCannotChange`, `TestJobTransitionRequiresAndRecordsAFailureTaxonomy`, `TestJobTransitionRefusesAStaleExecutionToken`, `TestJobGetHonoursVisibility` |
+| Publisher | `svc.PublishPendingEvents undefined` | `TestJobPublishAssignsDeliverySequencesOnlyAfterCommit`, `TestJobPublishIsBoundedAndIdempotent` (SQLite); `TestJobPublishOrdersOutOfOrderCommitsPG`, `TestJobPublishSerializesConcurrentPublishersPG` (PostgreSQL) |
+| Layering guard | verified failing with `_ "mahresources/application_context"` added to `jobs/store.go`, then reverted | `TestJobsStaysBelowItsConsumers` |
+| Startup fence | `job writer epoch seed: no such table: job_writer_epoches` (pluralizer) and `OpenContextWithConfig error = <nil>` | `TestJobCoreMigrationSeedsTheWriterEpoch` (package main), `TestJobWriterEpochPreflightRefusesADatabaseAdvancedByANewerRelease`, `TestJobWriterEpochFreshDatabaseBootsAndSeedsTheSupportedEpoch` |
+
+Two behaviors are worth recording because the tests forced the design:
+
+- **SQLite cannot show the ordering inversion.** Its single writer means two
+  write transactions can never commit in the opposite order from the order they
+  recorded their rows, so the SQLite publisher test asserts what it honestly
+  can (an uncommitted event is invisible to the publisher; sequences are handed
+  out after commit and a subscriber's cursor still receives a later commit),
+  and the real two-transaction regression — A records first, B commits first,
+  A commits second and must still land above B's sequence — runs against
+  PostgreSQL.
+- **Request shape is validated before state legality.** A transition to
+  `failed` without a failure is `ErrInvalidTransition` even when the Job is
+  already terminal; the table test therefore supplies a well-formed failure
+  wherever it exercises the state machine.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — all packages passed.
+- `go test --tags 'json1 fts5' ./jobs ./internal/arch ./application_context -count=1`
+  — passed (Task 1's focused gate).
+- `go test --tags 'json1 fts5 postgres' ./jobs -count=1` — passed, including the
+  out-of-order-commit regression and the concurrent-publisher serialization test.
+- `go test --tags 'json1 fts5 postgres' ./application_context -count=1` — passed
+  (the deletion sweep and migration-list changes are dialect-sensitive).
+- `go test --tags 'json1 fts5' . -run TestJobCore -count=1` — passed (startup
+  migration and epoch seeding).
+- `go vet --tags 'json1 fts5' ./...` and `go vet --tags 'json1 fts5 postgres' ./jobs ./application_context`
+  — clean. `go build --tags 'json1 fts5' ./...` — clean.
+- `git diff --check` — clean. No frontend source changed, so no bundle rebuild.
+
+## Review
+
+Task 1 is complete. The durable core stores no policy it does not enforce: the
+transition table is the only place legality is written, visibility is one
+predicate used by `Get`, and the delivery sequence is allocated only by the
+post-commit publisher — never inside a lifecycle transaction, which is what
+keeps PostgreSQL commit inversion from skipping an event for a connected
+subscriber.
+
+One deviation from the plan's file list, recorded deliberately: the writer-epoch
+preflight lives in `application_context/context.go` (immediately after
+`models.CreateDatabaseConnection`) rather than in `main.go`. The plan requires it
+"immediately after opening the database and before `NewMahresourcesContext`,
+AutoMigrate, cleanup goroutines, writes, or dispatch", and `main.go` cannot
+reach the database handle before `OpenContextWithConfig` has built the context —
+so the only placement that satisfies the requirement is inside the open path,
+which is also where the test in `application_context` can exercise the real
+startup refusal. `main.go` still owns the part it can: creating the job tables
+and seeding the epoch (`migrateJobCore`).
+
+Residual risks carried forward: `Acceptance.LegacyRefs` is validated and carried
+but not yet persisted (the compatibility-handle table arrives with legacy
+handling); `ReplayClass` records the replayable/non-replayable classification
+without storing an envelope yet; `ControlIntent` and `ExpiresAt` are columns
+whose writers arrive with the command surface and retention. None of them is
+reachable from a user-facing path in this task, because no Kind adapter is
+registered until later tasks.

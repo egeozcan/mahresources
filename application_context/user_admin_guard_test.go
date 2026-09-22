@@ -9,6 +9,7 @@ import (
 
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 
 	"github.com/jmoiron/sqlx"
@@ -40,6 +41,9 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		&models.PluginSchedule{},
 		&models.ResourceReduction{},
 		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+		// The durable job core: DeleteUser's sweep nulls a Job's owner and
+		// actor, so these tables exist wherever a user can be deleted.
+		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -232,5 +236,50 @@ func TestDeleteUser_NullsCreatorReferences(t *testing.T) {
 	}
 	if got.CreatedByUserId != nil {
 		t.Fatalf("creator reference must be NULL after user deletion, got %v", *got.CreatedByUserId)
+	}
+}
+
+// Phase 5b: a Job carries two live user references, and deleting its owner
+// nulls both. The Job survives as admin-only history — its outcome and sanitized
+// summary are facts about what happened — while the deleted identity keeps no
+// grant over it and no ordinary user gains one.
+func TestDeleteUser_NullsJobOwnershipAndActor(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	makeAdmin(t, ctx, "keeper")
+	u, err := ctx.CreateUser(&UserInput{Username: "jobowner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := jobs.NewService()
+	snap, err := svc.Accept(jobs.Deps{DB: ctx.db}, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: &u.ID, ActorUserID: &u.ID,
+		Title: "the download this user asked for",
+	})
+	if err != nil {
+		t.Fatalf("accept job: %v", err)
+	}
+
+	if err := ctx.DeleteUser(u.ID); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+
+	var job models.Job
+	if err := ctx.db.Where("id = ?", snap.ID).First(&job).Error; err != nil {
+		t.Fatalf("the job must survive its owner's deletion: %v", err)
+	}
+	if job.OwnerUserID != nil || job.ActorUserID != nil {
+		t.Fatalf("job references = owner %v, actor %v; both must be NULL", job.OwnerUserID, job.ActorUserID)
+	}
+	if job.Origin != "api" || job.State != string(jobs.StateQueued) || job.Title != "the download this user asked for" {
+		t.Fatalf("the job's own history changed: %+v", job)
+	}
+
+	if _, err := svc.Get(jobs.Deps{DB: ctx.db}, jobs.Access{Administrator: true}, snap.ID); err != nil {
+		t.Fatalf("an administrator must still see an ownerless job: %v", err)
+	}
+	if _, err := svc.Get(jobs.Deps{DB: ctx.db}, jobs.Access{UserID: u.ID}, snap.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("a deleted owner's id must grant nothing, got %v", err)
 	}
 }

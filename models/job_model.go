@@ -1,0 +1,320 @@
+package models
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"mahresources/models/types"
+
+	"gorm.io/gorm"
+)
+
+// This file holds the relational core of the Job control plane: the durable Job
+// record, its immutable events, the single-row delivery-sequence allocator, the
+// typed lineage links, and the writer-epoch row that fences mixed-version
+// writers against one database.
+//
+// The vocabulary — which states exist, which transitions are legal, what a
+// visibility class means — belongs to the jobs/ package, which is the only
+// writer. These types are the storage shape: strings and columns, no policy.
+
+// Job is one accepted execution of background work.
+//
+// Identity is a UUIDv7 string: opaque, globally unique, time-ordered, and
+// carrying no kind, owner, state or authorization decision. Terminal state and
+// identity are immutable; a retry creates a new Job rather than reopening one.
+//
+// Owner, Actor and Origin are three separate provenance facts, not one field.
+// Owner is the principal whose Job Center lists the Job, Actor is the principal
+// whose current authority execution or a command uses, and Origin is what
+// initiated it. They are historical: deleting a user nulls the live references
+// through nullCreatorReferences without transferring authority. VisibilityClass
+// is durable and is fixed by the registered Kind — request input cannot choose
+// it — so an admin-only Kind (plugin commands, for instance) stays admin-only
+// even when its submitter is an ordinary user, and stays admin-only after that
+// submitter is demoted or deleted.
+//
+// The terminal outcome lives here, on the Job, and is never derived from a
+// viewer's preferences: dismissal and pinning record a per-user view of the
+// list, they do not rewrite what happened.
+type Job struct {
+	// ID carries the visible-pagination and administrator-ordering indexes: both
+	// are keyset listings that page on (accepted_at, id), and a Job's accepted_at
+	// is not unique, so the identity is the tiebreak the index must hold for the
+	// page boundary to be walked rather than filtered.
+	ID string `gorm:"primaryKey;size:36;index:idx_jobs_visible,priority:5;index:idx_jobs_admin_order,priority:2" json:"id"`
+
+	// Kind and KindVersion name the family of work and the version of its
+	// input semantics. A Kind adapter is registered per (Kind, KindVersion)
+	// pair; no two share a pair.
+	Kind        string `gorm:"size:120;not null;index:idx_jobs_kind_state,priority:1" json:"kind"`
+	KindVersion uint   `gorm:"not null" json:"kindVersion"`
+
+	// State is the normalized lifecycle state; Phase is an optional finer step
+	// a Kind publishes ("downloading segments", "quarantined") and never
+	// redefines State.
+	State string `gorm:"size:20;not null;index:idx_jobs_kind_state,priority:2;index:idx_jobs_visible,priority:3;index:idx_jobs_retention,priority:1" json:"state"`
+	Phase string `gorm:"size:60" json:"phase,omitempty"`
+
+	// Title and Summary are the bounded, sanitized, searchable half of the
+	// input. The opaque half — the replay envelope — is stored separately and
+	// never returned by ordinary Job reads.
+	Title   string     `gorm:"size:200" json:"title,omitempty"`
+	Summary types.JSON `gorm:"type:json" json:"summary,omitempty"`
+
+	OwnerUserID *uint `gorm:"index:idx_jobs_visible,priority:2" json:"ownerUserId,omitempty"`
+	ActorUserID *uint `gorm:"index:idx_jobs_actor" json:"actorUserId,omitempty"`
+
+	// Origin names what initiated the Job: ui, api, cli, plugin, schedule or
+	// system.
+	Origin string `gorm:"size:40;not null;index:idx_jobs_origin" json:"origin"`
+
+	// VisibilityClass is "owner" or "admin". See the type comment.
+	VisibilityClass string `gorm:"size:10;not null;index:idx_jobs_visible,priority:1" json:"visibilityClass"`
+
+	// ReplayClass records whether acceptance carried a replayable input
+	// ("replayable") or an explicit non-replayable classification
+	// ("non-replayable"). It is the durable half of "a replay envelope or an
+	// explicit non-replayable classification"; the envelope itself is stored
+	// beside it.
+	ReplayClass string `gorm:"size:20;not null" json:"replayClass"`
+
+	// ExecutionToken is the fencing token of the claim that currently owns the
+	// Job. An executor may publish only with the token its claim was created
+	// with. Empty means no claim owns the Job.
+	ExecutionToken string `gorm:"size:36" json:"-"`
+
+	// ControlIntent is durable control intent that has been requested but not
+	// yet reached its outcome state: "" or "cancel" or "pause".
+	ControlIntent      string     `gorm:"size:20" json:"controlIntent,omitempty"`
+	ControlRequestedAt *time.Time `json:"controlRequestedAt,omitempty"`
+
+	// Version is the optimistic concurrency counter. Every accepted transition
+	// increments it; every write is guarded by the version the writer read.
+	Version uint64 `gorm:"not null" json:"version"`
+
+	// Failure is set when State is "failed" and empty otherwise.
+	FailureCode          string `gorm:"size:60" json:"failureCode,omitempty"`
+	FailureClass         string `gorm:"size:30" json:"failureClass,omitempty"`
+	FailureMessage       string `gorm:"size:1000" json:"failureMessage,omitempty"`
+	FailureDiagnosticRef string `gorm:"size:500" json:"failureDiagnosticRef,omitempty"`
+
+	// Progress is the latest bounded snapshot. Routine ticks update these
+	// columns; they are not events.
+	ProgressCompleted *int64     `json:"progressCompleted,omitempty"`
+	ProgressTotal     *int64     `json:"progressTotal,omitempty"`
+	ProgressUnit      string     `gorm:"size:20" json:"progressUnit,omitempty"`
+	ProgressMessage   string     `gorm:"size:500" json:"progressMessage,omitempty"`
+	ProgressETA       *time.Time `json:"progressEta,omitempty"`
+
+	// AcceptedAt is the acceptance instant, and the keyset column every visible
+	// listing pages on. The rest are the common UTC instants; StateEnteredAt is
+	// the bookkeeping behind the cumulative durations below and is deliberately
+	// not part of a public snapshot.
+	AcceptedAt     time.Time  `gorm:"not null;index:idx_jobs_visible,priority:4;index:idx_jobs_admin_order,priority:1" json:"acceptedAt"`
+	ScheduledFor   *time.Time `json:"scheduledFor,omitempty"`
+	QueuedAt       *time.Time `json:"queuedAt,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	LastResumedAt  *time.Time `json:"lastResumedAt,omitempty"`
+	FinishedAt     *time.Time `gorm:"index:idx_jobs_retention,priority:2" json:"finishedAt,omitempty"`
+	StateEnteredAt *time.Time `json:"-"`
+
+	// Cumulative time spent in each state, accumulated from the transitions
+	// rather than recomputed from the timestamps, so a Job that returns to the
+	// queue several times measures all of them.
+	RunningDuration time.Duration `gorm:"not null;default:0" json:"runningDuration"`
+	PausedDuration  time.Duration `gorm:"not null;default:0" json:"pausedDuration"`
+	BlockedDuration time.Duration `gorm:"not null;default:0" json:"blockedDuration"`
+	QueueDuration   time.Duration `gorm:"not null;default:0" json:"queueDuration"`
+
+	// ExpiresAt is the instant ordinary history retention may sweep this Job.
+	// It is only ever set from a terminal state, because nonterminal work —
+	// including blocked work — is never swept.
+	ExpiresAt *time.Time `gorm:"index:idx_jobs_expiry" json:"expiresAt,omitempty"`
+
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func (j Job) GetId() string {
+	return j.ID
+}
+
+// JobEvent is one immutable significant fact in a Job's timeline. Routine
+// progress ticks are not events.
+//
+// Sequence is the per-Job ordering and JobVersion is the Job version the fact
+// belongs to; together with JobID they are unique, so a timeline can never
+// contain two events claiming the same position.
+//
+// DeliverySequence is the global, commit-safe ordering of the resumable stream,
+// and it is deliberately nullable: an event is committed by the lifecycle
+// transaction that recorded it and only afterwards assigned a delivery sequence
+// by the publisher, on its own transaction. Allocating it inside the domain
+// transaction would order events by allocation rather than by commit, and
+// PostgreSQL sequences are not commit-ordered — an event allocated first but
+// committed last would take a lower delivery sequence than one a subscriber has
+// already consumed, and that subscriber would never see it.
+type JobEvent struct {
+	ID         string     `gorm:"primaryKey;size:36" json:"id"`
+	JobID      string     `gorm:"size:36;not null;uniqueIndex:idx_job_events_timeline,priority:1" json:"jobId"`
+	Sequence   uint64     `gorm:"not null;uniqueIndex:idx_job_events_timeline,priority:2" json:"sequence"`
+	JobVersion uint64     `gorm:"not null" json:"jobVersion"`
+	Type       string     `gorm:"size:60;not null" json:"type"`
+	Detail     types.JSON `gorm:"type:json" json:"detail,omitempty"`
+
+	// ReservedHost marks an event whose capacity cannot be displaced by
+	// optional Kind traffic: lifecycle and terminal events.
+	ReservedHost bool `gorm:"not null;default:false" json:"reservedHost"`
+
+	CreatedAt time.Time `gorm:"not null" json:"createdAt"`
+
+	// DeliverySequence is nullable until the post-commit publisher assigns it.
+	// The index serves both scans: the publication scan for
+	// `delivery_sequence IS NULL` and a subscriber's cursor
+	// `delivery_sequence > cursor`.
+	DeliverySequence *uint64 `gorm:"index:idx_job_events_delivery" json:"deliverySequence,omitempty"`
+}
+
+// JobEventSequence is the single serialized allocator row for delivery
+// sequences. It is touched only by the post-commit publisher, never inside a
+// domain or lifecycle transaction, so the allocator adds no cross-domain lock
+// ordering.
+type JobEventSequence struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	Value     uint64    `gorm:"not null" json:"value"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// JobEventSequenceRowID is the allocator's primary key. One row, always.
+const JobEventSequenceRowID = 1
+
+// Typed lineage link kinds. A Job keeps its own identity and outcome inside a
+// lineage; the link only records how two Jobs relate.
+const (
+	// JobLinkRetryOf relates a successor to the unsuccessful Job it recovers
+	// from: FromJobID is the successor, ToJobID the ancestor.
+	JobLinkRetryOf = "retry-of"
+	// JobLinkRepeatOf relates a successor to the successful Job it re-runs:
+	// FromJobID is the successor, ToJobID the ancestor.
+	JobLinkRepeatOf = "repeat-of"
+	// JobLinkParentChild relates independent workflow stages: FromJobID is the
+	// parent, ToJobID the child.
+	JobLinkParentChild = "parent-child"
+)
+
+// JobLink is one typed durable relation between two Jobs, unique on
+// (type, from, to) so the same relation cannot be recorded twice.
+type JobLink struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	Type      string    `gorm:"size:20;not null;uniqueIndex:idx_job_links_unique,priority:1" json:"type"`
+	FromJobID string    `gorm:"size:36;not null;uniqueIndex:idx_job_links_unique,priority:2;index:idx_job_links_from" json:"fromJobId"`
+	ToJobID   string    `gorm:"size:36;not null;uniqueIndex:idx_job_links_unique,priority:3;index:idx_job_links_to" json:"toJobId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// JobWriterEpoch is the single row recording the minimum writer epoch this
+// database accepts: the oldest release permitted to write to it.
+//
+// It exists because a release that changes the Job schema is unsupported once a
+// newer release has advanced the epoch, and the failure mode of not knowing is
+// silent: an older binary would keep writing rows the newer one cannot
+// reconcile. Every process therefore checks this row immediately after opening
+// the database and before it migrates, writes, cleans up or dispatches
+// anything.
+type JobWriterEpoch struct {
+	ID           uint      `gorm:"primarykey" json:"id"`
+	MinimumEpoch uint64    `gorm:"not null" json:"minimumEpoch"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// TableName pins the table name the preflight's raw SQL reads. GORM's pluralizer
+// would render it "job_writer_epoches", and the preflight runs before
+// AutoMigrate, so a mismatch here is a check that silently passes.
+func (JobWriterEpoch) TableName() string {
+	return JobWriterEpochTable
+}
+
+// JobWriterEpochRowID is the epoch row's primary key. One row, always.
+const JobWriterEpochRowID = 1
+
+// JobWriterEpochSupported is the writer epoch this release understands. It is
+// the Release-A epoch: the durable job core exists and every writer of these
+// tables understands it. A later release may advance the stored minimum, never
+// silently lower it.
+const JobWriterEpochSupported uint64 = 1
+
+// JobWriterEpochTable is the epoch table's name, spelled once because the
+// preflight reads it with raw SQL before AutoMigrate has had a chance to run.
+const JobWriterEpochTable = "job_writer_epochs"
+
+// ErrJobWriterEpochTooNew reports that the database was last written by a
+// release newer than this one. Startup must refuse rather than migrate, write,
+// or dispatch.
+var ErrJobWriterEpochTooNew = errors.New("job writer epoch is newer than this release supports")
+
+// CheckJobWriterEpoch reads the writer epoch and refuses a database whose
+// minimum epoch this release does not support.
+//
+// It is deliberately raw SQL, and deliberately tolerant of a missing table: it
+// runs immediately after the database is opened, before AutoMigrate — so a
+// database with no epoch table at all is a fresh (or pre-Job) database, which
+// is allowed, while anything else about it is an error worth refusing over
+// rather than guessing through.
+func CheckJobWriterEpoch(db *gorm.DB) error {
+	exists, err := jobCoreTableExists(db, JobWriterEpochTable)
+	if err != nil {
+		return fmt.Errorf("job writer epoch preflight: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	var minimum uint64
+	if err := db.Raw("SELECT minimum_epoch FROM job_writer_epochs WHERE id = 1").Scan(&minimum).Error; err != nil {
+		return fmt.Errorf("job writer epoch preflight: %w", err)
+	}
+	if minimum > JobWriterEpochSupported {
+		return fmt.Errorf("%w: this database requires writer epoch %d and this release supports %d; "+
+			"a newer release has already run against it, so start that release instead of downgrading",
+			ErrJobWriterEpochTooNew, minimum, JobWriterEpochSupported)
+	}
+	return nil
+}
+
+// EnsureJobWriterEpoch seeds the epoch row on a database that has just been
+// migrated. An epoch that is already recorded is left exactly as it is: a
+// release may advance the minimum epoch deliberately (after every older process
+// has drained), and no code path may lower it by accident.
+func EnsureJobWriterEpoch(db *gorm.DB) error {
+	var existing JobWriterEpoch
+	err := db.Where("id = ?", JobWriterEpochRowID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return db.Create(&JobWriterEpoch{ID: JobWriterEpochRowID, MinimumEpoch: JobWriterEpochSupported}).Error
+	}
+	if err != nil {
+		return fmt.Errorf("job writer epoch seed: %w", err)
+	}
+	return nil
+}
+
+// jobCoreTableExists reports whether a table exists, with the two dialects'
+// catalogues asked directly. It is used only by the preflight, which runs
+// before the schema is guaranteed to exist.
+func jobCoreTableExists(db *gorm.DB, name string) (bool, error) {
+	var count int64
+	var err error
+	if db.Dialector.Name() == "postgres" {
+		err = db.Raw(
+			"SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?",
+			name,
+		).Scan(&count).Error
+	} else {
+		err = db.Raw("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&count).Error
+	}
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

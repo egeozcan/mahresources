@@ -1440,6 +1440,21 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		slowQueryLogger = slowLogger
 	}
 
+	// Writer-epoch preflight. This is the earliest point at which the database
+	// handle exists, and it is deliberately the first thing that touches it:
+	// nothing has been migrated, written, or dispatched, the read-only connection
+	// is not open yet, and the context — which owns the download manager, the
+	// plugin manager and every cleanup loop — has not been built. A database last
+	// written by a newer release is refused here, so an old binary cannot
+	// downgrade a schema it does not understand by migrating, writing, or
+	// dispatching against it.
+	if err := models.CheckJobWriterEpoch(db); err != nil {
+		if sqlDB, closeErr := db.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, nil, nil, err
+	}
+
 	// Apply connection pool limits if configured (useful for SQLite under test load)
 	if cfg.MaxDBConnections > 0 {
 		sqlDB, err := db.DB()
