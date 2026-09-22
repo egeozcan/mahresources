@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -45,11 +46,74 @@ func NewService() *Service {
 // it — and opens one of its own when it does not. Execution begins after
 // commit; acceptance never claims work that is already running.
 func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
+	stored, _, err := s.accept(nil, deps, acceptance, nil)
+	return stored, err
+}
+
+// AcceptClaimed is Accept for work whose executor already exists in the calling
+// process: the Job is accepted *and* claimed in one transaction, and the caller
+// is handed the execution that owns it.
+//
+// The window it closes is the reason it exists. A closure-backed
+// `mah.start_job` owns a `*lua.LFunction` in the process that accepted it, and
+// that Job is not waiting work: nothing but that one process can run it. Accepting
+// it and then claiming it leaves an interval — the length of a dispatch loop's
+// poll — in which the Job is ordinary queued work of a registered Kind, and a
+// runtime that claims it there finds no callback, cannot run it, and must fail,
+// block or withdraw a Job whose host was about to run it perfectly well.
+//
+// Accepting and claiming together removes the interval rather than arbitrating
+// it: the Job is born running, fenced by its own token, occupying its budgets, and
+// no other runtime ever sees it as waiting work. The caller owns the returned
+// execution from that moment and must heartbeat it and end the Job — or release
+// the claim — when its executor finishes.
+//
+// It is deliberately not the general path: restorable work is dispatched by being
+// queued, which is what lets any runtime of the deployment run it.
+func (s *Service) AcceptClaimed(ctx context.Context, deps Deps, acceptance Acceptance, request ClaimRequest) (Execution, Snapshot, error) {
+	if acceptance.State != StateQueued {
+		return Execution{}, Snapshot{}, fmt.Errorf("%w: a Job claimed at acceptance is accepted queued, not %q",
+			ErrInvalidAcceptance, acceptance.State)
+	}
+	stored, execution, err := s.accept(ctx, deps, acceptance, &request)
+	return execution, stored, err
+}
+
+// accept is the one acceptance body: it validates, seals the input, and writes
+// the Job, its events, its handles and its envelope in one transaction — with the
+// first claim installed inside the same transaction when the caller supplies one.
+//
+// ctx is used only to build the execution for an acceptance that carries a claim,
+// and is nil for the ordinary path.
+func (s *Service) accept(ctx context.Context, deps Deps, acceptance Acceptance, claim *ClaimRequest) (Snapshot, Execution, error) {
 	if err := s.applyRegisteredVisibility(&acceptance); err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, Execution{}, err
 	}
 	if err := validateAcceptance(&acceptance); err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, Execution{}, err
+	}
+
+	// The claim's own admission is decided before the transaction opens, for the
+	// reason the acceptance's validation is: a claim this Kind cannot honour — an
+	// unregistered Kind, a claimant with no name — must refuse acceptance rather
+	// than leave a Job whose executor does not exist.
+	var lease time.Duration
+	if claim != nil {
+		if claim.Kind != acceptance.Kind || claim.KindVersion != acceptance.KindVersion {
+			return Snapshot{}, Execution{}, fmt.Errorf("%w: a claim at acceptance names %s v%d, not %s v%d",
+				ErrInvalidClaim, claim.Kind, claim.KindVersion, acceptance.Kind, acceptance.KindVersion)
+		}
+		_, definition, err := s.adapterFor(claim.Kind, claim.KindVersion)
+		if err != nil {
+			return Snapshot{}, Execution{}, err
+		}
+		if err := validateClaimRequest(claim, definition); err != nil {
+			return Snapshot{}, Execution{}, err
+		}
+		lease = claim.Lease
+		if lease <= 0 {
+			lease = definition.claimLease()
+		}
 	}
 
 	now := deps.now()
@@ -89,16 +153,65 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 	if len(acceptance.Replay.Input) > 0 {
 		sealed, summary, err := s.sealReplay(deps, job, acceptance.Replay, now)
 		if err != nil {
-			return Snapshot{}, err
+			return Snapshot{}, Execution{}, err
 		}
 		envelope = &sealed
 		job.Summary = types.JSON(summary)
 	}
 
-	var stored Snapshot
+	var (
+		stored     Snapshot
+		claimedJob models.Job
+		claimRow   models.JobClaim
+	)
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&job).Error; err != nil {
 			return fmt.Errorf("jobs: store job: %w", err)
+		}
+		claimed := job
+		if claim != nil {
+			// Born running, under this process's own token. The write is guarded the way
+			// every claim's is — on the state and version just written — so a second
+			// executor cannot take the same Job by writing first.
+			token := types.NewUUIDv7()
+			next, updates := applyTransition(job, Transition{To: StateRunning}, deps.retention(), now)
+			updates["execution_token"] = token
+			result := tx.Model(&models.Job{}).
+				Where("id = ? AND version = ? AND state = ?", job.ID, job.Version, job.State).
+				Updates(updates)
+			if result.Error != nil {
+				return fmt.Errorf("jobs: claim the accepted job: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return errClaimContended
+			}
+			if err := acquireCapacityTx(tx, claim.Capacity, job.ID, token, now); err != nil {
+				return err
+			}
+			claimRow = models.JobClaim{
+				JobID:          job.ID,
+				Kind:           job.Kind,
+				KindVersion:    job.KindVersion,
+				Claimant:       claim.Claimant,
+				ExecutionToken: token,
+				State:          models.JobClaimStateHeld,
+				ClaimedAt:      now,
+				HeartbeatAt:    now,
+				LeaseExpiresAt: now.Add(lease),
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			}
+			// Stated as a claim insert rather than a create: a row already stored under
+			// this Job id would be a claim this acceptance does not own, and the
+			// transaction rolls back rather than writing a second one over it.
+			result = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&claimRow)
+			if result.Error != nil {
+				return fmt.Errorf("jobs: store the acceptance claim: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return errClaimContended
+			}
+			claimed = next
 		}
 		// The legacy identifiers are written in the same transaction as the Job
 		// they name: a handle is the identity a legacy client keeps polling, and
@@ -110,16 +223,29 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 		if err := tx.Create(&event).Error; err != nil {
 			return fmt.Errorf("jobs: store accepted event: %w", err)
 		}
+		if claim != nil {
+			// The claim's own event, in the same transaction as the claim: an accepted
+			// Job that is running has to arrive with both facts or with neither.
+			sequence, err := nextEventSequence(tx, job.ID)
+			if err != nil {
+				return err
+			}
+			started := newEvent(job.ID, sequence, claimed.Version, EventStarted, nil, true, now)
+			if err := tx.Create(&started).Error; err != nil {
+				return fmt.Errorf("jobs: store started event: %w", err)
+			}
+		}
 		if envelope != nil {
 			if err := tx.Create(envelope).Error; err != nil {
 				return fmt.Errorf("jobs: store replay envelope: %w", err)
 			}
 		}
-		stored = snapshot(job)
+		claimedJob = claimed
+		stored = snapshot(claimed)
 		return nil
 	})
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, Execution{}, err
 	}
 	// Filled after commit rather than inside it: the envelope's availability is
 	// a read of the row that has just been written, and answering it on the
@@ -127,8 +253,15 @@ func (s *Service) Accept(deps Deps, acceptance Acceptance) (Snapshot, error) {
 	// projection is the stored row whole: an adapter is the producer of this
 	// acceptance rather than a viewer of it, and a Job that has just been
 	// accepted cannot carry a protected failure diagnostic.
-	stored.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), job, deps.now())
-	return stored, nil
+	stored.ReplayAvailability = s.replayAvailabilityOf(deps.DB, replayKeys(deps), claimedJob, deps.now())
+	if claim == nil {
+		return stored, Execution{}, nil
+	}
+	execution, err := s.executionFor(ctx, deps, claimedJob, claimRow)
+	if err != nil {
+		return stored, Execution{}, err
+	}
+	return stored, execution, nil
 }
 
 // Get returns one visible Job. A Job the caller may not see is reported exactly

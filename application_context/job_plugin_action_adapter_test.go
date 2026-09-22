@@ -31,7 +31,7 @@ const pluginActionTestPlugin = "action-plugin"
 // closure-backed child job, one that floods progress, and a schedule.
 const pluginActionTestSource = `
 plugin = { name = "` + pluginActionTestPlugin + `", version = "1.0", api_version = 1,
-           capabilities = { "actions", "jobs", "kv", "schedule" } }
+           capabilities = { "actions", "jobs", "kv", "schedule", "hooks", "job_events" } }
 
 local function bump(key)
     local n = tonumber(mah.kv.get(key) or "0") or 0
@@ -67,6 +67,14 @@ function burst_work(ctx)
     mah.job_complete(ctx.job_id, { message = "burst done" })
 end
 
+-- follow_up is armed by a key rather than always on, so the hook is inert in
+-- every other test that shares this plugin.
+function follow_up(event)
+    if mah.kv.get("armed") ~= "yes" then return end
+    bump("follow-ups")
+    mah.start_job("follow-up work", closure_work)
+end
+
 function init()
     mah.action({ id = "async-work", label = "Async Work", entity = "resource", async = true,
                  params = { {name = "note", type = "text", label = "Note"} },
@@ -80,6 +88,7 @@ function init()
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
+    mah.on("after_job_completed", follow_up)
 end
 `
 
@@ -627,4 +636,220 @@ func (s *recordingJobEventSink) snapshot() []download_queue.JobEventRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]download_queue.JobEventRecord(nil), s.records...)
+}
+
+// newPluginActionJobContextWithDeploymentBudget builds the plugin-action harness
+// the way a deployment configures it: the concurrency budget lives in the
+// deployment's configuration, and the runtime reads it from there rather than
+// from a second copy of the number.
+func newPluginActionJobContextWithDeploymentBudget(t *testing.T, budget int) *MahresourcesContext {
+	t.Helper()
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = budget
+	pm := ctx.PluginManager()
+	if pm == nil {
+		t.Fatal("the harness context has no plugin manager")
+	}
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{
+		Claimant: "budget-test", Interval: 25 * time.Millisecond,
+	})
+	runtime.Start()
+	t.Cleanup(runtime.Stop)
+	return ctx
+}
+
+// TestAHostSidePluginActionObeysTheDeploymentConcurrencyBudget pins that plugin
+// work claimed by the process that accepted it occupies the same deployment-wide
+// budget the polling runtime's claims do.
+//
+// The budget is the deployment's own (`max-job-concurrency`), it is
+// database-backed and shared across processes, and host-side execution was the one
+// admission path that bypassed it: a registered action ran in the submitting
+// process while every global slot was taken, which is how a deployment of three
+// processes ran three times the budget it configured. With the budget occupied the
+// accepted Job stays queued for the loop — accepted, visible, and not lost — and
+// runs when the slot is free.
+func TestAHostSidePluginActionObeysTheDeploymentConcurrencyBudget(t *testing.T) {
+	ctx := newPluginActionJobContextWithDeploymentBudget(t, 1)
+
+	// One execution of another Kind holds the deployment's only slot.
+	release := make(chan struct{})
+	blocking := newRuntimeTestAdapter()
+	blocking.dispatch = func(context.Context, jobs.Execution) error {
+		<-release
+		return nil
+	}
+	if err := ctx.JobService().RegisterAdapter(blocking); err != nil {
+		t.Fatalf("register the blocking kind: %v", err)
+	}
+	acceptRuntimeJob(t, ctx.JobService(), ctx)
+	waitFor(t, "the deployment slot to be occupied", func() bool {
+		return storedCapacity(t, ctx, jobs.CapacityGroupGlobal) == 1
+	})
+
+	handle, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 7, nil, "")
+	if err != nil {
+		t.Fatalf("the action was refused instead of queued: %v", err)
+	}
+	if handle == "" || canonical == "" {
+		t.Fatalf("the action answered handle %q canonical %q", handle, canonical)
+	}
+	if got := pluginKVForTest(t, ctx, "ran"); got != "" {
+		t.Fatalf("the handler ran %q times while the deployment budget was full", got)
+	}
+	queued, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, canonical)
+	if err != nil {
+		t.Fatalf("read the accepted job: %v", err)
+	}
+	if queued.State != jobs.StateQueued {
+		t.Fatalf("the accepted action is %s while the budget is full, want queued for the loop", queued.State)
+	}
+
+	// Freeing the slot lets the loop dispatch it: the work was deferred, not lost.
+	close(release)
+	waitFor(t, "the accepted action to run and finish", func() bool {
+		snap, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, canonical)
+		return err == nil && snap.State == jobs.StateSucceeded
+	})
+	if got := pluginKVForTest(t, ctx, "ran"); got != "1" {
+		t.Fatalf("the handler ran %q times, want once", got)
+	}
+}
+
+// TestAPluginJobEventHookThatStartsWorkCannotFeedItself is the causal boundary of
+// the hook feed.
+//
+// An after_job_completed hook may legitimately start work with mah.start_job, and
+// that is exactly the shape that can never terminate once plugin Jobs announce
+// their own terminal events: the hook hears the completion of the Job it started,
+// starts another, and so on for as long as the deployment runs. The rule is causal
+// — a Job started from the delivery of a terminal job event does not deliver one —
+// so the chain ends after the one follow-up the hook asked for.
+func TestAPluginJobEventHookThatStartsWorkCannotFeedItself(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	// The hook feed is what this test is about, so the deployment's own observer is
+	// the one installed — the seam between a terminal Job and the hooks is the
+	// property under test, and a fake there would test the fake.
+	dispatcher := NewJobEventDispatcher(ctx)
+	ctx.SetJobEventSink(dispatcher)
+	t.Cleanup(dispatcher.Stop)
+	if err := ctx.PluginKVSet(pluginActionTestPlugin, "armed", `"yes"`); err != nil {
+		t.Fatalf("arm the hook: %v", err)
+	}
+
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 5, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	waitForJobState(t, ctx, canonical, "the action to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+
+	waitFor(t, "the hook to start its follow-up", func() bool {
+		return pluginKVForTest(t, ctx, "follow-ups") != ""
+	})
+	waitFor(t, "the follow-up closure to finish", func() bool {
+		page, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+			jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 50)
+		if err != nil {
+			return false
+		}
+		for _, job := range page.Jobs {
+			if pluginActionSubtypeOf(job.Summary) == pluginActionSubtypeClosure && job.State.Terminal() {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The follow-up's completion is not delivered back to the hook, so nothing else
+	// is started and the chain is over.
+	time.Sleep(750 * time.Millisecond)
+	if got := pluginKVForTest(t, ctx, "follow-ups"); got != "1" {
+		t.Fatalf("the job-event hook started %q follow-ups, want exactly one: a hook that starts work was fed by that work's completion", got)
+	}
+}
+
+// TestAClosureJobIsNeverClaimableByTheDispatchLoop is the acceptance race at
+// mah.start_job, driven rather than reasoned about.
+//
+// A closure Job owns a *lua.LFunction in the process that accepted it, so it is
+// not waiting work: no other runtime can run it. Accepting it and claiming it in
+// two steps leaves an interval in which it *is* ordinary queued work of a
+// registered Kind, and a dispatch loop polling that queue claims it there, finds
+// no callback, and takes the Job away from the host that was about to run it —
+// which the plugin sees as a refused mah.start_job. The loop here polls every few
+// milliseconds, far faster than the window it used to need, and every closure must
+// still be born owned by the process whose VM holds the callback.
+func TestAClosureJobIsNeverClaimableByTheDispatchLoop(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	pm := ctx.PluginManager()
+	if pm == nil {
+		t.Fatal("the harness context has no plugin manager")
+	}
+	if err := pm.EnablePlugin(pluginActionTestPlugin); err != nil {
+		t.Fatalf("enable %s: %v", pluginActionTestPlugin, err)
+	}
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{
+		Claimant: "race-loop", Interval: 5 * time.Millisecond,
+	})
+	runtime.Start()
+	t.Cleanup(runtime.Stop)
+
+	const parents = 3
+	for attempt := 0; attempt < parents; attempt++ {
+		_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "parent-work", uint(attempt+1), nil, "")
+		if err != nil {
+			t.Fatalf("attempt %d: start the parent action: %v", attempt, err)
+		}
+		parent := waitForJobState(t, ctx, canonical, "the parent action to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if parent.State != jobs.StateSucceeded {
+			t.Fatalf("attempt %d: the parent action ended %s (%+v): its mah.start_job was not the host's to run",
+				attempt, parent.State, parent.Failure)
+		}
+	}
+
+	closures := func() []jobs.Snapshot {
+		page, err := ctx.JobService().List(ctx.jobDeps(), jobs.Access{Administrator: true},
+			jobs.Filter{Kinds: []string{JobKindPluginAction}}, jobs.Cursor{}, 50)
+		if err != nil {
+			t.Fatalf("list plugin jobs: %v", err)
+		}
+		found := make([]jobs.Snapshot, 0, parents)
+		for _, job := range page.Jobs {
+			if pluginActionSubtypeOf(job.Summary) == pluginActionSubtypeClosure {
+				found = append(found, job)
+			}
+		}
+		return found
+	}
+
+	waitFor(t, "every closure to finish", func() bool {
+		found := closures()
+		if len(found) < parents {
+			return false
+		}
+		for _, job := range found {
+			if !job.State.Terminal() {
+				return false
+			}
+		}
+		return true
+	})
+
+	owned := plugin_system.CurrentRuntimeIdentity().String()
+	for _, job := range closures() {
+		if job.State != jobs.StateSucceeded {
+			t.Fatalf("closure %s ended %s: the dispatch loop took work only its host can run", job.ID, job.State)
+		}
+		if claim := storedClaim(t, ctx, job.ID); claim.Claimant != owned {
+			t.Fatalf("closure %s was claimed by %q, want the process holding the callback (%q)",
+				job.ID, claim.Claimant, owned)
+		}
+	}
 }

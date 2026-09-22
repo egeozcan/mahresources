@@ -1706,7 +1706,16 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		// is the in-memory behaviour every bare manager has always had.
 		var host *HostJobRef
 		if jobs := pm.hostJobsInstalled(); jobs != nil {
-			ref, err := jobs.StartClosureJob(*pluginNamePtr, label, actor, parentJobID)
+			ref, err := jobs.StartClosureJob(ClosureJobRequest{
+				PluginName:  *pluginNamePtr,
+				Label:       label,
+				ActorUserID: actor,
+				ParentJobID: parentJobID,
+				// A start_job from an after_job_* delivery must not announce its own
+				// terminal event, or the feed would notify the hook that asked for
+				// this work and the chain would never end.
+				JobEventDispatch: invocationIsJobEventDispatch(pm.invocationFor(L)),
+			})
 			if err != nil {
 				L.RaiseError("could not start the job: %v", err)
 				return 0

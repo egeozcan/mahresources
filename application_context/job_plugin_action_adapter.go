@@ -133,6 +133,14 @@ type pluginActionJobInput struct {
 	// whose work cannot be restored. It is what reconciliation reads instead of
 	// guessing from a lease.
 	Runtime string `json:"runtime,omitempty"`
+	// NoTerminalHook marks a Job whose outcome is not announced to the plugin hook
+	// feed, because the work itself came from that feed: an after_job_* handler
+	// that starts work must not be handed the completion of the work it started,
+	// or every completion would start another Job. It is recorded durably rather
+	// than held in memory because the Job outlives the call chain that decided it,
+	// and it is inherited down a lineage so the suppression covers descendants
+	// too.
+	NoTerminalHook bool `json:"noTerminalHook,omitempty"`
 }
 
 // pluginActionSummary is the bounded, sanitized, *searchable* view. It carries
@@ -146,6 +154,10 @@ type pluginActionSummary struct {
 	EntityID   uint   `json:"entityId,omitempty"`
 	EntityType string `json:"entityType,omitempty"`
 	Runtime    string `json:"runtime,omitempty"`
+	// NoTerminalHook is the causal-suppression flag, carried in the readable
+	// summary so a child Job can inherit it from its parent without anybody having
+	// to open a sealed envelope to find out.
+	NoTerminalHook bool `json:"noTerminalHook,omitempty"`
 }
 
 // pluginActionJobCodec is this Kind's replay codec: it validates the shape on the
@@ -158,13 +170,14 @@ func pluginActionJobCodec() jobs.ReplayCodec {
 				return nil, err
 			}
 			return json.Marshal(pluginActionSummary{
-				Subtype:    decoded.Subtype,
-				Plugin:     decoded.Plugin,
-				Action:     decoded.Action,
-				ScheduleID: decoded.ScheduleID,
-				EntityID:   decoded.EntityID,
-				EntityType: decoded.EntityType,
-				Runtime:    decoded.Runtime,
+				Subtype:        decoded.Subtype,
+				Plugin:         decoded.Plugin,
+				Action:         decoded.Action,
+				ScheduleID:     decoded.ScheduleID,
+				EntityID:       decoded.EntityID,
+				EntityType:     decoded.EntityType,
+				Runtime:        decoded.Runtime,
+				NoTerminalHook: decoded.NoTerminalHook,
 			})
 		},
 		Encode: func(input json.RawMessage) (json.RawMessage, error) {
@@ -347,19 +360,23 @@ func (ctx *MahresourcesContext) RunPluginActionAsync(owner *uint, pluginName, ac
 	if err != nil {
 		return "", "", err
 	}
-	if claim.Elsewhere {
-		// Another runtime of this deployment got the claim in the window between
-		// acceptance and this call. The action is going to run there, and the
-		// client's answer is the same one it would have got here — the id it
-		// polls — so this reports success rather than a second run.
-		return handle, accepted.ID, nil
-	}
 	if !claim.Owned {
-		if err := ctx.withdrawPluginActionJob(jobs.Execution{JobID: accepted.ID},
-			"not-started", "the action could not be claimed"); err != nil {
-			log.Printf("warning: could not withdraw the unclaimed action %s: %v", accepted.ID, err)
-		}
-		return "", "", errors.New("the plugin action could not be started")
+		// This process does not own the Job, and nothing is started here.
+		//
+		// Two facts look alike from here: another runtime of the deployment claimed
+		// the Job in the window between acceptance and this call, and the claim was
+		// refused because the deployment's concurrency budget is full. Both answer
+		// the same way, and neither is a failure: the Job is one the dispatch loop
+		// owns — queued, visible, and a registered action is exactly what a loop
+		// with the plugin loaded can run — so the client gets the ids it polls and
+		// the work runs when a slot is free. §3 asks each runtime to run its share
+		// of durable work; it does not require the process that touched the request
+		// to be the one that runs it.
+		//
+		// Withdrawing it here instead — which is what this did before the budget was
+		// asked for — would report a full deployment as a broken plugin and destroy
+		// work acceptance had already promised.
+		return handle, accepted.ID, nil
 	}
 
 	decoded, err := pluginActionInputOf(input)
@@ -785,6 +802,12 @@ func (s *pluginActionSink) Failed(message string) {
 // test exists to prevent. The fact is not lost — it is on the Job's timeline,
 // where everything else about it is.
 func (s *pluginActionSink) announceTerminal(status, failureMessage string) {
+	if s.input != nil && s.input.NoTerminalHook {
+		// The work came from the hook feed, so its outcome does not go back into
+		// it: announcing here is what would let an after_job_* handler that calls
+		// mah.start_job notify itself, forever.
+		return
+	}
 	var owner *uint
 	if s.execution.Access.UserID != 0 {
 		id := s.execution.Access.UserID
@@ -919,46 +942,59 @@ type pluginActionHostJobs struct {
 // StartClosureJob accepts and claims the Job one closure-backed mah.start_job
 // stands for.
 //
-// The Job is accepted and claimed *before* the Lua goroutine exists, so the work
-// is durable before anything runs — the design's acceptance boundary — and it is
-// claimed here rather than by the control plane's dispatch loop because the
-// callback is a *lua.LFunction in this goroutine's VM: there is nothing to
-// dispatch it from, and a Job left queued for a callback that can never be found
-// again is exactly the state the runtime-loss rules exist to avoid.
+// The Job is accepted *and claimed* in one transaction, before the Lua goroutine
+// exists: the work is durable before anything runs — the design's acceptance
+// boundary — and it is never visible as waiting work. That second half is what
+// makes it correct rather than merely tidy. The callback is a *lua.LFunction in
+// this process's VM, so nothing but this process can run the Job, and a Job left
+// queued for it is a Job the control plane's dispatch loop is entitled to claim —
+// which it does, in the window between acceptance and the host's own claim, only
+// to find no callback to run. Accept-and-claim removes that window instead of
+// arbitrating it: the Job is born running under this process's token, and another
+// runtime has no instant at which it can see the work at all.
 //
 // The Job is non-replayable: its input is a label and a provenance, not something
 // that could be replayed, and recording it as replayable would advertise a Retry
 // whose execution could not exist. It records the originating runtime identity, so
 // a Job this process leaves running can be reconciled by the next one with proof
 // rather than with a guess.
-func (h *pluginActionHostJobs) StartClosureJob(pluginName, label string, actorUserID uint, parentJobID string) (*plugin_system.HostJobRef, error) {
+func (h *pluginActionHostJobs) StartClosureJob(request plugin_system.ClosureJobRequest) (*plugin_system.HostJobRef, error) {
 	service := h.ctx.JobService()
 	if service == nil {
 		// No control plane: the plugin manager keeps its in-memory record, which
 		// is the behaviour every bare manager has always had.
 		return nil, nil
 	}
+	label := request.Label
 	if strings.TrimSpace(label) == "" {
 		label = "Plugin background work"
 	}
 
+	// Whether this Job announces its own terminal event to the plugin hook feed.
+	// A start_job from an after_job_* delivery does not, and neither does one whose
+	// parent Job does not: the suppression has to hold down the whole lineage, or
+	// a hook that starts work is fed by the completion of the work that work
+	// started instead of by its direct child.
+	noTerminalHook := request.JobEventDispatch || h.ctx.pluginActionJobIsQuiet(request.ParentJobID)
+
 	handle := download_queue.NewJobID()
 	input, err := json.Marshal(pluginActionJobInput{
-		Subtype: pluginActionSubtypeClosure,
-		Plugin:  pluginName,
-		Label:   truncateTo(label, jobs.MaxTitleBytes),
-		Runtime: plugin_system.CurrentRuntimeIdentity().String(),
+		Subtype:        pluginActionSubtypeClosure,
+		Plugin:         request.PluginName,
+		Label:          truncateTo(label, jobs.MaxTitleBytes),
+		Runtime:        plugin_system.CurrentRuntimeIdentity().String(),
+		NoTerminalHook: noTerminalHook,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	var owner *uint
-	if actorUserID != 0 {
-		id := actorUserID
+	if request.ActorUserID != 0 {
+		id := request.ActorUserID
 		owner = &id
 	}
-	accepted, err := service.Accept(h.ctx.jobDeps(), jobs.Acceptance{
+	execution, _, err := service.AcceptClaimed(context.Background(), h.ctx.jobDeps(), jobs.Acceptance{
 		Kind:        JobKindPluginAction,
 		KindVersion: jobPluginActionKindVersion,
 		State:       jobs.StateQueued,
@@ -973,47 +1009,38 @@ func (h *pluginActionHostJobs) StartClosureJob(pluginName, label string, actorUs
 		// through the same codec, so it is still one description of one Job and
 		// still carries no value the plugin supplied.
 		Summary: pluginActionSummaryOf(input),
+	}, jobs.ClaimRequest{
+		Kind:        JobKindPluginAction,
+		KindVersion: jobPluginActionKindVersion,
+		Claimant:    plugin_system.CurrentRuntimeIdentity().String(),
+		Capacity:    h.ctx.hostClaimCapacityBudget(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("accept the plugin job: %w", err)
 	}
+	h.ctx.startPluginActionHeartbeat(execution)
 
-	if parentJobID != "" {
+	if request.ParentJobID != "" {
 		// A child link is how the Job Center shows what started what. It is a
 		// best-effort relation: a parent that cannot be linked — it was
 		// reconciled away, or it is not visible to this handle — must not stop
 		// the work the plugin asked for.
 		if err := service.Link(h.ctx.jobDeps(), jobs.LinkRequest{
-			Type: jobs.LinkParentChild, FromJobID: parentJobID, ToJobID: accepted.ID,
+			Type: jobs.LinkParentChild, FromJobID: request.ParentJobID, ToJobID: execution.JobID,
 		}); err != nil {
-			log.Printf("warning: could not link plugin job %s to its parent %s: %v", accepted.ID, parentJobID, err)
+			log.Printf("warning: could not link plugin job %s to its parent %s: %v",
+				execution.JobID, request.ParentJobID, err)
 		}
-	}
-
-	claim, err := h.ctx.claimPluginActionJobForHost(accepted.ID)
-	if err != nil {
-		return nil, err
-	}
-	if !claim.Owned {
-		// The Job was accepted but is not this process's to run: either another
-		// runtime claimed it in the window between acceptance and this call, or
-		// no claim was possible at all. Either way the callback belongs to this
-		// goroutine's VM and only this process can run it, so the plugin is told
-		// rather than handed a job id for work nothing will run, and the accepted
-		// Job is withdrawn if nobody else owns it.
-		if err := h.ctx.withdrawPluginActionJob(jobs.Execution{JobID: accepted.ID, ExecutionToken: ""},
-			"not-started", "the plugin's job could not be claimed"); err != nil {
-			log.Printf("warning: could not withdraw the unclaimed plugin job %s: %v", accepted.ID, err)
-		}
-		return nil, fmt.Errorf("the plugin job could not be started")
 	}
 
 	return &plugin_system.HostJobRef{
-		JobID:       accepted.ID,
+		JobID:       execution.JobID,
 		Handle:      handle,
-		ParentJobID: parentJobID,
-		Sink: newPluginActionSink(h.ctx, claim.execution, &pluginActionJobInput{
-			Subtype: pluginActionSubtypeClosure, Plugin: pluginName,
+		ParentJobID: request.ParentJobID,
+		Sink: newPluginActionSink(h.ctx, execution, &pluginActionJobInput{
+			Subtype:        pluginActionSubtypeClosure,
+			Plugin:         request.PluginName,
+			NoTerminalHook: noTerminalHook,
 		}),
 	}, nil
 }
@@ -1124,6 +1151,11 @@ func (ctx *MahresourcesContext) claimPluginActionJob(jobID string) (jobs.Executi
 		KindVersion: jobPluginActionKindVersion,
 		JobID:       jobID,
 		Claimant:    plugin_system.CurrentRuntimeIdentity().String(),
+		// The deployment-wide budget, exactly as the dispatch loop asks for it: a
+		// plugin execution is one of the executions `max-job-concurrency` counts,
+		// and a claim that skipped it would let a submitting process run work the
+		// deployment's own budget had refused.
+		Capacity: ctx.hostClaimCapacityBudget(),
 	})
 	if err != nil || !claimed {
 		return execution, claimed, err
@@ -1373,6 +1405,38 @@ func pluginActionRuntimeOf(summary json.RawMessage) string {
 		return ""
 	}
 	return decoded.Runtime
+}
+
+// pluginActionJobIsQuiet reports whether an already-accepted Job carries the
+// causal-suppression flag, read from its sanitized summary so no envelope has to
+// be opened for it. A Job that cannot be read is not quiet: suppression has to be
+// proved, and a Job nobody can read is one this process cannot claim to have
+// covered.
+func (ctx *MahresourcesContext) pluginActionJobIsQuiet(jobID string) bool {
+	if ctx == nil || jobID == "" {
+		return false
+	}
+	service := ctx.JobService()
+	if service == nil {
+		return false
+	}
+	snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	if err != nil {
+		return false
+	}
+	return pluginActionJobIsQuietOf(snap.Summary)
+}
+
+// pluginActionJobIsQuietOf reads the causal-suppression flag out of a summary.
+func pluginActionJobIsQuietOf(summary json.RawMessage) bool {
+	if len(summary) == 0 {
+		return false
+	}
+	var decoded pluginActionSummary
+	if err := json.Unmarshal(summary, &decoded); err != nil {
+		return false
+	}
+	return decoded.NoTerminalHook
 }
 
 // pluginActionSubtypeOf reads the subtype out of a sanitized summary. An

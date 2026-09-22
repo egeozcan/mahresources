@@ -24,15 +24,17 @@ type recordingHostJobs struct {
 }
 
 type closureStart struct {
-	PluginName  string
-	Label       string
-	ActorUserID uint
-	ParentJobID string
+	PluginName       string
+	Label            string
+	ActorUserID      uint
+	ParentJobID      string
+	JobEventDispatch bool
 }
 
-func (h *recordingHostJobs) StartClosureJob(pluginName, label string, actorUserID uint, parentJobID string) (*HostJobRef, error) {
+func (h *recordingHostJobs) StartClosureJob(request ClosureJobRequest) (*HostJobRef, error) {
 	h.mu.Lock()
-	h.starts = append(h.starts, closureStart{pluginName, label, actorUserID, parentJobID})
+	h.starts = append(h.starts, closureStart{request.PluginName, request.Label, request.ActorUserID,
+		request.ParentJobID, request.JobEventDispatch})
 	h.mu.Unlock()
 	if h.startErr != nil {
 		return nil, h.startErr

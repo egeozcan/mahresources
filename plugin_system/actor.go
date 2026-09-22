@@ -54,6 +54,15 @@ type Invocation struct {
 	// parent rather than a made-up one.
 	JobID string
 
+	// JobEventDispatch reports that this call is the *delivery of a terminal job
+	// event*: an after_job_completed, after_job_failed or after_job_cancelled
+	// hook. A Job started from here must not announce its own terminal event,
+	// because the feed would hand that announcement back to the very hook that
+	// caused it, which starts another Job, forever. The flag rides the call chain
+	// (it is copied by with() like tx is) so a hook that reaches another plugin's
+	// VM still counts as being inside the dispatch.
+	JobEventDispatch bool
+
 	// Egress is the network policy of the plugin that made this call, when the
 	// call can reach the network. Nil for every other call, and for host-side
 	// fetches that no plugin triggered — which is what keeps operator-initiated
@@ -143,6 +152,24 @@ func NewJobInvocation(actorUserID uint, jobID string) *Invocation {
 	return &Invocation{ActorUserID: actorUserID, JobID: jobID}
 }
 
+// NewJobEventInvocation returns an Invocation for the delivery of a terminal job
+// event — the after_job_* hooks.
+//
+// It is separate from NewInvocation because a hook that starts work is the one
+// place the job-event feed can feed itself: the Job it starts would announce its
+// own completion, which is the next delivery of the same hook. The flag says so
+// for the whole call chain rather than for one plugin, so a Job accepted from a
+// hook is marked as not announcing, whatever plugin ends up asking.
+func NewJobEventInvocation(actorUserID uint) *Invocation {
+	return &Invocation{ActorUserID: actorUserID, JobEventDispatch: true}
+}
+
+// invocationIsJobEventDispatch reports whether a call chain is the delivery of a
+// terminal job event.
+func invocationIsJobEventDispatch(inv *Invocation) bool {
+	return inv != nil && inv.JobEventDispatch
+}
+
 // invocationJobID answers the durable Job a call chain is executing, or "".
 func invocationJobID(inv *Invocation) string {
 	if inv == nil {
@@ -186,7 +213,14 @@ func (inv *Invocation) with(L *lua.LState) *Invocation {
 	// Job's execution is writing is still that execution, and a mah.start_job
 	// inside it is that Job's child. Dropping it here would make the relationship
 	// depend on which entry point happened to run the Lua.
-	return &Invocation{ActorUserID: inv.ActorUserID, JobID: inv.JobID, tx: inv.tx, states: append(states, L)}
+	//
+	// JobEventDispatch is carried for the same reason and to the same end: a
+	// plugin reached from the delivery of a terminal job event is still inside
+	// that delivery, so work it starts must still not announce.
+	return &Invocation{
+		ActorUserID: inv.ActorUserID, JobID: inv.JobID, JobEventDispatch: inv.JobEventDispatch,
+		tx: inv.tx, states: append(states, L),
+	}
 }
 
 // withInvocation returns a child context carrying inv, for a VM entry point that

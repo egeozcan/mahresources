@@ -59,7 +59,9 @@ type JobRuntimeConfig struct {
 	// Interval is how often the loop looks for work.
 	Interval time.Duration
 	// GlobalCapacity is the deployment-wide concurrency budget, shared by every
-	// Kind. 0 means no deployment-wide budget, leaving each Kind's own budget.
+	// Kind. 0 selects the deployment's configured budget (the context's
+	// Config.MaxJobConcurrency), which is the same number the host-side claim
+	// paths take: one deployment budget, one source for it.
 	GlobalCapacity int
 	// QuiesceTimeout bounds how long Stop waits for running executions to
 	// acknowledge cancellation.
@@ -102,6 +104,13 @@ func NewJobRuntime(ctx *MahresourcesContext, service *jobs.Service, config JobRu
 	}
 	if config.Interval <= 0 {
 		config.Interval = defaultJobRuntimeInterval
+	}
+	// Every claim takes the deployment's concurrency budget, and this is the one
+	// place the number comes from: the runtime and the host-side claim paths (a
+	// plugin action's own process) share it, so "the deployment is running as much
+	// as it may" is one fact rather than two counts that can disagree.
+	if config.GlobalCapacity <= 0 && ctx != nil {
+		config.GlobalCapacity = ctx.Config.MaxJobConcurrency
 	}
 	if config.QuiesceTimeout <= 0 {
 		config.QuiesceTimeout = defaultJobRuntimeQuiesceTimeout
@@ -249,10 +258,30 @@ func (r *JobRuntime) tick(ctx context.Context) {
 // capacityBudget is the deployment-wide budget this runtime asks every claim to
 // occupy, on top of the Kind's own.
 func (r *JobRuntime) capacityBudget() []jobs.CapacityRef {
-	if r.globalCapacity <= 0 {
+	return deploymentCapacityBudget(r.globalCapacity)
+}
+
+// deploymentCapacityBudget is the deployment-wide concurrency budget, expressed
+// as the claim admission that occupies it. A limit of zero is "not configured",
+// never "no budget for this claim": an unenforced budget would admit the very
+// concurrency the setting exists to bound.
+func deploymentCapacityBudget(limit int) []jobs.CapacityRef {
+	if limit <= 0 {
 		return nil
 	}
-	return []jobs.CapacityRef{{Group: jobs.CapacityGroupGlobal, Limit: r.globalCapacity}}
+	return []jobs.CapacityRef{{Group: jobs.CapacityGroupGlobal, Limit: limit}}
+}
+
+// hostClaimCapacityBudget is the budget a claim taken outside the dispatch loop
+// occupies — a plugin action, a scheduled occurrence or a closure-backed
+// start_job, all of which are admitted by the process that accepted them. It is
+// the deployment's own budget, so a host-side execution and a polling runtime's
+// execution are admitted against one count rather than two.
+func (ctx *MahresourcesContext) hostClaimCapacityBudget() []jobs.CapacityRef {
+	if ctx == nil {
+		return nil
+	}
+	return deploymentCapacityBudget(ctx.Config.MaxJobConcurrency)
 }
 
 // startExecution runs one claimed execution in its own goroutine, heartbeating

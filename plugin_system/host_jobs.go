@@ -95,7 +95,28 @@ type HostJobs interface {
 	// It is asked *before* the closure runs, because acceptance is the promise
 	// that the work is durable; a plugin whose host cannot accept the Job is told
 	// so rather than handed a job id for work nobody can find later.
-	StartClosureJob(pluginName, label string, actorUserID uint, parentJobID string) (*HostJobRef, error)
+	StartClosureJob(request ClosureJobRequest) (*HostJobRef, error)
+}
+
+// ClosureJobRequest is what one closure-backed mah.start_job asks the host to
+// accept.
+type ClosureJobRequest struct {
+	// PluginName is the plugin the closure belongs to.
+	PluginName string
+	// Label is the human name the plugin gave the work.
+	Label string
+	// ActorUserID is the user the call is attributed to, or 0 when there is none.
+	ActorUserID uint
+	// ParentJobID names the Job whose execution asked for this one. Empty when the
+	// call is not executing inside a Job.
+	ParentJobID string
+	// JobEventDispatch reports that this call is the delivery of a terminal job
+	// event — an after_job_completed, after_job_failed or after_job_cancelled
+	// hook. A Job accepted from there must not announce its own terminal event,
+	// or the feed hands the completion straight back to the hook that caused it,
+	// which starts another Job, forever. It is a fact about the call chain rather
+	// than about the plugin, so the host is told it rather than inferring it.
+	JobEventDispatch bool
 }
 
 // SetHostJobs installs the host's Job control plane.

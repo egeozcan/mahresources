@@ -188,9 +188,14 @@ func (d *JobEventDispatcher) dispatch(rec download_queue.JobEventRecord) {
 	// row is attributed and how an async action job runs. A job with no
 	// submitter (auth-off, or a system-started export) dispatches with no actor,
 	// which is the same thing every other principal-less host path does.
-	inv := plugin_system.NewInvocation(0)
+	//
+	// The invocation is the *job-event* one, and that is what keeps the feed from
+	// feeding itself: a handler that calls mah.start_job accepts a Job marked as
+	// not announcing its own terminal event, so a hook can start work without the
+	// completion of that work arriving at the same hook, and the chain ends.
+	inv := plugin_system.NewJobEventInvocation(0)
 	if rec.OwnerUserID != nil {
-		inv = plugin_system.NewInvocation(*rec.OwnerUserID)
+		inv = plugin_system.NewJobEventInvocation(*rec.OwnerUserID)
 	}
 
 	pm.RunAfterHooks(inv, event, data)

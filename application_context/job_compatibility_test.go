@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"mahresources/auth"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // This file drives the compatibility-handle seam: the durable mapping from a
@@ -213,5 +217,97 @@ func TestARefusedRetryLeavesTheHandleWhereItWas(t *testing.T) {
 	}
 	if resolved.ID != successor.SuccessorID {
 		t.Fatalf("the refused retry moved the handle to %s, want it left on %s", resolved.ID, successor.SuccessorID)
+	}
+}
+
+// TestALegacyDownloadHandleResolvesATerminalJobAfterRestart pins the compatibility
+// contract in the direction the process-local queue cannot answer.
+//
+// A legacy id is a handle onto a durable Job (ADR 0007), so it has to keep
+// resolving once the queue entry behind it is gone — the process restarted, or the
+// entry was evicted, or somebody dismissed it from the panel. Absence from *this*
+// process's memory is not evidence that the work never existed, and answering 404
+// there broke both legacy reads and legacy Retry for a failed download whose
+// canonical Job and sealed input were still perfectly available.
+func TestALegacyDownloadHandleResolvesATerminalJobAfterRestart(t *testing.T) {
+	ctx := newDownloadJobContext(t)
+
+	// One download that succeeds, and one that fails: the read half and the Retry
+	// half of the same handle contract.
+	content := plainContentServer(t, "durable body")
+	succeeded := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+		URL: content.URL + "/done.txt",
+	}, nil, "", "api")
+	if len(succeeded) != 1 || succeeded[0].Err != nil || succeeded[0].Job == nil {
+		t.Fatalf("submit the succeeding download: %+v", succeeded)
+	}
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no", http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+	failedSubmission := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+		URL: failing.URL + "/broken.bin",
+	}, nil, "", "api")
+	if len(failedSubmission) != 1 || failedSubmission[0].Err != nil || failedSubmission[0].Job == nil {
+		t.Fatalf("submit the failing download: %+v", failedSubmission)
+	}
+
+	succeededHandle, succeededJob := succeeded[0].Job.ID, succeeded[0].CanonicalJobID
+	failedHandle, failedJob := failedSubmission[0].Job.ID, failedSubmission[0].CanonicalJobID
+	waitForSnapshot(t, ctx, succeededJob, "the download to succeed",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	failure := waitForSnapshot(t, ctx, failedJob, "the download to fail",
+		func(snap jobs.Snapshot) bool { return snap.State.Terminal() })
+	if failure.State != jobs.StateFailed {
+		t.Fatalf("the failing download ended %s, want failed", failure.State)
+	}
+
+	// The queue entry is gone, which is what a restart, an eviction and the panel's
+	// own dismissal all look like from here. The durable records are not.
+	ctx.DownloadManager().ClearFinished(nil)
+	for _, handle := range []string{succeededHandle, failedHandle} {
+		if _, held := ctx.DownloadManager().GetJob(handle); held {
+			t.Fatalf("the queue entry %s is still in this process", handle)
+		}
+	}
+
+	projection, err := ctx.ProjectDownloadJob(succeededHandle)
+	if err != nil {
+		t.Fatalf("a finished download's handle stopped resolving: %v", err)
+	}
+	if projection.Row == nil || projection.Row.Status != download_queue.JobStatusCompleted {
+		t.Fatalf("the finished download projects as %+v, want a completed row", projection.Row)
+	}
+	if projection.CanonicalJobID != succeededJob {
+		t.Fatalf("the handle resolved to job %q, want %q", projection.CanonicalJobID, succeededJob)
+	}
+
+	// Retry through the same handle, which is the legacy control the durable Job has
+	// to keep answering for.
+	failedProjection, err := ctx.ProjectDownloadJob(failedHandle)
+	if err != nil {
+		t.Fatalf("a failed download's handle stopped resolving: %v", err)
+	}
+	if failedProjection.Row == nil || failedProjection.Row.Status != download_queue.JobStatusFailed {
+		t.Fatalf("the failed download projects as %+v, want a failed row", failedProjection.Row)
+	}
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID:           failedProjection.CanonicalJobID,
+		Key:             jobs.CommandRetry,
+		IdempotencyKey:  "legacy-retry-after-restart",
+		ExpectedVersion: failedProjection.CanonicalVersion,
+	})
+	if err != nil {
+		t.Fatalf("retry a failed download through its handle: %v", err)
+	}
+	if result.SuccessorID == "" {
+		t.Fatalf("the retry answered no successor: %+v", result)
+	}
+	resolved, err := ctx.ResolveJobHandle(DownloadHandleNamespace, failedHandle)
+	if err != nil {
+		t.Fatalf("resolve the handle after the retry: %v", err)
+	}
+	if resolved.ID != result.SuccessorID {
+		t.Fatalf("the handle names %s after a retry, want the successor %s", resolved.ID, result.SuccessorID)
 	}
 }

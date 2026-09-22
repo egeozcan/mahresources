@@ -144,15 +144,14 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 			projection.Row = downloadRowFromJob(*canonical, id)
 			return projection, nil
 		}
-		// No queue entry in this process. A Job that is still going to happen — queued,
-		// scheduled, running on a process that is not this one, or held for a person —
-		// is projected so a client polling after a restart still sees its work. A Job
-		// that has ended is not: its record is the Job Center's, and a legacy row for
-		// work that is over is exactly what deleting or clearing one removes. That is
-		// what keeps "clear completed" meaning what it has always meant.
-		if canonical.Terminal() {
-			return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
-		}
+		// No queue entry in this process. The durable Job is what answers, whatever
+		// state it reached: a handle onto finished work still names that work, and the
+		// queue this process happens to hold is not the record of it. A restart, an
+		// eviction and the panel's own dismissal all look exactly like this from here,
+		// and none of them is evidence that the work never existed or that somebody
+		// cleared it — the Job Center's dismissal is a per-viewer preference, not a
+		// deletion, and a client that kept one id may still read its outcome and ask
+		// for a Retry.
 		projection.Row = downloadRowFromJob(*canonical, id)
 		return projection, nil
 	}

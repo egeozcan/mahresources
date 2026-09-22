@@ -881,17 +881,17 @@ func main() {
 	// It is inert until a Kind registers an adapter with it, and it runs
 	// regardless: reconciliation is not optional, because a claim left by a
 	// previous process still has to be resolved even when this one cannot run the
-	// work at all. The deployment-wide concurrency budget is the shared job
-	// budget, and every Kind's own budget is taken on top of it.
+	// work at all. The deployment-wide concurrency budget is read from the
+	// deployment's own configuration inside the runtime, because the host-side
+	// claim paths (a plugin action's submitting process) take that same budget:
+	// one number, one place it is read.
 	jobService := jobs.NewService()
 	// Installed on the context as well as handed to the runtime: the runtime
 	// registers the Kind adapters, and a facade holding a second control plane
 	// would read one with no adapters registered. One process, one control
 	// plane.
 	context.SetJobService(jobService)
-	jobRuntime := application_context.NewJobRuntime(context, jobService, application_context.JobRuntimeConfig{
-		GlobalCapacity: *maxJobConcurrency,
-	})
+	jobRuntime := application_context.NewJobRuntime(context, jobService, application_context.JobRuntimeConfig{})
 	jobRuntime.Start()
 	defer jobRuntime.Stop()
 
