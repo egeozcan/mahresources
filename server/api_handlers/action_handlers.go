@@ -452,6 +452,14 @@ func startPluginActionAsync(
 	return jobID, "", err
 }
 
+// pluginActionJobProjector is the optional half of this route: the durable projection a
+// runner answers with when the in-memory registry has nothing. It is asserted rather
+// than required so a bare handler mount, a programmatic embed and a context with no
+// control plane keep the behaviour they had.
+type pluginActionJobProjector interface {
+	ProjectActionJob(handle string) (*plugin_system.ActionJob, error)
+}
+
 // GetActionJobHandler handles GET /v1/jobs/action/job?id=abc
 func GetActionJobHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +476,19 @@ func GetActionJobHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 		}
 
 		job := pm.GetActionJob(jobID)
+		if job == nil {
+			// The manager holds this process's executions. Work the deployment accepted
+			// and has not started — a submission the concurrency budget had no room for
+			// — is in none of that memory, and the id the server answered with has to
+			// keep resolving for the client that is polling it. The durable Job is what
+			// outlives the process, and a runner that can project it answers instead.
+			if projector, ok := ctx.(pluginActionJobProjector); ok {
+				projected, err := projector.ProjectActionJob(jobID)
+				if err == nil {
+					job = projected
+				}
+			}
+		}
 		if job == nil || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.Owner()) {
 			// Non-owners get a 404 (not 403) so job IDs can't be enumerated.
 			http_utils.HandleError(fmt.Errorf("action job %q not found", jobID), w, r, http.StatusNotFound)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 
 	"github.com/spf13/afero"
@@ -585,5 +587,145 @@ func TestAScopedExportsRepeatKeepsTheExportsSubtree(t *testing.T) {
 	}
 	if exportedGroupIDs(t, ctx, repeated.ID)[outsideID] {
 		t.Fatalf("the repeated export followed a relation outside the principal's subtree")
+	}
+}
+
+// gatedExportFs is the export harness's filesystem with one gate in it: creation of
+// the tar block until the test releases it. It is how a worker is made to be *still
+// running* while the assertions about its Job are made — the export's own staged
+// file, rather than a sleep in the test, is what holds it.
+type gatedExportFs struct {
+	afero.Fs
+	entered     chan struct{}
+	release     chan struct{}
+	enteredOnce sync.Once
+	released    sync.Once
+}
+
+func newGatedExportFs(inner afero.Fs) *gatedExportFs {
+	return &gatedExportFs{Fs: inner, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *gatedExportFs) Create(name string) (afero.File, error) {
+	g.enteredOnce.Do(func() { close(g.entered) })
+	<-g.release
+	return g.Fs.Create(name)
+}
+
+// release lets every staged write through, once.
+func (g *gatedExportFs) unblock() { g.released.Do(func() { close(g.release) }) }
+
+// TestARefusedProgressWriteDoesNotEndAnExportThatIsStillRunning is the other half of
+// owning an execution: a Job's outcome belongs to its executor, and nothing that
+// happens *around* the executor may classify the work.
+//
+// The queue bridge mirrors the running entry's progress into the Job, and a mirror
+// can be refused — a transient write failure, a locked database, a pool briefly
+// exhausted. Reading that refusal as the executor's answer ended the Job as
+// `dispatch-failed` while the queue's own worker was still producing the archive, so
+// the Job Center offered a Retry of work in flight and the claim and the capacity
+// that owned it went with the wrong outcome. A progress snapshot is telemetry:
+// ownership lasts until the worker returns, which is what the terminal status below
+// records.
+//
+// The runtime dispatched this Job, so the harm the finding names — `finishOwnedExecution`
+// ending a running Job and freeing its claim — is what the test observes, not merely a
+// refused dispatch call.
+func TestARefusedProgressWriteDoesNotEndAnExportThatIsStillRunning(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	ctx.Config.MaxJobConcurrency = 1
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{Claimant: "export-dispatch-test", Interval: time.Hour})
+	t.Cleanup(runtime.Stop)
+
+	groupID := createExportGroupForTest(t, ctx, "gated-export")
+
+	// The deployment's one slot, taken by a transfer that is held open by its server:
+	// the export is therefore accepted durably and dispatched by the runtime rather
+	// than by the request that accepted it.
+	server, _, unblock := heldTransferServer(t)
+	transfer := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(transfer) != 1 || transfer[0].Err != nil || transfer[0].Job == nil {
+		t.Fatalf("the holding transfer: %+v", transfer)
+	}
+	waitForSnapshot(t, ctx, transfer[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	// One refused write, injected: the failure under test is transient, so the
+	// executor runs on and the next tick has to record where it got to.
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failProgressWrite.Store(true)
+
+	accepted := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if accepted.Err != nil {
+		t.Fatalf("submit the export: %v", accepted.Err)
+	}
+	if accepted.CanonicalJobID == "" {
+		t.Fatalf("the export created no durable job")
+	}
+	if _, found := ctx.queueEntryFor(accepted.CanonicalJobID); found {
+		t.Fatalf("the export started an executor while the deployment's only slot was taken")
+	}
+
+	// The slot frees, and the runtime claims the export and dispatches it.
+	unblock()
+	waitForSnapshot(t, ctx, transfer[0].CanonicalJobID, "the holding transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+
+	// The worker is gated on its own staged write, so "still running" is a fact about
+	// the export rather than about a sleep in this test. The gate goes on after the
+	// holding transfer is done with the filesystem, and before the export reads it.
+	gate := newGatedExportFs(ctx.GetDefaultFs())
+	t.Cleanup(gate.unblock)
+	ctx.fs = gate
+	waitFor(t, "the runtime to claim and dispatch the export", func() bool {
+		runtime.tick(context.Background())
+		select {
+		case <-gate.entered:
+			return true
+		default:
+			return false
+		}
+	})
+
+	// The loop mirrors the entry's progress on its first tick, which is well inside
+	// this window: what it does with the refusal is the whole question.
+	time.Sleep(300 * time.Millisecond)
+	snap := jobSnapshot(t, ctx.JobService(), ctx, accepted.CanonicalJobID)
+	if snap.State != jobs.StateRunning {
+		t.Fatalf("the export is %s while its worker is still producing the archive: a refused progress write was read as its executor's answer (%+v)",
+			snap.State, snap.Failure)
+	}
+	if claimed := storedClaim(t, ctx, accepted.CanonicalJobID); claimed.State != models.JobClaimStateHeld {
+		t.Fatalf("the export's claim is %s while its worker is still running", claimed.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the export's worker is running with %d capacity slots held, want the one that admitted it", held)
+	}
+	if ctx.jobFaults.failProgressWrite.Load() {
+		t.Fatal("the injected write refusal was never consumed: the progress mirror never ran")
+	}
+
+	// The worker returns, and its own outcome is the one the Job keeps.
+	gate.unblock()
+	finished := waitForSnapshot(t, ctx, accepted.CanonicalJobID, "the gated export to end", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(accepted.CanonicalJobID)
+	if err != nil {
+		t.Fatalf("read outputs: %v", err)
+	}
+	if _, published := findJobOutput(outputs, jobExportArtifactOutput); !published {
+		t.Fatalf("a succeeded export published no artifact: %+v", outputs)
+	}
+	if claimed := storedClaim(t, ctx, accepted.CanonicalJobID); claimed.State != models.JobClaimStateReleased {
+		t.Fatalf("the claim is %s after the export ended, want released", claimed.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the deployment budget still holds %d slots after the export ended", held)
 	}
 }

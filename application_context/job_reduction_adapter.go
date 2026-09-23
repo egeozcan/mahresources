@@ -381,6 +381,11 @@ func (a *reductionComputeAdapter) CleanupArtifacts(_ context.Context, _ jobs.Art
 // Reduction row itself says the work can be done again, because that row is the
 // authority on whether a run is wanted.
 func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	// §8: a principal demoted below "may write" keeps the history and loses the
+	// controls over it.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+		return nil, nil
+	}
 	commands := []jobs.Command{{
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"mahresources/plugin_commands"
 )
@@ -36,11 +37,19 @@ import (
 //
 // Every method is a fact, never a decision: whether a Job may finish, whether an
 // outcome is acceptable, and what a stale execution's publish does are the control
-// plane's answers, and an implementation that returns nothing gives plugin_system
-// nothing to act on. A sink is therefore safe to call from the goroutine that runs
+// plane's answers. A sink is therefore safe to call from the goroutine that runs
 // the Lua, and it must not block that goroutine for long: the method calls are
 // where a worker's time goes if it is slow, and the reports are throttled by the
 // caller rather than here.
+//
+// The two *terminal* reports answer with an error, and that answer is what
+// plugin_system acts on. A terminal outcome is reported exactly once, and "exactly
+// once" has to mean "once the durable plane has it": the host's publish reaches a
+// database, so it can be refused transiently, and a caller that treated a refusal as
+// a delivery would leave a returned callback's Job running and heartbeated forever —
+// holding the deployment's capacity, unclassifiable by reconciliation, and hiding the
+// work from the person waiting for it. A non-nil answer means "not durable yet"; the
+// caller keeps the outcome and reports it again.
 type HostJobSink interface {
 	// Started reports that the handler is about to be entered.
 	Started(message string)
@@ -49,15 +58,20 @@ type HostJobSink interface {
 	// loop does not write a timeline.
 	Progress(percent int, message string)
 	// Completed reports the action's own success, with its result table when the
-	// plugin returned one.
-	Completed(message string, result map[string]any)
+	// plugin returned one. A non-nil answer means the outcome was not durably
+	// recorded.
+	Completed(message string, result map[string]any) error
 	// Failed reports that the handler ended unsuccessfully, with the message the
-	// plugin or the host produced.
-	Failed(message string)
+	// plugin or the host produced. A non-nil answer means the same as Completed's.
+	Failed(message string) error
 	// CallbackLost reports that the callback this execution was reporting for can
 	// never run or finish again: the VM that owned it is gone. It is how a
 	// graceful shutdown proves runtime loss, which is a stronger statement than a
 	// lease expiring and is why it is a method rather than an inference.
+	//
+	// It answers with nothing because it is reported at shutdown: there is no
+	// second attempt to make, and the next process reconciles what it could not
+	// settle.
 	CallbackLost(reason string)
 }
 
@@ -254,4 +268,47 @@ func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 		return RuntimeAlive
 	}
 	return pidLiveness(r.PID)
+}
+
+// ProjectedActionJob is the in-memory shape of one durable plugin-action Job, for a
+// reader that asks about work this process does not hold.
+//
+// The plugin manager's registry is process memory: it is populated by the executions
+// this process started and emptied at every restart. The durable Job outlives both, and
+// the legacy route that answers one action job by handle has to as well — otherwise a
+// client polling the id the server answered with gets a 404 for work that is plainly
+// still going to run, and the panel loses a row it was told about.
+type ProjectedActionJob struct {
+	Handle   string
+	Plugin   string
+	ActionID string
+	Label    string
+	// EntityType is the plugin action's entity kind, or "custom" for a schedule.
+	EntityType string
+	// Status is the panel's own vocabulary: pending, running, paused, completed,
+	// failed or cancelled.
+	Status   string
+	Progress int
+	Message  string
+	// Owner is the account the Job belongs to, for the per-user visibility rule the
+	// route applies. Nil is an ownerless Job, which is admin-only.
+	Owner     *uint
+	CreatedAt time.Time
+}
+
+// ActionJob renders the projection as the entry the route serializes.
+func (p ProjectedActionJob) ActionJob() *ActionJob {
+	return &ActionJob{
+		ID:          p.Handle,
+		Source:      "plugin",
+		PluginName:  p.Plugin,
+		ActionID:    p.ActionID,
+		Label:       p.Label,
+		EntityType:  p.EntityType,
+		Status:      p.Status,
+		Progress:    p.Progress,
+		Message:     p.Message,
+		CreatedAt:   p.CreatedAt,
+		ownerUserID: p.Owner,
+	}
 }

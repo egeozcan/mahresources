@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"sync"
@@ -57,6 +58,9 @@ type recordingSink struct {
 	lost      []string
 	progress  int
 	message   string
+	// refuseTerminal makes the terminal reports answer "not durable yet", which is
+	// what a transient write failure looks like to plugin_system.
+	refuseTerminal bool
 }
 
 func (s *recordingSink) Started(string) { s.bump(&s.started) }
@@ -65,13 +69,26 @@ func (s *recordingSink) Progress(int, string) {
 	s.progress++
 	s.mu.Unlock()
 }
-func (s *recordingSink) Completed(message string, _ map[string]any) {
+func (s *recordingSink) Completed(message string, _ map[string]any) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refuseTerminal {
+		return errors.New("the durable plane refused this outcome")
+	}
 	s.completed++
 	s.message = message
-	s.mu.Unlock()
+	return nil
 }
-func (s *recordingSink) Failed(string) { s.bump(&s.failed) }
+
+func (s *recordingSink) Failed(string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refuseTerminal {
+		return errors.New("the durable plane refused this outcome")
+	}
+	s.failed++
+	return nil
+}
 func (s *recordingSink) CallbackLost(reason string) {
 	s.mu.Lock()
 	s.lost = append(s.lost, reason)

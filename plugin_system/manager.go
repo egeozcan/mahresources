@@ -1603,7 +1603,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			// not turn one execution into thousands of database writes. Progress is
 			// a snapshot, not an event, so nothing is lost by replacing it less
 			// often — and the terminal report that follows is never throttled.
-			reportHostJob(job, func(sink HostJobSink) { sink.Progress(percent, message) })
+			_ = reportHostJob(job, func(sink HostJobSink) error { sink.Progress(percent, message); return nil })
 		}
 		return 0
 	})

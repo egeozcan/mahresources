@@ -3,14 +3,17 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
 
@@ -983,6 +986,17 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 		t.Fatalf("the chatty action ended %s (%+v)", finished.State, finished.Failure)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
+
+	// The sealed input is the last copy, and forgetting it must not leave the value
+	// behind in an output the plugin's own result carried it into.
+	forgot := jobSnapshot(t, ctx.JobService(), ctx, chatty)
+	if _, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: chatty, Key: jobs.CommandForget, IdempotencyKey: "forget-chatty",
+		ExpectedVersion: forgot.Version,
+	}); err != nil {
+		t.Fatalf("forget the chatty action's input: %v", err)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
 }
 
 // assertNoSecretInJobSurfaces reads every surface a viewer can list and refuses a
@@ -1016,6 +1030,18 @@ func assertNoSecretInJobSurfaces(t *testing.T, ctx *MahresourcesContext, jobID, 
 	for _, listed := range page.Jobs {
 		if strings.Contains(listed.Title, secret) || strings.Contains(string(listed.Summary), secret) {
 			t.Fatalf("the listing carries the value: %s / %s", listed.Title, listed.Summary)
+		}
+	}
+	// Outputs are a durable surface a viewer reads, and the plugin's own result table
+	// is published as one: a completion whose message is built from a parameter is a
+	// value the Job's sealed input is the only copy of.
+	outputs, err := ctx.GetJobOutputs(jobID)
+	if err != nil {
+		t.Fatalf("read the job's outputs: %v", err)
+	}
+	for _, output := range outputs {
+		if strings.Contains(output.Label, secret) || strings.Contains(string(output.Reference), secret) {
+			t.Fatalf("the %s output carries the value: %s", output.Key, output.Reference)
 		}
 	}
 }
@@ -1224,4 +1250,323 @@ func TestAPluginOutcomeIsPublishedOnlyAfterItsCallbackReturns(t *testing.T) {
 	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the deployment budget still holds %d slots after the handler returned", held)
 	}
+}
+
+// TestAPluginJobsCommandsFollowTheActorsCurrentAuthority is §8's "ownership grants
+// visibility, not permanent control", driven through the command seam rather than
+// through the request that submitted the work.
+//
+// The Job is the same Job and the account is the same account; what changes is what
+// that account may do. A Retry of a plugin action runs the plugin's Lua, which is the
+// exact power the deny on plugin-code endpoints exists to withhold from a group-limited
+// principal, so a demoted or confined owner keeps the sanitized history and loses the
+// control. Before this, a Kind's advertisement was decided from the Job's state and the
+// registration alone: nothing asked whether the actor could still do any of it, and
+// owning old history was enough.
+func TestAPluginJobsCommandsFollowTheActorsCurrentAuthority(t *testing.T) {
+	// Enabled through the application context rather than through the plugin manager
+	// alone: the per-plugin access rule reads the *state row*, and only this path
+	// writes one.
+	ctx := newJobHarnessContext(t, true)
+	if err := ctx.SetPluginEnabled(pluginActionTestPlugin, true); err != nil {
+		t.Fatalf("enable the plugin: %v", err)
+	}
+
+	operator, err := ctx.CreateUser(&UserInput{
+		Username: "operator", Password: "correct-horse-battery", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create the operator: %v", err)
+	}
+	asOperator := func() *MahresourcesContext {
+		user, err := ctx.GetUser(operator.ID)
+		if err != nil {
+			t.Fatalf("re-read the operator: %v", err)
+		}
+		return ctx.WithPrincipal(auth.FromUser(user))
+	}
+
+	// One unsuccessful registered action whose registration declares that re-running
+	// it is safe: a Retry this Job may offer until the actor's authority changes.
+	_, jobID, err := ctx.RunPluginActionAsync(&operator.ID, pluginActionTestPlugin, "retryable-work", 0, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	waitForSnapshot(t, ctx, jobID, "the action to fail", func(s jobs.Snapshot) bool { return s.State.Terminal() })
+
+	commands, err := asOperator().AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands: %v", err)
+	}
+	if !hasCommand(commands, jobs.CommandRetry) {
+		t.Fatalf("the operator's own unsuccessful action offers no Retry: %+v", commands)
+	}
+
+	// Demotion — to a guest, which is a role confined to one group, so the demotion and
+	// the confinement arrive together. The Job is unchanged and the account is the same
+	// one; only the authority moved, and a guest may not run plugin code at all.
+	group := &models.Group{Name: "operators"}
+	if err := ctx.db.Create(group).Error; err != nil {
+		t.Fatalf("create the scope group: %v", err)
+	}
+	if _, err := ctx.UpdateUser(operator.ID, &UserUpdate{
+		Role:         UserField[models.Role]{Set: true, Value: models.RoleGuest},
+		ScopeGroupID: UserField[*uint]{Set: true, Value: &group.ID},
+	}); err != nil {
+		t.Fatalf("demote the operator: %v", err)
+	}
+	commands, err = asOperator().AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands after the demotion: %v", err)
+	}
+	if hasCommand(commands, jobs.CommandRetry) {
+		t.Fatalf("a demoted owner is still offered a Retry: %+v", commands)
+	}
+	refused := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+	if _, err := asOperator().ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandRetry, IdempotencyKey: "retry-after-demotion",
+		ExpectedVersion: refused.Version,
+	}); !errors.Is(err, jobs.ErrCommandNotAdvertised) {
+		t.Fatalf("a demoted owner retrying their own action = %v, want ErrCommandNotAdvertised", err)
+	}
+	if after := jobSnapshot(t, ctx.JobService(), ctx, jobID); after.State != refused.State || after.Version != refused.Version {
+		t.Fatalf("the refused Retry changed the job to %s v%d", after.State, after.Version)
+	}
+
+	// Confinement, with the role back: an ordinary user scoped to one group cannot
+	// reach this plugin, so the same dismissal applies — this is the deny on
+	// plugin-code endpoints reached through a Job instead of through a URL.
+	if _, err := ctx.UpdateUser(operator.ID, &UserUpdate{
+		Role:         UserField[models.Role]{Set: true, Value: models.RoleUser},
+		ScopeGroupID: UserField[*uint]{Set: true, Value: &group.ID},
+	}); err != nil {
+		t.Fatalf("confine the operator: %v", err)
+	}
+	commands, err = asOperator().AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands after the confinement: %v", err)
+	}
+	if hasCommand(commands, jobs.CommandRetry) {
+		t.Fatalf("a principal with no access to the plugin is still offered a Retry of its job: %+v", commands)
+	}
+	refused = jobSnapshot(t, ctx.JobService(), ctx, jobID)
+	if _, err := asOperator().ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandRetry, IdempotencyKey: "retry-while-confined",
+		ExpectedVersion: refused.Version,
+	}); !errors.Is(err, jobs.ErrCommandNotAdvertised) {
+		t.Fatalf("a confined owner retrying a plugin's action = %v, want ErrCommandNotAdvertised", err)
+	}
+
+	// What the refusal was actually about: opening the plugin to group-limited
+	// principals restores the control, so the check is the plugin's reach and not a
+	// blanket refusal of confined owners.
+	if err := ctx.SetPluginScopedAccess(pluginActionTestPlugin, true); err != nil {
+		t.Fatalf("open the plugin to scoped principals: %v", err)
+	}
+	commands, err = asOperator().AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands after opening the plugin: %v", err)
+	}
+	if !hasCommand(commands, jobs.CommandRetry) {
+		t.Fatalf("an owner with access to the plugin is offered no Retry: %+v", commands)
+	}
+	allowed := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+	result, err := asOperator().ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandRetry, IdempotencyKey: "retry-while-allowed",
+		ExpectedVersion: allowed.Version,
+	})
+	if err != nil {
+		t.Fatalf("retry with access to the plugin: %v", err)
+	}
+	if result.Status != jobs.CommandStatusSucceeded || result.SuccessorID == "" {
+		t.Fatalf("the allowed Retry answered %s/%s (successor %q)", result.Status, result.Code, result.SuccessorID)
+	}
+}
+
+// TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority is the scheduler's
+// half of the same rule, and the half with no request anywhere near it: a claimed row
+// is materialized and dispatched by a ticker, so nothing carries the operator's
+// authority forward from the moment they enabled the plugin. A schedule is plugin code
+// on a timer — the power the deny on plugin-code endpoints withholds from a
+// group-limited principal — so an operator who has since been confined stops running
+// it, and the occurrence is blocked for a person rather than silently executed.
+func TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+
+	operator, err := ctx.CreateUser(&UserInput{
+		Username: "schedule-operator", Password: "correct-horse-battery", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create the operator: %v", err)
+	}
+	assertOperatorScoped := func() {
+		t.Helper()
+		group := &models.Group{Name: "schedule-scope"}
+		if err := ctx.db.Create(group).Error; err != nil {
+			t.Fatalf("create the scope group: %v", err)
+		}
+		if _, err := ctx.UpdateUser(operator.ID, &UserUpdate{
+			ScopeGroupID: UserField[*uint]{Set: true, Value: &group.ID},
+		}); err != nil {
+			t.Fatalf("confine the operator: %v", err)
+		}
+	}
+	assertOperatorScoped()
+
+	pm := ctx.PluginManager()
+	if err := ctx.SyncPluginSchedules(pluginActionTestPlugin, pm.DeclaredSchedules(pluginActionTestPlugin)); err != nil {
+		t.Fatalf("sync schedules: %v", err)
+	}
+	// The row belongs to the operator: a schedule nobody owns is never claimed.
+	if err := ctx.db.Model(&models.PluginSchedule{}).
+		Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "tick").
+		Update("created_by_user_id", operator.ID).Error; err != nil {
+		t.Fatalf("bind the schedule to its operator: %v", err)
+	}
+	var row models.PluginSchedule
+	if err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginActionTestPlugin, "tick").First(&row).Error; err != nil {
+		t.Fatalf("load the schedule row: %v", err)
+	}
+	if err := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", row.ID).
+		Update("next_due_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatalf("make the schedule due: %v", err)
+	}
+
+	NewPluginScheduler(ctx, time.Minute).Tick(time.Now())
+
+	job := pluginActionJobBySubtype(t, ctx, pluginActionSubtypeScheduled, 1)
+	job = waitForJobState(t, ctx, job.ID, "the occurrence to be decided", func(s jobs.Snapshot) bool {
+		return s.State.Terminal() || s.State == jobs.StateBlocked
+	})
+	if job.State != jobs.StateBlocked {
+		t.Fatalf("a confined operator's occurrence ended %s, want blocked", job.State)
+	}
+	if got := pluginKVForTest(t, ctx, "scheduled"); got != "" {
+		t.Fatalf("a confined operator's schedule still ran its handler (%q)", got)
+	}
+}
+
+// TestATerminalReportIsRetriedUntilTheDurablePlaneHasIt is §3's ownership rule at the
+// one edge where it can be lost silently: the callback has *returned*, so nothing is
+// running any more, and the only thing left is a write that can be refused.
+//
+// Before this, the host marked the execution settled before it published: one transient
+// database refusal — a locked row, a pool briefly exhausted — and the Job stayed running
+// with its claim heartbeated and its capacity held, classified by nothing and reported
+// to nobody. Reconciliation cannot repair that: an execution that is alive and
+// heartbeating is exactly what a reconciler must leave alone. So the outcome is retained
+// and reported again until the durable plane has it, and the two ways the write fails —
+// the read that asks whether the Job is already settled, and the terminal write itself —
+// are each injected here.
+func TestATerminalReportIsRetriedUntilTheDurablePlaneHasIt(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*jobDurabilityFaults)
+		heal func(*jobDurabilityFaults)
+	}{
+		{
+			name: "the terminal write is refused",
+			set:  func(f *jobDurabilityFaults) { f.failSettlementWrite.Store(true) },
+			heal: func(f *jobDurabilityFaults) { f.failSettlementWrite.Store(false) },
+		},
+		{
+			name: "the read that asks whether the job is settled fails",
+			set:  func(f *jobDurabilityFaults) { f.failSettlementRead.Store(true) },
+			heal: func(f *jobDurabilityFaults) { f.failSettlementRead.Store(false) },
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := newPluginActionJobContext(t)
+			ctx.jobFaults = &jobDurabilityFaults{}
+			testCase.set(ctx.jobFaults)
+
+			_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 0, nil, "")
+			if err != nil {
+				t.Fatalf("run the action: %v", err)
+			}
+			// The handler returned and its report was refused: several retry attempts
+			// have to have failed before the assertion means anything.
+			waitFor(t, "the handler to return", func() bool { return pluginKVForTest(t, ctx, "ran") != "" })
+			time.Sleep(1500 * time.Millisecond)
+
+			running := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+			if running.State.Terminal() {
+				t.Fatalf("a refused terminal report ended the job as %s (%+v): the outcome was dropped rather than retained",
+					running.State, running.Failure)
+			}
+			if running.State != jobs.StateRunning {
+				t.Fatalf("the job is %s while its outcome is waiting to be recorded, want running", running.State)
+			}
+
+			// The write succeeds again, and the retained outcome is what the Job keeps:
+			// the same one the callback produced, not a second outcome decided later.
+			testCase.heal(ctx.jobFaults)
+			finished := waitForSnapshot(t, ctx, jobID, "the retained outcome to land", func(s jobs.Snapshot) bool {
+				return s.State.Terminal()
+			})
+			if finished.State != jobs.StateSucceeded {
+				t.Fatalf("the job ended %s (%+v), want the outcome its callback reached", finished.State, finished.Failure)
+			}
+			if claim := storedClaim(t, ctx, jobID); claim.State != models.JobClaimStateReleased {
+				t.Fatalf("the claim is %s after the outcome landed, want released", claim.State)
+			}
+			if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+				t.Fatalf("the deployment budget still holds %d slots after the outcome landed", held)
+			}
+		})
+	}
+}
+
+// TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry is Task 7's control sequence
+// for the async plugin surface: the id the server answered with has to keep resolving,
+// even though nothing in this process is running the work.
+//
+// The plugin manager's registry is one process's memory. A submission the deployment had
+// no capacity for is accepted durably and started nowhere, so the registry the legacy
+// route reads holds nothing for it — and the client polling that id was told 404 for work
+// the server itself had just accepted.
+func TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	ctx.Config.MaxJobConcurrency = 1
+
+	server, _, unblock := heldTransferServer(t)
+	holder := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(holder) != 1 || holder[0].Err != nil || holder[0].Job == nil {
+		t.Fatalf("the holding transfer: %+v", holder)
+	}
+	waitForSnapshot(t, ctx, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	handle, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "async-work", 0, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	if canonical == "" {
+		t.Fatalf("the accepted action has no durable job")
+	}
+	if ctx.PluginManager().GetActionJob(handle) != nil {
+		t.Fatalf("the in-memory registry holds this execution, so the projection is not what is being measured")
+	}
+
+	projected, err := ctx.ProjectActionJob(handle)
+	if err != nil {
+		t.Fatalf("project the action job: %v", err)
+	}
+	if projected == nil {
+		t.Fatalf("no row answers for the handle the server handed out")
+	}
+	if projected.ID != handle {
+		t.Fatalf("the projected row answers to %q, want the handle %q", projected.ID, handle)
+	}
+	if projected.Status != "pending" {
+		t.Fatalf("the waiting action is %q, want pending", projected.Status)
+	}
+	if projected.PluginName != pluginActionTestPlugin || projected.ActionID != "async-work" {
+		t.Fatalf("the projected row names %s/%s, want %s/async-work",
+			projected.PluginName, projected.ActionID, pluginActionTestPlugin)
+	}
+	unblock()
 }

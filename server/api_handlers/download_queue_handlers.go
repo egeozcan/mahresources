@@ -23,6 +23,22 @@ type DownloadQueueReader interface {
 	DownloadManager() *download_queue.DownloadManager
 }
 
+// DownloadQueueProjector is the reading interface the queue listing needs: the
+// in-memory queue plus the durable Jobs behind it.
+//
+// It exists as its own interface rather than as a second method on DownloadQueueReader
+// because the two answer different questions. Reading the manager is "what is this
+// process running"; a listing is "what work does this deployment have outstanding",
+// which now includes Jobs accepted with no capacity to run them and Jobs running in
+// another process. A handler that only had the manager could not see either, and the
+// server it answered for had already handed the client an id for both.
+type DownloadQueueProjector interface {
+	DownloadManager() *download_queue.DownloadManager
+	// ProjectDownloadQueue answers the visible legacy rows, live entries and durable
+	// Jobs merged.
+	ProjectDownloadQueue() ([]*download_queue.DownloadJob, error)
+}
+
 // DownloadScopeChecker is the group-visibility question the download paths ask
 // before a submission, a retry or a resume is allowed: are these targets inside the
 // principal's subtree at all? It is separate from DownloadSubmitter because the
@@ -200,15 +216,18 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 
 // GetDownloadQueueHandler handles GET /v1/download/queue
 // Returns all jobs in the queue
-func GetDownloadQueueHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadQueueHandler(ctx DownloadQueueProjector) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		p := auth.PrincipalFromContext(request.Context())
-		all := ctx.DownloadManager().GetJobs()
-		jobs := make([]*download_queue.DownloadJob, 0, len(all))
-		for _, job := range all {
-			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
-				jobs = append(jobs, job)
-			}
+		// Projected rather than read from the queue: work the deployment accepted and
+		// has not run yet — a submission waiting for capacity, a Job running in another
+		// process — has no entry here and is still visible work.
+		jobs, err := ctx.ProjectDownloadQueue()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+		if jobs == nil {
+			jobs = make([]*download_queue.DownloadJob, 0)
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -672,7 +691,11 @@ func GetDownloadJobHandler(ctx DownloadJobProjector) func(http.ResponseWriter, *
 
 // JobEventsContext combines download and plugin action capabilities for the SSE stream.
 type JobEventsContext interface {
-	DownloadQueueReader
+	DownloadQueueProjector
+	// ProjectDownloadJob resolves one legacy id to what it currently means, which is
+	// what a live download event has to be re-read through: the event names the entry
+	// that changed, and a Retry moves the handle onto its successor.
+	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
 	PluginManager() *plugin_system.PluginManager
 }
 
@@ -710,12 +733,17 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 		}
 
 		// Send initial state with both download jobs and action jobs, filtered to
-		// what this principal may see.
-		visibleDownloads := make([]*download_queue.DownloadJob, 0)
-		for _, job := range ctx.DownloadManager().GetJobs() {
-			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
-				visibleDownloads = append(visibleDownloads, job)
-			}
+		// what this principal may see. The download half is the same projection the
+		// queue listing answers with, so a client that reconnects sees exactly what a
+		// poll of that route would tell it — including work the deployment accepted
+		// and has not started.
+		visibleDownloads, err := ctx.ProjectDownloadQueue()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+		if visibleDownloads == nil {
+			visibleDownloads = make([]*download_queue.DownloadJob, 0)
 		}
 		initData := map[string]any{"jobs": visibleDownloads}
 		visibleActions := make([]*plugin_system.ActionJob, 0)
@@ -742,8 +770,21 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !jobVisibleToPrincipal(p, event.Job.GetOwnerUserID()) {
 					continue
 				}
-				data, _ := json.Marshal(event)
-				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, data)
+				// Re-projected rather than forwarded: an event names the entry that
+				// changed, and after a Retry that entry is the *ancestor* whose id now
+				// belongs to its successor — so forwarding it would publish a finished
+				// attempt under live work's name. The projection is what makes the
+				// stream say what the handle currently means.
+				projected := event
+				if row, err := ctx.ProjectDownloadJob(event.Job.ID); err == nil && row.Row != nil {
+					projected = download_queue.JobEvent{Type: event.Type, Job: row.Row}
+				} else {
+					// A handle that resolves to nothing visible is one this viewer may
+					// not see any more; the same answer a poll of that id gets.
+					continue
+				}
+				data, _ := json.Marshal(projected)
+				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", projected.Type, data)
 				flusher.Flush()
 
 			// actionEvents is nil when the plugin system is unavailable.

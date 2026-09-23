@@ -546,6 +546,13 @@ func (a *downloadJobAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // deliberately absent (see the file comment); resume is offered for held work,
 // which is the state a pause leaves this Kind in.
 func (a *downloadJobAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	// §8: ownership grants visibility, not permanent control. A principal demoted below
+	// "may write", or one whose access to the plugin this download belongs to has been
+	// revoked, keeps the sanitized history and loses every control over it.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access,
+		jobCommandSummaryPlugin(commandContext.Snapshot.Summary)) != "" {
+		return nil, nil
+	}
 	state := commandContext.Snapshot.State
 	commands := make([]jobs.Command, 0, 3)
 

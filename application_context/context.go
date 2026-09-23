@@ -588,6 +588,10 @@ type MahresourcesContext struct {
 	// keeps a claim alive is otherwise reachable in two-minute increments and would
 	// be tested by waiting or not at all.
 	queueClaimLease time.Duration
+	// jobFaults injects the durable-write failures a test cannot produce any other
+	// way — see job_faults.go. Nil is every production context, and every use is a
+	// nil check.
+	jobFaults *jobDurabilityFaults
 	// jobTerminalSink observes Jobs reaching an end state, whoever ran them. It
 	// is the same observer the download queue publishes through, installed here
 	// as well because plugin background work is a Job now and its completion is
@@ -842,54 +846,14 @@ func (ctx *MahresourcesContext) startupSweepProtectedStems() (map[string]bool, e
 // archive and plan a child workflow reads, and a Retry/Repeat link, whose ancestor's
 // handle a successor carries and whose input the successor's own input still names.
 //
-// The walk is bounded in both directions — a fixed maximum of hops and one query per
-// hop rather than per Job — because a lineage is data: a corrupted or hand-edited link
-// table must not turn startup into an unbounded traversal. The bound is generous where
-// the real depth is one or two, and reaching it stops the walk rather than failing it:
-// the cost is a staging file that lives slightly longer than it had to, which is the
-// direction a cleanup may safely err in.
+// The walk itself lives in the Job module, because retention needs the same relation
+// read from the other end: a finished ancestor is not prunable while a live descendant
+// still names it, and two implementations of "what does this lineage carry" would be two
+// answers about the same files. It is bounded by the module's own hop ceiling, which is
+// a limit on a corrupt link table rather than on a real one.
 func (ctx *MahresourcesContext) stagingLineageAncestors(ids []string) ([]string, error) {
-	seen := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		seen[id] = true
-	}
-	frontier := ids
-	ancestors := make([]string, 0, len(ids))
-
-	for hop := 0; hop < maxStagingLineageHops && len(frontier) > 0; hop++ {
-		var linked []string
-		if err := ctx.db.Model(&models.JobLink{}).
-			Where("type IN ? AND to_job_id IN ?",
-				[]string{string(jobs.LinkParentChild)}, frontier).
-			Distinct().Pluck("from_job_id", &linked).Error; err != nil {
-			return nil, err
-		}
-		var prior []string
-		if err := ctx.db.Model(&models.JobLink{}).
-			Where("type IN ? AND from_job_id IN ?",
-				[]string{string(jobs.LinkRetryOf), string(jobs.LinkRepeatOf)}, frontier).
-			Distinct().Pluck("to_job_id", &prior).Error; err != nil {
-			return nil, err
-		}
-		linked = append(linked, prior...)
-
-		frontier = frontier[:0]
-		for _, id := range linked {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			ancestors = append(ancestors, id)
-			frontier = append(frontier, id)
-		}
-	}
-	return ancestors, nil
+	return jobs.LineageAncestors(ctx.db, ids, jobs.MaxStagingLineageHops)
 }
-
-// maxStagingLineageHops bounds the walk above over a lineage. The relations a staging
-// name travels are one or two links deep in every shape this tree has, so this is a
-// ceiling on a corrupt table rather than a limit on a real one.
-const maxStagingLineageHops = 32
 
 // stagingPathIsProtected reports whether one staging path is named after a Job in
 // the protected set.

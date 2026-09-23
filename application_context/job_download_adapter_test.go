@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -960,4 +961,278 @@ func TestACancellationRecordedByAnotherProcessStopsTheTransferItOwns(t *testing.
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("the transfer was fetched %d times, want the one attempt it stopped", got)
 	}
+}
+
+// TestAResumeIsRefusedWhileAQuarantinedClaimOwnsTheWork is §3's quiescence rule read
+// at the command surface, across the two runtimes that make it observable.
+//
+// A quarantine is the statement that nobody could prove the external work stopped:
+// the claim keeps its token and its capacity, and the Job stays blocked. Returning
+// that Job to the queue — which is what a resume does, and what releases whatever
+// claim its token names — is therefore a replacement dispatch over work that may
+// still be running in another process. The proof §3 requires is the owning
+// execution's own: it finishes the transfer, and under its token the quarantine is
+// released and the outcome is kept.
+func TestAResumeIsRefusedWhileAQuarantinedClaimOwnsTheWork(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 2
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, _ := newSecondProcessJobContext(t, first, key)
+
+	server, requests, unblock := heldTransferServer(t)
+	submissions := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/held.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+
+	if snap := waitForSnapshot(t, first, jobID, "the transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	}); snap.State != jobs.StateRunning {
+		t.Fatalf("the transfer is %s, want running", snap.State)
+	}
+	waitFor(t, "the transfer's request to reach the server", func() bool { return requests.Load() >= 1 })
+
+	// The other process's reconciliation finds the claim expired and no entry of its
+	// own, and the runtime that took the Job is this one — alive — so the only honest
+	// answer is that the work is unproven: it quarantines the claim and blocks the Job.
+	expired := time.Now().Add(-time.Minute).UTC()
+	if err := other.db.Model(&models.JobClaim{}).Where("job_id = ?", jobID).
+		Update("lease_expires_at", expired).Error; err != nil {
+		t.Fatalf("expire the claim: %v", err)
+	}
+	if decision := reconcileOnce(t, other, jobID); decision != jobs.ReconcileExternalWorkUnproven {
+		t.Fatalf("a live transfer's expired claim was decided %q, want it left unresolved", decision)
+	}
+	blocked := waitForSnapshot(t, other, jobID, "the quarantine to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateBlocked
+	})
+	quarantined := storedClaim(t, other, jobID)
+	if quarantined.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the claim is %s after an unproven reconciliation, want quarantined", quarantined.State)
+	}
+	if held := storedCapacity(t, other, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("a quarantined claim holds %d capacity slots, want the one it was admitted against", held)
+	}
+
+	// The block is not a hold a person released, and the command surface says so: a
+	// resume would release the quarantine and let a replacement dispatch, so it is
+	// neither offered nor honored.
+	commands, err := other.AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands: %v", err)
+	}
+	if hasCommand(commands, jobs.CommandResume) {
+		t.Fatalf("a quarantined job offered a resume: %+v", commands)
+	}
+	if _, err := other.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandResume, IdempotencyKey: "resume-quarantined",
+		ExpectedVersion: blocked.Version,
+	}); !errors.Is(err, jobs.ErrCommandNotAdvertised) {
+		t.Fatalf("resuming a quarantined job = %v, want ErrCommandNotAdvertised", err)
+	}
+
+	// Nothing was released, nothing was replaced, and no second transfer was started.
+	if claim := storedClaim(t, other, jobID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the refused resume left the claim %s, want it still quarantined", claim.State)
+	}
+	if held := storedCapacity(t, other, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the refused resume freed the quarantined claim's capacity (%d slots held)", held)
+	}
+	if snap := jobSnapshot(t, other.JobService(), other, jobID); snap.State != jobs.StateBlocked {
+		t.Fatalf("the refused resume left the job %s, want it blocked", snap.State)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("the server was asked for the file %d times while the transfer was quarantined", got)
+	}
+
+	// The owning execution is the thing that may prove the work stopped, and it does:
+	// the transfer returns, its own report releases the claim it was quarantined under,
+	// and the capacity that claim held goes with it. What it may not do is *rewrite* the
+	// quarantine's state: §1 admits no blocked -> succeeded edge, so a job a quarantine
+	// blocked stays blocked for a person to resolve rather than silently reporting an
+	// outcome decided elsewhere. Nothing dispatched a second transfer.
+	unblock()
+	waitFor(t, "the owning execution's transfer to return", func() bool {
+		snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		return err == nil && snap.Progress.Phase == "saving"
+	})
+	waitFor(t, "the quarantined claim to be released by its own execution", func() bool {
+		return storedClaim(t, first, jobID).State == models.JobClaimStateReleased
+	})
+	if held := storedCapacity(t, first, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the deployment budget still holds %d slots after the quarantined execution returned", held)
+	}
+	if snap := jobSnapshot(t, other.JobService(), other, jobID); snap.State.Terminal() {
+		t.Fatalf("the job ended %s: a quarantine is not a classification its own runtime may overwrite", snap.State)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("the file was fetched %d times, want the one attempt: %d", got, got)
+	}
+}
+
+// TestTheLegacyQueueListingCarriesWorkNoLocalEntryHolds is Task 7's deployed
+// get/list/events sequence read from the other end: the listing has to name the work
+// the deployment accepted, not the work this process happens to be running.
+//
+// A submission with no capacity to run it is durable, visible and answers the id the
+// client was handed — and it starts no queue entry at all, so a listing that read only
+// the queue's memory omitted work the server had just accepted.
+func TestTheLegacyQueueListingCarriesWorkNoLocalEntryHolds(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 1
+
+	server, _, unblock := heldTransferServer(t)
+	holder := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(holder) != 1 || holder[0].Err != nil || holder[0].Job == nil {
+		t.Fatalf("the holding transfer: %+v", holder)
+	}
+	waitForSnapshot(t, ctx, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	waiting := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/waiting.bin"}, nil, "", "api")
+	if len(waiting) != 1 || waiting[0].Err != nil {
+		t.Fatalf("the waiting submission: %+v", waiting)
+	}
+	if _, found := ctx.queueEntryFor(waiting[0].CanonicalJobID); found {
+		t.Fatalf("the waiting submission started an executor it had no capacity for")
+	}
+	handle := waiting[0].Row.ID
+
+	rows, err := ctx.ProjectDownloadQueue()
+	if err != nil {
+		t.Fatalf("project the queue: %v", err)
+	}
+	projected, found := rowForHandle(rows, handle)
+	if !found {
+		t.Fatalf("the queue listing omits the submission the server answered an id for: %+v", rows)
+	}
+	if projected.CanonicalJobID != waiting[0].CanonicalJobID {
+		t.Fatalf("the listing's row names job %q, want %q", projected.CanonicalJobID, waiting[0].CanonicalJobID)
+	}
+	if status := string(projected.Status); status != string(download_queue.JobStatusPending) {
+		t.Fatalf("the waiting submission is listed as %s, want pending", status)
+	}
+	// The running transfer is listed too, and from its live entry rather than from the
+	// projection of its Job: the queue's own status vocabulary is what every panel row
+	// and every legacy client switches on, and its progress is finer than a snapshot.
+	running, found := rowForHandle(rows, holder[0].Row.ID)
+	if !found {
+		t.Fatalf("the running transfer is missing from its own listing: %+v", rows)
+	}
+	if running.CanonicalJobID != holder[0].CanonicalJobID {
+		t.Fatalf("the running row names job %q, want %q", running.CanonicalJobID, holder[0].CanonicalJobID)
+	}
+	entry, found := ctx.queueEntryFor(holder[0].CanonicalJobID)
+	if !found {
+		t.Fatalf("the running transfer has no queue entry to compare against")
+	}
+	if running.Status != entry.GetStatus() {
+		t.Fatalf("the listing reports the running transfer as %q, want the queue's own %q: the durable "+
+			"projection displaced the live row", running.Status, entry.GetStatus())
+	}
+	unblock()
+}
+
+// TestTheLegacyQueueListingFollowsTheHandleAcrossARetry is the other half, and the one
+// a stale ancestor wins: after a Retry the handle names the successor, and the ancestor's
+// still-remembered queue entry must not be published under it.
+func TestTheLegacyQueueListingFollowsTheHandleAcrossARetry(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 1
+
+	// A URL nothing serves: the transfer fails, which is the unsuccessful work a Retry
+	// is for.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not here", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	submission := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/missing.bin"}, nil, "", "api")
+	if len(submission) != 1 || submission[0].Err != nil {
+		t.Fatalf("submit: %+v", submission)
+	}
+	handle := submission[0].Row.ID
+	failed := waitForSnapshot(t, ctx, submission[0].CanonicalJobID, "the transfer to fail", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if failed.State != jobs.StateFailed {
+		t.Fatalf("the transfer ended %s, want failed", failed.State)
+	}
+
+	// Before the Retry the handle names the attempt that ran, and the listing says so
+	// from the entry this process still holds.
+	rows, err := ctx.ProjectDownloadQueue()
+	if err != nil {
+		t.Fatalf("project the queue: %v", err)
+	}
+	if before, found := rowForHandle(rows, handle); !found || before.CanonicalJobID != failed.ID {
+		t.Fatalf("the listing does not name the attempt the handle points at: %+v", before)
+	}
+
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "listing-retry",
+		ExpectedVersion: failed.Version,
+	})
+	if err != nil {
+		t.Fatalf("retry the failed transfer: %v", err)
+	}
+	if result.SuccessorID == "" {
+		t.Fatalf("the Retry created no successor")
+	}
+	// Nothing is running the successor: this harness has no runtime, so the listing is
+	// the only thing that can show it — which is exactly the state the finding named.
+	if _, found := ctx.queueEntryFor(result.SuccessorID); found {
+		t.Fatalf("the successor started an executor, so this test measured something else")
+	}
+
+	rows, err = ctx.ProjectDownloadQueue()
+	if err != nil {
+		t.Fatalf("project the queue after the retry: %v", err)
+	}
+	after, found := rowForHandle(rows, handle)
+	if !found {
+		t.Fatalf("the listing lost the handle the Retry moved: %+v", rows)
+	}
+	if after.CanonicalJobID != result.SuccessorID {
+		t.Fatalf("the listing published the ancestor's row under the successor's handle: job %q, want %q",
+			after.CanonicalJobID, result.SuccessorID)
+	}
+	if named := countRowsForHandle(rows, handle); named != 1 {
+		t.Fatalf("the handle appears %d times in one listing", named)
+	}
+
+	// And the stream's rule is the same one: an event names the entry that changed,
+	// which after a Retry is the ancestor, so the row the client is sent is re-projected
+	// through the handle rather than forwarded.
+	projection, err := ctx.ProjectDownloadJob(handle)
+	if err != nil {
+		t.Fatalf("resolve the handle: %v", err)
+	}
+	if projection.Row == nil || projection.Row.CanonicalJobID != result.SuccessorID {
+		t.Fatalf("an event for the handle names job %v, want the successor %q", projection.Row, result.SuccessorID)
+	}
+}
+
+// rowForHandle answers one listing's row for a handle.
+func rowForHandle(rows []*download_queue.DownloadJob, handle string) (*download_queue.DownloadJob, bool) {
+	for _, row := range rows {
+		if row != nil && row.ID == handle {
+			return row, true
+		}
+	}
+	return nil, false
+}
+
+// countRowsForHandle counts the rows one handle appears as, which must be one.
+func countRowsForHandle(rows []*download_queue.DownloadJob, handle string) int {
+	count := 0
+	for _, row := range rows {
+		if row != nil && row.ID == handle {
+			count++
+		}
+	}
+	return count
 }

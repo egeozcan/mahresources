@@ -637,10 +637,28 @@ func (ctx *MahresourcesContext) waitForQueueExecution(
 			return nil, ctxDone.Err()
 		case <-ticker.C:
 			snap := entry.Snapshot()
+			// A progress snapshot is telemetry, and a failure to record it is not the
+			// executor ending. Returning here — which this did — let one refused write
+			// end the Job as `dispatch-failed` while the queue's own worker was still
+			// exporting, importing or reducing: the Job Center then offered a Retry of
+			// work that had not stopped, and the claim and the capacity that owned it went
+			// with the wrong outcome. Ownership lasts as long as the worker does, so a
+			// refused write is logged and attempted again on the next tick; the terminal
+			// status below is what ends the wait.
 			if progress := queueJobProgress(snap); !sameProgress(progress, published) {
-				published = progress
-				if _, err := execution.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
-					return nil, err
+				if err := ctx.jobFaults.progressWrite(); err != nil {
+					log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
+				} else if _, err := execution.Progress(progress); err != nil {
+					if !mirrorRefusalIsSilent(err) {
+						log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
+					} else {
+						// A fenced-out publish is not retried: the execution that lost its
+						// claim may not write to the Job at all, and the wait ends when the
+						// entry does.
+						published = progress
+					}
+				} else {
+					published = progress
 				}
 			}
 			ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)

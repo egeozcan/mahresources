@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // This file holds the import Kind pair's executor-level tests: the properties that
@@ -938,4 +940,254 @@ func moveLegacyHandlesForTest(t *testing.T, ctx *MahresourcesContext, from, to s
 	t.Helper()
 	return ctx.db.Model(&models.JobLegacyHandle{}).Where("job_id = ?", from).
 		Update("job_id", to).Error
+}
+
+// TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite is §8's rule
+// reaching the one place it cannot be assumed: an apply admitted while the deployment
+// was busy, dispatched later by whichever runtime has room.
+//
+// The Job records the actor and the dispatch binds that actor's *scope*, which is
+// exactly why the missing half was easy to miss: binding a subtree does not ask whether
+// the account may write at all. An actor demoted to guest between acceptance and
+// dispatch would therefore have had its import applied — groups created, taxonomy rows
+// inserted — by a runtime that never carried the request that proved otherwise. The
+// refusal is a block, decided before the plan is read or any row is touched.
+func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 1
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, otherRuntime := newSecondProcessJobContext(t, first, key)
+
+	actor, err := first.CreateUser(&UserInput{
+		Username: "import-actor", Password: "correct-horse-battery", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create the actor: %v", err)
+	}
+	actorCtx := first.WithPrincipal(auth.FromUser(actor))
+
+	// The plan an apply reads comes from a parse of this archive, run while the
+	// deployment had room for it.
+	handle := "imp-demoted-1"
+	staging := writeImportArchiveForTest(t, first, handle)
+	parse := actorCtx.SubmitImportParse(handle, staging, "api")
+	if parse.Err != nil {
+		t.Fatalf("submit the parse: %v", parse.Err)
+	}
+	waitForSnapshot(t, first, parse.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	consumed, err := ConsumeImportPlan(first.GetDefaultFs(), handle)
+	if err != nil {
+		t.Fatalf("consume the plan: %v", err)
+	}
+
+	// The deployment's one slot is taken, so the apply is accepted durably and runs
+	// nowhere until a runtime has room.
+	server, _, unblock := heldTransferServer(t)
+	holder := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(holder) != 1 || holder[0].Err != nil {
+		t.Fatalf("the holding transfer: %+v", holder)
+	}
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	apply := actorCtx.SubmitImportApply(handle, consumed, &ImportDecisions{
+		MappingActions:  map[string]MappingAction{},
+		DanglingActions: map[string]DanglingAction{},
+	}, "api")
+	if apply.Err != nil {
+		t.Fatalf("submit the apply: %v", apply.Err)
+	}
+	if _, found := first.queueEntryFor(apply.CanonicalJobID); found {
+		t.Fatalf("the apply started an executor while the deployment's only slot was taken")
+	}
+
+	// The demotion, between acceptance and dispatch. The account is the same one and
+	// the Job's actor is unchanged; only what the actor may do has moved.
+	group := &models.Group{Name: "demoted-scope"}
+	if err := first.db.Create(group).Error; err != nil {
+		t.Fatalf("create the scope group: %v", err)
+	}
+	if _, err := first.UpdateUser(actor.ID, &UserUpdate{
+		Role:         UserField[models.Role]{Set: true, Value: models.RoleGuest},
+		ScopeGroupID: UserField[*uint]{Set: true, Value: &group.ID},
+	}); err != nil {
+		t.Fatalf("demote the actor: %v", err)
+	}
+
+	// The slot frees and the other process dispatches the waiting apply.
+	unblock()
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	waitFor(t, "the other runtime to claim and dispatch the apply", func() bool {
+		otherRuntime.tick(context.Background())
+		snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, apply.CanonicalJobID)
+		return err == nil && (snap.State.Terminal() || snap.State == jobs.StateBlocked)
+	})
+
+	decided := waitForSnapshot(t, other, apply.CanonicalJobID, "the apply to be decided", func(s jobs.Snapshot) bool {
+		return s.State.Terminal() || s.State == jobs.StateBlocked
+	})
+	if decided.State != jobs.StateBlocked {
+		t.Fatalf("an apply whose actor was demoted before dispatch ended %s, want blocked", decided.State)
+	}
+	events, err := other.GetJobTimeline(apply.CanonicalJobID, 0, 200)
+	if err != nil {
+		t.Fatalf("read the timeline: %v", err)
+	}
+	blockedDetail := ""
+	for _, event := range events {
+		if event.Type == jobs.EventBlocked {
+			blockedDetail = string(event.Detail)
+		}
+	}
+	if !strings.Contains(blockedDetail, "role-refused") {
+		t.Fatalf("the blocked apply does not say why: %s", blockedDetail)
+	}
+
+	// Nothing was mutated: no imported group, and the archive and plan are where the
+	// refusal left them.
+	var imported int64
+	if err := other.db.Model(&models.Group{}).Where("name = ?", "Imported").Count(&imported).Error; err != nil {
+		t.Fatalf("count imported groups: %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("a refused apply created %d groups from its archive", imported)
+	}
+	if exists, _ := afero.Exists(other.GetDefaultFs(), importConsumedPlanPathFor(handle)); !exists {
+		t.Fatalf("a refused apply consumed the plan it was told not to read")
+	}
+}
+
+// TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads is the same invariant from
+// the other side, and the one the startup sweep cannot see for itself.
+//
+// Startup protection derives a nonterminal Job's staged hand-off by walking its lineage
+// upward, so that path has to exist: the parse's handle is what names the plan and the
+// archive the queued apply reads. Ordinary retention, meanwhile, prunes finished history
+// and takes the lineage rows with it — so a retained parse and a failed apply expiring
+// under a queued Retry removed the very link the walk follows, and the next startup
+// deleted the input of work that had not run. A Job a live Job's lineage still names is
+// not history.
+func TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if ctx.exportSweepFs == nil {
+		t.Skip("this harness has no startup sweep filesystem")
+	}
+	ctx.DownloadManager().SetSettings(download_queue.NewStaticDownloadSettings(
+		download_queue.TimeoutConfig{}, time.Hour))
+	fs := ctx.GetDefaultFs()
+	if err := fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("mkdir _imports: %v", err)
+	}
+
+	const parseHandle = "beef0123456789ab"
+	parse := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportParse, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: json.RawMessage(`{"handle":"` + parseHandle + `","archive":"_imports/` + parseHandle + `.tar"}`)},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportParseHandleNamespace, Handle: parseHandle}},
+	})
+	finishedParse := finishJobFor(t, ctx, parse, jobs.StateSucceeded)
+
+	input, err := json.Marshal(importApplyJobInput{
+		ParseHandle: parseHandle,
+		Plan:        importConsumedPlanPathFor(parseHandle),
+		Decisions: ImportDecisions{
+			MappingActions:  map[string]MappingAction{},
+			DanglingActions: map[string]DanglingAction{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode the apply input: %v", err)
+	}
+	apply := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: "retried-apply"}},
+	})
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkParentChild, FromJobID: finishedParse.ID, ToJobID: apply.ID,
+	}); err != nil {
+		t.Fatalf("link the apply to its parse: %v", err)
+	}
+	failedApply := finishJobFor(t, ctx, apply, jobs.StateFailed)
+
+	// The Retry is queued and reads what its ancestor's lineage names.
+	retried := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay: jobs.ReplayInput{Input: input},
+	})
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkRetryOf, FromJobID: retried.ID, ToJobID: failedApply.ID,
+	}); err != nil {
+		t.Fatalf("link the retry to the failed apply: %v", err)
+	}
+	if err := moveLegacyHandlesForTest(t, ctx, failedApply.ID, retried.ID); err != nil {
+		t.Fatalf("move the handle onto the retry: %v", err)
+	}
+
+	required := []string{
+		importArchivePathFor(parseHandle),
+		importConsumedPlanPathFor(parseHandle),
+	}
+	for _, path := range required {
+		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		ageStagingFileForTest(t, fs, path)
+	}
+
+	// Both ancestors are long past their retention window: the parse succeeded a month
+	// ago and the apply failed three months ago, under the design's default windows.
+	expired := time.Now().Add(-time.Hour).UTC()
+	if err := ctx.db.Model(&models.Job{}).Where("id IN ?", []string{finishedParse.ID, failedApply.ID}).
+		Update("expires_at", expired).Error; err != nil {
+		t.Fatalf("expire the ancestors: %v", err)
+	}
+
+	result, err := ctx.SweepJobHistory(jobs.SweepCursor{}, 50)
+	if err != nil {
+		t.Fatalf("sweep the history: %v", err)
+	}
+	if result.Pruned != 0 {
+		t.Fatalf("the sweep pruned %d jobs, and every candidate is named by a queued retry's lineage", result.Pruned)
+	}
+	for _, ancestor := range []string{finishedParse.ID, failedApply.ID} {
+		var job models.Job
+		if err := ctx.db.Where("id = ?", ancestor).First(&job).Error; err != nil {
+			t.Fatalf("the sweep removed ancestor %s, whose lineage the queued retry %s reads: %v",
+				ancestor, retried.ID, err)
+		}
+	}
+
+	// And the property that matters: the startup sweep can still derive the staged
+	// hand-off, because the lineage it walks is still there.
+	ctx.RunStartupExportSweep()
+	for _, path := range required {
+		if exists, _ := afero.Exists(fs, path); !exists {
+			t.Fatalf("startup cleanup deleted %s, which the queued retry %s still reads", path, retried.ID)
+		}
+	}
+
+	// The guard is a dependency test, not a refusal to prune at all: once the retry is
+	// over, the same ancestors are history again.
+	finishJobFor(t, ctx, jobSnapshot(t, ctx.JobService(), ctx, retried.ID), jobs.StateCancelled)
+	if err := ctx.db.Model(&models.Job{}).Where("id IN ?", []string{finishedParse.ID, failedApply.ID, retried.ID}).
+		Update("expires_at", expired).Error; err != nil {
+		t.Fatalf("expire the lineage: %v", err)
+	}
+	pruned, err := ctx.SweepJobHistory(jobs.SweepCursor{}, 50)
+	if err != nil {
+		t.Fatalf("sweep again: %v", err)
+	}
+	if pruned.Pruned == 0 {
+		t.Fatalf("a lineage nothing depends on any more was not pruned at all")
+	}
 }

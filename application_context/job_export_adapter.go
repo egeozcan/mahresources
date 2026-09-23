@@ -460,6 +460,11 @@ func (a *groupExportAdapter) CleanupArtifacts(_ context.Context, request jobs.Ar
 // second archive, which is what "export again" means, and unlike a download it
 // duplicates nothing in the library.
 func (a *groupExportAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	// §8: a principal demoted below "may write" keeps the history and loses the
+	// controls over it.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+		return nil, nil
+	}
 	commands := []jobs.Command{{
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",

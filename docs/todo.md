@@ -1,3 +1,126 @@
+# Job Center post-Task-9 checkpoint, third round — close the Astra review's nine P1 findings (2026-09-23)
+
+**Goal:** Close every P0/P1 the second Astra checkpoint raised after Task 9, each through
+the public seam with an observed failure first: quarantine released without proof, a refused
+progress write ending live work, commands that ignored the requester's current authority, a
+redispatched import apply without the write-role check, legacy queue/SSE/action-job surfaces
+that omitted durably queued work, plugin results that persisted the values their messages
+redact, a terminal report that could be lost and hold capacity for ever, a retention sweep
+that pruned the ancestors a queued Retry still reads, and the scheduled path that ran plugin
+code without revalidating its operator.
+
+## Findings closed
+
+| Finding | Regression |
+|---|---|
+| A quarantine was released, and replacement work admitted, by an ordinary Resume | `TestAResumeIsRefusedWhileAQuarantinedClaimOwnsTheWork` |
+| A refused progress write ended a Job whose executor was still running | `TestARefusedProgressWriteDoesNotEndAnExportThatIsStillRunning` |
+| A command's advertisement and recheck ignored the actor's current role and plugin access | `TestAPluginJobsCommandsFollowTheActorsCurrentAuthority` |
+| A scheduled occurrence entered the operator's handler without revalidating its authority | `TestAScheduledOccurrenceIsRevalidatedAgainstItsOperatorsAuthority` |
+| A redispatched import apply ran without the freshly resolved actor's write role | `TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite` |
+| The legacy queue listing omitted work with no local entry | `TestTheLegacyQueueListingCarriesWorkNoLocalEntryHolds` |
+| The legacy listing and stream published an ancestor's row under a Retry's handle | `TestTheLegacyQueueListingFollowsTheHandleAcrossARetry` |
+| The legacy action-job route 404'd a durably queued plugin action | `TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry` |
+| A plugin's structured result persisted the values its message redacts | `TestAPluginJobKeepsItsOwnTextOutOfDurableHistory` (extended to outputs and to Forget) |
+| A transient terminal-report failure could hold plugin capacity for ever | `TestATerminalReportIsRetriedUntilTheDurablePlaneHasIt` |
+| The retention sweep pruned an ancestor a queued Retry still reads | `TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads` |
+
+Every one was observed failing first, with the source restored afterwards (the red runs were
+produced by neutering the fix in place, or by stashing the changed production file).
+
+## Decisions worth recording
+
+- **A quarantine is released only by the execution that owns it.** §3 permits releasing an
+  unresolved claim once the owning runtime proves the external work quiescent, so the proof
+  is the claim's own execution returning — not a person asking for the Job to run again. An
+  ordinary Resume is therefore refused, and not merely un-advertised: the executor answers
+  between two transactions, so the question is asked again inside the one that would queue
+  the Job. The consequence is deliberate: a quarantined download whose transfer then
+  completes cannot record a success (`blocked -> succeeded` is not a legal edge), so the Job
+  stays blocked for a person and its own execution releases the claim. That is the fail-safe
+  direction, and it is recorded as a residual below.
+- **A progress snapshot is telemetry, and ownership lasts as long as the worker does.** The
+  queue bridge's wait loop no longer returns on a refused progress write: one transient
+  database error ended a Job as `dispatch-failed` while its worker was still exporting,
+  importing or reducing, which handed the Job Center a Retry of work in flight and freed the
+  claim and capacity that owned it.
+- **Authority is read from the database, not from the request that prepared the command.**
+  `commandActorRefusal` resolves the actor on the *handle the advertisement is computed on* —
+  the transaction's own during the recheck — and answers role and per-plugin access. That is
+  what makes the scheduler's path (no request at all), a Retry and a stale principal all ask
+  the same question. Scope and target validation stay where they were: asking them here would
+  mean opening every Job's sealed input on every list render.
+- **An import execution rechecks the actor's *write role*, not only the scope it binds.** An
+  apply admitted while the deployment was busy is dispatched by whichever runtime has room,
+  so binding a subtree is not the same as asking whether the account may write at all.
+- **Legacy surfaces project the durable Jobs, merged with the live entries.** The queue is
+  per-process memory: a submission with no capacity to run it has no entry anywhere, and a
+  Job running in another process has none here. `ProjectDownloadQueue` merges both, replaces
+  a durable row with its live entry when there is one (the entry's status vocabulary and
+  finer progress are what every legacy consumer reads), and refuses to publish an entry whose
+  handle has moved to a Retry successor — that last one is the stale-ancestor bug the merge
+  would otherwise introduce. The stream re-projects each download event through the handle it
+  names for the same reason, and the action-job route falls back to `ProjectActionJob`.
+- **A terminal outcome is retained and retried until the durable plane has it.** A refused
+  write is not a delivered outcome: the sink keeps the immutable result, republishes it until
+  the answer is durable or final, and plugin_system marks an execution settled only on that
+  acknowledgement — so a shutdown in between still reports the lost callback rather than
+  leaving a Job heartbeated for ever. A read that fails is no longer read as "already
+  finished": it is "publish and find out".
+- **A plugin's result table is redacted before it is published**, at every depth and in its
+  keys, because `mah.job_complete(id, {message = ctx.params.token})` stores the same value in
+  the structured output that the message redaction removes.
+- **A finished Job is not history while a live Job's lineage still names it.** Retention
+  checks the dependency *inside* the pruning transaction, after the guarded delete, and rolls
+  the delete back when one exists — a Retry that committed first is visible there, and one
+  that has not committed reads a Job that is still there. `jobs.LineageAncestors` is the one
+  walk of those relations; the startup sweep's protection and the retention guard are its two
+  readers, so the relation and the protection cannot drift.
+
+## Residual, known and deliberate
+
+- **A quarantined Job whose work then succeeds stays blocked.** Its own execution releases
+  the claim (the proof §3 asks for) but cannot publish the success, because §1's table admits
+  no `blocked -> succeeded`. §3's wording does permit terminal classification once the runtime
+  proves quiescence, so the follow-up is to let the token-owning execution finish a blocked
+  Job; it is a state-machine change with a spec table of its own and was deliberately not made
+  inside a finding about release.
+- **The retention guard is a dependency test on *lineage*, not on staging namespaces.** A Job
+  whose only reason to survive is a queued descendant stays until that descendant is terminal.
+  That over-protects (a plugin-action Retry's ancestor is kept though the successor carries
+  its own envelope) and never under-protects, which is the direction a retention rule may err
+  in.
+- **The dependency check is a read in the pruning transaction after the guarded delete.** On
+  PostgreSQL a Retry that commits after that read and before this transaction's commit is not
+  seen; its own acceptance required the ancestor row, so the window is the same one the pin
+  and claim predicates close by re-assertion, and it is recorded rather than papered over.
+- **`ws9-jobs-cockpit.spec.ts`'s two "Clear completed" tests still fail at the base commit.**
+  Verified by stashing this round's changes and re-running the file: they assert that
+  `GET /v1/jobs/get` 404s for a cleared entry, which stopped being true when the durable Job
+  became the thing that answers a handle. Pre-existing and stale, not a regression from this
+  change.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./server/api_tests -count=1`
+  — clean. One existing PostgreSQL regression needed its fixture updated rather than its
+  assertion weakened: `TestLinkHoldsItsEndpointsAgainstTheSweepPG` deletes an endpoint a
+  relation names, and under the new rule a *nonterminal* keeper makes that endpoint
+  unprunable, so its keeper is now settled first — the race the test is about (Link holding
+  both endpoint rows) is unchanged.
+- `go test -race --tags 'json1 fts5' ./jobs ./plugin_system -count=1` and the same over this
+  round's `application_context` regressions at `-count=2` — clean.
+- Browser: `tests/downloads-history.spec.ts`, `tests/admin-export/export.spec.ts`,
+  `tests/admin-import/`, `tests/plugins/plugin-actions.spec.ts`,
+  `tests/plugins/plugin-action-refusal.spec.ts`, `tests/resource-reduction.spec.ts` — 74
+  passed, 2 pre-existing failures (`ws9-jobs-cockpit.spec.ts`, above). CLI:
+  `tests/cli/cli-jobs.spec.ts` — 12 passed.
+- `go vet --tags 'json1 fts5' ./...` clean; `gofmt -l` clean on every changed file
+  (`models/query_models/filter_decode.go` is unformatted at the base commit and untouched);
+  `git diff --check` clean. `npm run build` leaves `public/dist/` and `public/tailwind.css`
+  byte-identical: no frontend source changed.
+
 # Job Center post-Task-9 checkpoint, second round — close the Astra review's ten P1 findings (2026-09-23)
 
 **Goal:** Close every P0/P1 the Astra checkpoint raised after Task 9, each through the

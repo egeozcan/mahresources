@@ -8,6 +8,8 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"mahresources/auth"
@@ -515,6 +517,19 @@ func (ctx *MahresourcesContext) runScheduledPluginOccurrence(pm *plugin_system.P
 		return pluginActionRun{JobID: execution.JobID, Failed: true}, nil
 	}
 
+	// The operator's authority is rechecked immediately before the handler runs, for
+	// the same reason a registered action's is: the row was claimed by a scheduler
+	// that carries no request, and the operator who enabled the plugin may have been
+	// demoted or may have lost access to it since. A materialized occurrence that may
+	// no longer run is blocked rather than failed — a person has to decide about it,
+	// and a broken schedule would be the wrong thing to report.
+	if refusal := ctx.commandActorRefusal(ctx.jobDeps(), execution.Access, input.Plugin); refusal != "" {
+		if err := ctx.blockPluginActionJob(execution, refusal); err != nil {
+			return pluginActionRun{JobID: execution.JobID}, err
+		}
+		return pluginActionRun{JobID: execution.JobID}, nil
+	}
+
 	ref := &plugin_system.HostJobRef{
 		JobID:  execution.JobID,
 		Handle: ctx.pluginActionHandleFor(execution.JobID),
@@ -724,6 +739,13 @@ func (a *pluginActionAdapter) Commands(_ context.Context, commandContext jobs.Co
 	if !ok || a.ctx == nil {
 		return nil, nil
 	}
+	// §8: ownership grants visibility, not permanent control. A principal demoted below
+	// "may write" — or one whose access to the plugin has since been revoked — keeps
+	// the sanitized history and loses the Retry that would run the plugin's Lua again on
+	// its behalf.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, summary.Plugin) != "" {
+		return nil, nil
+	}
 	pm := a.ctx.PluginManager()
 	if pm == nil {
 		return nil, nil
@@ -764,11 +786,22 @@ type pluginActionSink struct {
 	ctx       *MahresourcesContext
 	execution jobs.Execution
 	input     *pluginActionJobInput
+	// pending is the terminal outcome this execution reached and the durable plane
+	// has not accepted yet, or nil. It is immutable once stored: a retry publishes
+	// the same outcome, never a recomputed one.
+	pending atomic.Pointer[pluginActionOutcome]
+	// retryOnce starts the one retry goroutine this sink may have.
+	retryOnce sync.Once
 }
 
 func newPluginActionSink(ctx *MahresourcesContext, execution jobs.Execution, input *pluginActionJobInput) *pluginActionSink {
 	return &pluginActionSink{ctx: ctx, execution: execution, input: input}
 }
+
+// pluginActionSettlementRetryInterval is how long a retained terminal outcome waits
+// before it is offered to the durable plane again. Short, because what it is waiting
+// for is a transient write refusal and the Job stays visibly running until it lands.
+const pluginActionSettlementRetryInterval = 500 * time.Millisecond
 
 func (s *pluginActionSink) ref() jobs.ExecutionRef {
 	return jobs.ExecutionRef{JobID: s.execution.JobID, ExecutionToken: s.execution.ExecutionToken}
@@ -809,6 +842,46 @@ func (s *pluginActionSink) Progress(percent int, message string) {
 func (s *pluginActionSink) safeText(message string, limit int) string {
 	return truncateTo(redactPluginParamValues(message, s.input), limit)
 }
+
+// sanitizedResult is the result table with every parameter value replaced, at every
+// depth.
+//
+// A result is arbitrary Lua: a table of strings, of tables, of lists — whichever shape
+// the handler chose — and the value that matters can sit in any of them, including the
+// message the completion carries. Redaction therefore walks the structure rather than
+// the top-level strings, and it redacts *keys* as well: a handler can use a value as a
+// key (`result[ctx.params.token] = true`), and a key is as durable and as searchable as
+// a value.
+func (s *pluginActionSink) sanitizedResult(result map[string]any) map[string]any {
+	sanitized := make(map[string]any, len(result))
+	for key, value := range result {
+		sanitized[s.safeText(key, jobs.MaxTitleBytes)] = s.sanitizedValue(value)
+	}
+	return sanitized
+}
+
+// sanitizedValue is sanitizedResult for one value of any shape.
+func (s *pluginActionSink) sanitizedValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return s.safeText(typed, pluginsMaxSummaryTextBytes)
+	case map[string]any:
+		return s.sanitizedResult(typed)
+	case []any:
+		values := make([]any, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, s.sanitizedValue(item))
+		}
+		return values
+	default:
+		return value
+	}
+}
+
+// pluginsMaxSummaryTextBytes bounds one string inside a published result. It is the
+// control plane's own text ceiling, so a free-text field cannot make an otherwise
+// storable result exceed what an output may hold.
+const pluginsMaxSummaryTextBytes = jobs.MaxProgressMessageBytes
 
 // redactPluginParamValues replaces every occurrence of a parameter value in a
 // plugin-supplied string. Longest first, so a value that contains another value is
@@ -865,12 +938,21 @@ func (s *pluginActionSink) progress(progress jobs.Progress) {
 
 // Completed records the execution's own success, publishing the plugin's result
 // table as a bounded summary output when it is one this Kind can store.
-func (s *pluginActionSink) Completed(message string, result map[string]any) {
-	if s.finished() {
-		return
+//
+// The table is redacted before it is published, exactly as the message is. It is a
+// durable, searchable surface: `mah.job_complete(id, {message = ctx.params.token})`
+// stores the parameter value in it, and the parameter values are the one secret this
+// Kind is holding — the Job's summary refuses to carry them, and the sealed envelope is
+// their only other copy. Redacting only the *message* left the same value sitting in the
+// structured output beside it.
+func (s *pluginActionSink) Completed(message string, result map[string]any) error {
+	if s.settled() {
+		return nil
 	}
+	var publication error
 	if len(result) > 0 {
-		if reference, err := json.Marshal(result); err == nil && len(reference) <= maxPluginActionResultBytes {
+		sanitized := s.sanitizedResult(result)
+		if reference, err := json.Marshal(sanitized); err == nil && len(reference) <= maxPluginActionResultBytes {
 			if _, err := s.execution.Output(jobs.OutputInput{
 				Key:       "result",
 				Type:      jobs.OutputTypeSummary,
@@ -878,6 +960,7 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) {
 				Reference: reference,
 			}); err != nil && !mirrorRefusalIsSilent(err) {
 				log.Printf("warning: could not publish the result of job %s: %v", s.execution.JobID, err)
+				publication = err
 			}
 		} else {
 			// Too large to be an output, which is not a failure: the result is an
@@ -886,12 +969,12 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) {
 			s.warn("result-too-large", "the action's result is too large to store")
 		}
 	}
-	_, err := s.finish(jobs.StateSucceeded, nil, s.safeText(message, jobs.MaxProgressMessageBytes))
-	if err != nil && !mirrorRefusalIsSilent(err) {
-		log.Printf("warning: could not complete job %s: %v", s.execution.JobID, err)
-		return
+	outcome := pluginActionOutcome{succeeded: true, message: s.safeText(message, jobs.MaxProgressMessageBytes)}
+	if _, err := s.publishOutcome(outcome); err != nil {
+		return s.retainUnsettled(outcome, err)
 	}
 	s.announceTerminal("completed", "")
+	return publication
 }
 
 // Failed records an unsuccessful execution.
@@ -906,23 +989,19 @@ func (s *pluginActionSink) Completed(message string, result map[string]any) {
 // The executor's own words are not lost: they go to the process's own log, which
 // is not the Job Center and is not a searchable surface, with the Job id that
 // ties them back here.
-func (s *pluginActionSink) Failed(message string) {
-	if s.finished() {
-		return
+func (s *pluginActionSink) Failed(message string) error {
+	if s.settled() {
+		return nil
 	}
 	if raw := s.safeText(message, jobs.MaxFailureMessageBytes); raw != "" {
 		log.Printf("plugin job %s failed: %s", s.execution.JobID, raw)
 	}
-	_, err := s.finish(jobs.StateFailed, &jobs.Failure{
-		Code:    pluginActionFailureCode,
-		Class:   jobs.FailureClassInternal,
-		Message: pluginActionFailureMessage,
-	}, pluginActionFailureMessage)
-	if err != nil && !mirrorRefusalIsSilent(err) {
-		log.Printf("warning: could not fail job %s: %v", s.execution.JobID, err)
-		return
+	outcome := pluginActionOutcome{}
+	if _, err := s.publishOutcome(outcome); err != nil {
+		return s.retainUnsettled(outcome, err)
 	}
 	s.announceTerminal("failed", pluginActionFailureMessage)
+	return nil
 }
 
 // announceTerminal tells the deployment's job-event observer that one plugin Job
@@ -990,7 +1069,7 @@ func (s *pluginActionSink) CallbackLost(reason string) {
 	if service == nil {
 		return
 	}
-	current, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, s.execution.JobID)
+	current, err := s.current()
 	if err != nil || current.State.Terminal() {
 		return
 	}
@@ -1004,35 +1083,143 @@ func (s *pluginActionSink) CallbackLost(reason string) {
 	}
 }
 
+// settled reports whether this Job already reached an end state, so a late or
+// repeated report writes nothing. The plugin manager's own reporters can fire
+// after a handler completed itself, and a second terminal write would either be
+// refused or — worse — be a second outcome.
+//
+// A Job whose row cannot be *read* is deliberately not settled. Reading a failure
+// as "somebody already ended it" discarded the outcome the executor had just
+// produced: the Job stayed running with its claim, its capacity and no writer left,
+// and reconciliation could not classify it. An unknown state is "try to publish",
+// and the publish's own read is what decides.
+func (s *pluginActionSink) settled() bool {
+	snap, err := s.current()
+	if err != nil {
+		return false
+	}
+	return snap.State.Terminal()
+}
+
+// current reads this execution's Job, with the injected read failure a test uses to
+// reach the branch above.
+func (s *pluginActionSink) current() (jobs.Snapshot, error) {
+	service := s.ctx.JobService()
+	if service == nil {
+		return jobs.Snapshot{}, errors.New("this context has no job control plane installed")
+	}
+	if err := s.ctx.jobFaults.settlementRead(); err != nil {
+		return jobs.Snapshot{}, err
+	}
+	return service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, s.execution.JobID)
+}
+
+// retainUnsettled keeps one refused terminal outcome and retries it until the durable
+// plane has it.
+//
+// §3's quiescence rule is why the outcome may not simply be dropped: the callback has
+// returned, the work is over, and the only thing standing between the Job and its
+// classification is a write that can be refused transiently. Dropping it left a Job
+// running and heartbeated for ever — its capacity held, invisible to reconciliation,
+// and the person waiting told nothing. A refusal that is the *fence* working (the Job
+// moved on, somebody else settled it, there is no such Job) is not retained: there is
+// nothing left to publish, and retrying would be a second outcome.
+func (s *pluginActionSink) retainUnsettled(outcome pluginActionOutcome, err error) error {
+	if settleRefused(err) {
+		return nil
+	}
+	log.Printf("warning: could not settle job %s; retaining its outcome to report again: %v",
+		s.execution.JobID, err)
+	s.pending.Store(&outcome)
+	s.retrySettlement()
+	return err
+}
+
+// retrySettlement republishes one retained outcome until the durable plane has it.
+//
+// One goroutine per execution, started on the first refusal and ended by the first
+// answer that is either durable or final. It is deliberately not driven from the
+// heartbeat: a heartbeat that could not reach the database is the same outage that
+// refused this write, and an execution whose outcome is waiting must not have its
+// retry tied to a loop that ends the moment the Job leaves running.
+func (s *pluginActionSink) retrySettlement() {
+	s.retryOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(pluginActionSettlementRetryInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				pending := s.pending.Load()
+				if pending == nil {
+					return
+				}
+				if _, err := s.publishOutcome(*pending); settleRefused(err) {
+					s.pending.Store(nil)
+					return
+				}
+			}
+		}()
+	})
+}
+
+// pluginActionOutcome is one execution's terminal outcome in its publishable form.
+// The success message is carried already redacted: an outcome that is retried is
+// published later, and a value that was safe to store once must not depend on the
+// retry path redacting it a second time.
+type pluginActionOutcome struct {
+	succeeded bool
+	message   string
+}
+
+// publishOutcome records one terminal outcome through the sink's own finish path,
+// reporting the refusal when there is one.
+func (s *pluginActionSink) publishOutcome(outcome pluginActionOutcome) (jobs.Snapshot, error) {
+	if outcome.succeeded {
+		return s.finish(jobs.StateSucceeded, nil, outcome.message)
+	}
+	return s.finish(jobs.StateFailed, &jobs.Failure{
+		Code:    pluginActionFailureCode,
+		Class:   jobs.FailureClassInternal,
+		Message: pluginActionFailureMessage,
+	}, pluginActionFailureMessage)
+}
+
+// settleRefused reports whether an answer ends this execution's attempts to publish,
+// and it is deliberately narrower than "an error": a refusal by the execution fence,
+// by the state machine, or by the Job's absence is final — the outcome cannot be
+// recorded and retrying it would be a second outcome — while everything else (a
+// locked database, a pool that is briefly exhausted, a version that moved under a
+// concurrent command) is the write being refused rather than the outcome being wrong.
+func settleRefused(err error) bool {
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, jobs.ErrStaleExecution),
+		errors.Is(err, jobs.ErrIllegalTransition),
+		errors.Is(err, jobs.ErrNotFound):
+		return true
+	default:
+		return false
+	}
+}
+
 // finished reports whether this Job already reached an end state, so a late or
 // repeated report writes nothing. The plugin manager's own reporters can fire
 // after a handler completed itself, and a second terminal write would either be
 // refused or — worse — be a second outcome.
 func (s *pluginActionSink) finished() bool {
-	service := s.ctx.JobService()
-	if service == nil {
-		return true
-	}
-	snap, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, s.execution.JobID)
-	if err != nil {
-		return true
-	}
-	return snap.State.Terminal()
+	return s.settled()
 }
 
-// finish ends the Job, reading its current version first.
-//
-// The version is re-read rather than reused from the claim because progress
-// writes and events do not move it while a *successor* or an operator's command
-// can: publishing under a stale version would be refused, and the refusal would
-// look exactly like the fence working.
 func (s *pluginActionSink) finish(outcome jobs.State, failure *jobs.Failure, message string) (jobs.Snapshot, error) {
 	service := s.ctx.JobService()
 	if service == nil {
 		return jobs.Snapshot{}, nil
 	}
-	current, err := service.Get(s.ctx.jobDeps(), jobs.Access{Administrator: true}, s.execution.JobID)
+	current, err := s.current()
 	if err != nil {
+		return jobs.Snapshot{}, err
+	}
+	if err := s.ctx.jobFaults.settlementWrite(); err != nil {
 		return jobs.Snapshot{}, err
 	}
 	if current.State.Terminal() {
@@ -1630,4 +1817,89 @@ func truncateTo(value string, limit int) string {
 		return value[:limit]
 	}
 	return value[:limit-len(marker)] + marker
+}
+
+// ProjectActionJob answers one plugin-action Job's legacy row from the durable record.
+//
+// The route that answers a plugin action by handle reads the plugin manager's registry,
+// which is this process's memory: it holds the executions this process started and is
+// empty after a restart. A submission accepted for a runtime with no capacity starts no
+// execution anywhere, so that lookup found nothing and the client was told 404 for work
+// the server itself had just named and answered an id for. The durable Job is the thing
+// that outlives all of that, and this is the projection of it into the row shape the
+// legacy route serializes.
+//
+// Visibility is the canonical read's: a handle that resolves to a Job this principal may
+// not see is answered exactly as a handle that names nothing, which is what the handler
+// already does with the owner it gets back.
+func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.ActionJob, error) {
+	projected, err := ctx.ResolveJobHandle(PluginActionHandleNamespace, handle)
+	if err != nil {
+		return nil, err
+	}
+	if projected.Kind != JobKindPluginAction {
+		return nil, fmt.Errorf("%w: %s", jobs.ErrNotFound, handle)
+	}
+	summary, _ := pluginActionSummaryDecoded(projected.Summary)
+
+	progress := projected.Progress
+	message := progress.Message
+	percent := 0
+	if progress.Total != nil && *progress.Total > 0 && progress.Completed != nil {
+		percent = int(*progress.Completed * 100 / *progress.Total)
+	}
+	if projected.Failure != nil && message == "" {
+		message = projected.Failure.Message
+	}
+	if message == "" {
+		message = projected.Phase
+	}
+
+	entityType := summary.EntityType
+	if entityType == "" && summary.Subtype == pluginActionSubtypeScheduled {
+		entityType = "custom"
+	}
+	actionID := summary.Action
+	if summary.Subtype == pluginActionSubtypeScheduled {
+		actionID = "schedule:" + summary.ScheduleID
+	}
+	label := projected.Title
+	if label == "" {
+		label = pluginActionJobName(&pluginActionJobInput{
+			Subtype: summary.Subtype, Plugin: summary.Plugin,
+			Action: summary.Action, ScheduleID: summary.ScheduleID,
+		})
+	}
+
+	return plugin_system.ProjectedActionJob{
+		Handle:     handle,
+		Plugin:     summary.Plugin,
+		ActionID:   actionID,
+		Label:      label,
+		EntityType: entityType,
+		Status:     actionJobStatusFromState(projected.State),
+		Progress:   percent,
+		Message:    truncateTo(message, jobs.MaxProgressMessageBytes),
+		Owner:      projected.OwnerUserID,
+		CreatedAt:  projected.AcceptedAt,
+	}.ActionJob(), nil
+}
+
+// actionJobStatusFromState maps a normalized Job state onto the panel's own plugin-job
+// vocabulary, which is what every legacy consumer switches on.
+func actionJobStatusFromState(state jobs.State) string {
+	switch state {
+	case jobs.StateSucceeded:
+		return "completed"
+	case jobs.StateCancelled:
+		return "cancelled"
+	case jobs.StateFailed, jobs.StateInterrupted:
+		return "failed"
+	case jobs.StateRunning:
+		return "running"
+	case jobs.StatePaused, jobs.StateBlocked:
+		return "paused"
+	default:
+		return "pending"
+	}
 }

@@ -283,6 +283,27 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 		}
 		pruned = result.RowsAffected == 1
 
+		// A Job is not history while a live Job's lineage still names it. A staged
+		// hand-off is named by an *ancestor's* handle — an import apply reads the plan
+		// and archive its parse staged, and a queued successor names what its ancestor
+		// named — so the lineage rows are the only path from the live work back to
+		// those bytes. Pruning an ancestor while a descendant is nonterminal deleted
+		// that path, and the next startup sweep then removed the input of work that had
+		// not run yet.
+		//
+		// The check runs after the guarded delete has taken the transaction's write and
+		// before anything is recorded, so the two orders a retry can arrive in are both
+		// safe: one that committed first is visible here and this delete rolls back,
+		// and one that has not committed yet reads a Job that is still there — which is
+		// exactly what its own acceptance requires.
+		dependedOn, err := WorkStillDependsOnJob(tx, candidate.ID, MaxStagingLineageHops)
+		if err != nil {
+			return err
+		}
+		if dependedOn {
+			return errPruneDependencyLive
+		}
+
 		// Outputs are recorded before the history that points at them goes: the
 		// output rows are a dependent table of the Job's, and the removal the Kind
 		// established is recorded on them before the Job's own row is deleted.
@@ -324,8 +345,18 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 		}
 		return nil
 	})
+	if errors.Is(err, errPruneDependencyLive) {
+		// Nothing was pruned: the transaction rolled back, so the Job, its claims, its
+		// capacity and its outputs are exactly where the pass found them.
+		return false, 0, nil
+	}
 	return pruned, outputs, err
 }
+
+// errPruneDependencyLive rolls back one pruned candidate whose lineage a nonterminal Job
+// still names. It is a refusal rather than a failure: the pass is expected to meet Jobs
+// it may not take, and the caller counts it as a skip.
+var errPruneDependencyLive = errors.New("jobs: the job is still named by a live lineage")
 
 // lockPruneTarget takes the candidate Job's own row before the statement that
 // decides about it, on an engine that has row locks, and reports whether the row

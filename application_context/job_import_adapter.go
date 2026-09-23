@@ -367,6 +367,15 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	if execution.KindVersion != jobImportKindVersion {
 		return fmt.Errorf("%w: import parse v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
+	parsePrincipal := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
+	if execution.Access.UserID == 0 {
+		// An intentionally actorless execution runs as the host, which is the same
+		// permissive branch every role guard takes for a context with no principal.
+		parsePrincipal = a.ctx
+	}
+	if refusal := importWriteRefusal(parsePrincipal, "parse an import"); refusal != "" {
+		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refusal)
+	}
 	entry, found := a.ctx.queueEntryFor(execution.JobID)
 	if !found {
 		if !a.ctx.importArchiveExists(input.Handle) {
@@ -504,6 +513,11 @@ func (a *importParseAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // staged archive is still there, because the archive is the input a Retry needs and
 // a button that dispatches a Job which cannot read its own input is not a control.
 func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	// §8: a principal demoted below "may write" keeps the history and loses the
+	// controls over it.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+		return nil, nil
+	}
 	commands := []jobs.Command{{
 		Key:          jobs.CommandCancel,
 		Label:        "Cancel",
@@ -585,6 +599,9 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	bound := a.ctx.WithPrincipal(a.ctx.principalForPluginActor(execution.Access.UserID))
 	if execution.Access.UserID == 0 {
 		bound = a.ctx
+	}
+	if refusal := importWriteRefusal(bound, "apply an import"); refusal != "" {
+		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refusal)
 	}
 
 	entry, found := a.ctx.queueEntryFor(execution.JobID)
@@ -757,6 +774,11 @@ func (a *importApplyAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // report and stays failed, which is the honest answer, and re-running it would
 // duplicate the rows it already committed.
 func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
+	// §8: a principal demoted below "may write" keeps the history and loses the
+	// controls over it.
+	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+		return nil, nil
+	}
 	commands := make([]jobs.Command, 0, 2)
 	state := commandContext.Snapshot.State
 	if !state.Terminal() {
@@ -1151,4 +1173,26 @@ func (ctx *MahresourcesContext) ImportJobAuthorized(parseHandle string) (bool, b
 		return false, true
 	}
 	return true, true
+}
+
+// importWriteRefusal answers why one import execution may not run as the principal it
+// was bound to, or an empty string.
+//
+// The binding answered *where* a write would land; this answers whether the account may
+// write at all. Both are needed, and the second is the one nothing else supplies: an
+// apply admitted while the deployment was busy is dispatched by whichever runtime has
+// room, so the account that asked for the import may have been demoted in between, and
+// a runtime that only bound its subtree would import on behalf of somebody who may no
+// longer write anything.
+//
+// It is asked before the plan is read or any staged file is touched, so a refusal costs
+// a filesystem and a database nothing.
+func importWriteRefusal(bound *MahresourcesContext, op string) string {
+	if bound == nil {
+		return ""
+	}
+	if err := bound.requireWriteRole(op); err != nil {
+		return "role-refused"
+	}
+	return ""
 }

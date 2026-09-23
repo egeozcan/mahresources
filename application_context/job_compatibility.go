@@ -379,3 +379,178 @@ func (ctx *MahresourcesContext) DownloadRestartPayload(canonicalJobID string) (*
 	}
 	return decoded.Creator, nil
 }
+
+// ProjectDownloadQueue answers every legacy row this principal may see for the
+// queue-backed Kinds: the entries this process's queue holds, and the durable Jobs that
+// have no entry anywhere yet.
+//
+// The second half is the point. A submission accepted with no capacity to run it starts
+// no queue entry — it waits, durably, for a runtime with room — and a legacy listing
+// that read only the queue's own memory therefore omitted work the server had just
+// accepted and answered an id for. The same is true of a Job this process is not the one
+// running: the queue is per-process memory, the Job is not.
+//
+// Merging them is the part that has to be careful, and the rule is the single-Job
+// projection's: the live entry wins while it is not behind the record, because it is the
+// thing actually running and its progress is finer than a Job's snapshot — and it does
+// not win when the record has already ended the work, or when the handle has moved on to
+// a successor, because reporting an ancestor's row under an id that now names the
+// successor is how a Retry's stale row came back to life.
+func (ctx *MahresourcesContext) ProjectDownloadQueue() ([]*download_queue.DownloadJob, error) {
+	if ctx == nil || ctx.downloadManager == nil {
+		return nil, nil
+	}
+
+	rows := make([]*download_queue.DownloadJob, 0, 8)
+	// Where each canonical Job's row sits, so a live entry can replace it in place
+	// rather than appearing twice.
+	positionOfJob := map[string]int{}
+	seenHandle := map[string]bool{}
+
+	if service := ctx.JobService(); service != nil {
+		page, err := service.List(ctx.jobDeps(), ctx.jobAccess(), jobs.Filter{
+			Kinds:  queueBackedHandleKindNames,
+			States: nonterminalJobStates(),
+		}, jobs.Cursor{}, maxLegacyQueueRows)
+		if err != nil {
+			return nil, err
+		}
+		for _, projected := range page.Jobs {
+			handle, err := ctx.JobHandleNamespaceFor(projected.ID, namespaceForKind(projected.Kind))
+			if err != nil || handle == "" {
+				// A Job with no handle in its own namespace is one no legacy client can
+				// name, so there is nothing to project: the canonical surfaces are where
+				// it is read.
+				continue
+			}
+			if seenHandle[handle] {
+				continue
+			}
+			seenHandle[handle] = true
+			positionOfJob[projected.ID] = len(rows)
+			rows = append(rows, downloadRowFromJob(projected, handle, sourceForKind(projected.Kind)))
+		}
+	}
+
+	for _, entry := range ctx.downloadManager.GetJobs() {
+		if !ctx.downloadRowVisible(entry) {
+			continue
+		}
+		canonical := entry.CanonicalJobID
+		if canonical != "" {
+			// One question decides whether this entry may be published at all: does the
+			// handle still name *this* execution? After a Retry it does not — the
+			// ancestor's entry keeps its id while the id now belongs to the successor —
+			// and forwarding it would show a finished attempt under live work's name.
+			current, err := ctx.JobHandleNamespaceFor(canonical, downloadNamespaceForEntry(entry))
+			if err != nil || current != entry.ID {
+				continue
+			}
+			if position, known := positionOfJob[canonical]; known {
+				// The live entry wins over the projection of the same Job: it is the
+				// thing actually running, its progress is finer than a snapshot, and the
+				// queue's own status vocabulary is what every legacy consumer switches
+				// on. It replaces the durable row rather than being skipped by it — the
+				// two are one row, and taking the projected one would report a running
+				// transfer as a Job state no panel row has ever carried.
+				rows[position] = downloadRowFromEntry(entry, entry.ID, canonical)
+				continue
+			}
+			// No durable row: the Job behind this entry is terminal — the queue
+			// remembers finished work until it is evicted, and the panel has always
+			// shown it — or it is older than the durable listing's bound.
+		}
+		if seenHandle[entry.ID] {
+			continue
+		}
+		seenHandle[entry.ID] = true
+		rows = append(rows, entry.Snapshot())
+	}
+	return rows, nil
+}
+
+// maxLegacyQueueRows bounds the durable half of one legacy queue listing. The in-memory
+// queue the legacy surfaces were built around caps itself, so a projection that returned
+// every nonterminal Job of every kind without a bound would be a different surface with
+// a different cost; this keeps the listing the size it always was.
+const maxLegacyQueueRows = 200
+
+// downloadNamespaceForEntry answers the legacy id space one queue entry belongs to.
+func downloadNamespaceForEntry(entry *download_queue.DownloadJob) string {
+	if entry == nil {
+		return DownloadHandleNamespace
+	}
+	for _, candidate := range queueBackedHandleNamespaces {
+		if candidate.Source == entry.Source {
+			return candidate.Namespace
+		}
+	}
+	return DownloadHandleNamespace
+}
+
+// namespaceForKind answers the legacy id space one canonical Kind is named by.
+func namespaceForKind(kind string) string {
+	switch kind {
+	case JobKindRemoteDownload, JobKindDeferredDownload:
+		return DownloadHandleNamespace
+	case JobKindGroupExport:
+		return GroupExportHandleNamespace
+	case JobKindGroupImportParse:
+		return ImportParseHandleNamespace
+	case JobKindGroupImportApply:
+		return ImportApplyHandleNamespace
+	case JobKindReductionCompute:
+		return ReductionComputeHandleNamespace
+	case JobKindSimilarityRecompute:
+		return SimilarityRecomputeHandleNamespace
+	default:
+		return ""
+	}
+}
+
+// sourceForKind answers the legacy source label one canonical Kind projects onto: the
+// word the jobs panel and the legacy rows have always used for that work.
+func sourceForKind(kind string) string {
+	switch kind {
+	case JobKindRemoteDownload, JobKindDeferredDownload:
+		return download_queue.JobSourceDownload
+	case JobKindGroupExport:
+		return download_queue.JobSourceGroupExport
+	case JobKindGroupImportParse:
+		return download_queue.JobSourceGroupImportParse
+	case JobKindGroupImportApply:
+		return download_queue.JobSourceGroupImportApply
+	case JobKindReductionCompute:
+		return download_queue.JobSourceResourceReduction
+	case JobKindSimilarityRecompute:
+		return maintenanceJobSource
+	default:
+		return kind
+	}
+}
+
+// queueBackedHandleKindNames is every canonical Kind the legacy queue surfaces project,
+// in the order the id spaces were listed above.
+var queueBackedHandleKindNames = []string{
+	JobKindRemoteDownload,
+	JobKindDeferredDownload,
+	JobKindGroupExport,
+	JobKindGroupImportParse,
+	JobKindGroupImportApply,
+	JobKindReductionCompute,
+	JobKindSimilarityRecompute,
+}
+
+// nonterminalJobStates is the vocabulary a legacy listing includes: the states in which
+// work is still going to happen. Finished work is deliberately absent — the legacy panel
+// shows the entries its own queue still holds, and resurrecting a month of terminal
+// history into it would be a different listing from the one every client reads.
+func nonterminalJobStates() []string {
+	states := make([]string, 0, len(jobs.AllStates))
+	for _, state := range jobs.AllStates {
+		if !state.Terminal() {
+			states = append(states, string(state))
+		}
+	}
+	return states
+}

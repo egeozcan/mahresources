@@ -218,7 +218,21 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 		// Held work returns to the queue only while a cancellation has not won it: a
 		// Job a cancellation owns ends cancelled, and handing its work back to the
 		// queue would be resuming work that can never publish a success again.
-		return (state == StatePaused || state == StateBlocked) && job.ControlIntent != ControlIntentCancel, nil
+		if (state != StatePaused && state != StateBlocked) || job.ControlIntent == ControlIntentCancel {
+			return false, nil
+		}
+		// And only while nothing unresolved still owns the work. Returning a Job to
+		// the queue releases whatever claim its token names — a quarantine included —
+		// and §3 permits that release only once the owning runtime has proved the
+		// external work quiescent. A quarantine is the statement that nobody could
+		// prove it, so an ordinary Resume would admit a second execution of work that
+		// may still be running. The proof is the owning execution finishing the Job,
+		// not a person asking for it.
+		unresolved, err := s.unresolvedClaim(deps, job.ID)
+		if err != nil {
+			return false, err
+		}
+		return !unresolved, nil
 	case CommandRetry:
 		return s.retryableLeaf(deps, job)
 	case CommandRepeat:
@@ -226,6 +240,30 @@ func (s *Service) commandHonorable(deps Deps, job models.Job, key string) (bool,
 	default:
 		return true, nil
 	}
+}
+
+// unresolvedClaim reports whether a Job is still owned by a claim nobody resolved:
+// one that is held, or one that was quarantined because its execution could not be
+// proved quiescent.
+//
+// It answers for the Job's ownership rather than for its state, because the two can
+// disagree: a quarantined Job is blocked, and reading that state alone says nothing
+// about whether the process that started its work is still running. That is the
+// question every attempt to release the claim has to ask first.
+func (s *Service) unresolvedClaim(deps Deps, jobID string) (bool, error) {
+	return unresolvedClaimOn(deps.DB, jobID)
+}
+
+// unresolvedClaimOn is unresolvedClaim on a caller's own handle, so a recheck inside
+// a command's transaction reads the rows that transaction will write.
+func unresolvedClaimOn(db *gorm.DB, jobID string) (bool, error) {
+	var count int64
+	if err := db.Model(&models.JobClaim{}).
+		Where("job_id = ? AND state IN ?", jobID, unresolvedClaimStates()).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("jobs: read claim state for %s: %w", jobID, err)
+	}
+	return count > 0, nil
 }
 
 // retryableLeaf reports whether this Job is the quiescent leaf a Retry may branch
@@ -1138,6 +1176,17 @@ func (s *Service) applyResume(tx *gorm.DB, deps Deps, request CommandRequest) er
 	case StatePaused, StateBlocked:
 	default:
 		return nil
+	}
+	// The advertisement refused this while an unresolved claim owned the Job, and
+	// the executor that answered ran between two transactions — so the question is
+	// asked again here, against the row this write is about to change. A quarantine
+	// that landed in the gap would otherwise be released by a command that was
+	// prepared before it existed.
+	if unresolved, err := unresolvedClaimOn(tx, current.ID); err != nil {
+		return err
+	} else if unresolved {
+		return fmt.Errorf("%w: job %s is still owned by an unresolved claim",
+			ErrCommandNotAdvertised, current.ID)
 	}
 	_, err = s.applyCommandTransition(deps, tx, current, StateQueued)
 	return err

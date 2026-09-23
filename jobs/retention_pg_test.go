@@ -296,7 +296,20 @@ func TestLinkHoldsItsEndpointsAgainstTheSweepPG(t *testing.T) {
 	clock := time.Date(2034, 4, 5, 6, 7, 8, 0, time.UTC)
 	deps.Now = func() time.Time { return clock }
 
+	// The endpoint that stays is *finished*, and that is not incidental: a nonterminal
+	// Job's lineage is protected outright — a Retry successor still names what its
+	// ancestor staged — so a live keeper would make the expired endpoint unprunable and
+	// there would be no deletion for this test to be about. It is not due, though,
+	// which is what makes it the one retention must leave alone.
+	registerTestAdapter(t, svc, testDefinition())
 	keeper := acceptQueued(t, svc, deps, uintPtr(7))
+	execution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok || execution.JobID != keeper.ID {
+		t.Fatalf("claim the keeper: claimed=%v job=%s", ok, execution.JobID)
+	}
+	if _, err := execution.Finish(FinishRequest{ExpectedVersion: execution.Version, Outcome: StateCancelled}); err != nil {
+		t.Fatalf("settle the keeper: %v", err)
+	}
 	expired := seedExpiredEndpoint(t, deps, clock)
 
 	// The relation is held inside its transaction once its endpoints have been

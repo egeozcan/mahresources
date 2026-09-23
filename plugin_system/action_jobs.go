@@ -88,30 +88,40 @@ func (j *ActionJob) hostJobRef() *HostJobRef {
 // under that lock: doing the I/O inside would stall every reader behind one
 // progress tick. A job with no host Job reports nowhere, which is the whole
 // difference a process without a control plane sees.
-func reportHostJob(job *ActionJob, report func(HostJobSink)) {
+func reportHostJob(job *ActionJob, report func(HostJobSink) error) error {
 	ref := job.hostJobRef()
 	if ref == nil || ref.Sink == nil {
-		return
+		return nil
 	}
-	report(ref.Sink)
+	return report(ref.Sink)
 }
 
-// reportHostJobOnce reports one execution's terminal outcome to its durable Job,
-// at most once per execution.
+// reportHostJobOnce reports one execution's terminal outcome to its durable Job, at
+// most once per execution — where "once" counts deliveries, not attempts.
 //
 // One report per execution is a property of the *outcome*, not of the entry's
 // status: the plugin's own request is recorded when it is made but published only
 // once its callback returns, so a panic unwinding that callback and the settle path
 // can both reach here, and exactly one of them may speak for the Job.
-func reportHostJobOnce(job *ActionJob, report func(HostJobSink)) {
+//
+// A refused report therefore leaves the execution unsettled rather than marking it
+// delivered: the outcome stands, the host retains it, and `reportLostCallbacks` at
+// shutdown still knows this callback's outcome never reached the Job — which is what
+// turns a transient write failure into an interrupted Job the next process can see
+// rather than a Job that runs and is heartbeated forever.
+func reportHostJobOnce(job *ActionJob, report func(HostJobSink) error) {
 	job.mu.Lock()
 	if job.hostSettled {
 		job.mu.Unlock()
 		return
 	}
+	job.mu.Unlock()
+	if err := reportHostJob(job, report); err != nil {
+		return
+	}
+	job.mu.Lock()
 	job.hostSettled = true
 	job.mu.Unlock()
-	reportHostJob(job, report)
 }
 
 // reportLostCallbacks tells the host that the callbacks of every execution still
@@ -141,7 +151,7 @@ func (pm *PluginManager) reportLostCallbacks(reason string) {
 	pm.actionJobsMu.RUnlock()
 
 	for _, job := range running {
-		reportHostJob(job, func(sink HostJobSink) { sink.CallbackLost(reason) })
+		_ = reportHostJob(job, func(sink HostJobSink) error { sink.CallbackLost(reason); return nil })
 	}
 }
 
@@ -366,7 +376,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 			job.Message = message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
-			reportHostJobOnce(job, func(sink HostJobSink) { sink.Failed(message) })
+			reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
 			log.Printf("[plugin] panic in %s: %v", logLabel, r)
 		}
 	}()
@@ -386,7 +396,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 	job.Message = "Running..."
 	job.mu.Unlock()
 	pm.notifyActionJobSubscribers("updated", job)
-	reportHostJob(job, func(sink HostJobSink) { sink.Started("Running...") })
+	_ = reportHostJob(job, func(sink HostJobSink) error { sink.Started("Running..."); return nil })
 
 	err := work()
 
@@ -452,10 +462,10 @@ func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workEr
 		if workErr != nil {
 			log.Printf("[plugin] %s failed: %v", logLabel, workErr)
 		}
-		reportHostJobOnce(job, func(sink HostJobSink) { sink.Failed(message) })
+		reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Failed(message) })
 		return
 	}
-	reportHostJobOnce(job, func(sink HostJobSink) { sink.Completed(message, result) })
+	reportHostJobOnce(job, func(sink HostJobSink) error { return sink.Completed(message, result) })
 }
 
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.
@@ -541,7 +551,12 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			message := job.Message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
-			reportHostJob(job, func(sink HostJobSink) { sink.Completed(message, parsed) })
+			// Not reported once: this is the handler's *own* return value, and the
+			// settle path below publishes the same outcome through the once-guarded
+			// call. Attempting it here is only so a Job is not left without an
+			// outcome if that path is never reached, and a refusal is swallowed for
+			// the settle path to make good on.
+			_ = reportHostJob(job, func(sink HostJobSink) error { return sink.Completed(message, parsed) })
 		}
 
 		return nil
