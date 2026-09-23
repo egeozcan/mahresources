@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"mahresources/application_context"
 	"mahresources/jobs"
 )
 
@@ -40,6 +41,22 @@ type jobSummaryContextStub struct {
 	filter jobs.Filter
 	window time.Duration
 	err    error
+}
+
+type jobSummaryExportSubmitterStub struct {
+	called bool
+	filter jobs.Filter
+	from   time.Time
+	to     time.Time
+	format string
+	origin string
+	snap   jobs.Snapshot
+	err    error
+}
+
+func (s *jobSummaryExportSubmitterStub) SubmitJobSummaryExport(filter jobs.Filter, from, to time.Time, format, origin string) (jobs.Snapshot, error) {
+	s.called, s.filter, s.from, s.to, s.format, s.origin = true, filter, from, to, format, origin
+	return s.snap, s.err
 }
 
 func (s *jobSummaryContextStub) GetJobSummary(filter jobs.Filter, window time.Duration) (jobs.Summary, error) {
@@ -287,5 +304,71 @@ func TestJobSummaryRejectsOversizedWindowBeforeReading(t *testing.T) {
 	}
 	if ctx.called {
 		t.Fatal("GetJobSummary was called for an oversized window")
+	}
+}
+
+func TestJobSummaryExportForwardsSharedFiltersAndAcceptsDurableJob(t *testing.T) {
+	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(91 * 24 * time.Hour)
+	ctx := &jobSummaryExportSubmitterStub{snap: jobs.Snapshot{
+		ID: "summary-job", Kind: "job-summary-export", KindVersion: 1,
+		State: jobs.StateQueued, Version: 1,
+	}}
+	query := url.Values{"kinds": {"group-export"}, "state": {"failed"}, "search": {"quarterly"}}
+	body, _ := json.Marshal(JobSummaryExportRequest{From: from, To: to, Format: "csv"})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs/summary/export?"+query.Encode(), strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+
+	GetJobSummaryExportHandler(ctx)(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+	if !ctx.called || ctx.filter.Search != "quarterly" || len(ctx.filter.Kinds) != 1 || ctx.filter.Kinds[0] != "group-export" || len(ctx.filter.States) != 1 || ctx.filter.States[0] != "failed" {
+		t.Fatalf("submit args = %+v, called=%t", ctx.filter, ctx.called)
+	}
+	if !ctx.from.Equal(from) || !ctx.to.Equal(to) || ctx.format != "csv" || ctx.origin != "api" {
+		t.Fatalf("date/format/origin args = %v..%v %q %q", ctx.from, ctx.to, ctx.format, ctx.origin)
+	}
+	var response JobSummaryExportResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode accepted Job: %v", err)
+	}
+	if response.Job.ID != "summary-job" || response.Job.Kind != "job-summary-export" {
+		t.Fatalf("response Job = %+v", response.Job)
+	}
+}
+
+func TestJobSummaryExportRejectsShortRangeBeforeAccepting(t *testing.T) {
+	ctx := &jobSummaryExportSubmitterStub{}
+	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	body, _ := json.Marshal(JobSummaryExportRequest{From: from, To: from.Add(jobs.MaxSummaryWindow), Format: "json"})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs/summary/export", strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+
+	GetJobSummaryExportHandler(ctx)(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if ctx.called {
+		t.Fatal("summary export was accepted with an interactive-length range")
+	}
+}
+
+func TestJobSummaryExportMapsWriteRoleRefusalToForbidden(t *testing.T) {
+	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	ctx := &jobSummaryExportSubmitterStub{err: application_context.ErrRoleCapability}
+	body, _ := json.Marshal(JobSummaryExportRequest{From: from, To: from.Add(91 * 24 * time.Hour), Format: "json"})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs/summary/export", strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+
+	GetJobSummaryExportHandler(ctx)(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 }

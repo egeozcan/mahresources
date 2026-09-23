@@ -106,6 +106,7 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 // checks pass.
 func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobSnapshotResponse{}))
+	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobSummaryExportRequest{}))
 	filterParams := canonicalJobFilterQueryParams()
 	listParams := append(append([]openapi.QueryParam(nil), filterParams...),
 		openapi.QueryParam{Name: "cursor", Type: "string", Description: "Opaque keyset cursor returned by the prior page."},
@@ -127,6 +128,16 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 		ResponseType:         reflect.TypeOf(api_handlers.JobSummaryResponse{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/jobs/summary/export", OperationID: "exportCanonicalJobSummary",
+		Summary: "Queue a filtered long-range Job summary export", Tags: []string{"jobs"},
+		Description: "Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters.",
+		RequestType: reflect.TypeOf(api_handlers.JobSummaryExportRequest{}), RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ExtraQueryParams: filterParams,
+		ResponseType:     reflect.TypeOf(api_handlers.JobSummaryExportResponse{}), SuccessStatus: http.StatusAccepted,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       map[int]string{http.StatusBadRequest: "Invalid filter, date range, or format", http.StatusForbidden: "Insufficient permissions"},
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs/{id}", OperationID: "getCanonicalJob",
@@ -3332,6 +3343,22 @@ func registerPluginRoutes(r *openapi.Registry) {
 }
 
 func registerAdminRoutes(r *openapi.Registry) {
+	jobMigrationReadinessResponse := reflect.TypeOf(struct {
+		Ready        bool             `json:"ready"`
+		WriterEpoch  uint64           `json:"writerEpoch"`
+		Phase        string           `json:"phase"`
+		SourceCounts map[string]int64 `json:"sourceCounts"`
+		Blockers     []string         `json:"blockers"`
+	}{})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/admin/jobs/migration-readiness",
+		OperationID: "getJobMigrationReadiness", Summary: "Inspect Job migration readiness",
+		Description: "Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, and blockers. A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.",
+		Tags: []string{"admin", "jobs"}, ResponseType: jobMigrationReadinessResponse,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       map[int]string{http.StatusForbidden: "Administrator role required"},
+	})
+
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
 		Path:                 "/v1/admin/server-stats",

@@ -1137,6 +1137,7 @@ func (ctx *MahresourcesContext) registerWorkflowJobKinds(service *jobs.Service) 
 		{JobKindGroupImportApply, jobImportKindVersion, importApplyJobCodec(), &importApplyAdapter{ctx: ctx, kind: JobKindGroupImportApply}},
 		{JobKindReductionCompute, jobReductionKindVersion, reductionComputeJobCodec(), &reductionComputeAdapter{ctx: ctx, kind: JobKindReductionCompute}},
 		{JobKindSimilarityRecompute, jobMaintenanceKindVersion, similarityRecomputeJobCodec(), &similarityRecomputeAdapter{ctx: ctx, kind: JobKindSimilarityRecompute}},
+		{JobKindSummaryExport, jobSummaryExportVersion, jobSummaryExportCodec(), &jobSummaryExportAdapter{ctx: ctx}},
 	}
 	for _, registration := range registrations {
 		if !jobs.HasReplayCodec(service, registration.kind, registration.version) {

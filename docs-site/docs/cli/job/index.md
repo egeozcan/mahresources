@@ -1,6 +1,6 @@
 ---
 title: mr job
-description: Submit, cancel, pause, or retry a download job
+description: Control Jobs and submit legacy downloads
 sidebar_label: job
 ---
 

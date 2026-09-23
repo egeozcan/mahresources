@@ -1541,6 +1541,59 @@ func TestSummaryWindowDefaultsToThirtyDaysAndRefusesALongerOne(t *testing.T) {
 	}
 }
 
+func TestSummaryRangeUsesSharedVisibilityAndFiltersPastInteractiveCeiling(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	now := time.Date(2031, 6, 14, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return now }
+	visibleOwner := uint(7)
+	hiddenOwner := uint(8)
+
+	now = now.Add(-180 * 24 * time.Hour)
+	acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: "visible historical job",
+		OwnerUserID: &visibleOwner, Replay: ReplayInput{NonReplayable: true},
+	})
+	now = now.Add(24 * time.Hour)
+	_ = acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: "hidden historical job",
+		OwnerUserID: &hiddenOwner, Replay: ReplayInput{NonReplayable: true},
+	})
+
+	from := time.Date(2030, 12, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)
+	viewer := Access{UserID: visibleOwner}
+	summary, err := svc.SummaryRange(deps, viewer, Filter{Kinds: []string{testKind}}, from, to)
+	if err != nil {
+		t.Fatalf("SummaryRange: %v", err)
+	}
+	if summary.Total != 1 || summary.ByKind[testKind] != 1 {
+		t.Fatalf("owner-visible summary = %+v, want only the owner's historical Job", summary)
+	}
+	if summary.Window != to.Sub(from) || !summary.From.Equal(from) || !summary.To.Equal(to) {
+		t.Fatalf("range = %v..%v (%v), want %v..%v (%v)", summary.From, summary.To, summary.Window, from, to, to.Sub(from))
+	}
+
+	admin, err := svc.SummaryRange(deps, Access{Administrator: true}, Filter{Kinds: []string{testKind}}, from, to)
+	if err != nil {
+		t.Fatalf("SummaryRange as admin: %v", err)
+	}
+	if admin.Total != 2 {
+		t.Fatalf("administrator summary total = %d, want 2", admin.Total)
+	}
+	filtered, err := svc.SummaryRange(deps, viewer, Filter{Kinds: []string{"other-kind"}}, from, to)
+	if err != nil {
+		t.Fatalf("filtered SummaryRange: %v", err)
+	}
+	if filtered.Total != 0 {
+		t.Fatalf("filtered summary total = %d, want 0", filtered.Total)
+	}
+	if _, err := svc.SummaryRange(deps, viewer, Filter{}, to, from); !errors.Is(err, ErrInvalidWindow) {
+		t.Fatalf("reversed range error = %v, want ErrInvalidWindow", err)
+	}
+}
+
 // TestSummaryCountsStatesKindsDurationsAndFailures covers what the aggregate
 // reports: counts by state and Kind, the success rate over settled work, queue
 // and run duration percentiles, and the sanitized failure classifications.

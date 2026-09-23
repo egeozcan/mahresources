@@ -169,9 +169,12 @@ func TestACrashedExportIsSettledFromItsArchiveRatherThanRerun(t *testing.T) {
 	if err := ctx.GetDefaultFs().MkdirAll("_exports", 0755); err != nil {
 		t.Fatalf("mkdir _exports: %v", err)
 	}
-	archive := []byte("a finished archive")
-	if err := afero.WriteFile(ctx.GetDefaultFs(), archivePath, archive, 0644); err != nil {
-		t.Fatalf("stage the archive: %v", err)
+	if gotPath := writeGroupExportArchiveForTest(t, ctx, accepted.ID, []uint{groupID}, nil, nil, nil); gotPath != archivePath {
+		t.Fatalf("test archive path = %q, want %q", gotPath, archivePath)
+	}
+	archive, err := afero.ReadFile(ctx.GetDefaultFs(), archivePath)
+	if err != nil {
+		t.Fatalf("read staged archive: %v", err)
 	}
 
 	time.Sleep(40 * time.Millisecond)

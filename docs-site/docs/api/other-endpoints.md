@@ -27,6 +27,57 @@ Supported families are `resources`, `notes`, `groups`, `tags`, `categories`, `re
 
 Saving preserves repeated filter values, sort precedence, metadata filters, and MRQL text. Pagination and transient navigation/error state are removed; Downloads' `Error` filter is preserved. Timeline URLs additionally use `timelineMode` (`created` or `updated`), `timelineGranularity` (`week`, `month`, or `year`), and `timelineAnchor` (`YYYY-MM-DD`). Opening the stored URL uses normal list authorization and reruns the search against current data.
 
+## Job migration readiness
+
+Administrators can inspect the Job migration and plaintext-retirement barrier
+while preparing or restoring a database. This read-only route remains available
+independently of the canonical Job Center release gate.
+
+| Method | Endpoint | Behavior |
+|--------|----------|----------|
+| `GET` | `/v1/admin/jobs/migration-readiness` | Return whether the migration barrier is ready, the minimum writer epoch, current phase, source counts, and blockers; requires an administrator |
+
+The JSON response contains `ready` (boolean), `writerEpoch` (integer), `phase`
+(string), `sourceCounts` (source name to count), and `blockers` (array of
+strings). The route does not change migration state. Recheck it after restoring
+a pre-retirement backup; a completion marker from the original database does
+not establish readiness for the restored copy. A `403` means the caller is not
+an administrator.
+
+## Canonical Job Center API
+
+The following canonical endpoints are registered in the Job OpenAPI contract
+after the Job Center release gate opens. The gate stays closed until Kind
+inventory, migration, replay, and plaintext-retirement checks are complete.
+Until then, use the compatibility routes listed under
+[Download Queue](../features/download-queue.md#api-endpoints).
+
+| Method | Endpoint | Behavior |
+|--------|----------|----------|
+| `GET` | `/v1/jobs` | List visible Jobs newest first; accepts filters and an opaque `cursor` |
+| `GET` | `/v1/jobs/{id}` | Return detail, current advertised commands, outputs, and lineage |
+| `GET` | `/v1/jobs/{id}/events?afterSequence={n}&limit={n}` | Read ordered durable timeline events |
+| `GET` | `/v1/jobs/{id}/outputs?key={key}` | Reauthorize and open a typed output |
+| `GET` | `/v1/jobs/events?version=2&cursor={cursor}` | Resume the canonical SSE stream |
+| `POST` | `/v1/jobs/{id}/commands/{command}` | Recheck and run one advertised command |
+| `POST` | `/v1/jobs/commands/{command}` | Run a bulk-advertised command on up to 200 Jobs |
+| `GET` | `/v1/jobs/summary` | Summarize visible Jobs over a window up to 90 days |
+| `POST` | `/v1/jobs/summary/export` | Queue an owner-visible CSV or JSON summary Job for a longer range |
+
+List, summary, and export share these optional filters: `state`/`states`,
+`kind`/`kinds`, `origin`/`origins`, `ownerId`, `actorId`, `acceptedAfter`,
+`acceptedBefore`, `relationship`, `search`, `command`, `pinned`, and
+`dismissed`. Repeating a token parameter or comma-separating its values is
+supported. Visibility is applied before filters and aggregation; an owner or
+actor filter never grants access to hidden Jobs.
+
+Single-command JSON bodies contain `expectedVersion`, `idempotencyKey`, and
+`origin`. The bulk body contains `jobIds`, `idempotencyKey`, and `origin`; each
+selected Job receives an independent result. Summary-export JSON bodies contain
+RFC3339 `from`, `to`, and `format` (`csv` or `json`); the range must exceed 90
+days. Export filters are query parameters. The output artifact expires under
+`EXPORT_RETENTION`, independently of Job history retention.
+
 ## Tags API
 
 Tags are labels that can be applied to resources, notes, and groups for organization.

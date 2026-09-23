@@ -32,7 +32,7 @@ func TestCanonicalJobRoutesAreOptInUntilCutover(t *testing.T) {
 		t.Fatalf("walk enabled canonical routes: %v", err)
 	}
 	for _, path := range []string{
-		"/v1/jobs", "/v1/jobs/summary", "/v1/jobs/{id}", "/v1/jobs/{id}/events",
+		"/v1/jobs", "/v1/jobs/summary", "/v1/jobs/summary/export", "/v1/jobs/{id}", "/v1/jobs/{id}/events",
 		"/v1/jobs/{id}/outputs", "/v1/jobs/{id}/commands/{command}", "/v1/jobs/commands/{command}",
 	} {
 		if !paths[path] {
@@ -53,7 +53,7 @@ func TestPublicOpenAPISpecFollowsCanonicalJobRouteGate(t *testing.T) {
 	RegisterAPIRoutesWithOpenAPI(registry)
 	paths := registry.GenerateSpec().Paths.Map()
 	for _, path := range []string{
-		"/v1/jobs", "/v1/jobs/summary", "/v1/jobs/{id}", "/v1/jobs/{id}/events",
+		"/v1/jobs", "/v1/jobs/summary", "/v1/jobs/summary/export", "/v1/jobs/{id}", "/v1/jobs/{id}/events",
 		"/v1/jobs/{id}/outputs", "/v1/jobs/{id}/commands/{command}", "/v1/jobs/commands/{command}",
 	} {
 		if advertised := paths[path] != nil; advertised != canonicalJobAPICutoverComplete {
@@ -62,6 +62,45 @@ func TestPublicOpenAPISpecFollowsCanonicalJobRouteGate(t *testing.T) {
 	}
 	if paths["/v1/jobs/events"] == nil || paths["/v1/jobs/get"] == nil {
 		t.Fatal("legacy Jobs event/get routes disappeared from the public spec")
+	}
+}
+
+func TestCanonicalSummaryExportOpenAPIRouteIsDefinedButGated(t *testing.T) {
+	registry := openapi.NewRegistry()
+	registerCanonicalJobRoutesOpenAPI(registry)
+	path := registry.GenerateSpec().Paths.Map()["/v1/jobs/summary/export"]
+	if path == nil || path.Post == nil {
+		t.Fatal("canonical summary export has no gated OpenAPI definition")
+	}
+	if path.Post.OperationID != "exportCanonicalJobSummary" || path.Post.Responses.Value("202") == nil {
+		t.Fatalf("summary export operation = %+v, want stable operation id and 202 response", path.Post)
+	}
+
+	public := openapi.NewRegistry()
+	RegisterAPIRoutesWithOpenAPI(public)
+	if route := public.GenerateSpec().Paths.Map()["/v1/jobs/summary/export"]; route != nil {
+		t.Fatal("summary export was published while canonical Job API cutover is disabled")
+	}
+}
+
+func TestJobMigrationReadinessOpenAPIIsAdminRoute(t *testing.T) {
+	registry := openapi.NewRegistry()
+	RegisterAPIRoutesWithOpenAPI(registry)
+	operation := registry.GenerateSpec().Paths.Map()["/v1/admin/jobs/migration-readiness"]
+	if operation == nil || operation.Get == nil {
+		t.Fatal("Job migration readiness is missing from the admin OpenAPI routes")
+	}
+	if operation.Get.OperationID != "getJobMigrationReadiness" || operation.Get.Responses.Value("200") == nil || operation.Get.Responses.Value("403") == nil {
+		t.Fatalf("migration readiness operation = %+v, want stable operation id and 200/403 responses", operation.Get)
+	}
+	response := operation.Get.Responses.Value("200").Value.Content["application/json"]
+	if response == nil || response.Schema == nil || response.Schema.Value == nil {
+		t.Fatal("migration readiness response has no JSON schema")
+	}
+	for _, field := range []string{"ready", "writerEpoch", "phase", "sourceCounts", "blockers"} {
+		if response.Schema.Value.Properties[field] == nil {
+			t.Errorf("migration readiness response is missing %q", field)
+		}
 	}
 }
 

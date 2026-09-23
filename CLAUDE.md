@@ -120,7 +120,7 @@ Mahresources is a CRUD application for personal information management written i
 
 ### Background Jobs and download compatibility
 
-The Job Service is the durable control plane for user- and operator-facing background work. It accepts a Job before execution, stores lifecycle, ownership, replay input, claims, capacity, events, outputs, and lineage, and fences executor writes with an execution token. Downloads, exports, imports, Resource Reduction computation, maintenance, plugin actions, and schedules use this shared plane with their specialized executors. Plugin command runs and command imports are the next integration task; they are not yet represented as canonical Jobs.
+The Job Service is the durable control plane for user- and operator-facing background work. It accepts a Job before execution, stores lifecycle, ownership, replay input, claims, capacity, events, outputs, and lineage, and fences executor writes with an execution token. Downloads, exports, imports, Resource Reduction computation, maintenance, plugin actions, and schedules use this shared plane with their specialized executors. `job-summary-export@1` is a durable owner-visible Kind whose filtered queries use the same visibility predicate as interactive summary. Plugin command runs and command imports are the next integration task; they are not yet represented as canonical Jobs. The external Job Center API and UI cutover remain gated until the full Kind inventory and migration checks pass.
 
 `download_queue/` remains an in-memory executor and compatibility surface. Its entries can be evicted at `MaxQueueSize` or after their retention period, and they do not survive restart. A queue entry is not the durable Job record. `DownloadHistoryEntry` remains for the legacy `/downloads` history and related compatibility behavior; the Job tables are authoritative for canonical lifecycle and immutable execution identity.
 
@@ -130,6 +130,17 @@ The Job Service is the durable control plane for user- and operator-facing backg
 - **Scope and authority:** ownership grants visibility; it does not grant permanent permission to repeat work. A Retry or redispatch validates current actor role, plugin access where relevant, and download target scope before running.
 - **Retention:** Job history, replay input, and artifacts follow their Job-specific policies. The queue's in-memory cleanup and the legacy download-history retention are separate compatibility cleanup mechanisms; neither defines canonical Job retention.
 - **Duplicate transfers:** the queue still prevents duplicate active URLs within its process. The Job claim and capacity budgets govern admitted execution across processes; a queue-local URL check is not a deployment-wide lock.
+
+**Job rollout and operator invariants:**
+
+- `JOB_REPLAY_KEY` is a comma-separated keyring of base64-encoded 32-byte keys. The first key seals new inputs; later keys only decrypt old envelopes. Keep the same stable keyring on every PostgreSQL writer. Persistent SQLite's generated `_job_replay_key` is mode `0600`; include it with the database backup. Keep an old decrypt key until all envelopes using it expire or are explicitly forgotten.
+- `JobWriterEpoch` is checked before migrations, cleanup, plugin activation, or dispatch. Deploy the epoch-aware release everywhere and drain older writers before the minimum epoch advances. An older binary must refuse an advanced database; rollback uses a compatible canonical reader, never a plaintext writer.
+- Legacy download and Job handles/routes remain supported for at least one documented release and six months after canonical cutover. A legacy handle may follow its Retry leaf; a canonical UUID always identifies one immutable Job.
+- A backup from before plaintext retirement must pass the current backfill and retirement verification barrier after restore, using the matching files and replay key, before traffic or older writers are allowed.
+- Before admitting traffic after rollout or restore, an administrator must check `GET /v1/admin/jobs/migration-readiness`: require `ready: true`, inspect `writerEpoch` and `phase`, and resolve every entry in `blockers`. A prior completion marker does not establish readiness for a restored database.
+- Plugin command runs and command imports require one fenced command-runtime owner per database and staging namespace. Other Job Kinds and the Job Service can run on multiple processes; independent command runtimes with separate staging roots cannot share one database.
+
+See `docs-site/docs/features/job-system.md`, `docs-site/docs/configuration/advanced.md`, and `docs-site/docs/deployment/backups.md` for the operator procedure.
 
 ### Bulk resource uploads
 

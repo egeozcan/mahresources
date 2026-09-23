@@ -36,6 +36,13 @@ If you configured alternative file systems via `-alt-fs` flags or `FILE_ALT_*` e
 The database, primary file storage, plugin directory, and any alternative filesystem paths must all be backed up together. Restoring only a subset will result in orphaned records or missing files.
 :::
 
+Job replay envelopes are encrypted with `JOB_REPLAY_KEY`. If you configure the
+key explicitly, store it in the same protected backup set as the database. With
+persistent SQLite and no explicit key, the generated
+`<file-save-path>/_job_replay_key` file is already under the file storage root;
+preserve it with that directory. PostgreSQL requires the same stable keyring on
+every process that can read or write the database.
+
 ## SQLite Backup
 
 ### Simple File Copy (When Stopped)
@@ -238,13 +245,24 @@ rsync -av --delete /backup/mahresources-files/ /opt/mahresources/files/
 chown -R mahresources:mahresources /opt/mahresources/files/
 ```
 
-### 4. Start the Service
+### 4. Recheck the Job Retirement Barrier
+
+If the backup predates Job plaintext retirement, restore it in an isolated
+environment with its matching files and replay-key material. Start a release
+that understands the restored database's writer epoch, then rerun the current
+backfill and retirement verification barrier. The barrier must recheck the
+restored source rows; a completion marker from the original database is not
+accepted as evidence for this restored copy. Keep traffic and older writer
+processes stopped until verification completes. See
+[Advanced Configuration](../configuration/advanced.md#restoring-a-pre-retirement-backup).
+
+### 5. Start the Service
 
 ```bash
 sudo systemctl start mahresources
 ```
 
-### 5. Verify
+### 6. Verify
 
 - Check the logs: `sudo journalctl -u mahresources -f`
 - Access the web interface and verify data is present

@@ -759,45 +759,45 @@ type Summary struct {
 	// with From and To the instants it covers. AcceptedAt is the column it
 	// measures, because the cohort a question is asked about is the work that was
 	// accepted in that period.
-	Window time.Duration
-	From   time.Time
-	To     time.Time
+	Window time.Duration `json:"window"`
+	From   time.Time     `json:"from"`
+	To     time.Time     `json:"to"`
 
-	Total   int64
-	ByState map[string]int64
-	ByKind  map[string]int64
+	Total   int64            `json:"total"`
+	ByState map[string]int64 `json:"byState"`
+	ByKind  map[string]int64 `json:"byKind"`
 
 	// Succeeded, Failed and Terminal are the settled outcomes the rate is drawn
 	// from. SuccessRate is zero when nothing settled, rather than a division by
 	// an empty set.
-	Succeeded   int64
-	Failed      int64
-	Terminal    int64
-	SuccessRate float64
+	Succeeded   int64   `json:"succeeded"`
+	Failed      int64   `json:"failed"`
+	Terminal    int64   `json:"terminal"`
+	SuccessRate float64 `json:"successRate"`
 
 	// Queue is measured over every Job in the window; Run over the Jobs that
 	// started, because a Job that never ran has no run duration to report rather
 	// than a zero one.
-	Queue DurationStats
-	Run   DurationStats
+	Queue DurationStats `json:"queue"`
+	Run   DurationStats `json:"run"`
 
 	// Failures groups the settled failures by their bounded classification,
 	// commonest first. It never carries an error message.
-	Failures []FailureClassCount
+	Failures []FailureClassCount `json:"failures"`
 }
 
 // DurationStats is a median and a high percentile, which is what a duration
 // question is actually asking: an average over a long tail describes nothing a
 // person recognizes.
 type DurationStats struct {
-	Median time.Duration
-	P95    time.Duration
+	Median time.Duration `json:"median"`
+	P95    time.Duration `json:"p95"`
 }
 
 // FailureClassCount is one line of a failure breakdown.
 type FailureClassCount struct {
-	Class string
-	Count int64
+	Class string `json:"class"`
+	Count int64  `json:"count"`
 }
 
 // Page is one bounded, newest-first page of visible Jobs. Next is the cursor to

@@ -1,40 +1,38 @@
 ---
-title: mr jobs list
-description: List visible Jobs
-sidebar_label: list
+title: mr jobs summary export
+description: Queue a CSV or JSON summary export longer than 90 days
+sidebar_label: export
 ---
 
-# mr jobs list
+# mr jobs summary export
 
-List the durable Jobs visible to the current account. The server orders results
-newest first and returns an opaque `nextCursor` when another page is available.
-Pass that value to `--cursor` to continue. Use the repeatable state, kind, and
-origin filters, or narrow by owner, actor, accepted time, relationship, text,
-advertised command, or your pin and dismissal preferences.
+Queue a filtered summary export for an explicit RFC3339 range longer than 90
+days. The server applies the same visibility rules and filters as interactive
+summary, then publishes a typed artifact on the accepted Job. The artifact
+expires according to the server's export-retention setting. Read the Job with
+`jobs get` to inspect its output and commands.
 
-The canonical list endpoint is controlled by the server's Job Center release
-gate. While that endpoint is unavailable, an unfiltered `jobs list` request
-falls back to the legacy download queue. Use `jobs queue` when a script needs
-the legacy response explicitly.
+The accepted Job is owned by the submitting account. Filtering by another
+owner or actor does not grant access to that person's Jobs.
 
 ## Usage
 
 ```bash
-mr jobs list
+mr jobs summary export
 ```
 
 ## Examples
 
-**Find failed remote downloads**
+**Queue a CSV export for a year of remote downloads**
 
 ```bash
-mr jobs list --state failed --kind remote-download --limit 50
+mr jobs summary export --from 2025-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --kind remote-download --format csv
 ```
 
-**Continue from an opaque cursor on the next page**
+**Queue a JSON export with an owner filter**
 
 ```bash
-mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
+mr jobs summary export --from 2024-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --format json --owner-id 7
 ```
 
 
@@ -54,8 +52,9 @@ mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
 | `--command` | string | `` | Filter Jobs currently advertising this command key |
 | `--pinned` | string | `` | Filter this viewer's pin preference (true or false) |
 | `--dismissed` | string | `` | Filter this viewer's dismissal preference (true or false) |
-| `--cursor` | string | `` | Opaque cursor returned by the previous page |
-| `--limit` | int | `0` | Jobs per page (server maximum: 200) |
+| `--from` | string | `` | Inclusive start time in RFC3339 form (required) **(required)** |
+| `--to` | string | `` | Inclusive end time in RFC3339 form (required) **(required)** |
+| `--format` | string | `json` | Artifact format: csv or json |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |
@@ -67,7 +66,7 @@ mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Canonical page with visible Jobs and an optional nextCursor
+Accepted summary-export Job snapshot
 
 ## Exit Codes
 
@@ -75,7 +74,6 @@ Canonical page with visible Jobs and an optional nextCursor
 
 ## See Also
 
-- [`mr jobs get`](./get.md)
-- [`mr jobs timeline`](./timeline.md)
-- [`mr jobs summary`](./summary/index.md)
-- [`mr job submit`](../job/submit.md)
+- [`mr jobs summary`](./index.md)
+- [`mr jobs get`](../get.md)
+- [`mr jobs timeline`](../timeline.md)
