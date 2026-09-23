@@ -679,14 +679,32 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 // visible is the caller's RBAC predicate over the job's owner, matching the
 // filtering the queue and the SSE stream already apply.
 func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool) []string {
+	removed := pm.ClearFinishedActionJobSnapshots(visible)
+	ids := make([]string, 0, len(removed))
+	for _, job := range removed {
+		ids = append(ids, job.ID)
+	}
+	return ids
+}
+
+// ClearFinishedActionJobSnapshots removes the same rows as
+// ClearFinishedActionJobs and returns the removed rows' stable handle and
+// canonical target identities. The handler uses the canonical ID to ensure a
+// stale in-memory ancestor clear cannot mark a handle's Retry successor as
+// cleared.
+func (pm *PluginManager) ClearFinishedActionJobSnapshots(visible func(owner *uint) bool) []*ActionJob {
 	var removed []*ActionJob
-	ids := make([]string, 0)
+	cleared := make([]*ActionJob, 0)
 
 	pm.actionJobsMu.Lock()
 	for id, job := range pm.actionJobs {
 		job.mu.RLock()
 		status := job.Status
 		owner := job.ownerUserID
+		canonicalID := job.CanonicalJobID
+		if job.host != nil && job.host.JobID != "" {
+			canonicalID = job.host.JobID
+		}
 		job.mu.RUnlock()
 
 		if status != "completed" && status != "failed" {
@@ -697,8 +715,7 @@ func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool)
 		}
 		delete(pm.actionJobs, id)
 		removed = append(removed, job)
-		// The map key rather than job.ID: same value, and it needs no lock.
-		ids = append(ids, id)
+		cleared = append(cleared, &ActionJob{ID: id, CanonicalJobID: canonicalID})
 	}
 	pm.actionJobsMu.Unlock()
 
@@ -706,7 +723,7 @@ func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool)
 		pm.notifyActionJobSubscribers("removed", job)
 	}
 
-	return ids
+	return cleared
 }
 
 // cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.

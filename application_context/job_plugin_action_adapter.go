@@ -13,9 +13,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/plugin_system"
 )
 
@@ -1960,6 +1963,174 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 	if projected.Kind != JobKindPluginAction {
 		return nil, fmt.Errorf("%w: %s", jobs.ErrNotFound, handle)
 	}
+	return projectActionJobSnapshot(projected, handle), nil
+}
+
+// ProjectActionJobs answers the rows a legacy action-event init can currently
+// name. It joins current durable handles to visible Jobs in one filtered read,
+// so expired history and other owners' work never cause per-handle lookups. The
+// handle table already points at the current leaf, so an in-memory ancestor
+// cannot become authorization for a successor the viewer cannot see.
+func (ctx *MahresourcesContext) ProjectActionJobs() ([]*plugin_system.ActionJob, error) {
+	if ctx == nil || ctx.JobService() == nil {
+		return nil, fmt.Errorf("jobs: this context has no job control plane installed")
+	}
+	cutoff := time.Now().UTC().Add(-time.Hour)
+	access := ctx.jobAccess()
+	query := ctx.db.Table("job_legacy_handles").
+		Select("jobs.*, job_legacy_handles.handle AS action_handle").
+		Joins("JOIN jobs ON jobs.id = job_legacy_handles.job_id").
+		Where("job_legacy_handles.namespace = ?", PluginActionHandleNamespace).
+		Where("jobs.kind = ?", JobKindPluginAction).
+		Where("(jobs.state NOT IN ? OR jobs.finished_at >= ?)",
+			[]string{string(jobs.StateSucceeded), string(jobs.StateFailed), string(jobs.StateCancelled), string(jobs.StateInterrupted)}, cutoff)
+	query = query.Where("(job_legacy_handles.cleared_job_id IS NULL OR job_legacy_handles.cleared_job_id <> jobs.id)")
+	if !access.Administrator {
+		// Keep the same durable owner/admin visibility predicate as jobs.Get/List,
+		// applied before any history rows are materialized for this SSE connection.
+		query = query.Where("jobs.visibility_class = ? AND jobs.owner_user_id = ?",
+			string(jobs.VisibilityOwner), access.UserID)
+	}
+	type projectionRow struct {
+		models.Job `gorm:"embedded"`
+		Handle     string `gorm:"column:action_handle"`
+	}
+	var candidates []projectionRow
+	if err := query.Order("job_legacy_handles.handle asc").Scan(&candidates).Error; err != nil {
+		return nil, fmt.Errorf("application_context: list visible plugin action handles: %w", err)
+	}
+	rows := make([]*plugin_system.ActionJob, 0, len(candidates))
+	for _, candidate := range candidates {
+		rows = append(rows, projectActionJobSnapshot(pluginActionSnapshotFromModel(candidate.Job), candidate.Handle))
+	}
+	return rows, nil
+}
+
+// ClearPluginActionHandle records that a legacy action handle was cleared from
+// the old jobs panel, but only while it still names the exact terminal Job the
+// in-memory manager removed. Retry moves JobID while leaving ClearedJobID on its
+// ancestor, so a successor remains addressable and appears in the next init.
+func (ctx *MahresourcesContext) ClearPluginActionHandle(handle, removedCanonicalID string) (bool, error) {
+	if ctx == nil || ctx.JobService() == nil || handle == "" || removedCanonicalID == "" {
+		return false, nil
+	}
+	service := ctx.JobService()
+	access := ctx.jobAccess()
+	cleared := false
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Take the write lock before the first read. Besides serializing with
+		// Retry's handle movement on PostgreSQL, SQLite cannot promote a stale
+		// read snapshot to a writer after another transaction commits. Restricting
+		// the no-op update to the removed target also makes a concurrent Retry a
+		// clean no-op here instead of clearing its successor.
+		locked := tx.Model(&models.JobLegacyHandle{}).
+			Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
+			UpdateColumn("handle", gorm.Expr("handle"))
+		if locked.Error != nil {
+			return fmt.Errorf("application_context: lock plugin action handle to clear: %w", locked.Error)
+		}
+		if locked.RowsAffected == 0 {
+			return nil
+		}
+
+		var row models.JobLegacyHandle
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("namespace = ? AND handle = ?", PluginActionHandleNamespace, handle).
+			First(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("application_context: load plugin action handle to clear: %w", err)
+		}
+		// The manager may still hold an ancestor after Retry has already moved
+		// the durable handle. Never apply that clear to whatever the handle means
+		// now, even if the successor has also reached a terminal state.
+		if row.JobID != removedCanonicalID {
+			return nil
+		}
+		current, err := service.Get(ctx.jobDepsWithDB(tx), access, row.JobID)
+		if errors.Is(err, jobs.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("application_context: authorize plugin action handle clear: %w", err)
+		}
+		if current.Kind != JobKindPluginAction || !current.State.Terminal() {
+			return nil
+		}
+		result := tx.Model(&models.JobLegacyHandle{}).
+			Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
+			Updates(map[string]any{"cleared_job_id": removedCanonicalID, "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return fmt.Errorf("application_context: mark plugin action handle cleared: %w", result.Error)
+		}
+		cleared = result.RowsAffected == 1
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return cleared, nil
+}
+
+// ClearVisibleTerminalPluginActionHandles clears current terminal targets the
+// caller may see, including rows accepted by another process whose local
+// PluginManager has no entry. ProjectActionJobs filters visibility, expiry and
+// the target-bound clear marker in one joined query; each marker write then
+// locks and compares the exact canonical target so a concurrent Retry cannot
+// clear its successor.
+func (ctx *MahresourcesContext) ClearVisibleTerminalPluginActionHandles() ([]string, error) {
+	rows, err := ctx.ProjectActionJobs()
+	if err != nil {
+		return nil, err
+	}
+	cleared := make([]string, 0)
+	for _, row := range rows {
+		if row.Status != "completed" && row.Status != "failed" && row.Status != "cancelled" {
+			continue
+		}
+		marked, err := ctx.ClearPluginActionHandle(row.ID, row.CanonicalJobID)
+		if err != nil {
+			return nil, err
+		}
+		if marked {
+			cleared = append(cleared, row.ID)
+		}
+	}
+	return cleared, nil
+}
+
+func pluginActionSnapshotFromModel(row models.Job) jobs.Snapshot {
+	snapshot := jobs.Snapshot{
+		ID:          row.ID,
+		Kind:        row.Kind,
+		KindVersion: row.KindVersion,
+		State:       jobs.State(row.State),
+		Phase:       row.Phase,
+		Title:       row.Title,
+		Summary:     json.RawMessage(row.Summary),
+		OwnerUserID: row.OwnerUserID,
+		AcceptedAt:  row.AcceptedAt,
+		Progress: jobs.Progress{
+			Phase:     row.Phase,
+			Completed: row.ProgressCompleted,
+			Total:     row.ProgressTotal,
+			Unit:      row.ProgressUnit,
+			Message:   row.ProgressMessage,
+			ETA:       row.ProgressETA,
+		},
+	}
+	if row.FailureCode != "" || row.FailureClass != "" || row.FailureMessage != "" || row.FailureDiagnosticRef != "" {
+		snapshot.Failure = &jobs.Failure{
+			Code: row.FailureCode, Class: row.FailureClass,
+			Message: row.FailureMessage, DiagnosticRef: row.FailureDiagnosticRef,
+		}
+	}
+	return snapshot
+}
+
+func projectActionJobSnapshot(projected jobs.Snapshot, handle string) *plugin_system.ActionJob {
 	summary, _ := pluginActionSummaryDecoded(projected.Summary)
 
 	progress := projected.Progress
@@ -1991,7 +2162,7 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 		})
 	}
 
-	return plugin_system.ProjectedActionJob{
+	job := plugin_system.ProjectedActionJob{
 		Handle:         handle,
 		CanonicalJobID: projected.ID,
 		Plugin:         summary.Plugin,
@@ -2003,7 +2174,9 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 		Message:        truncateTo(message, jobs.MaxProgressMessageBytes),
 		Owner:          projected.OwnerUserID,
 		CreatedAt:      projected.AcceptedAt,
-	}.ActionJob(), nil
+	}.ActionJob()
+	job.EntityID = summary.EntityID
+	return job
 }
 
 // actionJobStatusFromState maps a normalized Job state onto the panel's own plugin-job

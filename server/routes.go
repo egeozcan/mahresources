@@ -893,7 +893,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	})
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadJobHandler)))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.
-	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(legacyJobHandler(api_handlers.GetJobsClearCompletedHandler(appContext)))
+	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetJobsClearCompletedHandler)))
 	registerCanonicalJobRoutes(router, appContext, canonicalJobAPICutoverComplete)
 
 	// Download history — the durable record behind /downloads. Retry runs on a
@@ -962,7 +962,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/plugin/displayTypes").HandlerFunc(api_handlers.GetPluginDisplayTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetActionRunHandler)))
-	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(legacyJobHandler(api_handlers.GetActionJobHandler(appContext)))
+	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetActionJobHandler)))
 
 	// Logs (read-only)
 	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))

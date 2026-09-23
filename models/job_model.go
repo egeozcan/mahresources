@@ -477,6 +477,13 @@ type JobLegacyHandle struct {
 	// because the movement of a handle is read from the Job that supersedes it.
 	JobID string `gorm:"size:36;not null;index:idx_job_legacy_handles_job" json:"jobId"`
 
+	// ClearedJobID records the terminal target this legacy handle was cleared
+	// against. It is intentionally target-bound: a Retry moves JobID to its new
+	// execution while this stays on the ancestor, making the same handle visible
+	// for the active successor again. This is the legacy clear control's durable
+	// marker; it does not dismiss or remove the canonical Job.
+	ClearedJobID *string `gorm:"size:36" json:"-"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }

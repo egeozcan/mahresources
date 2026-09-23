@@ -6,6 +6,7 @@ import (
 	"io"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
@@ -462,34 +463,45 @@ type pluginActionJobProjector interface {
 	ProjectActionJob(handle string) (*plugin_system.ActionJob, error)
 }
 
+// pluginActionJobServiceProvider distinguishes the current durable projection
+// from the compatibility-only in-memory registry. A context with no Job
+// control plane keeps the behavior its legacy manager had; once a control plane
+// is installed, the handle's durable target is authoritative even while an
+// ancestor remains in memory.
+type pluginActionJobServiceProvider interface {
+	JobService() *jobs.Service
+}
+
 // GetActionJobHandler handles GET /v1/jobs/action/job?id=abc
 func GetActionJobHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pm := ctx.PluginManager()
-		if pm == nil {
-			http_utils.HandleError(fmt.Errorf("plugin system is not available"), w, r, http.StatusServiceUnavailable)
-			return
-		}
-
 		jobID := r.URL.Query().Get("id")
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("id query parameter is required"), w, r, http.StatusBadRequest)
 			return
 		}
 
-		job := pm.GetActionJob(jobID)
-		if job == nil {
-			// The manager holds this process's executions. Work the deployment accepted
-			// and has not started — a submission the concurrency budget had no room for
-			// — is in none of that memory, and the id the server answered with has to
-			// keep resolving for the client that is polling it. The durable Job is what
-			// outlives the process, and a runner that can project it answers instead.
-			if projector, ok := ctx.(pluginActionJobProjector); ok {
-				projected, err := projector.ProjectActionJob(jobID)
-				if err == nil {
-					job = projected
-				}
+		var job *plugin_system.ActionJob
+		projector, canProject := ctx.(pluginActionJobProjector)
+		serviceProvider, hasServiceProvider := ctx.(pluginActionJobServiceProvider)
+		durableAvailable := hasServiceProvider && serviceProvider.JobService() != nil
+		if canProject && durableAvailable {
+			// The manager holds this process's executions. A Retry advances the
+			// durable handle atomically, but leaves its finished ancestor in memory;
+			// resolve and authorize the current target before consulting that local
+			// projection so a hidden successor can never fall back to its ancestor.
+			projected, err := projector.ProjectActionJob(jobID)
+			if err == nil {
+				job = projected
 			}
+		} else if pm != nil {
+			// An embed with no control plane still has only the legacy manager.
+			job = pm.GetActionJob(jobID)
+		}
+		if job == nil && pm == nil && !durableAvailable {
+			http_utils.HandleError(fmt.Errorf("plugin system is not available"), w, r, http.StatusServiceUnavailable)
+			return
 		}
 		if job == nil || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.Owner()) {
 			// Non-owners get a 404 (not 403) so job IDs can't be enumerated.

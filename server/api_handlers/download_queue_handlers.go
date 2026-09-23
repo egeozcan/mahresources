@@ -717,7 +717,40 @@ func GetJobsClearCompletedHandler(ctx JobsClearer) func(writer http.ResponseWrit
 
 		cleared := ctx.DownloadManager().ClearFinished(visible)
 		if pm := ctx.PluginManager(); pm != nil {
-			cleared = append(cleared, pm.ClearFinishedActionJobs(visible)...)
+			actionJobs := pm.ClearFinishedActionJobSnapshots(visible)
+			if clearer, ok := ctx.(pluginActionHandleClearer); ok {
+				if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
+					for _, job := range actionJobs {
+						marked, err := clearer.ClearPluginActionHandle(job.ID, job.CanonicalJobID)
+						if err != nil {
+							http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+							return
+						}
+						if marked {
+							cleared = append(cleared, job.ID)
+						}
+						// A Retry may have moved the durable handle since the manager
+						// accepted its removal. The canonical-ID check declines that
+						// stale clear and leaves the successor active in the client.
+					}
+				} else {
+					for _, job := range actionJobs {
+						cleared = append(cleared, job.ID)
+					}
+				}
+			} else {
+				for _, job := range actionJobs {
+					cleared = append(cleared, job.ID)
+				}
+			}
+		}
+		if durableClearer, ok := ctx.(durablePluginActionJobsClearer); ok {
+			durableIDs, err := durableClearer.ClearVisibleTerminalPluginActionHandles()
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
+			}
+			cleared = append(cleared, durableIDs...)
 		}
 
 		// The ids and not just the count: the panel dismisses exactly what this says
@@ -764,6 +797,25 @@ type JobEventsContext interface {
 	// that changed, and a Retry moves the handle onto its successor.
 	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
 	PluginManager() *plugin_system.PluginManager
+}
+
+// pluginActionJobsProjector supplies the current visible rows for legacy action
+// handles. Like the single-row projection, it is optional so a context without
+// the durable Job control plane can keep serving its manager's in-memory rows.
+type pluginActionJobsProjector interface {
+	ProjectActionJobs() ([]*plugin_system.ActionJob, error)
+}
+
+// pluginActionHandleClearer durably marks a legacy action handle as cleared only
+// when it still names the canonical Job removed from the in-memory manager.
+type pluginActionHandleClearer interface {
+	ClearPluginActionHandle(handle, removedCanonicalID string) (bool, error)
+}
+
+// durablePluginActionJobsClearer clears visible terminal action handles even
+// when this process has no matching in-memory PluginManager entry.
+type durablePluginActionJobsClearer interface {
+	ClearVisibleTerminalPluginActionHandles() ([]string, error)
 }
 
 // GetDownloadEventsHandler handles GET /v1/download/events and GET /v1/jobs/events
@@ -814,7 +866,24 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 		}
 		initData := map[string]any{"jobs": visibleDownloads}
 		visibleActions := make([]*plugin_system.ActionJob, 0)
-		if pm != nil {
+		projectedActions := false
+		var durableActionProjector pluginActionJobsProjector
+		if projector, ok := ctx.(pluginActionJobsProjector); ok {
+			if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
+				projected, err := projector.ProjectActionJobs()
+				if err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+					return
+				}
+				visibleActions = projected
+				if visibleActions == nil {
+					visibleActions = make([]*plugin_system.ActionJob, 0)
+				}
+				projectedActions = true
+				durableActionProjector = projector
+			}
+		}
+		if pm != nil && !projectedActions {
 			allActions := pm.GetAllActionJobs()
 			for i := range allActions {
 				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
@@ -823,11 +892,27 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			}
 		}
 		initData["actionJobs"] = visibleActions
+		// The plugin manager's channel is process-local. Seed a snapshot diff from
+		// init and poll the durable handle projection so a Retry accepted by a
+		// different process also updates this already-open legacy stream.
+		actionRows := make(map[string]*plugin_system.ActionJob, len(visibleActions))
+		for _, job := range visibleActions {
+			actionRows[job.ID] = job
+		}
 		initialData, _ := json.Marshal(initData)
 		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
 		flusher.Flush()
 
-		// Stream events from both sources
+		var actionProjectionPoll <-chan time.Time
+		var actionProjectionTicker *time.Ticker
+		if durableActionProjector != nil {
+			actionProjectionTicker = time.NewTicker(2 * time.Second)
+			actionProjectionPoll = actionProjectionTicker.C
+			defer actionProjectionTicker.Stop()
+		}
+
+		// Stream events from both sources, plus a bounded-frequency durable
+		// snapshot diff for handle movements committed by another process.
 		for {
 			select {
 			case event, ok := <-downloadEvents:
@@ -862,16 +947,98 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 					actionEvents = nil
 					continue
 				}
-				if !jobVisibleToPrincipal(p, event.Job.Owner()) {
+				job := event.Job
+				eventType := event.Type
+				if projector, ok := ctx.(pluginActionJobProjector); ok {
+					if serviceProvider, ok := ctx.(pluginActionJobServiceProvider); ok && serviceProvider.JobService() != nil {
+						projected, err := projector.ProjectActionJob(event.Job.ID)
+						if err != nil || projected == nil {
+							// A hidden or moved handle has no visible current target. The
+							// in-memory event may name its old ancestor, but that row no
+							// longer answers this id and must not be forwarded.
+							continue
+						}
+						job = projected
+						if event.Type == "removed" && projected.CanonicalJobID != event.Job.CanonicalJobID {
+							// Clear/retention removed the process-local ancestor, but the
+							// legacy handle already names a different durable execution.
+							// Send the current row as an update so old clients cannot erase
+							// a live retry successor from their panel.
+							eventType = "updated"
+						}
+					}
+				}
+				if !jobVisibleToPrincipal(p, job.Owner()) {
 					continue
 				}
-				data, _ := json.Marshal(map[string]any{"job": event.Job})
-				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", event.Type, data)
+				if previous, exists := actionRows[job.ID]; exists {
+					if eventType != "removed" && sameLegacyActionProjection(previous, job) {
+						continue
+					}
+					if eventType == "added" {
+						eventType = "updated"
+					}
+				} else if eventType == "updated" {
+					eventType = "added"
+				}
+				if eventType == "removed" {
+					delete(actionRows, job.ID)
+				} else {
+					actionRows[job.ID] = job
+				}
+				data, _ := json.Marshal(map[string]any{"job": job})
+				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
 				flusher.Flush()
+
+			case <-actionProjectionPoll:
+				// A single visibility-filtered join yields current rows. Diff by the
+				// stable legacy handle so a queued Retry is an update to that row,
+				// while new, hidden, cleared, and expired rows are handled safely.
+				projected, err := durableActionProjector.ProjectActionJobs()
+				if err != nil {
+					continue
+				}
+				current := make(map[string]*plugin_system.ActionJob, len(projected))
+				for _, job := range projected {
+					if !jobVisibleToPrincipal(p, job.Owner()) {
+						continue
+					}
+					current[job.ID] = job
+					previous, exists := actionRows[job.ID]
+					if exists && sameLegacyActionProjection(previous, job) {
+						actionRows[job.ID] = job
+						continue
+					}
+					eventType := "added"
+					if exists {
+						eventType = "updated"
+					}
+					data, _ := json.Marshal(map[string]any{"job": job})
+					fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", eventType, data)
+					flusher.Flush()
+					actionRows[job.ID] = job
+				}
+				for id, previous := range actionRows {
+					if _, exists := current[id]; exists {
+						continue
+					}
+					data, _ := json.Marshal(map[string]any{"job": previous})
+					fmt.Fprintf(writer, "event: action_removed\ndata: %s\n\n", data)
+					flusher.Flush()
+					delete(actionRows, id)
+				}
 
 			case <-request.Context().Done():
 				return
 			}
 		}
 	}
+}
+
+func sameLegacyActionProjection(left, right *plugin_system.ActionJob) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.CanonicalJobID == right.CanonicalJobID &&
+		left.Status == right.Status && left.Progress == right.Progress && left.Message == right.Message
 }
