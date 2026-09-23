@@ -158,11 +158,13 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 				refused = append(refused, map[string]string{"url": submission.URL, "reason": submission.Err.Error()})
 				continue
 			}
-			// Snapshots, because the workers are already running by the time this
-			// encodes: the queue hands back the live jobs so its caller can drive them,
-			// and marshalling one without its lock races the worker writing progress
-			// into it.
-			jobs = append(jobs, submission.Job.Snapshot())
+			// Rows, not live jobs: the workers are already running by the time this
+			// encodes, and a submission whose durable Job is waiting for the deployment's
+			// budget to free has no entry at all. The row is the entry's own snapshot when
+			// there is one and the projection of that Job otherwise, so the answer keeps
+			// the shape every client of this endpoint has always read — an id it polls and
+			// controls, and a status.
+			jobs = append(jobs, submission.Row)
 		}
 
 		if len(jobs) == 0 {

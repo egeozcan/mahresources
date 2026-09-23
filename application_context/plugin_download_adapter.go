@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"mahresources/download_queue"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 )
@@ -130,26 +129,19 @@ func (ctx *MahresourcesContext) SubmitDownload(pluginName string, actorUserID ui
 	if submission.Err != nil {
 		return nil, submission.Err
 	}
-	if submission.Job == nil {
-		// Accepted and dispatched by somebody else: this process lost the claim (or
-		// the deployment's budget is full), so the work is queued and a runtime will
-		// run it. The plugin is answered with the same shape it always gets, and the
-		// id is the one the Job Center lists it under.
-		return map[string]any{
-			"id":     submission.CanonicalJobID,
-			"url":    url,
-			"status": string(download_queue.JobStatusPending),
-		}, nil
+	// The row is the same shape whether or not a queue entry exists yet: the live
+	// entry's own snapshot, or — when the deployment's budget was full and a runtime
+	// will run it — a projection of the durable Job. Its id is the handle the Job
+	// already carries, so what the plugin is answered with is what the Job Center and
+	// every legacy surface name the work by.
+	row := submission.Row
+	if row == nil {
+		return nil, errors.New("the download could not be submitted")
 	}
-
-	// Snapshot, not the live job: Submit starts the worker before it returns,
-	// so reading job.Status here is a read racing that worker's first write.
-	// Snapshot takes the job's own lock.
-	snap := submission.Job.Snapshot()
 	return map[string]any{
-		"id":     snap.ID,
-		"url":    snap.URL,
-		"status": string(snap.Status),
+		"id":     row.ID,
+		"url":    row.URL,
+		"status": string(row.Status),
 	}, nil
 }
 

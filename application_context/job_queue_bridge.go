@@ -80,19 +80,279 @@ type QueueJobSubmission struct {
 	Err error
 }
 
-// acceptQueueJob accepts the durable Job one queue-backed submission stands for.
+// queueJobAdmission is what one queue-backed submission holds once the durable Job
+// is committed: the Job itself, and — when this process may run it — the claim and
+// execution token that keep every other runtime out of it.
+type queueJobAdmission struct {
+	// Accepted is the durable Job as it was committed.
+	Accepted jobs.Snapshot
+	// Execution is the claim this process owns. A zero value means the Job was
+	// accepted to wait instead: the deployment's concurrency budget was full, so
+	// there is no executor here and whichever runtime has a free slot takes it.
+	Execution jobs.Execution
+	// Lease is the claim's lease — how long it survives without the heartbeat that
+	// renews it — and therefore the interval the heartbeat is derived from.
+	Lease time.Duration
+}
+
+// Owned reports whether this process holds the Job's claim, and so owes it an
+// executor.
+func (a queueJobAdmission) Owned() bool { return a.Execution.ExecutionToken != "" }
+
+// admitQueueJob accepts one queue-backed Job and, when the deployment has room,
+// claims it in the same transaction.
 //
-// A context with no control plane answers a zero Snapshot and no error: the queue
-// runs exactly as it always has, and the caller submits with no canonical identity
-// because there is none to name. Every caller treats that as "no dual publication"
-// rather than as a failure, which is what keeps the CLI's, the package tests' and a
-// bare embedder's queue working.
-func (ctx *MahresourcesContext) acceptQueueJob(acceptance jobs.Acceptance) (jobs.Snapshot, error) {
+// The order is not negotiable and it is why this lives here rather than in each of
+// the submission paths. A submission starts the specialized executor — a queue entry
+// — and until the Job is *owned* it is ordinary queued work of a registered Kind. A
+// runtime claims queued work; a runtime in another process that claims this one
+// finds no entry in its own queue, starts a second executor for it, and two processes
+// run one transfer, one export or one import. Committing the claim and the capacity
+// that admits it together with the acceptance leaves no such interval: the Job is
+// owned from the moment it exists, or it is not running at all.
+//
+// A full deployment budget is therefore not a refusal. Capacity is a deployment-wide
+// invariant — work that runs must have been admitted against it — but it says nothing
+// about work that may be *queued* for later, so the Job is accepted in `queued` with
+// its legacy handle and its sealed input, and no executor is started. It waits,
+// visible and controllable in the Job Center, until a runtime with a free slot claims
+// it and starts the executor there. Refusing a submission a busy deployment could run
+// a minute later would be refusing to queue work, which is the one thing a queue is
+// for.
+func (ctx *MahresourcesContext) admitQueueJob(acceptance jobs.Acceptance) (queueJobAdmission, error) {
 	service := ctx.JobService()
 	if service == nil {
-		return jobs.Snapshot{}, nil
+		return queueJobAdmission{}, nil
 	}
-	return service.Accept(ctx.jobDeps(), acceptance)
+	lease := ctx.queueJobClaimLease(service, acceptance.Kind, acceptance.KindVersion)
+	execution, accepted, err := service.AcceptClaimed(context.Background(), ctx.jobDeps(), acceptance, jobs.ClaimRequest{
+		Kind:        acceptance.Kind,
+		KindVersion: acceptance.KindVersion,
+		Claimant:    defaultJobRuntimeClaimant(),
+		Capacity:    ctx.hostClaimCapacityBudget(),
+		Lease:       lease,
+	})
+	switch {
+	case err == nil:
+		return queueJobAdmission{Accepted: accepted, Execution: execution, Lease: lease}, nil
+	case errors.Is(err, jobs.ErrCapacityExhausted):
+		// Accepted to wait rather than refused: nothing was written by the claim
+		// attempt, so this is one acceptance on its own.
+		waiting, acceptErr := service.Accept(ctx.jobDeps(), acceptance)
+		if acceptErr != nil {
+			return queueJobAdmission{}, acceptErr
+		}
+		return queueJobAdmission{Accepted: waiting}, nil
+	default:
+		return queueJobAdmission{}, err
+	}
+}
+
+// queueJobClaimLease answers the lease a queue-backed admission claims with: the
+// deployment's override when a test set one, otherwise the Kind's own.
+func (ctx *MahresourcesContext) queueJobClaimLease(service *jobs.Service, kind string, version uint) time.Duration {
+	if ctx != nil && ctx.queueClaimLease > 0 {
+		return ctx.queueClaimLease
+	}
+	if adapter, ok := service.AdapterFor(kind, version); ok {
+		return adapter.Definition().EffectiveLease()
+	}
+	return jobs.DefaultClaimLease
+}
+
+// ownQueueExecution keeps one queue-backed execution's claim alive for as long as the
+// queue entry that runs it, and publishes the Kind's own outcome when it ends.
+//
+// It is the executor's half of the admission above: the queue is the specialized
+// executor and this is its owner, for the whole of the entry's lifetime. Three things
+// have to hold and none of them is a queue concern:
+//
+//   - the claim is renewed, or work that outlives its lease is reconciled out from
+//     under itself — and an execution whose Job was blocked by that reconciliation has
+//     its outcome refused outright, because `blocked -> succeeded` is not a
+//     transition;
+//   - the Kind's own outcome is published when the entry ends, because no polling
+//     runtime will ever see this Job: it is owned from the moment it exists;
+//   - the claim and the capacity that admitted it are handed back when the entry ends,
+//     rather than held until a lease runs out.
+//
+// publish is the Kind's terminal publication — its adapter's outcome path, with the
+// input the submission already holds — because what a Job publishes when its executor
+// ends is the Kind's business and not this seam's. It is idempotent by construction:
+// a download's own mirror may have got there first, and whoever arrives second finds
+// the Job terminal and writes nothing.
+//
+// Nothing is written when the deployment is shutting down. A graceful stop cancels the
+// queue's active entries, and the Job those entries were running is left exactly as it
+// is — running, claimed, with its lease — for the next process to reconcile from the
+// evidence the executor left behind. Recording `cancelled` there would end a Job the
+// process taking over could still settle from its archive, its plan or the row it
+// wrote.
+func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, entry *download_queue.DownloadJob, publish func(*download_queue.DownloadJob) error) {
+	service := ctx.JobService()
+	if service == nil || !admission.Owned() || entry == nil {
+		return
+	}
+	execution := admission.Execution
+	done := make(chan struct{})
+	go ctx.renewQueueExecutionClaim(execution, admission.Lease, done)
+	go func() {
+		defer close(done)
+		snap, stopped := ctx.followQueueExecution(execution, entry)
+		if stopped {
+			return
+		}
+		// Asked again at the edge, because the entry's terminal status may *be* the
+		// shutdown: the flag is set before any entry is cancelled, so a publish that
+		// reached here after the queue stopped is one the stop caused, and the Job
+		// belongs to the next process rather than to this record.
+		if ctx.queueIsShuttingDown() {
+			return
+		}
+		var publishErr error
+		if publish != nil {
+			publishErr = publish(snap)
+		}
+		ctx.finishOwnedExecution(service, execution, publishErr)
+	}()
+}
+
+// renewQueueExecutionClaim heartbeats one owned execution's claim for as long as its
+// executor runs.
+//
+// A heartbeat refused because the token no longer owns the Job is not a failure to
+// log: it is the fence telling this process that its execution was replaced — a
+// reconciliation after a lease expiry handed the Job to another runtime — so there is
+// nothing left here to renew.
+func (ctx *MahresourcesContext) renewQueueExecutionClaim(execution jobs.Execution, lease time.Duration, done <-chan struct{}) {
+	service := ctx.JobService()
+	if service == nil || execution.ExecutionToken == "" {
+		return
+	}
+	if lease <= 0 {
+		lease = jobs.DefaultClaimLease
+	}
+	interval := lease / jobRuntimeHeartbeatDivisor
+	if interval < minJobRuntimeHeartbeatInterval {
+		interval = minJobRuntimeHeartbeatInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if err := service.Heartbeat(ctx.jobDeps(), ref, lease); err != nil {
+				if errors.Is(err, jobs.ErrStaleExecution) {
+					return
+				}
+				log.Printf("warning: heartbeat for queue job %s failed: %v", execution.JobID, err)
+			}
+		}
+	}
+}
+
+// followQueueExecution waits for one queue entry to reach a terminal status, mirroring
+// the progress it observes while it waits.
+//
+// It is a bounded poll for the same reason the adapters' own wait is: the queue
+// publishes no completion signal to select on — its cancellation is a context and its
+// completion is a field. It answers stopped=true when the deployment began shutting
+// down underneath it, which is the one case its caller must write nothing about.
+func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, bool) {
+	ticker := time.NewTicker(queueJobPollInterval)
+	defer ticker.Stop()
+
+	var published jobs.Progress
+	for {
+		if ctx.queueIsShuttingDown() {
+			return nil, true
+		}
+		snap := entry.Snapshot()
+		if queueJobTerminal(snap.Status) {
+			return snap, false
+		}
+		if progress := queueJobProgress(snap); !sameProgress(progress, published) {
+			published = progress
+			if _, err := execution.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
+				log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
+			}
+		}
+		<-ticker.C
+	}
+}
+
+// queueIsShuttingDown reports whether this deployment's queue has begun stopping.
+func (ctx *MahresourcesContext) queueIsShuttingDown() bool {
+	if ctx == nil || ctx.downloadManager == nil {
+		return false
+	}
+	return ctx.downloadManager.ShuttingDown()
+}
+
+// finishOwnedExecution is what every owner of a claimed execution does when its
+// executor returns.
+//
+// The control plane is passed rather than read off the context, because the owner is
+// not always the context's own control plane: a dispatch runtime is built with the
+// service it registers its Kind adapters on, and a deployment that handed it one
+// different from the context's would otherwise have this write to a plane that never
+// saw the Job.
+//
+// An execution that ended its Job — success, failure, a return to the queue, a pause,
+// a block — is done, and this only hands the claim back. One that returned while its
+// Job was still running has left a Job owned by nobody, and a Job in that state is
+// resolved by nothing at all: it is not queued, no claim of it expires into a
+// reconciliation, and no executor owns it. So it is ended here, bounded and classed,
+// with the claim and the capacity.
+//
+// The executor's own error text is deliberately not recorded or logged. Only the Kind
+// knows what in it is safe — a URL, a header, a plugin value — and the durable record
+// is a bounded taxonomy instead. An executor that wants to explain itself appends a
+// bounded event before it returns.
+func (ctx *MahresourcesContext) finishOwnedExecution(service *jobs.Service, execution jobs.Execution, execErr error) {
+	if service == nil || ctx == nil || execution.JobID == "" {
+		return
+	}
+	deps := ctx.jobDeps()
+	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
+	snap, err := service.Get(deps, jobs.Access{Administrator: true}, execution.JobID)
+	if err != nil {
+		log.Printf("job execution: reading job %s after its execution ended failed: %v", execution.JobID, err)
+		return
+	}
+
+	if snap.State != jobs.StateRunning {
+		if _, err := service.ReleaseClaim(deps, jobs.ReleaseRequest{
+			ExecutionRef: ref, Reason: jobs.ReleaseReasonExecutionEnded,
+		}); err != nil {
+			log.Printf("job execution: releasing job %s failed: %v", execution.JobID, err)
+		}
+		return
+	}
+
+	code := jobRuntimeUnfinishedCode
+	if execErr != nil {
+		code = jobRuntimeDispatchFailedCode
+	}
+	_, err = service.Finish(deps, jobs.FinishRequest{
+		ExecutionRef:    ref,
+		ExpectedVersion: snap.Version,
+		Outcome:         jobs.StateFailed,
+		Failure:         &jobs.Failure{Code: code, Class: jobs.FailureClassInternal},
+	})
+	switch {
+	case err == nil:
+		log.Printf("job execution: job %s was ended as %s by its runtime", execution.JobID, code)
+	case errors.Is(err, jobs.ErrStaleExecution), errors.Is(err, jobs.ErrVersionConflict):
+		// A reconciliation or another runtime owns the Job now, which is exactly what
+		// the fence is for: nothing to do.
+	default:
+		log.Printf("job execution: ending job %s failed: %v", execution.JobID, err)
+	}
 }
 
 // submitQueueJob enqueues one generic queue job as the projection of the Job that
@@ -152,26 +412,35 @@ func (ctx *MahresourcesContext) submitQueueEntry(
 	return nil, err
 }
 
-// failUndispatchedQueueJob ends an accepted Job whose work the queue refused.
+// failUndispatchedQueueJob ends a Job whose work the queue refused.
 //
 // The queue's own error text is deliberately not carried: a Job's failure record is
 // a bounded taxonomy a reader groups on. A refusal here is not a failed export — it
 // is an admission the deployment could not take — so it is classed as a policy
 // refusal of the submission.
-func (ctx *MahresourcesContext) failUndispatchedQueueJob(accepted jobs.Snapshot, cause error) {
+//
+// It carries the execution token rather than the Job id alone, and that is the whole
+// of "a submission whose executor could not start leaves nothing behind": the finish
+// is one transaction that ends the Job, clears the token and frees the capacity the
+// admission occupied. A Job left running with no executor would be work nothing can
+// claim and nothing reconciles.
+func (ctx *MahresourcesContext) failUndispatchedQueueJob(admission queueJobAdmission, cause error) {
 	service := ctx.JobService()
-	if service == nil || accepted.ID == "" {
+	if service == nil || admission.Accepted.ID == "" {
 		return
 	}
 	if cause != nil {
-		log.Printf("warning: the download queue refused the submission for job %s: %v", accepted.ID, cause)
+		log.Printf("warning: the download queue refused the submission for job %s: %v", admission.Accepted.ID, cause)
 	}
-	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, accepted.ID)
+	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, admission.Accepted.ID)
 	if err != nil || current.State.Terminal() {
 		return
 	}
 	if _, err := service.Finish(ctx.jobDeps(), jobs.FinishRequest{
-		ExecutionRef:    jobs.ExecutionRef{JobID: accepted.ID},
+		ExecutionRef: jobs.ExecutionRef{
+			JobID:          admission.Execution.JobID,
+			ExecutionToken: admission.Execution.ExecutionToken,
+		},
 		ExpectedVersion: current.Version,
 		Outcome:         jobs.StateFailed,
 		Failure: &jobs.Failure{

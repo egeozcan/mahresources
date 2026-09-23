@@ -84,19 +84,24 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
 	}
 
-	// The durable Job is accepted before anything is dispatched, and the queue entry
+	// The durable Job is admitted before anything is dispatched, and the queue entry
 	// that runs the clustering takes the id the Job's own handle records — the same
-	// order and the same one-id rule every other queue-backed Kind follows.
+	// order and the same one-id rule every other queue-backed Kind follows. The
+	// admission is also what decides whether this process runs the clustering at all:
+	// a Job admitted while the deployment's budget is full waits for whichever runtime
+	// has a free slot, and takes the Reduction's compute claim when it gets there.
 	legacyID := ""
-	ref := jobs.ExecutionRef{}
+	admission := queueJobAdmission{}
+	var clusterInput *reductionComputeJobInput
 	if service := ctx.JobService(); service != nil {
-		input, marshalErr := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: version})
+		clusterInput = &reductionComputeJobInput{ReductionID: reduction.ID, Version: version}
+		input, marshalErr := json.Marshal(clusterInput)
 		if marshalErr != nil {
 			ctx.undoRefusedReductionCompute(reduction.ID, generation, marshalErr)
 			return nil, marshalErr
 		}
 		legacyID = download_queue.NewJobID()
-		accepted, acceptErr := ctx.acceptQueueJob(jobs.Acceptance{
+		admitted, acceptErr := ctx.admitQueueJob(jobs.Acceptance{
 			Kind:        JobKindReductionCompute,
 			KindVersion: jobReductionKindVersion,
 			State:       jobs.StateQueued,
@@ -111,18 +116,35 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 			ctx.undoRefusedReductionCompute(reduction.ID, generation, acceptErr)
 			return nil, acceptErr
 		}
-		ref = jobs.ExecutionRef{JobID: accepted.ID}
+		admission = admitted
+		if !admission.Owned() {
+			// The deployment's budget is full: the Job is durable, answers the id the
+			// caller was handed, and starts no executor here. The row's compute claim is
+			// handed back with it — the runtime that eventually dispatches the Job takes
+			// the claim itself, and a row left `computing` would refuse it as busy. See
+			// admitQueueJob.
+			ctx.releaseReductionComputeClaim(reduction, generation)
+			return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
+		}
 	}
 
 	// The owner is named at construction rather than set afterwards: under -auth
 	// the SSE stream drops any event whose job the principal may not see, so a
 	// job with no owner yet never reaches its own submitter's jobs panel — which
 	// is the only place the progress of this run is visible.
-	if _, err := ctx.startReductionComputeQueueJob(reduction.ID, generation, legacyID, ref, actorUserID); err != nil {
+	entry, err := ctx.startReductionComputeQueueJob(reduction.ID, generation, legacyID,
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken}, actorUserID)
+	if err != nil {
 		// The queue refused it, so nothing is going to compute this. Put the row
 		// back rather than leaving it at `computing` until the deadline.
 		ctx.undoRefusedReductionCompute(reduction.ID, generation, err)
+		ctx.failUndispatchedQueueJob(admission, err)
 		return nil, err
+	}
+	if admission.Owned() {
+		ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
+			return (&reductionComputeAdapter{ctx: ctx, kind: JobKindReductionCompute}).publishOutcome(admission.Execution, clusterInput, snap)
+		})
 	}
 
 	// The read-back can lose a shared-cache table lock to the claim write.
@@ -150,6 +172,64 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		waitOutContention(attempt)
 	}
 	return nil, lastErr
+}
+
+// releaseReductionComputeClaim hands one clustering run's compute claim back when the
+// admission could not take the capacity to honour it.
+//
+// A Job accepted to wait for a slot is not an execution: no worker has taken the
+// Reduction, and the runtime that eventually dispatches the Job takes the claim
+// itself, in `start`. A row left `computing` in the meantime would refuse that runtime
+// as busy and leave the Job blocked for a person, so the state the request found is
+// restored — and only while the row still carries this request's own generation,
+// because a newer request that has taken the row since owns its outcome.
+func (ctx *MahresourcesContext) releaseReductionComputeClaim(before *models.ResourceReduction, generation string) {
+	if before == nil || generation == "" {
+		return
+	}
+	for attempt := 0; attempt < reductionCASRetries; attempt++ {
+		current, err := ctx.loadReductionForUpdate(before.ID, nil, false)
+		if err != nil {
+			if isLockContentionError(err) {
+				waitOutContention(attempt)
+				continue
+			}
+			ctx.logReductionClaimRelease(before.ID, generation, err)
+			return
+		}
+		if current.ComputeJobID != generation {
+			// Somebody else owns the row now: their run is the one that counts, and
+			// restoring this request's snapshot over it would take their claim away.
+			return
+		}
+		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
+			"status":               before.Status,
+			"computing_started_at": before.ComputingStartedAt,
+			"compute_deadline":     before.ComputeDeadline,
+			"compute_job_id":       before.ComputeJobID,
+			"compute_error":        before.ComputeError,
+		})
+		if err != nil {
+			if isLockContentionError(err) {
+				waitOutContention(attempt)
+				continue
+			}
+			ctx.logReductionClaimRelease(before.ID, generation, err)
+			return
+		}
+		if ok {
+			return
+		}
+	}
+	ctx.logReductionClaimRelease(before.ID, generation, ErrReductionConflict)
+}
+
+// logReductionClaimRelease reports a compute claim that could not be handed back.
+// The Job stays accepted either way: a person reading the log is what closes that, and
+// the row's own deadline is what retires the claim it still carries.
+func (ctx *MahresourcesContext) logReductionClaimRelease(reductionID uint, generation string, cause error) {
+	ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, "",
+		"Could not hand back the compute claim of a queued clustering job ("+generation+"): "+cause.Error(), nil)
 }
 
 // undoRefusedReductionCompute puts a Reduction back after a submission that never

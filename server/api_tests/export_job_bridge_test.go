@@ -1,11 +1,13 @@
 package api_tests
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
+	"mahresources/application_context"
 	"mahresources/jobs"
 	"mahresources/models"
 
@@ -176,5 +178,78 @@ func TestGroupExportJobPublishesAVerifiedArtifactAndSucceeds(t *testing.T) {
 	}
 	if !exists {
 		t.Fatalf("the job succeeded but its artifact %q is not on disk", reference.Path)
+	}
+}
+
+// occupyTheDeploymentBudget takes every slot of the deployment's shared job budget
+// with a claim of one registered Kind, which is what a deployment at its ceiling looks
+// like to a submission. It is a real claim through the public control plane rather than
+// a fake: the thing being tested is that a submission meets the budget admission.
+func occupyTheDeploymentBudget(t *testing.T, tc *TestContext) {
+	t.Helper()
+	service := tc.AppCtx.JobService()
+	if service == nil {
+		t.Fatal("this test needs a job control plane")
+	}
+	deps := jobs.Deps{DB: tc.DB}
+	accepted, err := service.Accept(deps, jobs.Acceptance{
+		Kind: application_context.JobKindGroupExport, KindVersion: 1, State: jobs.StateQueued,
+		Origin: "test", Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept the budget holder: %v", err)
+	}
+	execution, claimed, err := service.Claim(context.Background(), deps, jobs.ClaimRequest{
+		Kind: application_context.JobKindGroupExport, KindVersion: 1, JobID: accepted.ID,
+		Claimant: "budget-holder",
+		// The deployment's own budget, which is the number the submission's admission
+		// asks every claim to occupy.
+		Capacity: []jobs.CapacityRef{{Group: jobs.CapacityGroupGlobal, Limit: tc.AppCtx.Config.MaxJobConcurrency}},
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim the budget holder: claimed=%v err=%v", claimed, err)
+	}
+	t.Cleanup(func() {
+		if _, err := service.ReleaseClaim(deps, jobs.ReleaseRequest{
+			ExecutionRef: jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+			To:           jobs.StateQueued,
+			Reason:       "test released the budget",
+		}); err != nil {
+			t.Logf("releasing the budget holder: %v", err)
+		}
+	})
+}
+
+// TestAnExportWaitingForCapacityIsAcceptedAndNotMissing is the deployment budget at the
+// routes a client actually calls.
+//
+// A submission with no capacity to run it is accepted durably and answers the id a
+// deployed client keeps — the same handle a dispatched export answers — rather than
+// being refused. What must not follow is a 404 from the archive route for that id:
+// the export exists, it simply has not run yet, and "not finished" is the honest
+// answer for work the client holds an id for.
+func TestAnExportWaitingForCapacityIsAcceptedAndNotMissing(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	tc.AppCtx.Config.MaxJobConcurrency = 1
+	occupyTheDeploymentBudget(t, tc)
+
+	groupID := createGroupForExport(t, tc, "export-waiting-for-capacity")
+	legacyID, canonicalID := submitGroupExport(t, tc, []uint{groupID})
+	if canonicalID == "" {
+		t.Fatalf("an export refused admission for capacity: legacy id %s", legacyID)
+	}
+
+	snap := waitForCanonicalState(t, tc, canonicalID, "the export to be recorded", func(jobs.Snapshot) bool { return true })
+	if snap.State != jobs.StateQueued {
+		t.Fatalf("the export is %s while the deployment has no room for it, want queued", snap.State)
+	}
+	if _, found := tc.AppCtx.DownloadManager().GetJobByCanonicalJobID(canonicalID); found {
+		t.Fatalf("the export started an executor it had no capacity to admit")
+	}
+
+	res := tc.MakeRequest(http.MethodGet, "/v1/exports/"+legacyID+"/download", nil)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("the archive route answered %d for an export waiting for capacity: %s", res.Code, res.Body.String())
 	}
 }

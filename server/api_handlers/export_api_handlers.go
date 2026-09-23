@@ -147,13 +147,14 @@ func GetExportDownloadHandler(ctx *application_context.MahresourcesContext, fs a
 			return
 		}
 
-		if archive, durable, err := ctx.ExportArchiveFor(jobID); durable {
-			if err != nil {
-				if errors.Is(err, jobs.ErrNotFound) {
+		archive, durable, archiveErr := ctx.ExportArchiveFor(jobID)
+		if durable {
+			if archiveErr != nil {
+				if errors.Is(archiveErr, jobs.ErrNotFound) {
 					http.Error(w, "job not found", http.StatusNotFound)
 					return
 				}
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				http.Error(w, archiveErr.Error(), http.StatusInternalServerError)
 				return
 			}
 			if archive.Available() {
@@ -175,6 +176,14 @@ func GetExportDownloadHandler(ctx *application_context.MahresourcesContext, fs a
 
 		job, ok := ctx.DownloadManager().GetJob(jobID)
 		if !ok {
+			if durable {
+				// The id names a durable Job and this process holds no queue entry for it: a
+				// submission waiting for the deployment's budget to free, or one whose entry
+				// was lost with a restart. "Not finished yet" is the answer for work the
+				// client holds an id for; 404 would say the export does not exist.
+				http.Error(w, "job not completed (status: "+string(archive.State)+")", http.StatusConflict)
+				return
+			}
 			http.Error(w, "job not found", http.StatusNotFound)
 			return
 		}

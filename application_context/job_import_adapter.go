@@ -937,7 +937,7 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 		return result
 	}
 
-	accepted, err := ctx.acceptQueueJob(jobs.Acceptance{
+	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindGroupImportParse,
 		KindVersion: jobImportKindVersion,
 		State:       jobs.StateQueued,
@@ -952,16 +952,27 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 		result.Err = err
 		return result
 	}
-	result.CanonicalJobID = accepted.ID
+	result.CanonicalJobID = admission.Accepted.ID
+	if !admission.Owned() {
+		// The deployment's budget is full: the Job is durable, answers the handle the
+		// client was handed, and starts no executor here. A runtime with a free slot
+		// takes it, and the archive its input names is still staged. See admitQueueJob.
+		return result
+	}
 
-	entry, err := ctx.submitQueueJob(opts, handle, jobs.ExecutionRef{JobID: accepted.ID},
-		ctx.buildImportParseRunFn(&importParseJobInput{Handle: handle, Archive: archivePath}))
+	parseInput := &importParseJobInput{Handle: handle, Archive: archivePath}
+	entry, err := ctx.submitQueueJob(opts, handle,
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
+		ctx.buildImportParseRunFn(parseInput))
 	if err != nil {
-		ctx.failUndispatchedQueueJob(accepted, err)
+		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
 		return result
 	}
 	result.QueueJobID = entry.ID
+	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
+		return (&importParseAdapter{ctx: ctx, kind: JobKindGroupImportParse}).publishOutcome(admission.Execution, parseInput, snap)
+	})
 	return result
 }
 
@@ -1010,7 +1021,7 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 		return result
 	}
 	legacyID := download_queue.NewJobID()
-	accepted, err := ctx.acceptQueueJob(jobs.Acceptance{
+	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindGroupImportApply,
 		KindVersion: jobImportKindVersion,
 		State:       jobs.StateQueued,
@@ -1025,17 +1036,29 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 		result.Err = err
 		return result
 	}
-	result.CanonicalJobID = accepted.ID
-	ctx.linkImportChild(accepted, parseHandle)
+	result.CanonicalJobID = admission.Accepted.ID
+	ctx.linkImportChild(admission.Accepted, parseHandle)
+	if !admission.Owned() {
+		// The deployment's budget is full: the Job is durable, answers the id the
+		// client was handed, and starts no executor here. A runtime with a free slot
+		// takes it, from the plan its input records — which is what the consumed plan
+		// exists for. See admitQueueJob.
+		return result
+	}
 
-	entry, err := ctx.submitQueueJob(opts, legacyID, jobs.ExecutionRef{JobID: accepted.ID},
+	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: consumedPlanPath, Decisions: *decisions}
+	entry, err := ctx.submitQueueJob(opts, legacyID,
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
 		ctx.buildImportApplyRunFn(parseHandle, consumedPlanPath, decisions))
 	if err != nil {
-		ctx.failUndispatchedQueueJob(accepted, err)
+		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
 		return result
 	}
 	result.QueueJobID = entry.ID
+	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
+		return (&importApplyAdapter{ctx: ctx, kind: JobKindGroupImportApply}).publishOutcome(admission.Execution, applyInput, snap)
+	})
 	return result
 }
 

@@ -345,63 +345,22 @@ func (r *JobRuntime) heartbeatLoop(ctx context.Context, execution jobs.Execution
 // finishExecution reconciles what an execution left behind after its adapter
 // returned.
 //
-// An adapter that ended its Job — success, failure, a return to the queue, a
-// pause, a block — is done, and this only hands the claim back. An adapter that
-// returned while its Job was still running has left the Job owned by nobody, and
-// a Job in that state would never be resolved by anything at all: it is not
-// queued, no claim of it expires into a reconciliation, and no executor owns it.
-// So the runtime ends it, bounded and classed, and the claim and its capacity go
-// with it.
-//
-// The adapter's own error text is deliberately not recorded or logged. Only the
-// adapter knows what in it is safe — a URL, a header, a plugin value — and the
-// durable record is a bounded taxonomy instead. An adapter that wants to explain
-// itself appends a bounded event before it returns.
+// The contract belongs to the context rather than to this loop, because the loop is
+// not the only owner of a claimed execution: the process that accepted queue-backed
+// work owns one too, and "the executor returned" has to mean the same thing whoever
+// was running it. What is left here is the loop's own half — a runtime that is
+// stopping writes nothing on the way out, so a Job it was running keeps its state,
+// its claim and its lease for the next process to reconcile.
 func (r *JobRuntime) finishExecution(execution jobs.Execution, dispatchErr error) {
 	if r.lifeCtx.Err() != nil {
 		// The runtime is stopping: the Job keeps its state, its claim and its
 		// lease, and the next process decides what happens to it.
 		return
 	}
-
-	deps := r.deps()
-	ref := jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken}
-	snap, err := r.service.Get(deps, jobs.Access{Administrator: true}, execution.JobID)
-	if err != nil {
-		log.Printf("job runtime: reading job %s after its execution ended failed: %v", execution.JobID, err)
+	if r.ctx == nil {
 		return
 	}
-
-	if snap.State != jobs.StateRunning {
-		// The adapter ended its own Job, so the state is its decision and all that is
-		// left is to hand the claim back.
-		if _, err := r.service.ReleaseClaim(deps, jobs.ReleaseRequest{
-			ExecutionRef: ref, Reason: jobs.ReleaseReasonExecutionEnded,
-		}); err != nil {
-			log.Printf("job runtime: releasing job %s failed: %v", execution.JobID, err)
-		}
-		return
-	}
-
-	code := jobRuntimeUnfinishedCode
-	if dispatchErr != nil {
-		code = jobRuntimeDispatchFailedCode
-	}
-	_, err = r.service.Finish(deps, jobs.FinishRequest{
-		ExecutionRef:    ref,
-		ExpectedVersion: snap.Version,
-		Outcome:         jobs.StateFailed,
-		Failure:         &jobs.Failure{Code: code, Class: jobs.FailureClassInternal},
-	})
-	switch {
-	case err == nil:
-		log.Printf("job runtime: job %s was ended as %s by its runtime", execution.JobID, code)
-	case errors.Is(err, jobs.ErrStaleExecution), errors.Is(err, jobs.ErrVersionConflict):
-		// A reconciliation or another runtime owns the Job now, which is exactly
-		// what the fence is for: nothing to do.
-	default:
-		log.Printf("job runtime: ending job %s failed: %v", execution.JobID, err)
-	}
+	r.ctx.finishOwnedExecution(r.service, execution, dispatchErr)
 }
 
 // deps is the per-call handle the control plane runs on. It is rebuilt for every

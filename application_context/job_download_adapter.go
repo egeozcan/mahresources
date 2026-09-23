@@ -769,7 +769,18 @@ func (ctx *MahresourcesContext) SubmitRemoteDownloads(creator *query_models.Reso
 	return submissions
 }
 
-// submitRemoteDownload accepts and dispatches one URL.
+// submitRemoteDownload admits and dispatches one URL.
+//
+// The order is the design's and it is not negotiable: the durable Job is admitted —
+// and, when the deployment has room, claimed — before anything runs, and only then is
+// the transfer dispatched. An accepted Job that existed only in memory would disappear
+// with the process; a dispatch that happened first would leave a transfer running that
+// nothing durable had agreed to; and a Job left unclaimed for as long as it takes to
+// enqueue the transfer is one another process's runtime starts a second transfer for.
+//
+// The legacy queue entry and the Job are then one thing seen two ways: the entry takes
+// the id the Job's own handle records, and the entry names the Job it publishes into
+// with the very token that owns it.
 func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint, pluginName, origin string) download_queue.RemoteDownloadSubmission {
 	result := download_queue.RemoteDownloadSubmission{URL: creator.URL}
 	if ctx == nil || ctx.downloadManager == nil {
@@ -782,6 +793,9 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 		// entry names no Job because there is none to name.
 		job, err := ctx.downloadManager.SubmitForPlugin(creator, ownerUserID, pluginName)
 		result.Job, result.Err = job, err
+		if job != nil {
+			result.Row = job.Snapshot()
+		}
 		return result
 	}
 
@@ -791,7 +805,7 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 		return result
 	}
 	legacyID := download_queue.NewJobID()
-	accepted, err := service.Accept(ctx.jobDeps(), jobs.Acceptance{
+	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindRemoteDownload,
 		KindVersion: jobDownloadKindVersion,
 		State:       jobs.StateQueued,
@@ -806,51 +820,38 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 		result.Err = err
 		return result
 	}
-	result.CanonicalJobID = accepted.ID
+	result.CanonicalJobID = admission.Accepted.ID
+	if !admission.Owned() {
+		// The deployment's budget is full: the Job is durable, answers the id the client
+		// was handed, and starts no executor here. A runtime with a free slot takes it,
+		// from the sealed payload — see admitQueueJob. The reported row is the projection
+		// of that Job, which is what a client polling the id would get from the
+		// compatibility route anyway.
+		result.Row = downloadRowFromJob(admission.Accepted, legacyID)
+		return result
+	}
 
 	job, err := ctx.downloadManager.SubmitForPluginWithOptions(creator, ownerUserID, pluginName,
 		download_queue.SubmissionOptions{
-			JobID:     legacyID,
-			Canonical: &download_queue.CanonicalRef{JobID: accepted.ID},
+			JobID: legacyID,
+			Canonical: &download_queue.CanonicalRef{
+				JobID:          admission.Execution.JobID,
+				ExecutionToken: admission.Execution.ExecutionToken,
+			},
 		})
 	if err != nil {
-		// The Job was accepted and the queue refused the transfer. It is ended here
-		// rather than left queued: a Job nothing will ever dispatch would sit in the
-		// Job Center claiming work that was never admitted, and the refusal is what
-		// its outcome should say.
-		ctx.failUndispatchedDownload(accepted, err)
+		// The Job was admitted and the queue refused the transfer. It is ended here
+		// rather than left running: a Job nothing will ever dispatch would sit in the
+		// Job Center claiming work that was never admitted, holding the capacity that
+		// admitted it, and the refusal is what its outcome should say.
+		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
 		return result
 	}
 	result.Job = job
-	return result
-}
-
-// failUndispatchedDownload ends an accepted Job whose transfer the queue refused.
-//
-// It is bounded and classed, and the queue's own error text is deliberately not
-// carried: it can name the URL. A failure here is not a failed download — nothing
-// was ever fetched — so it is recorded as a policy refusal of the admission.
-func (ctx *MahresourcesContext) failUndispatchedDownload(accepted jobs.Snapshot, cause error) {
-	service := ctx.JobService()
-	if service == nil {
-		return
-	}
-	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, accepted.ID)
-	if err != nil || current.State.Terminal() {
-		return
-	}
-	_, err = service.Finish(ctx.jobDeps(), jobs.FinishRequest{
-		ExecutionRef:    jobs.ExecutionRef{JobID: accepted.ID},
-		ExpectedVersion: current.Version,
-		Outcome:         jobs.StateFailed,
-		Failure: &jobs.Failure{
-			Code:    "submission-refused",
-			Class:   jobs.FailureClassPolicy,
-			Message: "the download queue refused this submission",
-		},
+	result.Row = downloadRowFromEntry(job, legacyID, admission.Accepted.ID)
+	ctx.ownQueueExecution(admission, job, func(snap *download_queue.DownloadJob) error {
+		return (&downloadJobAdapter{ctx: ctx, kind: JobKindRemoteDownload}).publishOutcome(admission.Execution, snap)
 	})
-	if err != nil {
-		log.Printf("warning: could not record a refused download submission as a failed job: %v", err)
-	}
+	return result
 }

@@ -340,7 +340,7 @@ func (ctx *MahresourcesContext) SubmitSimilarityRecompute() (string, error) {
 	}
 
 	legacyID := download_queue.NewJobID()
-	accepted, err := ctx.acceptQueueJob(jobs.Acceptance{
+	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindSimilarityRecompute,
 		KindVersion: jobMaintenanceKindVersion,
 		State:       jobs.StateQueued,
@@ -354,6 +354,13 @@ func (ctx *MahresourcesContext) SubmitSimilarityRecompute() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if !admission.Owned() {
+		// The deployment's budget is full: the Job is durable, answers the id the
+		// admin surface was handed, and starts no executor here. A runtime with a free
+		// slot takes it — see admitQueueJob — and the run is a full rebuild of one
+		// derived table, so it converges on the same answer whenever it happens.
+		return legacyID, nil
+	}
 
 	entry, err := ctx.submitQueueJob(
 		download_queue.JobOptions{
@@ -362,12 +369,15 @@ func (ctx *MahresourcesContext) SubmitSimilarityRecompute() (string, error) {
 			OwnerUserID:  owner,
 		},
 		legacyID,
-		jobs.ExecutionRef{JobID: accepted.ID},
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
 		ctx.buildSimilarityRecomputeRunFn(),
 	)
 	if err != nil {
-		ctx.failUndispatchedQueueJob(accepted, err)
+		ctx.failUndispatchedQueueJob(admission, err)
 		return "", err
 	}
+	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
+		return (&similarityRecomputeAdapter{ctx: ctx, kind: JobKindSimilarityRecompute}).publishOutcome(admission.Execution, snap)
+	})
 	return entry.ID, nil
 }

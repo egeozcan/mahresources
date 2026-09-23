@@ -152,8 +152,20 @@ type CanonicalSink interface {
 // this one).
 type RemoteDownloadSubmission struct {
 	URL string
-	// Job is the queue entry carrying the transfer, nil when the URL was refused.
+	// Job is the queue entry carrying the transfer, nil when the URL was refused or
+	// when the durable Job is waiting for the deployment's concurrency budget and
+	// starts no executor here.
 	Job *DownloadJob
+	// Row is the legacy row to report for this URL: the entry's own snapshot when
+	// there is one, and a projection of the durable Job otherwise. It is what a
+	// caller answers with, so accepting a submission does not change the shape of
+	// the answer because the deployment's budget was full — the id it reports is the
+	// handle the Job already carries, and a client that polls it gets the row the
+	// compatibility route would give it.
+	//
+	// It is nil exactly when the URL was refused, which is the one case with no row
+	// to report at all.
+	Row *DownloadJob
 	// CanonicalJobID is the durable Job the transfer publishes into; empty when the
 	// deployment has no control plane installed.
 	CanonicalJobID string
@@ -1722,6 +1734,24 @@ func (dm *DownloadManager) cleanupOldJobs() {
 	// reads its retention windows from the live settings on every call.
 	if historySweep != nil {
 		historySweep()
+	}
+}
+
+// ShuttingDown reports whether this queue has begun stopping, which is the moment
+// its active entries are cancelled.
+//
+// It exists for a caller that owns a durable Job behind one of those entries: a
+// cancellation the *deployment's own shutdown* causes is not an outcome of the work.
+// The process is going away and the Job is left exactly as it is — running, claimed,
+// with its lease — for whichever process takes over to reconcile from the evidence
+// the executor left behind. Recording `cancelled` there would end a Job that the
+// next process could still settle from its archive, its plan or the row it wrote.
+func (dm *DownloadManager) ShuttingDown() bool {
+	select {
+	case <-dm.done:
+		return true
+	default:
+		return false
 	}
 }
 

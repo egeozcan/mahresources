@@ -1,3 +1,105 @@
+# Job Center queue-backed executor ownership — close the checkpoint's last P1 (2026-09-23)
+
+**Goal:** Close the P1 the post-Task-9 checkpoint left open: the six queue-backed
+submission paths (`SubmitRemoteDownloads`, `SubmitGroupExport`, `SubmitImportParse`,
+`SubmitImportApply`, `SubmitSimilarityRecompute`, `RequestReductionCompute`) accepted a
+Job and started the specialized executor without owning it, so a runtime in another
+process could claim the same Job, find no queue entry in *its* queue, and start a
+second one.
+
+## Plan
+
+- [x] Read the checkpoint's write-up, ADR 0006, the design's §3/§4/§7, the executor
+      registry and every submission path before editing.
+- [x] Settle the one decision the design text did not: which capacity the admission
+      claims and what a full budget means. Capacity is a deployment-wide invariant —
+      work that runs is admitted against it, and nothing runs unbudgeted — but a full
+      budget queues the work durably instead of refusing it or starting an executor
+      that cannot be admitted. The decision came from the supervisor, and the
+      response/compatibility seam was corrected rather than weakened to match.
+- [x] `admitQueueJob`: acceptance and the first claim in one transaction, with the
+      claim and its capacity committed *before* any local work starts; a full budget
+      falls back to a plain `queued` acceptance with the legacy handle already
+      recorded.
+- [x] `ownQueueExecution`: the bridge owns the execution for the entry's whole life —
+      a heartbeat that renews the claim, a wait for the entry's terminal status, the
+      Kind's own outcome published through the Kind's own path, and the claim handed
+      back. Nothing is written while the deployment is shutting down, so a Job a
+      restart interrupts is left for the next process to reconcile.
+- [x] Start failure ends the Job in the same transaction that clears its token and
+      frees its capacity (`failUndispatchedQueueJob` now carries the token).
+- [x] `finishOwnedExecution` extracted from the runtime's own post-execution contract,
+      so a submission-owned execution and a dispatched one end the same way.
+- [x] The reduction path hands its *domain* compute claim back when the Job is
+      admitted to wait, because the runtime that dispatches it takes the row itself.
+- [x] The response seam: `RemoteDownloadSubmission.Row` reports the live entry's
+      snapshot or the durable Job's projection, `GET /v1/download/submit` and the
+      plugin answer use it, and the export archive route answers 409 — not 404 — for
+      an export waiting for a slot.
+- [x] Regression suite: two-process race, heartbeat non-expiry, start failure,
+      terminal release, the capacity-bound submission (accepted, visible,
+      controllable, restarted, never unbudgeted), the export and reduction arms, and
+      engine parity on PostgreSQL; `docs/todo.md`, formatting, `go vet`, the whole
+      tree, `-race` on the touched packages, PostgreSQL and the browser/CLI e2e.
+
+## Findings closed
+
+| Finding | Regression |
+|---|---|
+| A submission's Job is claimable by another process while its executor runs | `TestAQueueBackedSubmissionsClaimKeepsEveryOtherProcessOut`, `TestAQueueBackedSubmissionIsOwnedAcrossProcessesOnPostgres` |
+| A submission-owned claim expires under work that outlives its lease | `TestAnOwnedQueueSubmissionsClaimOutlivesItsLease` |
+| A start failure leaves the Job running with no executor, holding its capacity | `TestARefusedQueueSubmissionEndsTheJobAndHandsItsClaimBack` |
+| A submission the deployment has no capacity for is refused or runs unbudgeted | `TestACapacityBoundSubmissionIsQueuedAndRunsWhenTheSlotFrees`, `TestAnExportWaitingForCapacityIsAcceptedAndNotMissing` |
+| A submission-owned execution publishes no outcome (no runtime ever sees it) | `TestAnOwnedExportPublishesItsOwnOutcomeAndHandsItsClaimBack` |
+| A queued clustering run leaves its Reduction `computing` and refuses the runtime | `TestAQueuedClusteringRunLeavesTheReductionFreeForTheRuntimeThatRunsIt` |
+| `POST /v1/download/submit` dereferences a queue entry that need not exist | `TestADownloadSubmissionWithoutAQueueEntryStillAnswersARow` |
+
+Every one was observed failing first, with the source restored afterwards; the
+red→green pairs are in the commit message.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test --tags 'json1 fts5' ./application_context -count=1 -timeout 2400s` — clean
+  (72s).
+- `go test -race --tags 'json1 fts5' ./jobs ./download_queue -count=1` and the
+  focused race run over every test added here, plus
+  `./plugin_system ./server/api_handlers ./server/api_tests -run
+  'Test.*(ActionJob|StartJob|Schedule|PluginAction|RuntimeLoss|Job|Download)'` —
+  clean.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -run
+  'Test.*(Job|Reconcile|Claim|Command|Import|Export|Download|Plugin|Reduction|Similarity)'`
+  and `./server/api_tests -run 'Test.*(Job|Import|Export|Download|Plugin)'` — clean.
+- Browser: `tests/downloads-history.spec.ts` + `tests/admin-export/` (12 passed),
+  `tests/admin-import/` + `tests/cli/cli-jobs.spec.ts` (15 passed),
+  `tests/plugins/plugin-actions.spec.ts` + `plugin-schedules.spec.ts` +
+  `tests/accessibility/downloads-list-a11y.spec.ts` (36 passed).
+  `tests/regressions/ws9-jobs-cockpit.spec.ts` has **two pre-existing failures**
+  ("Clear completed removes finished jobs and they stay gone", "a job that finishes
+  while the clear is in flight does not come back"): both assert that `GET
+  /v1/jobs/get` 404s for a cleared download, which the durable handle table stopped
+  doing before this change. Verified by stashing this change and re-running them.
+- `go vet --tags 'json1 fts5' ./...` clean, `gofmt -l` clean on every changed file,
+  `git diff --check` clean. `npm run build` leaves `public/dist/` and
+  `public/tailwind.css` byte-identical: no frontend source changed.
+
+## Residual, known and deliberate
+
+- **A submission and a runtime can still both start one executor if the deployment
+  budget frees between them.** The claim closes the window in which the submitting
+  process runs work nobody owns; it does not make a queue entry globally unique,
+  because the queue is process memory. Two submissions naming one URL remain
+  deduplicated by `activeDownloadForURL` in the same process and by content hash
+  across them.
+- **A double submit while the budget is full can leave one Job blocked.** The
+  reduction path hands its row claim back so the runtime can take it; a second
+  request admitted in that window queues a second Job, and whichever loses the row's
+  compare-and-set is blocked `reduction-busy` for a person to resolve. The window is
+  the one that already existed between acceptance and dispatch.
+- **`queueClaimLease` is a test-only override** on the context, following
+  `scopedPluginAccess.ttl`: the renewal it exists to reach is otherwise two minutes
+  long and would be tested by waiting or not at all.
+
 # Job Center post-Task-9 checkpoint — close the Astra review's P1 findings (2026-09-23)
 
 **Goal:** Close the P1 findings the Astra checkpoint raised after Task 9 — durable
@@ -57,28 +159,20 @@ lifecycle, and staging retention — with a public-seam regression for each.
 Every one was observed failing first, with the source restored afterwards; the
 red→green pairs are in the commit messages.
 
-## Open: the submission path does not own a durable claim (P1)
+## Closed elsewhere
 
-`SubmitRemoteDownloads`, `SubmitGroupExport`, `SubmitImportParse`,
-`SubmitImportApply` and the two compute paths accept a Job and then hand the work
-to the queue with `jobs.ExecutionRef{JobID: ...}` and **no execution token**, while
-the dispatch loop may claim that same Job in another process and call its
-adapter's `start`, which creates a second queue entry there. The claim-bearing half
-of that hazard is closed now (reconciliation no longer dispatches a replacement on
-another process's queue absence), what remains is the *dispatch* half: a queued
-Job that a live submitter is already running.
-
-Routing submissions through `AcceptClaimed` is not sufficient on its own, and that
-is why this is left for its own change rather than patched here: a claim that is
-not renewed expires in the middle of a long transfer, and an execution that
-publishes into a Job the reconciler has since blocked has its outcome refused
-(`blocked → succeeded` is not a transition). So the executor — the queue — has to
-own and renew the claim for the whole run: a heartbeat for the execution's token,
-started with the entry and stopped when it reaches a terminal status, in
-`job_queue_bridge.go`, plus the wiring through `download_queue`'s canonical ref. It
-is a design decision about who owns a queue-backed execution, not a line in the
-submission paths, and guessing at it would put the same duplicate execution behind
-a new mechanism.
+The **P1 this checkpoint left open** — the submission path does not own a durable
+claim — is closed by the queue-backed executor ownership change recorded at the top
+of this file. What it was, in the checkpoint's own words: `SubmitRemoteDownloads`,
+`SubmitGroupExport`, `SubmitImportParse`, `SubmitImportApply` and the two compute
+paths accepted a Job and then handed the work to the queue with **no execution
+token**, while the dispatch loop could claim that same Job in another process and
+start a second executor there. Routing them through `AcceptClaimed` alone was not
+enough, and that is why it was left for its own change: a claim that is not renewed
+expires in the middle of a long transfer, and an execution that publishes into a Job
+the reconciler has since blocked has its outcome refused. The executor — the queue —
+had to own and renew the claim for the whole run, which is what `job_queue_bridge.go`
+now does.
 
 ## Verification
 

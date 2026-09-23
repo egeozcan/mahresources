@@ -583,6 +583,11 @@ type MahresourcesContext struct {
 	// nil means "this context has no control plane", which a facade call reports
 	// rather than dereferencing.
 	jobService *jobs.Service
+	// queueClaimLease overrides the lease a queue-backed admission claims with.
+	// Zero means the Kind's own lease; only tests set it, because the renewal that
+	// keeps a claim alive is otherwise reachable in two-minute increments and would
+	// be tested by waiting or not at all.
+	queueClaimLease time.Duration
 	// jobTerminalSink observes Jobs reaching an end state, whoever ran them. It
 	// is the same observer the download queue publishes through, installed here
 	// as well because plugin background work is a Job now and its completion is

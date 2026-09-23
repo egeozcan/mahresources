@@ -624,7 +624,7 @@ func (ctx *MahresourcesContext) SubmitGroupExport(request *ExportRequest, origin
 		return result
 	}
 	legacyID := download_queue.NewJobID()
-	accepted, err := ctx.acceptQueueJob(jobs.Acceptance{
+	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindGroupExport,
 		KindVersion: jobExportKindVersion,
 		State:       jobs.StateQueued,
@@ -639,8 +639,14 @@ func (ctx *MahresourcesContext) SubmitGroupExport(request *ExportRequest, origin
 		result.Err = err
 		return result
 	}
-	result.CanonicalJobID = accepted.ID
+	result.CanonicalJobID = admission.Accepted.ID
 	result.QueueJobID = legacyID
+	if !admission.Owned() {
+		// The deployment's budget is full: the Job is durable, answers the id the
+		// client was handed, and starts no executor here. A runtime with a free slot
+		// takes it — see admitQueueJob.
+		return result
+	}
 
 	entry, err := ctx.submitQueueJob(
 		download_queue.JobOptions{
@@ -649,15 +655,18 @@ func (ctx *MahresourcesContext) SubmitGroupExport(request *ExportRequest, origin
 			OwnerUserID:  owner,
 		},
 		legacyID,
-		jobs.ExecutionRef{JobID: accepted.ID},
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
 		ctx.buildGroupExportRunFn(request),
 	)
 	if err != nil {
-		ctx.failUndispatchedQueueJob(accepted, err)
+		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
 		return result
 	}
 	result.QueueJobID = entry.ID
+	ctx.ownQueueExecution(admission, entry, func(snap *download_queue.DownloadJob) error {
+		return (&groupExportAdapter{ctx: ctx, kind: JobKindGroupExport}).publishOutcome(admission.Execution, request, snap)
+	})
 	return result
 }
 
