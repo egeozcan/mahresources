@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"mahresources/models"
 )
@@ -77,6 +78,88 @@ func TestCommandIdempotencyAdmitsOneExecutionAcrossConnectionsPG(t *testing.T) {
 		// iterations that each left one running would be refused by the budget rather
 		// than by the tuple under test.
 		h.endExecution(running.ID, execution, StateCancelled)
+	}
+}
+
+// TestBulkCommandReplaysRunningAndCompletedOutcomeBeforeAdvertisementPG runs a
+// duplicate bulk command while the first request is outside its transaction in
+// the executor. The intent makes Cancel disappear from the current
+// advertisement, so the duplicate must resolve the keyed in-flight result
+// before checking that advertisement. After the executor returns, another
+// repeat must resolve the completed result the same way.
+func TestBulkCommandReplaysRunningAndCompletedOutcomeBeforeAdvertisementPG(t *testing.T) {
+	h := newCommandHarnessOn(t, newPGDeps(t))
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	running := h.acceptReplayable(&owner)
+	h.claim(running.ID)
+
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		if commandContext.Snapshot.State == StateRunning && commandContext.Snapshot.ControlIntent == "" {
+			return []Command{{Key: CommandCancel, Label: "Cancel", Bulk: true}}, nil
+		}
+		return nil, nil
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	var callsMu sync.Mutex
+	calls := 0
+	h.adapter.execute = func(context.Context, CommandExecution) (CommandOutcome, error) {
+		callsMu.Lock()
+		calls++
+		callsMu.Unlock()
+		close(entered)
+		<-release
+		return CommandOutcome{Status: CommandStatusSucceeded, Message: "stop requested"}, nil
+	}
+
+	bulk := func() []CommandResult {
+		return h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+			JobIDs: []string{running.ID}, Key: CommandCancel,
+			IdempotencyKey: "idem-pg-bulk-cancel", Actor: viewer, Origin: "api",
+		})
+	}
+	firstDone := make(chan []CommandResult, 1)
+	go func() { firstDone <- bulk() }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first bulk cancellation did not reach the executor")
+	}
+
+	// PostgreSQL can serve this through a separate transaction while the first
+	// goroutine is held in the executor. The recorded request is still running,
+	// and the current adapter advertisement no longer contains Cancel.
+	second := bulk()
+	if len(second) != 1 || second[0].Status != CommandStatusFailed || second[0].Code != CommandCodeInFlight {
+		t.Fatalf("the duplicate bulk cancellation answered %+v, want the recorded in-flight outcome", second)
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	var first []CommandResult
+	select {
+	case first = <-firstDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first bulk cancellation did not finish after releasing its executor")
+	}
+	if len(first) != 1 || first[0].Status != CommandStatusSucceeded || first[0].Code != CommandCodeRequested {
+		t.Fatalf("the first bulk cancellation answered %+v, want a successful requested result", first)
+	}
+
+	third := bulk()
+	if len(third) != 1 || third[0].Status != CommandStatusSucceeded || third[0].Code != CommandCodeRequested {
+		t.Fatalf("the completed bulk cancellation replay answered %+v, want the stored success", third)
+	}
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 1 {
+		t.Fatalf("the executor ran %d times for one bulk idempotency tuple, want once", calls)
+	}
+	if rows := commandRequestRows(t, h.deps, running.ID); len(rows) != 1 || rows[0].Status != models.JobCommandStatusSucceeded {
+		t.Fatalf("the Job has command request rows %+v, want one completed request", rows)
 	}
 }
 

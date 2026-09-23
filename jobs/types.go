@@ -1764,6 +1764,10 @@ type CommandRequest struct {
 	IdempotencyKey  string
 	ExpectedVersion uint64
 	Actor           Access
+	// requireBulk is set by ExecuteBulkCommand so the same execution path can
+	// replay a recorded outcome before checking current bulk eligibility, then
+	// enforce that eligibility again when it claims a new command.
+	requireBulk bool
 	// LegacyRef is set when a compatibility surface resolved JobID from a
 	// durable legacy handle. The Service rechecks that exact mapping in the
 	// command transaction so a handle moved by a concurrent Retry cannot make a

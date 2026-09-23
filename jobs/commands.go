@@ -436,8 +436,12 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if !offersCommand(commands, request.Key) {
-		return refusedResult(job, request, CommandCodeNotAdvertised, "the job does not offer that command",
+	if !commandOffered(commands, request) {
+		message := "the job does not offer that command"
+		if request.requireBulk {
+			message = "the job does not offer that command in bulk"
+		}
+		return refusedResult(job, request, CommandCodeNotAdvertised, message,
 			fmt.Errorf("%w: job %s does not offer %s", ErrCommandNotAdvertised, job.ID, request.Key))
 	}
 	// The version the caller decided from is the whole of the staleness check: every
@@ -550,14 +554,13 @@ func (s *Service) replayCommandResultInTransaction(tx *gorm.DB, deps Deps, reque
 	return s.replayCommandResult(scoped, request, row)
 }
 
-// offersCommand reports whether an advertisement contains one key.
-func offersCommand(commands []Command, key string) bool {
-	for _, command := range commands {
-		if command.Key == key {
-			return true
-		}
-	}
-	return false
+// commandOffered checks the eligibility a caller is asking the Service to
+// enforce. A bulk request uses the same command identity and idempotency tuple
+// as a single request, with the additional requirement that a new execution be
+// advertised for bulk use.
+func commandOffered(commands []Command, request CommandRequest) bool {
+	command, ok := commandByKey(commands, request.Key)
+	return ok && (!request.requireBulk || command.Bulk)
 }
 
 // refusedResult is one command's refusal, carrying the Job as the asker may see
@@ -846,6 +849,7 @@ func (s *Service) executeBulkEntry(ctx context.Context, deps Deps, request BulkC
 		IdempotencyKey: request.IdempotencyKey,
 		Actor:          request.Actor,
 		Origin:         request.Origin,
+		requireBulk:    true,
 	}
 
 	job, err := loadVisibleJob(deps.DB, request.Actor, jobID)
@@ -859,22 +863,6 @@ func (s *Service) executeBulkEntry(ctx context.Context, deps Deps, request BulkC
 		return CommandResult{
 			JobID: jobID, Key: request.Key, Status: CommandStatusFailed,
 			Code: CommandCodeFailed, Message: "the job could not be read",
-		}
-	}
-
-	commands, err := s.advertisedCommands(ctx, deps, request.Actor, job)
-	if err != nil {
-		return CommandResult{
-			JobID: jobID, Key: request.Key, Status: CommandStatusFailed,
-			Code: CommandCodeFailed, Message: "the job's commands could not be read",
-		}
-	}
-	advertised, ok := commandByKey(commands, request.Key)
-	if !ok || !advertised.Bulk {
-		return CommandResult{
-			JobID: jobID, Key: request.Key, Status: CommandStatusFailed,
-			Code: CommandCodeNotAdvertised, Message: "the job does not offer that command in bulk",
-			Job: viewerSnapshot(job, request.Actor),
 		}
 	}
 
@@ -1107,7 +1095,10 @@ func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, re
 	if err != nil {
 		return models.Job{}, err
 	}
-	if !offersCommand(offered, request.Key) {
+	if !commandOffered(offered, request) {
+		if request.requireBulk {
+			return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s in bulk", ErrCommandNotAdvertised, current.ID, request.Key)
+		}
 		return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, current.ID, request.Key)
 	}
 	return current, nil
