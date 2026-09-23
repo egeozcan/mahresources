@@ -308,6 +308,8 @@ export function jobCenter(options = {}) {
         details: {},
         selectedIds: new Set(),
         nextCursor: null,
+        _allPageCursors: [],
+        _listGeneration: 0,
         bulkOutcomes: [],
         timeline: [],
         timelineError: '',
@@ -342,6 +344,7 @@ export function jobCenter(options = {}) {
         destroy() {
             if (this._refreshTimer) clearTimeout(this._refreshTimer);
             this._streamRefreshGeneration += 1;
+            this._listGeneration += 1;
             this._streamRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
@@ -383,6 +386,9 @@ export function jobCenter(options = {}) {
 
         scheduleStreamRefresh() {
             this._streamRefreshGeneration += 1;
+            // Invalidate a list request started before this delivery. Its rows
+            // may describe a different server-side filter window.
+            this._listGeneration += 1;
             this._streamRefreshRequested = true;
             if (this._streamRefreshPromise) return;
             if (this._refreshTimer) clearTimeout(this._refreshTimer);
@@ -402,6 +408,7 @@ export function jobCenter(options = {}) {
         async refreshStreamState(generation) {
             if (this.detailId) return;
             const stateKey = JSON.stringify({ view: this.view, filters: this.filters });
+            const listGeneration = this._listGeneration;
             const refreshHome = this.view === 'home' && !this.hasFilters();
             const requests = [this.fetchJSON('/v1/jobs/summary')];
             if (refreshHome) {
@@ -413,7 +420,12 @@ export function jobCenter(options = {}) {
                 ]));
             }
             const [summary, homePages] = await Promise.all(requests);
-            if (generation !== this._streamRefreshGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
+            let allWindow = null;
+            if (!refreshHome) {
+                allWindow = await this.fetchLoadedAllWindow(generation, listGeneration, stateKey);
+                if (!allWindow) return;
+            }
+            if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
             this.summary = summary;
             if (refreshHome && homePages) {
                 this.sections = {
@@ -424,7 +436,34 @@ export function jobCenter(options = {}) {
                 };
                 this.jobs = uniqueJobs(Object.values(this.sections).flat());
                 this.nextCursor = null;
+                this._allPageCursors = [];
+            } else if (allWindow) {
+                this.jobs = preserveJobUIState(this.jobs, uniqueJobs(allWindow.jobs));
+                this.sections = splitJobSections(this.jobs);
+                this._allPageCursors = allWindow.cursors;
+                this.nextCursor = allWindow.nextCursor;
+                if (this.view === 'all') this.replaceURL(allWindow.cursors.at(-1) ?? null);
             }
+        },
+
+        async fetchLoadedAllWindow(generation, listGeneration, stateKey) {
+            const starts = this._allPageCursors.length ? [...this._allPageCursors] : [null];
+            const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
+            const jobs = [];
+            const cursors = [];
+            let cursor = starts[0];
+            let nextCursor = null;
+            for (let page = 0; page < starts.length; page++) {
+                if (page > 0 && !cursor) break;
+                const pageCursor = cursor;
+                const payload = await this.fetchJSON(buildJobListURL({ filters: filterBase, cursor: pageCursor, limit: 50 }));
+                if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return null;
+                jobs.push(...pageJobs(payload));
+                cursors.push(pageCursor);
+                nextCursor = payload.nextCursor || null;
+                cursor = nextCursor;
+            }
+            return { jobs, cursors, nextCursor };
         },
 
         hasFilters() {
@@ -439,12 +478,15 @@ export function jobCenter(options = {}) {
         },
 
         async loadHome() {
+            const listGeneration = ++this._listGeneration;
+            if (this._streamRefreshPromise) this._streamRefreshRequested = true;
             const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
             const [attention, active, finished] = await Promise.all([
                 this.fetchJSON(buildJobListURL({ filters: filterBase, states: ATTENTION_STATES, limit: 6 })),
                 this.fetchJSON(buildJobListURL({ filters: filterBase, states: ACTIVE_STATES, limit: 6 })),
                 this.fetchJSON(buildJobListURL({ filters: filterBase, states: FINISHED_STATES, limit: 6 })),
             ]);
+            if (listGeneration !== this._listGeneration) return;
             const sections = {
                 attention: preserveJobUIState(this.jobs, pageJobs(attention)),
                 active: preserveJobUIState(this.jobs, pageJobs(active)),
@@ -454,18 +496,27 @@ export function jobCenter(options = {}) {
             this.sections = sections;
             this.jobs = uniqueJobs(Object.values(sections).flat());
             this.nextCursor = null;
+            this._allPageCursors = [];
         },
 
         async loadAll(cursor = null, append = false) {
+            const listGeneration = ++this._listGeneration;
+            if (this._streamRefreshPromise) this._streamRefreshRequested = true;
+            if (!append) this._allPageCursors = [cursor];
             const payload = await this.fetchJSON(buildJobListURL({
                 filters: { ...this.filters, dismissed: this.filters.dismissed ?? false },
                 cursor,
                 limit: 50,
             }));
+            if (listGeneration !== this._listGeneration) return false;
             const rows = preserveJobUIState(this.jobs, pageJobs(payload));
             this.jobs = append ? uniqueJobs([...this.jobs, ...rows]) : rows;
+            this._allPageCursors = append
+                ? [...this._allPageCursors, cursor]
+                : [cursor];
             this.nextCursor = payload.nextCursor || null;
             this.sections = splitJobSections(this.jobs);
+            return true;
         },
 
         async loadMore() {
@@ -474,8 +525,7 @@ export function jobCenter(options = {}) {
             this.loadingMore = true;
             this.error = '';
             try {
-                await this.loadAll(previous, true);
-                this.replaceURL(previous);
+                if (await this.loadAll(previous, true)) this.replaceURL(previous);
             } catch (error) {
                 this.error = error.message || 'Could not load the next page.';
             } finally {
@@ -562,6 +612,7 @@ export function jobCenter(options = {}) {
             };
             this.view = 'all';
             this.nextCursor = null;
+            this._allPageCursors = [];
             this.selectedIds = new Set();
             this.replaceURL(null);
             this.loading = true;
@@ -575,6 +626,7 @@ export function jobCenter(options = {}) {
             this.filters = emptyFilters();
             this.view = 'home';
             this.nextCursor = null;
+            this._allPageCursors = [];
             this.selectedIds = new Set();
             globalThis.history?.replaceState({}, '', '/jobs');
             return this.load();
@@ -583,6 +635,7 @@ export function jobCenter(options = {}) {
         async setView(view) {
             this.view = view === 'all' ? 'all' : 'home';
             this.nextCursor = null;
+            this._allPageCursors = [];
             this.replaceURL(null);
             this.loading = true;
             this.error = '';

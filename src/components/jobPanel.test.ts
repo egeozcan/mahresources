@@ -177,6 +177,101 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
     });
 
+    test('ignores unknown replay detail fetches, refreshes bounded pages after catch-up, and caps live rows', async () => {
+        vi.useFakeTimers();
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const panel = jobPanel();
+        const detailRequests: string[] = [];
+        const listRequests: string[] = [];
+        let summaryCalls = 0;
+        const pageRows = new Map<string, unknown[]>();
+        for (const [state, count] of [['blocked', 5], ['running', 5], ['succeeded', 5]] as const) {
+            pageRows.set(state, Array.from({ length: count }, (_, index) => ({
+                id: `page-${state}-${index}`,
+                kind: 'maintenance',
+                state,
+                version: 1,
+                acceptedAt: `2026-09-23T10:${String(index).padStart(2, '0')}:00Z`,
+            })));
+        }
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') {
+                summaryCalls += 1;
+                return { byState: { running: summaryCalls === 1 ? 5 : 6, blocked: 5 } };
+            }
+            if (url.startsWith('/v1/jobs?')) {
+                listRequests.push(url);
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').flatMap(state => pageRows.get(state) || []) };
+            }
+            detailRequests.push(url);
+            const id = decodeURIComponent(url.slice('/v1/jobs/'.length));
+            return { id, kind: 'maintenance', state: 'running', version: 1, commands: [] };
+        });
+        panel.connect();
+        const stream = panel.eventSource as unknown as FakeEventSource;
+        const replay = Array.from({ length: 100 }, (_, index) => panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: `event-${index + 1}`, jobId: `historic-${index + 1}`, sequence: index + 1,
+                jobVersion: 1, type: 'queued', deliverySequence: index + 1,
+            }),
+            lastEventId: `v2:${index + 1}`,
+        }));
+        await Promise.all(replay);
+
+        expect(detailRequests).toEqual([]);
+        expect(panel.jobs).toEqual([]);
+
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:100' }) });
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+
+        expect(listRequests).toHaveLength(3);
+        expect(listRequests.every(url => new URL(url, 'http://localhost').searchParams.get('limit') === '5')).toBe(true);
+        expect(panel.jobs).toHaveLength(15);
+        expect(detailRequests).toHaveLength(15);
+        expect(detailRequests.some(path => path.includes('historic-'))).toBe(false);
+        expect(panel.counts).toEqual({ active: 5, attention: 5 });
+
+        for (let index = 0; index < 25; index++) {
+            await panel.handleStreamMessage({
+                data: JSON.stringify({
+                    id: `live-${index}`, title: `Live ${index}`, kind: 'maintenance', state: 'running',
+                    version: 1, acceptedAt: `2026-09-23T12:${String(index).padStart(2, '0')}:00Z`,
+                    deliverySequence: 101 + index,
+                }),
+                lastEventId: `v2:${101 + index}`,
+            });
+            expect(panel.jobs.length).toBeLessThanOrEqual(15);
+        }
+
+        stream.listeners.get('error')?.({});
+        await Promise.all(Array.from({ length: 3 }, (_, index) => panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: `replay-${index}`, jobId: `reconnected-history-${index}`, deliverySequence: 126 + index,
+            }),
+            lastEventId: `v2:${126 + index}`,
+        })));
+        expect(detailRequests).toHaveLength(15);
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:128' }) });
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+        expect(listRequests).toHaveLength(6);
+        expect(listRequests.slice(3).every(url => new URL(url, 'http://localhost').searchParams.get('limit') === '5')).toBe(true);
+        expect(summaryCalls).toBe(2);
+        expect(panel.counts).toEqual({ active: 6, attention: 5 });
+        expect(panel.jobs).toHaveLength(15);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('refreshes the active and attention counts after a delivered state event', async () => {
         vi.useFakeTimers();
         const panel = jobPanel();

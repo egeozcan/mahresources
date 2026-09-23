@@ -227,6 +227,59 @@ describe('Job Center URL state', () => {
         expect(center.refreshCurrentView).not.toHaveBeenCalled();
     });
 
+    test('refreshes filtered All membership and its loaded window after streamed state changes', async () => {
+        vi.useFakeTimers();
+        const leaving = { ...unfamiliarJob, id: 'running-leaves', state: 'running', version: 1, acceptedAt: '2026-09-23T10:03:00Z' };
+        const staying = { ...unfamiliarJob, id: 'running-stays', state: 'running', version: 1, acceptedAt: '2026-09-23T10:02:00Z', uiExpanded: true, uiSelected: true };
+        const initialTail = { ...unfamiliarJob, id: 'old-page-two', state: 'running', version: 1, acceptedAt: '2026-09-23T10:01:00Z' };
+        const newlyMatching = { ...unfamiliarJob, id: 'running-enters', state: 'running', version: 2, acceptedAt: '2026-09-23T10:04:00Z' };
+        const refreshedTail = { ...unfamiliarJob, id: 'new-page-two', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
+        const center = jobCenter();
+        center.view = 'all';
+        center.filters = { ...center.filters, states: ['running'] };
+        center.jobs = [leaving, staying];
+        center.selectedIds = new Set([staying.id]);
+        let serverChanged = false;
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') return { byState: { running: 2, succeeded: 0 } };
+            const cursor = url.searchParams.get('cursor');
+            if (!serverChanged) {
+                return cursor === 'initial-page-two'
+                    ? { jobs: [initialTail] }
+                    : { jobs: [leaving, staying], nextCursor: 'initial-page-two' };
+            }
+            return cursor === 'refreshed-page-two'
+                ? { jobs: [refreshedTail] }
+                : { jobs: [newlyMatching, staying], nextCursor: 'refreshed-page-two' };
+        });
+
+        await center.loadAll();
+        await center.loadMore();
+        expect(center.jobs.map(job => job.id)).toEqual([leaving.id, staying.id, initialTail.id]);
+
+        serverChanged = true;
+        center.streamCaughtUp = true;
+        await center.handleStreamMessage({
+            data: JSON.stringify({ id: leaving.id, state: 'succeeded', version: 2, deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        await vi.advanceTimersByTimeAsync(150);
+        await center._streamRefreshPromise;
+
+        expect(center.jobs.map(job => job.id)).toEqual([newlyMatching.id, staying.id, refreshedTail.id]);
+        expect(center.jobs.find(job => job.id === staying.id)).toMatchObject({ uiExpanded: true, uiSelected: true });
+        expect(center.selectedIds.has(staying.id)).toBe(true);
+        expect(center.nextCursor).toBeNull();
+        const refreshedRequests = center.fetchJSON.mock.calls
+            .map(([url]) => new URL(String(url), 'http://localhost'))
+            .filter(url => url.pathname === '/v1/jobs' && url.searchParams.getAll('state').includes('running'));
+        expect(refreshedRequests.slice(-2).map(url => url.searchParams.get('cursor')))
+            .toEqual([null, 'refreshed-page-two']);
+        center.destroy();
+        vi.useRealTimers();
+    });
+
     test('converts RFC3339 URL timestamps for local controls and datetime-local values for the API', () => {
         const timestamp = '2026-09-23T12:30:00.000Z';
         const local = dateTimeLocalValue(timestamp);
@@ -362,9 +415,12 @@ describe('Job Center live summary', () => {
         center.streamCaughtUp = true;
         center.jobs = [{ id: 'live-job', title: 'Index rebuild', state: 'running', version: 1 }];
         center.summary = { byState: { running: 1, failed: 0 } };
-        center.fetchJSON = vi.fn(async url => String(url) === '/v1/jobs/summary'
-            ? { byState: { running: 0, failed: 1 } }
-            : {});
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') return { byState: { running: 0, failed: 1 } };
+            if (url.pathname === '/v1/jobs') return { jobs: [{ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2 }] };
+            return {};
+        });
 
         center.handleStreamMessage({
             data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2, deliverySequence: 1 }),
@@ -510,6 +566,10 @@ describe('Job Center templates', () => {
         expect(center.displaySections.map(section => section.title)).toEqual(['All jobs']);
         expect(listTemplate).toContain('x-for="section in displaySections"');
         expect(listTemplate).toContain('Load more jobs');
+    });
+
+    test('keeps job row DOM keyed by identity so focused controls survive membership refreshes', () => {
+        expect(listTemplate).toContain('<template x-for="job in section.jobs" :key="job.id">');
     });
 
     test('does not put replayed timeline events in a live announcement region', () => {
