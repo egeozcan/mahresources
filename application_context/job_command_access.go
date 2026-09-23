@@ -58,13 +58,26 @@ func (ctx *MahresourcesContext) commandActorRefusal(deps jobs.Deps, access jobs.
 	if principal == nil {
 		return ""
 	}
-	scoped := ctx.WithPrincipal(principal)
-	if err := scoped.requireWriteRole("run this job's commands"); err != nil {
+	// The capability is read off the principal rather than through a principal-bound
+	// context, and that is not a shortcut: WithPrincipal materializes the principal's
+	// subtree allow-list with a query of its own, and a command's recheck is inside a
+	// transaction that holds the only connection a one-connection pool has. Nothing
+	// here needs the subtree — what the work acts on is revalidated on the Kind's own
+	// dispatch path, against the actor's scope as it stands then — so the role is the
+	// whole of the question, and requireWriteRole's answer for a resolved principal is
+	// exactly this one.
+	if !principal.CanWrite() {
 		return "role-refused"
 	}
 	if pluginName != "" {
 		requestCtx := auth.WithPrincipal(context.Background(), principal)
-		if !auth.PluginActionAccessFor(requestCtx, ctx.PluginAllowsScopedPrincipals)(pluginName) {
+		// The per-plugin answer is read on the handle this question is asked on, which
+		// during a command's recheck is the transaction's own. PluginAllowsScopedPrincipals
+		// reloads the process-wide snapshot through the context's handle on a cache miss,
+		// and that second connection beside the one the caller already holds is the
+		// deadlock this seam was corrected for once already.
+		allowsScoped := func(name string) bool { return ctx.pluginAllowsScopedPrincipalsOn(deps.DB, name) }
+		if !auth.PluginActionAccessFor(requestCtx, allowsScoped)(pluginName) {
 			return "plugin-refused"
 		}
 	}

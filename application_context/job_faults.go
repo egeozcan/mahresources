@@ -42,6 +42,18 @@ type jobDurabilityFaults struct {
 	// failSettlementWrite refuses every terminal write the plugin-action sink
 	// makes, until the test clears it, for the same reason.
 	failSettlementWrite atomic.Bool
+	// failCompletionRead refuses every completion read the queue bridge makes for a
+	// queue-backed execution, until the test clears it. A read that fails is not a Job
+	// that finished: the property under test is that the publication is retained and
+	// offered again, and that is only observable while the refusal lasts.
+	failCompletionRead atomic.Bool
+	// failCompletionWrite refuses every terminal write the queue bridge makes for a
+	// queue-backed execution, until the test clears it, for the same reason.
+	failCompletionWrite atomic.Bool
+	// failOutputPublication refuses every output publication a queue-backed executor
+	// makes, until the test clears it: publishing a required artifact is a write, and a
+	// refused one must not be read as the artifact being absent.
+	failOutputPublication atomic.Bool
 }
 
 // progressWrite refuses one progress mirror, once.
@@ -56,6 +68,32 @@ func (f *jobDurabilityFaults) progressWrite() error {
 // set.
 func (f *jobDurabilityFaults) settlementRead() error {
 	if f == nil || !f.failSettlementRead.Load() {
+		return nil
+	}
+	return errJobFaultInjected
+}
+
+// completionRead is the queue bridge's completion read, refused while a test asks for
+// it.
+func (f *jobDurabilityFaults) completionRead() error {
+	if f == nil || !f.failCompletionRead.Load() {
+		return nil
+	}
+	return errJobFaultInjected
+}
+
+// completionWrite is the queue bridge's terminal write: refused while a test asks for
+// it, so the retry the publication owns is observable.
+func (f *jobDurabilityFaults) completionWrite() error {
+	if f == nil || !f.failCompletionWrite.Load() {
+		return nil
+	}
+	return errJobFaultInjected
+}
+
+// outputPublication is the queue bridge's output publication, refused the same way.
+func (f *jobDurabilityFaults) outputPublication() error {
+	if f == nil || !f.failOutputPublication.Load() {
 		return nil
 	}
 	return errJobFaultInjected

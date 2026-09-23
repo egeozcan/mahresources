@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -425,13 +424,17 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	}
 
 	if snap := entry.Snapshot(); queueJobTerminal(snap.Status) {
-		return a.publishOutcome(execution, input, snap)
+		return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+			return a.publishOutcome(execution, input, finished)
+		})
 	}
 	snap, err := a.ctx.waitForQueueExecution(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, input, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, input, finished)
+	})
 }
 
 // start submits the parse this execution needs. The archive stays where the
@@ -460,6 +463,13 @@ func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *imp
 	case download_queue.JobStatusCompleted:
 		planPath := importPlanPathFor(input.Handle)
 		if err := a.ctx.publishQueueReport(execution, jobImportPlanOutput, "Import plan", planPath, true); err != nil {
+			if !errors.Is(err, errQueueStagedOutputMissing) {
+				// A refused publication is not a parse without a plan: the plan is on
+				// disk and the write that would have recorded it is what failed. The
+				// execution's owner retries the publication; ending the Job here would
+				// report a parse that produced nothing.
+				return err
+			}
 			return a.ctx.finishQueueJob(execution, jobs.StateFailed,
 				&jobs.Failure{
 					Code:    "import-plan-missing",
@@ -495,7 +505,13 @@ func (a *importParseAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 	}
 	input, err := importParseInputOf(request.Input)
 	if err != nil {
-		return jobs.ReconcileBlock, nil
+		// The input names the handle every piece of evidence a parse leaves behind is
+		// derived from, so a reconciler that cannot read it can check none of them. What
+		// it must not do is decide the work is not running: the process that holds the key
+		// may be parsing right now. Blocking here released the claim and the capacity of a
+		// live parse, so the answer is the one that needs no input — proof the runtime is
+		// gone.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	outputs, err := a.ctx.jobOutputsFor(request.Snapshot.ID)
 	if err != nil {
@@ -646,13 +662,17 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	}
 
 	if snap := entry.Snapshot(); queueJobTerminal(snap.Status) {
-		return a.publishOutcome(execution, input, snap)
+		return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+			return a.publishOutcome(execution, input, finished)
+		})
 	}
 	snap, err := a.ctx.waitForQueueExecution(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, input, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, input, finished)
+	})
 }
 
 // start binds the plan to this execution's Job and submits the apply it needs.
@@ -747,7 +767,11 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 	if _, err := a.ctx.GetDefaultFs().Stat(resultPath); err == nil {
 		if publishErr := a.ctx.publishQueueReport(execution, jobImportResultOutput, "Import report", resultPath, false); publishErr != nil &&
 			!mirrorRefusalIsSilent(publishErr) {
-			log.Printf("warning: could not publish an import report: %v", publishErr)
+			// The report is optional to success, but this execution owns its publication
+			// snapshot. A transient write refusal must be retried alongside the terminal
+			// outcome; otherwise the first attempt can succeed without ever retaining the
+			// partial-apply report.
+			return publishErr
 		}
 	}
 	switch snap.Status {
@@ -795,7 +819,14 @@ func (a *importApplyAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 	}
 	input, err := importApplyInputOf(request.Input)
 	if err != nil {
-		return jobs.ReconcileBlock, nil
+		// Every piece of evidence an apply is judged by — the plan restored to its
+		// unconsumed name, the archive it reads blobs from — is named by this input, so a
+		// reconciler that cannot read it can judge nothing. The process holding the key may
+		// be applying the plan at this instant, and a block here released its claim, its
+		// token and its capacity: the replacement would then be refused by the plan's own
+		// consumption while the first apply kept writing. What is left is the question that
+		// needs no input, positive proof the runtime is gone.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	if a.ctx.importPlanExists(input.ParseHandle) && a.ctx.importArchiveExists(input.ParseHandle) {
 		return jobs.ReconcileQueue, nil

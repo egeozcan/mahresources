@@ -681,3 +681,215 @@ func TestAQuarantinedCapacityQueuedTransferKeepsItsClaimUntilItsWorkerStops(t *t
 		t.Fatalf("the transfer's queue entry disappeared from the process that ran it")
 	}
 }
+
+// TestARefusedTerminalWriteDoesNotFailAnExportThatFinished is the queue-backed half
+// of §7's completion contract: the executor's terminal snapshot is retained and
+// offered to the durable plane until it is acknowledged.
+//
+// A terminal write can be refused transiently — a locked database, a pool briefly
+// exhausted, a version that moved under a concurrent command — and the closure that
+// publishes an outcome makes exactly one versioned attempt. Classifying that refusal as
+// the executor failing turned a finished export into an immutable `dispatch-failed`
+// Job: its archive was on disk, its artifact was never published, and neither Retry nor
+// Repeat could say what had happened.
+func TestARefusedTerminalWriteDoesNotFailAnExportThatFinished(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 2
+	groupID := createExportGroupForTest(t, ctx, "refused-terminal-write")
+
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failCompletionWrite.Store(true)
+
+	submission := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if submission.Err != nil {
+		t.Fatalf("submit the export: %v", submission.Err)
+	}
+	waitForQueueEntryTerminal(t, ctx, submission.QueueJobID)
+
+	// The queue's own worker has ended and the Job is still running: the refusal is a
+	// write that was not accepted, not an outcome, and the export is retained until it
+	// is.
+	time.Sleep(500 * time.Millisecond)
+	snap := jobSnapshot(t, ctx.JobService(), ctx, submission.CanonicalJobID)
+	if snap.State != jobs.StateRunning {
+		t.Fatalf("the export is %s after one refused terminal write: the finished outcome was reported as the executor failing (%+v)",
+			snap.State, snap.Failure)
+	}
+
+	ctx.jobFaults.failCompletionWrite.Store(false)
+	finished := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the retained outcome to land", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s once the write was accepted (%+v)", finished.State, finished.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(finished.ID)
+	if err != nil {
+		t.Fatalf("read the outputs: %v", err)
+	}
+	if _, published := findJobOutput(outputs, jobExportArtifactOutput); !published {
+		t.Fatalf("the retried publication left no archive output: %+v", outputs)
+	}
+}
+
+// TestARefusedOutputPublicationDoesNotReadAsAMissingArchive is the other half of the
+// same rule, and the one a required output makes dangerous.
+//
+// Publishing a required artifact is two facts — the file is there, and its reference is
+// durable — and only the first one is the Kind's evidence. Reading a refused *write* as
+// a missing file finished the Job as `export-artifact-missing` while the archive sat on
+// disk, which is a Job a person cannot tell from one whose export really produced
+// nothing.
+func TestARefusedOutputPublicationDoesNotReadAsAMissingArchive(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 2
+	groupID := createExportGroupForTest(t, ctx, "refused-artifact-publication")
+
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failOutputPublication.Store(true)
+
+	submission := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if submission.Err != nil {
+		t.Fatalf("submit the export: %v", submission.Err)
+	}
+	waitForQueueEntryTerminal(t, ctx, submission.QueueJobID)
+
+	time.Sleep(500 * time.Millisecond)
+	snap := jobSnapshot(t, ctx.JobService(), ctx, submission.CanonicalJobID)
+	if snap.State != jobs.StateRunning {
+		t.Fatalf("the export is %s after one refused output publication: a write that was not accepted was read as the archive being gone (%+v)",
+			snap.State, snap.Failure)
+	}
+	if snap.Failure != nil && snap.Failure.Code == "export-artifact-missing" {
+		t.Fatalf("a refused publication was classified as a missing archive")
+	}
+
+	ctx.jobFaults.failOutputPublication.Store(false)
+	finished := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the artifact to be published", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s once its artifact could be published (%+v)", finished.State, finished.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(finished.ID)
+	if err != nil {
+		t.Fatalf("read the outputs: %v", err)
+	}
+	if _, published := findJobOutput(outputs, jobExportArtifactOutput); !published {
+		t.Fatalf("the export succeeded without an archive output: %+v", outputs)
+	}
+}
+
+// TestARefusedCompletionReadDoesNotFailAnExportThatFinished is the read half of the
+// same contract.
+//
+// Publishing an outcome begins by reading the Job, to find out whether somebody else has
+// already ended it. A read that fails is not a Job that finished — and reading one as
+// such was how a transient outage during a finished export became a `dispatch-failed`
+// Job. The outcome is retained and the read is repeated.
+func TestARefusedCompletionReadDoesNotFailAnExportThatFinished(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = 2
+	groupID := createExportGroupForTest(t, ctx, "refused-completion-read")
+
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failCompletionRead.Store(true)
+
+	submission := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if submission.Err != nil {
+		t.Fatalf("submit the export: %v", submission.Err)
+	}
+	waitForQueueEntryTerminal(t, ctx, submission.QueueJobID)
+
+	time.Sleep(500 * time.Millisecond)
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, submission.CanonicalJobID); snap.State != jobs.StateRunning {
+		t.Fatalf("the export is %s while its completion read is refused: a read that failed was read as an outcome (%+v)",
+			snap.State, snap.Failure)
+	}
+
+	ctx.jobFaults.failCompletionRead.Store(false)
+	finished := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the retained outcome to land", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s once the read succeeded (%+v)", finished.State, finished.Failure)
+	}
+}
+
+// TestADispatchedExportsRefusedTerminalWriteIsRetained is the dispatch path's half of the
+// same contract, and the path a reconciliation's re-queue now hands work to.
+//
+// The executor of a queue-backed Kind is one function whatever ran it: the submission that
+// admitted the Job, or the runtime that claimed work the deployment had queued for a
+// capacity slot. A publication refused on the second route was classified as the adapter's
+// dispatch failing, which is the same finished-export-turned-into-an-immutable-failure the
+// owner path had — one route later.
+func TestADispatchedExportsRefusedTerminalWriteIsRetained(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	ctx.Config.MaxJobConcurrency = 1
+	ctx.jobFaults = &jobDurabilityFaults{}
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{Claimant: "export-dispatch-test", Interval: time.Hour})
+	t.Cleanup(runtime.Stop)
+
+	groupID := createExportGroupForTest(t, ctx, "dispatched-export-refused-write")
+
+	// The deployment's one slot, held by a transfer: the export is accepted durably and
+	// dispatched by the runtime rather than by the request that accepted it.
+	server, _, unblock := heldTransferServer(t)
+	transfer := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(transfer) != 1 || transfer[0].Err != nil || transfer[0].Job == nil {
+		t.Fatalf("the holding transfer: %+v", transfer)
+	}
+	waitForSnapshot(t, ctx, transfer[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	accepted := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if accepted.Err != nil {
+		t.Fatalf("submit the export: %v", accepted.Err)
+	}
+	if _, found := ctx.queueEntryFor(accepted.CanonicalJobID); found {
+		t.Fatalf("the export started an executor while the deployment's only slot was taken")
+	}
+	// The export is waiting for the slot; the transfer ends and gives it up. The fault
+	// goes on afterwards, so what it refuses is the export's own publication.
+	unblock()
+	waitForSnapshot(t, ctx, transfer[0].CanonicalJobID, "the holding transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	ctx.jobFaults.failCompletionWrite.Store(true)
+
+	// One tick claims the export and dispatches it; its publication is refused, and the
+	// outcome is retained rather than reported as its executor failing.
+	waitFor(t, "the runtime to dispatch the export", func() bool {
+		runtime.tick(context.Background())
+		_, found := ctx.queueEntryFor(accepted.CanonicalJobID)
+		return found
+	})
+	waitForQueueEntryTerminal(t, ctx, accepted.QueueJobID)
+	time.Sleep(500 * time.Millisecond)
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, accepted.CanonicalJobID); snap.State != jobs.StateRunning {
+		t.Fatalf("the dispatched export is %s after one refused terminal write (%+v)", snap.State, snap.Failure)
+	}
+
+	ctx.jobFaults.failCompletionWrite.Store(false)
+	finished := waitForSnapshot(t, ctx, accepted.CanonicalJobID, "the retained outcome to land", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the dispatched export ended %s once the write was accepted (%+v)", finished.State, finished.Failure)
+	}
+}
+
+// waitForQueueEntryTerminal waits for the queue entry carrying one execution to reach a
+// terminal status, which is the instant its outcome becomes the Job's to publish.
+func waitForQueueEntryTerminal(t *testing.T, ctx *MahresourcesContext, entryID string) {
+	t.Helper()
+	if entryID == "" {
+		t.Fatalf("the submission created no queue entry")
+	}
+	waitFor(t, "the queue entry to end", func() bool {
+		entry, found := ctx.DownloadManager().GetJob(entryID)
+		return found && queueJobTerminal(entry.GetStatus())
+	})
+}

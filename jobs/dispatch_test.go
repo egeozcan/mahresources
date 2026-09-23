@@ -2250,3 +2250,222 @@ func TestTheExecutionThatOwnsAQuarantinedJobMayEndIt(t *testing.T) {
 		t.Fatalf("a held job's host-side success = %v, want ErrIllegalTransition", err)
 	}
 }
+
+// TestReconcileLeavesAClaimItCannotDecideToAnUnreadableInput is the quiescence half
+// of the replay contract, and the one the expired-claim path got wrong.
+//
+// A reconciler that holds no key for the Job's input can decide nothing about the
+// work: the execution that sealed that input may be running perfectly well in the
+// process that holds the key. Handing the adapter a nil input and applying whatever
+// it answers released the live worker's claim and its deployment-wide capacity on a
+// decision nobody could make — and the adapter's own "I could not decode the input"
+// branch answered exactly that release.
+func TestReconcileLeavesAClaimItCannotDecideToAnUnreadableInput(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "reconcile-input-unavailable.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	registerTestCodec(t, svc)
+	// The answer every queue-backed Kind gives for input it cannot read: the Job
+	// cannot be run with what could not be decoded, so it is blocked.
+	adapter.reconcile = func(_ context.Context, request ReconcileRequest) (ReconcileDecision, error) {
+		if len(request.Input) == 0 {
+			return ReconcileBlock, nil
+		}
+		return ReconcileRemainRunning, nil
+	}
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	sealing := Deps{DB: deps.DB, Now: deps.Now, Replay: &ReplayConfig{Keys: replayKeyringFromSeeds(t, "the-key-that-sealed-it")}}
+	accepted, err := svc.Accept(sealing, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: json.RawMessage(`{"secret":"sealed"}`)},
+	})
+	if err != nil {
+		t.Fatalf("accept with replay input: %v", err)
+	}
+	execution, ok, err := svc.Claim(context.Background(), sealing, ClaimRequest{
+		Kind: testKind, KindVersion: 1, Claimant: "runtime-a",
+		Capacity: []CapacityRef{{Group: CapacityGroupGlobal, Limit: 2}},
+	})
+	if err != nil || !ok {
+		t.Fatalf("claim as the runtime that owns the key: claimed=%v err=%v", ok, err)
+	}
+	expireClaim(t, deps, accepted.ID, clock)
+
+	// A second runtime — a rotated key not yet rolled out, a key file lost with the
+	// data root — reconciles the expired claim and can read none of the input.
+	blind := Deps{DB: deps.DB, Now: deps.Now}
+	report := reconcileOnce(t, svc, blind, "runtime-b")
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Decision != ReconcileExternalWorkUnproven {
+		t.Fatalf("report = %+v, want the undecidable claim left unresolved", report.Outcomes)
+	}
+	if adapter.reconciledCount() != 0 {
+		t.Fatalf("the adapter was asked %d times with input it could not be given", adapter.reconciledCount())
+	}
+
+	stored := jobRow(t, deps, accepted.ID)
+	if stored.State != string(StateBlocked) {
+		t.Fatalf("job state = %s, want blocked", stored.State)
+	}
+	if stored.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("job token = %q, want the live execution's %q kept", stored.ExecutionToken, execution.ExecutionToken)
+	}
+	claim := claimRow(t, deps, accepted.ID)
+	if claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined: a live worker may still own this work", claim.State)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 2 {
+		t.Fatalf("capacity rows = %d, want the live execution's two slots kept", count)
+	}
+}
+
+// TestAReconciledResumeThatCannotOpenItsInputKeepsTheClaimItTook is the resumed half
+// of the same rule.
+//
+// A resume replaces an expired claim with a fresh one and hands the Job to this
+// runtime. When the execution cannot then be built — the input is gone by the time
+// it is opened — releasing that replacement handed the Job back to whoever asks next,
+// which is a Resume dispatched over work that may still be running.
+func TestAReconciledResumeThatCannotOpenItsInputKeepsTheClaimItTook(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "reconcile-resume-input.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	registerTestCodec(t, svc)
+
+	sealing := Deps{DB: deps.DB, Replay: &ReplayConfig{Keys: replayKeyringFromSeeds(t, "the-key-that-sealed-it")}}
+	accepted, err := svc.Accept(sealing, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: json.RawMessage(`{"secret":"sealed"}`)},
+	})
+	if err != nil {
+		t.Fatalf("accept with replay input: %v", err)
+	}
+	if _, ok, err := svc.Claim(context.Background(), sealing, ClaimRequest{
+		Kind: testKind, KindVersion: 1, Claimant: "runtime-a",
+		Capacity: []CapacityRef{{Group: CapacityGroupGlobal, Limit: 2}},
+	}); err != nil || !ok {
+		t.Fatalf("claim the job: claimed=%v err=%v", ok, err)
+	}
+
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	reconciling := Deps{DB: deps.DB, Now: func() time.Time { return clock }, Replay: sealing.Replay}
+	// The input disappears between the decision and the execution the resume builds:
+	// a purge, a key rotation landing mid-pass. Whatever the cause, the replacement
+	// claim was taken over an expired one and may not be handed back.
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		if err := deps.DB.Where("job_id = ?", accepted.ID).Delete(&models.JobReplayEnvelope{}).Error; err != nil {
+			t.Fatalf("purge the envelope: %v", err)
+		}
+		return ReconcileResume, nil
+	}
+	expireClaim(t, deps, accepted.ID, clock)
+
+	report := reconcileOnce(t, svc, reconciling, "runtime-b")
+	if len(report.Resume) != 0 {
+		t.Fatalf("a resume whose execution could not be built was dispatched anyway: %+v", report.Resume)
+	}
+	stored := jobRow(t, deps, accepted.ID)
+	if stored.State != string(StateBlocked) {
+		t.Fatalf("job state = %s, want blocked", stored.State)
+	}
+	if stored.ExecutionToken == "" {
+		t.Fatalf("the replacement claim's token was cleared: a Resume would now be admitted over work nobody proved stopped")
+	}
+	claim := claimRow(t, deps, accepted.ID)
+	if claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+	if claim.ExecutionToken != stored.ExecutionToken {
+		t.Fatalf("claim token %q and job token %q disagree", claim.ExecutionToken, stored.ExecutionToken)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 2 {
+		t.Fatalf("capacity rows = %d, want the replacement claim's two slots kept", count)
+	}
+}
+
+// TestAQuarantinedClaimIsReaskedAndReleasedOnNewEvidence is Task 4's recovery edge
+// for the state a quarantine leaves behind: a Job nobody could prove anything about
+// keeps its claim and its capacity, and the proof may arrive later — this host
+// rebooted, the process no longer exists, the Kind's own durable evidence turned up.
+// Only a decision that resolves it is applied, and a pass in between asks again
+// rather than applying the same silence.
+func TestAQuarantinedClaimIsReaskedAndReleasedOnNewEvidence(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "quarantine-recovered.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileExternalWorkUnproven, nil
+	}
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	if _, ok := claimOnce(t, svc, deps, "runtime-a", CapacityRef{Group: CapacityGroupGlobal, Limit: 2}); !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	expireClaim(t, deps, accepted.ID, clock)
+	reconcileOnce(t, svc, deps, "runtime-b")
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+	asked := adapter.reconciledCount()
+
+	// The same silence again: nothing is applied, and the claim is left exactly where
+	// it is while the pass is deferred.
+	report, err := svc.ReconcileQuarantined(context.Background(), deps, "runtime-b", DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ReconcileQuarantined: %v", err)
+	}
+	if report.Examined != 1 || report.Deferred != 1 || len(report.Outcomes) != 0 {
+		t.Fatalf("report = %+v, want the claim examined, deferred and unchanged", report)
+	}
+	if adapter.reconciledCount() != asked+1 {
+		t.Fatalf("the adapter was asked %d times in the quarantine pass", adapter.reconciledCount()-asked)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateBlocked) {
+		t.Fatalf("job state = %s, want it left blocked", stored.State)
+	}
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want it left quarantined", claim.State)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 2 {
+		t.Fatalf("capacity rows = %d, want them still held", count)
+	}
+	// The pass is deferred, not retried on the next tick: a quarantine is not a
+	// reconciliation loop over work nobody could decide.
+	deferred, err := svc.ReconcileQuarantined(context.Background(), deps, "runtime-b", DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("second ReconcileQuarantined: %v", err)
+	}
+	if deferred.Examined != 0 {
+		t.Fatalf("a deferred quarantine was examined again immediately: %+v", deferred)
+	}
+
+	// New evidence: the runtime that owned the work is proved gone, and the adapter
+	// answers with the release that proof permits.
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileQueue, nil
+	}
+	clock = clock.Add(MaxReconcileRetry + time.Minute)
+	recovered, err := svc.ReconcileQuarantined(context.Background(), deps, "runtime-b", DefaultReconcileBatch)
+	if err != nil {
+		t.Fatalf("ReconcileQuarantined after the proof: %v", err)
+	}
+	if len(recovered.Outcomes) != 1 || recovered.Outcomes[0].Decision != ReconcileQueue {
+		t.Fatalf("report = %+v, want the proved-gone claim queued again", recovered)
+	}
+	stored := jobRow(t, deps, accepted.ID)
+	if stored.State != string(StateQueued) {
+		t.Fatalf("job state = %s, want queued", stored.State)
+	}
+	if stored.ExecutionToken != "" {
+		t.Fatalf("the released job still carries token %q", stored.ExecutionToken)
+	}
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("claim state = %s, want released", claim.State)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 0 {
+		t.Fatalf("capacity rows = %d after the quarantine was resolved, want none", count)
+	}
+}

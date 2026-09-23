@@ -283,13 +283,17 @@ func (a *groupExportAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	}
 
 	if snap := entry.Snapshot(); queueJobTerminal(snap.Status) {
-		return a.publishOutcome(execution, input, snap)
+		return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+			return a.publishOutcome(execution, input, finished)
+		})
 	}
 	snap, err := a.ctx.waitForQueueExecution(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, input, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, input, finished)
+	})
 }
 
 // refusalReason answers why this execution may not start, or an empty string.
@@ -346,16 +350,24 @@ func (a *groupExportAdapter) publishOutcome(execution jobs.Execution, request *E
 		}
 		if err := a.ctx.publishQueueArtifact(execution, jobExportArtifactOutput, "Exported archive",
 			path, a.ctx.exportArtifactExpiry()); err != nil {
-			// The queue says the tar was written and the artifact is not there: that
-			// is not a success, whatever the queue's own status says, and it is the
-			// one failure a reader has to be able to tell from "the export failed".
-			return a.ctx.finishQueueJob(execution, jobs.StateFailed,
-				&jobs.Failure{
-					Code:    "export-artifact-missing",
-					Class:   jobs.FailureClassInternal,
-					Message: "the export finished without leaving an archive to hand over",
-				},
-				[]string{jobExportArtifactOutput})
+			if errors.Is(err, errQueueStagedOutputMissing) {
+				// The queue says the tar was written and there is no file: that is not
+				// a success, whatever the queue's own status says, and it is the one
+				// failure a reader has to be able to tell from "the export failed".
+				return a.ctx.finishQueueJob(execution, jobs.StateFailed,
+					&jobs.Failure{
+						Code:    "export-artifact-missing",
+						Class:   jobs.FailureClassInternal,
+						Message: "the export finished without leaving an archive to hand over",
+					},
+					[]string{jobExportArtifactOutput})
+			}
+			// The publication itself was refused — a locked database, a pool briefly
+			// exhausted, a version that moved. The archive is on disk and the outcome is
+			// not the executor's to lose: the owner of this execution offers the whole
+			// publication again. Ending the Job here is how a finished export became an
+			// immutable `export-artifact-missing`.
+			return err
 		}
 		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobExportArtifactOutput})
 	case download_queue.JobStatusCancelled:
@@ -395,7 +407,13 @@ func (a *groupExportAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 
 	parsed, err := exportRequestOf(request.Input)
 	if err != nil {
-		return jobs.ReconcileBlock, nil
+		// The input is what this Kind's reconciliation is made of, and a reconciler that
+		// cannot read it — no key for the envelope, a payload from a newer Kind version —
+		// has decided nothing about the work. Blocking here released the claim, the token
+		// and the capacity of an export that may still be running in the process that
+		// holds the key. The one answer that needs no input is proof that the runtime
+		// which started the work is gone.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	outputs, err := a.ctx.jobOutputsFor(request.Snapshot.ID)
 	if err != nil {

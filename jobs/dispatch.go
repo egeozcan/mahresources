@@ -150,7 +150,7 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 		return Execution{}, false, err
 	}
 
-	execution, err := s.executionFor(ctx, deps, claimed, claim, State(job.State))
+	execution, err := s.executionFor(ctx, deps, claimed, claim, State(job.State), claimFromWaiting)
 	if err != nil {
 		return Execution{}, false, err
 	}
@@ -447,6 +447,26 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 	return releaseCapacityTx(tx, jobID, token)
 }
 
+// claimOrigin says which piece of work a claim was taken over, and it is the whole
+// of the quiescence rule.
+//
+// A claim is taken in two places: over work that was *waiting* (queued or
+// scheduled, admitted by a submission or by a dispatch loop) and over work an
+// *expired* claim already owned (a reconciliation's resume). Nothing is running
+// behind the first — no executor exists until the claim is handed to one — so a Job
+// the control plane cannot hand to an adapter there is this process's own problem,
+// and its claim may be handed back. Behind the second an execution may still be
+// running somewhere, and an unreadable input or a vanished principal proves nothing
+// about it: releasing that claim is how a Resume is dispatched over live work.
+type claimOrigin int
+
+const (
+	// claimFromWaiting is work that was not running when the claim was taken.
+	claimFromWaiting claimOrigin = iota
+	// claimFromExpired is an expired claim replaced by a reconciliation.
+	claimFromExpired
+)
+
 // executionFor builds the Execution for a claim and opens the input the
 // execution runs with.
 //
@@ -454,24 +474,54 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 // executor that will never start: when the refusal is one that blocks work —
 // a key this process does not hold, a Kind version nothing can decode, a
 // payload that fails authentication — the Job is blocked, fenced by the token
-// that was just taken, and the claim is released with it.
-func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, claimedFrom State) (Execution, error) {
+// that was just taken. Whether that block also hands the claim back is what
+// claimOrigin decides: for work that was waiting it does, and for a claim taken
+// over an expired one it does not, because the execution it replaced may still be
+// running the work.
+func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, claimedFrom State, origin claimOrigin) (Execution, error) {
 	// Who the work acts as is settled before what it runs with: a Job whose
 	// recorded principal has been deleted may not be handed to an adapter at all,
 	// because every adapter receives that identity as the authority its work
 	// runs under.
 	access, err := executionAccess(job)
 	if err != nil {
-		return Execution{}, s.blockUnrunnableJob(deps, job, claim, blockedReasonPrincipalMissing, err)
+		return Execution{}, s.unrunnableClaim(deps, origin, job, claim,
+			blockedReasonPrincipalMissing, quarantineReasonPrincipalMissing, err)
 	}
 	input, err := s.executionInput(deps, job)
 	if err != nil {
 		if ReplayBlocked(State(job.State), err) {
-			return Execution{}, s.blockUnrunnableJob(deps, job, claim, blockedReasonInputUnavailable, err)
+			return Execution{}, s.unrunnableClaim(deps, origin, job, claim,
+				blockedReasonInputUnavailable, quarantineReasonInputUnavailable, err)
 		}
 		return Execution{}, err
 	}
 	return newExecution(ctx, deps, s, job, claim, access, input, claimedFrom), nil
+}
+
+// unrunnableClaim decides what becomes of a claim the control plane cannot hand to
+// an adapter: an ordinary block that hands the claim back, or a quarantine that keeps
+// it.
+func (s *Service) unrunnableClaim(deps Deps, origin claimOrigin, job models.Job, claim models.JobClaim, blockReason, quarantineReason string, cause error) error {
+	if origin == claimFromExpired {
+		return s.quarantineUnrunnableClaim(deps, job, claim, quarantineReason, cause)
+	}
+	return s.blockUnrunnableJob(deps, job, claim, blockReason, cause)
+}
+
+// quarantineUnrunnableClaim is blockUnrunnableJob for a claim that was taken over an
+// expired one.
+//
+// It blocks the Job and keeps the replacement claim — with its token and the capacity
+// it holds — because the execution the claim replaced is unproven: it may be running
+// the work in another process, and handing the claim back here would let the next
+// Resume dispatch a second execution of it. The claim's own outcome, or a
+// reconciliation that finds evidence the runtime is gone, is what resolves it.
+func (s *Service) quarantineUnrunnableClaim(deps Deps, job models.Job, claim models.JobClaim, reason string, cause error) error {
+	if _, err := s.quarantineClaim(deps, job, claim, reason, deps.now()); err != nil {
+		return fmt.Errorf("%w (and the job could not be quarantined either: %v)", cause, err)
+	}
+	return cause
 }
 
 // Reasons a claimed Job is blocked by the control plane itself rather than by
@@ -822,6 +872,12 @@ const (
 	// quarantineReasonUnprovenWork: the adapter could not prove the external work
 	// the claim started has stopped.
 	quarantineReasonUnprovenWork = "external-work-unproven"
+	// quarantineReasonInputUnavailable: the execution-required input cannot be
+	// opened in this process, so no decision about the work could be made here. It
+	// is not the same question as blockedReasonInputUnavailable, which is asked at
+	// admission: there nothing is running yet, so the claim may be handed back,
+	// while an expired claim may have a live execution behind it.
+	quarantineReasonInputUnavailable = "input-unavailable"
 	// quarantineReasonPrincipalMissing: the principal the Job's execution acts as
 	// was deleted. No adapter answer could be carried out, because every one of
 	// them would run the work as a principal the Job was not accepted under.
@@ -900,6 +956,39 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			continue
 		}
 
+		// The input is opened before the adapter is asked, because a reconciler that
+		// cannot produce it must not accept a decision made without it. A nil Input
+		// already means "this Kind stores none", and an adapter reading it as "there
+		// is nothing to decide with" answers the release it would answer for work it
+		// had just decoded — which is how a process holding no key for the Job
+		// released the claim, the token and the capacity of a worker that was still
+		// running under the key it did not have.
+		input, unreadable, inputErr := s.reconcileInput(deps, job)
+		if inputErr != nil {
+			// A database or infrastructure error is not evidence that the input is
+			// absent, and it must not be converted into an adapter decision made with
+			// nil input. Leave the held claim alone; its next bounded reconciliation
+			// will retry the read.
+			if decisionErr == nil {
+				decisionErr = inputErr
+			}
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+		if unreadable {
+			snap, err := s.quarantineClaim(deps, job, claim, quarantineReasonInputUnavailable, now)
+			if err != nil {
+				return report, err
+			}
+			report.Outcomes = append(report.Outcomes, ReconcileOutcome{
+				JobID: job.ID, Decision: ReconcileExternalWorkUnproven, Snapshot: snap,
+			})
+			continue
+		}
+
 		adapter, definition, err := s.adapterFor(claim.Kind, claim.KindVersion)
 		if err != nil {
 			snap, err := s.quarantineClaim(deps, job, claim, quarantineReasonAdapterMissing, now)
@@ -912,7 +1001,7 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			continue
 		}
 
-		decision, err := adapter.Reconcile(ctx, s.reconcileRequest(ctx, deps, job, claim, access))
+		decision, err := adapter.Reconcile(ctx, s.reconcileRequest(ctx, deps, job, claim, access, input))
 		if err != nil {
 			// An adapter that could not answer has not decided anything, and
 			// nothing may be applied on its behalf: an error here is a
@@ -973,11 +1062,14 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 			}
 			// Claimed running: a resume hands the *same* execution back under a fresh
 			// token rather than admitting work that was waiting.
-			execution, err := s.executionFor(ctx, deps, resumedJob, resumedClaim, StateRunning)
+			execution, err := s.executionFor(ctx, deps, resumedJob, resumedClaim, StateRunning, claimFromExpired)
 			if err != nil {
 				// The resumed execution could not be built — its input is not
-				// readable in this process — and executionFor has blocked the
-				// Job and released the replacement claim for it.
+				// readable in this process — and executionFor has blocked the Job
+				// and quarantined the replacement claim for it. It is deliberately
+				// not handed back: it was taken over an expired one, so the
+				// execution it replaced may still be running this work, and a
+				// released claim is a Resume that dispatches a second copy.
 				continue
 			}
 			report.Resume = append(report.Resume, execution)
@@ -1100,6 +1192,187 @@ func validReconcileDecision(decision ReconcileDecision) bool {
 	return false
 }
 
+// ReconcileQuarantined asks each quarantined claim's adapter again, so that a
+// quarantine can consume evidence that appeared after it was taken.
+//
+// A quarantined claim keeps its Job's token and the capacity that admitted it
+// precisely because nobody could prove the external work had stopped, and §3 forbids
+// releasing any of it on that silence. The proof can arrive later, and it does not
+// arrive by itself: the runtime that owned the work can be proved gone (this host
+// rebooted since, or the process no longer exists), or the Kind's own durable
+// evidence can turn up without it (a Reduction whose row is ready again, an archive
+// at the published path, a plan restored to its unconsumed name). Both are answers
+// the adapter gives, so this pass asks it again and applies what it answers.
+//
+// It is deliberately not part of ReconcileExpired. A quarantined claim is not expired
+// work waiting for a decision — it is work that was *already* decided as far as
+// anyone here could — and rescanning it at that cadence would turn an unresolvable
+// Job into a reconciliation loop. It has its own due schedule (the same widening
+// backoff an undecidable claim gets) and its own vocabulary: only a decision that
+// *resolves* the quarantine is applied, so "nothing has changed" leaves the claim and
+// its capacity exactly where they are and no amount of time releases unproven work.
+// A quarantine with no resolution at all is therefore not a leak of the *decision*
+// but of the proof — and the one proof that always eventually arrives is the owning
+// process being gone, which is what makes this pass the difference between a
+// deployment that recovers a dead runtime's capacity and one that never does.
+func (s *Service) ReconcileQuarantined(ctx context.Context, deps Deps, claimant string, limit int) (ReconcileReport, error) {
+	if strings.TrimSpace(claimant) == "" {
+		return ReconcileReport{}, fmt.Errorf("%w: a reconciliation pass needs a claimant", ErrInvalidClaim)
+	}
+	if limit <= 0 {
+		limit = DefaultReconcileBatch
+	}
+
+	now := deps.now()
+	claims, err := quarantinedClaims(deps.DB, now, limit)
+	if err != nil {
+		return ReconcileReport{}, err
+	}
+	if len(claims) == 0 {
+		return ReconcileReport{}, nil
+	}
+
+	report := ReconcileReport{Examined: len(claims)}
+	var decisionErr error
+	for _, claim := range claims {
+		job, err := loadJob(deps.DB, claim.JobID)
+		if err != nil {
+			return report, err
+		}
+		if State(job.State) != StateBlocked || job.ExecutionToken != claim.ExecutionToken {
+			// The quarantine was settled by its own execution, replaced, or the Job
+			// moved on while this pass was reading: there is nothing here to ask
+			// about any more.
+			continue
+		}
+
+		access, accessErr := executionAccess(job)
+		if accessErr != nil {
+			// The principal the work acts as is gone. No adapter answer could be
+			// carried out — every one of them would run the work as somebody the
+			// deleted account was not — so the quarantine stays and this pass asks
+			// again later rather than releasing work nobody has proved stopped.
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+
+		adapter, definition, err := s.adapterFor(claim.Kind, claim.KindVersion)
+		if err != nil {
+			// No executor here can prove anything about this Kind's work, which is
+			// often *why* it was quarantined: a Kind registered in a process that
+			// starts later is exactly the evidence this pass exists for.
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+
+		// Best effort, and deliberately so: the input is opened for an adapter that
+		// wants it, but a quarantine exists because something could not be decided,
+		// and the evidence that resolves it — a runtime that is provably gone, a
+		// durable artifact the Kind can see — does not depend on this process being
+		// able to decode the input. An adapter handed none must answer from that
+		// evidence rather than from the input it was not given.
+		input, unreadable, inputErr := s.reconcileInput(deps, job)
+		if inputErr != nil {
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+		if unreadable {
+			input = nil
+		}
+		decision, err := adapter.Reconcile(ctx, s.reconcileRequest(ctx, deps, job, claim, access, input))
+		if err != nil {
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+		if !validReconcileDecision(decision) {
+			if decisionErr == nil {
+				decisionErr = fmt.Errorf("%w: %s v%d answered %q",
+					ErrInvalidReconcileDecision, claim.Kind, claim.KindVersion, decision)
+			}
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+		if !definition.Restorable && (decision == ReconcileResume || decision == ReconcileQueue) {
+			// Closure-backed work is never redispatched after runtime loss, however
+			// it is asked, and "queue" is a redispatch.
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+		if !resolvesQuarantine(decision) {
+			// The adapter answered that nothing has changed: it still cannot prove
+			// the work stopped, or it sees the execution still running. The
+			// quarantine stays exactly where it is.
+			if err := deferClaimReconcile(deps, claim, now); err != nil {
+				return report, err
+			}
+			report.Deferred++
+			continue
+		}
+
+		applied, snap, err := s.applyReconcileDecision(deps, job, claim, decision, now)
+		if err != nil {
+			if errors.Is(err, errReconcileSuperseded) {
+				continue
+			}
+			return report, err
+		}
+		report.Outcomes = append(report.Outcomes, ReconcileOutcome{
+			JobID: job.ID, Decision: applied, Snapshot: snap,
+		})
+	}
+	return report, decisionErr
+}
+
+// resolvesQuarantine reports whether a decision settles a quarantined claim, and it
+// is deliberately narrower than "a decision was applied".
+//
+// Every answer that moves the Job on — back to the queue, or to an outcome — is the
+// adapter saying that the work is not running and what should happen to it. The rest
+// are the answers that mean "still nothing proved": a resume or a remain-running
+// would keep ownership where it is (and the first would hand a blocked Job to a fresh
+// execution), an unproven answer is the same silence in a different word, and a block
+// is the state the Job is already in.
+func resolvesQuarantine(decision ReconcileDecision) bool {
+	switch decision {
+	case ReconcileQueue, ReconcileSucceed, ReconcileFail, ReconcileInterrupt:
+		return true
+	default:
+		return false
+	}
+}
+
+// quarantinedClaims reads the quarantined claims whose own re-ask is due, soonest
+// first, in a bounded batch. The schedule is the same one an undecidable claim's
+// deferral uses, so a quarantine nothing can resolve is retried at a bounded
+// interval rather than on every tick.
+func quarantinedClaims(db *gorm.DB, now time.Time, limit int) ([]models.JobClaim, error) {
+	var claims []models.JobClaim
+	if err := db.Where("state = ?", models.JobClaimStateQuarantined).
+		Where("(next_reconcile_at IS NULL OR next_reconcile_at <= ?)", now).
+		Order("COALESCE(next_reconcile_at, lease_expires_at), job_id").Limit(limit).Find(&claims).Error; err != nil {
+		return nil, fmt.Errorf("jobs: read quarantined claims: %w", err)
+	}
+	return claims, nil
+}
+
 // expiredClaims reads the held claims whose lease has run out and whose own
 // reconciliation schedule is due, soonest first, in a bounded batch. A quarantined
 // claim is deliberately not here: it was already reconciled as far as anyone
@@ -1130,13 +1403,13 @@ func expiredClaims(db *gorm.DB, now time.Time, limit int) ([]models.JobClaim, er
 // reconciler is broken is still retried and still fails to hold up the claims
 // behind it.
 //
-// The write is guarded by the token, so a claim that was resumed or released while
-// the pass was running is not deferred by mistake — there is nothing left to defer
-// about it.
+// The write is guarded by the token and by the state the claim was read in, so a
+// claim that was resumed, released or settled while the pass was running is not
+// deferred by mistake — there is nothing left to defer about it.
 func deferClaimReconcile(deps Deps, claim models.JobClaim, at time.Time) error {
 	result := deps.DB.Model(&models.JobClaim{}).
 		Where("job_id = ? AND state = ? AND execution_token = ?",
-			claim.JobID, models.JobClaimStateHeld, claim.ExecutionToken).
+			claim.JobID, claim.State, claim.ExecutionToken).
 		Updates(map[string]any{
 			"reconcile_attempts": gorm.Expr("reconcile_attempts + 1"),
 			"next_reconcile_at":  at.Add(reconcileRetryDelay(claim.ReconcileAttempts + 1)),
@@ -1165,15 +1438,31 @@ func reconcileRetryDelay(attempts uint) time.Duration {
 	return delay
 }
 
-// reconcileRequest builds what one adapter is told about an expired claim. The
-// input is best effort: a Kind whose input cannot be produced here is told so by
-// a nil Input rather than by an error, because it still has to answer what
-// should happen to the Job.
-func (s *Service) reconcileRequest(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, access Access) ReconcileRequest {
+// reconcileInput opens the input a reconciliation of one claim needs, and reports
+// whether the Job's execution-required input is unavailable in this process.
+//
+// The distinction is the whole reason this is not executionInput: a Kind that stores
+// no input at all — an explicitly non-replayable declaration — has nothing to open
+// and nothing to prove, while a Job whose own class says its input is replayable and
+// which cannot produce it here is *undecided*. An open that fails for any other
+// reason is reported as "not unavailable" for the same reason executionInput
+// refuses it: the caller must see the failure rather than a Job run without it.
+func (s *Service) reconcileInput(deps Deps, job models.Job) (json.RawMessage, bool, error) {
 	input, err := s.executionInput(deps, job)
-	if err != nil {
-		input = nil
+	if err == nil {
+		return input, false, nil
 	}
+	if ReplayBlocked(State(job.State), err) {
+		return nil, true, nil
+	}
+	return nil, false, err
+}
+
+// reconcileRequest builds what one adapter is told about an expired claim. The input
+// is what reconciliation opened for it, and it is nil when the Kind stores none: a
+// reconciler that could not open execution-required input never asks an adapter at
+// all (see ReconcileExpired), so a nil Input here is never a decision made blind.
+func (s *Service) reconcileRequest(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, access Access, input json.RawMessage) ReconcileRequest {
 	ref := ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken}
 	execution := Execution{
 		JobID:          job.ID,

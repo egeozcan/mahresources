@@ -274,7 +274,9 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, finished)
+	})
 }
 
 // start submits the transfer this execution needs, taking the id from the Job's own
@@ -426,7 +428,10 @@ func downloadTerminal(status download_queue.JobStatus) bool {
 func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *download_queue.DownloadJob) error {
 	service := a.ctx.JobService()
 	deps := a.ctx.jobDeps()
-	current, err := service.Get(deps, jobs.Access{Administrator: true}, execution.JobID)
+	// The read goes through the shared completion seam, which is where a test can
+	// refuse it: a read that fails is not a Job that finished, and the publication is
+	// what is retried.
+	current, err := a.ctx.jobCompletionRead(service, execution.JobID)
 	if err != nil {
 		return err
 	}
@@ -455,7 +460,10 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 			Reference: reference,
 			Required:  true,
 		}); err != nil {
-			return a.finish(execution, jobs.StateFailed, "download-output-unavailable")
+			// The Resource exists and the reference to it did not land. That is a
+			// publication the owner retries, not a transfer that produced nothing, and
+			// ending the Job here lost the successful download.
+			return err
 		}
 		return a.finish(execution, jobs.StateSucceeded, "")
 	case download_queue.JobStatusCancelled:
@@ -470,38 +478,23 @@ func (a *downloadJobAdapter) publishOutcome(execution jobs.Execution, snap *down
 // succeed, whatever the queue's own status says.
 const jobDownloadResourceOutput = "resource"
 
-// finish ends the Job with a bounded classification.
+// finish ends the Job with a bounded classification, through the same completion path
+// every queue-backed Kind uses: the read, the versioned retry and the "somebody else
+// already ended it" tolerance are one implementation rather than one per Kind.
 //
 // The queue's own error text is deliberately not carried. The legacy surfaces show
 // it (that is where a person debugs one transfer), but a Job's failure message is
 // searchable text, and the queue's errors can name the URL including its query.
 func (a *downloadJobAdapter) finish(execution jobs.Execution, outcome jobs.State, code string) error {
-	current, err := a.ctx.JobService().Get(a.ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
-	if err != nil {
-		return err
-	}
-	if current.State.Terminal() {
-		return nil
-	}
-	request := jobs.FinishRequest{
-		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
-		ExpectedVersion: current.Version,
-		Outcome:         outcome,
-		RequiredOutputs: []string{jobDownloadResourceOutput},
-	}
+	var failure *jobs.Failure
 	if outcome == jobs.StateFailed {
-		request.Failure = &jobs.Failure{
+		failure = &jobs.Failure{
 			Code:    code,
 			Class:   jobs.FailureClassInternal,
 			Message: "the download did not complete",
 		}
 	}
-	_, err = a.ctx.JobService().Finish(a.ctx.jobDeps(), request)
-	if err != nil && errors.Is(err, jobs.ErrStaleExecution) {
-		// Somebody else's publish won: the Job is not this execution's to end.
-		return nil
-	}
-	return err
+	return a.ctx.finishQueueJob(execution, outcome, failure, []string{jobDownloadResourceOutput})
 }
 
 // Reconcile answers what should happen to one download whose claim expired.

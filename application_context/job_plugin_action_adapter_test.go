@@ -93,6 +93,20 @@ function chatty_work(ctx)
     mah.job_complete(ctx.job_id, { message = "finished " .. ctx.params.secret })
 end
 
+-- A parameter is arbitrary JSON, and the value worth hiding sits wherever the
+-- plugin put it: a leaf under a map, an element of a list, a table the handler
+-- echoes whole. Both shapes are echoed below, through every report surface.
+function nested_work(ctx)
+    local token = ctx.params.credentials.token
+    local recipient = ctx.params.recipients[1]
+    mah.job_progress(ctx.job_id, 25, "touching " .. token .. " for " .. recipient)
+    mah.job_complete(ctx.job_id, {
+        message = "finished for " .. recipient,
+        credentials = ctx.params.credentials,
+        recipient = recipient,
+    })
+end
+
 function burst_work(ctx)
     for i = 1, 400 do
         mah.job_progress(ctx.job_id, i % 100, string.rep("x", 900))
@@ -130,6 +144,11 @@ function init()
     mah.action({ id = "chatty-work", label = "Chatty Work", entity = "resource", async = true,
                  params = { {name = "secret", type = "text", label = "Secret"} },
                  handler = chatty_work })
+    -- Deliberately declares no params: an action's declaration constrains the values a
+    -- form supplies, and the finding's shape is a parameter the caller sends anyway —
+    -- a nested structure whose sensitive value is a leaf.
+    mah.action({ id = "nested-work", label = "Nested Work", entity = "resource", async = true,
+                 handler = nested_work })
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
@@ -1008,6 +1027,89 @@ func TestAPluginJobKeepsItsOwnTextOutOfDurableHistory(t *testing.T) {
 		t.Fatalf("forget the chatty action's input: %v", err)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, chatty, secret)
+}
+
+// TestANestedPluginParameterIsRedactedFromEveryReportSurface is the input half of the
+// redaction rule.
+//
+// A parameter is arbitrary JSON: `{"credentials":{"token":"…"}}` is one parameter whose
+// *leaf* is the secret, and a redaction that collected the parameter's own rendering —
+// the whole map as one JSON string — replaced nothing a handler echoes. The leaf reaches
+// the same durable surfaces a scalar parameter does (progress, the terminal message, the
+// result table, the hook feed), so the values collected are the ones a plugin's text can
+// actually carry: every leaf, at every depth, and the containers they sit in.
+func TestANestedPluginParameterIsRedactedFromEveryReportSurface(t *testing.T) {
+	const token = "nested-credential-token-value"
+	const recipient = "nested-recipient-address-value"
+	ctx := newPluginActionJobContext(t)
+
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "nested-work", 9,
+		map[string]any{
+			"credentials": map[string]any{"token": token},
+			"recipients":  []any{recipient},
+		}, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the nested action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, token)
+	assertNoSecretInJobSurfaces(t, ctx, jobID, recipient)
+
+	// The sealed input is the last copy of the values, and forgetting it must not leave
+	// one behind in the result the handler echoed.
+	forgot := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+	if _, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandForget, IdempotencyKey: "forget-nested",
+		ExpectedVersion: forgot.Version,
+	}); err != nil {
+		t.Fatalf("forget the nested action's input: %v", err)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, token)
+	assertNoSecretInJobSurfaces(t, ctx, jobID, recipient)
+}
+
+// TestAShortPluginParameterIsRedactedFromEveryReportSurface keeps the minimum-size
+// assumption honest.
+//
+// A parameter the plugin echoes is a value the host has accepted and must protect, even
+// when it is only two bytes: `token: "k9"` is no less private to this host because the
+// conventional secret detector cannot tell it is one. The nested fixture echoes it into
+// progress, the terminal message and the structured result; Forget must still leave no
+// copy in any of those surfaces.
+func TestAShortPluginParameterIsRedactedFromEveryReportSurface(t *testing.T) {
+	const token = "k9"
+	const recipient = "short-secret-recipient"
+	ctx := newPluginActionJobContext(t)
+
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "nested-work", 9,
+		map[string]any{
+			"credentials": map[string]any{"token": token},
+			"recipients":  []any{recipient},
+		}, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the short-secret action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, token)
+
+	forgot := jobSnapshot(t, ctx.JobService(), ctx, jobID)
+	if _, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandForget, IdempotencyKey: "forget-short-nested",
+		ExpectedVersion: forgot.Version,
+	}); err != nil {
+		t.Fatalf("forget the short parameter's input: %v", err)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, token)
 }
 
 // assertNoSecretInJobSurfaces reads every surface a viewer can list and refuses a

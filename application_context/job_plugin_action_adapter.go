@@ -111,11 +111,6 @@ const (
 	// pluginActionWaitPollInterval is how often a dispatched execution looks at its
 	// Job while waiting for the plugin manager's report.
 	pluginActionWaitPollInterval = 25 * time.Millisecond
-	// minRedactedParamBytes is the shortest parameter value worth replacing. Below
-	// it a value is a fragment of ordinary prose — "1", "on" — and replacing it
-	// would mangle every message without hiding anything a person would call a
-	// secret.
-	minRedactedParamBytes = 3
 )
 
 // pluginActionJobInput is what a plugin-action Job is accepted with.
@@ -837,8 +832,9 @@ func (s *pluginActionSink) Progress(percent int, message string) {
 // summary refuses to carry them, and its envelope is the only durable copy — so a
 // string built out of one of them is the concrete leak a redaction rule can
 // actually close: `error(ctx.params.token)` reaching the timeline, the progress
-// snapshot or a hook payload. Values too short to be worth replacing are left
-// alone, and a Job with no parameters has nothing to redact.
+// snapshot or a hook payload. Every nonempty value is replaced, including short
+// strings whose meaning the host cannot infer. A Job with no parameters has
+// nothing to redact.
 func (s *pluginActionSink) safeText(message string, limit int) string {
 	return truncateTo(redactPluginParamValues(message, s.input), limit)
 }
@@ -886,17 +882,22 @@ const pluginsMaxSummaryTextBytes = jobs.MaxProgressMessageBytes
 // redactPluginParamValues replaces every occurrence of a parameter value in a
 // plugin-supplied string. Longest first, so a value that contains another value is
 // replaced whole rather than in pieces.
+//
+// The values are the parameter structure's *leaves*, at every depth, plus the
+// containers they sit in. A parameter is arbitrary JSON — {"credentials":{"token":"…"}}
+// is one parameter whose secret is the leaf — and a handler that echoes
+// ctx.params.credentials.token writes that leaf into a message the host persists.
+// Collecting only the parameter's own rendering left the leaf in every report surface,
+// because the whole map as one JSON string is not what the handler's text contains. The
+// recursion is what makes "the values the host knows" mean the values, rather than the
+// shape one test happened to use.
 func redactPluginParamValues(message string, input *pluginActionJobInput) string {
 	if message == "" || input == nil || len(input.Params) == 0 {
 		return message
 	}
 	values := make([]string, 0, len(input.Params))
 	for _, value := range input.Params {
-		text, ok := pluginParamText(value)
-		if !ok || len(text) < minRedactedParamBytes {
-			continue
-		}
-		values = append(values, text)
+		values = appendPluginParamValues(values, value)
 	}
 	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
 	for _, value := range values {
@@ -905,25 +906,41 @@ func redactPluginParamValues(message string, input *pluginActionJobInput) string
 	return message
 }
 
-// pluginParamText renders one parameter value the way a plugin's own text would
-// carry it: a string as itself, and everything else through its JSON form, which
-// is how a Lua table comes back.
-func pluginParamText(value any) (string, bool) {
+// appendPluginParamValues collects every value one accepted parameter could have put
+// into a plugin's text, at every depth.
+//
+// A leaf is collected as itself; a container is collected as its own JSON rendering too,
+// because a handler can carry a whole table through json.encode; and a map's keys are
+// collected beside its values, because result[ctx.params.credentials.token] = true stores
+// a value as a key and a key is as durable and as searchable as a value. No string length
+// threshold is safe: the host cannot know whether a two-byte value is a secret.
+func appendPluginParamValues(values []string, value any) []string {
 	switch typed := value.(type) {
 	case string:
-		return typed, true
-	case nil:
-		return "", false
-	case bool, float64, int, int64:
-		// A scalar that short is caught by the length rule and is not a secret in
-		// practice; rendering it would only mangle prose.
-		return "", false
+		if typed != "" {
+			values = append(values, typed)
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			if key != "" {
+				values = append(values, key)
+			}
+			values = appendPluginParamValues(values, nested)
+		}
+		if encoded, err := json.Marshal(typed); err == nil && len(encoded) > 0 {
+			values = append(values, string(encoded))
+		}
+	case []any:
+		for _, item := range typed {
+			values = appendPluginParamValues(values, item)
+		}
+		if encoded, err := json.Marshal(typed); err == nil && len(encoded) > 0 {
+			values = append(values, string(encoded))
+		}
+	default:
+		// nil, and the numeric or boolean scalars a JSON body produces.
 	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return "", false
-	}
-	return string(encoded), true
+	return values
 }
 
 func (s *pluginActionSink) progress(progress jobs.Progress) {

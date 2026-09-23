@@ -263,13 +263,120 @@ func (ctx *MahresourcesContext) ownQueueExecution(admission queueJobAdmission, e
 		if ctx.queueIsShuttingDown() {
 			return
 		}
-		var publishErr error
-		if publish != nil {
-			publishErr = publish(snap)
+		// The terminal snapshot is what the executor ended with, and it is retained here
+		// for as long as the publication takes: the queue evicts the entry and the process
+		// may be asked for the outcome long after its worker returned, so "the executor
+		// ended" and "the Job says so" are two facts and only the second is durable.
+		if ctx.publishTerminalOutcome(execution, snap, publish) == publicationAcknowledged {
+			ctx.finishOwnedExecution(service, execution, nil)
 		}
-		ctx.finishOwnedExecution(service, execution, publishErr)
 	}()
 }
+
+// terminalPublication says what became of one queue-backed terminal publication.
+type terminalPublication int
+
+const (
+	// publicationAcknowledged is the durable plane holding the outcome — either because
+	// this publication recorded it, or because somebody else had already ended the Job.
+	publicationAcknowledged terminalPublication = iota
+	// publicationFenced is the Job no longer being this execution's to end: it moved on,
+	// somebody else settled it, or it is gone. There is nothing left to publish and a
+	// second outcome is the one thing worse than a late one.
+	publicationFenced
+	// publicationUnfinished is this process being unable to make the outcome durable
+	// before it stopped. The Job keeps its state, its claim and its lease, and the next
+	// process reconciles it from the evidence the executor left behind.
+	publicationUnfinished
+)
+
+// queuePublicationRetryInterval is how long a refused terminal publication waits before
+// it is offered to the durable plane again. Short, because what it is waiting for is a
+// transient write refusal and the Job stays visibly running until it lands.
+const queuePublicationRetryInterval = 250 * time.Millisecond
+
+// publishTerminalOutcome offers one queue execution's terminal outcome — the outputs it
+// publishes and the outcome itself — to the durable plane until it is acknowledged.
+//
+// §3's acceptance boundary is the reason this cannot be a single attempt. A write
+// refused by a locked database, a pool briefly exhausted, or a version that moved under
+// a concurrent command is the write being refused, not the outcome being wrong; reading
+// it as the executor failing turned a finished export into an immutable
+// `dispatch-failed` Job whose archive was on disk and whose artifact was never
+// published. The snapshot is immutable here, so every retry publishes the same outcome
+// rather than recomputing one.
+//
+// Only a refusal by the fence, by the state machine, or by the Job's absence is final:
+// there is nothing left to publish in any of those, and retrying would be a second
+// outcome. Every other error is retried until the deployment stops. There is no time
+// limit: the queue may evict its own terminal entry before a prolonged database outage
+// ends, but this goroutine retains the snapshot the executor returned and continues to
+// offer it. The Job stays claimed and its heartbeat stays live for the entire wait.
+func (ctx *MahresourcesContext) publishTerminalOutcome(execution jobs.Execution, snap *download_queue.DownloadJob, publish func(*download_queue.DownloadJob) error) terminalPublication {
+	if publish == nil {
+		return publicationAcknowledged
+	}
+	logged := false
+	for {
+		err := publish(snap)
+		if err == nil {
+			return publicationAcknowledged
+		}
+		if settleRefused(err) {
+			// The fence working, the state machine refusing, or the Job gone: the
+			// outcome cannot be recorded and offering it again would be a second one.
+			return publicationFenced
+		}
+		if ctx.queueIsShuttingDown() {
+			log.Printf("warning: the outcome of queue job %s was not durable before shutdown; the next process reconciles it",
+				execution.JobID)
+			return publicationUnfinished
+		}
+		// One line per stuck execution rather than one per attempt: the retries are every
+		// quarter second, and what an operator needs from this log is that an outcome is
+		// waiting, not a count of how many times it was offered.
+		if !logged {
+			logged = true
+			log.Printf("warning: could not publish the outcome of queue job %s (%v); retaining it to report again",
+				execution.JobID, err)
+		}
+		time.Sleep(queuePublicationRetryInterval)
+	}
+}
+
+// finishQueueExecution is what a queue-backed Kind's Dispatch returns: the terminal
+// snapshot its executor reached, published to the durable plane.
+//
+// The publication is retained and offered again while it is refused, exactly as the
+// submission path retains it, because a dispatch that is running this Kind's work is the
+// same executor by another route — a Job admitted to wait for a capacity slot, or one a
+// reconciliation queued again — and a refused write there turned the same finished export
+// into the same immutable failure. The only error it carries out is the sentinel that says
+// the outcome could not be made durable here, which leaves the Job running, claimed and
+// leasable for the next process rather than recording an outcome the work did not reach.
+func (ctx *MahresourcesContext) finishQueueExecution(execution jobs.Execution, snap *download_queue.DownloadJob, publish func(*download_queue.DownloadJob) error) error {
+	switch ctx.publishTerminalOutcome(execution, snap, publish) {
+	case publicationUnfinished:
+		return errQueuePublicationUnfinished
+	case publicationFenced:
+		return errQueuePublicationFenced
+	}
+	return nil
+}
+
+// errQueuePublicationUnfinished reports that one execution's terminal outcome could not be
+// made durable before this process stopped.
+//
+// It is not a failure of the work and it is not read as one: the Job keeps its state, its
+// claim and its lease, and the next process reconciles it from the evidence the executor
+// left behind (an archive, a plan, a row). Recording `dispatch-failed` instead is how a
+// finished export became an immutable failure whose bytes were on disk.
+var errQueuePublicationUnfinished = errors.New("the execution's outcome could not be made durable")
+
+// errQueuePublicationFenced says the durable plane refused this publication because
+// this execution no longer owns the Job, it already ended, or the state machine refused
+// the outcome. The runtime must not turn that refusal into a dispatch failure.
+var errQueuePublicationFenced = errors.New("the execution's outcome was refused by its fence")
 
 // renewQueueExecutionClaim heartbeats one owned execution's claim for as long as its
 // executor runs.
@@ -384,6 +491,19 @@ func (ctx *MahresourcesContext) finishOwnedExecution(service *jobs.Service, exec
 	snap, err := service.Get(deps, jobs.Access{Administrator: true}, execution.JobID)
 	if err != nil {
 		log.Printf("job execution: reading job %s after its execution ended failed: %v", execution.JobID, err)
+		return
+	}
+
+	if snap.State == jobs.StateRunning && errors.Is(execErr, errQueuePublicationUnfinished) {
+		// The executor reached its outcome and could not make it durable here. Ending the
+		// Job now — as unfinished or as dispatch-failed — would record an outcome the work
+		// did not reach; leaving it running with its claim and its lease is what lets the
+		// next process settle it from the evidence the executor left behind.
+		return
+	}
+	if snap.State == jobs.StateRunning && errors.Is(execErr, errQueuePublicationFenced) {
+		// The publication was refused as stale, already ended, or illegal. That is not
+		// evidence that the executor failed; only its owner may publish its outcome.
 		return
 	}
 
@@ -752,7 +872,12 @@ func queueJobTerminal(status download_queue.JobStatus) bool {
 //
 // Reading first is what makes two writers safe: the queue's own mirror and this
 // path can both reach the same conclusion, and whoever gets there second finds the
-// Job terminal and writes nothing.
+// Job terminal and writes nothing. The read is repeated when the version moved
+// underneath it — a progress update, a control request, another writer's publish — and
+// only a bounded number of times, because each attempt reads the row again and either
+// finds the Job already terminal or ends it at the version it now carries. A write that
+// fails for any other reason is *returned* rather than read as an outcome: the caller
+// owns the terminal snapshot and offers it again until the durable plane has it.
 func (ctx *MahresourcesContext) finishQueueJob(
 	execution jobs.Execution,
 	outcome jobs.State,
@@ -763,25 +888,55 @@ func (ctx *MahresourcesContext) finishQueueJob(
 	if service == nil {
 		return nil
 	}
-	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
-	if err != nil {
-		return err
+	var contended error
+	for attempt := 0; attempt < queuePublicationWriteAttempts; attempt++ {
+		current, err := ctx.jobCompletionRead(service, execution.JobID)
+		if err != nil {
+			return err
+		}
+		if current.State.Terminal() {
+			return nil
+		}
+		if err := ctx.jobFaults.completionWrite(); err != nil {
+			return err
+		}
+		_, err = service.Finish(ctx.jobDeps(), jobs.FinishRequest{
+			ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
+			ExpectedVersion: current.Version,
+			Outcome:         outcome,
+			Failure:         failure,
+			RequiredOutputs: requiredOutputs,
+		})
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, jobs.ErrStaleExecution):
+			// Somebody else's publish won: the Job is not this execution's to end.
+			return nil
+		case errors.Is(err, jobs.ErrVersionConflict):
+			contended = err
+		default:
+			return err
+		}
 	}
-	if current.State.Terminal() {
-		return nil
+	return contended
+}
+
+// queuePublicationWriteAttempts bounds the versioned retries of one terminal write. The
+// loop re-reads the Job each time, so an attempt only fails again when a concurrent
+// writer moved the version inside the window between the read and the write.
+const queuePublicationWriteAttempts = 5
+
+// jobCompletionRead reads one Job on the way to publishing a queue-backed outcome.
+//
+// It is a named step rather than an inline call because the failure paths either side of
+// it are the contract this file exists for — a read that fails is not a Job that
+// finished — and a test needs to reach the retry without inducing a real outage.
+func (ctx *MahresourcesContext) jobCompletionRead(service *jobs.Service, jobID string) (jobs.Snapshot, error) {
+	if err := ctx.jobFaults.completionRead(); err != nil {
+		return jobs.Snapshot{}, err
 	}
-	_, err = service.Finish(ctx.jobDeps(), jobs.FinishRequest{
-		ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
-		ExpectedVersion: current.Version,
-		Outcome:         outcome,
-		Failure:         failure,
-		RequiredOutputs: requiredOutputs,
-	})
-	if err != nil && errors.Is(err, jobs.ErrStaleExecution) {
-		// Somebody else's publish won: the Job is not this execution's to end.
-		return nil
-	}
-	return err
+	return service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
 }
 
 // blockQueueJob records that one queue-backed Job cannot proceed and who has to
@@ -829,10 +984,13 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 ) error {
 	info, err := ctx.GetDefaultFs().Stat(path)
 	if err != nil {
-		return fmt.Errorf("the artifact %s is not there: %w", path, err)
+		return fmt.Errorf("%w: the artifact %s is not there: %w", errQueueStagedOutputMissing, path, err)
 	}
 	reference, err := json.Marshal(queueArtifactReference{Path: path, Size: info.Size()})
 	if err != nil {
+		return err
+	}
+	if err := ctx.jobFaults.outputPublication(); err != nil {
 		return err
 	}
 	_, err = execution.Output(jobs.OutputInput{
@@ -845,6 +1003,13 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 	})
 	return err
 }
+
+// errQueueStagedOutputMissing reports that the file a queue-backed output names is not
+// there, which is the Kind's own evidence that its work produced nothing. It is
+// deliberately distinct from the *publication* failing: a write refused by a locked
+// database is not a missing archive, and reading the two as one ended a finished export
+// as `export-artifact-missing` while its bytes sat on disk.
+var errQueueStagedOutputMissing = errors.New("the staged output is not there")
 
 // queueArtifactReference is what an artifact output names: where the bytes are, and
 // how many of them the publisher verified. The Kind's own reader understands it and
@@ -866,10 +1031,13 @@ func (ctx *MahresourcesContext) publishQueueReport(
 	required bool,
 ) error {
 	if _, err := ctx.GetDefaultFs().Stat(path); err != nil {
-		return fmt.Errorf("the report %s is not there: %w", path, err)
+		return fmt.Errorf("%w: the report %s is not there: %w", errQueueStagedOutputMissing, path, err)
 	}
 	reference, err := json.Marshal(queueArtifactReference{Path: path})
 	if err != nil {
+		return err
+	}
+	if err := ctx.jobFaults.outputPublication(); err != nil {
 		return err
 	}
 	_, err = execution.Output(jobs.OutputInput{

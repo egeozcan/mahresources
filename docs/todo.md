@@ -1,3 +1,142 @@
+# Job Center post-Task-9 checkpoint, fifth round — close the Astra round-4 review (2026-09-23)
+
+**Goal:** Close the six P1s a fresh Astra cumulative review of `e60a7007` raised after Task 9 —
+a reconciler with no key for a held Job releasing a live worker's claim, a Reduction still
+being computed being queued over, a quarantine whose owning runtime died consuming capacity
+for ever, a refused terminal publication turning a finished export into an immutable failure,
+nested plugin parameters leaking through every report surface, and a scoped-plugin command
+recheck opening a second database connection — plus one P2 where a losing Retry could
+disclose a hidden successor UUID. The findings below follow the supplied Astra artifact at
+`/Users/egecan/.pi/agent/sessions/--Users-egecan-Code-mahresources--/subagent-artifacts/70a4ff5a-b5cb-4913-a2ea-313642d97602_reviewer_output.md`.
+
+## Findings closed
+
+| Finding (P1) | Fix | Regression |
+|---|---|---|
+| Unreadable replay let a reconciliation release an execution that was still running | the expired-claim pass opens the input *before* asking the adapter and quarantines when the Job's own class says it is required and cannot be produced here; a resumed claim that cannot build its execution is quarantined rather than handed back; the four queue-backed adapters answer the quiescence question instead of a release when the input they are given is unreadable | `TestReconcileLeavesAClaimItCannotDecideToAnUnreadableInput`, `TestAReconciledResumeThatCannotOpenItsInputKeepsTheClaimItTook`, `TestAHeldExportIsQuarantinedRatherThanReleasedByAReconcilerWithNoKey` |
+| Reduction reconciliation queued live work on a missing local entry | the clustering Kind's reconcile answers "queue" only on proved quiescence, never on a row that is still `computing` | `TestALiveReductionIsNotQueuedOverByAnExpiredClaim` |
+| Quarantines permanently consumed capacity after their owner died | a bounded `ReconcileQuarantined` pass, run by every runtime tick behind the expired-claim pass, asks each quarantined claim's adapter again on its own widening schedule and applies only decisions that resolve the quarantine | `TestAQuarantinedClaimIsReaskedAndReleasedOnNewEvidence`, `TestARestartedRuntimeResolvesAQuarantineWhoseRuntimeIsProvedGone` |
+| Queue-backed terminal publication failures overwrote the real outcome | the owner retains the terminal snapshot and republishes until acknowledged or fenced; `finishQueueJob` re-reads on a version conflict; a refused output publication is no longer classified as a missing artifact | `TestARefusedTerminalWriteDoesNotFailAnExportThatFinished`, `TestARefusedCompletionReadDoesNotFailAnExportThatFinished`, `TestARefusedOutputPublicationDoesNotReadAsAMissingArchive` |
+| Nested replay parameters leaked through plugin reports | parameter values are collected recursively — every leaf, every container, every key — before a report surface is redacted | `TestANestedPluginParameterIsRedactedFromEveryReportSurface` |
+| Plugin-command rechecks could acquire a second database connection | the command-access seam reads the actor's role off the resolved principal and the per-plugin answer on the caller's own handle, loading and publishing nothing | `TestAScopedPluginCommandRecheckReadsOnTheTransactionItHolds` |
+| A losing Retry disclosed a hidden successor UUID (P2) | the conflict error names only the Job whose Retry was requested | `TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG` |
+
+## Decisions worth recording
+
+- **An unreadable input is a reason to ask nobody.** `ReconcileExpired` now opens the input
+  before it looks up the adapter, and a Job whose replay class says its input is required and
+  which cannot be produced in this process is quarantined with reason `input-unavailable`. A
+  nil `Input` had two meanings — "this Kind stores none" and "this process cannot read it" —
+  and an adapter handed the second one answered the release it would have answered for work
+  it had just decoded. That is how a process holding no key released the claim, the token and
+  the deployment-wide capacity of a worker that was still running under the key it did not
+  have. The adapters that *can* be handed an unreadable payload (an envelope that opens, a
+  body nothing can decode) now answer `queueOnlyIfTheRuntimeIsProvedGone` rather than
+  `ReconcileBlock`, for the same reason: the answers that need no input are the only honest
+  ones.
+- **A claim taken over an expired one is never handed back on an admission failure.** A new
+  `claimOrigin` distinguishes the two places a claim is taken: over waiting work, where
+  nothing is running and an unrunnable Job's claim may be released; and over an expired claim,
+  where an execution may still be running and the same failure quarantines instead. The
+  resume path — the one place dispatch builds an execution for a claim a reconciliation just
+  replaced — is the second kind, and releasing there was a Resume dispatched over live work.
+- **A quarantine is resolved by evidence, not by time.** `ReconcileQuarantined` re-asks each
+  quarantined claim's adapter on the deferral schedule the undecidable path already uses, and
+  applies only a decision that *resolves* it: queue, succeed, fail, interrupt. "Nothing has
+  changed" — an unproven answer, a resume, a remain-running, a block — leaves the claim, its
+  token and its capacity exactly where they are, so no amount of time releases unproven work.
+  The pass is the deployment's, not an operator's: the evidence that arrives on its own is a
+  runtime that is now provably gone, and a restart is when that becomes decidable.
+- **A refused publication is a refused write, not an outcome.** The queue bridge retains the
+  terminal snapshot and republishes it — outputs and outcome — until the durable plane
+  acknowledges it, the fence refuses it finally, or the deployment stops (in which case the
+  Job keeps its state, claim and lease for the next process). Retries have no time limit;
+  queue eviction cannot discard the snapshot held by the publishing goroutine. `finishQueueJob` re-reads on a
+  version conflict, bounded, rather than making one versioned attempt. `errQueueStagedOutputMissing`
+  is the one failure a Kind may read as "my work produced nothing"; everything else is
+  retried. The cost is deliberate: a publication that never lands leaves the Job running with
+  its claim until the process ends, which is the honest state — the work did finish.
+- **Redaction collects the values, recursively.** A parameter is arbitrary JSON, so
+  `{"credentials":{"token":"…"}}` is one parameter whose secret is a leaf. Collecting the
+  parameter's own rendering replaced nothing, because the whole map as one JSON string is not
+  what a handler's text contains. Leaves, containers, keys, and every nonempty scalar are
+  collected now, including short values.
+- **Authority is read on the handle the question is asked on — including the role.** The
+  command seam's `WithPrincipal` call materialized the principal's subtree allow-list with a
+  query of its own, inside the command's transaction: the same second-connection deadlock the
+  adapter reads were corrected for. The role is a property of the principal, so it is read off
+  the principal, and the per-plugin answer is read directly on the caller's handle. This does
+  not load or publish the process-wide cache.
+
+## Additional review corrections
+
+- **A chain conflict does not reveal the successor.** Two callers can both pass the initial
+  command check before one creates the Retry successor. The loser receives only the
+  `ErrCommandChainConflict` and the Job it already asked about; the successor remains
+  subject to ordinary lineage visibility.
+- **A failed replay read is not an unreadable replay.** Only the replay-blocking error
+  family proves this process cannot open required input. A transient database error defers
+  reconciliation with the claim still held, instead of asking an adapter to decide with
+  nil input.
+- **A refused publication is not an executor failure, including after a final fence
+  refusal.** A distinct completion error keeps the runtime from converting a stale or
+  illegal publish into `dispatch-failed`. Import-apply report writes are retained with the
+  terminal snapshot when a non-fence publication error occurs.
+- **Short plugin values are secrets too.** Redaction has no minimum-length exception;
+  the regression uses a two-character nested value and checks the user-visible report surfaces.
+- **The compatibility guide follows the Job Service.** `CLAUDE.md` now describes the
+  canonical Job lifecycle, queue and download-history projections, Retry successor identity,
+  and remaining legacy resubmission path.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test -race --tags 'json1 fts5' ./jobs ./download_queue ./application_context -count=1` — clean;
+  a post-fix race run of the short-secret and refused-publication regressions also passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./application_context ./server/api_tests -count=1` — clean.
+- `go vet --tags 'json1 fts5' ./...` clean; `gofmt -l` clean on every changed file;
+  `git diff --check` clean.
+- `npm run build` — clean (Vite reports the existing large `main.js` chunk warning).
+- Job Center browser E2E — 63 passed; CLI Job E2E — 12 passed.
+- Red evidence, per finding: every regression above was observed failing before its fix — by
+  the pre-fix expression restored (the six Go tests whose assertions name the old behaviour),
+  by the fault wired into the pre-fix publication path (`TestARefusedTerminalWrite…`,
+  `TestARefusedCompletionRead…`, `TestARefusedOutputPublication…` all reached
+  `dispatch-failed` / `export-artifact-missing`), the short-secret test with the former
+  three-byte threshold (progress exposed `k9`), or by the missing method
+  (`ReconcileQuarantined` did not exist when its first regression was written).
+
+## Residual, known and deliberate
+
+- **The quarantine pass asks the adapter on every due tick.** A quarantine nothing can resolve
+  is re-asked at a widening, bounded interval (`DefaultReconcileRetry` … `MaxReconcileRetry`),
+  which is a real cost per quarantined Job and is the price of a state that has no other path
+  out. A Kind whose reconcile has side effects (the export Kind publishes an artifact when it
+  finds one) now exercises them from a second process as well as from the expiry scan.
+- **An input that is unreadable *for ever* keeps its capacity until the runtime is proved
+  gone.** The quarantine pass asks the adapter with a nil input in that case, so a Kind can
+  still answer on evidence that does not need one — but a Kind that cannot (the export Kind
+  needs the input to name the archive, and checks only the published output) leaves the Job
+  blocked with its slot held until the owning process is provably gone. That is §3's
+  fail-safe direction; it is a capacity cost, not a correctness one.
+- **The retained publication is process memory.** A process that stops while an outcome is
+  still unacknowledged loses that snapshot; the Job keeps its claim and its lease, and the
+  next process re-derives the outcome from the evidence the executor left behind (an archive,
+  a plan, a row) or blocks the Job. Nothing here makes an unrecorded outcome durable by
+  itself.
+- **`settleRefused` is now the queue bridge's finality rule too.** It treats `ErrNotFound` as
+  final, so a Job pruned while its publication was being retried stops the retry rather than
+  spinning — but it also means a publication refused by a *removed* Job is reported as fenced
+  rather than retried, which is the only sensible reading of a Job that no longer exists.
+- **The two P2 notes from the round-3 review remain separate open items.** This round's P2,
+  hidden successor UUID disclosure, is closed above.
+
+## Files, commits and artefact
+
+- Code-fix commit: this round's `fix(jobs): ...` commit on `master`.
+- Artefact: `/tmp/mahresources-job-center-cumulative-<code HEAD>.diff` (baseline
+  `6fb0f97d94c48c5ccf7183447ab72907578cd4ba..HEAD` with full metadata).
+
 # Job Center post-Task-9 checkpoint, fourth round — close the Astra round-3 review's six P1 findings (2026-09-23)
 
 **Goal:** Close the six P1s a fresh Astra cumulative review of `3db7ed41` (run

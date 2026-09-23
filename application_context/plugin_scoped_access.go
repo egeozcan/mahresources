@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // scopedAccessTTL bounds how long a snapshot is trusted.
@@ -129,6 +131,35 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 		snapshot = loaded
 	}
 	return snapshot.allowed[pluginName]
+}
+
+// pluginAllowsScopedPrincipalsOn answers PluginAllowsScopedPrincipals on a caller's own
+// handle, without loading or publishing the process-wide snapshot.
+//
+// The command path asks this question *inside a transaction*: the recheck that decides
+// whether a Kind still offers a command runs there, and a cache miss on the shared read
+// would otherwise load PluginState through the context's own handle — a second database
+// connection while the first is held, which is a guaranteed deadlock against a pool of
+// one and avoidable contention against every other pool. This path reads the current row
+// through the transaction handle every time: a process snapshot can miss a revocation
+// made by another process, and loading or publishing one here could ask for a second
+// connection.
+//
+// Fail-closed on an unreadable row, exactly like the cached form: the caller is deciding
+// whether plugin code may run for a confined principal, and "I could not find out" must
+// not resolve to yes.
+func (ctx *MahresourcesContext) pluginAllowsScopedPrincipalsOn(db *gorm.DB, pluginName string) bool {
+	if ctx == nil || pluginName == "" {
+		return false
+	}
+	if db == nil {
+		return false
+	}
+	var state models.PluginState
+	if err := db.Where("plugin_name = ?", pluginName).First(&state).Error; err != nil {
+		return false
+	}
+	return state.Enabled && state.AllowScopedPrincipals
 }
 
 // SetPluginScopedAccess records whether group-limited principals may reach a

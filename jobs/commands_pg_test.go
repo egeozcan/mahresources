@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -88,12 +89,13 @@ func TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG(t *testing.T) {
 	h.advertiseStateful()
 	owner := uint(7)
 	viewer := Access{UserID: owner}
+	admin := Access{UserID: 3, Administrator: true}
 
 	ancestor := h.acceptReplayable(&owner)
 	h.fail(ancestor.ID)
 
 	requests := []CommandRequest{
-		h.request(ancestor.ID, CommandRetry, "idem-pg-retry-a", viewer),
+		h.request(ancestor.ID, CommandRetry, "idem-pg-retry-a", admin),
 		h.request(ancestor.ID, CommandRetry, "idem-pg-retry-b", viewer),
 	}
 	errs := concurrent(
@@ -122,8 +124,22 @@ func TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG(t *testing.T) {
 		t.Fatalf("%d retries succeeded and %d were refused, want one of each (%s)",
 			succeeded, refused, describeErrors(errs))
 	}
-	if successors := jobLinks(t, h.deps, ancestor.ID, LinkRetryOf, false); len(successors) != 1 {
+	successors := jobLinks(t, h.deps, ancestor.ID, LinkRetryOf, false)
+	if len(successors) != 1 {
 		t.Fatalf("one job has %d retry successors, want exactly one", len(successors))
+	}
+	for _, err := range errs {
+		if err != nil && strings.Contains(err.Error(), successors[0]) {
+			t.Fatalf("the losing retry disclosed a successor UUID: %v", err)
+		}
+	}
+	if errs[0] == nil {
+		if _, err := h.svc.Get(h.deps, viewer, successors[0]); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the administrator's successor is visible to its losing owner: %v", err)
+		}
+		if errs[1] != nil && errors.Is(errs[1], ErrCommandChainConflict) && strings.Contains(errs[1].Error(), successors[0]) {
+			t.Fatalf("the losing owner learned the hidden successor UUID: %v", errs[1])
+		}
 	}
 }
 

@@ -177,13 +177,17 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 	}
 
 	if snap := entry.Snapshot(); queueJobTerminal(snap.Status) {
-		return a.publishOutcome(execution, input, snap)
+		return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+			return a.publishOutcome(execution, input, finished)
+		})
 	}
 	snap, err := a.ctx.waitForQueueExecution(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, input, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, input, finished)
+	})
 }
 
 // forExecution returns this adapter bound to the principal one execution acts as,
@@ -288,13 +292,11 @@ func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input
 			Reference: reference,
 			Required:  true,
 		}); err != nil {
-			return a.ctx.finishQueueJob(execution, jobs.StateFailed,
-				&jobs.Failure{
-					Code:    "reduction-output-unavailable",
-					Class:   jobs.FailureClassInternal,
-					Message: "the clustering run produced no Resource Reduction to open",
-				},
-				[]string{jobReductionOutput})
+			// A refused publication is a write that did not land, not a clustering run
+			// that produced nothing: the plan is in the row and this is the reference to
+			// it. The execution's owner retries the publication, and the Job stays
+			// running until it lands.
+			return err
 		}
 		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobReductionOutput})
 	case download_queue.JobStatusCancelled:
@@ -332,7 +334,14 @@ func (a *reductionComputeAdapter) Reconcile(_ context.Context, request jobs.Reco
 	}
 	input, err := reductionComputeInputOf(request.Input)
 	if err != nil {
-		return jobs.ReconcileBlock, nil
+		// The input names the Reduction this run is about, and a reconciler that
+		// cannot read it can decide nothing about the work: the execution that sealed
+		// it may be computing in the process that holds the key. Blocking here — which
+		// this did — released the claim, the token and the deployment-wide capacity of
+		// a run that may still be walking the Extent, which is the duplicate dispatch
+		// §3 forbids. The one answer that needs no input is positive proof that the
+		// runtime which started it is gone.
+		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 	}
 	reduction, err := a.ctx.loadReductionForUpdate(input.ReductionID, nil, false)
 	if err != nil {
@@ -364,7 +373,15 @@ func (a *reductionComputeAdapter) Reconcile(_ context.Context, request jobs.Reco
 		}
 		return jobs.ReconcileSucceed, nil
 	}
-	return jobs.ReconcileQueue, nil
+	// Nothing this process can see produced the plan, and the row is not `ready` under
+	// this Job's own handle. The row may still be `computing` in a process this one
+	// cannot inspect, and that is the whole difference between a re-run and a duplicate:
+	// a replacement dispatched over a live run takes the row's generation and the live
+	// run then discards its own plan, while the Job that released the claim is blocked
+	// as soon as `start` finds the row busy — its capacity gone and the work still
+	// running. §3 permits the replacement only once the claim's own runtime is proved
+	// gone, which is what this asks.
+	return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
 }
 
 // CleanupArtifacts accounts for one clustering run's outputs: its output is the

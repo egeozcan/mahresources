@@ -150,13 +150,17 @@ func (a *similarityRecomputeAdapter) Dispatch(ctx context.Context, execution job
 	}
 
 	if snap := entry.Snapshot(); queueJobTerminal(snap.Status) {
-		return a.publishOutcome(execution, snap)
+		return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+			return a.publishOutcome(execution, finished)
+		})
 	}
 	snap, err := a.ctx.waitForQueueExecution(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
-	return a.publishOutcome(execution, snap)
+	return a.ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return a.publishOutcome(execution, finished)
+	})
 }
 
 // refusalReason answers why this execution may not start, or an empty string.

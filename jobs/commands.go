@@ -1480,7 +1480,10 @@ func requireNoRetrySuccessor(tx *gorm.DB, job models.Job) error {
 		return err
 	}
 	if len(successors) > 0 {
-		return fmt.Errorf("%w: job %s already has retry successor %s", ErrCommandChainConflict, job.ID, successors[0])
+		// The successor can belong to somebody the actor cannot see (for example,
+		// an administrator who retried an owner's Job). The conflict is all the
+		// caller needs; naming the UUID would bypass lineage visibility.
+		return fmt.Errorf("%w: job %s already has a retry successor", ErrCommandChainConflict, job.ID)
 	}
 	return nil
 }

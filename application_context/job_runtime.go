@@ -215,6 +215,14 @@ func (r *JobRuntime) run() {
 // process has no adapter for is blocked in between, for the same reason: such a
 // Job is not owned by anybody, so no reconciliation batch would ever reach it and
 // nothing here could ever run it.
+//
+// Quarantined claims are asked again on their own schedule, behind the expired ones
+// and before anything is dispatched. They are the one state that holds a
+// deployment-wide capacity slot without anyone able to resolve it, and the evidence
+// that resolves it — the owning process being provably gone, a Kind registered in a
+// process that started later, durable work the Kind can see — appears while the
+// deployment runs. A restart is exactly when it appears, which is why this belongs in
+// the tick rather than in an operator's hands.
 func (r *JobRuntime) tick(ctx context.Context) {
 	if r == nil || r.service == nil || r.ctx == nil {
 		return
@@ -231,6 +239,13 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			continue
 		}
 		r.startExecution(adapter, execution, r.executionLeaseFor(adapter))
+	}
+
+	// A quarantine resolves to a Job that has left the blocked state — queued again, or
+	// ended — so this pass never returns an execution to dispatch: whatever it releases
+	// is ordinary work the claim loop below picks up in this same tick.
+	if _, err := r.service.ReconcileQuarantined(ctx, r.depsFor(ctx), r.claimant, jobs.DefaultReconcileBatch); err != nil {
+		log.Printf("job runtime: reconciling quarantined work failed: %v", err)
 	}
 
 	// A Kind this process cannot run at all leaves its pending work in a state
