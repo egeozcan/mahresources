@@ -48,6 +48,11 @@ func (r *Registry) Register(info RouteInfo) {
 	if info.ResponseType != nil {
 		r.generator.GenerateSchema(info.ResponseType)
 	}
+	for _, errorType := range info.ErrorResponseTypes {
+		if errorType != nil {
+			r.generator.GenerateSchema(errorType)
+		}
+	}
 }
 
 // SetPartialFields configures the fields emitted when a type is used as an
@@ -56,6 +61,16 @@ func (r *Registry) Register(info RouteInfo) {
 // stable wire shape.
 func (r *Registry) SetPartialFields(typeName string, fields ...string) {
 	r.generator.PartialFields[typeName] = append([]string(nil), fields...)
+}
+
+// RegisterSchemaType adds a named DTO schema even when a route only uses it in
+// an error response or as a nested optional field. This lets route registrars
+// publish the complete component graph without inventing a fake endpoint.
+func (r *Registry) RegisterSchemaType(typ reflect.Type) {
+	if typ == nil {
+		return
+	}
+	r.generator.GenerateSchema(typ)
 }
 
 // GenerateSpec generates the complete OpenAPI 3.0 specification.
@@ -255,9 +270,13 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 
 	// Add error responses
 	for code, desc := range route.ErrorResponses {
-		op.Responses.Set(statusCodeToString(code), &openapi3.ResponseRef{
-			Value: &openapi3.Response{Description: strPtr(desc)},
-		})
+		response := &openapi3.Response{Description: strPtr(desc)}
+		if errorType := route.ErrorResponseTypes[code]; errorType != nil {
+			response.Content = openapi3.Content{
+				string(ContentTypeJSON): &openapi3.MediaType{Schema: r.generator.GenerateSchema(errorType)},
+			}
+		}
+		op.Responses.Set(statusCodeToString(code), &openapi3.ResponseRef{Value: response})
 	}
 
 	return op

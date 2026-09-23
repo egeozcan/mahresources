@@ -76,6 +76,9 @@ type RouteInfo struct {
 
 	// HTTP status codes and their response types
 	ErrorResponses map[int]string
+	// ErrorResponseTypes optionally gives an HTTP error response a JSON schema.
+	// Descriptions remain useful when no stable response body is available.
+	ErrorResponseTypes map[int]reflect.Type
 
 	// Whether this endpoint supports pagination (adds page parameter)
 	Paginated bool
