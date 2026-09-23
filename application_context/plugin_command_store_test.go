@@ -206,6 +206,11 @@ func TestPluginCommandWritesUseCanonicalReplayAfterWriterFence(t *testing.T) {
 	require.NoError(t, json.Unmarshal(openedRun.Input, &runInput))
 	require.Equal(t, run.ParamsJSON, runInput.ParamsJSON)
 	require.Equal(t, encodeSuppliedInputs(run.Inputs), runInput.InputsJSON)
+	staleRun := storedRun
+	staleRun.ParamsJSON, staleRun.InputsJSON = `{"stale":"secret"}`, `["wrong"]`
+	require.NoError(t, ctx.hydratePluginCommandRun(&staleRun, ctx.db))
+	require.Equal(t, runInput.ParamsJSON, staleRun.ParamsJSON)
+	require.Equal(t, runInput.InputsJSON, staleRun.InputsJSON)
 
 	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
 		ImportID: "post-fence-import", RunID: run.ID, FileName: "admitted.csv",
@@ -222,6 +227,17 @@ func TestPluginCommandWritesUseCanonicalReplayAfterWriterFence(t *testing.T) {
 	var importInput pluginCommandImportReplayInput
 	require.NoError(t, json.Unmarshal(openedImport.Input, &importInput))
 	require.Equal(t, `{"title":"secret-field"}`, importInput.FieldsJSON)
+	staleImport := storedImport
+	staleImport.FieldsJSON = `{"stale":"secret"}`
+	require.NoError(t, ctx.hydratePluginCommandImport(&staleImport, ctx.db))
+	require.Equal(t, importInput.FieldsJSON, staleImport.FieldsJSON)
+	importAdapter := &pluginCommandJobAdapter{ctx: ctx, kind: JobKindPluginCommandImport}
+	fieldsJSON, ok := importAdapter.importFieldsJSON(ctx.db, models.PluginCommandImport{
+		ID: storedImport.ID, JobID: storedImport.JobID, RunID: storedImport.RunID,
+		FileName: storedImport.FileName, FieldsJSON: `{"stale":"secret"}`,
+	})
+	require.True(t, ok)
+	require.Equal(t, importInput.FieldsJSON, fieldsJSON, "the import retry reader must ignore stale legacy fields after epoch 2")
 	imports, err := ctx.NonterminalImports()
 	require.NoError(t, err)
 	require.Len(t, imports, 1)

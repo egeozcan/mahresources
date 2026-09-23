@@ -268,11 +268,20 @@ func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) boo
 }
 
 func (a *pluginCommandJobAdapter) importFieldsJSON(db *gorm.DB, source models.PluginCommandImport) (string, bool) {
-	if source.FieldsJSON != "" {
-		return source.FieldsJSON, true
+	if a == nil || a.ctx == nil || db == nil {
+		return "", false
 	}
 	retired, err := pluginCommandInputsRetired(db)
-	if err != nil || !retired || source.JobID == "" || a.ctx.JobService() == nil {
+	if err != nil {
+		return "", false
+	}
+	if !retired {
+		return source.FieldsJSON, source.FieldsJSON != ""
+	}
+	// Once the writer fence is active, the source column is only a compatibility
+	// projection. A stale in-memory row or restored backup cannot outrank the
+	// canonical envelope used by import retry.
+	if source.JobID == "" || a.ctx.JobService() == nil {
 		return "", false
 	}
 	opened, err := a.ctx.JobService().OpenReplay(a.ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, source.JobID)

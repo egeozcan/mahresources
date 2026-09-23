@@ -30,7 +30,7 @@ func commandImportContext(t *testing.T) (*MahresourcesContext, *models.User, *mo
 function init() end`)
 	ctx := createTestContextWithPlugins(t, pluginDir)
 	t.Cleanup(ctx.PluginManager().Close)
-	if err := ctx.db.AutoMigrate(&models.PluginCommandRun{}, &models.PluginCommandRunOutput{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{}); err != nil {
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.PluginCommandRun{}, &models.PluginCommandRunOutput{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ctx.EnsurePluginStates(); err != nil {

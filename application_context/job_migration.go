@@ -83,7 +83,7 @@ func (ctx *MahresourcesContext) recordDualPublishedDownloadHistoryTx(tx *gorm.DB
 		return errors.New("download history canonical handle is unavailable")
 	}
 	return ctx.recordDualPublishedSourceTx(tx, jobMigrationDownloadHistory, strconv.FormatUint(uint64(row.ID), 10), handle.JobID,
-		hashDownloadHistory(row), scrubbed, now)
+		hashDownloadHistory(row), hashRetiredDownloadHistory(row), scrubbed, now)
 }
 
 func (ctx *MahresourcesContext) recordDualPublishedScheduledDownload(row models.ScheduledDownload, scrubbed bool, now time.Time) error {
@@ -98,7 +98,7 @@ func (ctx *MahresourcesContext) recordDualPublishedScheduledDownloadTx(tx *gorm.
 		return errors.New("scheduled download canonical handle is unavailable")
 	}
 	return ctx.recordDualPublishedSourceTx(tx, jobMigrationScheduledDownload, strconv.FormatUint(uint64(row.ID), 10), handle.JobID,
-		hashScheduledDownload(row), scrubbed, now)
+		hashScheduledDownload(row), hashRetiredScheduledDownload(row), scrubbed, now)
 }
 
 // refreshChangedDownloadHistoryMapping and refreshChangedScheduledDownloadMapping
@@ -240,11 +240,11 @@ func (ctx *MahresourcesContext) refreshChangedScheduledDownloadMapping(tx *gorm.
 
 func (ctx *MahresourcesContext) recordDualPublishedSource(kind, sourceID, jobID, hash string, scrubbed bool, now time.Time) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		return ctx.recordDualPublishedSourceTx(tx, kind, sourceID, jobID, hash, scrubbed, now)
+		return ctx.recordDualPublishedSourceTx(tx, kind, sourceID, jobID, hash, hash, scrubbed, now)
 	})
 }
 
-func (ctx *MahresourcesContext) recordDualPublishedSourceTx(tx *gorm.DB, kind, sourceID, jobID, hash string, scrubbed bool, now time.Time) error {
+func (ctx *MahresourcesContext) recordDualPublishedSourceTx(tx *gorm.DB, kind, sourceID, jobID, hash, postScrubHash string, scrubbed bool, now time.Time) error {
 	var mapping models.JobSourceMapping
 	err := tx.Where("source_kind = ? AND source_id = ?", kind, sourceID).First(&mapping).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -267,7 +267,7 @@ func (ctx *MahresourcesContext) recordDualPublishedSourceTx(tx *gorm.DB, kind, s
 	mapping.VerifiedAt, mapping.ScrubbedAt = nil, nil
 	mapping.PostScrubHash = ""
 	if scrubbed {
-		mapping.Status, mapping.ScrubbedAt, mapping.PostScrubHash = models.JobSourceMappingScrubbed, &now, hash
+		mapping.Status, mapping.ScrubbedAt, mapping.PostScrubHash = models.JobSourceMappingScrubbed, &now, postScrubHash
 	} else {
 		mapping.Status = models.JobSourceMappingCopied
 	}
@@ -333,7 +333,11 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 				}
 			}
 		case models.JobMigrationPhaseDrainFence:
-			if !options.WritersDrained {
+			writerEpoch, err := models.JobWriterEpochMinimum(ctx.db)
+			if err != nil {
+				return result, errors.New("job migration writer epoch could not be read")
+			}
+			if !options.WritersDrained && writerEpoch < models.JobWriterEpochRetiredPlaintext {
 				var blocked int64
 				if err := ctx.db.Model(&models.JobSourceMapping{}).Where("status = ?", models.JobSourceMappingQuarantined).Count(&blocked).Error; err != nil {
 					return result, errors.New("job migration could not read its quarantine ledger")
@@ -421,7 +425,47 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 				}
 			}
 		case models.JobMigrationPhaseComplete:
-			result.Phase, result.Complete = checkpoint.Phase, true
+			readiness, err := ctx.GetJobMigrationReadiness()
+			if err != nil {
+				return result, err
+			}
+			if readiness.Ready {
+				result.Phase, result.Complete = checkpoint.Phase, true
+				if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+					return result, err
+				}
+				return result, nil
+			}
+			_, rearmed, err := ctx.rearmOneRestoredSource(now())
+			if err != nil {
+				return result, err
+			}
+			if rearmed {
+				result.Batches++
+				checkpoint.Phase, checkpoint.SourceKind, checkpoint.CursorID = models.JobMigrationPhaseCopy, jobMigrationSourceKinds[0], ""
+				checkpoint.CompletedAt = nil
+				if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+					return result, err
+				}
+				continue
+			}
+			unmapped, err := ctx.hasUnmappedJobMigrationSources()
+			if err != nil {
+				return result, errors.New("job migration could not recheck source coverage")
+			}
+			if unmapped {
+				result.Batches++
+				checkpoint.Phase, checkpoint.SourceKind, checkpoint.CursorID = models.JobMigrationPhaseCopy, jobMigrationSourceKinds[0], ""
+				checkpoint.CompletedAt = nil
+				if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+					return result, err
+				}
+				continue
+			}
+			result.Phase, result.Complete = models.JobMigrationPhaseDrainFence, false
+			result.BlockedSources = totalMigrationReadinessBlockers(readiness)
+			checkpoint.Phase, checkpoint.SourceKind, checkpoint.CursorID = models.JobMigrationPhaseDrainFence, "", ""
+			checkpoint.CompletedAt = nil
 			if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
 				return result, err
 			}
@@ -452,7 +496,15 @@ func (ctx *MahresourcesContext) RunJobMigrationToGate(options JobMigrationOption
 		if err != nil {
 			return result, err
 		}
-		if result.Complete || (!options.WritersDrained && result.Phase == models.JobMigrationPhaseDrainFence) ||
+		needsExternalDrain := false
+		if !options.WritersDrained && result.Phase == models.JobMigrationPhaseDrainFence {
+			epoch, err := models.JobWriterEpochMinimum(ctx.db)
+			if err != nil {
+				return result, errors.New("job migration writer epoch could not be read")
+			}
+			needsExternalDrain = epoch < models.JobWriterEpochRetiredPlaintext
+		}
+		if result.Complete || needsExternalDrain ||
 			(result.Phase == models.JobMigrationPhaseDrainFence && result.BlockedSources > 0) || passBatches == 0 {
 			return result, nil
 		}
@@ -839,6 +891,31 @@ func hashDownloadHistory(row models.DownloadHistoryEntry) string {
 	encoded, _ := json.Marshal(projection)
 	hash := sha256.Sum256(encoded)
 	return hex.EncodeToString(hash[:])
+}
+
+func hashRetiredDownloadHistory(row models.DownloadHistoryEntry) string {
+	return hashJobMigrationProjection(struct {
+		ID      uint
+		JobID   string
+		URL     string
+		Payload []byte
+	}{row.ID, row.JobID, row.URL, append([]byte(nil), row.Payload...)})
+}
+
+func hashRetiredScheduledDownload(row models.ScheduledDownload) string {
+	return hashJobMigrationProjection(struct {
+		ID         uint
+		PluginName string
+		JobID      string
+		URL        string
+		Payload    []byte
+	}{row.ID, row.PluginName, row.JobID, row.URL, append([]byte(nil), row.Payload...)})
+}
+
+func hashJobMigrationProjection(value any) string {
+	encoded, _ := json.Marshal(value)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }
 
 func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEntry, now time.Time) error {
@@ -1274,7 +1351,7 @@ func (ctx *MahresourcesContext) scrubDownloadHistoryBatch(cursor string, limit i
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
 				return errors.New("download history disappeared before scrub")
 			}
-			if hashDownloadHistory(row) != current.SourceHash {
+			if current.Status != models.JobSourceMappingPurged && hashDownloadHistory(row) != current.SourceHash {
 				if err := quarantineJobSource(tx, &current, "source changed after verification"); err != nil {
 					return err
 				}
@@ -1294,7 +1371,7 @@ func (ctx *MahresourcesContext) scrubDownloadHistoryBatch(cursor string, limit i
 			if current.Status != models.JobSourceMappingPurged {
 				current.Status = models.JobSourceMappingScrubbed
 			}
-			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashDownloadHistory(scrubbed), now
+			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashRetiredDownloadHistory(scrubbed), now
 			if err := tx.Save(&current).Error; err != nil {
 				return errors.New("download history scrub marker could not be stored")
 			}
@@ -1360,7 +1437,7 @@ func (ctx *MahresourcesContext) scrubScheduledDownloadBatch(cursor string, limit
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
 				return errors.New("scheduled download disappeared before scrub")
 			}
-			if hashScheduledDownload(row) != current.SourceHash {
+			if current.Status != models.JobSourceMappingPurged && hashScheduledDownload(row) != current.SourceHash {
 				if err := quarantineJobSource(tx, &current, "source changed after verification"); err != nil {
 					return err
 				}
@@ -1380,7 +1457,7 @@ func (ctx *MahresourcesContext) scrubScheduledDownloadBatch(cursor string, limit
 			if current.Status != models.JobSourceMappingPurged {
 				current.Status = models.JobSourceMappingScrubbed
 			}
-			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashScheduledDownload(scrubbed), now
+			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashRetiredScheduledDownload(scrubbed), now
 			if err := tx.Save(&current).Error; err != nil {
 				return errors.New("scheduled download scrub marker could not be stored")
 			}
@@ -1408,11 +1485,11 @@ func (ctx *MahresourcesContext) installRetiredPlaintextBarrier(now time.Time) er
 		if epoch.MinimumEpoch > models.JobWriterEpochRetiredPlaintext {
 			return fmt.Errorf("database job writer epoch %d is unsupported", epoch.MinimumEpoch)
 		}
-		if epoch.MinimumEpoch == models.JobWriterEpochRetiredPlaintext {
-			return nil
-		}
 		if err := installLegacySourceBarriers(tx); err != nil {
 			return err
+		}
+		if epoch.MinimumEpoch == models.JobWriterEpochRetiredPlaintext {
+			return nil
 		}
 		result := tx.Model(&models.JobWriterEpoch{}).
 			Where("id = ? AND minimum_epoch = ?", models.JobWriterEpochRowID, models.JobWriterEpochDualPublisher).

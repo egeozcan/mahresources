@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
@@ -238,12 +239,15 @@ end
 `)
 	ctx := createTestContextWithPlugins(t, pluginDir)
 	ctx.SetJobService(jobs.NewService())
+	replayKeyring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
+	require.NoError(t, err)
+	ctx.SetJobReplayKeyring(replayKeyring)
 	migratePluginCommandJobTestModels(t, ctx)
 	require.NoError(t, ctx.db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 	))
-	_, err := ctx.EnsurePluginStates()
+	_, err = ctx.EnsurePluginStates()
 	require.NoError(t, err)
 	require.NoError(t, ctx.SetPluginEnabledWithOptions(
 		controllerHealingPluginName, true, PluginEnableOptions{ConfirmCommands: true},

@@ -919,6 +919,19 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 		limit = DefaultReplayPurgeBatch
 	}
 	now := deps.now()
+	// Candidate discovery may happen before the transaction. The guarded UPDATE
+	// below rechecks every expiry and terminal-state predicate after it has taken
+	// SQLite's writer lock, so this snapshot never authorizes a purge on its own.
+	var candidates []string
+	if err := deps.DB.Model(&models.JobReplayEnvelope{}).
+		Select("job_replay_envelopes.job_id").
+		Where("job_replay_envelopes.purged_at IS NULL").
+		Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
+		Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
+		Order("job_replay_envelopes.expires_at, job_replay_envelopes.job_id").
+		Limit(limit).Pluck("job_replay_envelopes.job_id", &candidates).Error; err != nil {
+		return 0, fmt.Errorf("jobs: select expired replay input: %w", err)
+	}
 	purge := map[string]any{
 		"ciphertext":   gorm.Expr("NULL"),
 		"nonce":        gorm.Expr("NULL"),
@@ -929,22 +942,29 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 
 	purged := int64(0)
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
-		expired := tx.Model(&models.JobReplayEnvelope{}).
-			Select("job_replay_envelopes.job_id").
-			Where("job_replay_envelopes.purged_at IS NULL").
-			Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
-			Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)",
-				terminalStates()).
-			Order("job_replay_envelopes.expires_at, job_replay_envelopes.job_id").
-			Limit(limit)
-
 		result := tx.Model(&models.JobReplayEnvelope{}).
-			Where("job_id IN (?)", expired).
+			Where("job_id IN ? AND purged_at IS NULL", candidates).
+			Where("expires_at IS NOT NULL AND expires_at <= ?", now).
+			Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
 			Updates(purge)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: purge expired replay input: %w", result.Error)
 		}
 		purged = result.RowsAffected
+		if len(candidates) == 0 {
+			return nil
+		}
+		var actuallyPurged []string
+		if err := tx.Model(&models.JobReplayEnvelope{}).
+			Where("job_id IN ? AND purged_at = ? AND purge_reason = ?", candidates, now, models.JobReplayPurgeExpired).
+			Pluck("job_id", &actuallyPurged).Error; err != nil {
+			return fmt.Errorf("jobs: read expired replay purge markers: %w", err)
+		}
+		for _, jobID := range actuallyPurged {
+			if err := purgeLegacyReplaySourcesTx(tx, jobID, models.JobReplayPurgeExpired, now); err != nil {
+				return fmt.Errorf("jobs: purge legacy replay source: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -1010,7 +1030,7 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 		// The transaction's first statement is the write, for the same reason
 		// every other write in this module is: on SQLite the writer lock must be
 		// taken before anything is read.
-		return tx.Model(&models.JobReplayEnvelope{}).
+		if err := tx.Model(&models.JobReplayEnvelope{}).
 			Where("job_id = ? AND purged_at IS NULL", job.ID).
 			Updates(map[string]any{
 				"ciphertext":   gorm.Expr("NULL"),
@@ -1018,12 +1038,76 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 				"purged_at":    now,
 				"purge_reason": models.JobReplayPurgeForgotten,
 				"updated_at":   now,
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		var envelope models.JobReplayEnvelope
+		if err := tx.Where("job_id = ?", job.ID).First(&envelope).Error; err != nil {
+			return err
+		}
+		return purgeLegacyReplaySourcesTx(tx, job.ID, envelope.PurgeReason, now)
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("jobs: forget replay input: %w", err)
 	}
 	return s.snapshotFor(deps, access, job), nil
+}
+
+// purgeLegacyReplaySourcesTx removes every mapped plaintext replay copy in the
+// same transaction that marks the canonical envelope purged. Mappings are the
+// durable bridge between pre-Job rows and the canonical Job; a source row may
+// already have been scrubbed, or may have been restored from an older backup,
+// so this operation clears it again even when the mapping was purged earlier.
+func purgeLegacyReplaySourcesTx(tx *gorm.DB, jobID, reason string, now time.Time) error {
+	if !tx.Migrator().HasTable(&models.JobSourceMapping{}) {
+		return nil
+	}
+	var mappings []models.JobSourceMapping
+	if err := tx.Where("job_id = ?", jobID).Find(&mappings).Error; err != nil {
+		return err
+	}
+	for _, mapping := range mappings {
+		updates := map[string]any{"updated_at": now}
+		mappingReason := reason
+		switch mapping.SourceKind {
+		case "download-history":
+			if err := tx.Model(&models.DownloadHistoryEntry{}).Where("id = ?", mapping.SourceID).
+				Updates(map[string]any{"payload": nil, "url": ""}).Error; err != nil {
+				return err
+			}
+		case "scheduled-download":
+			if err := tx.Model(&models.ScheduledDownload{}).Where("id = ?", mapping.SourceID).
+				Updates(map[string]any{"payload": nil, "url": ""}).Error; err != nil {
+				return err
+			}
+		case "plugin-command-run":
+			if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", mapping.SourceID).
+				Updates(map[string]any{"params_json": "", "inputs_json": ""}).Error; err != nil {
+				return err
+			}
+		case "plugin-command-import":
+			if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", mapping.SourceID).
+				Updates(map[string]any{"fields_json": ""}).Error; err != nil {
+				return err
+			}
+		}
+		if mapping.Status == models.JobSourceMappingPurged && mapping.PurgeReason != "" {
+			mappingReason = mapping.PurgeReason
+		}
+		purgedAt := now
+		updates["status"] = models.JobSourceMappingPurged
+		updates["purged_at"] = purgedAt
+		updates["purge_reason"] = mappingReason
+		updates["scrubbed_at"] = purgedAt
+		updates["post_scrub_hash"] = ""
+		updates["blocker_code"] = ""
+		if err := tx.Model(&models.JobSourceMapping{}).
+			Where("source_kind = ? AND source_id = ?", mapping.SourceKind, mapping.SourceID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HasReplayCodec reports whether any registered codec could decode an envelope

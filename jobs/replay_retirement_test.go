@@ -1,0 +1,198 @@
+package jobs
+
+import (
+	"strconv"
+	"testing"
+	"time"
+
+	"mahresources/models"
+
+	"gorm.io/gorm"
+)
+
+func TestForgetReplayAtomicallyPurgesLegacySourceCopies(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	if err := deps.DB.AutoMigrate(
+		&models.JobSourceMapping{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2037, 2, 3, 4, 5, 6, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retirement-key"), Retention: time.Hour}
+	jobID := terminalReplayJob(t, svc, deps, &clock)
+	sources := seedLegacyReplaySources(t, deps.DB, jobID, clock)
+
+	if err := deps.DB.Exec(`CREATE TRIGGER fail_source_mapping_update BEFORE UPDATE ON job_source_mappings BEGIN SELECT RAISE(ABORT, 'injected mapping failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, jobID); err == nil {
+		t.Fatal("ForgetReplay succeeded despite an injected source-mapping failure")
+	}
+	assertReplayPurgeUnchanged(t, deps.DB, jobID, sources)
+	if err := deps.DB.Exec(`DROP TRIGGER fail_source_mapping_update`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, jobID); err != nil {
+		t.Fatalf("ForgetReplay after removing fault: %v", err)
+	}
+	assertReplaySourcesPurged(t, deps.DB, jobID, sources, models.JobReplayPurgeForgotten)
+}
+
+func TestExpiredReplaySweepAtomicallyPurgesLegacySourceCopies(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	if err := deps.DB.AutoMigrate(
+		&models.JobSourceMapping{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2038, 3, 4, 5, 6, 7, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retirement-key"), Retention: time.Hour}
+	jobID := terminalReplayJob(t, svc, deps, &clock)
+	sources := seedLegacyReplaySources(t, deps.DB, jobID, clock)
+	clock = clock.Add(2 * time.Hour)
+
+	if err := deps.DB.Exec(`CREATE TRIGGER fail_source_mapping_update BEFORE UPDATE ON job_source_mappings BEGIN SELECT RAISE(ABORT, 'injected mapping failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PurgeExpiredReplay(deps, 10); err == nil {
+		t.Fatal("PurgeExpiredReplay succeeded despite an injected source-mapping failure")
+	}
+	assertReplayPurgeUnchanged(t, deps.DB, jobID, sources)
+	if err := deps.DB.Exec(`DROP TRIGGER fail_source_mapping_update`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := svc.PurgeExpiredReplay(deps, 10); err != nil || purged != 1 {
+		t.Fatalf("PurgeExpiredReplay after removing fault = %d, %v; want 1, nil", purged, err)
+	}
+	assertReplaySourcesPurged(t, deps.DB, jobID, sources, models.JobReplayPurgeExpired)
+}
+
+type replaySourceIDs struct {
+	download  uint
+	scheduled uint
+	run       string
+	importID  string
+}
+
+func terminalReplayJob(t *testing.T, svc *Service, deps Deps, clock *time.Time) string {
+	t.Helper()
+	accepted, err := svc.Accept(deps, Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay: ReplayInput{Input: fixtureReplayInput()},
+	})
+	if err != nil {
+		t.Fatalf("accept replay job: %v", err)
+	}
+	running := advanceReplayJob(t, svc, deps, accepted, StateRunning)
+	*clock = clock.Add(time.Minute)
+	advanceReplayJob(t, svc, deps, running, StateFailed)
+	return accepted.ID
+}
+
+func seedLegacyReplaySources(t *testing.T, db *gorm.DB, jobID string, now time.Time) replaySourceIDs {
+	t.Helper()
+	download := models.DownloadHistoryEntry{
+		JobID: "legacy-download", URL: "https://user:pass@example.test/item?token=raw", Payload: []byte(`{"token":"legacy-secret"}`),
+		Status: models.DownloadHistoryStatusFailed, CreatedAt: now, Attempts: 1,
+	}
+	if err := db.Create(&download).Error; err != nil {
+		t.Fatal(err)
+	}
+	scheduled := models.ScheduledDownload{
+		PluginName: "fixture", URL: "https://user:pass@example.test/later?token=raw", Payload: []byte(`{"token":"legacy-secret"}`),
+		DueAt: now, Status: models.ScheduledDownloadStatusSubmitted, JobID: "legacy-scheduled", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&scheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := models.PluginCommandRun{ID: "legacy-run", JobID: jobID, PluginName: "fixture", CommandName: "run", ParamsJSON: `{"secret":"legacy"}`, InputsJSON: `[{"name":"x"}]`, Status: models.PluginCommandRunStatusFailed, CreatedAt: now}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	commandImport := models.PluginCommandImport{ID: "legacy-import", JobID: jobID, RunID: run.ID, FileName: "input.json", FieldsJSON: `{"secret":"legacy"}`, Status: models.PluginCommandImportStatusFailed, CreatedAt: now}
+	if err := db.Create(&commandImport).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows := []models.JobSourceMapping{
+		{SourceKind: "download-history", SourceID: strconv.FormatUint(uint64(download.ID), 10), JobID: jobID, SourceRevision: 1, SourceHash: "before", Status: models.JobSourceMappingCopied, Origin: models.JobSourceOriginBackfilled, CopiedAt: now, CreatedAt: now, UpdatedAt: now},
+		{SourceKind: "scheduled-download", SourceID: strconv.FormatUint(uint64(scheduled.ID), 10), JobID: jobID, SourceRevision: 1, SourceHash: "before", Status: models.JobSourceMappingCopied, Origin: models.JobSourceOriginBackfilled, CopiedAt: now, CreatedAt: now, UpdatedAt: now},
+		{SourceKind: "plugin-command-run", SourceID: run.ID, JobID: jobID, SourceRevision: 1, SourceHash: "before", Status: models.JobSourceMappingCopied, Origin: models.JobSourceOriginBackfilled, CopiedAt: now, CreatedAt: now, UpdatedAt: now},
+		{SourceKind: "plugin-command-import", SourceID: commandImport.ID, JobID: jobID, SourceRevision: 1, SourceHash: "before", Status: models.JobSourceMappingCopied, Origin: models.JobSourceOriginBackfilled, CopiedAt: now, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	return replaySourceIDs{download: download.ID, scheduled: scheduled.ID, run: run.ID, importID: commandImport.ID}
+}
+
+func assertReplayPurgeUnchanged(t *testing.T, db *gorm.DB, jobID string, ids replaySourceIDs) {
+	t.Helper()
+	envelope := replayEnvelopeRow(t, Deps{DB: db}, jobID)
+	if envelope.PurgedAt != nil || len(envelope.Ciphertext) == 0 {
+		t.Fatalf("failed purge changed canonical input: %+v", envelope)
+	}
+	var download models.DownloadHistoryEntry
+	if err := db.First(&download, ids.download).Error; err != nil || len(download.Payload) == 0 || download.URL == "" {
+		t.Fatalf("failed purge changed download source: %+v, %v", download, err)
+	}
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
+		t.Fatalf("failed purge changed scheduled source: %+v, %v", scheduled, err)
+	}
+	var run models.PluginCommandRun
+	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON == "" || run.InputsJSON == "" {
+		t.Fatalf("failed purge changed command source: %+v, %v", run, err)
+	}
+	var commandImport models.PluginCommandImport
+	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON == "" {
+		t.Fatalf("failed purge changed import source: %+v, %v", commandImport, err)
+	}
+}
+
+func assertReplaySourcesPurged(t *testing.T, db *gorm.DB, jobID string, ids replaySourceIDs, reason string) {
+	t.Helper()
+	envelope := replayEnvelopeRow(t, Deps{DB: db}, jobID)
+	if envelope.PurgedAt == nil || envelope.PurgeReason != reason || envelope.Ciphertext != nil || envelope.Nonce != nil {
+		t.Fatalf("canonical purge marker = %+v; want purged reason %q", envelope, reason)
+	}
+	var download models.DownloadHistoryEntry
+	if err := db.First(&download, ids.download).Error; err != nil || len(download.Payload) != 0 || download.URL != "" {
+		t.Fatalf("download source retained replay data: %+v, %v", download, err)
+	}
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) != 0 || scheduled.URL != "" {
+		t.Fatalf("scheduled source retained replay data: %+v, %v", scheduled, err)
+	}
+	var run models.PluginCommandRun
+	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON != "" || run.InputsJSON != "" {
+		t.Fatalf("command source retained replay data: %+v, %v", run, err)
+	}
+	var commandImport models.PluginCommandImport
+	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON != "" {
+		t.Fatalf("import source retained replay data: %+v, %v", commandImport, err)
+	}
+	var mappings []models.JobSourceMapping
+	if err := db.Where("job_id = ?", jobID).Find(&mappings).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 4 {
+		t.Fatalf("found %d purge mappings, want 4", len(mappings))
+	}
+	for _, mapping := range mappings {
+		if mapping.Status != models.JobSourceMappingPurged || mapping.PurgedAt == nil || mapping.PurgeReason != reason || mapping.ScrubbedAt == nil {
+			t.Errorf("source purge marker = %+v", mapping)
+		}
+	}
+}

@@ -156,12 +156,15 @@ func pluginCommandInputsRetired(db *gorm.DB) (bool, error) {
 }
 
 func (ctx *MahresourcesContext) hydratePluginCommandRun(row *models.PluginCommandRun, db *gorm.DB) error {
-	if row == nil || row.ParamsJSON != "" && row.InputsJSON != "" {
+	if row == nil {
 		return nil
 	}
 	retired, err := pluginCommandInputsRetired(db)
-	if err != nil || !retired {
+	if err != nil {
 		return err
+	}
+	if !retired {
+		return nil
 	}
 	if row.JobID == "" || ctx.JobService() == nil {
 		return fmt.Errorf("plugin command replay input is unavailable")
@@ -179,12 +182,15 @@ func (ctx *MahresourcesContext) hydratePluginCommandRun(row *models.PluginComman
 }
 
 func (ctx *MahresourcesContext) hydratePluginCommandImport(row *models.PluginCommandImport, db *gorm.DB) error {
-	if row == nil || row.FieldsJSON != "" {
+	if row == nil {
 		return nil
 	}
 	retired, err := pluginCommandInputsRetired(db)
-	if err != nil || !retired {
+	if err != nil {
 		return err
+	}
+	if !retired {
+		return nil
 	}
 	if row.JobID == "" || ctx.JobService() == nil {
 		return fmt.Errorf("plugin command import replay input is unavailable")
@@ -669,6 +675,12 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 	}
 	if req.CreatedByUserID == nil || *req.CreatedByUserID == 0 {
 		return plugin_commands.ImportClaimResult{}, fmt.Errorf("plugin command import claim requires an acting user")
+	}
+	// An omitted field selection means the empty ResourceFields value. Persist
+	// its explicit JSON form so the canonical import replay codec can validate
+	// the same input that the importer executes.
+	if req.FieldsJSON == "" {
+		req.FieldsJSON = "{}"
 	}
 	// The dispatcher is process-lifetime and intentionally unscoped, but the
 	// global create callback must stamp the current claim actor rather than the
