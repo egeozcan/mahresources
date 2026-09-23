@@ -576,10 +576,16 @@ func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
 	cmd := <-spawned
 	pgid := cmd.Process.Pid
 	waited := false
+	waitDone := make(chan error, 1)
+	waitStarted := false
 	t.Cleanup(func() {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		if !waited {
-			_ = cmd.Wait()
+			if !waitStarted {
+				waitStarted = true
+				go func() { waitDone <- cmd.Wait() }()
+			}
+			<-waitDone
 		}
 	})
 	descendantPID := waitForHelperPID(t, filepath.Join(exchange, "descendant.pid"))
@@ -607,23 +613,36 @@ func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("blocked worker did not release")
 	}
+	record, _, err = store.Run(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RunStatusRunning || record.FinishedAt != nil {
+		t.Fatalf("worker completion changed the recovery row before Recover: %+v", record)
+	}
 	recovery := NewDispatcher(Dependencies{Store: store, Settings: settings})
 	if err := recovery.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_ = cmd.Wait()
-	waited = true
+	identity, err := (nativeProcessInspector{}).InspectGroup(pgid, runID)
+	if err != nil || identity.State != GroupDead {
+		t.Fatalf("recovery returned before terminating descendant %d: identity=%+v err=%v", descendantPID, identity, err)
+	}
 	record, _, err = store.Run(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if record.Status != RunStatusInterrupted || record.FinishedAt == nil {
-		t.Fatalf("recovery did not classify run: %+v", record)
+		t.Fatalf("recovery did not classify run before process wait: %+v", record)
 	}
-	identity, err := (nativeProcessInspector{}).InspectGroup(pgid, runID)
-	if err != nil || identity.State != GroupDead {
-		t.Fatalf("recovery left descendant %d group alive: identity=%+v err=%v", descendantPID, identity, err)
+	waitStarted = true
+	go func() { waitDone <- cmd.Wait() }()
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatalf("recovery left process group %d alive after returning", pgid)
 	}
+	waited = true
 }
 
 func TestShutdownDoesNotSettleClaimedCallbackBeforeDeliveryReturns(t *testing.T) {
