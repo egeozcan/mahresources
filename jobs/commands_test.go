@@ -1185,6 +1185,110 @@ func TestBulkCommandRecordsAnIndependentOutcomePerJob(t *testing.T) {
 	}
 }
 
+// TestBulkCommandReplaysBeforeCheckingCurrentAdvertisement covers a command
+// whose successful effect removes that command from the Job's current
+// advertisement. A repeated bulk request must return the stored per-Job result
+// before asking whether the command could be run again now.
+func TestBulkCommandReplaysBeforeCheckingCurrentAdvertisement(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	first := h.acceptReplayable(&owner)
+	second := h.acceptReplayable(&owner)
+
+	// The first Job allows bulk cancellation while queued. The second advertises
+	// the same command only for individual use, so this selection has both a
+	// successful per-Job result and an independent bulk refusal.
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		if commandContext.Snapshot.ID == first.ID && commandContext.Snapshot.State == StateQueued {
+			return []Command{{Key: CommandCancel, Label: "Cancel", Bulk: true}}, nil
+		}
+		if commandContext.Snapshot.ID == second.ID && commandContext.Snapshot.State == StateQueued {
+			return []Command{{Key: CommandCancel, Label: "Cancel"}}, nil
+		}
+		return nil, nil
+	}
+
+	bulk := func(origin string) []CommandResult {
+		t.Helper()
+		return h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+			JobIDs: []string{first.ID, second.ID}, Key: CommandCancel,
+			IdempotencyKey: "idem-bulk-cancel-replay", Actor: viewer, Origin: origin,
+		})
+	}
+
+	results := bulk("api")
+	if len(results) != 2 {
+		t.Fatalf("the first bulk cancellation answered %d results, want two", len(results))
+	}
+	requireResult(t, "the eligible Job's bulk cancellation", results[0], CommandStatusSucceeded, CommandCodeApplied)
+	requireResult(t, "the individually advertised Job's bulk cancellation", results[1], CommandStatusFailed, CommandCodeNotAdvertised)
+	if got := State(jobRow(t, h.deps, first.ID).State); got != StateCancelled {
+		t.Fatalf("the first Job is %s after cancellation, want cancelled", got)
+	}
+	if got := State(jobRow(t, h.deps, second.ID).State); got != StateQueued {
+		t.Fatalf("the independently refused Job is %s, want queued", got)
+	}
+
+	// The first Job no longer advertises Cancel. Replaying the same key must use
+	// its recorded result, while the second Job's bulk refusal remains local to
+	// that entry.
+	results = bulk("api")
+	if len(results) != 2 {
+		t.Fatalf("the repeated bulk cancellation answered %d results, want two", len(results))
+	}
+	requireResult(t, "the replayed cancellation", results[0], CommandStatusSucceeded, CommandCodeApplied)
+	if results[0].Job.State != StateCancelled || results[0].Job.Version != jobRow(t, h.deps, first.ID).Version {
+		t.Fatalf("the replayed result has stale Job snapshot %+v", results[0].Job)
+	}
+	requireResult(t, "the repeated independent bulk refusal", results[1], CommandStatusFailed, CommandCodeNotAdvertised)
+
+	if rows := commandRequestRows(t, h.deps, first.ID); len(rows) != 1 {
+		t.Fatalf("the successful Job has %d recorded command requests, want one", len(rows))
+	}
+	if rows := commandRequestRows(t, h.deps, second.ID); len(rows) != 0 {
+		t.Fatalf("the refused Job has %d recorded command requests, want none", len(rows))
+	}
+
+	// The same tuple remains the same request across the single and bulk
+	// surfaces, and a fresh version does not change that identity.
+	single, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(first.ID, CommandCancel, "idem-bulk-cancel-replay", viewer))
+	if err != nil {
+		t.Fatalf("replaying the bulk request through the single-command surface: %v", err)
+	}
+	requireResult(t, "the cross-surface replay", single, CommandStatusSucceeded, CommandCodeApplied)
+
+	// A different key is a new attempt, so current eligibility still applies.
+	differentKey := h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{first.ID}, Key: CommandCancel,
+		IdempotencyKey: "idem-bulk-cancel-new", Actor: viewer, Origin: "api",
+	})
+	if len(differentKey) != 1 || differentKey[0].Status != CommandStatusFailed || differentKey[0].Code != CommandCodeNotAdvertised {
+		t.Fatalf("a different key after cancellation answered %+v, want a fresh non-advertised refusal", differentKey)
+	}
+
+	// Origin is part of the request hash, while ExpectedVersion is deliberately
+	// absent from it. A changed origin cannot borrow the recorded result.
+	results = bulk("cli")
+	if len(results) != 2 || results[0].Status != CommandStatusFailed || results[0].Code != CommandCodeKeyReused {
+		t.Fatalf("reusing the key with a different origin answered %+v, want a key-reused refusal for the first Job", results)
+	}
+	if results[1].Code != CommandCodeNotAdvertised {
+		t.Fatalf("the second Job's independent refusal changed to %q", results[1].Code)
+	}
+
+	// Visibility is checked before a durable result is exposed, so a different
+	// viewer still receives the same missing answer as for an unknown Job.
+	hidden := h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{first.ID}, Key: CommandCancel,
+		IdempotencyKey: "idem-bulk-cancel-replay", Actor: Access{UserID: owner + 1}, Origin: "api",
+	})
+	if len(hidden) != 1 || hidden[0].Code != CommandCodeNotFound || hidden[0].Job.ID != "" {
+		t.Fatalf("a viewer without access received %+v for the recorded command, want a not-found result without a Job snapshot", hidden)
+	}
+}
+
 // TestCommandRefusesRequestsOutsideItsBounds is the boundary half of the command
 // contract: a malformed request is refused before anything is read, nothing is
 // recorded for it, and no executor ever hears about it.
