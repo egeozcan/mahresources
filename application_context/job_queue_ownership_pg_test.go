@@ -220,6 +220,11 @@ func TestAQueueBackedSubmissionIsOwnedAcrossProcessesOnPostgres(t *testing.T) {
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("the queued export ended %s (%+v)", finished.State, finished.Failure)
 	}
+	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed <= 0 ||
+		finished.Progress.Total == nil || *finished.Progress.Total <= 0 {
+		t.Fatalf("the capacity-queued export's progress = %+v, want known byte counts on its finished Job",
+			finished.Progress)
+	}
 	outputs, err := other.GetJobOutputs(finished.ID)
 	if err != nil {
 		t.Fatalf("read the outputs: %v", err)

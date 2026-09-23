@@ -644,6 +644,138 @@ func (g *gatedExportFs) Create(name string) (afero.File, error) {
 // release lets every staged write through, once.
 func (g *gatedExportFs) unblock() { g.released.Do(func() { close(g.release) }) }
 
+// TestDispatchPersistsProgressForAnAlreadyTerminalExport covers the runtime path
+// where the queue entry finishes before Dispatch reaches its wait. The terminal
+// queue snapshot still owns the byte counts that the durable Job and legacy export
+// page must expose.
+func TestDispatchPersistsProgressForAnAlreadyTerminalExport(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "terminal-dispatch-progress")
+	accepted, execution := acceptAndClaimExportForTest(t, ctx, "terminal-dispatch-progress", groupID, time.Minute)
+	adapter := &groupExportAdapter{ctx: ctx}
+
+	entry, err := adapter.start(execution, exportRequestForTest(groupID))
+	if err != nil {
+		t.Fatalf("start export queue entry: %v", err)
+	}
+	waitForQueueEntryTerminal(t, ctx, entry.ID)
+	terminal := entry.Snapshot()
+	if terminal.Status != download_queue.JobStatusCompleted || terminal.Progress <= 0 || terminal.TotalSize <= 0 {
+		t.Fatalf("terminal queue progress = %s, %d/%d bytes; want completed with known byte counts",
+			terminal.Status, terminal.Progress, terminal.TotalSize)
+	}
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failProgressWrite.Store(true)
+
+	if err := adapter.Dispatch(context.Background(), execution); err != nil {
+		t.Fatalf("dispatch terminal export: %v", err)
+	}
+	if ctx.jobFaults.failProgressWrite.Load() {
+		t.Fatal("dispatch completed without retrying the refused terminal progress snapshot")
+	}
+	finished := waitForSnapshot(t, ctx, accepted.ID, "the terminal export to publish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
+	}
+	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress ||
+		finished.Progress.Total == nil || *finished.Progress.Total != terminal.TotalSize {
+		t.Fatalf("finished Job progress = %+v, want %d/%d bytes from terminal queue snapshot",
+			finished.Progress, terminal.Progress, terminal.TotalSize)
+	}
+}
+
+// TestWaitForQueueExecutionPublishesAnAlreadyTerminalSnapshot exercises the
+// capacity-queued/reconciled dispatch path whose first wait snapshot can already
+// be terminal. The wait returns without a progress tick; terminal publication
+// must persist the final byte snapshot before finishing the Job.
+func TestWaitForQueueExecutionPublishesAnAlreadyTerminalSnapshot(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "terminal-wait-progress")
+	accepted, execution := acceptAndClaimExportForTest(t, ctx, "terminal-wait-progress", groupID, time.Minute)
+	adapter := &groupExportAdapter{ctx: ctx}
+
+	entry, err := adapter.start(execution, exportRequestForTest(groupID))
+	if err != nil {
+		t.Fatalf("start export queue entry: %v", err)
+	}
+	waitForQueueEntryTerminal(t, ctx, entry.ID)
+	terminal := entry.Snapshot()
+	if terminal.Status != download_queue.JobStatusCompleted || terminal.Progress <= 0 || terminal.TotalSize <= 0 {
+		t.Fatalf("terminal queue progress = %s, %d/%d bytes; want completed with known byte counts",
+			terminal.Status, terminal.Progress, terminal.TotalSize)
+	}
+
+	snap, err := ctx.waitForQueueExecution(context.Background(), execution, entry)
+	if err != nil {
+		t.Fatalf("wait for the already-terminal export: %v", err)
+	}
+	if snap == nil || snap.Status != download_queue.JobStatusCompleted {
+		t.Fatalf("early terminal wait snapshot = %+v; want completed", snap)
+	}
+	if err := ctx.finishQueueExecution(execution, snap, func(finished *download_queue.DownloadJob) error {
+		return adapter.publishOutcome(execution, exportRequestForTest(groupID), finished)
+	}); err != nil {
+		t.Fatalf("publish the early terminal export: %v", err)
+	}
+
+	finished := waitForSnapshot(t, ctx, accepted.ID, "the early terminal export to publish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
+	}
+	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress ||
+		finished.Progress.Total == nil || *finished.Progress.Total != terminal.TotalSize {
+		t.Fatalf("finished Job progress = %+v, want %d/%d bytes from terminal queue snapshot",
+			finished.Progress, terminal.Progress, terminal.TotalSize)
+	}
+}
+
+// TestOwnedExportRetriesTheSameProgressAfterTransientRefusal holds the exporter
+// before its first progress change. A one-shot refused mirror must leave the
+// snapshot eligible for retry while the same execution still owns the Job.
+func TestOwnedExportRetriesTheSameProgressAfterTransientRefusal(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "owned-progress-retry")
+	gate := newGatedExportFs(ctx.GetDefaultFs())
+	t.Cleanup(gate.unblock)
+	ctx.fs = gate
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failProgressWrite.Store(true)
+
+	submission := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if submission.Err != nil {
+		t.Fatalf("submit the export: %v", submission.Err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the export worker did not reach its staged file gate")
+	}
+
+	waitFor(t, "the injected progress refusal", func() bool {
+		return !ctx.jobFaults.failProgressWrite.Load()
+	})
+	waitFor(t, "the same progress snapshot to be retried", func() bool {
+		snap := jobSnapshot(t, ctx.JobService(), ctx, submission.CanonicalJobID)
+		return snap.State == jobs.StateRunning && snap.Progress.Unit == "bytes" &&
+			snap.Progress.Completed != nil && *snap.Progress.Completed == 0
+	})
+
+	if entry, found := ctx.DownloadManager().GetJob(submission.QueueJobID); !found || queueJobTerminal(entry.GetStatus()) {
+		t.Fatalf("the gated export is missing or terminal before the progress retry completed")
+	}
+	gate.unblock()
+	finished := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the gated export to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
+	}
+}
+
 // TestARefusedProgressWriteDoesNotEndAnExportThatIsStillRunning is the other half of
 // owning an execution: a Job's outcome belongs to its executor, and nothing that
 // happens *around* the executor may classify the work.

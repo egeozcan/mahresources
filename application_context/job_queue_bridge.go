@@ -11,7 +11,10 @@ import (
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/plugin_system"
+
+	"gorm.io/gorm"
 )
 
 // This file is the shared half of every Kind whose work the in-memory download
@@ -313,6 +316,9 @@ const queuePublicationRetryInterval = 250 * time.Millisecond
 // ends, but this goroutine retains the snapshot the executor returned and continues to
 // offer it. The Job stays claimed and its heartbeat stays live for the entire wait.
 func (ctx *MahresourcesContext) publishTerminalOutcome(execution jobs.Execution, snap *download_queue.DownloadJob, publish func(*download_queue.DownloadJob) error) terminalPublication {
+	if result := ctx.mirrorTerminalQueueProgress(execution, snap); result != publicationAcknowledged {
+		return result
+	}
 	if publish == nil {
 		return publicationAcknowledged
 	}
@@ -342,6 +348,91 @@ func (ctx *MahresourcesContext) publishTerminalOutcome(execution jobs.Execution,
 		}
 		time.Sleep(queuePublicationRetryInterval)
 	}
+}
+
+// mirrorQueueJobProgress makes one fenced progress write, including the injectable
+// transient refusal used by the queue-backed execution tests.
+func (ctx *MahresourcesContext) mirrorQueueJobProgress(execution jobs.Execution, progress jobs.Progress) error {
+	if err := ctx.jobFaults.progressWrite(); err != nil {
+		return err
+	}
+	_, err := execution.Progress(progress)
+	return err
+}
+
+// mirrorTerminalQueueProgress holds terminal publication until its final progress
+// snapshot is durable or the execution's fence proves this worker can no longer
+// publish. The snapshot is stable after the queue entry ends, so retries replace the
+// same bounded progress fields and cannot double-apply an outcome.
+func (ctx *MahresourcesContext) mirrorTerminalQueueProgress(execution jobs.Execution, snap *download_queue.DownloadJob) terminalPublication {
+	if ctx == nil || snap == nil {
+		return publicationFenced
+	}
+	progress := queueJobProgress(snap)
+	if queueProgressIsEmpty(progress) {
+		return publicationAcknowledged
+	}
+
+	logged := false
+	for {
+		if ctx.queueIsShuttingDown() {
+			if !logged {
+				log.Printf("warning: final progress for queue job %s was not durable before shutdown; the next process reconciles it", execution.JobID)
+			}
+			return publicationUnfinished
+		}
+
+		err := ctx.mirrorQueueJobProgress(execution, progress)
+		switch {
+		case err == nil:
+			return publicationAcknowledged
+		case errors.Is(err, jobs.ErrVersionConflict):
+			stillOwned, readErr := ctx.queueExecutionStillOwnsJob(execution)
+			if readErr == nil && !stillOwned {
+				return publicationFenced
+			}
+			if !logged {
+				if readErr != nil {
+					log.Printf("warning: checking ownership before retrying progress for queue job %s failed (%v; %v)", execution.JobID, err, readErr)
+				} else {
+					log.Printf("warning: final progress for queue job %s raced another write; retrying while its claim is held", execution.JobID)
+				}
+				logged = true
+			}
+		case mirrorRefusalIsSilent(err):
+			return publicationFenced
+		default:
+			if !logged {
+				log.Printf("warning: final progress for queue job %s was refused (%v); retaining the outcome to retry", execution.JobID, err)
+				logged = true
+			}
+		}
+		time.Sleep(queuePublicationRetryInterval)
+	}
+}
+
+// queueExecutionStillOwnsJob checks the row state and token after a progress write
+// loses its guarded update. ErrVersionConflict is retryable while this execution
+// still owns a running Job; a different state or token proves that another writer
+// fenced it out.
+func (ctx *MahresourcesContext) queueExecutionStillOwnsJob(execution jobs.Execution) (bool, error) {
+	if ctx == nil || ctx.db == nil {
+		return false, errors.New("the Job database is unavailable")
+	}
+	var current models.Job
+	err := ctx.db.Select("state", "execution_token").Where("id = ?", execution.JobID).Take(&current).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read Job %s after progress conflict: %w", execution.JobID, err)
+	}
+	return current.State == string(jobs.StateRunning) && current.ExecutionToken == execution.ExecutionToken, nil
+}
+
+func queueProgressIsEmpty(progress jobs.Progress) bool {
+	return progress.Phase == "" && progress.Completed == nil && progress.Total == nil &&
+		progress.Unit == "" && progress.Message == "" && progress.ETA == nil
 }
 
 // finishQueueExecution is what a queue-backed Kind's Dispatch returns: the terminal
@@ -434,17 +525,26 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 			return nil, true
 		}
 		snap := entry.Snapshot()
-		if progress := queueJobProgress(snap); !sameProgress(progress, published) {
-			published = progress
-			if _, err := execution.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
-				log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
-			}
-		}
-		// The queue can finish before this poll's first tick (small exports do
-		// exactly that). Mirror the terminal snapshot before returning so a fast
-		// completion still leaves its final phase and byte counts on the Job.
+		// The terminal snapshot is held by publishTerminalOutcome until its final
+		// progress is durable. Keeping terminal writes there lets dispatch and
+		// submission paths share the same retry and fencing rules.
 		if queueJobTerminal(snap.Status) {
 			return snap, false
+		}
+		if progress := queueJobProgress(snap); !sameProgress(progress, published) {
+			if err := ctx.mirrorQueueJobProgress(execution, progress); err != nil {
+				if !mirrorRefusalIsSilent(err) {
+					log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
+				}
+				// A transient refusal leaves this exact snapshot eligible for the
+				// next poll. A silent fence refusal cannot be repaired by this
+				// execution, so stop offering it while the queue finishes.
+				if mirrorRefusalIsSilent(err) {
+					published = progress
+				}
+			} else {
+				published = progress
+			}
 		}
 		ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
 		<-ticker.C
@@ -800,9 +900,7 @@ func (ctx *MahresourcesContext) waitForQueueExecution(
 			// refused write is logged and attempted again on the next tick; the terminal
 			// status below is what ends the wait.
 			if progress := queueJobProgress(snap); !sameProgress(progress, published) {
-				if err := ctx.jobFaults.progressWrite(); err != nil {
-					log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
-				} else if _, err := execution.Progress(progress); err != nil {
+				if err := ctx.mirrorQueueJobProgress(execution, progress); err != nil {
 					if !mirrorRefusalIsSilent(err) {
 						log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
 					} else {
