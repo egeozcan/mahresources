@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -8,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"mahresources/models"
-	"mahresources/models/database_scopes"
-
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"mahresources/models"
+	"mahresources/models/database_scopes"
 )
 
 // This file holds the read side of the control plane: the one query constructor
 // every Job read goes through, the listing that paginates it, and the bounded
-// views those reads return.
+// views those reads return. Command filters compose exact per-Kind database
+// selectors into that same visible query before a page or summary is formed.
 //
 // The constructor is the point of the file. A Job is reachable through a list, a
 // detail read, a timeline join, an output lookup, a lineage join, the resumable
@@ -81,10 +82,15 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 	if err := validateCursor(cursor); err != nil {
 		return Page{}, err
 	}
-
 	query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
 	if err != nil {
 		return Page{}, err
+	}
+	if filter.Command != "" {
+		query, err = s.applyCommandFilter(query, deps, access, filter.Command)
+		if err != nil {
+			return Page{}, err
+		}
 	}
 	query = continueAfter(query, cursor)
 
@@ -183,8 +189,12 @@ func validateFilter(filter Filter) error {
 		return invalid("the accepted window ends before it starts")
 	}
 	if filter.Command != "" {
-		return fmt.Errorf("%w: the command filter is not answerable from durable facts yet; "+
-			"a command's availability is advertised by its Kind adapter, not stored on the Job", ErrInvalidFilter)
+		if strings.TrimSpace(filter.Command) == "" {
+			return invalid("command key is empty")
+		}
+		if len(filter.Command) > MaxCommandKeyBytes {
+			return invalid("command key is %d bytes, over the %d-byte ceiling", len(filter.Command), MaxCommandKeyBytes)
+		}
 	}
 	return nil
 }
@@ -330,6 +340,152 @@ func pageSize(limit int) (int, error) {
 		return 0, fmt.Errorf("%w: %d is over the %d-job ceiling", ErrInvalidPage, limit, MaxPageSize)
 	}
 	return limit, nil
+}
+
+// applyCommandFilter narrows the already-authorized, ordinary-filter query with
+// exact selector subqueries. A dynamic advertisement cannot safely be applied
+// after pagination or during an unbounded Go scan, so every registered adapter
+// must answer this database query contract before command-filter reads are
+// enabled.
+func (s *Service) applyCommandFilter(base *gorm.DB, deps Deps, access Access, key string) (*gorm.DB, error) {
+	if query, handled, err := s.applyHostOnlyCommandFilter(base, deps, access, key); handled || err != nil {
+		return query, err
+	}
+
+	ctx := context.Background()
+	if deps.DB != nil && deps.DB.Statement != nil && deps.DB.Statement.Context != nil {
+		ctx = deps.DB.Statement.Context
+	}
+	selectors := deps.DB.Session(&gorm.Session{NewDB: true}).Model(&models.Job{}).
+		Select("jobs.id").Where("1 = 0")
+	for _, registration := range s.Registrations() {
+		selector, ok := registration.Adapter.(CommandFilterAdapter)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s v%d has no Kind command selector",
+				ErrCommandFilterUnavailable, registration.Definition.Kind, registration.Definition.KindVersion)
+		}
+		kindQuery := base.Session(&gorm.Session{}).
+			Where("jobs.kind = ? AND jobs.kind_version = ?", registration.Definition.Kind, registration.Definition.KindVersion)
+		selected, supported, err := selector.SelectCommandJobs(ctx, CommandFilterRequest{
+			Deps: deps, Access: access, Key: key, Jobs: kindQuery,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("jobs: select %s command candidates: %w", registration.Definition.Kind, err)
+		}
+		if !supported {
+			if selected != nil {
+				return nil, fmt.Errorf("%w: %s v%d returned a selector for an unsupported key",
+					ErrCommandFilterUnavailable, registration.Definition.Kind, registration.Definition.KindVersion)
+			}
+			continue
+		}
+		if selected == nil {
+			return nil, fmt.Errorf("%w: %s v%d returned no selector for %q",
+				ErrCommandFilterUnavailable, registration.Definition.Kind, registration.Definition.KindVersion, key)
+		}
+		// These wrapper predicates are owned by the Service. A selector can only
+		// narrow one registered Kind/version and cannot replace its shared read
+		// predicate or any request filter.
+		kindSelection := deps.DB.Session(&gorm.Session{NewDB: true}).Model(&models.Job{}).
+			Select("jobs.id").
+			Where("jobs.kind = ? AND jobs.kind_version = ?", registration.Definition.Kind, registration.Definition.KindVersion).
+			Where("jobs.id IN (?)", selected)
+		selectors = selectors.Or("jobs.id IN (?)", kindSelection)
+	}
+	query := base.Where("jobs.id IN (?)", selectors)
+	return s.applyCommandHostNarrowing(query, deps, key)
+}
+
+// applyHostOnlyCommandFilter handles keys the host alone advertises. They do
+// not need an adapter selector, because Adapter.Commands entries for these keys
+// are ignored by advertisedCommands.
+func (s *Service) applyHostOnlyCommandFilter(base *gorm.DB, deps Deps, access Access, key string) (*gorm.DB, bool, error) {
+	if !isHostOnlyCommandKey(key) {
+		return base, false, nil
+	}
+	switch key {
+	case CommandDismiss:
+		if access.UserID == 0 {
+			return base.Where("1 = 0"), true, nil
+		}
+		return base.Where("jobs.state IN ?", terminalJobStates()), true, nil
+	case CommandPin, CommandPinLineage:
+		if access.UserID == 0 {
+			return base.Where("1 = 0"), true, nil
+		}
+		return base, true, nil
+	case CommandForget:
+		query, err := s.applyReplayAvailableFilter(base, deps)
+		if err != nil {
+			return nil, true, err
+		}
+		return query.Where("jobs.state IN ?", terminalJobStates()), true, nil
+	default:
+		return nil, true, fmt.Errorf("%w: host key %q has no query selector", ErrCommandFilterUnavailable, key)
+	}
+}
+
+// applyCommandHostNarrowing mirrors commandHonorable after the adapter's exact
+// selector. These durable host conditions are shared by advertisement and
+// execution, so a SQL filter cannot announce a command the Service itself would
+// refuse on a visible Job.
+func (s *Service) applyCommandHostNarrowing(query *gorm.DB, deps Deps, key string) (*gorm.DB, error) {
+	switch key {
+	case CommandCancel:
+		return query.Where("jobs.state NOT IN ?", terminalJobStates()), nil
+	case CommandPause:
+		return query.Where("jobs.state = ?", StateRunning).
+			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel), nil
+	case CommandResume:
+		return query.Where("jobs.state IN ?", []State{StatePaused, StateBlocked}).
+			Where("(jobs.control_intent IS NULL OR jobs.control_intent <> ?)", ControlIntentCancel).
+			Where("NOT EXISTS (SELECT 1 FROM job_claims c WHERE c.job_id = jobs.id AND c.state IN ?)", unresolvedClaimStates()), nil
+	case CommandRetry:
+		query = query.Where("jobs.state IN ?", []State{StateFailed, StateCancelled, StateInterrupted}).
+			Where("NOT EXISTS (SELECT 1 FROM job_links l WHERE l.type = ? AND l.to_job_id = jobs.id)", string(LinkRetryOf))
+		return s.applyReplayAvailableFilter(query, deps)
+	case CommandRepeat:
+		query = query.Where("jobs.state = ?", StateSucceeded)
+		return s.applyReplayAvailableFilter(query, deps)
+	default:
+		return query, nil
+	}
+}
+
+func (s *Service) applyReplayAvailableFilter(query *gorm.DB, deps Deps) (*gorm.DB, error) {
+	keyring := replayKeys(deps)
+	if keyring == nil || len(keyring.keys) == 0 {
+		return query.Where("1 = 0"), nil
+	}
+	keyIDs := make([]string, 0, len(keyring.keys))
+	for id := range keyring.keys {
+		keyIDs = append(keyIDs, id)
+	}
+
+	s.replayMu.Lock()
+	codecs := make([]replayCodecKey, 0, len(s.replayCodecs))
+	for key := range s.replayCodecs {
+		codecs = append(codecs, key)
+	}
+	s.replayMu.Unlock()
+	if len(codecs) == 0 {
+		return query.Where("1 = 0"), nil
+	}
+	codecPredicates := make([]string, 0, len(codecs))
+	codecArgs := make([]any, 0, 2*len(codecs))
+	for _, codec := range codecs {
+		codecPredicates = append(codecPredicates, "(e.kind = ? AND e.kind_version = ?)")
+		codecArgs = append(codecArgs, codec.kind, codec.version)
+	}
+	args := []any{deps.now(), keyIDs}
+	args = append(args, codecArgs...)
+	query = query.Where("jobs.replay_class = ?", ReplayClassReplayable).
+		Where("EXISTS (SELECT 1 FROM job_replay_envelopes e WHERE e.job_id = jobs.id AND e.purged_at IS NULL AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.key_id IN ? AND ("+strings.Join(codecPredicates, " OR ")+"))", args...)
+	return query, nil
+}
+
+func terminalJobStates() []State {
+	return []State{StateSucceeded, StateFailed, StateCancelled, StateInterrupted}
 }
 
 // knownLinkType reports whether a spelling is one of the lineage relations.
@@ -817,11 +973,36 @@ func (s *Service) Summary(deps Deps, access Access, filter Filter, window time.D
 	scoped := filter
 	scoped.AcceptedAfter = &from
 	scoped.AcceptedBefore = &to
+	if filter.Command != "" {
+		var summary Summary
+		err := deps.DB.Transaction(func(tx *gorm.DB) error {
+			commandDeps := deps
+			commandDeps.DB = tx
+			base, err := applyFilter(jobQuery(tx.Model(&models.Job{}), access), access, scoped)
+			if err != nil {
+				return err
+			}
+			base, err = s.applyCommandFilter(base, commandDeps, access, filter.Command)
+			if err != nil {
+				return err
+			}
+			summary, err = summarizeQuery(base, window, from, to)
+			return err
+		})
+		if err != nil {
+			return Summary{}, err
+		}
+		return summary, nil
+	}
 
 	base, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, scoped)
 	if err != nil {
 		return Summary{}, err
 	}
+	return summarizeQuery(base, window, from, to)
+}
+
+func summarizeQuery(base *gorm.DB, window time.Duration, from, to time.Time) (Summary, error) {
 	summary := Summary{
 		Window: window, From: from, To: to,
 		ByState: map[string]int64{}, ByKind: map[string]int64{},

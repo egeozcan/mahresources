@@ -80,6 +80,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Downloads
 	registerDownloadRoutes(registry)
+	if canonicalJobAPICutoverComplete {
+		registerCanonicalJobRoutesOpenAPI(registry)
+	}
 
 	// Exports
 	registerExportRoutes(registry)
@@ -95,6 +98,151 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Timeline
 	registerTimelineRoutes(registry)
+}
+
+// registerCanonicalJobRoutesOpenAPI mirrors registerCanonicalJobRoutes. Keep
+// this behind the same Task 17 gate so the generated public contract does not
+// advertise endpoints before their complete-Kind and retirement readiness
+// checks pass.
+func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
+	r.RegisterSchemaType(reflect.TypeOf(api_handlers.JobSnapshotResponse{}))
+	filterParams := canonicalJobFilterQueryParams()
+	listParams := append(append([]openapi.QueryParam(nil), filterParams...),
+		openapi.QueryParam{Name: "cursor", Type: "string", Description: "Opaque keyset cursor returned by the prior page."},
+		openapi.QueryParam{Name: "limit", Type: "integer", Description: "Page size, bounded by the server."},
+	)
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs", OperationID: "listCanonicalJobs",
+		Summary: "List visible canonical Jobs", Tags: []string{"jobs"},
+		ExtraQueryParams: listParams, ResponseType: reflect.TypeOf(api_handlers.JobListResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs/summary", OperationID: "summarizeCanonicalJobs",
+		Summary: "Summarize visible Jobs over a bounded window", Tags: []string{"jobs"},
+		ExtraQueryParams: append(append([]openapi.QueryParam(nil), filterParams...),
+			openapi.QueryParam{Name: "window", Type: "string", Description: "Positive duration, at most 90 days; defaults to 30 days."},
+		),
+		ResponseType:         reflect.TypeOf(api_handlers.JobSummaryResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs/{id}", OperationID: "getCanonicalJob",
+		Summary: "Get a visible Job with commands, outputs, and lineage", Tags: []string{"jobs"},
+		PathParams:           []openapi.PathParam{{Name: "id", Type: "string", Description: "Canonical Job ID."}},
+		ResponseType:         reflect.TypeOf(api_handlers.JobDetailResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs/{id}/events", OperationID: "getCanonicalJobTimeline",
+		Summary: "Read a visible Job timeline", Tags: []string{"jobs"},
+		PathParams: []openapi.PathParam{{Name: "id", Type: "string", Description: "Canonical Job ID."}},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "afterSequence", Type: "integer", Description: "Return events after this per-Job sequence."},
+			{Name: "cursor", Type: "integer", Description: "Alias for afterSequence."},
+			{Name: "limit", Type: "integer", Description: "Page size, bounded by the server."},
+		},
+		ResponseType:         reflect.TypeOf(api_handlers.JobTimelineResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs/events", OperationID: "streamCanonicalJobEvents",
+		Summary: "Stream resumable canonical Job events", Tags: []string{"jobs"},
+		Description: "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream.",
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "version", Type: "string", Description: "Set to 2 for the canonical stream; omit to retain the legacy compatibility stream."},
+			{Name: "cursor", Type: "string", Description: "Resume at a canonical v2 delivery cursor."},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentType("text/event-stream")},
+		ErrorResponses:       jobAPIErrorResponses(),
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/jobs/{id}/outputs", OperationID: "openCanonicalJobOutput",
+		Summary: "Open a currently authorized typed Job output", Tags: []string{"jobs"},
+		Description:      "The output key comes from the Job detail response. The handler rechecks Job visibility, current principal capability, and output availability. Stored filesystem paths are never returned.",
+		PathParams:       []openapi.PathParam{{Name: "id", Type: "string", Description: "Canonical Job ID."}},
+		ExtraQueryParams: []openapi.QueryParam{{Name: "key", Type: "string", Required: true, Description: "Advertised output key."}},
+		ResponseContentTypes: []openapi.ContentType{
+			openapi.ContentTypeJSON, openapi.ContentType("application/octet-stream"), openapi.ContentType("text/plain"),
+		},
+		ErrorResponses: map[int]string{
+			http.StatusBadRequest: "Invalid output key", http.StatusNotFound: "Job or output not found",
+			http.StatusGone: "Output is no longer available", http.StatusInternalServerError: "Output could not be opened",
+			http.StatusSeeOther: "Output resolves to an authorized entity or external link",
+		},
+	})
+	commandRequest := reflect.TypeOf(struct {
+		ExpectedVersion uint64 `json:"expectedVersion" openapi:"required"`
+		IdempotencyKey  string `json:"idempotencyKey,omitempty"`
+		Origin          string `json:"origin,omitempty"`
+	}{})
+	commandErrors := jobAPIErrorResponses()
+	commandErrors[http.StatusConflict] = "Command was not advertised, its idempotency key conflicted, or the visible Job version changed"
+	commandErrorTypes := map[int]reflect.Type{
+		http.StatusConflict: reflect.TypeOf(api_handlers.JobCommandConflictResponse{}),
+	}
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/jobs/{id}/commands/{command}", OperationID: "executeCanonicalJobCommand",
+		Summary: "Execute an advertised Job command", Tags: []string{"jobs"},
+		Description: "Send Idempotency-Key as a header or idempotencyKey in the JSON body. If both are set they must match. A stale visible Job returns 409 with its fresh snapshot.",
+		PathParams: []openapi.PathParam{
+			{Name: "id", Type: "string", Description: "Canonical Job ID."},
+			{Name: "command", Type: "string", Description: "Advertised command key."},
+		},
+		RequestType: commandRequest, RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         reflect.TypeOf(api_handlers.JobCommandResultResponse{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON}, ErrorResponses: commandErrors,
+		ErrorResponseTypes: commandErrorTypes,
+	})
+	bulkRequest := reflect.TypeOf(struct {
+		JobIDs         []string `json:"jobIds" openapi:"required"`
+		IdempotencyKey string   `json:"idempotencyKey,omitempty"`
+		Origin         string   `json:"origin,omitempty"`
+	}{})
+	bulkErrors := jobAPIErrorResponses()
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/jobs/commands/{command}", OperationID: "executeBulkCanonicalJobCommand",
+		Summary: "Execute an advertised bulk command across Jobs", Tags: []string{"jobs"},
+		Description: "Send Idempotency-Key as a header or idempotencyKey in the JSON body. If both are set they must match; select at most 200 Jobs and the response includes one result per selected Job.",
+		PathParams:  []openapi.PathParam{{Name: "command", Type: "string", Description: "Advertised bulk command key."}},
+		RequestType: bulkRequest, RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType: reflect.TypeOf(struct {
+			Results []api_handlers.JobCommandResultResponse `json:"results"`
+		}{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON}, ErrorResponses: bulkErrors,
+	})
+}
+
+func canonicalJobFilterQueryParams() []openapi.QueryParam {
+	return []openapi.QueryParam{
+		{Name: "state", Type: "array", ItemType: "string", Description: "Filter by state; repeat or comma-separate values."},
+		{Name: "states", Type: "array", ItemType: "string", Description: "Filter by states; repeat or comma-separate values."},
+		{Name: "kind", Type: "array", ItemType: "string", Description: "Filter by Kind; repeat or comma-separate values."},
+		{Name: "kinds", Type: "array", ItemType: "string", Description: "Filter by Kinds; repeat or comma-separate values."},
+		{Name: "origin", Type: "array", ItemType: "string", Description: "Filter by origin; repeat or comma-separate values."},
+		{Name: "origins", Type: "array", ItemType: "string", Description: "Filter by origins; repeat or comma-separate values."},
+		{Name: "search", Type: "string", Description: "Search safe Job title, summary, and phase fields."},
+		{Name: "relationship", Type: "string", Description: "Filter by a supported lineage relationship."},
+		{Name: "ownerId", Type: "integer", Description: "Filter by owner user ID."},
+		{Name: "actorId", Type: "integer", Description: "Filter by actor user ID."},
+		{Name: "acceptedAfter", Type: "string", Description: "Inclusive RFC3339 lower bound."},
+		{Name: "acceptedBefore", Type: "string", Description: "Inclusive RFC3339 upper bound."},
+		{Name: "pinned", Type: "boolean", Description: "Filter this viewer's pin state."},
+		{Name: "dismissed", Type: "boolean", Description: "Filter this viewer's dismissal state."},
+		{Name: "command", Type: "string", Description: "Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation."},
+	}
+}
+
+func jobAPIErrorResponses() map[int]string {
+	return map[int]string{
+		http.StatusBadRequest:          "Invalid filter or request",
+		http.StatusNotFound:            "Job not found or not visible",
+		http.StatusInternalServerError: "Job request failed",
+	}
 }
 
 // authLoginRequestType documents the JSON body accepted by POST /v1/auth/login.

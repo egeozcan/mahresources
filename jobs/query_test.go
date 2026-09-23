@@ -1,8 +1,10 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -313,7 +315,8 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 		{name: "unknown state", filter: Filter{States: []string{"finished"}}, want: ErrInvalidFilter},
 		{name: "empty kind", filter: Filter{Kinds: []string{" "}}, want: ErrInvalidFilter},
 		{name: "inverted window", filter: Filter{AcceptedAfter: timePtr(time.Date(2032, 1, 1, 0, 0, 0, 0, time.UTC)), AcceptedBefore: timePtr(time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC))}, want: ErrInvalidFilter},
-		{name: "command dimension", filter: Filter{Command: "cancel"}, want: ErrInvalidFilter},
+		{name: "blank command key", filter: Filter{Command: " \t"}, want: ErrInvalidFilter},
+		{name: "oversized command key", filter: Filter{Command: strings.Repeat("x", MaxCommandKeyBytes+1)}, want: ErrInvalidFilter},
 		{name: "cursor without identity", cursor: Cursor{AcceptedAt: time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)}, want: ErrInvalidCursor},
 		{name: "cursor without instant", cursor: Cursor{ID: "5c7b5b4a-0000-7000-8000-000000000000"}, want: ErrInvalidCursor},
 		{name: "negative page", limit: -1, want: ErrInvalidPage},
@@ -325,6 +328,11 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("List = %v, want %v", err, tc.want)
 			}
+			if tc.filter.Command != "" {
+				if _, err := svc.Summary(deps, admin, tc.filter, 0); !errors.Is(err, ErrInvalidFilter) {
+					t.Fatalf("Summary with invalid command key = %v, want ErrInvalidFilter", err)
+				}
+			}
 		})
 	}
 
@@ -334,6 +342,489 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 	if len(page.Jobs) != 1 || page.Next != nil {
 		t.Fatalf("page = %d jobs, next = %v", len(page.Jobs), page.Next)
 	}
+}
+
+// TestListCommandFilterPaginatesSparseMatches verifies that Command is evaluated
+// before the page boundary: a sparse key must not produce short pages, and the
+// next cursor must name the last returned match rather than a candidate the scan
+// skipped over.
+func TestListCommandFilterPaginatesSparseMatches(t *testing.T) {
+	testListCommandFilterPaginatesSparseMatches(t, newTestDeps(t))
+}
+
+func testListCommandFilterPaginatesSparseMatches(t *testing.T, deps Deps) {
+	t.Helper()
+	sqlDB, err := deps.DB.DB()
+	if err != nil {
+		t.Fatalf("underlying database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		if strings.HasPrefix(commandContext.Snapshot.Title, "match-") {
+			return []Command{{Key: "inspect"}}, nil
+		}
+		return nil, nil
+	}
+	adapter.selectCommand = func(_ context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+		if request.Key != "inspect" {
+			return nil, false, nil
+		}
+		return request.Jobs.Where("jobs.title LIKE ?", "match-%").Select("jobs.id"), true, nil
+	}
+	owner := uint(7)
+	clock := time.Date(2034, 8, 1, 0, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	const candidates = 2*MaxPageSize + 3
+	matches := make(map[int]bool)
+	matches[0] = true
+	matches[MaxPageSize] = true
+	matches[2*MaxPageSize] = true
+	created := make(map[int]Snapshot, len(matches))
+	for i := 0; i < candidates; i++ {
+		clock = clock.Add(time.Second)
+		title := fmt.Sprintf("other-%03d", i)
+		if matches[i] {
+			title = fmt.Sprintf("match-%03d", i)
+		}
+		job := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &owner, Title: title, Replay: ReplayInput{NonReplayable: true},
+		})
+		if matches[i] {
+			created[i] = job
+		}
+	}
+
+	access := Access{UserID: owner}
+	first := listFor(t, svc, deps, access, Filter{Command: "inspect"}, Cursor{}, 2)
+	requireIDs(t, "first command page", pageIDs(first), created[2*MaxPageSize].ID, created[MaxPageSize].ID)
+	if first.Next == nil || first.Next.ID != created[MaxPageSize].ID || !first.Next.AcceptedAt.Equal(created[MaxPageSize].AcceptedAt) {
+		t.Fatalf("first page cursor = %+v, want cursor at the last returned match %+v", first.Next, created[MaxPageSize])
+	}
+
+	second := listFor(t, svc, deps, access, Filter{Command: "inspect"}, *first.Next, 2)
+	requireIDs(t, "second command page", pageIDs(second), created[0].ID)
+	if second.Next != nil {
+		t.Fatalf("last sparse command page unexpectedly has next cursor %+v", second.Next)
+	}
+
+	summary, err := svc.Summary(deps, access, Filter{Command: "inspect"}, 0)
+	if err != nil {
+		t.Fatalf("sparse command summary: %v", err)
+	}
+	if summary.Total != 3 || summary.ByState[string(StateQueued)] != 3 || summary.ByKind[testKind] != 3 {
+		t.Fatalf("sparse command summary = %+v, want the three matches across candidate batches", summary)
+	}
+}
+
+// TestCommandFilterUsesCurrentRoleForListAndSummary shows command availability
+// is asked from the current principal for each read, never cached on a Job or
+// inherited from a prior administrator request.
+func TestCommandFilterUsesCurrentRoleForListAndSummary(t *testing.T) {
+	testCommandFilterUsesCurrentRoleForListAndSummary(t, newTestDeps(t))
+}
+
+func testCommandFilterUsesCurrentRoleForListAndSummary(t *testing.T, deps Deps) {
+	t.Helper()
+	sqlDB, err := deps.DB.DB()
+	if err != nil {
+		t.Fatalf("underlying database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		if commandContext.Access.Administrator || commandContext.Snapshot.Title == "viewer-inspect" {
+			return []Command{{Key: "inspect"}}, nil
+		}
+		return nil, nil
+	}
+	adapter.selectCommand = func(_ context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+		if request.Key != "inspect" {
+			return nil, false, nil
+		}
+		if request.Access.Administrator {
+			return request.Jobs.Select("jobs.id"), true, nil
+		}
+		return request.Jobs.Where("jobs.title = ?", "viewer-inspect").Select("jobs.id"), true, nil
+	}
+	owner := uint(7)
+	clock := time.Date(2034, 8, 2, 0, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(time.Minute)
+		title := fmt.Sprintf("job-%d", i)
+		if i == 0 {
+			title = "viewer-inspect"
+		}
+		acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &owner, Title: title, Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	clock = clock.Add(time.Minute)
+	otherOwner := uint(8)
+	acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: &otherOwner, Title: "viewer-inspect", Replay: ReplayInput{NonReplayable: true},
+	})
+	filter := Filter{Command: "inspect"}
+	viewer := Access{UserID: owner}
+	admin := Access{UserID: owner, Administrator: true}
+
+	if got := listFor(t, svc, deps, viewer, filter, Cursor{}, 10); len(got.Jobs) != 1 {
+		t.Fatalf("viewer list matched %d jobs before promotion, want only its advertised command", len(got.Jobs))
+	}
+	viewerSummary, err := svc.Summary(deps, viewer, filter, 0)
+	if err != nil {
+		t.Fatalf("viewer summary: %v", err)
+	}
+	if viewerSummary.Total != 1 || viewerSummary.ByKind[testKind] != 1 {
+		t.Fatalf("viewer summary = %+v, want only its advertised command", viewerSummary)
+	}
+
+	adminPage := listFor(t, svc, deps, admin, filter, Cursor{}, 10)
+	if len(adminPage.Jobs) != 4 {
+		t.Fatalf("administrator list matched %d jobs after promotion, want 4 including the other owner's work", len(adminPage.Jobs))
+	}
+	adminSummary, err := svc.Summary(deps, admin, filter, 0)
+	if err != nil {
+		t.Fatalf("administrator summary: %v", err)
+	}
+	if adminSummary.Total != 4 || adminSummary.ByState[string(StateQueued)] != 4 || adminSummary.ByKind[testKind] != 4 {
+		t.Fatalf("administrator command summary = %+v, want four queued %s jobs", adminSummary, testKind)
+	}
+
+	// Demotion is observed by the next read, including when the same user id is
+	// retained by the session.
+	if got := listFor(t, svc, deps, viewer, filter, Cursor{}, 10); len(got.Jobs) != 1 {
+		t.Fatalf("demoted viewer list matched %d jobs, want only its advertised command", len(got.Jobs))
+	}
+	demotedSummary, err := svc.Summary(deps, viewer, filter, 0)
+	if err != nil {
+		t.Fatalf("demoted summary: %v", err)
+	}
+	if demotedSummary.Total != 1 {
+		t.Fatalf("demoted summary total = %d, want 1", demotedSummary.Total)
+	}
+}
+
+// TestCommandFilterQueryCountDoesNotScaleWithCandidates is a query-count
+// regression for sparse selectors. A command predicate must stay a SQL
+// subquery before pagination and aggregation; one match among thousands of
+// visible candidates costs the same number of database round trips as one
+// match among dozens.
+func TestCommandFilterQueryCountDoesNotScaleWithCandidates(t *testing.T) {
+	testCommandFilterQueryCountDoesNotScaleWithCandidates(t, newTestDeps(t))
+}
+
+func testCommandFilterQueryCountDoesNotScaleWithCandidates(t *testing.T, deps Deps) {
+	t.Helper()
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	var commandCalls atomic.Int64
+	var selectorCalls atomic.Int64
+	adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		commandCalls.Add(1)
+		if commandContext.Snapshot.Title == "sparse-match" {
+			return []Command{{Key: "inspect"}}, nil
+		}
+		return nil, nil
+	}
+	adapter.selectCommand = func(_ context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+		selectorCalls.Add(1)
+		if request.Key != "inspect" {
+			return nil, false, nil
+		}
+		return request.Jobs.Where("jobs.title = ?", "sparse-match").Select("jobs.id"), true, nil
+	}
+
+	now := time.Date(2035, 2, 4, 12, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return now }
+	seedCommandFilterRows(t, deps, 0, 64, true, now)
+	queryCount := atomic.Int64{}
+	const hookName = "test:command-filter-query-count"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hookName, func(tx *gorm.DB) {
+		if tx.Error == nil {
+			queryCount.Add(1)
+		}
+	}); err != nil {
+		t.Fatalf("register query counter: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hookName) })
+
+	run := func() int64 {
+		t.Helper()
+		queryCount.Store(0)
+		page, err := svc.List(deps, Access{Administrator: true}, Filter{Command: "inspect"}, Cursor{}, 10)
+		if err != nil {
+			t.Fatalf("List sparse command filter: %v", err)
+		}
+		if len(page.Jobs) != 1 || page.Jobs[0].Title != "sparse-match" {
+			t.Fatalf("sparse page = %+v, want the one advertised match", page.Jobs)
+		}
+		summary, err := svc.Summary(deps, Access{Administrator: true}, Filter{Command: "inspect"}, 0)
+		if err != nil {
+			t.Fatalf("Summary sparse command filter: %v", err)
+		}
+		if summary.Total != 1 {
+			t.Fatalf("sparse summary total = %d, want 1", summary.Total)
+		}
+		return queryCount.Load()
+	}
+
+	smallQueryCount := run()
+	if commandCalls.Load() != 0 || selectorCalls.Load() != 2 {
+		t.Fatalf("small candidate set called Commands %d times and selectors %d times; want zero per-Job calls and one selector per read", commandCalls.Load(), selectorCalls.Load())
+	}
+	selectorCalls.Store(0)
+	runUnknown := func() int64 {
+		t.Helper()
+		queryCount.Store(0)
+		page, err := svc.List(deps, Access{Administrator: true}, Filter{Command: "not-advertised"}, Cursor{}, 10)
+		if err != nil {
+			t.Fatalf("List unknown command filter: %v", err)
+		}
+		if len(page.Jobs) != 0 {
+			t.Fatalf("unknown command page returned %d jobs", len(page.Jobs))
+		}
+		summary, err := svc.Summary(deps, Access{Administrator: true}, Filter{Command: "not-advertised"}, 0)
+		if err != nil {
+			t.Fatalf("Summary unknown command filter: %v", err)
+		}
+		if summary.Total != 0 {
+			t.Fatalf("unknown command summary total = %d, want 0", summary.Total)
+		}
+		return queryCount.Load()
+	}
+	unknownSmallQueryCount := runUnknown()
+	if commandCalls.Load() != 0 || selectorCalls.Load() != 2 {
+		t.Fatalf("small unknown-key set called Commands %d times and selectors %d times; want zero per-Job calls and one selector per read", commandCalls.Load(), selectorCalls.Load())
+	}
+	selectorCalls.Store(0)
+	seedCommandFilterRows(t, deps, 64, 16384, false, now)
+	largeQueryCount := run()
+	if largeQueryCount != smallQueryCount {
+		t.Fatalf("query count grew with candidate rows: small=%d large=%d", smallQueryCount, largeQueryCount)
+	}
+	if commandCalls.Load() != 0 || selectorCalls.Load() != 2 {
+		t.Fatalf("large candidate set called Commands %d times and selectors %d times; want zero per-Job calls and one selector per read", commandCalls.Load(), selectorCalls.Load())
+	}
+	selectorCalls.Store(0)
+	unknownLargeQueryCount := runUnknown()
+	if unknownLargeQueryCount != unknownSmallQueryCount {
+		t.Fatalf("unknown-key query count grew with candidate rows: small=%d large=%d", unknownSmallQueryCount, unknownLargeQueryCount)
+	}
+	if commandCalls.Load() != 0 || selectorCalls.Load() != 2 {
+		t.Fatalf("large unknown-key set called Commands %d times and selectors %d times; want zero per-Job calls and one selector per read", commandCalls.Load(), selectorCalls.Load())
+	}
+
+	commands, err := svc.AdvertisedCommands(context.Background(), deps, Access{Administrator: true}, "00000000-0000-7000-8000-000000000000")
+	if err != nil {
+		t.Fatalf("read selected Job's commands: %v", err)
+	}
+	if len(commands) != 1 || commands[0].Key != "inspect" {
+		t.Fatalf("selected Job advertises %+v, want inspect", commands)
+	}
+}
+
+func seedCommandFilterRows(t *testing.T, deps Deps, start, count int, includeMatch bool, acceptedAt time.Time) {
+	t.Helper()
+	owner := uint(7)
+	rows := make([]models.Job, count)
+	for i := range rows {
+		index := start + i
+		title := "unmatched"
+		if includeMatch && i == 0 {
+			title = "sparse-match"
+		}
+		rows[i] = models.Job{
+			ID:   fmt.Sprintf("00000000-0000-7000-8000-%012x", index),
+			Kind: testKind, KindVersion: 1, State: string(StateQueued), Title: title,
+			OwnerUserID: &owner, Origin: "api", VisibilityClass: string(VisibilityOwner),
+			ExecutionPrincipal: string(PrincipalOwner), ReplayClass: string(ReplayClassNonReplayable),
+			Version: 1, AcceptedAt: acceptedAt.Add(-time.Duration(index) * time.Second),
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if err := deps.DB.CreateInBatches(&rows, 500).Error; err != nil {
+		t.Fatalf("seed %d command-filter rows: %v", count, err)
+	}
+}
+
+// TestCommandHostSelectorsMatchAdvertisedCommands covers the host predicates
+// composed after adapter selectors. The cases include state gates, cancel
+// intent, an unresolved claim, retry lineage, replay availability and the
+// caller's preference commands; each SQL-filtered set must equal the set the
+// current principal sees from Commands.
+func TestCommandHostSelectorsMatchAdvertisedCommands(t *testing.T) {
+	testCommandHostSelectorsMatchAdvertisedCommands(t, newTestDeps(t))
+}
+
+func testCommandHostSelectorsMatchAdvertisedCommands(t *testing.T, deps Deps) {
+	t.Helper()
+	svc := NewService()
+	registerTestCodec(t, svc)
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "command-selector-test-key")}
+	clock := time.Date(2035, 3, 10, 9, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(context.Context, CommandContext) ([]Command, error) {
+		return []Command{
+			{Key: CommandCancel}, {Key: CommandPause}, {Key: CommandResume},
+			{Key: CommandRetry}, {Key: CommandRepeat},
+		}, nil
+	}
+	adapter.selectCommand = func(_ context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+		switch request.Key {
+		case CommandCancel, CommandPause, CommandResume, CommandRetry, CommandRepeat:
+			return request.Jobs.Select("jobs.id"), true, nil
+		default:
+			return nil, false, nil
+		}
+	}
+	owner := uint(7)
+	jobsByName := make(map[string]Snapshot)
+	accept := func(name string, replay bool) Snapshot {
+		t.Helper()
+		clock = clock.Add(time.Second)
+		input := ReplayInput{NonReplayable: true}
+		if replay {
+			input = ReplayInput{Input: json.RawMessage(`{"kind":"selector-test"}`)}
+		}
+		snapshot := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &owner, ActorUserID: &owner, Title: name, Replay: input,
+		})
+		jobsByName[name] = snapshot
+		return snapshot
+	}
+	setState := func(name string, state State, controlIntent string) {
+		t.Helper()
+		updates := map[string]any{"state": string(state), "control_intent": controlIntent}
+		if err := deps.DB.Model(&models.Job{}).Where("id = ?", jobsByName[name].ID).Updates(updates).Error; err != nil {
+			t.Fatalf("set %s state: %v", name, err)
+		}
+	}
+
+	for _, name := range []string{
+		"queued", "running", "running-cancel", "paused", "paused-cancel", "paused-held",
+		"blocked", "failed", "failed-linked", "cancelled", "interrupted", "succeeded",
+		"queued-no-replay", "succeeded-no-replay",
+	} {
+		accept(name, name != "queued-no-replay" && name != "succeeded-no-replay")
+	}
+	setState("running", StateRunning, "")
+	setState("running-cancel", StateRunning, ControlIntentCancel)
+	setState("paused", StatePaused, "")
+	setState("paused-cancel", StatePaused, ControlIntentCancel)
+	setState("paused-held", StatePaused, "")
+	setState("blocked", StateBlocked, "")
+	setState("failed", StateFailed, "")
+	setState("failed-linked", StateFailed, "")
+	setState("cancelled", StateCancelled, "")
+	setState("interrupted", StateInterrupted, "")
+	setState("succeeded", StateSucceeded, "")
+	setState("succeeded-no-replay", StateSucceeded, "")
+	accept("retry-successor", true)
+
+	now := clock
+	held := models.JobClaim{
+		JobID: jobsByName["paused-held"].ID, Kind: testKind, KindVersion: 1,
+		Claimant: "selector-test", ExecutionToken: "selector-claim-token",
+		State: models.JobClaimStateHeld, ClaimedAt: now, HeartbeatAt: now,
+		LeaseExpiresAt: now.Add(time.Minute),
+	}
+	if err := deps.DB.Create(&held).Error; err != nil {
+		t.Fatalf("create unresolved claim: %v", err)
+	}
+	link := models.JobLink{
+		Type: string(LinkRetryOf), FromJobID: jobsByName["retry-successor"].ID,
+		ToJobID: jobsByName["failed-linked"].ID, CreatedAt: clock,
+	}
+	if err := deps.DB.Create(&link).Error; err != nil {
+		t.Fatalf("create retry successor link: %v", err)
+	}
+
+	access := Access{UserID: owner}
+	for _, key := range []string{
+		CommandCancel, CommandPause, CommandResume, CommandRetry, CommandRepeat,
+		CommandDismiss, CommandForget, CommandPin, CommandPinLineage,
+	} {
+		want := make(map[string]bool)
+		for _, snapshot := range jobsByName {
+			commands, err := svc.AdvertisedCommands(context.Background(), deps, access, snapshot.ID)
+			if err != nil {
+				t.Fatalf("commands for %s: %v", snapshot.ID, err)
+			}
+			for _, command := range commands {
+				if command.Key == key {
+					want[snapshot.ID] = true
+				}
+			}
+		}
+		page, err := svc.List(deps, access, Filter{Command: key}, Cursor{}, MaxPageSize)
+		if err != nil {
+			t.Fatalf("list %s selector: %v", key, err)
+		}
+		got := make(map[string]bool)
+		for _, snapshot := range page.Jobs {
+			got[snapshot.ID] = true
+		}
+		if !equalStringSets(got, want) {
+			t.Fatalf("%s selector IDs = %v, Commands IDs = %v", key, got, want)
+		}
+	}
+}
+
+func equalStringSets(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for item := range left {
+		if !right[item] {
+			return false
+		}
+	}
+	return true
+}
+
+type adapterWithoutCommandSelector struct{ Adapter }
+
+func TestCommandFilterCoverageRejectsMissingSelectorAndKind(t *testing.T) {
+	t.Run("registered adapter without selector", func(t *testing.T) {
+		deps := newTestDeps(t)
+		svc := NewService()
+		legacy := adapterWithoutCommandSelector{Adapter: newTestAdapter(testDefinition())}
+		if err := svc.RegisterAdapter(legacy); err != nil {
+			t.Fatalf("register legacy adapter: %v", err)
+		}
+		if err := svc.ValidateCommandFilterCoverage([]CommandFilterKind{{Kind: testKind, Version: 1}}); !errors.Is(err, ErrCommandFilterUnavailable) {
+			t.Fatalf("coverage check = %v, want ErrCommandFilterUnavailable", err)
+		}
+		if _, err := svc.List(deps, Access{Administrator: true}, Filter{Command: "inspect"}, Cursor{}, 10); !errors.Is(err, ErrCommandFilterUnavailable) {
+			t.Fatalf("List with an adapter lacking a selector = %v, want ErrCommandFilterUnavailable", err)
+		}
+	})
+
+	t.Run("missing expected Kind", func(t *testing.T) {
+		svc := NewService()
+		registerTestAdapter(t, svc, testDefinition())
+		expected := []CommandFilterKind{
+			{Kind: testKind, Version: 1},
+			{Kind: "plugin-command", Version: 1},
+		}
+		if err := svc.ValidateCommandFilterCoverage(expected); !errors.Is(err, ErrCommandFilterUnavailable) {
+			t.Fatalf("coverage check without expected plugin-command adapter = %v, want ErrCommandFilterUnavailable", err)
+		}
+		if err := svc.ValidateCommandFilterCoverage(expected[:1]); err != nil {
+			t.Fatalf("complete test inventory: %v", err)
+		}
+	})
 }
 
 func timePtr(t time.Time) *time.Time { return &t }

@@ -441,6 +441,22 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 			fmt.Errorf("%w: job %s is at version %d, the request expected %d",
 				ErrVersionConflict, job.ID, job.Version, request.ExpectedVersion))
 	}
+	if adapter, _, adapterErr := s.adapterFor(job.Kind, job.KindVersion); adapterErr == nil {
+		if revalidator, ok := adapter.(CommandExecutionRevalidator); ok {
+			valid, err := revalidator.RevalidateCommand(ctx, CommandContext{
+				Snapshot: viewerSnapshot(job, request.Actor),
+				Access:   request.Actor,
+				Deps:     deps,
+			}, request.Key)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("jobs: revalidate %s command: %w", request.Key, err)
+			}
+			if !valid {
+				return refusedResult(job, request, CommandCodeNotAdvertised, "the job no longer offers that command",
+					fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, job.ID, request.Key))
+			}
+		}
+	}
 
 	// The host's own keys are dispatched here and nowhere else: a key it does not
 	// own goes to the Kind's adapter, and a key it owns never does. A Job's lineage

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"mime"
 	"path/filepath"
 	"time"
 
+	"mahresources/archive"
+	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 )
@@ -46,6 +50,12 @@ const (
 	// makes success depend on it: an export whose archive cannot be handed over did
 	// not succeed, whatever the queue's own status says.
 	jobExportArtifactOutput = "artifact"
+	// jobExportScopeManifestVersion marks outputs whose archive manifest was
+	// validated at publication and contains the full exported source-ID set.
+	jobExportScopeManifestVersion = 1
+	// jobExportMaxScopeManifestBytes bounds decompressed manifest parsing while
+	// still allowing large exports with hundreds of thousands of entries.
+	jobExportMaxScopeManifestBytes = 32 << 20
 	// jobExportPartialSuffix is appended to the archive's path while it is being
 	// written. A file at the published path is therefore a complete one.
 	jobExportPartialSuffix = ".part"
@@ -219,6 +229,310 @@ func (a *groupExportAdapter) Definition() jobs.Definition {
 		Restorable:  true,
 		Visibility:  jobs.VisibilityOwner,
 	}
+}
+
+// AuthorizeJobOutput rechecks every entity recorded in the archive manifest
+// against the asking principal's current scope. The bounded output reference
+// carries only a version marker; the full proof stays with the archive itself.
+func (a *groupExportAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if a == nil || a.ctx == nil || request.Principal == nil ||
+		request.Snapshot.Kind != a.kind || request.Snapshot.KindVersion != jobExportKindVersion ||
+		request.Output.Key != jobExportArtifactOutput || request.Output.Type != jobs.OutputTypeArtifact {
+		return ErrJobOutputForbidden
+	}
+	var summary exportSummary
+	if len(request.Snapshot.Summary) == 0 || json.Unmarshal(request.Snapshot.Summary, &summary) != nil || len(summary.RootGroups) == 0 {
+		return ErrJobOutputForbidden
+	}
+	path, err := groupExportScopeManifestPath(request.Output, request.Snapshot.ID, summary.Gzip)
+	if err != nil {
+		return ErrJobOutputForbidden
+	}
+	scoped := a.ctx.WithPrincipal(request.Principal)
+	manifest, err := readGroupExportScopeManifestFromPath(scoped, path)
+	if err != nil || !authorizeGroupExportScope(scoped, manifest, summary.RootGroups) {
+		return ErrJobOutputForbidden
+	}
+	return nil
+}
+
+// OpenJobOutput repeats current scope authorization against the same open file
+// it returns. The shared output policy has already checked the Job and reference;
+// this second pass prevents a local file replacement between authorization and
+// file serving from swapping in an archive with different source entities.
+func (a *groupExportAdapter) OpenJobOutput(_ context.Context, request JobOutputOpenRequest) (contracts.JobOutputContent, error) {
+	if a == nil || a.ctx == nil || request.Principal == nil ||
+		request.Snapshot.Kind != a.kind || request.Snapshot.KindVersion != jobExportKindVersion ||
+		request.Output.Key != jobExportArtifactOutput || request.Output.Type != jobs.OutputTypeArtifact {
+		return contracts.JobOutputContent{}, ErrJobOutputForbidden
+	}
+	var summary exportSummary
+	if len(request.Snapshot.Summary) == 0 || json.Unmarshal(request.Snapshot.Summary, &summary) != nil || len(summary.RootGroups) == 0 {
+		return contracts.JobOutputContent{}, ErrJobOutputForbidden
+	}
+	path, err := groupExportScopeManifestPath(request.Output, request.Snapshot.ID, summary.Gzip)
+	if err != nil {
+		return contracts.JobOutputContent{}, ErrJobOutputForbidden
+	}
+	file, err := a.ctx.GetDefaultFs().Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return contracts.JobOutputContent{}, ErrJobOutputUnavailable
+		}
+		return contracts.JobOutputContent{}, fmt.Errorf("open group export output: %w", err)
+	}
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = file.Close()
+		}
+	}()
+	manifest, err := readGroupExportScopeManifest(file)
+	if err != nil || !authorizeGroupExportScope(a.ctx.WithPrincipal(request.Principal), manifest, summary.RootGroups) {
+		return contracts.JobOutputContent{}, ErrJobOutputForbidden
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return contracts.JobOutputContent{}, ErrJobOutputUnavailable
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return contracts.JobOutputContent{}, ErrJobOutputUnavailable
+	}
+	contentType := mime.TypeByExtension(filepath.Ext(path))
+	if contentType == "" {
+		contentType = "application/x-tar"
+	}
+	closeOnError = false
+	return contracts.JobOutputContent{
+		Body: file, ContentType: contentType, Filename: safeJobOutputFilename(request.Output.Label, path),
+	}, nil
+}
+
+func groupExportScopeManifestPath(output jobs.Output, jobID string, gzip bool) (string, error) {
+	var reference queueArtifactReference
+	if len(output.Reference) == 0 || json.Unmarshal(output.Reference, &reference) != nil ||
+		reference.ScopeManifestVersion != jobExportScopeManifestVersion || reference.Path == "" {
+		return "", ErrJobOutputForbidden
+	}
+	path, err := rootedJobOutputPath(reference.Path)
+	if err != nil || path != exportArchivePath(jobID, gzip) {
+		return "", ErrJobOutputForbidden
+	}
+	return path, nil
+}
+
+func readGroupExportScopeManifestFromPath(ctx *MahresourcesContext, path string) (*archive.Manifest, error) {
+	if ctx == nil {
+		return nil, errors.New("application context is unavailable")
+	}
+	clean, err := rootedJobOutputPath(path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := ctx.GetDefaultFs().Open(clean)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return readGroupExportScopeManifest(file)
+}
+
+func readGroupExportScopeManifest(source io.Reader) (*archive.Manifest, error) {
+	reader, err := archive.NewReaderWithManifestLimit(source, jobExportMaxScopeManifestBytes)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	manifest, err := reader.ReadManifest()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGroupExportScopeManifest(manifest, nil); err != nil {
+		return nil, err
+	}
+	return manifest, nil
+}
+
+func validateGroupExportScopeManifest(manifest *archive.Manifest, input json.RawMessage) error {
+	if manifest == nil || len(manifest.Entries.Groups) == 0 ||
+		manifest.Counts.Groups != len(manifest.Entries.Groups) || manifest.Counts.ShellGroups > manifest.Counts.Groups ||
+		manifest.Counts.Resources != len(manifest.Entries.Resources) ||
+		manifest.Counts.Notes != len(manifest.Entries.Notes) ||
+		manifest.Counts.Series != len(manifest.Entries.Series) {
+		return errors.New("manifest entries do not prove the complete export scope")
+	}
+	if _, err := uniqueGroupExportSourceIDs("group", manifest.Entries.Groups, func(entry archive.GroupEntry) uint { return entry.SourceID }); err != nil {
+		return err
+	}
+	if _, err := uniqueGroupExportSourceIDs("resource", manifest.Entries.Resources, func(entry archive.ResourceEntry) uint { return entry.SourceID }); err != nil {
+		return err
+	}
+	if _, err := uniqueGroupExportSourceIDs("note", manifest.Entries.Notes, func(entry archive.NoteEntry) uint { return entry.SourceID }); err != nil {
+		return err
+	}
+	if _, err := uniqueGroupExportSourceIDs("series", manifest.Entries.Series, func(entry archive.SeriesEntry) uint { return entry.SourceID }); err != nil {
+		return err
+	}
+	if len(input) > 0 {
+		request, err := exportRequestOf(input)
+		if err != nil {
+			return err
+		}
+		for _, root := range request.RootGroupIDs {
+			if !manifestHasExportedRoot(manifest, root) {
+				return errors.New("manifest omits an accepted root group")
+			}
+		}
+	}
+	return nil
+}
+
+func manifestHasExportedRoot(manifest *archive.Manifest, sourceID uint) bool {
+	for _, group := range manifest.Entries.Groups {
+		if group.SourceID != sourceID {
+			continue
+		}
+		for _, root := range manifest.Roots {
+			if root == group.ExportID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func uniqueGroupExportSourceIDs[T any](kind string, entries []T, sourceID func(T) uint) (map[uint]bool, error) {
+	ids := make(map[uint]bool, len(entries))
+	for _, entry := range entries {
+		id := sourceID(entry)
+		if id == 0 || ids[id] {
+			return nil, fmt.Errorf("manifest has a missing or duplicate %s source id", kind)
+		}
+		ids[id] = true
+	}
+	return ids, nil
+}
+
+func groupExportManifestSourceIDs(manifest *archive.Manifest) (groups, resources, notes, series map[uint]bool) {
+	groups, _ = uniqueGroupExportSourceIDs("group", manifest.Entries.Groups, func(entry archive.GroupEntry) uint { return entry.SourceID })
+	resources, _ = uniqueGroupExportSourceIDs("resource", manifest.Entries.Resources, func(entry archive.ResourceEntry) uint { return entry.SourceID })
+	notes, _ = uniqueGroupExportSourceIDs("note", manifest.Entries.Notes, func(entry archive.NoteEntry) uint { return entry.SourceID })
+	series, _ = uniqueGroupExportSourceIDs("series", manifest.Entries.Series, func(entry archive.SeriesEntry) uint { return entry.SourceID })
+	return
+}
+
+func authorizeGroupExportScope(ctx *MahresourcesContext, manifest *archive.Manifest, roots []uint) bool {
+	if ctx == nil || validateGroupExportScopeManifest(manifest, nil) != nil {
+		return false
+	}
+	groups, resources, notes, series := groupExportManifestSourceIDs(manifest)
+	for _, id := range roots {
+		if id == 0 || !groups[id] || !manifestHasExportedRoot(manifest, id) {
+			return false
+		}
+	}
+	return exportSourceIDsVisible(ctx, "groups", mapKeys(groups)) &&
+		exportSourceIDsVisible(ctx, "resources", mapKeys(resources)) &&
+		exportSourceIDsVisible(ctx, "notes", mapKeys(notes)) &&
+		exportSeriesIDsVisible(ctx, mapKeys(series))
+}
+
+// exportSourceIDsVisible checks entity existence in bounded batches. Raw reads
+// avoid GORM adding the full group allow-list as a second large IN clause; the
+// allow-list is then applied in memory with the same containment rule.
+func exportSourceIDsVisible(ctx *MahresourcesContext, table string, ids []uint) bool {
+	if ctx == nil || len(ids) == 0 {
+		return ctx != nil
+	}
+	scoped := ctx.isScopedPrincipal()
+	for _, chunk := range chunkUints(ids, 500) {
+		if table == "groups" {
+			var rows []struct {
+				ID uint `gorm:"column:id"`
+			}
+			if err := ctx.db.Raw("SELECT id FROM groups WHERE id IN ?", chunk).Scan(&rows).Error; err != nil || len(rows) != len(chunk) {
+				return false
+			}
+			if scoped {
+				allowed := ctx.visibleGroupIDs(chunk)
+				for _, id := range chunk {
+					if !allowed[id] {
+						return false
+					}
+				}
+			}
+			continue
+		}
+		if table != "resources" && table != "notes" {
+			return false
+		}
+		var rows []struct {
+			ID      uint  `gorm:"column:id"`
+			OwnerID *uint `gorm:"column:owner_id"`
+		}
+		query := "SELECT id, owner_id FROM " + table + " WHERE id IN ?"
+		if err := ctx.db.Raw(query, chunk).Scan(&rows).Error; err != nil || len(rows) != len(chunk) {
+			return false
+		}
+		if scoped {
+			ownerIDs := make([]uint, 0, len(rows))
+			for _, row := range rows {
+				if row.OwnerID == nil {
+					return false
+				}
+				ownerIDs = append(ownerIDs, *row.OwnerID)
+			}
+			allowed := ctx.visibleGroupIDs(ownerIDs)
+			for _, ownerID := range ownerIDs {
+				if !allowed[ownerID] {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// exportSeriesIDsVisible treats a series as visible when it still belongs to
+// at least one current resource the principal can see. Series have no direct
+// group owner, so the resource membership is their scope boundary.
+func exportSeriesIDsVisible(ctx *MahresourcesContext, ids []uint) bool {
+	if ctx == nil || len(ids) == 0 {
+		return ctx != nil
+	}
+	scoped := ctx.isScopedPrincipal()
+	visible := make(map[uint]bool, len(ids))
+	for _, chunk := range chunkUints(ids, 500) {
+		var rows []struct {
+			SeriesID uint  `gorm:"column:series_id"`
+			OwnerID  *uint `gorm:"column:owner_id"`
+		}
+		if err := ctx.db.Raw("SELECT series_id, owner_id FROM resources WHERE series_id IN ? AND series_id IS NOT NULL", chunk).Scan(&rows).Error; err != nil {
+			return false
+		}
+		ownerIDs := make([]uint, 0, len(rows))
+		if scoped {
+			for _, row := range rows {
+				if row.OwnerID == nil {
+					continue
+				}
+				ownerIDs = append(ownerIDs, *row.OwnerID)
+			}
+		}
+		allowed := ctx.visibleGroupIDs(ownerIDs)
+		for _, row := range rows {
+			if scoped && (row.OwnerID == nil || !allowed[*row.OwnerID]) {
+				continue
+			}
+			visible[row.SeriesID] = true
+		}
+	}
+	for _, id := range ids {
+		if !visible[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // forExecution returns this adapter bound to the principal one execution acts as,
@@ -763,7 +1077,28 @@ func (ctx *MahresourcesContext) ExportArchiveFor(legacyID string) (ExportArchive
 	}
 	archive.Published = true
 	archive.Availability = artifact.Availability
-	archive.Path, _ = artifactPathOf(artifact.Reference)
+	storedPath, pathErr := artifactPathOf(artifact.Reference)
+	if pathErr == nil {
+		archive.Path, pathErr = rootedJobOutputPath(storedPath)
+	}
+	if pathErr != nil {
+		archive.Path = ""
+	}
+	if artifact.Availability != jobs.OutputAvailable || archive.Path == "" {
+		return archive, true, nil
+	}
+	if _, err := ctx.GetDefaultFs().Stat(archive.Path); err != nil {
+		// Keep the legacy download route's established 410 answer for an artifact
+		// whose bytes have already been removed by retention or external cleanup.
+		return archive, true, nil
+	}
+	request := JobOutputOpenRequest{Snapshot: snap, Output: artifact, Principal: ctx.Principal()}
+	if err := ctx.authorizeJobOutput(context.Background(), service, request); err != nil {
+		if errors.Is(err, ErrJobOutputForbidden) {
+			return ExportArchive{}, true, jobs.ErrNotFound
+		}
+		return ExportArchive{}, true, err
+	}
 	return archive, true, nil
 }
 

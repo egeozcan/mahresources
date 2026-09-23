@@ -425,29 +425,15 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 	if state != jobs.StateFailed && state != jobs.StateCancelled && state != jobs.StateInterrupted {
 		return commands, nil
 	}
-	input, err := a.inputOf(commandContext.Deps, commandContext.Snapshot.ID)
-	if err != nil {
+	var summary reductionComputeSummary
+	raw := commandContext.Snapshot.Summary
+	if len(raw) == 0 || !json.Valid(raw) || json.Unmarshal(raw, &summary) != nil || summary.ReductionID == 0 {
 		return commands, nil
 	}
-	if a.ctx.reductionComputableOn(commandContext.Deps, input.ReductionID) {
+	if a.ctx.reductionComputableOn(commandContext.Deps, summary.ReductionID) {
 		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Compute again"})
 	}
 	return commands, nil
-}
-
-// inputOf opens one Job's sealed input as this Kind reads it, on the caller's own
-// handle: the command plane re-asks this question inside the transaction that would
-// create the successor, and a second connection there deadlocks a pool of one.
-func (a *reductionComputeAdapter) inputOf(deps jobs.Deps, jobID string) (*reductionComputeJobInput, error) {
-	service := a.ctx.JobService()
-	if service == nil {
-		return nil, errors.New("this context has no job control plane installed")
-	}
-	opened, err := service.OpenReplay(deps, jobs.Access{Administrator: true}, jobID)
-	if err != nil {
-		return nil, err
-	}
-	return reductionComputeInputOf(opened.Input)
 }
 
 // reductionComputable answers whether the row one Job names can be clustered again:

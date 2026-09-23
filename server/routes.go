@@ -30,6 +30,11 @@ type templateInformation struct {
 // templateContextFn is the uniform shape the route table stores.
 type templateContextFn = func(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context
 
+// canonicalJobAPICutoverComplete stays false until Task 17's complete-Kind and
+// retirement readiness gates pass. The handler and OpenAPI registrations are
+// ready behind this rollout switch; the legacy Jobs routes remain available.
+const canonicalJobAPICutoverComplete = false
+
 // adaptTemplate lets each template provider declare the narrow interface it
 // actually needs while the route table stays a single uniform map. Go has no
 // function-parameter contravariance, so a func(TagPageContext) cannot be stored
@@ -860,10 +865,19 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
-	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("version") == "2" {
+			requestContext := scopedCtx(appContext, r)
+			api_handlers.GetJobsEventsHandler(requestContext, requestContext, canonicalJobAPICutoverComplete)(w, r)
+			return
+		}
+		// The compatibility stream retains its existing context and payload.
+		api_handlers.GetJobsEventsHandler(appContext, appContext, canonicalJobAPICutoverComplete)(w, r)
+	})
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadJobHandler))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.
 	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(api_handlers.GetJobsClearCompletedHandler(appContext))
+	registerCanonicalJobRoutes(router, appContext, canonicalJobAPICutoverComplete)
 
 	// Download history — the durable record behind /downloads. Retry runs on a
 	// request-scoped context for the same reason submit does: it enqueues a
@@ -1022,4 +1036,22 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			PathPrefix("/plugins/").
 			HandlerFunc(template_handlers.RenderTemplate("pluginPage.tpl", pluginCtxFn))
 	}
+}
+
+// registerCanonicalJobRoutes adds the canonical Job Center API only after the
+// rollout gate passes. The boolean is explicit so route metadata can be tested
+// without making the endpoints externally available in earlier releases.
+func registerCanonicalJobRoutes(router *mux.Router, appContext *application_context.MahresourcesContext, enabled bool) {
+	if !enabled {
+		return
+	}
+	// Register static paths before /{id}, which can otherwise capture names such
+	// as "summary". Compatibility aliases above retain their existing routing.
+	router.Methods(http.MethodGet).Path("/v1/jobs/summary").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobSummaryHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/commands/{command}").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkJobCommandHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobListHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs/{id}/events").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobTimelineHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs/{id}/outputs").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobOutputHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/{id}/commands/{command}").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobCommandHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs/{id}").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobDetailHandler))
 }

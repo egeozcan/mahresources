@@ -234,8 +234,8 @@ func TestAnExportWhosePublishedArchiveIsGoneIsFailedNotSucceeded(t *testing.T) {
 	if err := ctx.GetDefaultFs().MkdirAll("_exports", 0755); err != nil {
 		t.Fatalf("mkdir _exports: %v", err)
 	}
-	if err := afero.WriteFile(ctx.GetDefaultFs(), archivePath, []byte("gone soon"), 0644); err != nil {
-		t.Fatalf("stage the archive: %v", err)
+	if gotPath := writeGroupExportArchiveForTest(t, ctx, accepted.ID, []uint{groupID}, nil, nil, nil); gotPath != archivePath {
+		t.Fatalf("test archive path = %q, want %q", gotPath, archivePath)
 	}
 	if err := ctx.publishQueueArtifact(execution, jobExportArtifactOutput, "Exported archive",
 		archivePath, time.Now().Add(time.Hour)); err != nil {
@@ -254,6 +254,32 @@ func TestAnExportWhosePublishedArchiveIsGoneIsFailedNotSucceeded(t *testing.T) {
 	})
 	if snap.State != jobs.StateFailed {
 		t.Fatalf("an export whose archive vanished ended %s, want failed", snap.State)
+	}
+}
+
+func TestLargeGroupExportScopeManifestKeepsOutputReferenceBounded(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "export-large-manifest")
+	accepted, execution := acceptAndClaimExportForTest(t, ctx, "export-large-manifest", groupID, time.Minute)
+	groupIDs := make([]uint, 2048)
+	groupIDs[0] = groupID
+	for i := 1; i < len(groupIDs); i++ {
+		groupIDs[i] = uint(100000 + i)
+	}
+	path := writeGroupExportArchiveForTest(t, ctx, accepted.ID, groupIDs, nil, nil, nil)
+	if err := ctx.publishQueueArtifact(execution, jobExportArtifactOutput, "Exported archive", path, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("publish large export artifact: %v", err)
+	}
+	outputs, err := ctx.jobOutputsFor(accepted.ID)
+	if err != nil || len(outputs) != 1 {
+		t.Fatalf("published outputs = %#v, err=%v", outputs, err)
+	}
+	if len(outputs[0].Reference) >= jobs.MaxOutputReferenceBytes {
+		t.Fatalf("output reference is %d bytes, want below %d; source IDs belong in the archive manifest", len(outputs[0].Reference), jobs.MaxOutputReferenceBytes)
+	}
+	var reference queueArtifactReference
+	if err := json.Unmarshal(outputs[0].Reference, &reference); err != nil || reference.ScopeManifestVersion != jobExportScopeManifestVersion {
+		t.Fatalf("published scope proof reference = %+v, err=%v", reference, err)
 	}
 }
 

@@ -598,10 +598,10 @@ type Access struct {
 
 // Filter selects the Jobs one visible listing, summary or event scan returns.
 //
-// Every dimension is a durable relational fact — columns and the preference and
-// lineage rows — because a listing that filtered in Go would answer its page and
-// its counts from different sets, which is how an aggregate leaks a Job its list
-// hides. A zero field means "not asked": no predicate is added for it.
+// Most dimensions are durable relational facts — columns and the preference and
+// lineage rows. Command is evaluated from each candidate's current adapter
+// advertisement before pagination or aggregation. A zero field means "not
+// asked": no predicate is added for it.
 type Filter struct {
 	// States, Kinds and Origins narrow on the normalized stored spellings. An
 	// unknown state is refused rather than matching nothing, because a typo is a
@@ -635,13 +635,9 @@ type Filter struct {
 	Pinned    *bool
 	Dismissed *bool
 
-	// Command narrows to Jobs currently offering a command key. It is refused:
-	// a command's availability is advertised by its Kind adapter at read time
-	// and is not a durable column, so a listing could not answer it without
-	// post-filtering in Go — which is exactly the drift the constructor exists
-	// to prevent. The command surface is what makes this dimension answerable,
-	// and until it does a request naming it is refused rather than silently
-	// matching nothing.
+	// Command narrows to Jobs currently offering this key. Availability comes
+	// from the Kind adapter at read time, so List and Summary evaluate it for
+	// bounded candidate batches using the asking principal's current access.
 	Command string
 }
 
@@ -1107,6 +1103,11 @@ var (
 	// vocabulary this release can answer — an unknown state, a relationship that
 	// is not a LinkType, or a dimension that is not a durable fact.
 	ErrInvalidFilter = errors.New("jobs: invalid filter")
+	// ErrCommandFilterUnavailable means an installed Kind cannot provide an exact
+	// query selector for its dynamic command advertisements. The Service refuses
+	// the read rather than scanning an unbounded Job history or returning an
+	// incomplete page/summary.
+	ErrCommandFilterUnavailable = errors.New("jobs: exact command filter is unavailable")
 	// ErrInvalidCursor is a keyset position that cannot be continued from.
 	ErrInvalidCursor = errors.New("jobs: invalid cursor")
 	// ErrInvalidPage is a page size outside the bound a listing accepts.

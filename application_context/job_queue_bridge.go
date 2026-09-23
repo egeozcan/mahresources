@@ -990,7 +990,22 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 	if err != nil {
 		return fmt.Errorf("%w: the artifact %s is not there: %w", errQueueStagedOutputMissing, path, err)
 	}
-	reference, err := json.Marshal(queueArtifactReference{Path: path, Size: info.Size()})
+	artifactReference := queueArtifactReference{Path: path, Size: info.Size()}
+	if execution.Kind == JobKindGroupExport {
+		request, requestErr := exportRequestOf(execution.Input)
+		if requestErr != nil || path != exportArchivePath(execution.JobID, request.Gzip) {
+			return errors.New("group export artifact path does not match its canonical Job")
+		}
+		manifest, manifestErr := readGroupExportScopeManifestFromPath(ctx, path)
+		if manifestErr != nil {
+			return fmt.Errorf("verify group export scope manifest: %w", manifestErr)
+		}
+		if err := validateGroupExportScopeManifest(manifest, execution.Input); err != nil {
+			return fmt.Errorf("verify group export scope manifest: %w", err)
+		}
+		artifactReference.ScopeManifestVersion = jobExportScopeManifestVersion
+	}
+	reference, err := json.Marshal(artifactReference)
 	if err != nil {
 		return err
 	}
@@ -1019,8 +1034,9 @@ var errQueueStagedOutputMissing = errors.New("the staged output is not there")
 // how many of them the publisher verified. The Kind's own reader understands it and
 // the control plane never interprets it.
 type queueArtifactReference struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path                 string `json:"path"`
+	Size                 int64  `json:"size"`
+	ScopeManifestVersion uint   `json:"scopeManifestVersion,omitempty"`
 }
 
 // publishQueueReport publishes one staged JSON document as a report output.

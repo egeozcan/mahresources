@@ -1314,7 +1314,7 @@ func (ctx *MahresourcesContext) SetTemplateGenerationRateLimiter(l *MRQLGenerati
 // BasePathFs in disk mode, or an in-memory fs in memory mode). Used by
 // handlers that need to read/write files alongside the main resource store.
 func (ctx *MahresourcesContext) GetDefaultFs() afero.Fs {
-	return ctx.fs
+	return ctx.defaultFsWithImportFacts()
 }
 
 // WithRequest returns a shallow copy of the context with the HTTP request set.

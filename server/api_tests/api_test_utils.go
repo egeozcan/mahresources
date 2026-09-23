@@ -130,6 +130,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		// wherever the suite exercises user deletion.
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
+		&models.JobImportCommandFact{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	)

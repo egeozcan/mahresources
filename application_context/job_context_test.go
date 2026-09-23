@@ -49,7 +49,7 @@ func newJobContext(t *testing.T) *MahresourcesContext {
 		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{},
 		&models.JobClaim{}, &models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
-		&models.JobCommandRequest{}, &models.JobLegacyHandle{},
+		&models.JobCommandRequest{}, &models.JobLegacyHandle{}, &models.JobImportCommandFact{},
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	); err != nil {
 		t.Fatalf("migrate job core: %v", err)

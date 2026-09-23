@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"mahresources/contracts"
 	"mahresources/jobs"
 )
 
@@ -159,6 +160,13 @@ func (ctx *MahresourcesContext) GetJobOutputs(jobID string) ([]jobs.Output, erro
 		return nil, err
 	}
 	return service.Outputs(ctx.jobDeps(), ctx.jobAccess(), jobID)
+}
+
+// OpenJobOutput resolves and opens one currently available typed output. The
+// application rechecks Job visibility, principal capability, and output
+// availability for every request before resolving any stored reference.
+func (ctx *MahresourcesContext) OpenJobOutput(requestCtx context.Context, jobID, key string) (contracts.JobOutputContent, error) {
+	return ctx.openJobOutput(requestCtx, jobID, key)
 }
 
 // GetJobLineage returns one visible Job's relatives, as far as the principal may

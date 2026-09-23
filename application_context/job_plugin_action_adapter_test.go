@@ -164,6 +164,8 @@ function init()
     mah.schedule({ id = "tick", every = "1m", overlap = "skip", handler = function(job_id)
         bump("scheduled")
     end })
+    mah.schedule({ id = "retryable-tick", every = "1m", overlap = "skip", retry = true,
+                   handler = function(job_id) bump("retryable-scheduled") end })
     mah.on("after_job_completed", follow_up)
 end
 `

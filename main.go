@@ -693,6 +693,13 @@ func main() {
 	// Install the shared control plane before command recovery so recovery can
 	// reconcile authoritative command rows and canonical Jobs in one transaction.
 	jobService := installJobControlPlane(context)
+	// Import Retry selectors use durable file-availability facts. Repair old
+	// missing facts and stale files after the service exists, before migration,
+	// plugin activation, or dispatch can expose import commands.
+	if err := context.ReconcileImportCommandAvailability(); err != nil {
+		fail("failed to reconcile import command availability: %v", err)
+		return
+	}
 	migration, err := context.RunJobMigrationToGate(application_context.JobMigrationOptions{
 		BatchSize: *jobMigrationBatchSize, MaxBatches: 20, WritersDrained: *jobMigrationWritersDrained,
 	})
@@ -985,10 +992,13 @@ func main() {
 //
 // It lives here rather than inline so the ordering is testable without starting a server,
 // exactly as migrateJobCore does.
-func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) *jobs.Service {
+func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) (*jobs.Service, error) {
 	jobService := installJobControlPlane(context)
+	if err := context.ReconcileImportCommandAvailability(); err != nil {
+		return nil, err
+	}
 	activatePluginsWithJobControlPlane(context)
-	return jobService
+	return jobService, nil
 }
 
 func installJobControlPlane(context *application_context.MahresourcesContext) *jobs.Service {
@@ -1034,6 +1044,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobPinGuard{},
 		&models.JobCommandRequest{},
 		&models.JobLegacyHandle{},
+		&models.JobImportCommandFact{},
 		&models.JobWriterEpoch{},
 		&models.JobSourceMapping{},
 		&models.JobMigrationCheckpoint{},

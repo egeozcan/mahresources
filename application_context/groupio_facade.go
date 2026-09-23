@@ -97,5 +97,8 @@ func (ctx *MahresourcesContext) LoadImportPlan(jobID string) (*ImportPlan, error
 
 // DeleteImportFiles removes a parse job's staged tar and plan.
 func (ctx *MahresourcesContext) DeleteImportFiles(jobID string) error {
-	return ctx.groupio.DeleteImportFiles(ctx.groupioDeps(), jobID)
+	if err := ctx.groupio.DeleteImportFiles(ctx.groupioDeps(), jobID); err != nil {
+		return err
+	}
+	return ctx.initializeImportCommandAvailability(jobID)
 }
