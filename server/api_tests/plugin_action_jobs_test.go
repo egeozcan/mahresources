@@ -573,7 +573,8 @@ func TestProjectActionJobsHydratesSanitizedResultsInOneBatchAndSSEInit(t *testin
 	}
 	for _, handle := range []string{firstHandle, secondHandle} {
 		found := false
-		for _, row := range init.ActionJobs {
+		for i := range init.ActionJobs {
+			row := &init.ActionJobs[i]
 			if row.ID == handle && row.Result["stable"] == "kept" {
 				found = true
 			}
