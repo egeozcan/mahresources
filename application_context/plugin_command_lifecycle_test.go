@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
@@ -404,6 +405,7 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 		t.Skip("plugin commands are unsupported on Windows")
 	}
 	ctx := newPluginCommandStoreTestContext(t)
+	ctx.SetJobService(jobs.NewService())
 	if ctx.pluginManager == nil {
 		t.Fatal("plugin manager unavailable")
 	}
@@ -466,6 +468,13 @@ func TestPluginCommandLifecycleShutdownPersistsOutcome(t *testing.T) {
 	}, plugin_commands.RunOutput{RunID: importRunID, ArgvJSON: `[]`, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
+	storedImportRun, _, err := ctx.Run(importRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := ctx.claimPluginCommandJob(storedImportRun.JobID, JobKindPluginCommand, importRunID); err != nil || !claimed {
+		t.Fatalf("claim import source run Job: claimed=%v err=%v", claimed, err)
+	}
 	if won, err := ctx.MarkRunRunning(importRunID, now); err != nil || !won {
 		t.Fatalf("start import source run: won=%v err=%v", won, err)
 	}
@@ -519,6 +528,7 @@ func TestPluginCommandLifecycleShutdownRetainsLeaseWhileClaimedWorkerIsActive(t 
 		t.Skip("plugin commands are unsupported on Windows")
 	}
 	ctx := newPluginCommandStoreTestContext(t)
+	ctx.SetJobService(jobs.NewService())
 	root := t.TempDir()
 	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
 	lease, err := plugin_commands.AcquireRuntimeLease(root)
@@ -534,6 +544,15 @@ func TestPluginCommandLifecycleShutdownRetainsLeaseWhileClaimedWorkerIsActive(t 
 		t.Fatal(err)
 	}
 	installPluginCommandActiveForTest(ctx, dispatcher, nil, lease)
+	dbFence, err := ctx.acquirePluginCommandDBFence(root)
+	if err != nil {
+		close(executor.release)
+		t.Fatal(err)
+	}
+	ctx.pluginCommandController.mu.Lock()
+	ctx.pluginCommandController.dbFence = dbFence
+	ctx.pluginCommandController.config.releaseDBFence = ctx.releasePluginCommandDBFence
+	ctx.pluginCommandController.mu.Unlock()
 	owner := uint(19)
 	if _, err := dispatcher.Submit(plugin_commands.CommandRequest{
 		PluginName: "lifecycle", ActorUserID: &owner,

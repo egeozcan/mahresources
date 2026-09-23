@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
@@ -234,6 +235,8 @@ function init()
 end
 `)
 	ctx := createTestContextWithPlugins(t, pluginDir)
+	ctx.SetJobService(jobs.NewService())
+	migratePluginCommandJobTestModels(t, ctx)
 	require.NoError(t, ctx.db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
@@ -692,6 +695,7 @@ func TestPluginCommandControllerStopDuringPublishCannotPublish(t *testing.T) {
 
 func TestPluginCommandControllerStopDuringPrePublicationDrainRetainsLease(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
+	ctx.SetJobService(jobs.NewService())
 	root := t.TempDir()
 	settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
 	executor := &lifecycleStubbornExecutor{started: make(chan struct{}), release: make(chan struct{})}
@@ -813,6 +817,7 @@ func TestPluginCommandControllerStopAfterRecoveryBlockerStaysStopping(t *testing
 	inspector := &controllerRecoveryInspector{state: plugin_commands.GroupAliveUnverified}
 	blockerReady := make(chan struct{})
 	allowQuarantine := make(chan struct{})
+	root := t.TempDir()
 	cfg := defaultPluginCommandControllerConfig()
 	cfg.bootSessionID = func() (string, error) { return "same-boot", nil }
 	cfg.inspector = inspector
@@ -823,7 +828,7 @@ func TestPluginCommandControllerStopAfterRecoveryBlockerStaysStopping(t *testing
 	started := make(chan error, 1)
 	go func() {
 		started <- ctx.startPluginCommandsWithConfig(context.Background(), testPluginCommandSettings{
-			root: t.TempDir(), commandPath: t.TempDir(),
+			root: root, commandPath: t.TempDir(),
 		}, cfg)
 	}()
 	<-blockerReady
@@ -836,7 +841,10 @@ func TestPluginCommandControllerStopAfterRecoveryBlockerStaysStopping(t *testing
 	}, time.Second, time.Millisecond)
 	close(allowQuarantine)
 	require.NoError(t, <-started)
-	require.NoError(t, <-stopped)
+	require.Error(t, <-stopped, "an unresolved recovery dispatcher cannot release either fence")
+	second, leaseErr := plugin_commands.AcquireRuntimeLease(root)
+	require.ErrorIs(t, leaseErr, plugin_commands.ErrRuntimeLeaseBusy)
+	require.Nil(t, second)
 	ctx.pluginCommandController.mu.Lock()
 	state := ctx.pluginCommandController.state
 	ctx.pluginCommandController.mu.Unlock()

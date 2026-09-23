@@ -37,6 +37,7 @@ type pluginCommandRuntimeController struct {
 	reason   string
 	retryAt  time.Time
 	lease    *plugin_commands.RuntimeLease
+	dbFence  string
 	pending  *plugin_commands.Dispatcher
 	// pendingExchange shares the pending dispatcher's lease manager. It is not
 	// published until recovery succeeds.
@@ -50,6 +51,8 @@ type pluginCommandRuntimeController struct {
 
 type pluginCommandControllerConfig struct {
 	acquireLease     func(string) (*plugin_commands.RuntimeLease, error)
+	acquireDBFence   func(string) (string, error)
+	releaseDBFence   func(string) error
 	bootSessionID    func() (string, error)
 	acquireBackoff   []time.Duration
 	recoveryInterval time.Duration
@@ -81,6 +84,16 @@ func (ctx *MahresourcesContext) pluginCommandActive() (*pluginCommandActiveRunti
 	}
 	controller := ctx.pluginCommandController
 	if active := controller.active.Load(); active != nil {
+		controller.mu.Lock()
+		productionOwner := controller.lease != nil
+		token := controller.dbFence
+		controller.mu.Unlock()
+		if productionOwner {
+			var count int64
+			if token == "" || ctx.db.Model(&models.JobRuntimeFence{}).Where("key = ? AND token = ?", pluginCommandRuntimeFenceKey, token).Count(&count).Error != nil || count != 1 {
+				return nil, &plugin_commands.RuntimeQuarantinedError{Reason: pluginCommandCallerQuarantineReason}
+			}
+		}
 		return active, nil
 	}
 	controller.mu.Lock()
@@ -102,6 +115,12 @@ func (ctx *MahresourcesContext) startPluginCommandsWithConfig(callCtx context.Co
 	}
 	if cfg.acquireLease == nil {
 		cfg.acquireLease = plugin_commands.AcquireRuntimeLease
+	}
+	if cfg.acquireDBFence == nil {
+		cfg.acquireDBFence = ctx.acquirePluginCommandDBFence
+	}
+	if cfg.releaseDBFence == nil {
+		cfg.releaseDBFence = ctx.releasePluginCommandDBFence
 	}
 	if cfg.bootSessionID == nil {
 		cfg.bootSessionID = plugin_commands.CurrentBootSessionID
@@ -213,6 +232,21 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 		}
 		c.lease = lease
 		c.mu.Unlock()
+		token, fenceErr := c.config.acquireDBFence(c.settings.StagingRoot())
+		if fenceErr != nil {
+			_ = lease.Close()
+			c.mu.Lock()
+			c.lease = nil
+			c.mu.Unlock()
+			message := fmt.Sprintf("plugin command runtime is quarantined because its database fence is unavailable: %v; automatic retry is active; see /logs", fenceErr)
+			if !c.enterQuarantine(pluginCommandRuntimeAcquiring, message, nil, c.acquireDelay(attempt)) {
+				return pluginCommandAttemptStopped, nil
+			}
+			return pluginCommandAttemptLeaseBusy, fenceErr
+		}
+		c.mu.Lock()
+		c.dbFence = token
+		c.mu.Unlock()
 
 		runtime, err := c.buildRuntime()
 		if err != nil {
@@ -297,7 +331,7 @@ func (c *pluginCommandRuntimeController) buildRuntime() (*pluginCommandActiveRun
 	})
 	dispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
 		Store: c.owner, BootSessionID: c.bootSessionID,
-		Jobs: commandLiveJobs{manager: c.owner.downloadManager}, Executor: executor,
+		Jobs: commandLiveJobs{ctx: c.owner, manager: c.owner.downloadManager}, Executor: executor,
 		Settings: c.settings, Inspector: c.config.inspector, Usage: usage,
 		Leases: leases, Logf: log.Printf,
 	})
@@ -434,7 +468,9 @@ func (c *pluginCommandRuntimeController) resetAfterFailedStart() {
 		return
 	}
 	lease := c.lease
+	dbFence := c.dbFence
 	c.lease = nil
+	c.dbFence = ""
 	c.pending = nil
 	c.pendingExchange = nil
 	c.draining = nil
@@ -445,6 +481,9 @@ func (c *pluginCommandRuntimeController) resetAfterFailedStart() {
 	c.retryAt = time.Time{}
 	c.state = pluginCommandRuntimeIdle
 	c.mu.Unlock()
+	if dbFence != "" {
+		_ = c.config.releaseDBFence(dbFence)
+	}
 	if lease != nil {
 		_ = lease.Close()
 	}

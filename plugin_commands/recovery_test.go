@@ -120,8 +120,9 @@ func TestRecoveryClassifiesNonterminalRuns(t *testing.T) {
 		pgidCancelled:     {{State: GroupAliveOwned}, {State: GroupAliveOwned}},
 	}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector})
-	if err := d.Recover(context.Background()); err != nil {
-		t.Fatal(err)
+	var blocked *RecoveryBlockedError
+	if err := d.Recover(context.Background()); !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want unknown-PGID recovery blocker", err)
 	}
 
 	want := map[string]struct {
@@ -130,7 +131,7 @@ func TestRecoveryClassifiesNonterminalRuns(t *testing.T) {
 	}{
 		"queued-cancel": {RunStatusCancelled, false},
 		"queued":        {RunStatusInterrupted, false},
-		"no-pgid":       {RunStatusInterrupted, true},
+		"no-pgid":       {RunStatusRunning, false},
 		"dead":          {RunStatusInterrupted, false},
 		"dead-cancel":   {RunStatusCancelled, false},
 		"owned":         {RunStatusInterrupted, false},
@@ -366,7 +367,7 @@ func TestRecoveryHonoursContextWhileWaitingForOwnedGroupDeath(t *testing.T) {
 	}
 }
 
-func TestRecoveryDifferentBootNeverTouchesPersistedPGID(t *testing.T) {
+func TestRecoveryDifferentBootKeepsRunBlockedWithoutProvingQuiescence(t *testing.T) {
 	pgid := 42
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
 	store.bootSessionIDs["old"] = "boot-a"
@@ -375,8 +376,9 @@ func TestRecoveryDifferentBootNeverTouchesPersistedPGID(t *testing.T) {
 		pgid: {{State: GroupAliveOwned}},
 	}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector, BootSessionID: "boot-b"})
-	if err := d.Recover(context.Background()); err != nil {
-		t.Fatal(err)
+	var blocked *RecoveryBlockedError
+	if err := d.Recover(context.Background()); !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want cross-boot recovery blocker", err)
 	}
 	inspector.mu.Lock()
 	inspections, kills := append([]int(nil), inspector.inspections...), append([]int(nil), inspector.kills...)
@@ -388,12 +390,12 @@ func TestRecoveryDifferentBootNeverTouchesPersistedPGID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != RunStatusInterrupted || !record.OutputUnverified || !strings.Contains(record.Error, "prior boot") {
+	if record.Status != RunStatusRunning || record.FinishedAt != nil || record.OutputUnverified {
 		t.Fatalf("record = %+v", record)
 	}
 }
 
-func TestRecoveryDifferentBootPreservesCancellationPrecedence(t *testing.T) {
+func TestRecoveryDifferentBootKeepsCancellationPendingUntilQuiescence(t *testing.T) {
 	pgid := 43
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
 	store.bootSessionIDs["cancelled-old"] = "boot-a"
@@ -403,14 +405,15 @@ func TestRecoveryDifferentBootPreservesCancellationPrecedence(t *testing.T) {
 	}
 	inspector := &recoveryInspector{states: map[int][]GroupIdentity{pgid: {{State: GroupAliveOwned}}}}
 	d := NewDispatcher(Dependencies{Store: store, Inspector: inspector, BootSessionID: "boot-b"})
-	if err := d.Recover(context.Background()); err != nil {
-		t.Fatal(err)
+	var blocked *RecoveryBlockedError
+	if err := d.Recover(context.Background()); !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want cross-boot recovery blocker", err)
 	}
 	record, _, err := store.Run("cancelled-old")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != RunStatusCancelled || !record.OutputUnverified || !strings.Contains(record.Error, "operator cancelled") {
+	if record.Status != RunStatusRunning || !record.CancelRequested || record.Error != "operator cancelled" {
 		t.Fatalf("record = %+v", record)
 	}
 	if len(inspector.inspections) != 0 || len(inspector.kills) != 0 {

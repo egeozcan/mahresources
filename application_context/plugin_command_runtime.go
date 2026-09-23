@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/plugin_commands"
 )
 
@@ -20,6 +22,7 @@ const (
 // command work into its registry. Dispatcher workers own admission first; only
 // running work enters the independently capped managed lane.
 type commandLiveJobs struct {
+	ctx     *MahresourcesContext
 	manager *download_queue.DownloadManager
 }
 
@@ -39,6 +42,13 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 	if j.manager == nil {
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
 	}
+	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommand, spec.RunID)
+	if err != nil {
+		return "", err
+	}
+	if spec.JobID != "" && j.ctx.JobService() != nil && !claimed {
+		return "", fmt.Errorf("plugin command Job %s was not claimable", spec.JobID)
+	}
 	job, err := j.manager.SubmitManagedJob(download_queue.ManagedJobOptions{
 		JobOptions: download_queue.JobOptions{
 			Source: pluginCommandJobSource, InitialPhase: "starting command",
@@ -48,9 +58,14 @@ func (j commandLiveJobs) SubmitCommandJob(spec plugin_commands.RunJobSpec, cance
 		Cancel:          cancel,
 		AuthoritativeID: spec.RunID,
 	}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
-		return managedCommandOutcome(run(ctx, commandProgress{sink: progress}))
+		workCtx, stop := j.ctx.heartbeatManagedCommand(ctx, execution, claimed)
+		defer stop()
+		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress}))
 	})
 	if err != nil {
+		if claimed {
+			_ = j.ctx.releasePluginCommandJob(execution)
+		}
 		return "", err
 	}
 	return job.ID, nil
@@ -60,16 +75,58 @@ func (j commandLiveJobs) SubmitImportJob(spec plugin_commands.ImportJobSpec, run
 	if j.manager == nil {
 		return "", fmt.Errorf("plugin command managed job lane is unavailable")
 	}
+	execution, claimed, err := j.ctx.claimPluginCommandJob(spec.JobID, JobKindPluginCommandImport, spec.ImportID)
+	if err != nil {
+		return "", err
+	}
+	if spec.JobID != "" && j.ctx.JobService() != nil && !claimed {
+		return "", fmt.Errorf("plugin command import Job %s was not claimable", spec.JobID)
+	}
 	job, err := j.manager.SubmitManagedJob(download_queue.ManagedJobOptions{JobOptions: download_queue.JobOptions{
 		Source: pluginImportJobSource, InitialPhase: plugin_commands.ImportStatusRunning,
 		OwnerUserID: clonePluginCommandActor(spec.OwnerUserID),
 	}}, func(ctx context.Context, _ *download_queue.DownloadJob, progress download_queue.ManagedProgressSink) download_queue.ManagedJobOutcome {
-		return managedCommandOutcome(run(ctx, commandProgress{sink: progress}))
+		workCtx, stop := j.ctx.heartbeatManagedCommand(ctx, execution, claimed)
+		defer stop()
+		return managedCommandOutcome(run(workCtx, commandProgress{sink: progress}))
 	})
 	if err != nil {
+		if claimed {
+			_ = j.ctx.releasePluginCommandJob(execution)
+		}
 		return "", err
 	}
 	return job.ID, nil
+}
+
+func (ctx *MahresourcesContext) heartbeatManagedCommand(parent context.Context, execution jobs.Execution, claimed bool) (context.Context, context.CancelFunc) {
+	if !claimed || execution.JobID == "" {
+		return parent, func() {}
+	}
+	workCtx, cancel := context.WithCancel(parent)
+	finished := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(cancel)
+		<-finished
+	}
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-workCtx.Done():
+				return
+			case <-ticker.C:
+				if err := ctx.heartbeatPluginCommandJob(execution); err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return workCtx, stop
 }
 
 func managedCommandOutcome(outcome plugin_commands.Outcome) download_queue.ManagedJobOutcome {
@@ -153,7 +210,9 @@ func (ctx *MahresourcesContext) stopPluginCommandsWithin(timeout time.Duration) 
 
 	controller.mu.Lock()
 	draining := controller.draining
+	pending := controller.pending
 	lease := controller.lease
+	dbFence := controller.dbFence
 	controller.mu.Unlock()
 	var stopErr error
 	if draining != nil && draining.dispatcher != nil {
@@ -166,19 +225,30 @@ func (ctx *MahresourcesContext) stopPluginCommandsWithin(timeout time.Duration) 
 			return stopErr
 		}
 	}
+	if draining == nil && pending != nil && !pending.RuntimeLeaseReleasable() {
+		return errors.Join(stopErr, fmt.Errorf("plugin command recovery has not proved runtime lease releasable; retaining database and staging fences"))
+	}
+	var fenceErr error
+	if dbFence != "" {
+		fenceErr = controller.config.releaseDBFence(dbFence)
+		if fenceErr != nil {
+			return errors.Join(stopErr, fenceErr)
+		}
+	}
 	var leaseErr error
 	if lease != nil {
 		leaseErr = lease.Close()
 	}
 	controller.mu.Lock()
 	controller.lease = nil
+	controller.dbFence = ""
 	controller.pending = nil
 	controller.pendingExchange = nil
 	controller.draining = nil
 	controller.cancel = nil
 	controller.done = nil
 	controller.mu.Unlock()
-	return errors.Join(stopErr, leaseErr)
+	return errors.Join(stopErr, fenceErr, leaseErr)
 }
 
 // SubmitPluginCommand implements plugin_system.CommandSubmitter.

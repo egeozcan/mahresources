@@ -146,12 +146,11 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 		FinishedAt: time.Now().UTC(),
 	}
 	if run.ProcessGroupID == nil {
-		// No numeric group survived the fork/persist crash window, so recovery has
-		// nothing it can inspect. Preserve the historical terminal fail-closed
-		// classification and refuse its output through OutputUnverified.
-		finish.OutputUnverified = true
-		finish.Error += "; process group was not recorded"
-		return finish, nil, nil
+		// The process may have been forked just before the server crashed and
+		// before SetRunProcessGroup committed. Without a persisted group identity
+		// there is no safe target to inspect or signal, so retain the claim and
+		// capacity until an operator resolves the uncertainty.
+		return RunFinish{}, recoveryBlocker(run.ID, 0, "process group identity was not persisted before recovery"), nil
 	}
 	if *run.ProcessGroupID <= 0 {
 		return RunFinish{}, nil, fmt.Errorf("persisted non-positive process group %d", *run.ProcessGroupID)
@@ -159,16 +158,11 @@ func (d *Dispatcher) recoverRunning(ctx context.Context, run RecoveryRun) (RunFi
 
 	pgid := *run.ProcessGroupID
 	if d.deps.BootSessionID != "" && run.BootSessionID != "" && d.deps.BootSessionID != run.BootSessionID {
-		finish.OutputUnverified = true
-		finish.Error += "; process group belongs to a prior boot"
-		if run.CancelRequested {
-			finish.Status = RunStatusCancelled
-			finish.Error = "process group belongs to a prior boot"
-			if run.Error != "" {
-				finish.Error = run.Error + "; " + finish.Error
-			}
-		}
-		return finish, nil, nil
+		// A boot-session mismatch alone cannot distinguish a reboot on this host
+		// from a controller looking at a different host with a live process group.
+		// Keep the run and its capacity quarantined until an operator can establish
+		// quiescence rather than turning namespace uncertainty into a terminal Job.
+		return RunFinish{}, recoveryBlocker(run.ID, pgid, "process group belongs to a different or uninspectable boot session"), nil
 	}
 
 	if err := ctx.Err(); err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -127,10 +128,10 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		// The durable job core. Deleting a user nulls a Job's owner and actor and
 		// removes the viewer-keyed preferences beside it, so these tables exist
 		// wherever the suite exercises user deletion.
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
-		&models.JobCapacityLease{}, &models.JobCommandRequest{},
+		&models.JobCapacityLease{}, &models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -180,6 +181,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+	appCtx.SetJobService(jobs.NewService())
 
 	// Wire runtime settings (mirrors main.go boot sequence).
 	settings := application_context.NewRuntimeSettings(

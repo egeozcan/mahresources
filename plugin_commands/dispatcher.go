@@ -194,6 +194,12 @@ type cancelSubmission struct {
 	reply  chan error
 }
 
+type cancelImportSubmission struct {
+	importID string
+	reason   string
+	reply    chan error
+}
+
 type stopDispatcher struct {
 	ctx   context.Context
 	reply chan error
@@ -431,6 +437,11 @@ func (d *Dispatcher) Cancel(runID, reason string) error {
 		control.forkMu.Lock()
 	}
 	err := d.deps.Store.RequestRunCancel(runID, reason)
+	if errors.Is(err, ErrRunNotCancellable) {
+		if record, _, readErr := d.deps.Store.Run(runID); readErr == nil && record.Status == RunStatusCancelled && record.CancelRequested {
+			err = nil
+		}
+	}
 	if err == nil && control != nil {
 		control.cancelled.Store(true)
 	}
@@ -441,6 +452,14 @@ func (d *Dispatcher) Cancel(runID, reason string) error {
 		return err
 	}
 	request := cancelSubmission{runID: runID, reason: reason, reply: make(chan error, 1)}
+	if err := d.send(context.Background(), request); err != nil {
+		return err
+	}
+	return awaitDispatcherReply(request.reply, d.done)
+}
+
+func (d *Dispatcher) CancelImport(importID, reason string) error {
+	request := cancelImportSubmission{importID: importID, reason: reason, reply: make(chan error, 1)}
 	if err := d.send(context.Background(), request); err != nil {
 		return err
 	}
@@ -651,6 +670,8 @@ func (d *Dispatcher) run(ctx context.Context) {
 				if !deferred {
 					message.reply <- err
 				}
+			case cancelImportSubmission:
+				message.reply <- d.cancelImport(&state, message.importID, message.reason)
 			case disablePluginSubmission:
 				message.reply <- d.disableQueuedImports(&state, message.plugin, message.reason)
 			case commandCompleted:
@@ -1039,6 +1060,11 @@ func (d *Dispatcher) acceptCommand(state *dispatcherState, run QueuedRun) error 
 	}, RunOutput{RunID: run.RunID, ArgvJSON: string(argvJSON), CreatedAt: now}); err != nil {
 		return err
 	}
+	accepted, _, err := d.deps.Store.Run(run.RunID)
+	if err != nil {
+		return fmt.Errorf("read accepted plugin command run: %w", err)
+	}
+	run.JobID = accepted.JobID
 
 	// Register the completion lifecycle at durable admission, before scheduling
 	// can execute the command and publish a terminal row. Disable closes external
@@ -1075,6 +1101,12 @@ func (d *Dispatcher) acceptImport(state *dispatcherState, request importSubmissi
 	}
 	if len(state.imports[plugin]) >= limit {
 		return fmt.Errorf("plugin %q import queue is full (max %d pending)", plugin, limit)
+	}
+	if mapped, found, err := d.deps.Store.ImportMap(item.spec.RunID, item.spec.FileName); err != nil {
+		return err
+	} else if found && mapped.ImportID == item.spec.ImportID && mapped.Status == ImportStatusCancelled {
+		releaseImportItem(item, ImportResult{ImportID: item.spec.ImportID, Error: mapped.Error})
+		return nil
 	}
 	state.imports[plugin] = append(state.imports[plugin], item)
 	if !state.importSeen[plugin] {
@@ -1214,7 +1246,7 @@ func (d *Dispatcher) startCommand(state *dispatcherState, run QueuedRun) {
 	state.activeByPlugin[run.Request.PluginName]++
 
 	_, err := d.deps.Jobs.SubmitCommandJob(RunJobSpec{
-		RunID: run.RunID, PluginName: run.Request.PluginName, OwnerUserID: copyUint(run.Request.ActorUserID),
+		JobID: run.JobID, RunID: run.RunID, PluginName: run.Request.PluginName, OwnerUserID: copyUint(run.Request.ActorUserID),
 	}, func(reason string) error {
 		return d.Cancel(run.RunID, reason)
 	}, func(liveCtx context.Context, progress Progress) Outcome {
@@ -1306,6 +1338,35 @@ func (d *Dispatcher) startImport(state *dispatcherState, item queuedImport) {
 	}
 	state.failedImportDispatch[item.spec.ImportID] = failure
 	_, _ = d.persistImportDispatchFailure(state, failure)
+}
+
+func (d *Dispatcher) cancelImport(state *dispatcherState, importID, reason string) error {
+	if active, ok := state.activeImports[importID]; ok {
+		active.cancel(errOperatorCancelled)
+		return nil
+	}
+	for plugin, queue := range state.imports {
+		for i, item := range queue {
+			if item.spec.ImportID != importID {
+				continue
+			}
+			canceller, ok := d.deps.Store.(PendingImportCanceller)
+			if !ok {
+				return errors.New("plugin command store cannot cancel pending imports")
+			}
+			won, err := canceller.CancelPendingImport(importID, reason, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			state.imports[plugin] = append(queue[:i], queue[i+1:]...)
+			releaseImportItem(item, ImportResult{ImportID: importID, Error: reason})
+			if !won {
+				d.deps.Logf("plugin command import %s was already terminal when cancellation arrived", importID)
+			}
+			return nil
+		}
+	}
+	return ErrRunNotCancellable
 }
 
 func (d *Dispatcher) retryDispatchFailures(state *dispatcherState) {

@@ -56,6 +56,9 @@ func (ctx *MahresourcesContext) SetJobService(service *jobs.Service) {
 	if err := ctx.registerPluginActionJobKind(service); err != nil {
 		log.Printf("warning: could not register the plugin-action job kind: %v", err)
 	}
+	if err := ctx.registerPluginCommandJobKinds(service); err != nil {
+		log.Printf("warning: could not register plugin command job kinds: %v", err)
+	}
 }
 
 // registerPluginActionJobKind teaches one control plane to run plugin background

@@ -890,6 +890,13 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 		if err != nil {
 			return err
 		}
+		if hook, ok := adapter.(HostTransitionAdapter); ok {
+			scoped := deps
+			scoped.DB = tx
+			if err := hook.ApplyHostTransition(ctx, scoped, viewerSnapshot(current, request.Actor), request.Key, applied.State); err != nil {
+				return err
+			}
+		}
 		outcome := appliedOutcome(commandAppliedMessage(applied.State), nil)
 		if err := completeCommandRequest(tx, claim.ID, outcome, now); err != nil {
 			return err
@@ -907,6 +914,9 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 		return s.replayCommandResult(deps, request, *recorded)
 	}
 	if settled != nil {
+		if hook, ok := adapter.(HostTransitionCompletion); ok {
+			hook.AfterHostTransition(ctx, viewerSnapshot(job, request.Actor), request.Key, StateCancelled)
+		}
 		return s.finishSettledResult(deps, request, *settled)
 	}
 	if !requested {

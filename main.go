@@ -688,6 +688,9 @@ func main() {
 	// Now that the manager reads retention through RuntimeSettings, run the
 	// startup sweep so the first-pass cleanup honors any persisted override.
 	context.RunStartupExportSweep()
+	// Install the shared control plane before command recovery so recovery can
+	// reconcile authoritative command rows and canonical Jobs in one transaction.
+	jobService := installJobControlPlane(context)
 
 	// Recovery must settle every durable command/import writer before a plugin
 	// VM can load and observe mah.commands or mah.fs. The context-owned gate keeps
@@ -751,7 +754,7 @@ func main() {
 	// plugin-work seam is installed with the control plane. Whatever the order, the
 	// process has to end up with the plane installed before any plugin can accept
 	// work — see installJobControlPlaneBeforePluginActivation.
-	jobService := installJobControlPlaneBeforePluginActivation(context)
+	activatePluginsWithJobControlPlane(context)
 	if pm := context.PluginManager(); pm != nil {
 		if plugins := pm.Plugins(); len(plugins) > 0 {
 			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
@@ -970,19 +973,27 @@ func main() {
 // It lives here rather than inline so the ordering is testable without starting a server,
 // exactly as migrateJobCore does.
 func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) *jobs.Service {
+	jobService := installJobControlPlane(context)
+	activatePluginsWithJobControlPlane(context)
+	return jobService
+}
+
+func installJobControlPlane(context *application_context.MahresourcesContext) *jobs.Service {
 	jobService := jobs.NewService()
 	// Installed on the context as well as handed back for the runtime: the runtime
 	// registers the Kind adapters, and a facade holding a second control plane would
 	// read one with no adapters registered. One process, one control plane.
 	context.SetJobService(jobService)
+	return jobService
+}
 
+func activatePluginsWithJobControlPlane(context *application_context.MahresourcesContext) {
 	if context.PluginManager() != nil {
 		if _, err := context.EnsurePluginStates(); err != nil {
 			log.Printf("[plugin] WARNING: failed to initialize plugin states: %v", err)
 		}
 		context.ActivateEnabledPlugins()
 	}
-	return jobService
 }
 
 // migrateJobCore creates the durable job tables and seeds the writer epoch.
@@ -1011,6 +1022,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobCommandRequest{},
 		&models.JobLegacyHandle{},
 		&models.JobWriterEpoch{},
+		&models.JobRuntimeFence{},
 	); err != nil {
 		return err
 	}

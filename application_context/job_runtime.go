@@ -256,6 +256,9 @@ func (r *JobRuntime) tick(ctx context.Context) {
 	}
 
 	for _, registration := range r.service.Registrations() {
+		if gated, ok := registration.Adapter.(interface{ RuntimeClaimEnabled() bool }); ok && !gated.RuntimeClaimEnabled() {
+			continue
+		}
 		for claimed := 0; claimed < jobs.DefaultClaimBatch; claimed++ {
 			execution, ok, err := r.service.Claim(ctx, r.depsFor(ctx), jobs.ClaimRequest{
 				Kind:        registration.Definition.Kind,

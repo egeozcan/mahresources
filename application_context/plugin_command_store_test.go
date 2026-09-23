@@ -16,7 +16,9 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
@@ -28,9 +30,13 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	modelsToMigrate := append(stampedModels(),
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{},
+		&models.JobRuntimeFence{},
 		// The viewer-keyed Job preferences DeleteUser removes: cited here rather
 		// than in stampedModels because nothing about them is nulled.
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
+		&models.JobCommandRequest{}, &models.JobWriterEpoch{},
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.User{}, &models.Session{}, &models.ApiToken{}, &models.SavedSearch{}, &models.UserSetting{},
@@ -42,6 +48,60 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	cfg := &MahresourcesConfig{DbType: constants.DbTypeSqlite, AuthEnabled: true}
 	return NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
+}
+
+func migratePluginCommandJobTestModels(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
+	require.NoError(t, ctx.db.AutoMigrate(
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{}, &models.JobCommandRequest{},
+		&models.JobWriterEpoch{}, &models.JobRuntimeFence{},
+	))
+}
+
+func TestPluginCommandRunAcceptanceCommitsWithItsCanonicalJob(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	now := time.Now().UTC()
+	record := testRun("canonical-run", uintPtr(7), false, now)
+	err := ctx.CreateRun(record, testOutput(record.ID, now))
+	require.NoError(t, err)
+	stored, _, err := ctx.Run(record.ID)
+	require.NoError(t, err)
+	jobID := stored.JobID
+	require.NotEmpty(t, jobID)
+
+	require.Equal(t, jobID, stored.JobID)
+	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	require.NoError(t, err)
+	require.Equal(t, JobKindPluginCommand, snapshot.Kind)
+	require.Equal(t, jobs.StateQueued, snapshot.State)
+	require.Equal(t, jobs.VisibilityAdmin, snapshot.Visibility)
+
+	viewer := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser})
+	_, err = viewer.GetJob(jobID)
+	require.ErrorIs(t, err, jobs.ErrNotFound)
+}
+
+func TestPluginCommandRunAcceptanceRollsBackWhenCanonicalJobCannotBeStored(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	require.NoError(t, ctx.db.Exec(`CREATE TRIGGER reject_plugin_command_job BEFORE INSERT ON jobs
+		WHEN NEW.kind = 'plugin-command'
+		BEGIN SELECT RAISE(ABORT, 'injected Job insert failure'); END`).Error)
+
+	now := time.Now().UTC()
+	record := testRun("atomic-canonical-run", uintPtr(7), false, now)
+	err := ctx.CreateRun(record, testOutput(record.ID, now))
+	require.Error(t, err)
+	var runCount, outputCount int64
+	require.NoError(t, ctx.db.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Count(&runCount).Error)
+	require.NoError(t, ctx.db.Model(&models.PluginCommandRunOutput{}).Where("run_id = ?", record.ID).Count(&outputCount).Error)
+	require.Zero(t, runCount)
+	require.Zero(t, outputCount)
 }
 
 func uintPtr(v uint) *uint { return &v }
@@ -361,7 +421,7 @@ func TestPluginCommandStoreImportClaimStateTable(t *testing.T) {
 		{name: "pending", existingStatus: plugin_commands.ImportStatusPending, wantID: "old-import", wantStatus: plugin_commands.ImportStatusPending},
 		{name: "running", existingStatus: plugin_commands.ImportStatusRunning, wantID: "old-import", wantStatus: plugin_commands.ImportStatusRunning},
 		{name: "succeeded", existingStatus: plugin_commands.ImportStatusSucceeded, wantID: "old-import", wantStatus: plugin_commands.ImportStatusSucceeded, wantResourceID: uintPtr(88)},
-		{name: "interrupted", existingStatus: plugin_commands.ImportStatusInterrupted, wantID: "old-import", wantStatus: plugin_commands.ImportStatusPending, wantEnqueue: true},
+		{name: "interrupted", existingStatus: plugin_commands.ImportStatusInterrupted, wantID: "new-import", wantStatus: plugin_commands.ImportStatusPending, wantCreated: true, wantEnqueue: true, wantOldPreserved: true},
 		{name: "failed", existingStatus: plugin_commands.ImportStatusFailed, wantID: "new-import", wantStatus: plugin_commands.ImportStatusPending, wantCreated: true, wantEnqueue: true, wantOldPreserved: true},
 		{name: "cancelled", existingStatus: plugin_commands.ImportStatusCancelled, wantID: "new-import", wantStatus: plugin_commands.ImportStatusPending, wantCreated: true, wantEnqueue: true, wantOldPreserved: true},
 	}
@@ -392,13 +452,9 @@ func TestPluginCommandStoreImportClaimStateTable(t *testing.T) {
 			require.Equal(t, tc.wantEnqueue, got.Enqueue)
 
 			if tc.existingStatus == plugin_commands.ImportStatusInterrupted {
-				var refreshed models.PluginCommandImport
-				require.NoError(t, ctx.db.First(&refreshed, "id = ?", "old-import").Error)
-				require.Equal(t, plugin_commands.ImportStatusPending, refreshed.Status)
-				require.Equal(t, uint64(22), refreshed.PluginGeneration)
-				require.Equal(t, uint(77), *refreshed.CreatedByUserId)
-				require.Nil(t, refreshed.StartedAt)
-				require.Nil(t, refreshed.FinishedAt)
+				var preserved models.PluginCommandImport
+				require.NoError(t, ctx.db.First(&preserved, "id = ?", "old-import").Error)
+				require.Equal(t, plugin_commands.ImportStatusInterrupted, preserved.Status)
 			}
 			if tc.wantOldPreserved {
 				var count int64
@@ -488,22 +544,22 @@ func TestPluginCommandStoreImportTransitionsAndRecovery(t *testing.T) {
 
 	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{ImportID: "ignored", RunID: "imports-run", FileName: "a", PluginGeneration: 2, CreatedByUserID: &owner, CreatedAt: now.Add(4 * time.Second)})
 	require.NoError(t, err)
-	require.Equal(t, "pending", claim.ImportID)
+	require.Equal(t, "ignored", claim.ImportID)
 	require.True(t, claim.Enqueue)
 	resourceID := uint(101)
-	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID, FinishedAt: now.Add(5 * time.Second)})
+	won, err = ctx.FinishImport("ignored", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID, FinishedAt: now.Add(5 * time.Second)})
 	require.NoError(t, err)
 	require.False(t, won, "a pending import cannot succeed without first running")
-	won, err = ctx.MarkImportRunning("pending", now.Add(5*time.Second))
+	won, err = ctx.MarkImportRunning("ignored", now.Add(5*time.Second))
 	require.NoError(t, err)
 	require.True(t, won)
-	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{
+	won, err = ctx.FinishImport("ignored", plugin_commands.ImportFinish{
 		Status: plugin_commands.ImportStatusSucceeded, ResourceID: &resourceID,
 		SourceDeletePending: true, FinishedAt: now.Add(6 * time.Second),
 	})
 	require.NoError(t, err)
 	require.True(t, won)
-	won, err = ctx.FinishImport("pending", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusFailed, Error: "stale", FinishedAt: now.Add(7 * time.Second)})
+	won, err = ctx.FinishImport("ignored", plugin_commands.ImportFinish{Status: plugin_commands.ImportStatusFailed, Error: "stale", FinishedAt: now.Add(7 * time.Second)})
 	require.NoError(t, err)
 	require.False(t, won)
 	entry, ok, err := ctx.ImportMap("imports-run", "a")
@@ -512,13 +568,13 @@ func TestPluginCommandStoreImportTransitionsAndRecovery(t *testing.T) {
 	require.Equal(t, plugin_commands.ImportStatusSucceeded, entry.Status)
 	require.Equal(t, resourceID, *entry.ResourceID)
 	require.True(t, entry.SourceDeletePending)
-	require.NoError(t, ctx.SetImportSourceDeletePending("pending", false))
+	require.NoError(t, ctx.SetImportSourceDeletePending("ignored", false))
 	entry, ok, err = ctx.ImportMap("imports-run", "a")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, entry.SourceDeletePending)
 	var claimRow models.PluginCommandImport
-	require.NoError(t, ctx.db.Where("id = ?", "pending").First(&claimRow).Error)
+	require.NoError(t, ctx.db.Where("id = ?", "ignored").First(&claimRow).Error)
 	require.False(t, claimRow.SourceDeletePending)
 }
 

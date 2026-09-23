@@ -2,6 +2,7 @@ package plugin_commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -175,8 +176,16 @@ func (d *Dispatcher) SubmitImport(submission ImportSubmission) (ImportSubmitResu
 		return ImportSubmitResult{}, err
 	}
 	actor := copyUint(submission.ActorUserID)
+	fieldsJSON, err := json.Marshal(submission.Fields)
+	if err != nil {
+		return ImportSubmitResult{}, fmt.Errorf("encode plugin command import fields: %w", err)
+	}
+	if len(fieldsJSON) > 64<<10 {
+		return ImportSubmitResult{}, fmt.Errorf("plugin command import fields exceed 64 KiB")
+	}
 	claim, err := d.deps.Store.ClaimImport(ImportClaimRequest{
 		ImportID: requestedID, RunID: run.ID, FileName: submission.Name,
+		FieldsJSON:       string(fieldsJSON),
 		PluginGeneration: submission.PluginGeneration, CreatedByUserID: actor,
 		CreatedAt: time.Now().UTC(),
 	})
@@ -189,7 +198,7 @@ func (d *Dispatcher) SubmitImport(submission ImportSubmission) (ImportSubmitResu
 
 	request := cloneImportSubmission(submission)
 	cleanupOnce := sync.OnceFunc(func() { _ = source.Close() })
-	spec := ImportJobSpec{ImportID: claim.ImportID, RunID: run.ID, PluginName: run.PluginName, OwnerUserID: actor}
+	spec := ImportJobSpec{JobID: claim.JobID, ImportID: claim.ImportID, RunID: run.ID, FileName: submission.Name, PluginName: run.PluginName, OwnerUserID: actor}
 	queued := queuedImport{
 		spec: spec, release: releaseOnce, cleanup: cleanupOnce,
 		completion: request.Completion, retainOnReject: true,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"mahresources/constants"
@@ -21,6 +22,60 @@ var errPluginCommandTransitionLost = errors.New("plugin command transition lost"
 var _ plugin_commands.Store = (*MahresourcesContext)(nil)
 var _ plugin_commands.PendingImportCanceller = (*MahresourcesContext)(nil)
 
+func (ctx *MahresourcesContext) requestRunCancelTx(id, reason string) error {
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		err = ctx.db.Transaction(func(tx *gorm.DB) error {
+			if fenceErr := ctx.requirePluginCommandFenceTx(tx); fenceErr != nil {
+				return fenceErr
+			}
+			res := tx.Model(&models.PluginCommandRun{}).
+				Where("id = ? AND status IN ? AND cancel_requested = ?", id,
+					[]string{plugin_commands.RunStatusQueued, plugin_commands.RunStatusRunning}, false).
+				Updates(map[string]any{"cancel_requested": true, "error": reason})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 1 {
+				return nil
+			}
+			var count int64
+			if queryErr := tx.Model(&models.PluginCommandRun{}).Where("id = ?", id).Count(&count).Error; queryErr != nil {
+				return queryErr
+			}
+			if count == 0 {
+				return plugin_commands.ErrRunNotFound
+			}
+			return plugin_commands.ErrRunNotCancellable
+		})
+		if err == nil || ctx.db.Dialector.Name() != "sqlite" || !sqliteLockContention(err) {
+			return err
+		}
+		// SQLite can reject a transaction that read before another writer
+		// committed instead of honoring busy_timeout. Retry after rollback so the
+		// cancellation CAS is evaluated against the latest source state.
+		time.Sleep(time.Duration(5*(1<<attempt)) * time.Millisecond)
+	}
+	return err
+}
+
+func sqliteLockContention(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database is busy")
+}
+
+func retryPluginCommandSQLiteWrite(ctx *MahresourcesContext, write func() error) error {
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		err = write()
+		if err == nil || ctx.db.Dialector.Name() != "sqlite" || !sqliteLockContention(err) {
+			return err
+		}
+		time.Sleep(time.Duration(5*(1<<attempt)) * time.Millisecond)
+	}
+	return err
+}
+
 func copyCommandUint(value *uint) *uint {
 	if value == nil {
 		return nil
@@ -31,7 +86,7 @@ func copyCommandUint(value *uint) *uint {
 
 func runModel(record plugin_commands.RunRecord) models.PluginCommandRun {
 	return models.PluginCommandRun{
-		ID: record.ID, PluginName: record.PluginName, CommandName: record.CommandName,
+		ID: record.ID, JobID: record.JobID, JobExecutionToken: record.JobExecutionToken, PluginName: record.PluginName, CommandName: record.CommandName,
 		ParamsJSON: record.ParamsJSON, InputsJSON: encodeSuppliedInputs(record.Inputs), Status: record.Status, ExitCode: record.ExitCode,
 		Error: record.Error, ProcessGroupID: record.ProcessGroupID,
 		CancelRequested: record.CancelRequested, OutputUnverified: record.OutputUnverified,
@@ -43,7 +98,7 @@ func runModel(record plugin_commands.RunRecord) models.PluginCommandRun {
 
 func runRecord(row models.PluginCommandRun) plugin_commands.RunRecord {
 	return plugin_commands.RunRecord{
-		ID: row.ID, PluginName: row.PluginName, CommandName: row.CommandName,
+		ID: row.ID, JobID: row.JobID, JobExecutionToken: row.JobExecutionToken, PluginName: row.PluginName, CommandName: row.CommandName,
 		ParamsJSON: row.ParamsJSON, Inputs: decodeSuppliedInputs(row.ID, row.InputsJSON), Status: row.Status, ExitCode: row.ExitCode,
 		Error: row.Error, ProcessGroupID: row.ProcessGroupID,
 		CancelRequested: row.CancelRequested, OutputUnverified: row.OutputUnverified,
@@ -94,7 +149,7 @@ func outputRecord(row models.PluginCommandRunOutput) plugin_commands.RunOutput {
 
 func importRecord(row models.PluginCommandImport) plugin_commands.ImportRecord {
 	return plugin_commands.ImportRecord{
-		ID: row.ID, RunID: row.RunID, FileName: row.FileName,
+		ID: row.ID, JobID: row.JobID, JobExecutionToken: row.JobExecutionToken, RunID: row.RunID, FileName: row.FileName, FieldsJSON: row.FieldsJSON,
 		PluginGeneration: row.PluginGeneration, CreatedByUserID: copyCommandUint(row.CreatedByUserId),
 		Status: row.Status, Error: row.Error, SourceDeletePending: row.SourceDeletePending,
 		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
@@ -117,6 +172,9 @@ func (ctx *MahresourcesContext) CreateRun(record plugin_commands.RunRecord, outp
 		return fmt.Errorf("new plugin command run must be %q", plugin_commands.RunStatusQueued)
 	}
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
 		row := runModel(record)
 		if err := tx.Create(&row).Error; err != nil {
 			return err
@@ -132,55 +190,71 @@ func (ctx *MahresourcesContext) CreateRun(record plugin_commands.RunRecord, outp
 			}
 		}
 		out := outputModel(output)
-		return tx.Create(&out).Error
+		if err := tx.Create(&out).Error; err != nil {
+			return err
+		}
+		jobID, err := ctx.acceptPluginCommandRunJob(tx, record)
+		if err != nil {
+			return err
+		}
+		if jobID != "" {
+			return tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Update("job_id", jobID).Error
+		}
+		return nil
 	})
 }
 
 func (ctx *MahresourcesContext) MarkRunRunning(id string, started time.Time) (bool, error) {
-	res := ctx.db.Model(&models.PluginCommandRun{}).
-		Where("id = ? AND status = ?", id, plugin_commands.RunStatusQueued).
-		Updates(map[string]any{"status": plugin_commands.RunStatusRunning, "started_at": started})
-	return res.RowsAffected == 1, res.Error
+	var won bool
+	err := retryPluginCommandSQLiteWrite(ctx, func() error {
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+				return err
+			}
+			updates := map[string]any{"status": plugin_commands.RunStatusRunning, "started_at": started}
+			if ctx.JobService() != nil {
+				updates["job_execution_token"] = tx.Model(&models.Job{}).Select("execution_token").Where("jobs.id = plugin_command_runs.job_id")
+			}
+			res := tx.Model(&models.PluginCommandRun{}).Where("id = ? AND status = ?", id, plugin_commands.RunStatusQueued).Updates(updates)
+			if res.Error != nil {
+				return res.Error
+			}
+			won = res.RowsAffected == 1
+			return nil
+		})
+	})
+	return won, err
 }
 
 func (ctx *MahresourcesContext) SetRunProcessGroup(id string, pgid int, bootSessionID string) error {
 	if pgid <= 0 {
 		return fmt.Errorf("plugin command process group must be positive")
 	}
-	res := ctx.db.Model(&models.PluginCommandRun{}).
-		Where("id = ? AND status = ? AND process_group_id IS NULL", id, plugin_commands.RunStatusRunning).
-		Updates(map[string]any{
-			"process_group_id": pgid,
-			"boot_session_id":  bootSessionID,
+	err := retryPluginCommandSQLiteWrite(ctx, func() error {
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+				return err
+			}
+			res := tx.Model(&models.PluginCommandRun{}).
+				Where("id = ? AND status = ? AND process_group_id IS NULL", id, plugin_commands.RunStatusRunning).
+				Updates(map[string]any{
+					"process_group_id": pgid,
+					"boot_session_id":  bootSessionID,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected != 1 {
+				return fmt.Errorf("plugin command run %q is not awaiting a process group", id)
+			}
+			return nil
 		})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected != 1 {
-		return fmt.Errorf("plugin command run %q is not awaiting a process group", id)
-	}
-	return nil
+	})
+	return err
 }
 
 func (ctx *MahresourcesContext) RequestRunCancel(id, reason string) error {
-	res := ctx.db.Model(&models.PluginCommandRun{}).
-		Where("id = ? AND status IN ? AND cancel_requested = ?", id,
-			[]string{plugin_commands.RunStatusQueued, plugin_commands.RunStatusRunning}, false).
-		Updates(map[string]any{"cancel_requested": true, "error": reason})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 1 {
-		return nil
-	}
-	var count int64
-	if err := ctx.db.Model(&models.PluginCommandRun{}).Where("id = ?", id).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return plugin_commands.ErrRunNotFound
-	}
-	return plugin_commands.ErrRunNotCancellable
+	return ctx.requestRunCancelTx(id, reason)
 }
 
 func (ctx *MahresourcesContext) FinishRun(id string, finish plugin_commands.RunFinish) (bool, error) {
@@ -191,31 +265,45 @@ func (ctx *MahresourcesContext) FinishRun(id string, finish plugin_commands.RunF
 	if finish.Status == plugin_commands.RunStatusCancelled || finish.Status == plugin_commands.RunStatusInterrupted {
 		priorStatuses = append(priorStatuses, plugin_commands.RunStatusQueued)
 	}
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Model(&models.PluginCommandRun{}).
-			Where("id = ? AND status IN ?", id, priorStatuses)
-		if finish.Status == plugin_commands.RunStatusSucceeded || finish.Status == plugin_commands.RunStatusFailed {
-			query = query.Where("cancel_requested = ?", false)
-		}
-		res := query.Updates(map[string]any{
-			"status": finish.Status, "exit_code": finish.ExitCode, "error": finish.Error,
-			"output_unverified": finish.OutputUnverified, "finished_at": finish.FinishedAt,
+	err := retryPluginCommandSQLiteWrite(ctx, func() error {
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+				return err
+			}
+			var prior models.PluginCommandRun
+			if err := tx.Where("id = ?", id).First(&prior).Error; err != nil {
+				return err
+			}
+			query := tx.Model(&models.PluginCommandRun{}).
+				Where("id = ? AND status IN ?", id, priorStatuses)
+			if finish.Status == plugin_commands.RunStatusSucceeded || finish.Status == plugin_commands.RunStatusFailed {
+				query = query.Where("cancel_requested = ?", false)
+			}
+			res := query.Updates(map[string]any{
+				"status": finish.Status, "exit_code": finish.ExitCode, "error": finish.Error,
+				"output_unverified": finish.OutputUnverified, "finished_at": finish.FinishedAt,
+			})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected != 1 {
+				return errPluginCommandTransitionLost
+			}
+			out := tx.Model(&models.PluginCommandRunOutput{}).Where("run_id = ?", id).
+				Update("output_tail", finish.OutputTail)
+			if out.Error != nil {
+				return out.Error
+			}
+			if out.RowsAffected != 1 {
+				return fmt.Errorf("plugin command run %q has no output row", id)
+			}
+			if prior.JobID != "" && ctx.JobService() != nil {
+				if err := ctx.finishPluginCommandJobTx(tx, prior.JobID, prior.JobExecutionToken, finish.Status, prior.ID); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return errPluginCommandTransitionLost
-		}
-		out := tx.Model(&models.PluginCommandRunOutput{}).Where("run_id = ?", id).
-			Update("output_tail", finish.OutputTail)
-		if out.Error != nil {
-			return out.Error
-		}
-		if out.RowsAffected != 1 {
-			return fmt.Errorf("plugin command run %q has no output row", id)
-		}
-		return nil
 	})
 	if errors.Is(err, errPluginCommandTransitionLost) {
 		return false, nil
@@ -369,6 +457,9 @@ func (ctx *MahresourcesContext) ExpiredTerminalRuns(before time.Time, after, thr
 
 func (ctx *MahresourcesContext) MarkRunExchangeRemoved(runID string, removedAt time.Time) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
 		result := tx.Model(&models.PluginCommandRun{}).
 			Where("id = ? AND status IN ? AND exchange_removed_at IS NULL", runID, terminalCommandStatuses()).
 			Update("exchange_removed_at", removedAt)
@@ -390,10 +481,18 @@ func (ctx *MahresourcesContext) MarkRunExchangeRemoved(runID string, removedAt t
 }
 
 func (ctx *MahresourcesContext) PruneRunOutputs(before time.Time) (int64, error) {
-	terminal := terminalCommandStatuses()
-	subquery := ctx.db.Model(&models.PluginCommandRun{}).Select("id").Where("status IN ?", terminal)
-	res := ctx.db.Where("created_at < ? AND run_id IN (?)", before, subquery).Delete(&models.PluginCommandRunOutput{})
-	return res.RowsAffected, res.Error
+	var removed int64
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
+		terminal := terminalCommandStatuses()
+		subquery := tx.Model(&models.PluginCommandRun{}).Select("id").Where("status IN ?", terminal)
+		res := tx.Where("created_at < ? AND run_id IN (?)", before, subquery).Delete(&models.PluginCommandRunOutput{})
+		removed = res.RowsAffected
+		return res.Error
+	})
+	return removed, err
 }
 
 func (ctx *MahresourcesContext) ImportMap(runID, name string) (plugin_commands.ImportMapEntry, bool, error) {
@@ -441,6 +540,9 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 	for attempt := 0; attempt < attempts; attempt++ {
 		var result plugin_commands.ImportClaimResult
 		err := claimDB.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+				return err
+			}
 			var run models.PluginCommandRun
 			if err := tx.Where("id = ?", req.RunID).First(&run).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -456,17 +558,28 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				claim := models.PluginCommandImport{
 					ID: req.ImportID, RunID: req.RunID, FileName: req.FileName,
+					FieldsJSON:       req.FieldsJSON,
 					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
 					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt,
 				}
 				if err := tx.Create(&claim).Error; err != nil {
 					return err
 				}
+				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, "")
+				if err != nil {
+					return err
+				}
+				if jobID != "" {
+					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
+						return err
+					}
+				}
 				mapped = models.PluginCommandImportMap{RunID: req.RunID, FileName: req.FileName, ImportID: req.ImportID, Status: plugin_commands.ImportStatusPending}
 				if err := tx.Create(&mapped).Error; err != nil {
 					return err
 				}
 				result = commandClaimResult(mapped, true, true)
+				result.JobID = jobID
 				return nil
 			}
 			if err != nil {
@@ -478,34 +591,25 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 				result = commandClaimResult(mapped, false, false)
 				return nil
 			case plugin_commands.ImportStatusInterrupted:
-				updates := map[string]any{
-					"status": plugin_commands.ImportStatusPending, "plugin_generation": req.PluginGeneration,
-					"created_by_user_id": *req.CreatedByUserID, "error": "", "started_at": nil,
-					"finished_at": nil,
-				}
-				res := tx.Model(&models.PluginCommandImport{}).
-					Where("id = ? AND status = ?", mapped.ImportID, plugin_commands.ImportStatusInterrupted).Updates(updates)
-				if res.Error != nil {
-					return res.Error
-				}
-				if res.RowsAffected != 1 {
-					return errPluginCommandTransitionLost
-				}
-				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
-					Updates(map[string]any{"status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
+				var predecessor models.PluginCommandImport
+				if err := tx.Where("id = ?", mapped.ImportID).First(&predecessor).Error; err != nil {
 					return err
 				}
-				mapped.Status, mapped.ResourceID, mapped.Error, mapped.SourceDeletePending = plugin_commands.ImportStatusPending, nil, "", false
-				result = commandClaimResult(mapped, false, true)
-				return nil
-			case plugin_commands.ImportStatusFailed, plugin_commands.ImportStatusCancelled:
-				claim := models.PluginCommandImport{
-					ID: req.ImportID, RunID: req.RunID, FileName: req.FileName,
+				claim := models.PluginCommandImport{ID: req.ImportID, RunID: req.RunID, FileName: req.FileName,
+					FieldsJSON:       req.FieldsJSON,
 					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
-					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt,
-				}
+					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt}
 				if err := tx.Create(&claim).Error; err != nil {
 					return err
+				}
+				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, predecessor.JobID)
+				if err != nil {
+					return err
+				}
+				if jobID != "" {
+					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
+						return err
+					}
 				}
 				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
 					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
@@ -513,6 +617,38 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 				}
 				mapped.ImportID, mapped.Status, mapped.ResourceID, mapped.Error, mapped.SourceDeletePending = req.ImportID, plugin_commands.ImportStatusPending, nil, "", false
 				result = commandClaimResult(mapped, true, true)
+				result.JobID = jobID
+				return nil
+			case plugin_commands.ImportStatusFailed, plugin_commands.ImportStatusCancelled:
+				var predecessor models.PluginCommandImport
+				if err := tx.Where("id = ?", mapped.ImportID).First(&predecessor).Error; err != nil {
+					return err
+				}
+				claim := models.PluginCommandImport{
+					ID: req.ImportID, RunID: req.RunID, FileName: req.FileName,
+					FieldsJSON:       req.FieldsJSON,
+					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
+					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt,
+				}
+				if err := tx.Create(&claim).Error; err != nil {
+					return err
+				}
+				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, predecessor.JobID)
+				if err != nil {
+					return err
+				}
+				if jobID != "" {
+					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
+						return err
+					}
+				}
+				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
+					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
+					return err
+				}
+				mapped.ImportID, mapped.Status, mapped.ResourceID, mapped.Error, mapped.SourceDeletePending = req.ImportID, plugin_commands.ImportStatusPending, nil, "", false
+				result = commandClaimResult(mapped, true, true)
+				result.JobID = jobID
 				return nil
 			default:
 				return fmt.Errorf("invalid plugin command import map status %q", mapped.Status)
@@ -532,9 +668,16 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 
 func (ctx *MahresourcesContext) MarkImportRunning(importID string, started time.Time) (bool, error) {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
+		updates := map[string]any{"status": plugin_commands.ImportStatusRunning, "started_at": started}
+		if ctx.JobService() != nil {
+			updates["job_execution_token"] = tx.Model(&models.Job{}).Select("execution_token").Where("jobs.id = plugin_command_imports.job_id")
+		}
 		res := tx.Model(&models.PluginCommandImport{}).
 			Where("id = ? AND status = ? AND created_by_user_id IS NOT NULL", importID, plugin_commands.ImportStatusPending).
-			Updates(map[string]any{"status": plugin_commands.ImportStatusRunning, "started_at": started})
+			Updates(updates)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -562,6 +705,13 @@ func (ctx *MahresourcesContext) MarkImportRunning(importID string, started time.
 // MarkImportRunning committed first owns the import and is allowed to finish.
 func (ctx *MahresourcesContext) CancelPendingImport(importID, reason string, finished time.Time) (bool, error) {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
+		var prior models.PluginCommandImport
+		if err := tx.Where("id = ?", importID).First(&prior).Error; err != nil {
+			return err
+		}
 		claim := tx.Model(&models.PluginCommandImport{}).
 			Where("id = ? AND status = ?", importID, plugin_commands.ImportStatusPending).
 			Updates(map[string]any{
@@ -583,6 +733,11 @@ func (ctx *MahresourcesContext) CancelPendingImport(importID, reason string, fin
 		}
 		if mapped.RowsAffected != 1 {
 			return fmt.Errorf("plugin command import %q has no pending map entry", importID)
+		}
+		if prior.JobID != "" && ctx.JobService() != nil {
+			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, plugin_commands.ImportStatusCancelled, prior.ID, nil); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -608,6 +763,13 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 		priorStatuses = append(priorStatuses, plugin_commands.ImportStatusPending)
 	}
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
+		var prior models.PluginCommandImport
+		if err := tx.Where("id = ?", importID).First(&prior).Error; err != nil {
+			return err
+		}
 		res := tx.Model(&models.PluginCommandImport{}).
 			Where("id = ? AND status IN ?", importID, priorStatuses).
 			Updates(map[string]any{
@@ -631,6 +793,11 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 		if mapped.RowsAffected != 1 {
 			return fmt.Errorf("plugin command import %q has no active map entry", importID)
 		}
+		if prior.JobID != "" && ctx.JobService() != nil {
+			if err := ctx.finishPluginCommandImportJobTx(tx, prior.JobID, prior.JobExecutionToken, finish.Status, prior.ID, finish.ResourceID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if errors.Is(err, errPluginCommandTransitionLost) {
@@ -641,6 +808,9 @@ func (ctx *MahresourcesContext) FinishImport(importID string, finish plugin_comm
 
 func (ctx *MahresourcesContext) SetImportSourceDeletePending(importID string, pending bool) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
 		claim := tx.Model(&models.PluginCommandImport{}).
 			Where("id = ? AND status = ?", importID, plugin_commands.ImportStatusSucceeded).
 			Update("source_delete_pending", pending)
@@ -665,6 +835,9 @@ func (ctx *MahresourcesContext) SetImportSourceDeletePending(importID string, pe
 
 func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+			return err
+		}
 		nonterminal := []string{plugin_commands.ImportStatusPending, plugin_commands.ImportStatusRunning}
 		var rows []models.PluginCommandImport
 		query := tx.Where("status IN ?", nonterminal)
@@ -679,6 +852,15 @@ func (ctx *MahresourcesContext) InterruptNonterminalImports(finished time.Time) 
 		}
 		if len(rows) == 0 {
 			return nil
+		}
+		if ctx.JobService() != nil {
+			for _, row := range rows {
+				if row.JobID != "" {
+					if err := ctx.finishPluginCommandImportJobTx(tx, row.JobID, row.JobExecutionToken, plugin_commands.ImportStatusInterrupted, row.ID, nil); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		ids := make([]string, len(rows))
 		for i := range rows {

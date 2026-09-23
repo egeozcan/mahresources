@@ -69,6 +69,7 @@ func createTestContextWithPlugins(t *testing.T, pluginDir string) *MahresourcesC
 		// The stamp callback falls back to the root admin when no actor is on
 		// the context, and resolving root reads this table.
 		&models.User{},
+		&models.JobRuntimeFence{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

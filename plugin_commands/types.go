@@ -25,6 +25,8 @@ const (
 
 type RunRecord struct {
 	ID                    string
+	JobID                 string
+	JobExecutionToken     string
 	PluginName            string
 	CommandName           string
 	ParamsJSON            string
@@ -112,8 +114,11 @@ func (a Access) AllowsRun(run RunRecord) bool {
 
 type ImportRecord struct {
 	ID                  string
+	JobID               string
+	JobExecutionToken   string
 	RunID               string
 	FileName            string
+	FieldsJSON          string
 	PluginGeneration    uint64
 	CreatedByUserID     *uint
 	Status              string
@@ -138,6 +143,7 @@ type ImportClaimRequest struct {
 	ImportID         string
 	RunID            string
 	FileName         string
+	FieldsJSON       string
 	PluginGeneration uint64
 	CreatedByUserID  *uint
 	CreatedAt        time.Time
@@ -145,6 +151,7 @@ type ImportClaimRequest struct {
 
 type ImportClaimResult struct {
 	ImportID   string
+	JobID      string
 	ResourceID *uint
 	Status     string
 	Created    bool
@@ -189,14 +196,17 @@ type Settings interface {
 }
 
 type RunJobSpec struct {
+	JobID       string
 	RunID       string
 	PluginName  string
 	OwnerUserID *uint
 }
 
 type ImportJobSpec struct {
+	JobID       string
 	ImportID    string
 	RunID       string
+	FileName    string
 	PluginName  string
 	OwnerUserID *uint
 }
@@ -245,6 +255,7 @@ type CommandRequest struct {
 
 type QueuedRun struct {
 	RunID               string
+	JobID               string
 	Request             CommandRequest
 	ExchangeDir         string
 	Invocation          Invocation

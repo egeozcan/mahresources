@@ -264,7 +264,7 @@ func TestPluginCommandInputsAreSweptWithTheExpiredFolderAgainstTheRealStore(t *t
 	}
 }
 
-func TestPluginCommandKillDuringInputWriteRecoversAndSweeps(t *testing.T) {
+func TestPluginCommandUnknownProcessGroupDuringInputWriteRemainsQuarantined(t *testing.T) {
 	harness := newCommandInputHarness(t)
 	const runID = "killed-mid-write"
 	now := time.Now().UTC()
@@ -289,50 +289,25 @@ func TestPluginCommandKillDuringInputWriteRecoversAndSweeps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := harness.dispatcher.Recover(context.Background()); err != nil {
-		t.Fatalf("Recover: %v", err)
+	var blocked *plugin_commands.RecoveryBlockedError
+	if err := harness.dispatcher.Recover(context.Background()); !errors.As(err, &blocked) {
+		t.Fatalf("Recover error = %v, want unknown process-group blocker", err)
 	}
 	record, _, err := harness.ctx.Run(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != plugin_commands.RunStatusInterrupted || !record.OutputUnverified {
+	if record.Status != plugin_commands.RunStatusRunning || record.OutputUnverified {
 		t.Fatalf("recovered row = status %q unverified=%v err=%q", record.Status, record.OutputUnverified, record.Error)
 	}
-	// The metadata admission persisted survives the crash, and the declared name
-	// was never renamed into place: checked directly, because the read path
-	// refuses an unverified run before it looks at any path.
+	// The durable metadata remains available for diagnosis while the uncertain
+	// process may still own this run.
 	if len(record.Inputs) != 1 || record.Inputs[0].Name != "cookies.txt" || record.Inputs[0].Bytes != 9 {
 		t.Fatalf("recovered row inputs = %+v", record.Inputs)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "cookies.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a name that was never renamed exists: %v", err)
+	if _, err := os.Lstat(filepath.Join(dir, ".tmp", "input-1234")); err != nil {
+		t.Fatalf("unproven live work was swept: %v", err)
 	}
-	exchange := plugin_commands.NewExchange(harness.ctx, harness.settings)
-	access := plugin_commands.Access{PluginName: "plug", Administrator: true}
-	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, plugin_commands.ErrExchangeOutputUnverified) {
-		t.Fatalf("Read of an unverified run = %v, want %v", err, plugin_commands.ErrExchangeOutputUnverified)
-	}
-	if _, err := exchange.Read(access, runID, ".tmp", 1024); err == nil {
-		t.Fatal("the scratch directory is readable as an input")
-	}
-
-	// The same recovered folder is what the retention sweep removes.
-	if err := harness.ctx.db.Exec(
-		"UPDATE plugin_command_runs SET finished_at = ? WHERE id = ?",
-		time.Now().UTC().Add(-DefaultPluginCommandExchangeRetention-time.Hour), runID,
-	).Error; err != nil {
-		t.Fatal(err)
-	}
-	harness.sweepOnlyDispatcher(t)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("the recovered folder was not swept: %v", dir)
 }
 
 func TestPluginCommandQueuedCancellationWritesNoInputAgainstTheRealStore(t *testing.T) {

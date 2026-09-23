@@ -65,6 +65,9 @@ func (ctx *MahresourcesContext) PluginCommandRuntimeAvailability() (available bo
 // dispatcher so history and live-cockpit cancellation share the durable latch
 // and pre-fork/process-group handling.
 func (ctx *MahresourcesContext) CancelPluginCommandRun(id string) error {
+	if _, _, err := ctx.Run(id); err != nil {
+		return err
+	}
 	active, err := ctx.pluginCommandActive()
 	if err != nil {
 		return err

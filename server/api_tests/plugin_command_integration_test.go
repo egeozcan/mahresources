@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/seed"
 	"mahresources/plugin_commands"
@@ -167,6 +168,10 @@ func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, fi
 		&models.DownloadHistoryEntry{}, &models.ScheduledDownload{}, &models.ResourceReduction{},
 		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{}, &models.JobOutput{},
+		&models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{}, &models.JobCommandRequest{},
+		&models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +194,7 @@ func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, fi
 	}
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 	appCtx := application_context.NewMahresourcesContext(filesystem, db, readOnlyDB, config)
+	appCtx.SetJobService(jobs.NewService())
 	settings := application_context.NewRuntimeSettings(
 		db, application_context.NewStdlibSettingsLogger(), application_context.BuildSpecsExported(),
 		application_context.BuildDefaultsFromConfig(config),
@@ -458,14 +464,24 @@ func waitForImportSourceCleanup(t *testing.T, ctx *application_context.Mahresour
 	return plugin_commands.ImportMapEntry{}
 }
 
-func createImportBlocker(t *testing.T, ctx *application_context.MahresourcesContext, stagingRoot, id string, actorID uint, generation uint64) {
+func createImportBlocker(t *testing.T, tc *TestContext, stagingRoot, id string, actorID uint, generation uint64) {
 	t.Helper()
+	ctx := tc.AppCtx
 	now := time.Now().UTC()
 	if err := ctx.CreateRun(plugin_commands.RunRecord{
 		ID: id, PluginName: commandIntegrationPluginName, CommandName: "produce",
 		ParamsJSON: `{}`, Status: plugin_commands.RunStatusQueued, CreatedByUserID: &actorID, CreatedAt: now,
 	}, plugin_commands.RunOutput{RunID: id, ArgvJSON: `[]`, CreatedAt: now}); err != nil {
 		t.Fatal(err)
+	}
+	var source models.PluginCommandRun
+	if err := tc.DB.Where("id = ?", id).First(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := ctx.JobService().Claim(context.Background(), jobs.Deps{DB: tc.DB}, jobs.ClaimRequest{
+		Kind: application_context.JobKindPluginCommand, KindVersion: 1, JobID: source.JobID, Claimant: "test-import-blocker",
+	}); err != nil || !claimed {
+		t.Fatalf("claim blocker Job: claimed=%v err=%v", claimed, err)
 	}
 	if won, err := ctx.MarkRunRunning(id, now); err != nil || !won {
 		t.Fatalf("mark blocker running: won=%v err=%v", won, err)
@@ -692,8 +708,8 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatalf("enabled plugins = %+v", plugins)
 	}
 	entered = resourceFS.arm(2)
-	createImportBlocker(t, tc.AppCtx, stagingRoot, "blocker-one", actor.ID, plugins[0].Generation)
-	createImportBlocker(t, tc.AppCtx, stagingRoot, "blocker-two", actor.ID, plugins[0].Generation)
+	createImportBlocker(t, tc, stagingRoot, "blocker-one", actor.ID, plugins[0].Generation)
+	createImportBlocker(t, tc, stagingRoot, "blocker-two", actor.ID, plugins[0].Generation)
 	waitForResourceCreates(t, entered, 2)
 	restartStart := doReq(tc, http.MethodGet, "/plugins/command-integration/start-restart", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
 	if restartStart.Code != http.StatusOK {
@@ -730,13 +746,33 @@ func TestPluginCommandHostIntegrationRestartRedriveAndCallbackLoss(t *testing.T)
 		t.Fatal("persisted plugin did not reload after process reconstruction")
 	}
 	redrive := doReq(tc, http.MethodGet, "/plugins/command-integration/redrive", map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
-	wantRedrive := "interrupted:" + oldImportID + ":" + oldImportID
-	if redrive.Code != http.StatusOK || !strings.Contains(redrive.Body.String(), wantRedrive) {
-		t.Fatalf("redrive page = %d %s, want %q", redrive.Code, redrive.Body.String(), wantRedrive)
+	wantRedrivePrefix := "interrupted:" + oldImportID + ":"
+	if redrive.Code != http.StatusOK || !strings.Contains(redrive.Body.String(), wantRedrivePrefix) {
+		t.Fatalf("redrive page = %d %s, want prefix %q", redrive.Code, redrive.Body.String(), wantRedrivePrefix)
 	}
 	redriven := waitForImport(t, tc.AppCtx, restartRun.ID, "restart.bin", plugin_commands.ImportStatusSucceeded)
-	if redriven.ImportID != oldImportID || redriven.ResourceID == nil {
+	if redriven.ImportID == oldImportID || redriven.ResourceID == nil {
 		t.Fatalf("redriven map = %+v", redriven)
+	}
+	if !strings.Contains(redrive.Body.String(), wantRedrivePrefix+redriven.ImportID) {
+		t.Fatalf("redrive callback did not report successor import %q: %s", redriven.ImportID, redrive.Body.String())
+	}
+	var predecessor, successor models.PluginCommandImport
+	if err := tc.DB.Where("id = ?", oldImportID).First(&predecessor).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.DB.Where("id = ?", redriven.ImportID).First(&successor).Error; err != nil {
+		t.Fatal(err)
+	}
+	if predecessor.JobID == successor.JobID {
+		t.Fatalf("interrupted import reused canonical Job %q", predecessor.JobID)
+	}
+	var retryLink, parentLink models.JobLink
+	if err := tc.DB.Where("type = ? AND from_job_id = ? AND to_job_id = ?", models.JobLinkRetryOf, successor.JobID, predecessor.JobID).First(&retryLink).Error; err != nil {
+		t.Fatalf("successor retry lineage: %v", err)
+	}
+	if err := tc.DB.Where("type = ? AND from_job_id = ? AND to_job_id = ?", models.JobLinkParentChild, restartRun.JobID, successor.JobID).First(&parentLink).Error; err != nil {
+		t.Fatalf("successor run parent lineage: %v", err)
 	}
 
 	// Disable revokes the VM before the verified process group is cancelled.

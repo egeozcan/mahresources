@@ -13330,3 +13330,38 @@ Residual risks and handoffs carried forward:
   the row absence and reload checks; both focused browser cases now pass.
 - Selected CLI E2E passed 34 tests covering jobs, plugin commands, group import,
   and group export.
+
+## Task 10 final verification (2026-09-23)
+
+- Plugin command runs and imports now accept canonical Jobs in the same
+  transaction as their durable source records. Import children link to the run;
+  retries create a new source and Job and link the successor with `retry-of`.
+- The command history output reference contains only `runId`; an API output
+  opener must verify that the source run's `JobID` matches the requesting Job,
+  then return only the stored bounded and redacted command history. Imported
+  Resource output contains only `resourceId` and resolves through the Resource
+  entity route.
+- The controller takes the staging RuntimeLease before the DB fence. Canonical
+  claim and source token persistence are atomic, while source state remains
+  queued/pending until the runner's pre-fork start boundary. Live workers renew
+  their canonical claim under the current DB fence. Recovery with unknown PGID,
+  cross-boot identity or unresolved children remains quarantined.
+- Command runs expose Cancel and inspect, with no Retry/Repeat. Import Retry is
+  offered only for a failed/cancelled/interrupted admitted source whose import
+  fields, current map entry, creator and verified successful parent run are
+  durable; execution rechecks the exchange file before admission.
+- Focused regressions cover source/Job acceptance rollback, claim-token crash
+  windows for both kinds, retry lineage, queued cancellation, DB fence rotation,
+  long-running claim heartbeat, and admin-only list/detail/timeline/summary/
+  output visibility. The SQLite real-store queued-cancel race exposed transient
+  `database is locked` failures while live commands completed; terminal source
+  and Job writes now retry the full transaction on SQLite lock contention.
+- Focused race gate passed: `go test -race --tags 'json1 fts5' ./plugin_commands
+  ./application_context -run 'Test.*(PluginCommand|CommandRun|CommandImport|RuntimeFence|Quarantine|Recovery)'
+  -count=10` (plugin_commands 3.248s; application_context 374.359s).
+- PostgreSQL-tagged focused gate passed:
+  `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests
+  -run 'Test.*PluginCommand' -count=1` (6.234s and 17.807s).
+- `go vet --tags 'json1 fts5 postgres' ./application_context ./plugin_commands
+  ./jobs ./server/api_tests` passed. Whole-repository Go/CLI/browser suites were
+  last run at Task 9; final whole-tree gates remain scheduled for Task 18.

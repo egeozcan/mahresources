@@ -50,6 +50,19 @@ type Adapter interface {
 	ExecuteCommand(context.Context, CommandExecution) (CommandOutcome, error)
 }
 
+// HostTransitionAdapter lets a Kind keep its durable source row in step when
+// the host applies a control directly to waiting work that has no executor to
+// notify. It runs inside the same transaction as the canonical transition.
+type HostTransitionAdapter interface {
+	ApplyHostTransition(context.Context, Deps, Snapshot, string, State) error
+}
+
+// HostTransitionCompletion lets a Kind release its in-memory admission after a
+// host-applied waiting-work transition has committed.
+type HostTransitionCompletion interface {
+	AfterHostTransition(context.Context, Snapshot, string, State)
+}
+
 // AdapterRegistration pairs a Kind's fixed definition with the adapter that runs
 // it. The definition is the one captured at registration, so a runtime reading
 // its budgets cannot be surprised by an adapter that answers differently on a

@@ -87,12 +87,10 @@ func TestSuppliedInputsAreDiscardableAndSweptWithTheFolder(t *testing.T) {
 	}
 }
 
-// TestRecoverySettlesARunLeftMidWrite pins spec §9.9 at the state level: a
-// process killed between the scratch create and the rename leaves a durable
-// nonterminal row, a folder with a partial scratch file, and no file at the
-// declared name. Recovery settles the row without a new stuck state, and the
-// declared name is simply absent rather than half-written.
-func TestRecoverySettlesARunLeftMidWrite(t *testing.T) {
+// TestRecoveryQuarantinesARunWithoutProcessGroup pins the fork-before-persist
+// crash window: without a persisted process group, recovery cannot prove that
+// no child started, so it retains the durable row and exchange directory.
+func TestRecoveryQuarantinesARunWithoutProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	const runID = "left-mid-write"
 	store := &recoveryStore{dispatcherTestStore: newDispatcherTestStore()}
@@ -113,27 +111,28 @@ func TestRecoverySettlesARunLeftMidWrite(t *testing.T) {
 		Store: store, Settings: settings,
 		Inspector: &recoveryInspector{states: map[int][]GroupIdentity{}},
 	})
-	if err := d.Recover(context.Background()); err != nil {
-		t.Fatalf("Recover: %v", err)
+	if err := d.Recover(context.Background()); err == nil {
+		t.Fatal("Recover succeeded without proving the child process is gone")
 	}
 	record, _, err := store.Run(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != RunStatusInterrupted {
-		t.Fatalf("recovered status = %q, want %q", record.Status, RunStatusInterrupted)
+	if record.Status != RunStatusRunning {
+		t.Fatalf("recovered status = %q, want %q", record.Status, RunStatusRunning)
 	}
-	if !record.OutputUnverified {
-		t.Fatal("a run killed before its process group was recorded must be marked output-unverified")
+	if record.OutputUnverified {
+		t.Fatal("a run without a process-group proof must not be terminalized")
 	}
 
-	// The settled run is terminal, so the read path can answer: the declared
-	// name does not exist, and because recovery marked the output unverified the
-	// folder is refused outright rather than read.
+	// The unresolved worker retains the exchange data for a later recovery pass.
+	if _, err := os.Stat(filepath.Join(folder, ".tmp", "input-1234")); err != nil {
+		t.Fatalf("partial exchange input after blocked recovery: %v", err)
+	}
 	exchange := NewExchange(store, settings)
 	access := Access{PluginName: "plug", Administrator: true}
-	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, ErrExchangeOutputUnverified) {
-		t.Fatalf("Read of a name that was never renamed = %v, want %v", err, ErrExchangeOutputUnverified)
+	if _, err := exchange.Read(access, runID, "cookies.txt", 1024); !errors.Is(err, ErrExchangeRunNotFinished) {
+		t.Fatalf("Read of a nonterminal run = %v, want %v", err, ErrExchangeRunNotFinished)
 	}
 	if _, err := exchange.Read(access, runID, ".tmp", 1024); err == nil {
 		t.Fatal("the scratch directory is readable as an input")

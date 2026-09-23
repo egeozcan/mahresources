@@ -12,9 +12,13 @@ const (
 )
 
 type PluginCommandImport struct {
-	ID                  string `gorm:"primaryKey;size:32"`
+	ID string `gorm:"primaryKey;size:32"`
+	// JobID is the canonical Job accepted atomically with this import claim.
+	JobID               string `gorm:"size:36;index"`
+	JobExecutionToken   string `gorm:"size:36"`
 	RunID               string `gorm:"index;size:32;not null"`
 	FileName            string `gorm:"size:255;not null"`
+	FieldsJSON          string `gorm:"type:text"`
 	PluginGeneration    uint64
 	CreatedByUserId     *uint  `gorm:"index"`
 	Status              string `gorm:"index;size:16;not null"`
