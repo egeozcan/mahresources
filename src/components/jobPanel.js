@@ -19,12 +19,13 @@ const PANEL_STATE_FILTERS = [
     ['succeeded', 'cancelled'],
 ];
 
-export function panelCounts(summary) {
-    const byState = summary?.byState || {};
-    return {
-        active: ['scheduled', 'queued', 'running', 'paused'].reduce((count, state) => count + Number(byState[state] || 0), 0),
-        attention: ['blocked', 'failed', 'interrupted'].reduce((count, state) => count + Number(byState[state] || 0), 0),
-    };
+export function panelCounts(jobs) {
+    return (jobs || []).reduce((counts, job) => {
+        const classification = classifyJobState(job);
+        if (classification === 'active') counts.active += 1;
+        if (classification === 'attention') counts.attention += 1;
+        return counts;
+    }, { active: 0, attention: 0 });
 }
 
 export function panelCommandConfirmation(command) {
@@ -55,7 +56,6 @@ export function jobPanel() {
         isOpen: false,
         jobs: [],
         details: {},
-        summary: null,
         eventSource: null,
         lastSequence: 0,
         streamCaughtUp: false,
@@ -110,7 +110,7 @@ export function jobPanel() {
             this._liveRegion?.destroy();
         },
 
-        get counts() { return panelCounts(this.summary); },
+        get counts() { return panelCounts(this.jobs); },
         get activeCount() { return this.counts.active; },
         get attentionCount() { return this.counts.attention; },
         get finishedCount() {
@@ -190,12 +190,10 @@ export function jobPanel() {
                 { generation: update.generation, previous: update.previous },
             ]));
             try {
-                const [summary, ...pages] = await Promise.all([
-                    this.requestJSON('/v1/jobs/summary'),
-                    ...PANEL_STATE_FILTERS.map(states => this.requestJSON(buildPanelListURL(states))),
-                ]);
+                const pages = await Promise.all(
+                    PANEL_STATE_FILTERS.map(states => this.requestJSON(buildPanelListURL(states))),
+                );
                 if (generation !== this._refreshGeneration) return;
-                this.summary = summary;
                 const byId = new Map();
                 for (const payload of pages) {
                     for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);

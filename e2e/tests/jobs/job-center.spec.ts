@@ -51,6 +51,35 @@ async function waitForJobState(
 }
 
 test.describe('Job Center', () => {
+  test('requests a filtered summary with the current list filters and default dismissal scope', async ({ page }) => {
+    let summaryRequestURL = '';
+    await page.route('**/v1/jobs/summary**', async route => {
+      summaryRequestURL = route.request().url();
+      await route.fulfill({ json: { byState: {} } });
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs: [], nextCursor: null } }));
+
+    await page.goto('/jobs?view=all&search=archive&command=retry&kind=remote-download&state=failed&origin=api&ownerId=12&actorId=13&acceptedAfter=2026-09-01T00%3A00%3A00Z&acceptedBefore=2026-09-20T00%3A00%3A00Z&relationship=retry-of&pinned=true');
+
+    await expect(page.getByTestId('job-center')).toBeVisible();
+    await expect.poll(() => summaryRequestURL).not.toBe('');
+    const summary = new URL(summaryRequestURL).searchParams;
+    expect(summary.get('search')).toBe('archive');
+    expect(summary.get('command')).toBe('retry');
+    expect(summary.get('kind')).toBe('remote-download');
+    expect(summary.get('state')).toBe('failed');
+    expect(summary.get('origin')).toBe('api');
+    expect(summary.get('ownerId')).toBe('12');
+    expect(summary.get('actorId')).toBe('13');
+    expect(summary.get('acceptedAfter')).toBe('2026-09-01T00:00:00.000Z');
+    expect(summary.get('acceptedBefore')).toBe('2026-09-20T00:00:00.000Z');
+    expect(summary.get('relationship')).toBe('retry-of');
+    expect(summary.get('pinned')).toBe('true');
+    expect(summary.get('dismissed')).toBe('false');
+    expect(summary.has('cursor')).toBe(false);
+    expect(summary.has('limit')).toBe(false);
+  });
+
   test('findings 41 and 113: paused progress stays visible and unknown totals keep a named indeterminate bar', async ({ page }) => {
     const acceptedAt = new Date().toISOString();
     const jobs = [
@@ -142,6 +171,43 @@ test.describe('Job Center', () => {
     await panel.getByRole('link', { name: 'All jobs', exact: true }).click();
     await expect(page).toHaveURL('/jobs');
     await expect(page.getByTestId('job-center')).toBeVisible();
+  });
+
+  test('the panel shows older actionable jobs and labels counts as shown rows', async ({ page }) => {
+    const olderJob = {
+      id: 'panel-older-active-job',
+      kind: 'maintenance',
+      state: 'running',
+      version: 1,
+      title: 'Older active job',
+      acceptedAt: '2020-01-01T00:00:00Z',
+      commands: [{ key: 'pause', label: 'Pause', endpoint: '/v1/jobs/panel-older-active-job/commands/pause', jobVersion: 1 }],
+    };
+    const listURLs: URL[] = [];
+    let summaryRequests = 0;
+    await page.route('**/v1/jobs/summary**', async route => {
+      summaryRequests += 1;
+      await route.fulfill({ json: { byState: { running: 20, failed: 10 } } });
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const url = new URL(route.request().url());
+      if (url.pathname !== '/v1/jobs') return route.continue();
+      listURLs.push(url);
+      return route.fulfill({ json: { jobs: url.searchParams.getAll('state').includes('running') ? [olderJob] : [] } });
+    });
+
+    await page.goto('/dashboard');
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    await expect(panel.getByRole('link', { name: 'Older active job', exact: true })).toBeVisible();
+    await expect(panel.getByText('Active and scheduled jobs shown')).toBeVisible();
+    await expect(panel.getByText('Active and scheduled jobs shown').locator('..').getByText('1', { exact: true })).toBeVisible();
+    expect(listURLs.length).toBeGreaterThanOrEqual(3);
+    expect(listURLs.length % 3).toBe(0);
+    expect(listURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
+    expect(listURLs.every(url => !url.searchParams.has('acceptedAfter'))).toBe(true);
+    expect(summaryRequests).toBe(0);
   });
 
   test('legacy download and job-handle APIs still resolve canonical work', async ({ request }) => {

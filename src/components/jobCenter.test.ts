@@ -5,6 +5,7 @@ import {
     advertisedCommands,
     advertisedOutputs,
     buildJobListURL,
+    buildJobSummaryURL,
     classifyJobState,
     commandEndpoint,
     dateTimeLocalValue,
@@ -184,6 +185,45 @@ describe('Job Center URL state', () => {
         expect(url.searchParams.get('cursor')).toBe('list-v1-next-page');
         expect(url.searchParams.get('acceptedAfter')).toBe(new Date('2026-09-23T12:30').toISOString());
         expect(url.searchParams.has('command')).toBe(false);
+    });
+
+    test('builds summary requests from the same filters as the visible list without list pagination', () => {
+        const filters = {
+            search: 'staged archive',
+            command: 'retry',
+            kinds: ['remote-download', 'plugin-command-run'],
+            states: ['failed', 'blocked'],
+            origins: ['user', 'schedule'],
+            ownerId: '12',
+            actorId: '13',
+            acceptedAfter: '2026-09-01T00:00:00.000Z',
+            acceptedBefore: '2026-09-20T00:00:00.000Z',
+            relationship: 'retry-of',
+            pinned: true,
+            dismissed: false,
+        };
+        const summary = new URL(buildJobSummaryURL({ filters }), 'http://localhost');
+
+        expect(summary.pathname).toBe('/v1/jobs/summary');
+        expect(summary.searchParams.get('search')).toBe('staged archive');
+        expect(summary.searchParams.get('command')).toBe('retry');
+        expect(summary.searchParams.getAll('kind')).toEqual(['remote-download', 'plugin-command-run']);
+        expect(summary.searchParams.getAll('state')).toEqual(['failed', 'blocked']);
+        expect(summary.searchParams.getAll('origin')).toEqual(['user', 'schedule']);
+        expect(summary.searchParams.get('ownerId')).toBe('12');
+        expect(summary.searchParams.get('actorId')).toBe('13');
+        expect(summary.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00.000Z');
+        expect(summary.searchParams.get('acceptedBefore')).toBe('2026-09-20T00:00:00.000Z');
+        expect(summary.searchParams.get('relationship')).toBe('retry-of');
+        expect(summary.searchParams.get('pinned')).toBe('true');
+        expect(summary.searchParams.get('dismissed')).toBe('false');
+        expect(summary.searchParams.has('cursor')).toBe(false);
+        expect(summary.searchParams.has('limit')).toBe(false);
+        const list = new URL(buildJobListURL({ filters, cursor: 'list-v1-page-two', limit: 50 }), 'http://localhost');
+        expect(list.searchParams.get('cursor')).toBe('list-v1-page-two');
+        expect(list.searchParams.get('limit')).toBe('50');
+        expect(new URL(buildJobSummaryURL({ filters: { search: 'download' } }), 'http://localhost')
+            .searchParams.get('dismissed')).toBe('false');
     });
 
     test('loads the next opaque keyset cursor and retains newest-first order', async () => {
@@ -419,19 +459,45 @@ describe('Job Center event stream catch-up boundary', () => {
 });
 
 describe('Job Center live summary', () => {
-    test('refreshes summary counts and state sections after a delivered lifecycle event', async () => {
+    test('uses current filters for initial and live summary refreshes', async () => {
         vi.useFakeTimers();
         const center = jobCenter();
         center.view = 'all';
+        center.filters = {
+            ...center.filters,
+            search: 'Index rebuild',
+            command: 'retry',
+            kinds: ['remote-download'],
+            origins: ['api'],
+            ownerId: '12',
+            actorId: '13',
+            acceptedAfter: '2026-09-01T00:00:00.000Z',
+            acceptedBefore: '2026-09-20T00:00:00.000Z',
+            relationship: 'retry-of',
+            pinned: true,
+            dismissed: null,
+        };
         center.streamCaughtUp = true;
         center.jobs = [{ id: 'live-job', title: 'Index rebuild', state: 'running', version: 1 }];
         center.summary = { byState: { running: 1, failed: 0 } };
+        const summaryURLs: URL[] = [];
+        let currentState = 'running';
         center.fetchJSON = vi.fn(async raw => {
             const url = new URL(String(raw), 'http://localhost');
-            if (url.pathname === '/v1/jobs/summary') return { byState: { running: 0, failed: 1 } };
-            if (url.pathname === '/v1/jobs') return { jobs: [{ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2 }] };
+            if (url.pathname === '/v1/jobs/summary') {
+                summaryURLs.push(url);
+                return { byState: { running: 0, failed: 1 } };
+            }
+            if (url.pathname === '/v1/jobs') return { jobs: [{ id: 'live-job', title: 'Index rebuild', state: currentState, version: 2 }] };
             return {};
         });
+
+        await center.load();
+        currentState = 'failed';
+        const initialSummaryURL = summaryURLs[0];
+        expect(initialSummaryURL).toBeDefined();
+        expect(initialSummaryURL.searchParams.get('search')).toBe('Index rebuild');
+        expect(initialSummaryURL.searchParams.get('dismissed')).toBe('false');
 
         center.handleStreamMessage({
             data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2, deliverySequence: 1 }),
@@ -441,7 +507,8 @@ describe('Job Center live summary', () => {
 
         expect(center.sections.attention.map(job => job.id)).toEqual(['live-job']);
         expect(center.summary.byState).toEqual({ running: 0, failed: 1 });
-        expect(center.fetchJSON).toHaveBeenCalledWith('/v1/jobs/summary');
+        expect(summaryURLs).toHaveLength(2);
+        expect(summaryURLs[1].search).toBe(initialSummaryURL.search);
         vi.useRealTimers();
     });
 
@@ -450,7 +517,7 @@ describe('Job Center live summary', () => {
         const center = jobCenter();
         center.view = 'home';
         center.fetchJSON = vi.fn(async url => {
-            if (String(url) === '/v1/jobs/summary') return { byState: {} };
+            if (new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary') return { byState: {} };
             if (String(url).startsWith('/v1/jobs/')) return { id: 'off-screen', state: 'queued', version: 1 };
             return { jobs: [] };
         });
@@ -465,10 +532,10 @@ describe('Job Center live summary', () => {
         sendEvent(1, 'first-new-job');
         sendEvent(2, 'second-new-job');
         await Promise.resolve();
-        expect(center.fetchJSON.mock.calls.filter(([url]) => String(url) === '/v1/jobs/summary')).toHaveLength(0);
+        expect(center.fetchJSON.mock.calls.filter(([url]) => new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary')).toHaveLength(0);
 
         await vi.advanceTimersByTimeAsync(250);
-        expect(center.fetchJSON.mock.calls.filter(([url]) => String(url) === '/v1/jobs/summary')).toHaveLength(1);
+        expect(center.fetchJSON.mock.calls.filter(([url]) => new URL(String(url), 'http://localhost').pathname === '/v1/jobs/summary')).toHaveLength(1);
         expect(center.fetchJSON.mock.calls.filter(([url]) => String(url).startsWith('/v1/jobs?'))).toHaveLength(3);
         vi.useRealTimers();
     });
@@ -486,7 +553,7 @@ describe('Job Center live summary', () => {
         center.jobs = [{ id: 'live-job', state: 'running', version: 1 }];
         center.summary = { byState: { running: 1 } };
         center.fetchJSON = vi.fn(async url => {
-            if (String(url) !== '/v1/jobs/summary') return {};
+            if (new URL(String(url), 'http://localhost').pathname !== '/v1/jobs/summary') return {};
             summaryCalls += 1;
             activeRequests += 1;
             maximumConcurrentRequests = Math.max(maximumConcurrentRequests, activeRequests);
@@ -525,6 +592,7 @@ describe('Job Center templates', () => {
 
     test('renders commands and outputs only from the advertised detail arrays', () => {
         expect(detailTemplate).toContain('x-for="command in advertisedCommands(detail)"');
+        expect(detailTemplate).toContain('role="group" aria-label="Advertised job commands"');
         expect(detailTemplate).toContain('x-for="output in advertisedOutputs(detail)"');
         expect(detailTemplate).toContain(':href="outputEndpoint(output)"');
         expect(detailTemplate).not.toMatch(/detail\.(?:kind|source)\s*===/);

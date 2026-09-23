@@ -6,9 +6,37 @@ import { jobPanel, panelCounts, panelCommandConfirmation } from './jobPanel.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Job Center panel', () => {
-    test('keeps active and attention counts separate', () => {
-        expect(panelCounts({ byState: { scheduled: 2, queued: 3, running: 4, paused: 1, blocked: 5, failed: 6, interrupted: 2 } }))
-            .toEqual({ active: 10, attention: 13 });
+    test('counts the undismissed rows shown, including older actionable jobs', async () => {
+        const olderActive = {
+            id: 'older-active', state: 'running', version: 1,
+            acceptedAt: '2020-01-01T00:00:00Z', commands: [{ key: 'pause' }],
+        };
+        const attention = {
+            id: 'visible-attention', state: 'blocked', version: 1,
+            acceptedAt: '2020-01-02T00:00:00Z', commands: [{ key: 'retry' }],
+        };
+        const panel = jobPanel();
+        const requests: string[] = [];
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            requests.push(url);
+            if (url === '/v1/jobs/summary') {
+                return { byState: { running: 20, blocked: 15 } };
+            }
+            const states = new URL(url, 'http://localhost').searchParams.getAll('state');
+            return { jobs: states.includes('running') ? [olderActive] : states.includes('blocked') ? [attention] : [] };
+        });
+
+        await panel.refresh();
+
+        expect(panel.jobs.map(job => job.id)).toEqual(['visible-attention', 'older-active']);
+        expect(panelCounts(panel.jobs)).toEqual({ active: 1, attention: 1 });
+        const listURLs = requests.filter(url => url.startsWith('/v1/jobs?'))
+            .map(url => new URL(url, 'http://localhost'));
+        expect(listURLs).toHaveLength(3);
+        expect(listURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
+        expect(listURLs.every(url => !url.searchParams.has('acceptedAfter'))).toBe(true);
+        expect(requests).not.toContain('/v1/jobs/summary');
     });
 
     test('finished dismissal replaces blanket clear and explains pin/forget scope', () => {
@@ -342,7 +370,6 @@ describe('Job Center panel accessibility hooks', () => {
         const panel = jobPanel();
         const detailRequests: string[] = [];
         const listRequests: string[] = [];
-        let summaryCalls = 0;
         const pageRows = new Map<string, unknown[]>();
         for (const [state, count] of [['blocked', 5], ['running', 5], ['succeeded', 5]] as const) {
             pageRows.set(state, Array.from({ length: count }, (_, index) => ({
@@ -355,10 +382,6 @@ describe('Job Center panel accessibility hooks', () => {
         }
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
-            if (url === '/v1/jobs/summary') {
-                summaryCalls += 1;
-                return { byState: { running: summaryCalls === 1 ? 5 : 6, blocked: 5 } };
-            }
             if (url.startsWith('/v1/jobs?')) {
                 listRequests.push(url);
                 const query = new URL(url, 'http://localhost').searchParams;
@@ -366,7 +389,8 @@ describe('Job Center panel accessibility hooks', () => {
             }
             detailRequests.push(url);
             const id = decodeURIComponent(url.slice('/v1/jobs/'.length));
-            return { id, kind: 'maintenance', state: 'running', version: 1, commands: [] };
+            const state = id.startsWith('page-blocked-') ? 'blocked' : id.startsWith('page-running-') ? 'running' : 'succeeded';
+            return { id, kind: 'maintenance', state, version: 1, commands: [] };
         });
         panel.connect();
         const stream = panel.eventSource as unknown as FakeEventSource;
@@ -418,8 +442,7 @@ describe('Job Center panel accessibility hooks', () => {
         await panel._panelRefreshPromise;
         expect(listRequests).toHaveLength(6);
         expect(listRequests.slice(3).every(url => new URL(url, 'http://localhost').searchParams.get('limit') === '5')).toBe(true);
-        expect(summaryCalls).toBe(2);
-        expect(panel.counts).toEqual({ active: 6, attention: 5 });
+        expect(panel.counts).toEqual({ active: 5, attention: 5 });
         expect(panel.jobs).toHaveLength(15);
         panel.destroy();
         vi.useRealTimers();
@@ -622,8 +645,16 @@ describe('Job Center panel accessibility hooks', () => {
         const panel = jobPanel();
         panel.streamCaughtUp = true;
         panel.jobs = [{ id: 'job-1', state: 'running', version: 1 }];
-        panel.summary = { byState: { running: 1, failed: 0 } };
-        panel.requestJSON = vi.fn(async () => ({ byState: { running: 0, failed: 1 } }));
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url.startsWith('/v1/jobs?')) {
+                const states = new URL(url, 'http://localhost').searchParams.getAll('state');
+                return { jobs: states.includes('failed') ? [{
+                    id: 'job-1', state: 'failed', version: 2, commands: [{ key: 'retry' }],
+                }] : [] };
+            }
+            return { id: 'job-1', state: 'failed', version: 2, commands: [{ key: 'retry' }] };
+        });
 
         await panel.handleStreamMessage({
             data: JSON.stringify({ id: 'job-1', state: 'failed', version: 2, deliverySequence: 1 }),
@@ -632,7 +663,10 @@ describe('Job Center panel accessibility hooks', () => {
         await vi.advanceTimersByTimeAsync(250);
 
         expect(panel.counts).toEqual({ active: 0, attention: 1 });
-        expect(panel.requestJSON).toHaveBeenCalledWith('/v1/jobs/summary');
+        expect(panel.requestJSON.mock.calls.filter(([url]) => String(url).startsWith('/v1/jobs?')))
+            .toHaveLength(3);
+        expect(panel.requestJSON.mock.calls.every(([url]) => !String(url).startsWith('/v1/jobs/summary')))
+            .toBe(true);
         vi.useRealTimers();
     });
 
@@ -647,9 +681,12 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).toContain('Dismiss finished');
         expect(template).toContain('All jobs');
         expect(template).toContain('x-for="command in commandsFor(job)"');
+        expect(template).toContain('Active and scheduled jobs shown');
+        expect(template).toContain('Jobs needing attention shown');
+        expect(template).toContain("'Active jobs shown: ' + activeCount");
         expect(template).not.toContain('Clear completed');
         expect(template).toContain('Active and scheduled');
-        expect(template).toContain('Needs attention');
+        expect(template).toContain('Jobs needing attention');
         expect(baseTemplate).toContain('{% include "/partials/jobPanel.tpl" %}');
         expect(baseTemplate).not.toContain('downloadCockpit.tpl');
     });

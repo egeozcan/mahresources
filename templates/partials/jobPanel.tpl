@@ -7,8 +7,8 @@
             <circle cx="18" cy="12" r="2" stroke-width="1.7" />
         </svg>
         <span>Jobs</span>
-        <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-700" x-text="activeCount" :aria-label="'Active jobs: ' + activeCount"></span>
-        <span x-show="attentionCount > 0" class="rounded-full border border-amber-700 px-1.5 py-0.5 text-xs font-medium text-amber-900" x-text="attentionCount" :aria-label="'Jobs needing attention: ' + attentionCount"></span>
+        <span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-xs text-stone-700" x-text="activeCount" :aria-label="'Active jobs shown: ' + activeCount"></span>
+        <span x-show="attentionCount > 0" class="rounded-full border border-amber-700 px-1.5 py-0.5 text-xs font-medium text-amber-900" x-text="attentionCount" :aria-label="'Jobs needing attention shown: ' + attentionCount"></span>
     </button>
 
     <template x-if="isOpen">
@@ -30,11 +30,11 @@
 
                 <div class="grid grid-cols-2 gap-2 border-b border-stone-200 p-3">
                     <div class="rounded bg-stone-50 px-3 py-2">
-                        <span class="block text-xs font-mono uppercase tracking-wide text-stone-500">Active and scheduled</span>
+                        <span class="block text-xs font-mono uppercase tracking-wide text-stone-500">Active and scheduled jobs shown</span>
                         <span class="text-lg font-semibold text-stone-900" x-text="activeCount"></span>
                     </div>
                     <div class="rounded bg-stone-50 px-3 py-2">
-                        <span class="block text-xs font-mono uppercase tracking-wide text-stone-500">Needs attention</span>
+                        <span class="block text-xs font-mono uppercase tracking-wide text-stone-500">Jobs needing attention shown</span>
                         <span class="text-lg font-semibold text-stone-900" x-text="attentionCount"></span>
                     </div>
                 </div>

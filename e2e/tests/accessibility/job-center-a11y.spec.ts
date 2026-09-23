@@ -31,6 +31,28 @@ test.describe('Job Center panel accessibility', () => {
     await expect(status).not.toBeEmpty();
   });
 
+  test('detail command controls are exposed as a named group', async ({ page }) => {
+    const job = {
+      id: 'a11y-detail-command-group',
+      kind: 'remote-download',
+      state: 'failed',
+      version: 2,
+      title: 'Detail command group job',
+      commands: [{ key: 'retry', label: 'Retry', jobVersion: 2 }],
+      outputs: [],
+      lineage: { ancestors: [], successors: [], parents: [], children: [] },
+    };
+    await page.route(`**/v1/jobs/${job.id}/events**`, route => route.fulfill({ json: { events: [] } }));
+    await page.route(`**/v1/jobs/${job.id}`, route => route.fulfill({ json: job }));
+
+    await page.goto(`/job?id=${job.id}`);
+
+    const detail = page.getByTestId('job-detail');
+    const controls = detail.getByRole('group', { name: 'Advertised job commands' });
+    await expect(controls).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
   test('axe finds no serious or critical violations in the open panel', async ({ page, checkComponentA11y }) => {
     const job = {
       id: 'a11y-advertised-command',

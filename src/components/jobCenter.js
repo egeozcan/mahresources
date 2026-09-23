@@ -86,8 +86,7 @@ export function serializeJobCenterURL(state) {
     return params.toString();
 }
 
-export function buildJobListURL({ filters = {}, states = null, cursor = null, limit = 50 } = {}) {
-    const params = new URLSearchParams();
+function appendJobFilters(params, filters, states = null) {
     for (const [key, parameter] of Object.entries(FILTER_LIST_KEYS)) {
         const values = key === 'states' && states ? states : filters[key] || [];
         for (const value of values) {
@@ -102,9 +101,21 @@ export function buildJobListURL({ filters = {}, states = null, cursor = null, li
     for (const key of ['pinned', 'dismissed']) {
         if (filters[key] !== null && filters[key] !== undefined) params.set(key, String(filters[key]));
     }
+}
+
+export function buildJobListURL({ filters = {}, states = null, cursor = null, limit = 50 } = {}) {
+    const params = new URLSearchParams();
+    appendJobFilters(params, filters, states);
     if (cursor) params.set('cursor', cursorToken(cursor));
     params.set('limit', String(limit));
     return `/v1/jobs?${params.toString()}`;
+}
+
+export function buildJobSummaryURL({ filters = {}, window = null } = {}) {
+    const params = new URLSearchParams();
+    appendJobFilters(params, { ...filters, dismissed: filters.dismissed ?? false });
+    if (window) params.set('window', window);
+    return `/v1/jobs/summary${params.size ? `?${params.toString()}` : ''}`;
 }
 
 export function advertisedCommands(job) {
@@ -398,7 +409,7 @@ export function jobCenter(options = {}) {
         },
 
         async loadSummary() {
-            this.summary = await this.fetchJSON('/v1/jobs/summary');
+            this.summary = await this.fetchJSON(buildJobSummaryURL({ filters: this.filters }));
         },
 
         scheduleStreamRefresh() {
@@ -427,7 +438,7 @@ export function jobCenter(options = {}) {
             const stateKey = JSON.stringify({ view: this.view, filters: this.filters });
             const listGeneration = this._listGeneration;
             const refreshHome = this.view === 'home' && !this.hasFilters();
-            const requests = [this.fetchJSON('/v1/jobs/summary')];
+            const requests = [this.fetchJSON(buildJobSummaryURL({ filters: this.filters }))];
             if (refreshHome) {
                 const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
                 requests.push(Promise.all([

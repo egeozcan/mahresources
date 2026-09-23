@@ -17,7 +17,7 @@
                         <span class="font-mono text-xs" x-text="detail.id"></span>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2" aria-label="Advertised job commands">
+                <div class="flex flex-wrap gap-2" role="group" aria-label="Advertised job commands">
                     <template x-for="command in advertisedCommands(detail)" :key="command.key">
                         <button type="button" @click="runCommand(detail, command)" class="rounded border border-stone-400 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-50" x-text="command.label || command.key"></button>
                     </template>
