@@ -1619,6 +1619,9 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 			return err
 		}
 	}
+	if err := lockSuccessorReplayEnvelope(tx, job.ID); err != nil {
+		return err
+	}
 
 	// The input is opened here, inside the transaction, rather than copied as
 	// sealed bytes: acceptance seals what the Kind's codec encodes, so writing the
@@ -1669,6 +1672,23 @@ func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, r
 		JobID: job.ID, Key: request.Key,
 		Status: outcome.status, Code: outcome.code, Message: outcome.message,
 		SuccessorID: successor.ID,
+	}
+	return nil
+}
+
+// lockSuccessorReplayEnvelope serializes copying a Job's input with Forget and
+// the expiry sweeper. Those operations update the envelope row, while a normal
+// read in OpenReplay would not conflict with them under PostgreSQL READ
+// COMMITTED: a Retry or Repeat could otherwise decrypt an older committed
+// version, then accept its successor after the purge committed. The lock is held
+// by the command transaction through acceptance of the successor and its link.
+// Missing rows are left to OpenReplay's typed missing-envelope refusal.
+func lockSuccessorReplayEnvelope(tx *gorm.DB, jobID string) error {
+	var envelope models.JobReplayEnvelope
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("job_id = ?", jobID).First(&envelope).Error
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("jobs: lock replay envelope for retry: %w", err)
 	}
 	return nil
 }

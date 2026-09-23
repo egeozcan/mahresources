@@ -5,12 +5,16 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // These tests run the dialect-sensitive halves of the command surface against
@@ -278,6 +282,194 @@ func TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG(t *testing.T) {
 		if errs[1] != nil && errors.Is(errs[1], ErrCommandChainConflict) && strings.Contains(errs[1].Error(), successors[0]) {
 			t.Fatalf("the losing owner learned the hidden successor UUID: %v", errs[1])
 		}
+	}
+}
+
+func TestRetryWaitsForConcurrentForgetOfReplayEnvelopePG(t *testing.T) {
+	assertSuccessorWaitsForReplayPurgePG(t, CommandRetry, models.JobReplayPurgeForgotten)
+}
+
+func TestRetryWaitsForConcurrentExpiryOfReplayEnvelopePG(t *testing.T) {
+	assertSuccessorWaitsForReplayPurgePG(t, CommandRetry, models.JobReplayPurgeExpired)
+}
+
+func TestRepeatWaitsForConcurrentForgetOfReplayEnvelopePG(t *testing.T) {
+	assertSuccessorWaitsForReplayPurgePG(t, CommandRepeat, models.JobReplayPurgeForgotten)
+}
+
+// assertSuccessorWaitsForReplayPurgePG makes Forget or expiry purge hold the
+// envelope row after writing its tombstone, then starts Retry or Repeat while
+// that write is uncommitted. The input read must wait on the envelope row and
+// then refuse the tombstone instead of publishing a successor from bytes the
+// purge already removed.
+func assertSuccessorWaitsForReplayPurgePG(t *testing.T, commandKey, purgeReason string) {
+	t.Helper()
+	h := newCommandHarnessOn(t, newPGDeps(t))
+	h.advertiseStateful()
+	if purgeReason == models.JobReplayPurgeExpired {
+		h.deps.Replay.Retention = time.Hour
+	}
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	ancestor := h.acceptReplayable(&owner)
+	var terminal Snapshot
+	if commandKey == CommandRetry {
+		terminal = h.fail(ancestor.ID)
+	} else {
+		terminal = h.succeed(ancestor.ID)
+	}
+	if purgeReason == models.JobReplayPurgeExpired {
+		h.clock = h.clock.Add(2 * time.Hour)
+	}
+	request := h.request(terminal.ID, commandKey, "successor-after-purge", viewer)
+	retryDeps := h.deps
+	if purgeReason == models.JobReplayPurgeExpired {
+		// Expiry is already enforced by the stored deadline before the sweep runs.
+		// Model a retrying PostgreSQL process whose clock has not advanced as far as
+		// the process that selected and purges the expired envelope.
+		retryNow := h.clock.Add(-2 * time.Hour)
+		retryDeps.Now = func() time.Time { return retryNow }
+	}
+
+	purgeUpdated := make(chan struct{})
+	releasePurge := make(chan struct{})
+	openReadStarted := make(chan struct{})
+	openReadFinished := make(chan struct{})
+	releaseOpenRead := make(chan struct{})
+	var releasePurgeOnce, releaseOpenReadOnce sync.Once
+	letPurgeFinish := func() { releasePurgeOnce.Do(func() { close(releasePurge) }) }
+	letOpenReadFinish := func() { releaseOpenReadOnce.Do(func() { close(releaseOpenRead) }) }
+	t.Cleanup(func() {
+		letPurgeFinish()
+		letOpenReadFinish()
+		_ = h.deps.DB.Callback().Update().Remove("test:retry-purge-row-lock")
+		_ = h.deps.DB.Callback().Query().Remove("test:retry-purge-open-before")
+		_ = h.deps.DB.Callback().Query().Remove("test:retry-purge-open-after")
+	})
+
+	var pausePurge atomic.Bool
+	pausePurge.Store(true)
+	if err := h.deps.DB.Callback().Update().After("gorm:update").Register("test:retry-purge-row-lock", func(db *gorm.DB) {
+		if db.Statement == nil || db.Statement.Table != "job_replay_envelopes" ||
+			!strings.Contains(strings.ToLower(db.Statement.SQL.String()), "purged_at") ||
+			!pausePurge.CompareAndSwap(true, false) {
+			return
+		}
+		close(purgeUpdated)
+		<-releasePurge
+	}); err != nil {
+		t.Fatalf("register replay purge barrier: %v", err)
+	}
+
+	purgeDone := make(chan error, 1)
+	go func() {
+		if purgeReason == models.JobReplayPurgeForgotten {
+			_, err := h.svc.ForgetReplay(h.deps, viewer, terminal.ID)
+			purgeDone <- err
+			return
+		}
+		count, err := h.svc.PurgeExpiredReplay(h.deps, 10)
+		if err == nil && count != 1 {
+			err = fmt.Errorf("purged %d envelopes, want one", count)
+		}
+		purgeDone <- err
+	}()
+	select {
+	case <-purgeUpdated:
+	case err := <-purgeDone:
+		t.Fatalf("replay purge finished before its envelope update barrier: %v", err)
+	case <-time.After(5 * time.Second):
+		select {
+		case err := <-purgeDone:
+			t.Fatalf("replay purge did not reach its envelope update: %v", err)
+		default:
+			t.Fatal("replay purge did not reach its envelope update")
+		}
+	}
+
+	// Register after the purge's update is paused. Only the FOR UPDATE read used
+	// to copy input is gated; Retry's earlier availability reads remain free to
+	// observe the old committed version.
+	if err := h.deps.DB.Callback().Query().Before("gorm:query").Register("test:retry-purge-open-before", func(db *gorm.DB) {
+		if db.Statement != nil && db.Statement.Table == "job_replay_envelopes" {
+			if _, locking := db.Statement.Clauses["FOR"]; !locking {
+				return
+			}
+			close(openReadStarted)
+		}
+	}); err != nil {
+		t.Fatalf("register Retry input read start barrier: %v", err)
+	}
+	if err := h.deps.DB.Callback().Query().After("gorm:query").Register("test:retry-purge-open-after", func(db *gorm.DB) {
+		if db.Statement != nil && db.Statement.Table == "job_replay_envelopes" &&
+			strings.Contains(strings.ToUpper(db.Statement.SQL.String()), "FOR UPDATE") {
+			close(openReadFinished)
+			<-releaseOpenRead
+		}
+	}); err != nil {
+		t.Fatalf("register Retry input read completion barrier: %v", err)
+	}
+
+	retryDone := make(chan error, 1)
+	go func() {
+		_, err := h.svc.ExecuteCommand(context.Background(), retryDeps, request)
+		retryDone <- err
+	}()
+	select {
+	case <-openReadStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("successor command did not reach its locking input read")
+	}
+
+	// With the row lock, the read waits for the purge transaction. Without it,
+	// PostgreSQL returns the old envelope version here and Retry can commit.
+	openedBeforePurgeCommit := false
+	select {
+	case <-openReadFinished:
+		openedBeforePurgeCommit = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	if openedBeforePurgeCommit {
+		letOpenReadFinish()
+		select {
+		case <-retryDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("successor command did not finish after reading the replay envelope")
+		}
+		letPurgeFinish()
+		if err := <-purgeDone; err != nil {
+			t.Fatalf("finish replay purge: %v", err)
+		}
+		t.Fatal("successor command read the envelope before Forget/expiry committed")
+	}
+
+	letPurgeFinish()
+	if err := <-purgeDone; err != nil {
+		t.Fatalf("finish replay purge: %v", err)
+	}
+	select {
+	case <-openReadFinished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("successor input read did not continue after the purge committed")
+	}
+	letOpenReadFinish()
+	select {
+	case err := <-retryDone:
+		if purgeReason == models.JobReplayPurgeForgotten && !errors.Is(err, ErrReplayForgotten) {
+			t.Fatalf("successor after Forget = %v, want ErrReplayForgotten", err)
+		}
+		if purgeReason == models.JobReplayPurgeExpired && !errors.Is(err, ErrReplayExpired) {
+			t.Fatalf("successor after expiry = %v, want ErrReplayExpired", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("successor command did not finish after reading the purged envelope")
+	}
+	linkType := LinkRetryOf
+	if commandKey == CommandRepeat {
+		linkType = LinkRepeatOf
+	}
+	if successors := jobLinks(t, h.deps, terminal.ID, linkType, false); len(successors) != 0 {
+		t.Fatalf("a purge racing %s left %d successors, want none", commandKey, len(successors))
 	}
 }
 
