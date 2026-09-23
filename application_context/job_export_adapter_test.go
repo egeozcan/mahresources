@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"mahresources/plugin_system"
 
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
 )
 
 // This file drives the export Kind's behaviour beyond the happy path: what
@@ -730,6 +732,137 @@ func TestWaitForQueueExecutionPublishesAnAlreadyTerminalSnapshot(t *testing.T) {
 		finished.Progress.Total == nil || *finished.Progress.Total != terminal.TotalSize {
 		t.Fatalf("finished Job progress = %+v, want %d/%d bytes from terminal queue snapshot",
 			finished.Progress, terminal.Progress, terminal.TotalSize)
+	}
+}
+
+// TestTerminalExportRetriesProgressAfterQuarantineConflict makes the guarded
+// progress UPDATE lose a race to a same-token quarantine. That conflict does not
+// prove this executor lost its fence: the quarantined claim still permits this
+// execution to publish its terminal outcome.
+func TestTerminalExportRetriesProgressAfterQuarantineConflict(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "terminal-quarantine-progress")
+	accepted, execution := acceptAndClaimExportForTest(t, ctx, "terminal-quarantine-progress", groupID, time.Minute)
+	adapter := &groupExportAdapter{ctx: ctx}
+
+	entry, err := adapter.start(execution, exportRequestForTest(groupID))
+	if err != nil {
+		t.Fatalf("start export queue entry: %v", err)
+	}
+	waitForQueueEntryTerminal(t, ctx, entry.ID)
+	terminal := entry.Snapshot()
+	if terminal.Status != download_queue.JobStatusCompleted || terminal.Progress <= 0 || terminal.TotalSize <= 0 {
+		t.Fatalf("terminal queue progress = %s, %d/%d bytes; want completed with known byte counts",
+			terminal.Status, terminal.Progress, terminal.TotalSize)
+	}
+
+	var quarantined atomic.Bool
+	var quarantineErr error
+	callbackName := "test:quarantine-before-terminal-progress:" + accepted.ID
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "jobs" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]interface{})
+		if !ok {
+			return
+		}
+		if _, progressWrite := updates["progress_unit"]; !progressWrite || !quarantined.CompareAndSwap(false, true) {
+			return
+		}
+		_, quarantineErr = ctx.JobService().QuarantineExternalWork(ctx.jobDeps(), jobs.ExecutionRef{
+			JobID: accepted.ID, ExecutionToken: execution.ExecutionToken,
+		}, "test-progress-conflict")
+		if quarantineErr != nil {
+			tx.AddError(quarantineErr)
+		}
+	}); err != nil {
+		t.Fatalf("register quarantine race callback: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Update().Remove(callbackName) })
+
+	err = ctx.finishQueueExecution(execution, terminal, func(finished *download_queue.DownloadJob) error {
+		return adapter.publishOutcome(execution, exportRequestForTest(groupID), finished)
+	})
+	if err != nil {
+		t.Fatalf("publish the quarantined terminal export: %v", err)
+	}
+	if !quarantined.Load() || quarantineErr != nil {
+		t.Fatalf("the progress conflict did not quarantine the execution: triggered=%v, err=%v", quarantined.Load(), quarantineErr)
+	}
+	finished := waitForSnapshot(t, ctx, accepted.ID, "the quarantined export to publish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the export ended %s (%+v), want its owner to publish success", finished.State, finished.Failure)
+	}
+	if finished.Progress.Unit != "bytes" || finished.Progress.Completed == nil || *finished.Progress.Completed != terminal.Progress {
+		t.Fatalf("finished Job progress = %+v, want %d bytes after the quarantine conflict", finished.Progress, terminal.Progress)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("the quarantined claim ended %s, want released after its owner settled", claim.State)
+	}
+}
+
+// TestLateCancelWinsAfterACompletedExportRetriesOutputPublication covers a
+// cancellation accepted after the queue completed but before its canonical
+// success was durable. A successful artifact write remains recorded as a fact,
+// while the Job outcome honors the cancellation intent.
+func TestLateCancelWinsAfterACompletedExportRetriesOutputPublication(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	groupID := createExportGroupForTest(t, ctx, "late-cancel-export")
+	accepted, execution := acceptAndClaimExportForTest(t, ctx, "late-cancel-export", groupID, time.Minute)
+	ctx.jobFaults = &jobDurabilityFaults{}
+	ctx.jobFaults.failOutputPublication.Store(true)
+	adapter := &groupExportAdapter{ctx: ctx}
+
+	entry, err := adapter.start(execution, exportRequestForTest(groupID))
+	if err != nil {
+		t.Fatalf("start export queue entry: %v", err)
+	}
+	waitForQueueEntryTerminal(t, ctx, entry.ID)
+	terminal := entry.Snapshot()
+	if terminal.Status != download_queue.JobStatusCompleted {
+		t.Fatalf("queue export ended %s, want completed", terminal.Status)
+	}
+	if err := adapter.publishOutcome(execution, exportRequestForTest(groupID), terminal); !errors.Is(err, errJobFaultInjected) {
+		t.Fatalf("the first artifact publication error = %v, want the injected refusal", err)
+	}
+	if got := jobSnapshot(t, ctx.JobService(), ctx, accepted.ID); got.State != jobs.StateRunning {
+		t.Fatalf("the Job ended %s after the refused artifact write, want it retained for retry", got.State)
+	}
+
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: accepted.ID, Key: jobs.CommandCancel, IdempotencyKey: "cancel-after-export-queue",
+		ExpectedVersion: currentVersionOf(t, ctx, accepted.ID),
+	})
+	if err != nil {
+		t.Fatalf("request cancellation after queue completion: %v", err)
+	}
+	if result.Code != jobs.CommandCodeRequested && result.Code != jobs.CommandCodeApplied {
+		t.Fatalf("late cancellation answered %q (%s)", result.Code, result.Message)
+	}
+	if got := jobSnapshot(t, ctx.JobService(), ctx, accepted.ID); got.ControlIntent != jobs.ControlIntentCancel {
+		t.Fatalf("late cancellation left intent %q, want %q", got.ControlIntent, jobs.ControlIntentCancel)
+	}
+
+	ctx.jobFaults.failOutputPublication.Store(false)
+	if err := adapter.publishOutcome(execution, exportRequestForTest(groupID), terminal); err != nil {
+		t.Fatalf("retry terminal export publication after cancellation: %v", err)
+	}
+	finished := jobSnapshot(t, ctx.JobService(), ctx, accepted.ID)
+	if finished.State != jobs.StateCancelled || finished.ControlIntent != "" {
+		t.Fatalf("late-cancelled export = %s with intent %q; want cancelled with intent resolved", finished.State, finished.ControlIntent)
+	}
+	outputs, err := ctx.GetJobOutputs(accepted.ID)
+	if err != nil {
+		t.Fatalf("read the committed artifact output: %v", err)
+	}
+	if _, found := findJobOutput(outputs, jobExportArtifactOutput); !found {
+		t.Fatalf("completed archive artifact was not recorded alongside cancellation: %+v", outputs)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("late-cancelled claim ended %s, want released", claim.State)
 	}
 }
 

@@ -427,7 +427,29 @@ func (ctx *MahresourcesContext) queueExecutionStillOwnsJob(execution jobs.Execut
 	if err != nil {
 		return false, fmt.Errorf("read Job %s after progress conflict: %w", execution.JobID, err)
 	}
-	return current.State == string(jobs.StateRunning) && current.ExecutionToken == execution.ExecutionToken, nil
+	state := jobs.State(current.State)
+	if state.Terminal() || current.ExecutionToken != execution.ExecutionToken {
+		return false, nil
+	}
+	if state == jobs.StateBlocked {
+		// A blocked Job keeps an execution token only when its claim was
+		// quarantined: that unresolved claim is still allowed to settle the Job's
+		// outcome. Ordinary blocked Jobs have released their token and cannot pass
+		// this check; verify the claim as well so corrupt or stale rows do not turn
+		// a matching string into ownership.
+		service := ctx.JobService()
+		if service == nil {
+			return false, nil
+		}
+		owned, err := service.OwnsQuarantinedJob(ctx.jobDeps(), jobs.ExecutionRef{
+			JobID: execution.JobID, ExecutionToken: execution.ExecutionToken,
+		})
+		if errors.Is(err, jobs.ErrStaleExecution) || errors.Is(err, jobs.ErrNotFound) {
+			return false, nil
+		}
+		return owned, err
+	}
+	return true, nil
 }
 
 func queueProgressIsEmpty(progress jobs.Progress) bool {
@@ -1017,15 +1039,27 @@ func (ctx *MahresourcesContext) finishQueueJob(
 			ctx.notifyQueueJobCanonicalUpdate(execution.JobID)
 			return nil
 		}
+		attemptOutcome := outcome
+		attemptFailure := failure
+		attemptRequiredOutputs := requiredOutputs
+		if outcome == jobs.StateSucceeded && current.ControlIntent == jobs.ControlIntentCancel {
+			// A late cancellation can land after queue work completed but before
+			// this terminal publication. Outputs already written remain evidence of
+			// what the executor produced; the canonical lifecycle outcome belongs
+			// to the cancellation that won.
+			attemptOutcome = jobs.StateCancelled
+			attemptFailure = nil
+			attemptRequiredOutputs = nil
+		}
 		if err := ctx.jobFaults.completionWrite(); err != nil {
 			return err
 		}
 		_, err = service.Finish(ctx.jobDeps(), jobs.FinishRequest{
 			ExecutionRef:    jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 			ExpectedVersion: current.Version,
-			Outcome:         outcome,
-			Failure:         failure,
-			RequiredOutputs: requiredOutputs,
+			Outcome:         attemptOutcome,
+			Failure:         attemptFailure,
+			RequiredOutputs: attemptRequiredOutputs,
 		})
 		switch {
 		case err == nil:
@@ -1035,6 +1069,11 @@ func (ctx *MahresourcesContext) finishQueueJob(
 			// Somebody else's publish won: the Job is not this execution's to end.
 			return nil
 		case errors.Is(err, jobs.ErrVersionConflict):
+			contended = err
+		case errors.Is(err, jobs.ErrControlIntentWon):
+			// Cancellation can commit just after the snapshot above. Reread it on
+			// the next attempt and settle as cancelled rather than retrying a success
+			// forever against an intent that now owns the outcome.
 			contended = err
 		default:
 			return err
