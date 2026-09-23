@@ -17,6 +17,15 @@ func TestReductionExternalResources(t *testing.T) {
 		for _, selection := range []string{"resources", "groups", "owned", "owned subtree"} {
 			t.Run(tier+"/"+selection, func(t *testing.T) {
 				tc := SetupTestEnv(t)
+				// Shared-cache in-memory SQLite reports SQLITE_LOCKED immediately when
+				// concurrent readers and writers touch the same table. This test drives
+				// async reduction jobs while issuing create/widen requests, so serialize
+				// this fixture's pool as auth tests do for their concurrent writes.
+				// The application uses WAL in production; this is specific to the test
+				// database's shared-cache mode.
+				sqlDB, err := tc.DB.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(1)
 				inside := addImage(t, tc, "inside.jpg", 400, 400)
 				twin := addImage(t, tc, "twin.jpg", 200, 200)
 				outside := addImage(t, tc, "outside.jpg", 800, 800)

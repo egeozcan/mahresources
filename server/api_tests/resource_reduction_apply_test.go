@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -412,28 +413,29 @@ func TestAnEjectionLandingDuringTheClaimIsHonoured(t *testing.T) {
 	// starts: the entry read, then applyOneCluster's, then the claim's own. The
 	// claim's is the one that matters — an ejection landing there is inside the
 	// window between the batch reading a Cluster and freezing it.
-	reads := 0
-	fired := false
+	var reads atomic.Int32
+	var fired atomic.Bool
+	// This GORM callback belongs to the fixture's private DB, which is discarded at
+	// test cleanup. Leave it installed through queue finalization because GORM
+	// cannot remove callbacks while another goroutine is compiling a query chain.
 	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:eject_mid_apply", func(db *gorm.DB) {
-		if fired || db.Statement.Table != "resource_reductions" {
+		if fired.Load() || db.Statement.Table != "resource_reductions" {
 			return
 		}
-		reads++
-		if reads < 3 {
+		if reads.Add(1) < 3 {
 			return
 		}
-		fired = true
+		if !fired.CompareAndSwap(false, true) {
+			return
+		}
 		override(t, tc, red.ID, clusterID, application_context.ReductionActionEject, spared.ID)
 	}))
-	t.Cleanup(func() {
-		_ = tc.DB.Callback().Query().Remove("test:eject_mid_apply")
-	})
 
 	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{
 		ID: red.ID, Version: current.Version,
 	}, owner, restricted)
 	require.NoError(t, err)
-	require.True(t, fired, "the injected ejection never ran, so this proves nothing")
+	require.True(t, fired.Load(), "the injected ejection never ran, so this proves nothing")
 
 	if len(result.Applied) == 1 {
 		assert.NotContains(t, result.Applied[0].LoserIDs, spared.ID)
@@ -515,26 +517,26 @@ func TestAPromotionAfterApplyWasPressedDoesNotSwapTheVictim(t *testing.T) {
 
 	// Promote on the third read of the reduction row after the apply starts — the
 	// claim's own — which is the window a subset check on membership alone accepts.
-	reads := 0
-	fired := false
+	var reads atomic.Int32
+	var fired atomic.Bool
 	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:promote_mid_apply", func(db *gorm.DB) {
-		if fired || db.Statement.Table != "resource_reductions" {
+		if fired.Load() || db.Statement.Table != "resource_reductions" {
 			return
 		}
-		reads++
-		if reads < 3 {
+		if reads.Add(1) < 3 {
 			return
 		}
-		fired = true
+		if !fired.CompareAndSwap(false, true) {
+			return
+		}
 		override(t, tc, red.ID, clusterID, application_context.ReductionActionPromote, drop.ID)
 	}))
-	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove("test:promote_mid_apply") })
 
 	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{
 		ID: red.ID, Version: current.Version,
 	}, owner, restricted)
 	require.NoError(t, err)
-	require.True(t, fired, "the injected promotion never ran, so this proves nothing")
+	require.True(t, fired.Load(), "the injected promotion never ran, so this proves nothing")
 
 	assert.Empty(t, result.Applied, "the proposal is no longer the one that was approved")
 	assert.True(t, resourceExists(t, tc, keep.ID),

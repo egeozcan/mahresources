@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -485,18 +486,20 @@ func TestAnIdenticalClusterHoldsOnlyResourcesThatStillShareTheHash(t *testing.T)
 
 	// Fire once, on the grouping query's own read of resources: by the time
 	// loadClusterCandidates runs, `moves` no longer holds that content.
-	fired := false
+	var fired atomic.Bool
+	// tc.DB is private to this fixture and is discarded at test cleanup. Keep the
+	// callback installed until then: GORM cannot remove it while the queue's owner
+	// goroutine may still be compiling a query callback chain.
 	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:rehash_mid_cluster", func(db *gorm.DB) {
-		if fired || db.Statement.Table != "resources" {
+		if db.Statement.Table != "resources" || !fired.CompareAndSwap(false, true) {
 			return
 		}
-		fired = true
 		_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
 	}))
-	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove("test:rehash_mid_cluster") })
 
 	red := createReduction(t, tc, "Racing rehash", []uint{stays.ID, moves.ID, third.ID})
 	plan := computeReduction(t, tc, red.ID)
+	require.True(t, fired.Load(), "the injected rehash never ran, so this proves nothing")
 
 	for _, cluster := range plan.Clusters {
 		require.Equal(t, models.ReductionTierIdentical, cluster.Tier)
