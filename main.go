@@ -203,6 +203,8 @@ func main() {
 	jobHistoryRetention := flag.Duration("job-history-retention", parseDurationEnv("JOB_HISTORY_RETENTION", jobs.DefaultHistoryRetention), "How long a succeeded or cancelled job's history stays after it finishes (env: JOB_HISTORY_RETENTION)")
 	jobAttentionRetention := flag.Duration("job-attention-retention", parseDurationEnv("JOB_ATTENTION_RETENTION", jobs.DefaultAttentionRetention), "How long a failed or interrupted job's history stays after it finishes (env: JOB_ATTENTION_RETENTION)")
 	jobPinLimit := flag.Int("job-pin-limit", parseIntEnv("JOB_PIN_LIMIT", jobs.DefaultPinLimit), "How many jobs one user may pin; pinning exempts a job's history from ordinary retention (env: JOB_PIN_LIMIT)")
+	jobMigrationWritersDrained := flag.Bool("job-migration-writers-drained", os.Getenv("JOB_MIGRATION_WRITERS_DRAINED") == "1", "Attest that every pre-fence server process has stopped before the Job migration scrubs legacy input and advances writer epoch (env: JOB_MIGRATION_WRITERS_DRAINED=1)")
+	jobMigrationBatchSize := flag.Int("job-migration-batch-size", parseIntEnv("JOB_MIGRATION_BATCH_SIZE", 100), "Maximum legacy source rows copied, verified or scrubbed per Job migration batch (env: JOB_MIGRATION_BATCH_SIZE)")
 	pluginScheduleTick := flag.Duration("plugin-schedule-tick", parseDurationEnv("PLUGIN_SCHEDULE_TICK", application_context.DefaultScheduleTick), "How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule (env: PLUGIN_SCHEDULE_TICK)")
 	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
 	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
@@ -691,6 +693,17 @@ func main() {
 	// Install the shared control plane before command recovery so recovery can
 	// reconcile authoritative command rows and canonical Jobs in one transaction.
 	jobService := installJobControlPlane(context)
+	migration, err := context.RunJobMigrationToGate(application_context.JobMigrationOptions{
+		BatchSize: *jobMigrationBatchSize, MaxBatches: 20, WritersDrained: *jobMigrationWritersDrained,
+	})
+	if err != nil {
+		fail("failed to run the bounded Job source migration: %v", err)
+		return
+	}
+	if !migration.Complete {
+		log.Printf("[jobs] source migration remains in phase %s after %d bounded batches; plaintext retirement is not active (quarantined sources: %d)",
+			migration.Phase, migration.Batches, migration.BlockedSources)
+	}
 
 	// Recovery must settle every durable command/import writer before a plugin
 	// VM can load and observe mah.commands or mah.fs. The context-owned gate keeps
@@ -1022,6 +1035,8 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobCommandRequest{},
 		&models.JobLegacyHandle{},
 		&models.JobWriterEpoch{},
+		&models.JobSourceMapping{},
+		&models.JobMigrationCheckpoint{},
 		&models.JobRuntimeFence{},
 	); err != nil {
 		return err

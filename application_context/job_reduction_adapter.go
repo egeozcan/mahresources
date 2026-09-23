@@ -298,7 +298,19 @@ func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input
 			// running until it lands.
 			return err
 		}
-		return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobReductionOutput})
+		if err := a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobReductionOutput}); err != nil {
+			return err
+		}
+		// Refresh the migration source hash only after the canonical Job outcome
+		// and its required output have committed. A crash between those writes is
+		// still recoverable: migration resolves the same durable handle on startup.
+		var reduction models.ResourceReduction
+		if err := a.ctx.db.First(&reduction, input.ReductionID).Error; err == nil {
+			if err := a.ctx.recordDualPublishedReduction(reduction, time.Now().UTC()); err != nil {
+				a.ctx.Logger().Warning(models.LogActionSystem, "resource_reduction", nil, fmt.Sprint(input.ReductionID), "canonical source mapping could not be refreshed", nil)
+			}
+		}
+		return nil
 	case download_queue.JobStatusCancelled:
 		return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
 	default:

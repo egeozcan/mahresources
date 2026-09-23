@@ -12,6 +12,7 @@ import (
 
 	"mahresources/auth"
 	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -90,6 +91,10 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 	if len(rec.Payload) > 0 {
 		entry.Payload = types.JSON(rec.Payload)
 	}
+	if ctx.legacyJobInputsRetired() {
+		entry.URL = downloadURLProjection(rec.URL)
+		entry.Payload = nil
+	}
 
 	// The actor is bound explicitly because the stamp callback overwrites
 	// CreatedByUserId from the db context, falling back to the default actor — and
@@ -106,42 +111,57 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 		db = ctx.WithPrincipal(&auth.Principal{UserID: *rec.CreatedByUserId}).db
 	}
 
-	return db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "job_id"}},
-		// An outcome never overwrites a newer one. The recording goroutine runs
-		// after its attempt has already been published, so a slow write from a
-		// failed attempt can land after the retry that followed it has completed —
-		// and an unguarded upsert would then restore `failed` over `completed`, with
-		// the older attempt's timestamps. Both dialects spell the proposed row
-		// `excluded`; the NULL arms keep the historic behaviour for a record with no
-		// completion time rather than silently dropping it.
-		Where: clause.Where{Exprs: []clause.Expression{
-			gorm.Expr("download_history_entries.completed_at IS NULL OR excluded.completed_at IS NULL OR excluded.completed_at >= download_history_entries.completed_at"),
-		}},
-		DoUpdates: clause.Assignments(map[string]any{
-			"status":       entry.Status,
-			"error":        entry.Error,
-			"resource_id":  entry.ResourceID,
-			"total_size":   entry.TotalSize,
-			"progress":     entry.Progress,
-			"started_at":   entry.StartedAt,
-			"completed_at": entry.CompletedAt,
-			"url":          entry.URL,
-			"name":         entry.Name,
-			"payload":      entry.Payload,
-			// Carried on the update too: a row first written by a person's
-			// download and later retried by a plugin (or the reverse) must
-			// record which origin the stored outcome belongs to, or the next
-			// retry picks the wrong policy.
-			"plugin_name": entry.PluginName,
-			// Qualified with the table name so both dialects read the stored value
-			// rather than the excluded one. A write the guard above rejects bumps
-			// nothing, so attempts counts outcomes recorded *in order* — one lost
-			// increment in that race is preferable to a row that describes the wrong
-			// attempt.
-			"attempts": gorm.Expr("download_history_entries.attempts + 1"),
-		}),
-	}).Create(&entry).Error
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "job_id"}},
+			// An outcome never overwrites a newer one. The recording goroutine runs
+			// after its attempt has already been published, so a slow write from a
+			// failed attempt can land after the retry that followed it has completed —
+			// and an unguarded upsert would then restore `failed` over `completed`, with
+			// the older attempt's timestamps. Both dialects spell the proposed row
+			// `excluded`; the NULL arms keep the historic behaviour for a record with no
+			// completion time rather than silently dropping it.
+			Where: clause.Where{Exprs: []clause.Expression{
+				gorm.Expr("download_history_entries.completed_at IS NULL OR excluded.completed_at IS NULL OR excluded.completed_at >= download_history_entries.completed_at"),
+			}},
+			DoUpdates: clause.Assignments(map[string]any{
+				"status":       entry.Status,
+				"error":        entry.Error,
+				"resource_id":  entry.ResourceID,
+				"total_size":   entry.TotalSize,
+				"progress":     entry.Progress,
+				"started_at":   entry.StartedAt,
+				"completed_at": entry.CompletedAt,
+				"url":          entry.URL,
+				"name":         entry.Name,
+				"payload":      entry.Payload,
+				// Carried on the update too: a row first written by a person's
+				// download and later retried by a plugin (or the reverse) must
+				// record which origin the stored outcome belongs to, or the next
+				// retry picks the wrong policy.
+				"plugin_name": entry.PluginName,
+				// Qualified with the table name so both dialects read the stored value
+				// rather than the excluded one. A write the guard above rejects bumps
+				// nothing, so attempts counts outcomes recorded *in order* — one lost
+				// increment in that race is preferable to a row that describes the wrong
+				// attempt.
+				"attempts": gorm.Expr("download_history_entries.attempts + 1"),
+			}),
+		}).Create(&entry).Error; err != nil {
+			return err
+		}
+		if ctx.JobService() != nil && tx.Migrator().HasTable(&models.JobSourceMapping{}) {
+			var stored models.DownloadHistoryEntry
+			if err := tx.Where("job_id = ?", rec.JobID).First(&stored).Error; err != nil {
+				return err
+			}
+			if err := ctx.recordDualPublishedDownloadHistoryTx(tx, stored, ctx.legacyJobInputsRetired(), time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 // GetDownloadHistory lists history rows for the given filters.
@@ -400,6 +420,25 @@ func (ctx *MahresourcesContext) DownloadHistoryPayload(entry *models.DownloadHis
 		return nil, errors.New("download history: no entry")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
+	if ctx.legacyJobInputsRetired() && len(entry.Payload) == 0 {
+		service := ctx.JobService()
+		if service == nil {
+			return nil, errors.New("download history: canonical Job service is unavailable")
+		}
+		jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, entry.JobID)
+		if err != nil {
+			return nil, errors.New("download history: canonical retry input is unavailable")
+		}
+		opened, err := service.OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err != nil {
+			return nil, errors.New("download history: canonical retry input is unavailable")
+		}
+		var input downloadJobInput
+		if err := json.Unmarshal(opened.Input, &input); err != nil || input.Creator == nil {
+			return nil, errors.New("download history: canonical retry input is unreadable")
+		}
+		return input.Creator, nil
+	}
 	if len(entry.Payload) > 0 {
 		if err := json.Unmarshal(entry.Payload, creator); err != nil {
 			return nil, fmt.Errorf("download history: decode stored payload: %w", err)

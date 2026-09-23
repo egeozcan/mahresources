@@ -144,6 +144,87 @@ func decodeSuppliedInputs(runID, encoded string) []plugin_commands.SuppliedInput
 	return inputs
 }
 
+func pluginCommandInputsRetired(db *gorm.DB) (bool, error) {
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		return false, err
+	}
+	epoch, err := models.JobWriterEpochMinimum(db)
+	if err != nil {
+		return false, err
+	}
+	return epoch >= models.JobWriterEpochRetiredPlaintext, nil
+}
+
+func (ctx *MahresourcesContext) hydratePluginCommandRun(row *models.PluginCommandRun, db *gorm.DB) error {
+	if row == nil || row.ParamsJSON != "" && row.InputsJSON != "" {
+		return nil
+	}
+	retired, err := pluginCommandInputsRetired(db)
+	if err != nil || !retired {
+		return err
+	}
+	if row.JobID == "" || ctx.JobService() == nil {
+		return fmt.Errorf("plugin command replay input is unavailable")
+	}
+	opened, err := ctx.JobService().OpenReplay(ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, row.JobID)
+	if err != nil {
+		return fmt.Errorf("plugin command replay input is unavailable")
+	}
+	var input pluginCommandRunReplayInput
+	if err := json.Unmarshal(opened.Input, &input); err != nil || input.PluginName != row.PluginName || input.CommandName != row.CommandName {
+		return fmt.Errorf("plugin command replay input does not match its source")
+	}
+	row.ParamsJSON, row.InputsJSON = input.ParamsJSON, input.InputsJSON
+	return nil
+}
+
+func (ctx *MahresourcesContext) hydratePluginCommandImport(row *models.PluginCommandImport, db *gorm.DB) error {
+	if row == nil || row.FieldsJSON != "" {
+		return nil
+	}
+	retired, err := pluginCommandInputsRetired(db)
+	if err != nil || !retired {
+		return err
+	}
+	if row.JobID == "" || ctx.JobService() == nil {
+		return fmt.Errorf("plugin command import replay input is unavailable")
+	}
+	opened, err := ctx.JobService().OpenReplay(ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, row.JobID)
+	if err != nil {
+		return fmt.Errorf("plugin command import replay input is unavailable")
+	}
+	var input pluginCommandImportReplayInput
+	if err := json.Unmarshal(opened.Input, &input); err != nil || input.RunID != row.RunID || input.FileName != row.FileName {
+		return fmt.Errorf("plugin command import replay input does not match its source")
+	}
+	row.FieldsJSON = input.FieldsJSON
+	return nil
+}
+
+func (ctx *MahresourcesContext) acceptAndPersistPluginCommandImportTx(tx *gorm.DB, run models.PluginCommandRun, claim models.PluginCommandImport, retryOfJobID string) (string, error) {
+	jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, retryOfJobID)
+	if err != nil {
+		return "", err
+	}
+	retired, err := pluginCommandInputsRetired(tx)
+	if err != nil {
+		return "", err
+	}
+	claim.JobID = jobID
+	if retired {
+		claim.FieldsJSON = ""
+	}
+	if err := tx.Create(&claim).Error; err != nil {
+		return "", err
+	}
+	if jobID != "" {
+		if err := ctx.recordDualPublishedPluginCommandImportTx(tx, claim, retired, claim.CreatedAt.UTC()); err != nil {
+			return "", err
+		}
+	}
+	return jobID, nil
+}
+
 func outputRecord(row models.PluginCommandRunOutput) plugin_commands.RunOutput {
 	return plugin_commands.RunOutput{RunID: row.RunID, ArgvJSON: row.ArgvJSON, OutputTail: row.OutputTail, CreatedAt: row.CreatedAt}
 }
@@ -176,7 +257,14 @@ func (ctx *MahresourcesContext) CreateRun(record plugin_commands.RunRecord, outp
 		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
 			return err
 		}
+		retired, err := pluginCommandInputsRetired(tx)
+		if err != nil {
+			return err
+		}
 		row := runModel(record)
+		if retired {
+			row.ParamsJSON, row.InputsJSON = "", ""
+		}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -199,7 +287,11 @@ func (ctx *MahresourcesContext) CreateRun(record plugin_commands.RunRecord, outp
 			return err
 		}
 		if jobID != "" {
-			return tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Update("job_id", jobID).Error
+			if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Update("job_id", jobID).Error; err != nil {
+				return err
+			}
+			row.JobID = jobID
+			return ctx.recordDualPublishedPluginCommandRunTx(tx, row, retired, record.CreatedAt.UTC())
 		}
 		return nil
 	})
@@ -320,6 +412,9 @@ func (ctx *MahresourcesContext) Run(id string) (plugin_commands.RunRecord, plugi
 		}
 		return plugin_commands.RunRecord{}, plugin_commands.RunOutput{}, err
 	}
+	if err := ctx.hydratePluginCommandRun(&row, ctx.db); err != nil {
+		return plugin_commands.RunRecord{}, plugin_commands.RunOutput{}, err
+	}
 	var out models.PluginCommandRunOutput
 	err := ctx.db.Where("run_id = ?", id).First(&out).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -353,6 +448,9 @@ func (ctx *MahresourcesContext) Runs(access plugin_commands.Access) ([]plugin_co
 	for _, row := range rows {
 		record := runRecord(row)
 		if access.AllowsRun(record) {
+			if err := ctx.hydratePluginCommandRun(&row, ctx.db); err != nil {
+				return nil, err
+			}
 			visible = append(visible, row)
 			ids = append(ids, row.ID)
 		}
@@ -405,6 +503,9 @@ func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RecoveryRun
 	}
 	result := make([]plugin_commands.RecoveryRun, len(rows))
 	for i, row := range rows {
+		if err := ctx.hydratePluginCommandRun(&row, ctx.db); err != nil {
+			return nil, err
+		}
 		result[i] = plugin_commands.RecoveryRun{RunRecord: runRecord(row), BootSessionID: row.BootSessionID}
 	}
 	return result, nil
@@ -601,17 +702,9 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
 					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt,
 				}
-				if err := tx.Create(&claim).Error; err != nil {
-					return err
-				}
-				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, "")
+				jobID, err := ctx.acceptAndPersistPluginCommandImportTx(tx, run, claim, "")
 				if err != nil {
 					return err
-				}
-				if jobID != "" {
-					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
-						return err
-					}
 				}
 				mapped = models.PluginCommandImportMap{RunID: req.RunID, FileName: req.FileName, ImportID: req.ImportID, Status: plugin_commands.ImportStatusPending}
 				if err := tx.Create(&mapped).Error; err != nil {
@@ -638,17 +731,9 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 					FieldsJSON:       req.FieldsJSON,
 					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
 					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt}
-				if err := tx.Create(&claim).Error; err != nil {
-					return err
-				}
-				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, predecessor.JobID)
+				jobID, err := ctx.acceptAndPersistPluginCommandImportTx(tx, run, claim, predecessor.JobID)
 				if err != nil {
 					return err
-				}
-				if jobID != "" {
-					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
-						return err
-					}
 				}
 				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
 					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
@@ -669,17 +754,9 @@ func (ctx *MahresourcesContext) ClaimImport(req plugin_commands.ImportClaimReque
 					PluginGeneration: req.PluginGeneration, CreatedByUserId: copyCommandUint(req.CreatedByUserID),
 					Status: plugin_commands.ImportStatusPending, CreatedAt: req.CreatedAt,
 				}
-				if err := tx.Create(&claim).Error; err != nil {
-					return err
-				}
-				jobID, err := ctx.acceptPluginCommandImportJob(tx, run, claim, predecessor.JobID)
+				jobID, err := ctx.acceptAndPersistPluginCommandImportTx(tx, run, claim, predecessor.JobID)
 				if err != nil {
 					return err
-				}
-				if jobID != "" {
-					if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", claim.ID).Update("job_id", jobID).Error; err != nil {
-						return err
-					}
 				}
 				if err := tx.Model(&models.PluginCommandImportMap{}).Where("id = ?", mapped.ID).
 					Updates(map[string]any{"import_id": req.ImportID, "status": plugin_commands.ImportStatusPending, "resource_id": nil, "error": "", "source_delete_pending": false}).Error; err != nil {
@@ -933,6 +1010,9 @@ func (ctx *MahresourcesContext) NonterminalImports() ([]plugin_commands.ImportRe
 	}
 	result := make([]plugin_commands.ImportRecord, len(rows))
 	for i, row := range rows {
+		if err := ctx.hydratePluginCommandImport(&row, ctx.db); err != nil {
+			return nil, err
+		}
 		result[i] = importRecord(row)
 	}
 	return result, nil

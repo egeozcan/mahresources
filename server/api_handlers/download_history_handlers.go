@@ -142,12 +142,6 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 			entry := &entries[i]
 			res := bulkResult{ID: entry.ID}
 
-			if first, repeated := batchURLs[entry.URL]; repeated && entry.URL != "" {
-				res.Reason = fmt.Sprintf("the same download is already being retried as row %d in this request", first)
-				results = append(results, res)
-				continue
-			}
-
 			if !models.DownloadHistoryRetryable(entry.Status) {
 				// Completed downloads are excluded deliberately: the file is already
 				// stored, so running the download again would transfer it for nothing
@@ -160,6 +154,11 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 			creator, err := ctx.DownloadHistoryPayload(entry)
 			if err != nil {
 				res.Reason = err.Error()
+				results = append(results, res)
+				continue
+			}
+			if first, repeated := batchURLs[creator.URL]; repeated && creator.URL != "" {
+				res.Reason = fmt.Sprintf("the same download is already being retried as row %d in this request", first)
 				results = append(results, res)
 				continue
 			}
@@ -183,8 +182,8 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 
 			res.OK, res.JobID, res.CanonicalJobID = true, jobID, successorID
 			accepted++
-			if entry.URL != "" {
-				batchURLs[entry.URL] = entry.ID
+			if creator.URL != "" {
+				batchURLs[creator.URL] = entry.ID
 			}
 
 			if err := ctx.MarkDownloadHistoryRetried(entry.ID, jobID, time.Now()); err != nil {
@@ -239,7 +238,7 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// jobs that were fetching one URL, and retrying each in place ran both at once.
 	// The queue is the authority on what is being downloaded, so it is asked first,
 	// whichever way this row is about to be run again.
-	if live, running := download_queue.ActiveDownloadForURL(dm, entry.URL); running {
+	if live, running := download_queue.ActiveDownloadForURL(dm, creator.URL); running {
 		return "", "", fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live)
 	}
 

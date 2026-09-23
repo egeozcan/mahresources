@@ -601,11 +601,19 @@ func (JobWriterEpoch) TableName() string {
 // JobWriterEpochRowID is the epoch row's primary key. One row, always.
 const JobWriterEpochRowID = 1
 
-// JobWriterEpochSupported is the writer epoch this release understands. It is
-// the Release-A epoch: the durable job core exists and every writer of these
-// tables understands it. A later release may advance the stored minimum, never
-// silently lower it.
-const JobWriterEpochSupported uint64 = 1
+// JobWriterEpochDualPublisher is the minimum epoch for Release A, which writes
+// both the legacy source record and the canonical Job.
+const JobWriterEpochDualPublisher uint64 = 1
+
+// JobWriterEpochRetiredPlaintext is the epoch after all pre-fence writers have
+// drained and legacy execution fields have been scrubbed. The startup migration
+// installs database barriers and switches this epoch atomically.
+const JobWriterEpochRetiredPlaintext uint64 = 2
+
+// JobWriterEpochSupported is the newest writer epoch this release understands.
+// Release A binaries support only epoch 1 and therefore refuse a database that
+// this migration has advanced to epoch 2.
+const JobWriterEpochSupported uint64 = JobWriterEpochRetiredPlaintext
 
 // JobWriterEpochTable is the epoch table's name, spelled once because the
 // preflight reads it with raw SQL before AutoMigrate has had a chance to run.
@@ -653,12 +661,26 @@ func EnsureJobWriterEpoch(db *gorm.DB) error {
 	var existing JobWriterEpoch
 	err := db.Where("id = ?", JobWriterEpochRowID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return db.Create(&JobWriterEpoch{ID: JobWriterEpochRowID, MinimumEpoch: JobWriterEpochSupported}).Error
+		return db.Create(&JobWriterEpoch{ID: JobWriterEpochRowID, MinimumEpoch: JobWriterEpochDualPublisher}).Error
 	}
 	if err != nil {
 		return fmt.Errorf("job writer epoch seed: %w", err)
 	}
 	return nil
+}
+
+// JobWriterEpochMinimum reads the database's active writer fence after the
+// startup preflight has established that the table exists. A missing row is a
+// schema error here, not an implicit dual-publisher mode.
+func JobWriterEpochMinimum(db *gorm.DB) (uint64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("job writer epoch database is unavailable")
+	}
+	var epoch JobWriterEpoch
+	if err := db.Where("id = ?", JobWriterEpochRowID).First(&epoch).Error; err != nil {
+		return 0, fmt.Errorf("read job writer epoch: %w", err)
+	}
+	return epoch.MinimumEpoch, nil
 }
 
 // jobCoreTableExists reports whether a table exists, with the two dialects'

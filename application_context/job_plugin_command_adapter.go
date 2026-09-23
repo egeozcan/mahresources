@@ -21,6 +21,62 @@ const (
 	pluginCommandImportHandleNamespace = "plugin-command-import"
 )
 
+// pluginCommandRunReplayInput holds the accepted command values in the sealed
+// Job envelope. The legacy source row is a compatibility projection only.
+type pluginCommandRunReplayInput struct {
+	PluginName  string `json:"pluginName"`
+	CommandName string `json:"commandName"`
+	ParamsJSON  string `json:"paramsJson"`
+	InputsJSON  string `json:"inputsJson,omitempty"`
+}
+
+type pluginCommandImportReplayInput struct {
+	RunID            string `json:"runId"`
+	FileName         string `json:"fileName"`
+	FieldsJSON       string `json:"fieldsJson"`
+	PluginGeneration uint64 `json:"pluginGeneration"`
+}
+
+func pluginCommandReplayCodec(kind string) jobs.ReplayCodec {
+	return jobs.ReplayCodec{
+		Sanitize: func(input json.RawMessage) (json.RawMessage, error) {
+			if kind == JobKindPluginCommand {
+				var decoded pluginCommandRunReplayInput
+				if err := json.Unmarshal(input, &decoded); err != nil || decoded.PluginName == "" || decoded.CommandName == "" || !json.Valid([]byte(decoded.ParamsJSON)) || (decoded.InputsJSON != "" && !json.Valid([]byte(decoded.InputsJSON))) {
+					return nil, fmt.Errorf("invalid plugin command replay input")
+				}
+				return json.Marshal(map[string]string{"plugin": decoded.PluginName, "command": decoded.CommandName})
+			}
+			var decoded pluginCommandImportReplayInput
+			if err := json.Unmarshal(input, &decoded); err != nil || decoded.RunID == "" || decoded.FileName == "" || decoded.FieldsJSON == "" || !json.Valid([]byte(decoded.FieldsJSON)) {
+				return nil, fmt.Errorf("invalid plugin command import replay input")
+			}
+			return json.Marshal(map[string]string{"source": "plugin-command", "runId": decoded.RunID})
+		},
+		Encode: func(input json.RawMessage) (json.RawMessage, error) {
+			if _, err := pluginCommandReplayCodec(kind).Sanitize(input); err != nil {
+				return nil, err
+			}
+			return input, nil
+		},
+		Decode: func(payload json.RawMessage, version uint) (json.RawMessage, error) {
+			if version != jobPluginCommandVersion {
+				return nil, fmt.Errorf("%w: plugin command v%d input", jobs.ErrReplayCodecUnregistered, version)
+			}
+			if _, err := pluginCommandReplayCodec(kind).Sanitize(payload); err != nil {
+				return nil, err
+			}
+			return payload, nil
+		},
+		Migrate: func(payload json.RawMessage, fromVersion, toVersion uint) (json.RawMessage, error) {
+			if fromVersion != toVersion {
+				return nil, fmt.Errorf("jobs: no plugin command input migration from v%d to v%d", fromVersion, toVersion)
+			}
+			return payload, nil
+		},
+	}
+}
+
 type pluginCommandJobAdapter struct {
 	ctx  *MahresourcesContext
 	kind string
@@ -186,7 +242,7 @@ func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) boo
 		return false
 	}
 	var source models.PluginCommandImport
-	if db.Where("job_id = ?", jobID).First(&source).Error != nil || source.FieldsJSON == "" || source.CreatedByUserId == nil {
+	if db.Where("job_id = ?", jobID).First(&source).Error != nil || source.CreatedByUserId == nil {
 		return false
 	}
 	if source.Status != plugin_commands.ImportStatusFailed && source.Status != plugin_commands.ImportStatusCancelled && source.Status != plugin_commands.ImportStatusInterrupted {
@@ -200,11 +256,34 @@ func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) boo
 	if db.Where("id = ? AND status = ? AND output_unverified = ?", source.RunID, plugin_commands.RunStatusSucceeded, false).First(&run).Error != nil {
 		return false
 	}
+	fieldsJSON, ok := a.importFieldsJSON(db, source)
+	if !ok {
+		return false
+	}
 	var fields plugin_commands.ResourceFields
-	if json.Unmarshal([]byte(source.FieldsJSON), &fields) != nil {
+	if json.Unmarshal([]byte(fieldsJSON), &fields) != nil {
 		return false
 	}
 	return true
+}
+
+func (a *pluginCommandJobAdapter) importFieldsJSON(db *gorm.DB, source models.PluginCommandImport) (string, bool) {
+	if source.FieldsJSON != "" {
+		return source.FieldsJSON, true
+	}
+	retired, err := pluginCommandInputsRetired(db)
+	if err != nil || !retired || source.JobID == "" || a.ctx.JobService() == nil {
+		return "", false
+	}
+	opened, err := a.ctx.JobService().OpenReplay(a.ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, source.JobID)
+	if err != nil {
+		return "", false
+	}
+	var input pluginCommandImportReplayInput
+	if json.Unmarshal(opened.Input, &input) != nil || input.RunID != source.RunID || input.FileName != source.FileName || input.FieldsJSON == "" {
+		return "", false
+	}
+	return input.FieldsJSON, true
 }
 
 func (a *pluginCommandJobAdapter) importExchangeFilePresent(db *gorm.DB, jobID string) bool {
@@ -243,8 +322,12 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 	if err := a.ctx.db.Where("job_id = ?", execution.JobID).First(&source).Error; err != nil {
 		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import source is unavailable")
 	}
+	fieldsJSON, ok := a.importFieldsJSON(a.ctx.db, source)
+	if !ok {
+		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import fields are unavailable")
+	}
 	var fields plugin_commands.ResourceFields
-	if err := json.Unmarshal([]byte(source.FieldsJSON), &fields); err != nil {
+	if err := json.Unmarshal([]byte(fieldsJSON), &fields); err != nil {
 		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import fields are invalid")
 	}
 	plugins := a.ctx.PluginManager()
@@ -295,6 +378,11 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 
 func (ctx *MahresourcesContext) registerPluginCommandJobKinds(service *jobs.Service) error {
 	for _, kind := range []string{JobKindPluginCommand, JobKindPluginCommandImport} {
+		if !jobs.HasReplayCodec(service, kind, jobPluginCommandVersion) {
+			if err := service.RegisterReplayCodec(kind, jobPluginCommandVersion, pluginCommandReplayCodec(kind)); err != nil {
+				return err
+			}
+		}
 		if _, ok := service.AdapterFor(kind, jobPluginCommandVersion); ok {
 			continue
 		}
@@ -395,18 +483,21 @@ func (ctx *MahresourcesContext) acceptPluginCommandRunJob(tx *gorm.DB, record pl
 		}
 		return "", nil
 	}
-	summary, err := json.Marshal(map[string]string{"plugin": record.PluginName, "command": record.CommandName})
-	if err != nil {
-		return "", err
-	}
 	deps := ctx.jobDeps()
 	deps.DB = tx
+	input, err := json.Marshal(pluginCommandRunReplayInput{
+		PluginName: record.PluginName, CommandName: record.CommandName,
+		ParamsJSON: record.ParamsJSON, InputsJSON: encodeSuppliedInputs(record.Inputs),
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode plugin command replay input")
+	}
 	snapshot, err := service.Accept(deps, jobs.Acceptance{
 		Kind: JobKindPluginCommand, KindVersion: jobPluginCommandVersion,
 		State: jobs.StateQueued, ActorUserID: copyCommandUint(record.CreatedByUserID),
 		Origin: "plugin", Visibility: jobs.VisibilityAdmin,
-		Title: record.CommandName, Summary: summary,
-		Replay:     jobs.ReplayInput{NonReplayable: true},
+		Title:      record.CommandName,
+		Replay:     jobs.ReplayInput{Input: input},
 		LegacyRefs: []jobs.LegacyRef{{Namespace: pluginCommandHandleNamespace, Handle: record.ID}},
 	})
 	if err != nil {
@@ -434,12 +525,19 @@ func (ctx *MahresourcesContext) acceptPluginCommandImportJob(tx *gorm.DB, run mo
 	}
 	deps := ctx.jobDeps()
 	deps.DB = tx
+	input, err := json.Marshal(pluginCommandImportReplayInput{
+		RunID: claim.RunID, FileName: claim.FileName, FieldsJSON: claim.FieldsJSON,
+		PluginGeneration: claim.PluginGeneration,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode plugin command import replay input")
+	}
 	snapshot, err := service.Accept(deps, jobs.Acceptance{
 		Kind: JobKindPluginCommandImport, KindVersion: jobPluginCommandVersion,
 		State: jobs.StateQueued, ActorUserID: copyCommandUint(claim.CreatedByUserId),
 		Origin: "plugin", Visibility: jobs.VisibilityAdmin,
-		Title: "Import " + claim.FileName, Summary: json.RawMessage(`{"source":"plugin-command"}`),
-		Replay:     jobs.ReplayInput{NonReplayable: true},
+		Title:      "Import " + claim.FileName,
+		Replay:     jobs.ReplayInput{Input: input},
 		LegacyRefs: []jobs.LegacyRef{{Namespace: pluginCommandImportHandleNamespace, Handle: claim.ID}}, Parents: parents,
 	})
 	if err != nil {

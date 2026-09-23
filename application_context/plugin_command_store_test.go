@@ -36,7 +36,7 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 		// The viewer-keyed Job preferences DeleteUser removes: cited here rather
 		// than in stampedModels because nothing about them is nulled.
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
-		&models.JobCommandRequest{}, &models.JobWriterEpoch{},
+		&models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobSourceMapping{},
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.User{}, &models.Session{}, &models.ApiToken{}, &models.SavedSearch{}, &models.UserSetting{},
@@ -47,7 +47,11 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	cfg := &MahresourcesConfig{DbType: constants.DbTypeSqlite, AuthEnabled: true}
-	return NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
+	keyring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
+	require.NoError(t, err)
+	ctx.SetJobReplayKeyring(keyring)
+	return ctx
 }
 
 func migratePluginCommandJobTestModels(t *testing.T, ctx *MahresourcesContext) {
@@ -56,7 +60,7 @@ func migratePluginCommandJobTestModels(t *testing.T, ctx *MahresourcesContext) {
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{},
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{}, &models.JobCommandRequest{},
-		&models.JobWriterEpoch{}, &models.JobRuntimeFence{},
+		&models.JobWriterEpoch{}, &models.JobRuntimeFence{}, &models.JobSourceMapping{},
 	))
 }
 
@@ -175,6 +179,53 @@ func TestPluginCommandStoreRecordsSuppliedInputNamesAndSizes(t *testing.T) {
 		}
 	}
 	require.True(t, listed, "the run was not listed")
+}
+
+func TestPluginCommandWritesUseCanonicalReplayAfterWriterFence(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	require.NoError(t, models.EnsureJobWriterEpoch(ctx.db))
+	require.NoError(t, ctx.db.Transaction(func(tx *gorm.DB) error { return installLegacySourceBarriers(tx) }))
+	require.NoError(t, ctx.db.Model(&models.JobWriterEpoch{}).Where("id = ?", models.JobWriterEpochRowID).
+		Update("minimum_epoch", models.JobWriterEpochRetiredPlaintext).Error)
+
+	now := time.Now().UTC()
+	owner := uint(7)
+	run := testRun("post-fence-command", &owner, false, now)
+	run.ParamsJSON = `{"token":"secret-param"}`
+	run.Inputs = []plugin_commands.SuppliedInput{{Name: "private.txt", Bytes: 42}}
+	require.NoError(t, ctx.CreateRun(run, testOutput(run.ID, now)))
+	var storedRun models.PluginCommandRun
+	require.NoError(t, ctx.db.First(&storedRun, "id = ?", run.ID).Error)
+	require.Empty(t, storedRun.ParamsJSON)
+	require.Empty(t, storedRun.InputsJSON)
+	openedRun, err := service.OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, storedRun.JobID)
+	require.NoError(t, err)
+	var runInput pluginCommandRunReplayInput
+	require.NoError(t, json.Unmarshal(openedRun.Input, &runInput))
+	require.Equal(t, run.ParamsJSON, runInput.ParamsJSON)
+	require.Equal(t, encodeSuppliedInputs(run.Inputs), runInput.InputsJSON)
+
+	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
+		ImportID: "post-fence-import", RunID: run.ID, FileName: "admitted.csv",
+		FieldsJSON: `{"title":"secret-field"}`, PluginGeneration: 9,
+		CreatedByUserID: &owner, CreatedAt: now.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.True(t, claim.Created)
+	var storedImport models.PluginCommandImport
+	require.NoError(t, ctx.db.First(&storedImport, "id = ?", claim.ImportID).Error)
+	require.Empty(t, storedImport.FieldsJSON)
+	openedImport, err := service.OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, storedImport.JobID)
+	require.NoError(t, err)
+	var importInput pluginCommandImportReplayInput
+	require.NoError(t, json.Unmarshal(openedImport.Input, &importInput))
+	require.Equal(t, `{"title":"secret-field"}`, importInput.FieldsJSON)
+	imports, err := ctx.NonterminalImports()
+	require.NoError(t, err)
+	require.Len(t, imports, 1)
+	require.Equal(t, importInput.FieldsJSON, imports[0].FieldsJSON)
 }
 
 func TestPluginCommandStoreRunTransitionsAndOutputPruning(t *testing.T) {

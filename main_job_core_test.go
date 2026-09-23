@@ -38,8 +38,8 @@ func TestJobCoreMigrationSeedsTheWriterEpoch(t *testing.T) {
 	if err := db.Where("id = ?", models.JobWriterEpochRowID).First(&epoch).Error; err != nil {
 		t.Fatalf("read seeded writer epoch: %v", err)
 	}
-	if epoch.MinimumEpoch != models.JobWriterEpochSupported {
-		t.Fatalf("seeded epoch = %d, want the supported %d", epoch.MinimumEpoch, models.JobWriterEpochSupported)
+	if epoch.MinimumEpoch != models.JobWriterEpochDualPublisher {
+		t.Fatalf("seeded epoch = %d, want dual-publisher epoch %d", epoch.MinimumEpoch, models.JobWriterEpochDualPublisher)
 	}
 	if err := models.CheckJobWriterEpoch(db); err != nil {
 		t.Fatalf("a freshly migrated database must pass the preflight: %v", err)

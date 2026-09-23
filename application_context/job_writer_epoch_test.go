@@ -120,8 +120,8 @@ func TestJobWriterEpochFreshDatabaseBootsAndSeedsTheSupportedEpoch(t *testing.T)
 	if err := db.Where("id = ?", models.JobWriterEpochRowID).First(&epoch).Error; err != nil {
 		t.Fatalf("read seeded epoch: %v", err)
 	}
-	if epoch.MinimumEpoch != models.JobWriterEpochSupported {
-		t.Fatalf("seeded epoch = %d, want %d", epoch.MinimumEpoch, models.JobWriterEpochSupported)
+	if epoch.MinimumEpoch != models.JobWriterEpochDualPublisher {
+		t.Fatalf("seeded epoch = %d, want %d", epoch.MinimumEpoch, models.JobWriterEpochDualPublisher)
 	}
 	if err := models.CheckJobWriterEpoch(db); err != nil {
 		t.Fatalf("the seeded epoch must pass its own preflight: %v", err)

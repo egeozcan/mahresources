@@ -13410,3 +13410,44 @@ Residual risks and handoffs carried forward:
   `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests
   -run 'Test.*PluginCommand' -count=1` (27.149s and 20.649s). Tagged vet and
   `git diff --check` passed.
+
+## Job Center Task 11 migration evidence (2026-09-23)
+
+- Startup migrates download history, scheduled downloads, command runs/imports,
+  and provable Reduction executions through bounded, resumable copy, verify,
+  drain/fence, scrub and complete phases. The startup driver repeats bounded
+  checkpointed passes until it completes or reaches the explicit writer-drain or
+  quarantined-source gate; it does not put a row-count-sized source set in
+  memory.
+- A source changed after its first copy can advance `SourceRevision` only after
+  the current legacy handle still resolves and its canonical replay decrypts to
+  the exact current execution input. Purge markers stay authoritative. Terminal
+  history writes now commit their source row and migration mapping together;
+  scheduled creation commits its source row, canonical Job/handle and mapping in
+  one transaction. Injected mapping-write failures prove these transactions do
+  not leave unmapped rows or half-accepted scheduled work.
+- Release A compatibility was checked using a detached checkout at
+  `d62f5cc99ccff33fafd1c085ad37ae4152160127`, where
+  `JobWriterEpochSupported == 1`. Its compiled test artifact
+  `/tmp/mahresources-release-a-test.bin` had SHA-256
+  `b805cff3aaa876068e98e8f511386a262013dcee04ca4853d9c9c95a710adbc7`. Running
+  `go test -c --tags 'json1 fts5' -o /tmp/mahresources-release-a-test.bin
+  ./application_context` followed by
+  `/tmp/mahresources-release-a-test.bin -test.run
+  '^TestJobWriterEpochPreflightRefusesADatabaseAdvancedByANewerRelease$'
+  -test.count=1` passed. The test seeded epoch 2 and proved Release A refused
+  before context construction, schema migration or writes.
+- SQLite migration, Release A source-schema fixture, changed-source recovery,
+  source/mapping atomicity, command/import parent, already-dual-published,
+  purge-marker and Reduction provenance cases passed:
+  `go test --tags 'json1 fts5' ./application_context -run
+  'TestJobMigration|Test.*(ScheduledDownload|DownloadHistory)' -count=1`.
+- PostgreSQL migration and crash-mid-scrub restart coverage passed:
+  `go test --tags 'json1 fts5 postgres' ./application_context -run
+  'TestJobMigration' -count=1`. The restart fixture checked lifecycle-only
+  updates to unswept source rows and rejection of unsafe post-fence writes.
+- Focused changed-seam race gate passed:
+  `go test -race --tags 'json1 fts5' ./application_context -run
+  'TestJobMigration|TestPluginCommandWritesUseCanonicalReplayAfterWriterFence|TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction' -count=1`.
+  Tagged `go vet` for `application_context`, `jobs`, and `plugin_commands`, plus
+  `git diff --check`, passed.

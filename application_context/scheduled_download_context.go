@@ -94,17 +94,31 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 		Status:          models.ScheduledDownloadStatusPending,
 		CreatedByUserId: &owner,
 	}
+	retired := ctx.legacyJobInputsRetired()
+	if retired {
+		row.URL = downloadURLProjection(creator.URL)
+		row.Payload = nil
+	}
 
 	db := ctx.WithPrincipal(&auth.Principal{UserID: actorUserID}).db
-	if err := db.Create(&row).Error; err != nil {
-		return nil, err
-	}
-	// The row and the Job are one deferred download seen two ways: the row is what
-	// the plugin management surfaces list, and the Job is what the control plane
-	// schedules, dispatches and keeps the outcome of. The row is written first
-	// because its is the identity the handle names — a Job accepted without it would
-	// be a handle pointing at nothing.
-	if err := ctx.acceptDeferredDownloadJob(&row, creator, pluginName); err != nil {
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		// Keep the compatibility row, accepted Job and migration ledger together.
+		// Startup can then neither mistake a crash-limbo row for completed copy nor
+		// advance the writer barrier without its canonical replay and handle.
+		if err := ctx.acceptDeferredDownloadJob(tx, &row, creator, pluginName); err != nil {
+			return err
+		}
+		if ctx.JobService() != nil && tx.Migrator().HasTable(&models.JobSourceMapping{}) {
+			if err := ctx.recordDualPublishedScheduledDownloadTx(tx, row, retired, time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &row, nil
@@ -119,17 +133,22 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 //
 // A deployment with no control plane keeps the row alone, which is what this
 // feature was before there was a Job to accept it as.
-func (ctx *MahresourcesContext) acceptDeferredDownloadJob(row *models.ScheduledDownload, creator *query_models.ResourceFromRemoteCreator, pluginName string) error {
+func (ctx *MahresourcesContext) acceptDeferredDownloadJob(db *gorm.DB, row *models.ScheduledDownload, creator *query_models.ResourceFromRemoteCreator, pluginName string) error {
 	service := ctx.JobService()
 	if service == nil {
 		return nil
+	}
+	if db == nil {
+		return fmt.Errorf("deferred download acceptance has no transaction")
 	}
 	input, err := remoteDownloadInputJSON(creator, pluginName)
 	if err != nil {
 		return err
 	}
 	owner := row.CreatedByUserId
-	_, err = service.Accept(ctx.jobDeps(), jobs.Acceptance{
+	deps := ctx.jobDeps()
+	deps.DB = db
+	_, err = service.Accept(deps, jobs.Acceptance{
 		Kind:         JobKindDeferredDownload,
 		KindVersion:  jobDownloadKindVersion,
 		State:        jobs.StateScheduled,
@@ -160,6 +179,25 @@ func (ctx *MahresourcesContext) ScheduledDownloadPayload(row *models.ScheduledDo
 		return nil, errors.New("scheduled download: no row")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
+	if ctx.legacyJobInputsRetired() && len(row.Payload) == 0 {
+		service := ctx.JobService()
+		if service == nil {
+			return nil, errors.New("scheduled download: canonical Job service is unavailable")
+		}
+		jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ScheduledDownloadHandleNamespace, fmt.Sprintf("%d", row.ID))
+		if err != nil {
+			return nil, errors.New("scheduled download: canonical execution input is unavailable")
+		}
+		opened, err := service.OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+		if err != nil {
+			return nil, errors.New("scheduled download: canonical execution input is unavailable")
+		}
+		var input downloadJobInput
+		if err := json.Unmarshal(opened.Input, &input); err != nil || input.Creator == nil {
+			return nil, errors.New("scheduled download: canonical execution input is unreadable")
+		}
+		return input.Creator, nil
+	}
 	if len(row.Payload) > 0 {
 		if err := json.Unmarshal(row.Payload, creator); err != nil {
 			return nil, fmt.Errorf("scheduled download: decode stored payload: %w", err)
