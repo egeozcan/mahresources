@@ -8,23 +8,23 @@ Resource receives a later version.
 
 | Finding (P1) | Fix | Regression |
 |---|---|---|
-| PostgreSQL production migration omitted receipt cascade constraints, leaving orphan receipts on Resource deletion and Job retention | Add an idempotent, transaction-locked migration for the acyclic Job and Resource `ON DELETE CASCADE` constraints | `TestPostgresReceiptCascadesUnderProductionMigrationSettings` migrates with automatic FK creation disabled, runs concurrent migrations, deletes a Resource, reconciles without deferral, and prunes an expired Job |
+| PostgreSQL production migration omitted receipt cascade constraints, leaving orphan receipts on Resource deletion and Job retention; pre-existing orphans also blocked FK installation | Under the advisory-locked migration transaction, remove missing-Job or missing-Resource receipts with one idempotent set-based delete before adding the acyclic cascades | `TestPostgresReceiptCascadesUnderProductionMigrationSettings` checks concurrent migration, Resource deletion, no-deferral reconciliation, and Job retention; `TestPostgresReceiptMigrationRemovesLegacyOrphansAndPreservesValidRows` removes both orphan types and preserves the valid receipt |
 | Reconciliation treated a changed current Resource hash as receipt corruption, though later versions can change it | Trust the transactionally recorded receipt and referenced Resource existence; keep Job and actor verification, without comparing the mutable current hash | `TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement` mutates the Resource hash before recovery and still verifies the required output |
 
 ## Verification
 
-- Red: under production PostgreSQL migration settings, Resource deletion left one receipt; changing a Resource hash made recovery defer the expired claim.
-- Green: focused SQLite receipt recovery and PostgreSQL cascade, concurrent migration, retention, and no-deferral checks passed.
+- Red: under production PostgreSQL migration settings, Resource deletion left one receipt; changing a Resource hash made recovery defer the expired claim; seeded legacy orphans caused constraint installation to fail with SQLSTATE 23503.
+- Green: focused SQLite receipt recovery and PostgreSQL cascade, orphan cleanup, valid-receipt preservation, concurrent migration, retention, and no-deferral checks passed.
 - `go test --tags 'json1 fts5' ./application_context -run 'TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement|TestAddResourceForJob(RecoversCommitBeforeQueueAcknowledgement|RecordsReceiptWhenAttachingSecondOwner)' -count=1` — passed.
 - `go test --tags 'json1 fts5' . -run '^TestJobCoreMigrationSeedsTheWriterEpoch$' -count=1` — passed.
-- `go test --tags 'postgres json1 fts5' ./application_context -run '^TestPostgresReceiptCascadesUnderProductionMigrationSettings$' -count=1` — passed with concurrent migration calls, Resource deletion, no-deferral reconciliation, and Job retention.
-- Focused `-race` runs for the SQLite receipt recovery and PostgreSQL cascade tests — passed.
-- `go vet --tags 'json1 fts5' . ./application_context`, `gofmt`, and `git diff --check` — clean. The broader suites passed in the preceding round before this migration-only correction.
+- `go test --tags 'postgres json1 fts5' ./application_context -run '^TestPostgresReceipt(CascadesUnderProductionMigrationSettings|MigrationRemovesLegacyOrphansAndPreservesValidRows)$' -count=1` — passed with concurrent migration calls, orphan cleanup, Resource deletion, no-deferral reconciliation, and Job retention.
+- Focused `-race` runs for SQLite receipt recovery and PostgreSQL orphan cleanup — passed.
+- `go vet --tags 'json1 fts5' . ./application_context ./models`, `gofmt`, and `git diff --check` — clean. The broader suites passed in the preceding round before this upgrade-path correction.
 
 ## Files, commits and artifact
 
 - Code-fix commit: this round's `fix(downloads): ...` commit on `master`.
-- Baseline: `56fc5058`.
+- Baseline: `b79ee0ca`.
 
 # Job Center post-Task-9 checkpoint, eighth round — download receipt recovery (2026-09-23)
 

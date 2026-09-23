@@ -20,6 +20,9 @@ func EnsureJobResourceReceiptConstraints(db *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(0x4D524A4F42524350)).Error; err != nil {
 			return fmt.Errorf("models: lock JobResourceReceipt constraint migration: %w", err)
 		}
+		if err := pruneOrphanJobResourceReceipts(tx); err != nil {
+			return err
+		}
 		for _, name := range []string{"Job", "Resource"} {
 			if tx.Migrator().HasConstraint(&JobResourceReceipt{}, name) {
 				continue
@@ -30,4 +33,18 @@ func EnsureJobResourceReceiptConstraints(db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+// pruneOrphanJobResourceReceipts removes legacy rows left by releases that had
+// no PostgreSQL cascades. One set-based DELETE keeps the upgrade idempotent and
+// lets PostgreSQL choose indexed anti-join plans without materializing rows in Go.
+func pruneOrphanJobResourceReceipts(tx *gorm.DB) error {
+	result := tx.Exec(`
+DELETE FROM job_resource_receipts AS receipt
+WHERE NOT EXISTS (SELECT 1 FROM jobs AS job WHERE job.id = receipt.job_id)
+   OR NOT EXISTS (SELECT 1 FROM resources AS resource WHERE resource.id = receipt.resource_id)`)
+	if result.Error != nil {
+		return fmt.Errorf("models: prune orphan JobResourceReceipt rows: %w", result.Error)
+	}
+	return nil
 }

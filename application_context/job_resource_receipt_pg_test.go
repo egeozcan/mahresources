@@ -120,3 +120,60 @@ func TestPostgresReceiptCascadesUnderProductionMigrationSettings(t *testing.T) {
 		t.Fatalf("Job deletion left %d receipt rows", receipts)
 	}
 }
+
+func TestPostgresReceiptMigrationRemovesLegacyOrphansAndPreservesValidRows(t *testing.T) {
+	_, dsn := pgContainer.CreateTestDBWithDSN(t)
+	db, err := gorm.Open(pgdriver.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent), DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatalf("open PostgreSQL database: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Job{}, &models.Resource{}, &models.JobResourceReceipt{}); err != nil {
+		t.Fatalf("migrate receipt tables with production settings: %v", err)
+	}
+	job := &models.Job{
+		ID: "00000000-0000-7000-8000-000000000011", Kind: "remote-download", KindVersion: 1,
+		State: "succeeded", Origin: "api", VisibilityClass: "owner", ExecutionPrincipal: "host",
+		ReplayClass: "replayable", Version: 1, AcceptedAt: time.Now().UTC(),
+	}
+	missingResourceJob := *job
+	missingResourceJob.ID = "00000000-0000-7000-8000-000000000012"
+	if err := db.Create(job).Error; err != nil {
+		t.Fatalf("create valid Job: %v", err)
+	}
+	if err := db.Create(&missingResourceJob).Error; err != nil {
+		t.Fatalf("create Job for missing-Resource orphan: %v", err)
+	}
+	resource := &models.Resource{Name: "legacy-receipt", Hash: "legacy-hash", ResourceCategoryId: 1}
+	if err := db.Create(resource).Error; err != nil {
+		t.Fatalf("create Resource: %v", err)
+	}
+	if err := db.Create(&models.JobResourceReceipt{JobID: job.ID, ResourceID: resource.ID, Hash: resource.Hash}).Error; err != nil {
+		t.Fatalf("create valid receipt: %v", err)
+	}
+	missingJobID := "00000000-0000-7000-8000-000000000013"
+	if err := db.Create(&models.JobResourceReceipt{JobID: missingJobID, ResourceID: resource.ID, Hash: resource.Hash}).Error; err != nil {
+		t.Fatalf("seed missing-Job receipt: %v", err)
+	}
+	if err := db.Create(&models.JobResourceReceipt{JobID: missingResourceJob.ID, ResourceID: 987654321, Hash: "missing-resource-hash"}).Error; err != nil {
+		t.Fatalf("seed missing-Resource receipt: %v", err)
+	}
+	if err := models.EnsureJobResourceReceiptConstraints(db); err != nil {
+		t.Fatalf("upgrade legacy receipt table: %v", err)
+	}
+	if err := models.EnsureJobResourceReceiptConstraints(db); err != nil {
+		t.Fatalf("repeat upgraded receipt migration: %v", err)
+	}
+	var count int64
+	if err := db.Model(&models.JobResourceReceipt{}).Count(&count).Error; err != nil {
+		t.Fatalf("count migrated receipts: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("migration retained %d receipt rows, want only the valid receipt", count)
+	}
+	var receipt models.JobResourceReceipt
+	if err := db.First(&receipt, "job_id = ?", job.ID).Error; err != nil {
+		t.Fatalf("read valid receipt after cleanup: %v", err)
+	}
+}
