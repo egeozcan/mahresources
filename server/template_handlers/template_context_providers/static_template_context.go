@@ -362,6 +362,13 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 		menu := append([]template_entities.Entry(nil), baseTemplateContext["menu"].([]template_entities.Entry)...)
 		menu = append(menu, template_entities.Entry{Name: "Jobs", Url: "/jobs"})
 		baseContext["menu"] = menu
+		adminMenu := make([]template_entities.Entry, 0, len(baseTemplateContext["adminMenu"].([]template_entities.Entry)))
+		for _, entry := range baseTemplateContext["adminMenu"].([]template_entities.Entry) {
+			if entry.Url != "/downloads" {
+				adminMenu = append(adminMenu, entry)
+			}
+		}
+		baseContext["adminMenu"] = adminMenu
 	}
 	return context.Update(baseContext)
 }
