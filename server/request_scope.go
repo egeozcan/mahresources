@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"path"
 	"strings"
 
 	"mahresources/application_context"
@@ -57,23 +58,42 @@ func denyScopedPrincipal(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// guardedFileServer wraps a raw file server so that group-limited principals can
-// only fetch files belonging to resources inside their subtree. Unrestricted
-// principals (admin, system/auth-off, unscoped users) pass straight through.
+// guardedFileServer reserves private storage directories from raw file access,
+// then ensures group-limited principals can only fetch files belonging to
+// resources inside their subtree. Dedicated download handlers apply the
+// artifact-specific authorization for private job files.
 func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, prefix)
+		if privateRawStoragePath(rel) {
+			http.NotFound(w, r)
+			return
+		}
+
 		p := auth.PrincipalFromContext(r.Context())
 		if !principalIsRestricted(p) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		rel := strings.TrimPrefix(r.URL.Path, prefix)
 		if scopedCtx(appCtx, r).FilePathInScope(rel) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	})
+}
+
+// privateRawStoragePath identifies application-managed files whose authorization
+// depends on their owning job or import. They are available only through
+// dedicated handlers, which enforce ownership and any output-specific checks.
+// Normalize URL separators and dot segments before checking so encoded
+// separators and traversal cannot turn a private path into a public one.
+func privateRawStoragePath(rel string) bool {
+	normalized := strings.ReplaceAll(rel, `\`, "/")
+	normalized = path.Clean("/" + strings.TrimLeft(normalized, "/"))
+	root := strings.TrimPrefix(normalized, "/")
+	root, _, _ = strings.Cut(root, "/")
+	return strings.EqualFold(root, "_exports") || strings.EqualFold(root, "_imports")
 }
 
 // scopedCtx returns the application context bound to the current request's

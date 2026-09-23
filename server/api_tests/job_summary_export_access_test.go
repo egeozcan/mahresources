@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/afero"
 	"mahresources/application_context"
 	"mahresources/jobs"
 	"mahresources/models"
+	"mahresources/server"
 )
 
 func loginSummaryExportSession(t *testing.T, tc *TestContext, username, password string) (*http.Cookie, string) {
@@ -106,6 +109,53 @@ func TestSummaryExportOutputIsHiddenAfterAdminOwnerDemotion(t *testing.T) {
 		t.Fatalf("administrator detail status=%d outputs=%d decode error=%v body=%s; want one output", adminDetail.Code, len(adminDetailBody.Outputs), err, adminDetail.Body.String())
 	}
 
+	// Serve the real raw-file routes from disk, as production does. Durable job
+	// output APIs continue to read through the application context's storage; the
+	// raw /files mount is the boundary under test here.
+	privatePath := fmt.Sprintf("_exports/job-summaries/%s.json", accepted.Job.ID)
+	diskFS := afero.NewBasePathFs(afero.NewOsFs(), t.TempDir())
+	if err := diskFS.MkdirAll(filepath.Dir(privatePath), 0o755); err != nil {
+		t.Fatalf("create disk-backed summary directory: %v", err)
+	}
+	if err := afero.WriteFile(diskFS, privatePath, before.Body.Bytes(), 0o644); err != nil {
+		t.Fatalf("write disk-backed summary export: %v", err)
+	}
+	if err := diskFS.MkdirAll("_exports", 0o755); err != nil {
+		t.Fatalf("create disk-backed group export directory: %v", err)
+	}
+	if err := afero.WriteFile(diskFS, "_exports/group-export.tar", []byte("private group archive"), 0o644); err != nil {
+		t.Fatalf("write disk-backed group export: %v", err)
+	}
+	if err := diskFS.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("create disk-backed import directory: %v", err)
+	}
+	if err := afero.WriteFile(diskFS, "_imports/import-plan.json", []byte("private import plan"), 0o644); err != nil {
+		t.Fatalf("write disk-backed import plan: %v", err)
+	}
+	altRoot := t.TempDir()
+	if err := afero.NewOsFs().MkdirAll(filepath.Join(altRoot, "_exports"), 0o755); err != nil {
+		t.Fatalf("create alternate export directory: %v", err)
+	}
+	if err := afero.WriteFile(afero.NewOsFs(), filepath.Join(altRoot, "_exports", "alternate-export.tar"), []byte("private alternate archive"), 0o644); err != nil {
+		t.Fatalf("write alternate export: %v", err)
+	}
+	tc.Router = server.CreateServer(tc.AppCtx, diskFS, map[string]string{"archive": altRoot}).Handler
+	adminOutput := doReq(tc, http.MethodGet, openPath, map[string]string{"Accept": "application/json"}, []*http.Cookie{adminCookie}, nil)
+	if adminOutput.Code != http.StatusOK || adminOutput.Body.String() != before.Body.String() {
+		t.Fatalf("administrator dedicated summary output: status=%d body=%q; want the stored summary", adminOutput.Code, adminOutput.Body.String())
+	}
+	for _, path := range []string{
+		"/files/" + privatePath,
+		"/files/_exports/group-export.tar",
+		"/files/_imports/import-plan.json",
+		"/archive/_exports/alternate-export.tar",
+	} {
+		response := doReq(tc, http.MethodGet, path, nil, []*http.Cookie{adminCookie}, nil)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("administrator raw private path %q: status=%d body=%q; want 404", path, response.Code, response.Body.String())
+		}
+	}
+
 	demoteBody, _ := json.Marshal(map[string]any{"id": admin.ID, "role": models.RoleEditor})
 	demoted := doReq(tc, http.MethodPost, "/v1/user",
 		map[string]string{"Accept": "application/json", "Content-Type": "application/json", "X-CSRF-Token": rootCSRF},
@@ -138,5 +188,34 @@ func TestSummaryExportOutputIsHiddenAfterAdminOwnerDemotion(t *testing.T) {
 		map[string]string{"Accept": "application/json"}, []*http.Cookie{editorCookie}, nil)
 	if opened.Code != http.StatusNotFound || opened.Body.String() == before.Body.String() {
 		t.Errorf("demoted owner opening summary output: status=%d body=%q; want 404 without aggregate", opened.Code, opened.Body.String())
+	}
+
+	assertRawFileHidden := func(path string) {
+		t.Helper()
+		response := doReq(tc, http.MethodGet, path, nil, []*http.Cookie{editorCookie}, nil)
+		if response.Code == http.StatusFound || response.Code == http.StatusMovedPermanently || response.Code == http.StatusTemporaryRedirect || response.Code == http.StatusPermanentRedirect {
+			location := response.Header().Get("Location")
+			if location == "" {
+				t.Errorf("raw private path %q redirected without a Location header", path)
+				return
+			}
+			response = doReq(tc, http.MethodGet, location, nil, []*http.Cookie{editorCookie}, nil)
+		}
+		if response.Code != http.StatusNotFound {
+			t.Errorf("demoted editor raw request %q: status=%d body=%q; want 404", path, response.Code, response.Body.String())
+		}
+	}
+	for _, path := range []string{
+		"/files/" + privatePath,
+		"/files/_exports/group-export.tar",
+		"/files/_imports/import-plan.json",
+		"/files/public/../" + privatePath,
+		"/files/public/%2e%2e/" + privatePath,
+		"/files/public%5c..%5c_exports/job-summaries/" + accepted.Job.ID + ".json",
+		"/files/%5fexports/job-summaries/" + accepted.Job.ID + ".json",
+		"/files/%5Fexports%2fjob-summaries%2f" + accepted.Job.ID + ".json",
+		"/archive/_exports/alternate-export.tar",
+	} {
+		assertRawFileHidden(path)
 	}
 }
