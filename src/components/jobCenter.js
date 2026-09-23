@@ -4,7 +4,7 @@ export const JOB_STATES = Object.freeze([
     'scheduled', 'queued', 'running', 'paused', 'blocked',
     'succeeded', 'failed', 'cancelled', 'interrupted',
 ]);
-export const JOB_COMMAND_FILTER_ENABLED = false;
+export const JOB_COMMAND_FILTER_ENABLED = true;
 
 const ACTIVE_STATES = ['scheduled', 'queued', 'running', 'paused'];
 const ATTENTION_STATES = ['blocked', 'failed', 'interrupted'];
@@ -91,6 +91,7 @@ export function buildJobListURL({ filters = {}, states = null, cursor = null, li
         }
     }
     if (filters.search) params.set('search', filters.search);
+    if (JOB_COMMAND_FILTER_ENABLED && filters.command) params.set('command', filters.command);
     for (const key of ['ownerId', 'actorId', 'acceptedAfter', 'acceptedBefore', 'relationship']) {
         if (filters[key]) params.set(key, key.startsWith('accepted') ? dateTimeQueryValue(filters[key]) : filters[key]);
     }

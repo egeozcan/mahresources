@@ -632,8 +632,7 @@ describe('Job Center panel accessibility hooks', () => {
         expect(template).not.toContain('Clear completed');
         expect(template).toContain('Active and scheduled');
         expect(template).toContain('Needs attention');
-        expect(baseTemplate).toContain('{% if jobCenterCutoverEnabled %}');
         expect(baseTemplate).toContain('{% include "/partials/jobPanel.tpl" %}');
-        expect(baseTemplate).toContain('{% include "/partials/downloadCockpit.tpl" %}');
+        expect(baseTemplate).not.toContain('downloadCockpit.tpl');
     });
 });

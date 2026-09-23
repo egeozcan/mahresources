@@ -27,10 +27,6 @@
     <meta name="msapplication-TileColor" content="#ffffff">
     <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
     <meta name="theme-color" content="#ffffff">
-    {# BH-036: expose the export-retention window (ms) so downloadCockpit can render per-job expiry timestamps. #}
-    <meta name="x-export-retention-ms" content="{{ exportRetentionMs|default:0 }}">
-    {# How many of the newest jobs the panel renders; the rest stay on /downloads. #}
-    <meta name="x-download-cockpit-limit" content="{{ downloadCockpitLimit|default:10 }}">
     {# CSRF synchronizer token: read by the JS fetch/form layer. Empty when auth is off. #}
     <meta name="csrf-token" content="{{ csrfToken|default:'' }}">
     {# The list page's row count, published for the mass-edit panel's "edit all N #}
@@ -56,11 +52,7 @@
             {# header chrome now. Only the trigger is here: deferred-work item 7     #}
             {# teleports the panel it opens into `.overlays`, so the markup below is #}
             {# in the header but the dialog never renders in it.                     #}
-            {% if jobCenterCutoverEnabled %}
-                {% include "/partials/jobPanel.tpl" %}
-            {% else %}
-                {% include "/partials/downloadCockpit.tpl" %}
-            {% endif %}
+            {% include "/partials/jobPanel.tpl" %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
                 <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">

@@ -78,8 +78,6 @@ import { registerConfirmDialogStore } from './components/confirmDialog.js';
 import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
-import { downloadCockpit } from './components/downloadCockpit.js';
-import { registerDownloadsStore } from './components/downloadsManager.js';
 import { jobCenter } from './components/jobCenter.js';
 import { jobPanel } from './components/jobPanel.js';
 import { compareView } from './components/compareView.js';
@@ -154,8 +152,6 @@ window.getJSONValue = getJSONValue;
 window.getJSONOrObjValue = getJSONOrObjValue;
 // Lets a shared form field declare a `parameters` callback over sibling controls.
 window.selectorFormParameters = selectorFormParameters;
-// BH-015: expose the factory so E2E tests can unit-check formatProgress clamping.
-window.downloadCockpit = downloadCockpit;
 
 // Global, lazily-created ARIA live regions for one-off status announcements
 // (inline-edit saves, inline description saves, etc.). Exposed on window so
@@ -188,9 +184,6 @@ registerConfirmDialogStore(Alpine);
 // The compare banner reads the image comparator's pixel-diff percentage
 // through this store: the banner is outside that component's Alpine scope.
 registerComparePixelDiffStore(Alpine);
-// After confirmDialog and bulkSelection: the /downloads actions read the shared
-// selection and raise the shared confirm.
-registerDownloadsStore(Alpine);
 // The reduction review is a store because its state crosses the body/sidebar
 // split: the Clusters live in the body and the apply controls in the sidebar,
 // which are two Alpine roots.
@@ -213,7 +206,6 @@ Alpine.data('selectableItem', selectableItem);
 Alpine.data('globalSearch', globalSearch);
 Alpine.data('mobileNav', mobileNav);
 Alpine.data('multiSort', multiSort);
-Alpine.data('downloadCockpit', downloadCockpit);
 Alpine.data('jobCenter', jobCenter);
 Alpine.data('jobPanel', jobPanel);
 Alpine.data('compareView', compareView);

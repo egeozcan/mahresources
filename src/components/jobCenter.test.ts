@@ -541,12 +541,12 @@ describe('Job Center templates', () => {
         ])).toEqual([warning, truncated]);
     });
 
-    test('keeps the advertised-command filter disabled until the list API accepts it', () => {
-        expect(JOB_COMMAND_FILTER_ENABLED).toBe(false);
-        expect(jobCenter().commandFilterEnabled).toBe(false);
+    test('sends the advertised-command filter to the canonical list API', () => {
+        expect(JOB_COMMAND_FILTER_ENABLED).toBe(true);
+        expect(jobCenter().commandFilterEnabled).toBe(true);
         expect(listTemplate).toContain('name="command"');
         expect(listTemplate).toContain(':disabled="!commandFilterEnabled"');
-        expect(buildJobListURL({ filters: { command: 'retry' } })).not.toContain('command=');
+        expect(buildJobListURL({ filters: { command: 'retry' } })).toContain('command=retry');
     });
 
     test('keeps state text and indeterminate progress readable without color', () => {
@@ -577,10 +577,9 @@ describe('Job Center templates', () => {
         expect(timeline).not.toContain('aria-live');
     });
 
-    test('keeps the list/detail routes behind the explicit cutover context gate', () => {
+    test('renders the shared Job panel after cutover', () => {
         const baseTemplate = readFileSync(fileURLToPath(new URL('../../templates/layouts/base.tpl', import.meta.url)), 'utf8');
-        expect(baseTemplate).toContain('{% if jobCenterCutoverEnabled %}');
         expect(baseTemplate).toContain('{% include "/partials/jobPanel.tpl" %}');
-        expect(baseTemplate).toContain('{% include "/partials/downloadCockpit.tpl" %}');
+        expect(baseTemplate).not.toContain('downloadCockpit.tpl');
     });
 });

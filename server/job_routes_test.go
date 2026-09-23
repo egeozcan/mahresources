@@ -84,8 +84,8 @@ func TestCanonicalSummaryExportOpenAPIRouteIsDefinedButGated(t *testing.T) {
 
 	public := openapi.NewRegistry()
 	RegisterAPIRoutesWithOpenAPI(public)
-	if route := public.GenerateSpec().Paths.Map()["/v1/jobs/summary/export"]; route != nil {
-		t.Fatal("summary export was published while canonical Job API cutover is disabled")
+	if route := public.GenerateSpec().Paths.Map()["/v1/jobs/summary/export"]; (route != nil) != canonicalJobAPICutoverComplete {
+		t.Fatalf("summary export publication does not match cutover gate: published=%t, gate=%t", route != nil, canonicalJobAPICutoverComplete)
 	}
 }
 

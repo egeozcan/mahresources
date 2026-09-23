@@ -8,8 +8,7 @@ import (
 )
 
 // JobCenterCutoverEnabled is the single release gate for the canonical Job UI.
-// Task 17 enables it after every Job Kind has passed the inventory cutover.
-const JobCenterCutoverEnabled = false
+const JobCenterCutoverEnabled = true
 
 func JobCenterListContextProvider(_ *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {

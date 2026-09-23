@@ -136,11 +136,6 @@ var templates = map[string]templateInformation{
 	"/categories/timeline": {adaptTemplate(template_context_providers.CategoryTimelineContextProvider), "listCategoriesTimeline.tpl", http.MethodGet},
 	"/queries/timeline":    {adaptTemplate(template_context_providers.QueryTimelineContextProvider), "listQueriesTimeline.tpl", http.MethodGet},
 
-	// Not /admin/downloads: every role owns downloads, and each principal sees only
-	// its own. An /admin path would also have to be listed in isSystemPath, whose
-	// exact-match table is the footgun documented there.
-	"/downloads": {adaptTemplate(template_context_providers.DownloadListContextProvider), "listDownloads.tpl", http.MethodGet},
-
 	"/logs": {adaptTemplate(template_context_providers.LogListContextProvider), "listLogs.tpl", http.MethodGet},
 	"/log":  {adaptTemplate(template_context_providers.LogContextProvider), "displayLog.tpl", http.MethodGet},
 
@@ -536,27 +531,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		}
 
 		pageHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
-		if path == "/downloads" {
-			legacyPageHandler := pageHandler
-			pageHandler = func(w http.ResponseWriter, r *http.Request) {
-				addLegacyJobHeaders(w.Header())
-				if canonicalJobUICutoverComplete {
-					http.Redirect(w, r, legacyDownloadsLocation(r.URL.Query()), http.StatusFound)
-					return
-				}
-				legacyPageHandler(w, r)
-			}
-		}
 		router.Methods(info.method).Path(path).HandlerFunc(pageHandler)
 
 		jsonHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
-		if path == "/downloads" {
-			legacyJSONHandler := jsonHandler
-			jsonHandler = func(w http.ResponseWriter, r *http.Request) {
-				addLegacyJobHeaders(w.Header())
-				legacyJSONHandler(w, r)
-			}
-		}
 		router.Methods(info.method).Path(path + ".json").HandlerFunc(jsonHandler)
 
 		router.Methods(info.method).Path(path + ".body").HandlerFunc(
@@ -564,6 +541,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		)
 	}
 	registerJobCenterRoutes(router, appContext, template_context_providers.JobCenterCutoverEnabled)
+	for _, path := range []string{"/downloads", "/downloads.json", "/downloads.body"} {
+		router.Methods(http.MethodGet).Path(path).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			addLegacyJobHeaders(w.Header())
+			http.Redirect(w, r, legacyDownloadsLocation(r.URL.Query()), http.StatusFound)
+		})
+	}
 
 	router.Methods(http.MethodGet).
 		Path("/partials/autocompleter").

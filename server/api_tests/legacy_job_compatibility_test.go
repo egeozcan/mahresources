@@ -40,8 +40,8 @@ func TestLegacyJobRoutesCarryRetirementHeadersOnSuccessAndErrors(t *testing.T) {
 		{method: http.MethodGet, path: "/v1/download/queue", status: http.StatusOK},
 		{method: http.MethodGet, path: "/v1/jobs/queue", status: http.StatusOK},
 		{method: http.MethodGet, path: "/v1/downloads", status: http.StatusOK},
-		{method: http.MethodGet, path: "/downloads", status: http.StatusOK},
-		{method: http.MethodGet, path: "/downloads.json", status: http.StatusOK},
+		{method: http.MethodGet, path: "/downloads", status: http.StatusFound},
+		{method: http.MethodGet, path: "/downloads.json", status: http.StatusFound},
 		{method: http.MethodPost, path: "/v1/download/retry", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, body: url.Values{}.Encode(), status: http.StatusBadRequest},
 		{method: http.MethodPost, path: "/v1/downloads/delete", headers: map[string]string{"Content-Type": "application/json"}, body: `{"ids":[]}`, status: http.StatusBadRequest},
 	} {

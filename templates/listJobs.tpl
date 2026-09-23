@@ -30,7 +30,7 @@
             </label>
             <label class="text-sm text-stone-700">Available command
                 <input name="command" type="text" :value="filters.command" :disabled="!commandFilterEnabled" aria-describedby="job-command-filter-help" class="mt-1 block w-full rounded border-stone-300 text-sm focus:border-amber-700 focus:ring-amber-700 disabled:cursor-not-allowed disabled:bg-stone-100" placeholder="retry, resume" />
-                <span id="job-command-filter-help" class="mt-1 block text-xs text-stone-500">Available after server-side command filtering is enabled.</span>
+                <span id="job-command-filter-help" class="mt-1 block text-xs text-stone-500">Show jobs currently offering this command.</span>
             </label>
             <label class="text-sm text-stone-700">Kinds, comma separated
                 <input name="kind" type="text" :value="filters.kinds.join(', ')" class="mt-1 block w-full rounded border-stone-300 text-sm focus:border-amber-700 focus:ring-amber-700" />
