@@ -63,6 +63,7 @@ export function jobPanel() {
         error: '',
         notice: '',
         outcomes: [],
+        _pendingLiveJobUpdates: new Map(),
         busy: false,
         _liveRegion: null,
         _trigger: null,
@@ -183,6 +184,10 @@ export function jobPanel() {
 
         async refreshAtGeneration(generation) {
             this.error = '';
+            const pendingLiveUpdates = new Map([...this._pendingLiveJobUpdates.entries()].map(([jobId, update]) => [
+                jobId,
+                { generation: update.generation, previous: update.previous },
+            ]));
             try {
                 const [summary, ...pages] = await Promise.all([
                     this.requestJSON('/v1/jobs/summary'),
@@ -194,10 +199,35 @@ export function jobPanel() {
                 for (const payload of pages) {
                     for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
                 }
-                this.jobs = boundedPanelJobs([...byId.values()]);
+                const nextJobs = boundedPanelJobs([...byId.values()]);
+                this.announceRefreshedLiveTransitions(nextJobs, pendingLiveUpdates);
+                this.jobs = nextJobs;
                 await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation).catch(() => null)));
             } catch (error) {
                 if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
+            }
+        },
+
+        queueLiveJobUpdate(jobId) {
+            const previous = this.jobs.find(job => job.id === jobId);
+            if (!previous) return;
+            const pending = this._pendingLiveJobUpdates.get(jobId);
+            if (pending) pending.generation += 1;
+            else this._pendingLiveJobUpdates.set(jobId, { generation: 1, previous });
+        },
+
+        announceRefreshedLiveTransitions(nextJobs, capturedUpdates) {
+            const refreshed = new Map(nextJobs.map(job => [job.id, job]));
+            for (const [jobId, captured] of capturedUpdates) {
+                const currentPending = this._pendingLiveJobUpdates.get(jobId);
+                if (!currentPending) continue;
+                const next = refreshed.get(jobId);
+                if (next) {
+                    const result = reduceJobStreamEvent([captured.previous], { job: next }, this.lastSequence, { allowInsert: true });
+                    if (result.announcement) this.announce(result.announcement);
+                }
+                if (currentPending.generation === captured.generation) this._pendingLiveJobUpdates.delete(jobId);
+                else if (next) currentPending.previous = next;
             }
         },
 
@@ -299,7 +329,14 @@ export function jobPanel() {
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: false });
             this.lastSequence = result.lastSequence;
             if (this.lastSequence > previousSequence && this.streamCaughtUp) this.schedulePanelRefresh();
-            if (!result.changed || result.needsSnapshot) return;
+            if (!result.changed) return;
+            const jobId = result.jobId || message.job?.id || message.snapshot?.id ||
+                (message.id && message.state ? message.id : '') || message.jobId || message.jobID || '';
+            if (result.needsSnapshot) {
+                if (!message.replay) this.queueLiveJobUpdate(result.jobId);
+                return;
+            }
+            this._pendingLiveJobUpdates.delete(jobId);
             this.jobs = boundedPanelJobs(result.jobs);
             if (result.announcement) this.announce(result.announcement);
         },

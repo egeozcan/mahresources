@@ -127,6 +127,77 @@ describe('Job Center panel accessibility hooks', () => {
         });
     });
 
+    test('announces a canonical event-only state change after its bounded refresh', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        const listRequests: string[] = [];
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { failed: 1 } };
+            if (url.startsWith('/v1/jobs?')) {
+                listRequests.push(url);
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').includes('blocked') ? [
+                    { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, acceptedAt: '2026-09-23T10:00:00Z' },
+                ] : [] };
+            }
+            return { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, commands: [] };
+        });
+
+        await Promise.all(Array.from({ length: 100 }, (_, index) => panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: `event-${index + 1}`, jobId: 'export-1', sequence: index + 2, jobVersion: 2,
+                type: 'state-change', deliverySequence: index + 1, createdAt: '2026-09-23T10:01:00Z',
+            }),
+            lastEventId: `v2:${index + 1}`,
+        })));
+
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+
+        expect(listRequests).toHaveLength(3);
+        expect(panel.jobs[0]).toMatchObject({ id: 'export-1', state: 'failed' });
+        expect(panel._liveRegion.announce).toHaveBeenCalledOnce();
+        expect(panel._liveRegion.announce).toHaveBeenCalledWith('Export failed.');
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not announce a replay event when catch-up refresh shows a state change', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { failed: 1 } };
+            if (url.startsWith('/v1/jobs?')) {
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').includes('failed') ? [
+                    { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, acceptedAt: '2026-09-23T10:00:00Z' },
+                ] : [] };
+            }
+            return { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, commands: [] };
+        });
+
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ id: 'event-1', jobId: 'export-1', jobVersion: 2, type: 'state-change', deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:1' }) });
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+
+        expect(panel.jobs[0]).toMatchObject({ id: 'export-1', state: 'failed' });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('announces only events after the catch-up boundary, including after reconnect', () => {
         class FakeEventSource {
             listeners = new Map<string, Function>();
