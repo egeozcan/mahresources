@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -127,7 +126,7 @@ func TestPluginCommandImportIsChildJobAndFinishesWithResourceOutput(t *testing.T
 	storedRun, _, err := ctx.Run(run.ID)
 	require.NoError(t, err)
 	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{ImportID: "import-child", RunID: run.ID,
-		FileName: "asset.png", PluginGeneration: 1, CreatedByUserID: &actor, CreatedAt: now})
+		FileName: "asset.png", PluginGeneration: 1, CreatedByUserID: &actor, CreatedAt: now, FieldsJSON: `{}`})
 	require.NoError(t, err)
 	require.True(t, claim.Enqueue)
 	require.NotEmpty(t, claim.JobID)
@@ -161,11 +160,12 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 	ctx := newPluginCommandStoreTestContext(t)
 	service := jobs.NewService()
 	ctx.SetJobService(service)
+	actor := uint(9)
+	preparePluginCommandRetryAuthority(t, ctx, actor)
 	root := t.TempDir()
 	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: root, commandPath: t.TempDir()}))
 	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
 	now := time.Now().UTC()
-	actor := uint(9)
 	run := testRun("import-retry-parent", &actor, false, now)
 	require.NoError(t, ctx.CreateRun(run, testOutput(run.ID, now)))
 	storedRun, _, err := ctx.Run(run.ID)
@@ -197,10 +197,7 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 		Error: "import failed", FinishedAt: now.Add(2 * time.Second)})
 	require.NoError(t, err)
 	require.True(t, won)
-	exchangeDir := filepath.Join(root, "plugin_exchange", run.PluginName, run.ID)
-	require.NoError(t, os.MkdirAll(exchangeDir, 0o700))
-	exchangeFile := filepath.Join(exchangeDir, "asset.bin")
-	require.NoError(t, os.WriteFile(exchangeFile, []byte("source bytes"), 0o600))
+	exchangeFile := createPluginCommandRetryFile(t, root, run.PluginName, run.ID, "asset.bin")
 	commands, err := service.AdvertisedCommands(context.Background(), ctx.jobDeps(), jobs.Access{Administrator: true}, first.JobID)
 	require.NoError(t, err)
 	keys := make(map[string]bool)
@@ -216,7 +213,22 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 	for _, command := range commands {
 		keys[command.Key] = true
 	}
-	require.False(t, keys["retry-import"], "a missing admitted exchange file cannot be retried")
+	require.True(t, keys["retry-import"], "interactive selectors use the durable fact without per-Job file probes")
+	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, first.JobID)
+	require.NoError(t, err)
+	_, err = service.ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: first.JobID, Key: "retry-import", IdempotencyKey: "missing-exchange-file",
+		ExpectedVersion: snapshot.Version, Actor: jobs.Access{Administrator: true},
+	})
+	require.ErrorIs(t, err, jobs.ErrCommandNotAdvertised,
+		"pre-execute revalidation must reject a physical file that disappeared outside the runtime lifecycle")
+	commands, err = service.AdvertisedCommands(context.Background(), ctx.jobDeps(), jobs.Access{Administrator: true}, first.JobID)
+	require.NoError(t, err)
+	keys = make(map[string]bool)
+	for _, command := range commands {
+		keys[command.Key] = true
+	}
+	require.False(t, keys["retry-import"], "failed physical-file revalidation invalidates the durable availability fact")
 	// Restore the file so the later import lineage operation is testing its own
 	// transactional claim behaviour rather than a missing staging artifact.
 	require.NoError(t, os.WriteFile(exchangeFile, []byte("source bytes"), 0o600))
@@ -238,11 +250,12 @@ func TestPluginCommandImportRetryRecheckUsesOneConnection(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	service := jobs.NewService()
 	ctx.SetJobService(service)
+	actor := uint(9)
+	preparePluginCommandRetryAuthority(t, ctx, actor)
 	root := t.TempDir()
 	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: root, commandPath: t.TempDir()}))
 	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
 	now := time.Now().UTC()
-	actor := uint(9)
 	run := testRun("one-connection-import-retry", &actor, false, now)
 	require.NoError(t, ctx.CreateRun(run, testOutput(run.ID, now)))
 	storedRun, _, err := ctx.Run(run.ID)
@@ -276,9 +289,7 @@ func TestPluginCommandImportRetryRecheckUsesOneConnection(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, won)
 
-	exchangeDir := filepath.Join(root, "plugin_exchange", run.PluginName, run.ID)
-	require.NoError(t, os.MkdirAll(exchangeDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(exchangeDir, "asset.bin"), []byte("source bytes"), 0o600))
+	createPluginCommandRetryFile(t, root, run.PluginName, run.ID, "asset.bin")
 	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, claim.JobID)
 	require.NoError(t, err)
 	sqlDB, err := ctx.db.DB()

@@ -68,8 +68,11 @@ function init() end
 	ctx := createTestContextWithPlugins(t, pluginDir)
 	if err := ctx.db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
-		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{}, &models.JobWriterEpoch{},
 	); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ctx.EnsurePluginStates(); err != nil {
@@ -136,7 +139,7 @@ end
 	ctx := createTestContextWithPlugins(t, pluginDir)
 	if err := ctx.db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
-		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{}, &models.JobWriterEpoch{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +214,7 @@ function init() end
 	}
 	requireNoError(ctx.db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
-		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+		&models.PluginCommandImport{}, &models.PluginCommandImportMap{}, &models.JobWriterEpoch{},
 	))
 	_, err := ctx.EnsurePluginStates()
 	requireNoError(err)

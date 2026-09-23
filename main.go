@@ -1057,6 +1057,8 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobCommandRequest{},
 		&models.JobLegacyHandle{},
 		&models.JobImportCommandFact{},
+		&models.PluginCommandImportCommandFact{},
+		&models.PluginCommandImportCommandFactGroup{},
 		&models.JobWriterEpoch{},
 		&models.JobSourceMapping{},
 		&models.JobMigrationCheckpoint{},

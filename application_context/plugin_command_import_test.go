@@ -33,6 +33,9 @@ function init() end`)
 	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.PluginCommandRun{}, &models.PluginCommandRunOutput{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ctx.EnsurePluginStates(); err != nil {
 		t.Fatal(err)
 	}

@@ -26,13 +26,21 @@ func newPluginCommandStorePGContext(t *testing.T) *MahresourcesContext {
 	require.NoError(t, db.AutoMigrate(
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
+		&models.JobWriterEpoch{},
 	))
+	require.NoError(t, models.EnsureJobWriterEpoch(db))
 	readOnly, err := sqlx.Connect("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = readOnly.Close() })
-	return NewMahresourcesContext(afero.NewMemMapFs(), db, readOnly, &MahresourcesConfig{
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, readOnly, &MahresourcesConfig{
 		DbType: constants.DbTypePosgres, AuthEnabled: true,
 	})
+	key, err := jobs.GenerateReplayKey()
+	require.NoError(t, err)
+	ring, err := jobs.NewKeyring(key)
+	require.NoError(t, err)
+	ctx.SetJobReplayKeyring(ring)
+	return ctx
 }
 
 func TestPluginCommandRunStartPGHasExactlyOneWinner(t *testing.T) {

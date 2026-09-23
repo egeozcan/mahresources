@@ -212,6 +212,10 @@ func (ctx *MahresourcesContext) acceptAndPersistPluginCommandImportTx(tx *gorm.D
 	if err != nil {
 		return "", err
 	}
+	// Capture the accepted fields before the compatibility projection is
+	// scrubbed. Commands and SQL selectors share this durable validation fact;
+	// neither needs to decrypt one replay envelope per Job while listing.
+	fieldsJSON := claim.FieldsJSON
 	retired, err := pluginCommandInputsRetired(tx)
 	if err != nil {
 		return "", err
@@ -226,6 +230,9 @@ func (ctx *MahresourcesContext) acceptAndPersistPluginCommandImportTx(tx *gorm.D
 	if jobID != "" {
 		if err := ctx.recordDualPublishedPluginCommandImportTx(tx, claim, retired, claim.CreatedAt.UTC()); err != nil {
 			return "", err
+		}
+		if err := setPluginCommandImportFactTx(tx, claim, fieldsJSON, true, time.Now().UTC()); err != nil {
+			return "", fmt.Errorf("record plugin command import command fact: %w", err)
 		}
 	}
 	return jobID, nil
@@ -620,9 +627,12 @@ func (ctx *MahresourcesContext) MarkRunExchangeRemoved(runID string, removedAt t
 			Update("source_delete_pending", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.PluginCommandImportMap{}).
+		if err := tx.Model(&models.PluginCommandImportMap{}).
 			Where("run_id = ? AND status = ? AND source_delete_pending = ?", runID, plugin_commands.ImportStatusSucceeded, true).
-			Update("source_delete_pending", false).Error
+			Update("source_delete_pending", false).Error; err != nil {
+			return err
+		}
+		return updatePluginCommandImportFactAvailabilityTx(tx, runID, "", false, removedAt)
 	})
 }
 
@@ -956,6 +966,15 @@ func (ctx *MahresourcesContext) SetImportSourceDeletePending(importID string, pe
 		}
 		if mapped.RowsAffected != 1 {
 			return fmt.Errorf("plugin command import %q has no succeeded map entry", importID)
+		}
+		if !pending {
+			var source models.PluginCommandImport
+			if err := tx.Select("run_id", "file_name").Where("id = ?", importID).First(&source).Error; err != nil {
+				return err
+			}
+			if err := updatePluginCommandImportFactAvailabilityTx(tx, source.RunID, source.FileName, false, time.Now().UTC()); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

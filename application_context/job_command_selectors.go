@@ -260,16 +260,25 @@ func (a *pluginActionAdapter) SelectCommandJobs(_ context.Context, request jobs.
 
 // Plugin command inspection is visible to the same principals as the Job, and
 // cancellation is narrowed by the host's nonterminal-state predicate. Import
-// Retry also requires a physical exchange file; until its presence has a
-// durable selector fact, refuse that filter instead of returning an incomplete
-// page or probing one file per Job.
+// Retry shares its SQL fact predicate with the detail advertisement and never
+// probes the exchange filesystem once per Job during list or summary reads.
 func (a *pluginCommandJobAdapter) SelectCommandJobs(_ context.Context, request jobs.CommandFilterRequest) (*gorm.DB, bool, error) {
 	switch request.Key {
 	case jobs.CommandCancel, "inspect":
 		return request.Jobs.Select("jobs.id"), true, nil
-	case "retry-import":
+	case pluginCommandImportRetryKey:
 		if a.kind == JobKindPluginCommandImport {
-			return nil, false, fmt.Errorf("%w: plugin command import exchange availability has no selector", jobs.ErrCommandFilterUnavailable)
+			if a.ctx == nil {
+				return emptyCommandSelection(request), true, nil
+			}
+			token, owned := a.ctx.pluginCommandImportRetryFenceToken()
+			pluginNames := a.ctx.pluginCommandImportRetryPluginNames()
+			keys := pluginRetryReplayKeyring(request.Deps)
+			if !owned || len(pluginNames) == 0 || keys == nil {
+				return emptyCommandSelection(request), true, nil
+			}
+			return pluginCommandImportRetrySelection(request.Deps.DB, request.Jobs, token, pluginNames,
+				keys.KeyIDs(), pluginRetryReplayNow(request.Deps)), true, nil
 		}
 	}
 	return nil, false, nil

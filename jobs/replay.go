@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -167,6 +168,21 @@ func (k *Keyring) HasKey(id string) bool {
 	}
 	_, ok := k.keys[id]
 	return ok
+}
+
+// KeyIDs returns the stable, public identifiers of the keys this process can
+// open. SQL read paths use the same set to answer replay availability without
+// probing or decrypting one envelope per Job.
+func (k *Keyring) KeyIDs() []string {
+	if k == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(k.keys))
+	for id := range k.keys {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // ReplayKeyConfig is the deployment a keyring is being loaded for. Every fact is

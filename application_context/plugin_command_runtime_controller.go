@@ -314,6 +314,21 @@ func (c *pluginCommandRuntimeController) tryActivate(ctx context.Context, attemp
 	// plugin manager stores this context as a dynamic per-call provider.
 	c.owner.pluginManager.SetCommandSubmitter(c.owner)
 	c.owner.pluginManager.SetExchangeMediator(c.owner)
+	if c.owner.JobService() != nil {
+		if err := c.owner.ReconcilePluginCommandImportRetryFacts(); err != nil {
+			if fenceErr := c.owner.failClosedPluginCommandImportRetryFacts(); fenceErr != nil {
+				c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(),
+					"plugin command import retry facts could not be reconciled or failed closed", map[string]interface{}{
+						"reconcile_error": err.Error(), "fence_error": fenceErr.Error(),
+					})
+			} else {
+				c.owner.Logger().Warning(models.LogActionSystem, "plugin_command", nil, c.settings.StagingRoot(),
+					"plugin command import retry facts could not be reconciled; Retry is withheld until reconciliation succeeds", map[string]interface{}{
+						"error": err.Error(),
+					})
+			}
+		}
+	}
 	c.logActivation()
 	return pluginCommandAttemptActive, nil
 }

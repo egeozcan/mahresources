@@ -36,10 +36,11 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 		// The viewer-keyed Job preferences DeleteUser removes: cited here rather
 		// than in stampedModels because nothing about them is nulled.
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
-		&models.JobImportCommandFact{}, &models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobSourceMapping{},
+		&models.JobImportCommandFact{}, &models.PluginCommandImportCommandFact{}, &models.PluginCommandImportCommandFactGroup{},
+		&models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobSourceMapping{},
 		&models.PluginCommandRun{}, &models.PluginCommandRunOutput{},
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
-		&models.User{}, &models.Session{}, &models.ApiToken{}, &models.SavedSearch{}, &models.UserSetting{},
+		&models.PluginState{}, &models.User{}, &models.Session{}, &models.ApiToken{}, &models.SavedSearch{}, &models.UserSetting{},
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	)
 	require.NoError(t, db.AutoMigrate(modelsToMigrate...))

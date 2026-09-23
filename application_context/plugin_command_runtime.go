@@ -348,7 +348,10 @@ func (ctx *MahresourcesContext) DiscardCommandFile(access plugin_commands.Access
 	if err != nil {
 		return err
 	}
-	return active.exchange.Discard(access, runID, name)
+	if err := active.exchange.Discard(access, runID, name); err != nil {
+		return err
+	}
+	return ctx.markPluginCommandImportFileUnavailable(runID, name)
 }
 
 func (ctx *MahresourcesContext) DiscardCommandRun(access plugin_commands.Access, runID string) error {
@@ -356,5 +359,8 @@ func (ctx *MahresourcesContext) DiscardCommandRun(access plugin_commands.Access,
 	if err != nil {
 		return err
 	}
-	return active.exchange.DiscardRun(access, runID)
+	if err := active.exchange.DiscardRun(access, runID); err != nil {
+		return err
+	}
+	return ctx.markPluginCommandImportFileUnavailable(runID, "")
 }

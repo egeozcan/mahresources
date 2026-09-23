@@ -35,6 +35,9 @@ func (ctx *MahresourcesContext) SetJobService(service *jobs.Service) {
 		return
 	}
 	ctx.jobService = service
+	if service == nil {
+		return
+	}
 	// The Kind adapters this context's own executors publish into are registered
 	// with the control plane it was handed, so "one process, one control plane"
 	// includes one registry: a facade reading a service with no adapters registered

@@ -12,6 +12,7 @@ import (
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
+	"mahresources/plugin_system"
 )
 
 const (
@@ -186,12 +187,83 @@ func (a *pluginCommandJobAdapter) Commands(_ context.Context, command jobs.Comma
 	commands := []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Confirmation: "Cancel this plugin command?"},
 		{Key: "inspect", Label: "Inspect command history"}}
 	if a.kind == JobKindPluginCommandImport {
-		if a.importRetryable(command.Deps.DB, command.Snapshot.ID) && a.importExchangeFilePresent(command.Deps.DB, command.Snapshot.ID) {
+		eligible, err := a.pluginCommandImportRetryEligible(command.Deps, command.Snapshot.ID)
+		if err != nil {
+			return nil, fmt.Errorf("check plugin command import Retry: %w", err)
+		}
+		if eligible {
 			commands = append(commands, jobs.Command{Key: "retry-import", Label: "Retry import", Destructive: true,
 				Confirmation: "Retry this import from its admitted exchange file?"})
 		}
 	}
 	return commands, nil
+}
+
+// RevalidateCommand is the last application-layer check before the host records
+// a retry-import request. Listings use the shared SQL fact selector; this hook
+// refreshes the physical-file fact and re-runs the current importer authority
+// checks so an exchange removal, demotion, stale generation, or deleted
+// association cannot turn an old advertisement into a retry.
+func (a *pluginCommandJobAdapter) RevalidateCommand(_ context.Context, command jobs.CommandContext, key string) (bool, error) {
+	if key != pluginCommandImportRetryKey {
+		return true, nil
+	}
+	if a == nil || a.ctx == nil || a.kind != JobKindPluginCommandImport {
+		return false, nil
+	}
+	eligible, err := a.pluginCommandImportRetryEligible(command.Deps, command.Snapshot.ID)
+	if err != nil || !eligible {
+		return false, err
+	}
+	var source models.PluginCommandImport
+	if err := command.Deps.DB.Where("job_id = ?", command.Snapshot.ID).First(&source).Error; err != nil {
+		return false, nil
+	}
+	var run models.PluginCommandRun
+	if err := command.Deps.DB.Where("id = ?", source.RunID).First(&run).Error; err != nil {
+		return false, nil
+	}
+	active, err := a.ctx.pluginCommandActive()
+	if err != nil {
+		return false, nil
+	}
+	probe, ok := active.exchange.(pluginCommandImportFileProbe)
+	if !ok || !probe.HasRegularFile(run.PluginName, source.RunID, source.FileName) {
+		if updateErr := a.ctx.markPluginCommandImportFileUnavailable(source.RunID, source.FileName); updateErr != nil {
+			return false, updateErr
+		}
+		return false, nil
+	}
+	fieldsJSON, found := a.ctx.pluginCommandImportFieldsJSON(command.Deps.DB, source)
+	if !found {
+		return false, nil
+	}
+	var fields plugin_commands.ResourceFields
+	if err := json.Unmarshal([]byte(fieldsJSON), &fields); err != nil {
+		return false, nil
+	}
+	plugins := a.ctx.PluginManager()
+	if plugins == nil {
+		return false, nil
+	}
+	var generation uint64
+	for _, plugin := range plugins.Plugins() {
+		if plugin.Name == run.PluginName && plugin.Manifest.Capabilities().Has(plugin_system.CapCommands) &&
+			plugin.Manifest.Capabilities().Has(plugin_system.CapDBWrite) {
+			generation = plugin.Generation
+			break
+		}
+	}
+	if generation == 0 {
+		return false, nil
+	}
+	if err := a.ctx.ValidateImport(plugin_commands.ImportValidation{
+		PluginName: run.PluginName, PluginGeneration: generation,
+		ActorUserID: copyCommandUint(source.CreatedByUserId), Fields: fields,
+	}); err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 func (a *pluginCommandJobAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
 	switch execution.Key {
@@ -313,108 +385,19 @@ func (a *pluginCommandJobAdapter) AfterHostTransition(_ context.Context, snapsho
 	}
 }
 
-func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) bool {
-	if db == nil || !a.ctx.pluginCommandFenceOwned() {
-		return false
-	}
-	var fenceCount int64
-	a.ctx.pluginCommandController.mu.Lock()
-	token := a.ctx.pluginCommandController.dbFence
-	a.ctx.pluginCommandController.mu.Unlock()
-	if db.Model(&models.JobRuntimeFence{}).Where("key = ? AND token = ?", pluginCommandRuntimeFenceKey, token).Count(&fenceCount).Error != nil || fenceCount != 1 {
-		return false
-	}
-	var source models.PluginCommandImport
-	if db.Where("job_id = ?", jobID).First(&source).Error != nil || source.CreatedByUserId == nil {
-		return false
-	}
-	if source.Status != plugin_commands.ImportStatusFailed && source.Status != plugin_commands.ImportStatusCancelled && source.Status != plugin_commands.ImportStatusInterrupted {
-		return false
-	}
-	var mapped models.PluginCommandImportMap
-	if db.Where("run_id = ? AND file_name = ?", source.RunID, source.FileName).First(&mapped).Error != nil || mapped.ImportID != source.ID || mapped.Status != source.Status || mapped.ResourceID != nil {
-		return false
-	}
-	var run models.PluginCommandRun
-	if db.Where("id = ? AND status = ? AND output_unverified = ?", source.RunID, plugin_commands.RunStatusSucceeded, false).First(&run).Error != nil {
-		return false
-	}
-	fieldsJSON, ok := a.importFieldsJSON(db, source)
-	if !ok {
-		return false
-	}
-	var fields plugin_commands.ResourceFields
-	if json.Unmarshal([]byte(fieldsJSON), &fields) != nil {
-		return false
-	}
-	return true
-}
-
-func (a *pluginCommandJobAdapter) importFieldsJSON(db *gorm.DB, source models.PluginCommandImport) (string, bool) {
-	if a == nil || a.ctx == nil || db == nil {
-		return "", false
-	}
-	retired, err := pluginCommandInputsRetired(db)
-	if err != nil {
-		return "", false
-	}
-	if !retired {
-		return source.FieldsJSON, source.FieldsJSON != ""
-	}
-	// Once the writer fence is active, the source column is only a compatibility
-	// projection. A stale in-memory row or restored backup cannot outrank the
-	// canonical envelope used by import retry.
-	if source.JobID == "" || a.ctx.JobService() == nil {
-		return "", false
-	}
-	opened, err := a.ctx.JobService().OpenReplay(a.ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, source.JobID)
-	if err != nil {
-		return "", false
-	}
-	var input pluginCommandImportReplayInput
-	if json.Unmarshal(opened.Input, &input) != nil || input.RunID != source.RunID || input.FileName != source.FileName || input.FieldsJSON == "" {
-		return "", false
-	}
-	return input.FieldsJSON, true
-}
-
-func (a *pluginCommandJobAdapter) importExchangeFilePresent(db *gorm.DB, jobID string) bool {
-	if db == nil || a.ctx == nil {
-		return false
-	}
-	var source models.PluginCommandImport
-	if db.Where("job_id = ?", jobID).First(&source).Error != nil {
-		return false
-	}
-	var run models.PluginCommandRun
-	if db.Where("id = ?", source.RunID).First(&run).Error != nil {
-		return false
-	}
-	controller := a.ctx.pluginCommandController
-	if controller == nil {
-		return false
-	}
-	controller.mu.Lock()
-	active := controller.active.Load()
-	controller.mu.Unlock()
-	if active == nil || active.exchange == nil {
-		return false
-	}
-	probe, ok := active.exchange.(interface {
-		HasRegularFile(pluginName, runID, name string) bool
-	})
-	return ok && probe.HasRegularFile(run.PluginName, run.ID, source.FileName)
-}
-
 func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
-	if !a.importRetryable(a.ctx.db, execution.JobID) {
+	eligible, err := a.pluginCommandImportRetryEligible(a.ctx.jobDeps(), execution.JobID)
+	if err != nil {
+		return jobs.CommandOutcome{}, err
+	}
+	if !eligible {
 		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import is no longer safely retryable")
 	}
 	var source models.PluginCommandImport
 	if err := a.ctx.db.Where("job_id = ?", execution.JobID).First(&source).Error; err != nil {
 		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import source is unavailable")
 	}
-	fieldsJSON, ok := a.importFieldsJSON(a.ctx.db, source)
+	fieldsJSON, ok := a.ctx.pluginCommandImportFieldsJSON(a.ctx.db, source)
 	if !ok {
 		return jobs.CommandOutcome{}, fmt.Errorf("plugin command import fields are unavailable")
 	}
@@ -433,7 +416,8 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 	}
 	pluginName := run.PluginName
 	for _, plugin := range plugins.Plugins() {
-		if plugin.Name == pluginName {
+		caps := plugin.Manifest.Capabilities()
+		if plugin.Name == pluginName && caps.Has(plugin_system.CapCommands) && caps.Has(plugin_system.CapDBWrite) {
 			generation = plugin.Generation
 			break
 		}
@@ -445,15 +429,11 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 	if err != nil {
 		return jobs.CommandOutcome{}, err
 	}
-	listing, err := active.exchange.List(plugin_commands.Access{Administrator: true}, source.RunID)
-	if err != nil {
-		return jobs.CommandOutcome{}, fmt.Errorf("the admitted exchange file is unavailable")
-	}
-	filePresent := false
-	for _, entry := range listing.Entries {
-		filePresent = filePresent || entry.Name == source.FileName
-	}
-	if !filePresent {
+	probe, ok := active.exchange.(pluginCommandImportFileProbe)
+	if !ok || !probe.HasRegularFile(pluginName, source.RunID, source.FileName) {
+		if updateErr := a.ctx.markPluginCommandImportFileUnavailable(source.RunID, source.FileName); updateErr != nil {
+			return jobs.CommandOutcome{}, updateErr
+		}
 		return jobs.CommandOutcome{}, fmt.Errorf("the admitted exchange file is unavailable")
 	}
 	result, err := active.dispatcher.SubmitImport(plugin_commands.ImportSubmission{
@@ -462,6 +442,14 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 		ActorUserID: copyCommandUint(source.CreatedByUserId),
 	})
 	if err != nil {
+		// SubmitImport opens the file under the exchange lease. If it vanished
+		// after the preflight probe, invalidate the durable fact so subsequent
+		// detail and list reads stop offering a dead Retry.
+		if !probe.HasRegularFile(pluginName, source.RunID, source.FileName) {
+			if updateErr := a.ctx.markPluginCommandImportFileUnavailable(source.RunID, source.FileName); updateErr != nil {
+				return jobs.CommandOutcome{}, updateErr
+			}
+		}
 		return jobs.CommandOutcome{}, err
 	}
 	detail, _ := json.Marshal(map[string]string{"importId": result.ImportID})

@@ -116,12 +116,14 @@ func newPostgresOwnershipFixture(t *testing.T, concurrency int) (*MahresourcesCo
 		&models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
 		&models.Query{}, &models.SavedMRQLQuery{}, &models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{},
-		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
+		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.ResourceReduction{},
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
 		&models.JobCommandRequest{}, &models.JobLegacyHandle{}, &models.JobImportCommandFact{},
+		&models.PluginCommandImportCommandFact{}, &models.PluginCommandImportCommandFactGroup{},
+		&models.JobRuntimeFence{}, &models.JobWriterEpoch{}, &models.JobSourceMapping{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
