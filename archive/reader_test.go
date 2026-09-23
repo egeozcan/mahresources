@@ -52,6 +52,28 @@ func TestReader_ReadManifest(t *testing.T) {
 	}
 }
 
+func TestReader_ReadManifestHonorsConfiguredLimit(t *testing.T) {
+	var buf bytes.Buffer
+	w, err := NewWriter(&buf, true)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&Manifest{SchemaVersion: SchemaVersion, Warnings: []string{strings.Repeat("x", 256)}}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	r, err := NewReaderWithManifestLimit(bytes.NewReader(buf.Bytes()), 128)
+	if err != nil {
+		t.Fatalf("NewReaderWithManifestLimit: %v", err)
+	}
+	defer r.Close()
+	if _, err := r.ReadManifest(); err == nil {
+		t.Fatal("ReadManifest accepted an entry larger than the configured uncompressed limit")
+	}
+}
+
 // testCollector implements every Visitor hook and keeps the decoded entries
 // in maps for spot-checks in round-trip tests. Blob and preview bodies are
 // drained into byte slices so the tar reader can advance.

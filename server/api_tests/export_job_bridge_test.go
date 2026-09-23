@@ -1,13 +1,16 @@
 package api_tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/archive"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -179,6 +182,103 @@ func TestGroupExportJobPublishesAVerifiedArtifactAndSucceeds(t *testing.T) {
 	}
 	if !exists {
 		t.Fatalf("the job succeeded but its artifact %q is not on disk", reference.Path)
+	}
+}
+
+func TestDurableExportDownloadWithholdsQueueFallbackBeforePublication(t *testing.T) {
+	tc := setupAuthEnv(t)
+	root := &models.Group{Name: "staged-export-root"}
+	if err := tc.DB.Create(root).Error; err != nil {
+		t.Fatalf("create export root: %v", err)
+	}
+	child := &models.Group{Name: "staged-export-child", OwnerId: &root.ID}
+	if err := tc.DB.Create(child).Error; err != nil {
+		t.Fatalf("create export child: %v", err)
+	}
+	outside := &models.Group{Name: "staged-export-outside"}
+	if err := tc.DB.Create(outside).Error; err != nil {
+		t.Fatalf("create outside group: %v", err)
+	}
+	owner, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "staged-export-owner", Password: "password1", Role: models.RoleUser, ScopeGroupId: &root.ID,
+	})
+	if err != nil {
+		t.Fatalf("create scoped export owner: %v", err)
+	}
+	token, _, err := tc.AppCtx.CreateApiToken(owner.ID, "test", nil)
+	if err != nil {
+		t.Fatalf("create owner token: %v", err)
+	}
+	service := jobs.NewService()
+	tc.AppCtx.SetJobService(service)
+	const legacyID = "staged-scope-export"
+	accepted, err := service.Accept(jobs.Deps{DB: tc.DB}, jobs.Acceptance{
+		Kind: application_context.JobKindGroupExport, KindVersion: 1, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: &owner.ID, Title: "Export of one group",
+		Replay:     jobs.ReplayInput{NonReplayable: true},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: application_context.GroupExportHandleNamespace, Handle: legacyID}},
+	})
+	if err != nil {
+		t.Fatalf("accept durable export: %v", err)
+	}
+	var archiveBytes bytes.Buffer
+	archiveWriter, err := archive.NewWriter(&archiveBytes, false)
+	if err != nil {
+		t.Fatalf("create staged archive: %v", err)
+	}
+	if err := archiveWriter.WriteManifest(&archive.Manifest{
+		SchemaVersion: archive.SchemaVersion,
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 2},
+		Entries: archive.Entries{Groups: []archive.GroupEntry{
+			{ExportID: "g0001", Name: "root", SourceID: root.ID, Path: "groups/g0001.json"},
+			{ExportID: "g0002", Name: "child", SourceID: child.ID, Path: "groups/g0002.json"},
+		}},
+	}); err != nil {
+		t.Fatalf("write staged archive manifest: %v", err)
+	}
+	if err := archiveWriter.Close(); err != nil {
+		t.Fatalf("close staged archive: %v", err)
+	}
+	path := "_exports/" + accepted.ID + ".tar"
+	if err := tc.Fs.MkdirAll("_exports", 0o755); err != nil {
+		t.Fatalf("create export directory: %v", err)
+	}
+	if err := afero.WriteFile(tc.Fs, path, archiveBytes.Bytes(), 0o600); err != nil {
+		t.Fatalf("write staged archive: %v", err)
+	}
+	_, err = tc.AppCtx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
+		Source: download_queue.JobSourceGroupExport, JobID: legacyID, OwnerUserID: &owner.ID,
+		Canonical: &download_queue.CanonicalRef{JobID: accepted.ID}, InitialPhase: "completed",
+	}, func(_ context.Context, _ *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
+		sink.SetResultPath(path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stage completed queue entry: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		entry, found := tc.AppCtx.DownloadManager().GetJob(legacyID)
+		if found && entry.GetStatus() == download_queue.JobStatusCompleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	entry, found := tc.AppCtx.DownloadManager().GetJob(legacyID)
+	if !found || entry.GetStatus() != download_queue.JobStatusCompleted {
+		t.Fatalf("queue fallback is not completed: found=%v entry=%+v", found, entry)
+	}
+	if err := tc.DB.Model(&models.Group{}).Where("id = ?", child.ID).Update("owner_id", outside.ID).Error; err != nil {
+		t.Fatalf("move exported descendant out of scope: %v", err)
+	}
+	headers := map[string]string{"Authorization": "Bearer " + token}
+	if hidden := doReq(tc, http.MethodGet, "/v1/group?id="+itoa(int(child.ID)), headers, nil, nil); hidden.Code == http.StatusOK {
+		t.Fatalf("moved child remains visible to scoped owner: %s", hidden.Body.String())
+	}
+	response := doReq(tc, http.MethodGet, "/v1/exports/"+legacyID+"/download", headers, nil, nil)
+	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), "manifest.json") {
+		t.Fatalf("unpublished scoped artifact response = %d %q, want 409 with no archive bytes", response.Code, response.Body.String())
 	}
 }
 

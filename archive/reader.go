@@ -24,19 +24,35 @@ import (
 //
 // Reader is not safe for concurrent use.
 type Reader struct {
-	tr       *tar.Reader
-	gz       *gzip.Reader
-	manifest *Manifest
-	walked   bool
+	tr               *tar.Reader
+	gz               *gzip.Reader
+	manifest         *Manifest
+	walked           bool
+	maxManifestBytes int64
 }
 
 // NewReader detects whether the input is gzipped (magic bytes 0x1f 0x8b) and
 // constructs a tar.Reader appropriately. The Reader does not take ownership
 // of src — the caller is responsible for closing it if necessary.
 func NewReader(src io.Reader) (*Reader, error) {
+	return newReader(src, 0)
+}
+
+// NewReaderWithManifestLimit constructs a Reader that refuses to parse a
+// manifest larger than maxBytes. The tar header carries the uncompressed
+// entry size, so this also bounds manifests inside highly compressed archives.
+// A non-positive limit is invalid.
+func NewReaderWithManifestLimit(src io.Reader, maxBytes int64) (*Reader, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("archive: manifest size limit must be positive")
+	}
+	return newReader(src, maxBytes)
+}
+
+func newReader(src io.Reader, maxManifestBytes int64) (*Reader, error) {
 	pr := &peekedReader{r: src}
 	header, _ := pr.Peek(2)
-	r := &Reader{}
+	r := &Reader{maxManifestBytes: maxManifestBytes}
 	if len(header) >= 2 && header[0] == 0x1f && header[1] == 0x8b {
 		gz, err := gzip.NewReader(pr)
 		if err != nil {
@@ -68,6 +84,9 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	}
 	if hdr.Name != "manifest.json" {
 		return nil, fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)
+	}
+	if r.maxManifestBytes > 0 && hdr.Size > r.maxManifestBytes {
+		return nil, fmt.Errorf("archive: manifest exceeds %d byte limit", r.maxManifestBytes)
 	}
 	// BH-017: read the manifest body once so we can parse it twice — once as
 	// a map to presence-check required fields, once into the typed Manifest.

@@ -4,9 +4,12 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"mahresources/archive"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -17,6 +20,46 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func TestGroupExportScopeAuthorizationBatchesOnPostgres(t *testing.T) {
+	ctx, _, _ := newPostgresOwnershipFixture(t, 2)
+	rootID := createExportGroupForTest(t, ctx, "pg-scoped-export-root")
+	children := make([]models.Group, 600)
+	for i := range children {
+		children[i] = models.Group{Name: "pg-scoped-export-child", OwnerId: &rootID}
+	}
+	if err := ctx.db.CreateInBatches(&children, 200).Error; err != nil {
+		t.Fatalf("create export descendants: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{rootID}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	groupIDs := make([]uint, 1+len(children))
+	groupIDs[0] = rootID
+	for i := range children {
+		groupIDs[i+1] = children[i].ID
+	}
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, groupIDs, nil)
+	scoped := ctx.WithPrincipal(&auth.Principal{
+		UserID: 7, Role: models.RoleUser, ScopeGroupID: &rootID,
+	})
+	if outputs, err := scoped.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 1 {
+		t.Fatalf("large Postgres scoped export outputs = %d, err=%v; want one visible output", len(outputs), err)
+	}
+	content, err := scoped.OpenJobOutput(context.Background(), job.ID, jobExportArtifactOutput)
+	if err != nil {
+		t.Fatalf("open large Postgres scoped export: %v", err)
+	}
+	_ = content.Body.Close()
+}
 
 // The engine parity of the executor-ownership contract. What differs between SQLite
 // and PostgreSQL here is the whole admission: PostgreSQL runs several writers, so the

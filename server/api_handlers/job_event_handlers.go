@@ -202,9 +202,6 @@ func canonicalJobEventCursor(r *http.Request) (uint64, error) {
 			return 0, err
 		}
 	}
-	if queryCursor != "" && lastEventID != "" && queryValue != headerValue {
-		return 0, fmt.Errorf("cursor and Last-Event-ID must identify the same event")
-	}
 	if lastEventID != "" {
 		return headerValue, nil
 	}

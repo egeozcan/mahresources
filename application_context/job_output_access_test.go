@@ -1,10 +1,13 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +48,75 @@ func publishTestOutput(t *testing.T, ctx *MahresourcesContext, jobID, key, kind 
 	if err := ctx.db.Create(&row).Error; err != nil {
 		t.Fatalf("create output row: %v", err)
 	}
+}
+
+func writeGroupExportArchiveForTest(t *testing.T, ctx *MahresourcesContext, jobID string, groupIDs, resourceIDs, noteIDs, seriesIDs []uint) string {
+	t.Helper()
+	var buf bytes.Buffer
+	writer, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("create test export writer: %v", err)
+	}
+	manifest := &archive.Manifest{SchemaVersion: archive.SchemaVersion}
+	manifest.Counts = archive.Counts{
+		Groups: len(groupIDs), Resources: len(resourceIDs), Notes: len(noteIDs), Series: len(seriesIDs),
+	}
+	manifest.Entries.Groups = make([]archive.GroupEntry, 0, len(groupIDs))
+	for i, id := range groupIDs {
+		ref := fmt.Sprintf("g%06d", i+1)
+		manifest.Entries.Groups = append(manifest.Entries.Groups, archive.GroupEntry{
+			ExportID: ref, Name: "group", SourceID: id, Path: "groups/" + ref + ".json",
+		})
+		if i == 0 {
+			manifest.Roots = []string{ref}
+		}
+	}
+	manifest.Entries.Resources = make([]archive.ResourceEntry, 0, len(resourceIDs))
+	for i, id := range resourceIDs {
+		ref := fmt.Sprintf("r%06d", i+1)
+		manifest.Entries.Resources = append(manifest.Entries.Resources, archive.ResourceEntry{
+			ExportID: ref, Name: "resource", SourceID: id, Path: "resources/" + ref + ".json",
+		})
+	}
+	manifest.Entries.Notes = make([]archive.NoteEntry, 0, len(noteIDs))
+	for i, id := range noteIDs {
+		ref := fmt.Sprintf("n%06d", i+1)
+		manifest.Entries.Notes = append(manifest.Entries.Notes, archive.NoteEntry{
+			ExportID: ref, Name: "note", SourceID: id, Path: "notes/" + ref + ".json",
+		})
+	}
+	manifest.Entries.Series = make([]archive.SeriesEntry, 0, len(seriesIDs))
+	for i, id := range seriesIDs {
+		ref := fmt.Sprintf("s%06d", i+1)
+		manifest.Entries.Series = append(manifest.Entries.Series, archive.SeriesEntry{
+			ExportID: ref, Name: "series", SourceID: id, Path: "series/" + ref + ".json",
+		})
+	}
+	if err := writer.WriteManifest(manifest); err != nil {
+		t.Fatalf("write test export manifest: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close test export archive: %v", err)
+	}
+	path := exportArchivePath(jobID, false)
+	if err := afero.WriteFile(ctx.GetDefaultFs(), path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write test export archive: %v", err)
+	}
+	return path
+}
+
+func publishScopedGroupExportOutputForTest(t *testing.T, ctx *MahresourcesContext, jobID string, groupIDs, resourceIDs []uint) string {
+	t.Helper()
+	path := writeGroupExportArchiveForTest(t, ctx, jobID, groupIDs, resourceIDs, nil, nil)
+	reference, err := json.Marshal(queueArtifactReference{
+		Path: path, ScopeManifestVersion: jobExportScopeManifestVersion,
+	})
+	if err != nil {
+		t.Fatalf("encode scoped export reference: %v", err)
+	}
+	publishTestOutput(t, ctx, jobID, jobExportArtifactOutput, jobs.OutputTypeArtifact,
+		string(reference), jobs.OutputAvailable, nil)
+	return path
 }
 
 func TestOpenJobOutputRechecksJobAndOutputAuthorization(t *testing.T) {
@@ -109,10 +181,7 @@ func TestGroupExportOutputRechecksCurrentRootGroupScope(t *testing.T) {
 		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
 		Replay: jobs.ReplayInput{Input: request},
 	})
-	if err := afero.WriteFile(ctx.GetDefaultFs(), "_exports/group.tar", []byte("private export"), 0o600); err != nil {
-		t.Fatalf("write test export: %v", err)
-	}
-	publishTestOutput(t, ctx, job.ID, "artifact", jobs.OutputTypeArtifact, `{"path":"_exports/group.tar"}`, jobs.OutputAvailable, nil)
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, []uint{1}, nil)
 
 	inside := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)})
 	insideOutputs, err := inside.GetOpenableJobOutputs(job.ID)
@@ -132,6 +201,233 @@ func TestGroupExportOutputRechecksCurrentRootGroupScope(t *testing.T) {
 	}
 	if _, err := revoked.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, ErrJobOutputForbidden) {
 		t.Fatalf("revoked-scope output open error = %v, want forbidden", err)
+	}
+}
+
+func TestGroupExportOutputRechecksEveryExportedGroupAfterMove(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL), (2, NULL), (3, 1)").Error; err != nil {
+		t.Fatalf("create test groups: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{1}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, []uint{1, 3}, nil)
+
+	principal := &auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)}
+	inside := ctx.WithPrincipal(principal)
+	if outputs, err := inside.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 1 {
+		t.Fatalf("in-scope outputs = %#v, err=%v; want the export", outputs, err)
+	}
+	content, err := inside.OpenJobOutput(context.Background(), job.ID, "artifact")
+	if err != nil {
+		t.Fatalf("in-scope export could not be opened: %v", err)
+	}
+	_ = content.Body.Close()
+
+	if err := ctx.db.Exec("UPDATE groups SET owner_id = 2 WHERE id = 3").Error; err != nil {
+		t.Fatalf("move exported child group out of current scope: %v", err)
+	}
+	revoked := ctx.WithPrincipal(principal)
+	if outputs, err := revoked.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("outputs after exported child moved = %#v, err=%v; want no advertised output", outputs, err)
+	}
+	if _, err := revoked.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("output open after exported child moved = %v, want forbidden", err)
+	}
+}
+
+func TestGroupExportScopeAuthorizationBatchesLargeScopedManifest(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	const entityCount = 2200
+	for start := 1; start <= entityCount; start += 300 {
+		end := start + 300
+		if end > entityCount+1 {
+			end = entityCount + 1
+		}
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, (end-start)*2)
+		for id := start; id < end; id++ {
+			values = append(values, "(?, ?)")
+			args = append(args, id)
+			if id == 1 {
+				args = append(args, nil)
+			} else {
+				args = append(args, 1)
+			}
+		}
+		if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES "+strings.Join(values, ","), args...).Error; err != nil {
+			t.Fatalf("create test groups %d through %d: %v", start, end-1, err)
+		}
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{1}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	groupIDs := make([]uint, entityCount)
+	for i := range groupIDs {
+		groupIDs[i] = uint(i + 1)
+	}
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, groupIDs, nil)
+	scoped := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)})
+	if outputs, err := scoped.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 1 {
+		t.Fatalf("large scoped export outputs = %d, err=%v; want one visible output", len(outputs), err)
+	}
+	content, err := scoped.OpenJobOutput(context.Background(), job.ID, jobExportArtifactOutput)
+	if err != nil {
+		t.Fatalf("open large scoped export: %v", err)
+	}
+	_ = content.Body.Close()
+}
+
+func TestGroupExportOutputRechecksEveryExportedResourceAfterMove(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL), (2, NULL)").Error; err != nil {
+		t.Fatalf("create test groups: %v", err)
+	}
+	if err := ctx.db.Exec("CREATE TABLE resources (id integer PRIMARY KEY, owner_id integer, series_id integer)").Error; err != nil {
+		t.Fatalf("create test resource scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO resources(id, owner_id) VALUES (10, 1)").Error; err != nil {
+		t.Fatalf("create test resource: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{1}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, []uint{1}, []uint{10})
+
+	principal := &auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)}
+	inside := ctx.WithPrincipal(principal)
+	if outputs, err := inside.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 1 {
+		t.Fatalf("in-scope outputs = %#v, err=%v; want the export", outputs, err)
+	}
+	content, err := inside.OpenJobOutput(context.Background(), job.ID, "artifact")
+	if err != nil {
+		t.Fatalf("in-scope export could not be opened: %v", err)
+	}
+	_ = content.Body.Close()
+
+	if err := ctx.db.Exec("UPDATE resources SET owner_id = 2 WHERE id = 10").Error; err != nil {
+		t.Fatalf("move exported resource out of current scope: %v", err)
+	}
+	revoked := ctx.WithPrincipal(principal)
+	if outputs, err := revoked.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("outputs after exported resource moved = %#v, err=%v; want no advertised output", outputs, err)
+	}
+	if _, err := revoked.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("output open after exported resource moved = %v, want forbidden", err)
+	}
+}
+
+func TestGroupExportOutputHidesArtifactsWithoutScopeProofMarker(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL)").Error; err != nil {
+		t.Fatalf("create test group: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{RootGroupIDs: []uint{1}}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	path := writeGroupExportArchiveForTest(t, ctx, job.ID, []uint{1}, nil, nil, nil)
+	reference, err := json.Marshal(queueArtifactReference{Path: path})
+	if err != nil {
+		t.Fatalf("encode legacy output reference: %v", err)
+	}
+	publishTestOutput(t, ctx, job.ID, jobExportArtifactOutput, jobs.OutputTypeArtifact,
+		string(reference), jobs.OutputAvailable, nil)
+	principal := &auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)}
+	scoped := ctx.WithPrincipal(principal)
+	if outputs, err := scoped.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("unproved export outputs = %#v, err=%v; want hidden", outputs, err)
+	}
+	if _, err := scoped.OpenJobOutput(context.Background(), job.ID, jobExportArtifactOutput); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("unproved export open error = %v, want forbidden", err)
+	}
+}
+
+func TestGroupExportOutputRechecksEveryExportedNoteAfterMove(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL), (2, NULL)").Error; err != nil {
+		t.Fatalf("create test groups: %v", err)
+	}
+	if err := ctx.db.Exec("CREATE TABLE notes (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test note scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO notes(id, owner_id) VALUES (50, 1)").Error; err != nil {
+		t.Fatalf("create test note: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{RootGroupIDs: []uint{1}}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	path := writeGroupExportArchiveForTest(t, ctx, job.ID, []uint{1}, nil, []uint{50}, nil)
+	reference, err := json.Marshal(queueArtifactReference{Path: path, ScopeManifestVersion: jobExportScopeManifestVersion})
+	if err != nil {
+		t.Fatalf("encode scoped export reference: %v", err)
+	}
+	publishTestOutput(t, ctx, job.ID, jobExportArtifactOutput, jobs.OutputTypeArtifact,
+		string(reference), jobs.OutputAvailable, nil)
+	principal := &auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)}
+	scoped := ctx.WithPrincipal(principal)
+	if outputs, err := scoped.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 1 {
+		t.Fatalf("in-scope output = %#v, err=%v; want the export", outputs, err)
+	}
+	if err := ctx.db.Exec("UPDATE notes SET owner_id = 2 WHERE id = 50").Error; err != nil {
+		t.Fatalf("move exported note out of current scope: %v", err)
+	}
+	if outputs, err := scoped.GetOpenableJobOutputs(job.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("outputs after exported note moved = %#v, err=%v; want hidden", outputs, err)
+	}
+	if _, err := scoped.OpenJobOutput(context.Background(), job.ID, jobExportArtifactOutput); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("output open after exported note moved = %v, want forbidden", err)
 	}
 }
 

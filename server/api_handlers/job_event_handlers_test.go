@@ -81,6 +81,25 @@ func TestCanonicalJobSSERejectsLegacyCursor(t *testing.T) {
 	}
 }
 
+func TestCanonicalJobSSEReconnectPrefersNewerLastEventID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=v2:5", nil)
+	request.Header.Set("Last-Event-ID", "v2:9")
+
+	cursor, err := canonicalJobEventCursor(request)
+	if err != nil || cursor != 9 {
+		t.Fatalf("reconnect cursor = %d, err=%v; want Last-Event-ID v2:9 to supersede stale URL cursor v2:5", cursor, err)
+	}
+}
+
+func TestCanonicalJobSSEReconnectStillValidatesBothCursorFormats(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=legacy:5", nil)
+	request.Header.Set("Last-Event-ID", "v2:9")
+
+	if _, err := canonicalJobEventCursor(request); err == nil {
+		t.Fatal("reconnect accepted a malformed URL cursor because Last-Event-ID was valid")
+	}
+}
+
 func TestCanonicalJobSSECatchesUpWithVersionedDeliveryCursor(t *testing.T) {
 	delivery := uint64(6)
 	ctx := &jobEventContextStub{events: []jobs.Event{{

@@ -172,6 +172,11 @@ func GetExportDownloadHandler(ctx *application_context.MahresourcesContext, fs a
 				serveExportArchive(w, archive, fs)
 				return
 			}
+			// A queue entry can finish before the durable Job publishes its
+			// artifact. Until that publication, its result path has not passed the
+			// Kind-specific current-scope check, so do not serve the staged bytes.
+			http.Error(w, "job not completed (status: "+string(archive.State)+")", http.StatusConflict)
+			return
 		}
 
 		job, ok := ctx.DownloadManager().GetJob(jobID)
