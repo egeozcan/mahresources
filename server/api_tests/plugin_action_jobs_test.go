@@ -305,7 +305,7 @@ func TestLegacyActionJobGetResolvesCurrentRetryLeaf(t *testing.T) {
 		t.Fatalf("decode visible action job: %v (%s)", err, visibleResponse.Body.String())
 	}
 	if visibleJob.ID != handle || visibleJob.CanonicalJobID != visible.SuccessorID || visibleJob.Status != "pending" {
-		t.Fatalf("legacy handle projected %+v; want handle %q, queued successor %q, status pending", visibleJob, handle, visible.SuccessorID)
+		t.Fatalf("legacy handle projected %+v; want handle %q, queued successor %q, status pending", &visibleJob, handle, visible.SuccessorID)
 	}
 
 	// An administrator's canonical Retry changes the current target's owner. The
@@ -349,7 +349,7 @@ func TestLegacyActionJobGetUsesDurableHandleWithoutPluginManager(t *testing.T) {
 		t.Fatalf("decode durable action job: %v (%s)", err, response.Body.String())
 	}
 	if job.ID != handle || job.Status != "failed" {
-		t.Fatalf("durable action response %+v; want handle %q with failed status", job, handle)
+		t.Fatalf("durable action response %+v; want handle %q with failed status", &job, handle)
 	}
 }
 
@@ -475,7 +475,7 @@ func TestLegacyActionEventsInitProjectsQueuedRetryLeaf(t *testing.T) {
 	if len(init.ActionJobs) != 1 {
 		t.Fatalf("SSE init has %d action jobs, want the one durable queued successor: %+v", len(init.ActionJobs), init.ActionJobs)
 	}
-	job := init.ActionJobs[0]
+	job := &init.ActionJobs[0]
 	if job.ID != handle || job.CanonicalJobID != retry.SuccessorID || job.Status != "pending" {
 		t.Fatalf("SSE init projected %+v; want handle %q, queued successor %q, pending", job, handle, retry.SuccessorID)
 	}
