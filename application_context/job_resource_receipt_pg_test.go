@@ -31,7 +31,7 @@ func TestPostgresReceiptCascadesUnderProductionMigrationSettings(t *testing.T) {
 		&models.Job{}, &models.Resource{}, &models.JobResourceReceipt{},
 		&models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{}, &models.JobOutput{},
 		&models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{},
-		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobCommandRequest{}, &models.JobLegacyHandle{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobCommandRequest{}, &models.JobLegacyHandle{}, &models.JobImportCommandFact{},
 	); err != nil {
 		t.Fatalf("migrate receipt tables with production settings: %v", err)
 	}

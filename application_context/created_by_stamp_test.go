@@ -64,7 +64,7 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		// Preferences are the third arm of the same sweep: they belong to the
 		// viewer, so deleting the viewer removes them rather than nulling
 		// anything.
-		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
+		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{}, &models.JobImportCommandFact{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

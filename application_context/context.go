@@ -780,6 +780,9 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned import files", removed)
 	}
+	if err := ctx.reconcileImportCommandAvailability(); err != nil {
+		log.Printf("warning: could not reconcile import command file facts after the startup sweep: %v", err)
+	}
 }
 
 // startupSweepProtectedStems answers the staging names startup cleanup must leave
@@ -1314,7 +1317,7 @@ func (ctx *MahresourcesContext) SetTemplateGenerationRateLimiter(l *MRQLGenerati
 // BasePathFs in disk mode, or an in-memory fs in memory mode). Used by
 // handlers that need to read/write files alongside the main resource store.
 func (ctx *MahresourcesContext) GetDefaultFs() afero.Fs {
-	return ctx.fs
+	return ctx.defaultFsWithImportFacts()
 }
 
 // WithRequest returns a shallow copy of the context with the HTTP request set.

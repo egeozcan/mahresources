@@ -60,6 +60,22 @@ type CommandFilterAdapter interface {
 	SelectCommandJobs(context.Context, CommandFilterRequest) (*gorm.DB, bool, error)
 }
 
+// CommandExecutionRevalidator is an optional preflight for command facts that
+// cannot be guaranteed by the database alone. It runs after the adapter has
+// advertised the command and before the command transaction rechecks that
+// advertisement. A revalidator may refresh a durable fact from an external
+// system (for example, an import artifact on disk); it must fail closed when
+// that fact is no longer true. The transaction then sees the refreshed fact
+// through the same adapter Commands method used by listings.
+//
+// This hook is deliberately outside the command transaction: a recheck that
+// refused inside the transaction would roll back the fact invalidation along
+// with the command request. Durable facts should still be reconciled at startup
+// and by the subsystem that owns their lifecycle.
+type CommandExecutionRevalidator interface {
+	RevalidateCommand(context.Context, CommandContext, string) (bool, error)
+}
+
 // CommandFilterRequest asks one Kind adapter to select Jobs where its Commands
 // method would advertise Key to Access. Jobs is an unpaginated query already
 // narrowed to the registered Kind/version, the shared visibility predicate,

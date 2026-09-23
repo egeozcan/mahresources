@@ -298,6 +298,21 @@ func (ctx *MahresourcesContext) importArchiveExists(handle string) bool {
 	return err == nil && exists
 }
 
+func (ctx *MahresourcesContext) importCommandFileAvailable(deps jobs.Deps, handle, field string) (bool, error) {
+	archiveAvailable, planAvailable, err := importCommandAvailability(deps.DB, handle)
+	if err != nil {
+		return false, err
+	}
+	switch field {
+	case "archive_available":
+		return archiveAvailable, nil
+	case "plan_available":
+		return planAvailable, nil
+	default:
+		return false, fmt.Errorf("unknown import command fact field %q", field)
+	}
+}
+
 // importPlanExists reports whether one import's plan is waiting at its unconsumed
 // path — which is the durable evidence that a failed apply is safe to replay.
 func (ctx *MahresourcesContext) importPlanExists(handle string) bool {
@@ -588,15 +603,43 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 	}}
 	state := commandContext.Snapshot.State
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
-		handle, err := a.ctx.jobHandleForDeps(commandContext.Deps, commandContext.Snapshot.ID, ImportParseHandleNamespace)
-		if err != nil {
-			return nil, err
-		}
-		if a.ctx.importArchiveExists(handle) {
-			commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+		if summary, ok := importParseSummaryOf(commandContext.Snapshot.Summary); ok {
+			available, err := a.ctx.importCommandFileAvailable(commandContext.Deps, summary.Handle, "archive_available")
+			if err != nil {
+				return nil, err
+			}
+			if available {
+				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+			}
 		}
 	}
 	return commands, nil
+}
+
+// RevalidateCommand refreshes the parse's external input fact immediately
+// before a Retry is rechecked inside the command transaction. Listings and
+// selector queries read only the durable fact; execution confirms it still
+// describes the staged archive.
+func (a *importParseAdapter) RevalidateCommand(_ context.Context, commandContext jobs.CommandContext, key string) (bool, error) {
+	if key != jobs.CommandRetry {
+		return true, nil
+	}
+	summary, ok := importParseSummaryOf(commandContext.Snapshot.Summary)
+	if !ok || a.ctx == nil {
+		return false, nil
+	}
+	archiveAvailable, err := afero.Exists(a.ctx.fs, importArchivePathFor(summary.Handle))
+	if err != nil {
+		return false, err
+	}
+	_, planAvailable, err := importCommandAvailability(commandContext.Deps.DB, summary.Handle)
+	if err != nil {
+		return false, err
+	}
+	if err := setImportCommandAvailability(commandContext.Deps.DB, summary.Handle, archiveAvailable, planAvailable); err != nil {
+		return false, err
+	}
+	return archiveAvailable, nil
 }
 
 func (a *importParseAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
@@ -893,21 +936,44 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 		})
 	}
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
-		// The Job's own sealed input names the plan that would be replayed, so the
-		// evidence is read from the same input the Retry would use rather than from a
-		// handle that may have moved. It is read on the handle this advertisement was
-		// asked on: the command plane re-asks this question inside the transaction
-		// that would create the successor, and a second connection there deadlocks a
-		// pool of one.
-		input, err := a.inputOf(commandContext.Deps, commandContext.Snapshot.ID)
-		if err != nil {
-			return commands, nil
-		}
-		if a.ctx.importPlanExists(input.ParseHandle) && a.ctx.importArchiveExists(input.ParseHandle) {
-			commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+		// The parse handle is carried in the validated sanitized summary. The host
+		// separately checks this Job's replay envelope before creating a successor.
+		if summary, ok := importApplySummaryOf(commandContext.Snapshot.Summary); ok {
+			archiveAvailable, planAvailable, err := importCommandAvailability(commandContext.Deps.DB, summary.ParseHandle)
+			if err != nil {
+				return nil, err
+			}
+			if archiveAvailable && planAvailable {
+				commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Retry"})
+			}
 		}
 	}
 	return commands, nil
+}
+
+// RevalidateCommand refreshes both file facts used by apply Retry. The plan is
+// replay evidence and the archive is execution input, so a missing file clears
+// the same durable fact Commands and the SQL selector read.
+func (a *importApplyAdapter) RevalidateCommand(_ context.Context, commandContext jobs.CommandContext, key string) (bool, error) {
+	if key != jobs.CommandRetry {
+		return true, nil
+	}
+	summary, ok := importApplySummaryOf(commandContext.Snapshot.Summary)
+	if !ok || a.ctx == nil {
+		return false, nil
+	}
+	archiveAvailable, err := afero.Exists(a.ctx.fs, importArchivePathFor(summary.ParseHandle))
+	if err != nil {
+		return false, err
+	}
+	planAvailable, err := afero.Exists(a.ctx.fs, importPlanPathFor(summary.ParseHandle))
+	if err != nil {
+		return false, err
+	}
+	if err := setImportCommandAvailability(commandContext.Deps.DB, summary.ParseHandle, archiveAvailable, planAvailable); err != nil {
+		return false, err
+	}
+	return archiveAvailable && planAvailable, nil
 }
 
 // inputOf opens one Job's sealed input as this Kind reads it, on the caller's own
@@ -983,6 +1049,9 @@ func (ctx *MahresourcesContext) runImportParseJob(jobCtx context.Context, j *dow
 	}
 
 	planPath := importPlanPathFor(input.Handle)
+	if err := ctx.noteImportFileChange(planPath, true); err != nil {
+		return fmt.Errorf("record parsed import plan availability: %w", err)
+	}
 	sink.SetResultPath(planPath)
 	sink.SetPhase("completed")
 
@@ -1086,6 +1155,10 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 		result.QueueJobID = job.ID
 		return result
 	}
+	if err := ctx.initializeImportCommandAvailability(handle); err != nil {
+		result.Err = err
+		return result
+	}
 
 	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindGroupImportParse,
@@ -1181,6 +1254,10 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 		result.Err = fmt.Errorf("%w: the import %s this apply belongs to has no durable record", err, parseHandle)
 		return result
 	}
+	if err := ctx.initializeImportCommandAvailability(parseHandle); err != nil {
+		result.Err = err
+		return result
+	}
 
 	legacyID := download_queue.NewJobID()
 	consumedPath := importConsumedPlanPathFor(parseHandle, legacyID)
@@ -1248,7 +1325,9 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions 
 // that did not commit. The consumption is part of the submission, so a refused one must
 // leave the review exactly as it found it — the client's next /apply has to work.
 func (ctx *MahresourcesContext) restoreImportPlan(consumedPath, parseHandle string) {
-	_ = ctx.GetDefaultFs().Rename(consumedPath, importPlanPathFor(parseHandle))
+	if err := ctx.GetDefaultFs().Rename(consumedPath, importPlanPathFor(parseHandle)); err == nil {
+		_ = ctx.noteImportFileChange(importPlanPathFor(parseHandle), true)
+	}
 }
 
 // ImportJobAuthorized answers whether this context's principal may act on the import

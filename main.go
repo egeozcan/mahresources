@@ -1010,6 +1010,7 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobPinGuard{},
 		&models.JobCommandRequest{},
 		&models.JobLegacyHandle{},
+		&models.JobImportCommandFact{},
 		&models.JobWriterEpoch{},
 	); err != nil {
 		return err
