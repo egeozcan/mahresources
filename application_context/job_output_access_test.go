@@ -204,6 +204,44 @@ func TestGroupExportOutputRechecksCurrentRootGroupScope(t *testing.T) {
 	}
 }
 
+func TestGroupExportOutputFailsClosedWhenKindVersionAdapterIsMissing(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL), (2, NULL)").Error; err != nil {
+		t.Fatalf("create test groups: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{1}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	publishScopedGroupExportOutputForTest(t, ctx, job.ID, []uint{1}, nil)
+
+	// This is a supported persisted upgrade state: the Job and its artifact were
+	// written by an older binary, while this binary no longer has its adapter.
+	if err := ctx.db.Model(&models.Job{}).Where("id = ?", job.ID).Update("kind_version", jobExportKindVersion+100).Error; err != nil {
+		t.Fatalf("mark export as an unsupported adapter version: %v", err)
+	}
+
+	// The owner can still see the Job, but has since lost scope to its root group.
+	revoked := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(2)})
+	outputs, err := revoked.GetOpenableJobOutputs(job.ID)
+	if err != nil || len(outputs) != 0 {
+		t.Fatalf("unsupported-version outputs = %#v, err=%v; want no advertised output", outputs, err)
+	}
+	if _, err := revoked.OpenJobOutput(context.Background(), job.ID, jobExportArtifactOutput); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("unsupported-version output open error = %v, want forbidden", err)
+	}
+}
+
 func TestGroupExportOutputRechecksEveryExportedGroupAfterMove(t *testing.T) {
 	ctx := newJobContext(t)
 	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {

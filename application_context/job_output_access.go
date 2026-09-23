@@ -137,7 +137,11 @@ func (ctx *MahresourcesContext) authorizeJobOutput(requestCtx context.Context, s
 	}
 	adapter, registered := service.AdapterFor(request.Snapshot.Kind, request.Snapshot.KindVersion)
 	if !registered {
-		return nil
+		// An output may need kind-specific authorization before the standard
+		// opener reads its persisted reference. If the adapter is missing (for
+		// example, after upgrading beyond a stored kind version), there is no
+		// policy available to establish that the output remains safe to expose.
+		return ErrJobOutputForbidden
 	}
 	authorizer, hasPolicy := adapter.(JobOutputAuthorizer)
 	_, hasOpener := adapter.(JobOutputOpener)
