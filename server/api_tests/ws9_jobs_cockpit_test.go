@@ -16,18 +16,15 @@ import (
 	"mahresources/download_queue"
 )
 
-// WS9 — "Jobs and downloads cockpit".
-//
-// Findings 2, 40, 41 and 113 of docs/ui-bug-hunt-2026-07-29.md.
+// WS9 — jobs and downloads compatibility contracts.
 //
 // Finding 2 is the last high-severity row in the campaign: a paused download could
-// never be cancelled. It has three separate causes, and the HTTP status mapping is
-// the one with other victims — `download_queue_handlers.go` mapped *any* manager
-// error from Cancel to 404, so a state conflict was reported as a missing job.
-//
-// Findings 41 and 113 are template facts (which branches the panel renders, and
-// what the progress bar is called), so they are asserted against the served markup
-// here and measured in the browser in e2e/tests/regressions/ws9-jobs-cockpit.spec.ts.
+// never be cancelled. The HTTP status mapping is the backend half —
+// `download_queue_handlers.go` mapped *any* manager error from Cancel to 404, so a
+// state conflict was reported as a missing job. Finding 40's response also remains
+// part of the legacy API contract. The global download cockpit has been replaced by
+// the Job Center; its template and component contracts live with jobPanel.tpl and
+// src/components/jobPanel.test.ts.
 
 // trickleServer serves a slow, known-length body so a download job stays in
 // `downloading` long enough to be paused. The finding is specifically about a
@@ -260,170 +257,34 @@ func TestClearCompletedJobs_NamesWhatItCleared(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------- findings 41 and 113
-
-// TestJobsPanel_PausedJobKeepsItsProgressAndCancel is findings 41 and 2's UI half.
-// The progress block was rendered only for `downloading`, so pausing collapsed the
-// row to "⏸ 100Mb.dat Paused <url> Resume" — bytes, percent, speed and bar all
-// gone — and the Cancel button was gated on isActive(), which excludes paused.
-func TestJobsPanel_PausedJobKeepsItsProgressAndCancel(t *testing.T) {
-	tc := SetupTestEnv(t)
-	_, body := tc.getHTML(t, "/dashboard")
-
-	bar := findOpenTag(body, `data-testid="cockpit-progressbar"`, "div")
-	if bar == "" {
-		t.Fatalf("the cockpit progress bar is not in the page — this test measured nothing")
-	}
-
-	// Go can read which expression gates the block; whether a *paused* job then
-	// renders it is a browser question, asserted in ws9-jobs-cockpit.spec.ts, and
-	// the predicate itself is unit-tested in src/components/downloadCockpit.test.js.
-	progressBranch := templateCondition(body, `data-testid="cockpit-progressbar"`)
-	if progressBranch == "job.status === 'downloading'" {
-		t.Errorf("finding 41: the progress block's x-if is still downloading-only (%q), so pausing drops bytes, percent, speed and bar", progressBranch)
-	}
-	if !strings.Contains(progressBranch, "showsProgress(job)") {
-		t.Errorf("finding 41: the progress block is not gated on showsProgress(job) (got %q)", progressBranch)
-	}
-
-	if !strings.Contains(body, `canCancel(job)`) {
-		t.Errorf("finding 2: the Cancel button is not gated on canCancel(job), so a paused job offers no Cancel control")
-	}
-}
-
-// TestJobsPanel_ProgressBarIsNamedAfterTheJob is finding 113: the accessible name
-// was the literal prefix "Download progress: " plus formatProgress(job), which
-// returns "" for an unknown total — so a screen reader announced an unnamed 0% bar
-// for the whole transfer.
-func TestJobsPanel_ProgressBarIsNamedAfterTheJob(t *testing.T) {
-	tc := SetupTestEnv(t)
-	_, body := tc.getHTML(t, "/dashboard")
-
-	bar := findOpenTag(body, `data-testid="cockpit-progressbar"`, "div")
-	if bar == "" {
-		t.Fatalf("the cockpit progress bar is not in the page — this test measured nothing")
-	}
-
-	if strings.Contains(bar, `'Download progress: ' + formatProgress(job)`) {
-		t.Errorf("finding 113: the progress bar's name is still the bare prefix plus a value that is empty for unknown-size downloads.\ntag: %s",
-			whitespaceRe.ReplaceAllString(bar, " "))
-	}
-	if !strings.Contains(bar, "progressLabel(job)") {
-		t.Errorf("finding 113: the progress bar does not use progressLabel(job) for its accessible name.\ntag: %s",
-			whitespaceRe.ReplaceAllString(bar, " "))
-	}
-	// An indeterminate progressbar must not claim a value. aria-valuenow bound to
-	// null removes the attribute (the same idiom autocompleter.tpl already uses for
-	// aria-invalid), so the binding has to be conditional rather than literal.
-	if strings.Contains(bar, `aria-valuenow="0"`) || !strings.Contains(bar, `:aria-valuenow="progressValueNow(job)"`) {
-		t.Errorf("finding 113: aria-valuenow is not conditional, so an unknown-size download announces a pinned 0%%.\ntag: %s",
-			whitespaceRe.ReplaceAllString(bar, " "))
-	}
-	if !strings.Contains(bar, `:aria-valuetext="progressValueText(job)"`) {
-		t.Errorf("finding 113: no aria-valuetext, so an indeterminate bar describes nothing.\ntag: %s",
-			whitespaceRe.ReplaceAllString(bar, " "))
-	}
-}
-
-func TestJobsPanel_HasAClearCompletedControl(t *testing.T) {
-	tc := SetupTestEnv(t)
-	_, body := tc.getHTML(t, "/dashboard")
-
-	if !strings.Contains(body, `data-testid="cockpit-clear-completed"`) {
-		t.Errorf("finding 40: the jobs panel has no Clear completed control, so finished jobs accumulate forever")
-	}
-	if !strings.Contains(body, "clearCompleted()") {
-		t.Errorf("finding 40: nothing calls clearCompleted()")
-	}
-}
-
-// templateCondition returns the x-if expression of the <template> that most
-// closely precedes marker in body. Used to assert which branch a block renders
-// under, which is a property of the template source and therefore something Go
-// can read; whether Alpine instantiated it is a browser question.
-func templateCondition(body, marker string) string {
-	at := strings.Index(body, marker)
-	if at < 0 {
+// between returns the substring from the first occurrence of from to the first
+// following occurrence of to.
+func between(body, from, to string) string {
+	start := strings.Index(body, from)
+	if start < 0 {
 		return ""
 	}
-	head := body[:at]
-	open := strings.LastIndex(head, "<template ")
-	if open < 0 {
-		return ""
-	}
-	const attr = `x-if="`
-	from := strings.Index(body[open:at], attr)
-	if from < 0 {
-		return ""
-	}
-	rest := body[open+from+len(attr):]
-	end := strings.Index(rest, `"`)
+	end := strings.Index(body[start:], to)
 	if end < 0 {
 		return ""
 	}
-	return rest[:end]
+	return body[start : start+end]
 }
 
-// ------------------------------------ review remediation findings 3 and 5
-
-// TestJobsPanel_RowCarriesItsJobID pins the hook every locator in
-// ws9-jobs-cockpit.spec.ts is scoped by.
-//
-// Review remediation finding 5: without it a row could only be found by its
-// rendered text, and `getJobTitle` renders every stalled test download as "events"
-// (the filename of the URL they all share, since DownloadJob has no name field to
-// serialise). Three assertions were scoped that way and could not fail. This is the
-// CI-visible half — CI runs `go test` and does not run the browser suite — so if the
-// attribute is ever dropped, the failure arrives here rather than silently turning
-// those locators back into "whichever row happens to match".
-func TestJobsPanel_RowCarriesItsJobID(t *testing.T) {
-	tc := SetupTestEnv(t)
-	_, body := tc.getHTML(t, "/dashboard")
-
-	row := findOpenTag(body, `data-testid="cockpit-job"`, "li")
-	if row == "" {
-		t.Fatalf("the cockpit job row is not in the page — this test measured nothing")
-	}
-	if !strings.Contains(row, `:data-job-id="job.id"`) {
-		t.Errorf("review finding 5: the job row does not carry :data-job-id, so a row can only be located by text every row shares: %s", row)
-	}
-}
-
-// TestHeaderDialogs_StackAboveHeaderDropdowns is review remediation finding 3.
-//
-// `.header` is position:sticky with z-index:40, so it is a stacking context and its
-// descendants are ordered against each other rather than against the page. The
-// global search dialog is one of them (`fixed inset-0`), and so are the settings and
-// account dropdowns. The dropdowns are the later siblings, so at equal z-index they
-// painted over an aria-modal dialog and stayed clickable through it.
-//
-// Deferred-work item 7 removed the jobs panel from this set: it is teleported into
-// `.overlays`, so its markup is still textually inside <header> but it never renders
-// there. Markup inside an `x-teleport` template is therefore excluded below —
-// without that, the panel's deliberately-low z-40 reads as a header dialog that
-// fails to outrank the z-50 dropdowns, which is the opposite of what it means.
-//
-// What the browser does with these numbers is asserted by hit-testing in
-// ws9-jobs-cockpit.spec.ts. This is the drift guard for the invariant behind it:
-// every full-viewport overlay that actually renders in the header outranks every
-// other z-index class in the header.
+// TestHeaderDialogs_StackAboveHeaderDropdowns covers the remaining dialog that
+// lives in the header. The Job Center panel also appears in the header source, but
+// its dialog is teleported into .overlays; strip that template before finding the
+// header boundary because its dialog contains its own <header> element.
 func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
 
-	header := between(body, "<header", "</header>")
+	header := between(stripTeleportedTemplates(body), "<header", "</header>")
 	if header == "" {
-		t.Fatalf("no <header> in the page — this test measured nothing")
+		t.Fatalf("no rendered <header> in the page — this test measured nothing")
 	}
-
-	// The control: something really is teleported out, so the strip below is not
-	// silently a no-op that leaves the old classification in place.
-	if !strings.Contains(header, "<template x-teleport") {
-		t.Fatalf("no x-teleport template in the header — the jobs panel is supposed to be one, so this test measured the wrong thing")
-	}
-	header = stripTeleportedTemplates(header)
-	if strings.Contains(header, `data-testid="cockpit-panel"`) {
-		t.Fatalf("the jobs panel survived the teleport strip — stripTeleportedTemplates did not match its nesting")
+	if strings.Contains(header, `data-testid="job-panel-overlay"`) {
+		t.Fatalf("the Job Center panel overlay is still in the header after stripping teleported templates")
 	}
 
 	zClass := regexp.MustCompile(`(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|"|$)`)
@@ -442,44 +303,30 @@ func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		// A full-viewport overlay is a dialog layer; anything else in the header is
-		// chrome that must not paint over one.
 		if strings.Contains(tag, "fixed inset-0") {
 			dialogs[tag] = z
 		} else {
 			others[tag] = z
 		}
 	}
-
-	// One, not two: the jobs panel used to be the second and now teleports out. The
-	// global search dialog is the only full-viewport overlay that still renders here.
-	if len(dialogs) < 1 {
-		t.Fatalf("expected the global search dialog overlay in the header, found %d full-viewport overlays", len(dialogs))
+	if len(dialogs) == 0 {
+		t.Fatalf("expected the global search dialog overlay in the header, found no full-viewport overlays")
 	}
 	if len(others) == 0 {
-		t.Fatalf("expected the settings and account dropdowns to carry a z-index class — this test measured nothing")
+		t.Fatalf("expected a settings or account dropdown to carry a z-index class — this test measured nothing")
 	}
-
 	for tag, z := range dialogs {
 		for otherTag, otherZ := range others {
 			if z <= otherZ {
-				t.Errorf("review finding 3: a header dialog at z-index %d does not outrank header chrome at z-index %d, so the chrome paints over an aria-modal dialog.\n dialog: %s\n chrome: %s", z, otherZ, tag, otherTag)
+				t.Errorf("a header dialog at z-index %d does not outrank header chrome at z-index %d, so the chrome paints over an aria-modal dialog.\n dialog: %s\n chrome: %s", z, otherZ, tag, otherTag)
 			}
 		}
 	}
 }
 
 // stripTeleportedTemplates removes every `<template x-teleport …>…</template>` block,
-// nesting included, from a fragment of served HTML.
-//
-// A teleported template's contents sit in the document where they were authored but
-// never render there, so any test that reads *placement* out of the served HTML has
-// to skip them.
-//
-// Depth counting rather than "the next </template>": the jobs panel contains
-// seventeen <template> elements of its own, so a naive scan would stop inside it and
-// leave most of the panel still classified as header markup — the test would pass,
-// for the wrong reason.
+// nesting included, from a fragment of served HTML. Teleported content is authored
+// under the header but renders in another layer, so markup placement checks must skip it.
 func stripTeleportedTemplates(markup string) string {
 	const openTag, closeTag = "<template", "</template>"
 	for {
@@ -492,8 +339,6 @@ func stripTeleportedTemplates(markup string) string {
 			nextOpen := strings.Index(markup[i:], openTag)
 			nextClose := strings.Index(markup[i:], closeTag)
 			if nextClose < 0 {
-				// Unterminated. Dropping the remainder is the safe direction: it can
-				// only make the caller see less, never misclassify teleported markup.
 				return markup[:start]
 			}
 			if nextOpen >= 0 && nextOpen < nextClose {
@@ -515,76 +360,44 @@ func stripTeleportedTemplates(markup string) string {
 	}
 }
 
-// TestJobsPanel_IsTeleportedIntoTheOverlaysLayer is deferred-work item 7's markup
-// contract, and it replaces what TestHeaderDialogs_StackAboveHeaderDropdowns used to
-// assert about the panel.
-//
-// The panel carried z-[60] inside `.header`, a stacking context at z-index 40. That
-// number was true and useless: it ordered the panel against the settings and account
-// dropdowns and against nothing else, so raising a dropdown to z-index 70 would have put an
-// aria-modal dialog back underneath page chrome with no test failing. Teleporting the
-// panel into `.overlays` puts it in the layer where the app's overlay ordering
-// actually lives, and its z-index finally means what every other overlay's means.
-//
-// Three things have to hold, and each of them fails silently if it stops holding:
-//
-//  1. `x-if` is the OUTER template and `x-teleport` the INNER one. Reversed, x-if
-//     inserts its clone with `el.after(clone)` — a sibling of the teleported node —
-//     so Alpine's `_x_teleportBack` hop is never taken, `closestRoot` finds no
-//     [x-data], and `x-ref="panel"` never registers. focusFirstIn($refs.panel) then
-//     does nothing and raises no error.
-//  2. They never share one <template>. directiveOrder runs `if` before `teleport`
-//     and the teleport handler is unconditional, so one template yields a second,
-//     permanent `fixed inset-0` overlay.
-//  3. The z-index stays below the lowest `.overlays` sibling (lightbox 50,
-//     paste-upload 50 and its toast 50, plugin-action 60, entity-picker 70,
-//     confirm 50), because a teleport appends last and would win every tie.
-//
-// The computed-style and focus halves are in ws9-jobs-cockpit.spec.ts; this is the
-// source contract, in the suite that gates every PR.
-func TestJobsPanel_IsTeleportedIntoTheOverlaysLayer(t *testing.T) {
+// TestJobCenterPanel_IsTeleportedIntoTheOverlaysLayer pins the placement contract
+// for the Job Center dialog. x-if must be outside x-teleport so Alpine keeps the
+// dialog under the panel component's data root; the panel layer must also stay below
+// the other .overlays dialogs because a teleport appends its node last.
+func TestJobCenterPanel_IsTeleportedIntoTheOverlaysLayer(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
 
-	cockpit := between(body, `class="download-cockpit"`, "\n</div>")
-	if cockpit == "" {
-		cockpit = body
+	rootIdx := strings.Index(body, `data-testid="job-panel-root"`)
+	if rootIdx < 0 {
+		t.Fatalf("the served page is missing the Job Center panel root")
+	}
+	panelSource := body[rootIdx:]
+	ifIdx := strings.Index(panelSource, `<template x-if="isOpen">`)
+	teleIdx := strings.Index(panelSource, `<template x-teleport=".overlays">`)
+	overlayIdx := strings.Index(panelSource, `data-testid="job-panel-overlay"`)
+	panelIdx := strings.Index(panelSource, `id="job-center-panel"`)
+	if ifIdx < 0 || teleIdx < 0 || overlayIdx < 0 || panelIdx < 0 {
+		t.Fatalf("the served page is missing Job Center panel markup (if=%d teleport=%d overlay=%d panel=%d)", ifIdx, teleIdx, overlayIdx, panelIdx)
+	}
+	if !(ifIdx < teleIdx && teleIdx < overlayIdx && overlayIdx < panelIdx) {
+		t.Errorf("the Job Center panel must have x-if outside x-teleport before its overlay and dialog (if=%d teleport=%d overlay=%d panel=%d)", ifIdx, teleIdx, overlayIdx, panelIdx)
+	}
+	panel := findOpenTag(body, `id="job-center-panel"`, "section")
+	if !strings.Contains(panel, `aria-modal="true"`) || !strings.Contains(panel, "x-trap.noscroll.noreturn") {
+		t.Errorf("the Job Center dialog must retain its modal semantics and focus trap:\n%s", whitespaceRe.ReplaceAllString(panel, " "))
 	}
 
-	ifIdx := strings.Index(cockpit, `<template x-if="isOpen">`)
-	teleIdx := strings.Index(cockpit, `<template x-teleport=".overlays">`)
-	panelIdx := strings.Index(cockpit, `data-testid="cockpit-panel"`)
-	if ifIdx < 0 {
-		t.Fatalf(`no <template x-if="isOpen"> in the cockpit — this test measured nothing`)
-	}
-	if panelIdx < 0 {
-		t.Fatalf(`no data-testid="cockpit-panel" in the cockpit — this test measured nothing`)
-	}
-	if teleIdx < 0 {
-		t.Fatalf(`item 7: the jobs panel is not wrapped in <template x-teleport=".overlays">, so it renders inside the header's stacking context again`)
-	}
-	if teleIdx < ifIdx {
-		t.Errorf("item 7: x-teleport is outside x-if. Reversed, x-if inserts its clone as a *sibling* of the teleported node, x-ref=\"panel\" never registers, and focus is never moved into the panel — with no error. x-if must be the outer template.")
-	}
-	if panelIdx < teleIdx {
-		t.Errorf("item 7: the panel dialog is outside the x-teleport template, so it still renders in the header")
-	}
-
-	// The two directives must not end up on one <template>.
-	for _, tag := range openTagsWithin(cockpit, "template") {
+	for _, tag := range openTagsWithin(body, "template") {
 		if strings.Contains(tag, "x-teleport") && strings.Contains(tag, "x-if") {
-			t.Errorf("item 7: x-if and x-teleport share a <template>. directiveOrder runs `if` before `teleport` and the teleport handler is unconditional, so this renders a second, permanent overlay.\ntag: %s", tag)
+			t.Errorf("x-if and x-teleport share a <template>, which can leave a second permanent Job Center overlay:\n%s", tag)
 		}
 	}
 
-	// The teleported overlay's z-index, below the lowest `.overlays` sibling.
-	overlay := findOpenTag(cockpit, `data-testid="cockpit-overlay"`, "div")
-	if overlay == "" {
-		t.Fatalf(`no data-testid="cockpit-overlay" in the cockpit — the teleported wrapper is what carries the z-index, and the browser test locates it by this marker`)
-	}
+	overlay := findOpenTag(body, `data-testid="job-panel-overlay"`, "div")
 	m := regexp.MustCompile(`(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|"|$)`).FindStringSubmatch(overlay)
 	if m == nil {
-		t.Fatalf("the teleported overlay carries no z-index class — this test measured nothing.\ntag: %s", overlay)
+		t.Fatalf("the Job Center overlay carries no z-index class — this test measured nothing:\n%s", overlay)
 	}
 	raw := m[1]
 	if raw == "" {
@@ -592,39 +405,24 @@ func TestJobsPanel_IsTeleportedIntoTheOverlaysLayer(t *testing.T) {
 	}
 	z, err := strconv.Atoi(raw)
 	if err != nil {
-		t.Fatalf("unreadable z-index %q on the teleported overlay", raw)
+		t.Fatalf("unreadable z-index %q on the Job Center overlay", raw)
 	}
-	// 50 is the lowest z-index among the .overlays children.
 	if z >= 50 {
-		t.Errorf("item 7: the teleported jobs panel is at z-index %d, which is not below the lowest .overlays sibling (50). A teleport appends last, so at a tie the panel paints over a true modal.\ntag: %s", z, overlay)
+		t.Errorf("the teleported Job Center overlay is at z-index %d, which is not below the lowest .overlays sibling (50)\n%s", z, overlay)
 	}
 }
 
-// between returns the substring of body from the first occurrence of from to the
-// first following occurrence of to.
-func between(body, from, to string) string {
-	start := strings.Index(body, from)
-	if start < 0 {
-		return ""
-	}
-	end := strings.Index(body[start:], to)
-	if end < 0 {
-		return ""
-	}
-	return body[start : start+end]
-}
-
-// The jobs panel declines to open while a true modal is up, and it recognises one by
+// The Job Center panel declines to open while a true modal is up, and it recognises one by
 // sweeping the document for `[aria-modal="true"]` (src/utils/modality.js). That is a
 // contract with the markup, and the markup is where it can silently stop being true:
 // an overlay added without the attribute would be a dialog the panel happily opens
 // underneath, with focus trapped in the panel nobody can see.
 //
 // This counts the overlays in `.overlays` because that is the layer where a new one
-// is most likely to be added. The browser half is in ws9-jobs-cockpit.spec.ts, which
+// is most likely to be added. The browser half is in the Job Center browser suite, which
 // CI does run (the e2e-browser job covers tests/regressions/); this is the cheaper
 // source-level guard that fails in seconds rather than minutes.
-func TestOverlayModals_AreAllReachableByTheJobsPanelsGuard(t *testing.T) {
+func TestOverlayModals_AreAllReachableByTheJobPanelGuard(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
 
@@ -640,7 +438,7 @@ func TestOverlayModals_AreAllReachableByTheJobsPanelsGuard(t *testing.T) {
 		}
 		dialogs++
 		if !strings.Contains(tag, `aria-modal="true"`) {
-			t.Errorf("an overlay dialog carries no aria-modal, so downloadCockpit.blockingModal() cannot see it and the jobs panel will open underneath it:\n %s", tag)
+			t.Errorf("an overlay dialog carries no aria-modal, so jobPanel.blockingModal() cannot see it and the jobs panel will open underneath it:\n %s", tag)
 		}
 	}
 	// The lightbox, paste-upload, the plugin action modal and the entity picker. A
@@ -679,7 +477,7 @@ func TestOverlaysLayer_OutranksTheEntireHeaderLayer(t *testing.T) {
 
 	overlays, header := zOf(".overlays"), zOf(".header")
 	if overlays <= header {
-		t.Errorf("the overlays layer is z-index %d and the header layer is %d, so a true modal no longer paints above the jobs panel", overlays, header)
+		t.Errorf("the overlays layer is z-index %d and the header layer is %d, so a true modal no longer paints above the Job Center panel", overlays, header)
 	}
 }
 
@@ -719,28 +517,5 @@ func TestPluginActionModal_LeavesTheFocusReturnToItsComponent(t *testing.T) {
 	}
 	if !strings.Contains(modal, "x-trap.noreturn") {
 		t.Errorf("the plugin action modal's trap restores focus as well as its own close(), and the two disagree: the trap returns to the control that opened the modal, which for a card action is a menu item the menu has since hidden.\n %s", modal)
-	}
-}
-
-// A cancelled job that saved a file still links it.
-//
-// USER DECISION, 2026-07-30: a cancel accepted after AddResource succeeded reports
-// `cancelled` rather than `completed`, because the control was answered 200 and a job
-// that then says `completed` contradicts it. The resource id is kept on the row so the
-// file is not hidden — that is the half of the decision this guard protects, and it is
-// the easier half to lose, because "show the link when the download completed" is the
-// obvious thing to write and was what the template said before.
-//
-// A markup assertion: the condition is a template expression, and reading it is a
-// more direct statement of the decision than driving a job to completion would be.
-func TestJobsCockpit_LinksASavedFileWhateverTheJobsFinalStatus(t *testing.T) {
-	tc := SetupTestEnv(t)
-	_, body := tc.getHTML(t, "/dashboard")
-
-	if !strings.Contains(body, `x-if="job.resourceId"`) {
-		t.Errorf("the jobs panel has no status-independent resource link. A cancel that lands after the file was saved keeps the resource id precisely so the reader can still reach the file; gating the link on `completed` hides it instead.")
-	}
-	if strings.Contains(body, `x-if="job.status === 'completed' && job.resourceId"`) {
-		t.Errorf("the jobs panel links a saved resource only when the job completed, so a job cancelled after its file was saved names a resource the reader cannot open")
 	}
 }
