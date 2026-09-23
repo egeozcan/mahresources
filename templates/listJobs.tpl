@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<main x-data="jobCenter()" data-testid="job-center" class="space-y-5">
+<div x-data="jobCenter()" data-testid="job-center" class="space-y-5">
     <p class="text-sm text-stone-600">
         Follow background work, open its outputs, and use the controls each job advertises.
         <span class="ml-2 inline-flex items-center gap-1" role="status" aria-live="polite">
@@ -158,5 +158,5 @@
             <button type="button" @click="loadMore()" :disabled="loadingMore" class="rounded border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 hover:bg-stone-50 disabled:opacity-50" x-text="loadingMore ? 'Loading…' : 'Load more jobs'"></button>
         </div>
     </div>
-</main>
+</div>
 {% endblock %}

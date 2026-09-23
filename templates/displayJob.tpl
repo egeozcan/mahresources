@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<main x-data="jobCenter()" data-testid="job-detail" class="mx-auto max-w-5xl space-y-5">
+<div x-data="jobCenter()" data-testid="job-detail" class="mx-auto max-w-5xl space-y-5">
     <p x-show="loading" x-cloak role="status" class="py-6 text-sm text-stone-600">Loading job…</p>
     <p x-show="error" x-cloak role="alert" class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800" x-text="error"></p>
     <template x-if="detail && !loading">
@@ -138,5 +138,5 @@
             </section>
         </div>
     </template>
-</main>
+</div>
 {% endblock %}
