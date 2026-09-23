@@ -151,3 +151,60 @@ func TestPostgresImportCommandSelectorHasSparseDatabasePlan(t *testing.T) {
 		t.Fatalf("Postgres selector plan omitted indexed import facts:\n%s", plan)
 	}
 }
+
+func TestPostgresImportCommandAvailabilityBackfillsJobsAndReconcilesAfterRestart(t *testing.T) {
+	first, other, _ := newPostgresOwnershipFixture(t, 2)
+	if err := first.db.Migrator().DropTable(&models.JobImportCommandFact{}); err != nil {
+		t.Fatalf("remove the not-yet-upgraded import fact table: %v", err)
+	}
+	jobIDs := seedImportJobsForCommandFactBackfill(t, first)
+	if err := first.db.AutoMigrate(&models.JobImportCommandFact{}); err != nil {
+		t.Fatalf("migrate import command facts during upgrade: %v", err)
+	}
+	var before int64
+	if err := first.db.Model(&models.JobImportCommandFact{}).Count(&before).Error; err != nil {
+		t.Fatalf("count import facts before simulated upgrade: %v", err)
+	}
+	if before != 0 {
+		t.Fatalf("pre-upgrade fact rows = %d, want none", before)
+	}
+	other.SetJobService(nil)
+	if other.PluginManager() != nil {
+		other.PluginManager().Close()
+		other.pluginManager = nil
+	}
+	startupReconcileImportFactsForTest(t, other)
+	for name, want := range map[string]bool{
+		"parse-valid": true, "parse-missing": false,
+		"apply-valid": true, "apply-plan-missing": false,
+	} {
+		assertImportJobRetry(t, other, jobIDs[name], want)
+	}
+	assertAdapterSelectorMatchesCommands(t, other, jobs.Access{Administrator: true}, jobs.CommandRetry)
+	var afterBackfill int64
+	if err := first.db.Model(&models.JobImportCommandFact{}).Count(&afterBackfill).Error; err != nil {
+		t.Fatalf("count backfilled import facts: %v", err)
+	}
+	if afterBackfill != 4 {
+		t.Fatalf("backfilled fact rows = %d, want four parse handles", afterBackfill)
+	}
+
+	for _, path := range []string{
+		importArchivePathFor("backfill-parse-valid"),
+		importPlanPathFor("backfill-apply-valid"),
+	} {
+		if err := first.fs.Remove(path); err != nil {
+			t.Fatalf("remove %s before second restart: %v", path, err)
+		}
+	}
+	other.SetJobService(nil)
+	startupReconcileImportFactsForTest(t, other)
+	assertImportJobRetry(t, other, jobIDs["parse-valid"], false)
+	assertImportJobRetry(t, other, jobIDs["apply-valid"], false)
+	assertAdapterSelectorMatchesCommands(t, other, jobs.Access{Administrator: true}, jobs.CommandRetry)
+}
+
+func TestPostgresImportCommandJobBackfillUsesBoundedKeysetBatches(t *testing.T) {
+	ctx, _, _ := newPostgresOwnershipFixture(t, 2)
+	assertImportCommandJobBackfillIsBounded(t, ctx)
+}

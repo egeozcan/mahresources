@@ -128,11 +128,24 @@ func (ctx *MahresourcesContext) initializeImportCommandAvailability(handle strin
 	return setImportCommandAvailability(ctx.db, handle, archiveAvailable, planAvailable)
 }
 
-// reconcileImportCommandAvailability repairs file facts after an unclean stop or
-// a retention sweep. It runs at startup, never while a list or summary is being
-// selected.
-func (ctx *MahresourcesContext) reconcileImportCommandAvailability() error {
+// ReconcileImportCommandAvailability repairs the indexed artifact facts used by
+// import Retry commands. Startup calls it after SetJobService has registered the
+// import Kinds, and before plugin activation or dispatch can expose these Jobs.
+// It reconciles existing facts against the filesystem, then backfills handles in
+// existing import Jobs that predate the fact table. The bounded keyset scans run
+// only at startup, never while a list or summary is being selected.
+func (ctx *MahresourcesContext) ReconcileImportCommandAvailability() error {
 	if ctx == nil || ctx.JobService() == nil || ctx.db == nil {
+		return fmt.Errorf("import command availability reconciliation requires a database and installed Job service")
+	}
+	if err := ctx.reconcileImportCommandFacts(); err != nil {
+		return err
+	}
+	return ctx.backfillImportCommandFactsFromJobs()
+}
+
+func (ctx *MahresourcesContext) reconcileImportCommandFacts() error {
+	if ctx == nil || ctx.db == nil {
 		return nil
 	}
 	const batchSize = 500
@@ -151,8 +164,14 @@ func (ctx *MahresourcesContext) reconcileImportCommandAvailability() error {
 		}
 		changed := make([]models.JobImportCommandFact, 0, len(facts))
 		for _, fact := range facts {
-			archiveAvailable, _ := afero.Exists(ctx.fs, importArchivePathFor(fact.ParseHandle))
-			planAvailable, _ := afero.Exists(ctx.fs, importPlanPathFor(fact.ParseHandle))
+			archiveAvailable, err := afero.Exists(ctx.fs, importArchivePathFor(fact.ParseHandle))
+			if err != nil {
+				return fmt.Errorf("check archive for import %q: %w", fact.ParseHandle, err)
+			}
+			planAvailable, err := afero.Exists(ctx.fs, importPlanPathFor(fact.ParseHandle))
+			if err != nil {
+				return fmt.Errorf("check plan for import %q: %w", fact.ParseHandle, err)
+			}
 			if archiveAvailable != fact.ArchiveAvailable || planAvailable != fact.PlanAvailable {
 				changed = append(changed, models.JobImportCommandFact{
 					ParseHandle: fact.ParseHandle, ArchiveAvailable: archiveAvailable,
@@ -171,6 +190,103 @@ func (ctx *MahresourcesContext) reconcileImportCommandAvailability() error {
 				}),
 			}).CreateInBatches(&changed, 200).Error; err != nil {
 				return err
+			}
+		}
+	}
+}
+
+func importCommandHandleForJob(job models.Job) string {
+	switch job.Kind {
+	case JobKindGroupImportParse:
+		summary, ok := importParseSummaryOf(job.Summary)
+		if ok {
+			return summary.Handle
+		}
+	case JobKindGroupImportApply:
+		summary, ok := importApplySummaryOf(job.Summary)
+		if ok {
+			return summary.ParseHandle
+		}
+	}
+	return ""
+}
+
+// backfillImportCommandFactsFromJobs finds missing parse handles from the safe,
+// indexed Job summaries. It deliberately does not open replay envelopes: parse
+// and apply summaries already carry the handle the selector needs, and decrypting
+// each Job at startup would make this repair unbounded in both CPU and key access.
+func (ctx *MahresourcesContext) backfillImportCommandFactsFromJobs() error {
+	const batchSize = 500
+	lastID := ""
+	for {
+		var page []models.Job
+		query := ctx.db.Model(&models.Job{}).
+			Select("id, kind, summary").
+			Where("(kind = ? AND kind_version = ?) OR (kind = ? AND kind_version = ?)",
+				JobKindGroupImportParse, jobImportKindVersion,
+				JobKindGroupImportApply, jobImportKindVersion).
+			Order("id ASC").Limit(batchSize)
+		if lastID != "" {
+			query = query.Where("id > ?", lastID)
+		}
+		if err := query.Find(&page).Error; err != nil {
+			return fmt.Errorf("read import Jobs for command fact backfill: %w", err)
+		}
+		if len(page) == 0 {
+			return nil
+		}
+		lastID = page[len(page)-1].ID
+
+		handles := make([]string, 0, len(page))
+		seen := make(map[string]struct{}, len(page))
+		for _, job := range page {
+			handle := importCommandHandleForJob(job)
+			if handle == "" {
+				continue
+			}
+			if _, duplicate := seen[handle]; duplicate {
+				continue
+			}
+			seen[handle] = struct{}{}
+			handles = append(handles, handle)
+		}
+		if len(handles) == 0 {
+			continue
+		}
+
+		var present []string
+		if err := ctx.db.Model(&models.JobImportCommandFact{}).
+			Where("parse_handle IN ?", handles).Pluck("parse_handle", &present).Error; err != nil {
+			return fmt.Errorf("read existing import command facts: %w", err)
+		}
+		known := make(map[string]struct{}, len(present))
+		for _, handle := range present {
+			known[handle] = struct{}{}
+		}
+		missing := make([]models.JobImportCommandFact, 0, len(handles)-len(present))
+		for _, handle := range handles {
+			if _, ok := known[handle]; ok {
+				continue
+			}
+			archiveAvailable, err := afero.Exists(ctx.fs, importArchivePathFor(handle))
+			if err != nil {
+				return fmt.Errorf("check archive for import %q during backfill: %w", handle, err)
+			}
+			planAvailable, err := afero.Exists(ctx.fs, importPlanPathFor(handle))
+			if err != nil {
+				return fmt.Errorf("check plan for import %q during backfill: %w", handle, err)
+			}
+			missing = append(missing, models.JobImportCommandFact{
+				ParseHandle: handle, ArchiveAvailable: archiveAvailable,
+				PlanAvailable: planAvailable, UpdatedAt: time.Now().UTC(),
+			})
+		}
+		if len(missing) > 0 {
+			if err := ctx.db.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "parse_handle"}},
+				DoNothing: true,
+			}).CreateInBatches(&missing, 200).Error; err != nil {
+				return fmt.Errorf("write backfilled import command facts: %w", err)
 			}
 		}
 	}
@@ -256,7 +372,7 @@ func (f importFactTrackingFS) RemoveAll(path string) error {
 	}
 	clean := filepath.ToSlash(filepath.Clean(path))
 	if clean == "_imports" || strings.HasPrefix(clean, "_imports/") {
-		return f.ctx.reconcileImportCommandAvailability()
+		return f.ctx.reconcileImportCommandFacts()
 	}
 	return f.ctx.noteImportFileChange(path, false)
 }

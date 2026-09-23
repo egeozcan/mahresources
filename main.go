@@ -751,7 +751,11 @@ func main() {
 	// plugin-work seam is installed with the control plane. Whatever the order, the
 	// process has to end up with the plane installed before any plugin can accept
 	// work — see installJobControlPlaneBeforePluginActivation.
-	jobService := installJobControlPlaneBeforePluginActivation(context)
+	jobService, err := installJobControlPlaneBeforePluginActivation(context)
+	if err != nil {
+		fail("failed to reconcile import command availability: %v", err)
+		return
+	}
 	if pm := context.PluginManager(); pm != nil {
 		if plugins := pm.Plugins(); len(plugins) > 0 {
 			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
@@ -969,12 +973,15 @@ func main() {
 //
 // It lives here rather than inline so the ordering is testable without starting a server,
 // exactly as migrateJobCore does.
-func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) *jobs.Service {
+func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) (*jobs.Service, error) {
 	jobService := jobs.NewService()
 	// Installed on the context as well as handed back for the runtime: the runtime
 	// registers the Kind adapters, and a facade holding a second control plane would
 	// read one with no adapters registered. One process, one control plane.
 	context.SetJobService(jobService)
+	if err := context.ReconcileImportCommandAvailability(); err != nil {
+		return nil, err
+	}
 
 	if context.PluginManager() != nil {
 		if _, err := context.EnsurePluginStates(); err != nil {
@@ -982,7 +989,7 @@ func installJobControlPlaneBeforePluginActivation(context *application_context.M
 		}
 		context.ActivateEnabledPlugins()
 	}
-	return jobService
+	return jobService, nil
 }
 
 // migrateJobCore creates the durable job tables and seeds the writer epoch.

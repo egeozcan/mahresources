@@ -506,7 +506,7 @@ func TestImportCommandFactReconciliationUsesBoundedKeysetBatches(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register fact scan observer: %v", err)
 	}
-	if err := ctx.reconcileImportCommandAvailability(); err != nil {
+	if err := ctx.ReconcileImportCommandAvailability(); err != nil {
 		t.Fatalf("reconcile import facts: %v", err)
 	}
 	if len(factScans) != 4 {

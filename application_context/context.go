@@ -780,9 +780,6 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned import files", removed)
 	}
-	if err := ctx.reconcileImportCommandAvailability(); err != nil {
-		log.Printf("warning: could not reconcile import command file facts after the startup sweep: %v", err)
-	}
 }
 
 // startupSweepProtectedStems answers the staging names startup cleanup must leave
