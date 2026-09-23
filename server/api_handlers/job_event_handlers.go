@@ -129,6 +129,7 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 		defer poll.Stop()
 		heartbeat := time.NewTicker(15 * time.Second)
 		defer heartbeat.Stop()
+		caughtUp := false
 		for {
 			events, err := ctx.GetPublishedJobEvents(cursor, catchupPageSize)
 			if err != nil {
@@ -153,6 +154,20 @@ func GetCanonicalJobEventsHandler(ctx CanonicalJobEventContext) func(http.Respon
 				// Drain another bounded page immediately. A blocked or slow consumer
 				// catches up from durable rows rather than depending on wake-ups.
 				continue
+			}
+			if !caughtUp {
+				data, err := json.Marshal(struct {
+					Cursor string `json:"cursor"`
+				}{Cursor: fmt.Sprintf("v2:%d", cursor)})
+				if err != nil {
+					return
+				}
+				// This control frame marks the boundary between replay and live
+				// delivery. It is not a durable Job event, so it deliberately has no
+				// SSE id and never enters the timeline or delivery cursor.
+				fmt.Fprintf(w, "event: job-caught-up\ndata: %s\n\n", data)
+				flusher.Flush()
+				caughtUp = true
 			}
 			select {
 			case <-r.Context().Done():

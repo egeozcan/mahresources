@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,7 +24,7 @@ type jobEventContextStub struct {
 	called    int
 	lastAfter uint64
 	after     []uint64
-	afterSix  chan struct{}
+	pages     [][]jobs.Event
 }
 
 func (s *jobEventContextStub) GetJobTimeline(_ string, after uint64, _ int) ([]jobs.Event, error) {
@@ -36,11 +37,12 @@ func (s *jobEventContextStub) GetPublishedJobEvents(after uint64, _ int) ([]jobs
 	s.called++
 	s.lastAfter = after
 	s.after = append(s.after, after)
-	if after == 6 && s.afterSix != nil {
-		select {
-		case s.afterSix <- struct{}{}:
-		default:
+	if len(s.pages) > 0 {
+		pageIndex := s.called - 1
+		if pageIndex < len(s.pages) {
+			return s.pages[pageIndex], s.err
 		}
+		return nil, s.err
 	}
 	if s.called > 1 {
 		return nil, nil
@@ -81,7 +83,7 @@ func TestCanonicalJobSSERejectsLegacyCursor(t *testing.T) {
 
 func TestCanonicalJobSSECatchesUpWithVersionedDeliveryCursor(t *testing.T) {
 	delivery := uint64(6)
-	ctx := &jobEventContextStub{afterSix: make(chan struct{}, 1), events: []jobs.Event{{
+	ctx := &jobEventContextStub{events: []jobs.Event{{
 		ID: "event-row-6", JobID: "job-123", Sequence: 4, JobVersion: 5,
 		Type: jobs.EventAccepted, Detail: json.RawMessage(`{"origin":"api"}`),
 		DeliverySequence: &delivery, CreatedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
@@ -100,9 +102,9 @@ func TestCanonicalJobSSECatchesUpWithVersionedDeliveryCursor(t *testing.T) {
 		t.Fatal("SSE did not catch up the published event")
 	}
 	select {
-	case <-ctx.afterSix:
+	case <-response.caughtUpWritten:
 	case <-time.After(2 * time.Second):
-		t.Fatal("SSE did not advance its durable cursor after sending the event")
+		t.Fatal("SSE did not announce that durable catch-up finished")
 	}
 	cancel()
 	select {
@@ -114,8 +116,64 @@ func TestCanonicalJobSSECatchesUpWithVersionedDeliveryCursor(t *testing.T) {
 	if !strings.Contains(body, "id: v2:6\nevent: job\n") || !strings.Contains(body, `"jobId":"job-123"`) {
 		t.Fatalf("SSE body = %q, want the canonical event and delivery cursor", body)
 	}
-	if len(ctx.after) < 2 || ctx.after[0] != 5 || ctx.after[1] != 6 {
-		t.Fatalf("catch-up cursors = %v, want 5 then 6", ctx.after)
+	if !strings.HasSuffix(body, "event: job-caught-up\ndata: {\"cursor\":\"v2:6\"}\n\n") || strings.Count(body, "id: ") != 1 {
+		t.Fatalf("SSE body = %q, want a non-durable caught-up marker after events without its own id", body)
+	}
+	if len(ctx.after) < 1 || ctx.after[0] != 5 {
+		t.Fatalf("initial catch-up cursor = %v, want 5", ctx.after)
+	}
+}
+
+func TestCanonicalJobSSEWaitsForAllCatchUpPagesBeforeControlMarker(t *testing.T) {
+	pageSize := jobs.DefaultEventPageSize
+	firstPage := make([]jobs.Event, 0, pageSize)
+	for i := 0; i < pageSize; i++ {
+		sequence := uint64(i + 1)
+		firstPage = append(firstPage, jobs.Event{
+			ID: "event-row-" + strconv.FormatUint(sequence, 10), JobID: "job-123",
+			Sequence: sequence, Type: jobs.EventQueued, DeliverySequence: &sequence,
+		})
+	}
+	last := uint64(pageSize + 1)
+	secondPage := []jobs.Event{{
+		ID: "event-row-last", JobID: "job-123", Sequence: last,
+		Type: jobs.EventSucceeded, DeliverySequence: &last,
+	}}
+	ctx := &jobEventContextStub{pages: [][]jobs.Event{firstPage, secondPage}}
+	response := newSSETestWriter()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events?version=2&cursor=v2:0", nil).WithContext(requestCtx)
+	finished := make(chan struct{})
+	go func() {
+		GetCanonicalJobEventsHandler(ctx)(response, request)
+		close(finished)
+	}()
+	select {
+	case <-response.caughtUpWritten:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("SSE did not announce completion after draining all catch-up pages")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE handler did not stop after the client disconnected")
+	}
+
+	body := response.String()
+	if len(ctx.after) != 2 || ctx.after[0] != 0 || ctx.after[1] != uint64(pageSize) {
+		t.Fatalf("catch-up cursors = %v, want 0 then %d", ctx.after, pageSize)
+	}
+	if strings.Count(body, "event: job\ndata:") != pageSize+1 {
+		t.Fatalf("SSE emitted %d durable events, want %d", strings.Count(body, "event: job\ndata:"), pageSize+1)
+	}
+	if !strings.HasSuffix(body, "event: job-caught-up\ndata: {\"cursor\":\"v2:"+strconv.FormatUint(last, 10)+"\"}\n\n") || strings.Count(body, "id: ") != pageSize+1 {
+		tail := body
+		if len(tail) > 120 {
+			tail = tail[len(tail)-120:]
+		}
+		t.Fatalf("SSE did not mark the final replay cursor without a control-event id: suffix %q", tail)
 	}
 }
 
@@ -217,15 +275,17 @@ type sseTestWriter struct {
 	status           int
 	body             bytes.Buffer
 	eventWritten     chan struct{}
+	caughtUpWritten  chan struct{}
 	initWritten      chan struct{}
 	once             sync.Once
+	caughtUpOnce     sync.Once
 	initOnce         sync.Once
 	legacyOnce       sync.Once
 	legacyJobWritten chan struct{}
 }
 
 func newSSETestWriter() *sseTestWriter {
-	return &sseTestWriter{header: make(http.Header), eventWritten: make(chan struct{}), initWritten: make(chan struct{}), legacyJobWritten: make(chan struct{})}
+	return &sseTestWriter{header: make(http.Header), eventWritten: make(chan struct{}), caughtUpWritten: make(chan struct{}), initWritten: make(chan struct{}), legacyJobWritten: make(chan struct{})}
 }
 
 func (w *sseTestWriter) Header() http.Header { return w.header }
@@ -238,8 +298,11 @@ func (w *sseTestWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n, err := w.body.Write(data)
-	if bytes.Contains(data, []byte("event: job")) {
+	if bytes.Contains(data, []byte("event: job\ndata:")) {
 		w.once.Do(func() { close(w.eventWritten) })
+	}
+	if bytes.Contains(data, []byte("event: job-caught-up\n")) {
+		w.caughtUpOnce.Do(func() { close(w.caughtUpWritten) })
 	}
 	if bytes.Contains(data, []byte("event: init\n")) {
 		w.initOnce.Do(func() { close(w.initWritten) })

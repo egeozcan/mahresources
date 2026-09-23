@@ -152,7 +152,7 @@ func registerCanonicalJobRoutesOpenAPI(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/jobs/events", OperationID: "streamCanonicalJobEvents",
 		Summary: "Stream resumable canonical Job events", Tags: []string{"jobs"},
-		Description: "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. Omit version to retain the legacy compatibility stream.",
+		Description: "Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream.",
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "version", Type: "string", Description: "Set to 2 for the canonical stream; omit to retain the legacy compatibility stream."},
 			{Name: "cursor", Type: "string", Description: "Resume at a canonical v2 delivery cursor."},
