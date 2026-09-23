@@ -30,10 +30,9 @@ type templateInformation struct {
 // templateContextFn is the uniform shape the route table stores.
 type templateContextFn = func(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context
 
-// canonicalJobAPICutoverComplete stays false until Task 17's complete-Kind and
-// retirement readiness gates pass. The handler and OpenAPI registrations are
-// ready behind this rollout switch; the legacy Jobs routes remain available.
-const canonicalJobAPICutoverComplete = false
+// API, SSE, page, and redirect must flip together after the complete-Kind and
+// retirement gates pass. Legacy Jobs routes remain available for compatibility.
+const canonicalJobAPICutoverComplete = template_context_providers.JobCenterCutoverEnabled
 
 // adaptTemplate lets each template provider declare the narrow interface it
 // actually needs while the route table stays a single uniform map. Go has no
