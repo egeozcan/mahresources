@@ -899,6 +899,7 @@ func (ctx *MahresourcesContext) finishQueueJob(
 			return err
 		}
 		if current.State.Terminal() {
+			ctx.notifyQueueJobCanonicalUpdate(execution.JobID)
 			return nil
 		}
 		if err := ctx.jobFaults.completionWrite(); err != nil {
@@ -913,6 +914,7 @@ func (ctx *MahresourcesContext) finishQueueJob(
 		})
 		switch {
 		case err == nil:
+			ctx.notifyQueueJobCanonicalUpdate(execution.JobID)
 			return nil
 		case errors.Is(err, jobs.ErrStaleExecution):
 			// Somebody else's publish won: the Job is not this execution's to end.
@@ -924,6 +926,16 @@ func (ctx *MahresourcesContext) finishQueueJob(
 		}
 	}
 	return contended
+}
+
+// notifyQueueJobCanonicalUpdate wakes legacy stream clients after the durable
+// terminal state is committed. The stream resolves the queue event's legacy id
+// again through the current handle and visibility projection before sending it.
+func (ctx *MahresourcesContext) notifyQueueJobCanonicalUpdate(canonicalJobID string) {
+	if ctx == nil || ctx.downloadManager == nil || canonicalJobID == "" {
+		return
+	}
+	ctx.downloadManager.NotifyJobUpdatedByCanonicalJobID(canonicalJobID)
 }
 
 // queuePublicationWriteAttempts bounds the versioned retries of one terminal write. The

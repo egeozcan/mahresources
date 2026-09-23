@@ -869,7 +869,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
 	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
-	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(legacyJobHandler(api_handlers.GetDownloadEventsHandler(appContext)))
+	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestContext := scopedCtx(appContext, r)
+		legacyJobHandler(api_handlers.GetDownloadEventsHandler(requestContext))(w, r)
+	})
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
 	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler)))
@@ -879,13 +882,14 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestContext := scopedCtx(appContext, r)
 		if r.URL.Query().Get("version") == "2" {
-			requestContext := scopedCtx(appContext, r)
 			api_handlers.GetJobsEventsHandler(requestContext, requestContext, canonicalJobAPICutoverComplete)(w, r)
 			return
 		}
-		// The compatibility stream retains its existing context and payload.
-		legacyJobHandler(api_handlers.GetJobsEventsHandler(appContext, appContext, canonicalJobAPICutoverComplete))(w, r)
+		// Keep the legacy wire format, while binding its initial and live queue
+		// projections to the authenticated request principal.
+		legacyJobHandler(api_handlers.GetJobsEventsHandler(requestContext, requestContext, canonicalJobAPICutoverComplete))(w, r)
 	})
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadJobHandler)))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.

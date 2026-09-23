@@ -1557,6 +1557,19 @@ func (dm *DownloadManager) GetJobByCanonicalJobID(canonicalJobID string) (*Downl
 	return nil, false
 }
 
+// NotifyJobUpdatedByCanonicalJobID broadcasts an update for the queue entry that
+// publishes into one durable Job, if this process still holds that entry. The
+// event carries the entry's legacy id; consumers must resolve that id through
+// their current compatibility projection before exposing the row.
+func (dm *DownloadManager) NotifyJobUpdatedByCanonicalJobID(canonicalJobID string) bool {
+	job, found := dm.GetJobByCanonicalJobID(canonicalJobID)
+	if !found {
+		return false
+	}
+	dm.notifyJob("updated", job)
+	return true
+}
+
 // NewJobID returns a fresh legacy queue id.
 //
 // Exported because an admission path that accepts a durable Job before it submits
