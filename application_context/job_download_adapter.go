@@ -533,9 +533,6 @@ func (a *downloadJobAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 			if err := a.ctx.db.First(&resource, receipt.ResourceID).Error; err != nil {
 				return "", fmt.Errorf("load resource for download receipt: %w", err)
 			}
-			if resource.Hash != receipt.Hash {
-				return "", fmt.Errorf("download receipt hash does not match Resource %d", resource.ID)
-			}
 			reference, err := json.Marshal(map[string]any{"resourceId": resource.ID})
 			if err != nil {
 				return "", err

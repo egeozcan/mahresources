@@ -987,10 +987,10 @@ func installJobControlPlaneBeforePluginActivation(context *application_context.M
 
 // migrateJobCore creates the durable job tables and seeds the writer epoch.
 //
-// The job tables carry no foreign keys — a Job's owner and actor are scalar
-// columns, and lineage links address Jobs by their UUID — so they need no place
-// in the dependency-ordered list above, and their migration cannot fail on
-// PostgreSQL's circular-reference ordering.
+// Most job tables carry no foreign keys — a Job's owner and actor are scalar
+// columns, and lineage links address Jobs by their UUID. The resource receipt is
+// the exception: its Job and Resource references are acyclic, so their cascade
+// constraints are installed explicitly after table migration.
 //
 // It lives here rather than inline so the startup step is testable without
 // starting a server, and it is idempotent: AutoMigrate is, and
@@ -1012,6 +1012,9 @@ func migrateJobCore(db *gorm.DB) error {
 		&models.JobLegacyHandle{},
 		&models.JobWriterEpoch{},
 	); err != nil {
+		return err
+	}
+	if err := models.EnsureJobResourceReceiptConstraints(db); err != nil {
 		return err
 	}
 	return models.EnsureJobWriterEpoch(db)

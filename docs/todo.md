@@ -1,3 +1,31 @@
+# Job Center post-Task-9 checkpoint, ninth round — receipt cascade and mutable Resource hash (2026-09-23)
+
+**Goal:** Keep canonical download receipts from outliving their Job or Resource on production
+PostgreSQL, where GORM automatic foreign-key migration is disabled, and recover receipts after a
+Resource receives a later version.
+
+## Findings closed
+
+| Finding (P1) | Fix | Regression |
+|---|---|---|
+| PostgreSQL production migration omitted receipt cascade constraints, leaving orphan receipts on Resource deletion and Job retention | Add an idempotent, transaction-locked migration for the acyclic Job and Resource `ON DELETE CASCADE` constraints | `TestPostgresReceiptCascadesUnderProductionMigrationSettings` migrates with automatic FK creation disabled, runs concurrent migrations, deletes a Resource, reconciles without deferral, and prunes an expired Job |
+| Reconciliation treated a changed current Resource hash as receipt corruption, though later versions can change it | Trust the transactionally recorded receipt and referenced Resource existence; keep Job and actor verification, without comparing the mutable current hash | `TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement` mutates the Resource hash before recovery and still verifies the required output |
+
+## Verification
+
+- Red: under production PostgreSQL migration settings, Resource deletion left one receipt; changing a Resource hash made recovery defer the expired claim.
+- Green: focused SQLite receipt recovery and PostgreSQL cascade, concurrent migration, retention, and no-deferral checks passed.
+- `go test --tags 'json1 fts5' ./application_context -run 'TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement|TestAddResourceForJob(RecoversCommitBeforeQueueAcknowledgement|RecordsReceiptWhenAttachingSecondOwner)' -count=1` — passed.
+- `go test --tags 'json1 fts5' . -run '^TestJobCoreMigrationSeedsTheWriterEpoch$' -count=1` — passed.
+- `go test --tags 'postgres json1 fts5' ./application_context -run '^TestPostgresReceiptCascadesUnderProductionMigrationSettings$' -count=1` — passed with concurrent migration calls, Resource deletion, no-deferral reconciliation, and Job retention.
+- Focused `-race` runs for the SQLite receipt recovery and PostgreSQL cascade tests — passed.
+- `go vet --tags 'json1 fts5' . ./application_context`, `gofmt`, and `git diff --check` — clean. The broader suites passed in the preceding round before this migration-only correction.
+
+## Files, commits and artifact
+
+- Code-fix commit: this round's `fix(downloads): ...` commit on `master`.
+- Baseline: `56fc5058`.
+
 # Job Center post-Task-9 checkpoint, eighth round — download receipt recovery (2026-09-23)
 
 **Goal:** Recover a committed download Resource after the executor dies before the queue records
@@ -8,9 +36,9 @@ an existing same-hash Resource.
 
 | Finding (P1) | Fix | Regression |
 |---|---|---|
-| A queue acknowledgement crash left a Resource without a Job output, and replay downloaded the URL before consulting its receipt | On an expired claim, require positive runtime-death proof, validate the durable receipt and actor/resource/hash, publish the required output with the old execution token, then succeed without dispatch | `TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement` makes the source return 404 and asserts zero fetches during recovery |
+| A queue acknowledgement crash left a Resource without a Job output, and replay downloaded the URL before consulting its receipt | On an expired claim, require positive runtime-death proof, validate the durable receipt, actor, and Resource, publish the required output with the old execution token, then succeed without dispatch | `TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement` makes the source return 404, mutates current Resource hash, and asserts zero fetches during recovery |
 | Successful same-hash attachment to a different owner committed without the canonical Job receipt | Insert the receipt in the same transaction as the owner association | `TestAddResourceForJobRecordsReceiptWhenAttachingSecondOwner` |
-| Generic Job retention assumed every host had the application download receipt table | Prune receipts when the app extension table exists; jobs-only stores remain independent of download schema | Existing Job retention suite plus `TestAddResourceForJobRecoversCommitBeforeQueueAcknowledgement` |
+| PostgreSQL production migration disabled automatic receipt cascades | Addressed in the ninth round with explicit cascade constraints | `TestPostgresReceiptCascadesUnderProductionMigrationSettings` |
 
 ## Verification
 

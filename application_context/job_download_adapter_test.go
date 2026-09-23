@@ -361,6 +361,12 @@ func TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgem
 		UpdateColumn("lease_expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
 		t.Fatalf("expire crashed execution claim: %v", err)
 	}
+	// Resource.Hash describes its current version and may change after an
+	// upload; the Job receipt still identifies the Resource created by this
+	// execution and remains authoritative for outcome recovery.
+	if err := ctx.db.Model(&models.Resource{}).Where("id = ?", resourceID).Update("hash", "a-later-version-hash").Error; err != nil {
+		t.Fatalf("change current Resource hash: %v", err)
+	}
 
 	// A fresh runtime sees no queue entry in memory. Reconciliation proves the
 	// previous process gone and publishes the Resource from its receipt, so it
@@ -410,7 +416,7 @@ func TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgem
 		t.Fatalf("read replayed receipt: %v", err)
 	}
 	var resources int64
-	if err := ctx.db.Model(&models.Resource{}).Where("hash = ?", receipt.Hash).Count(&resources).Error; err != nil {
+	if err := ctx.db.Model(&models.Resource{}).Where("id = ?", receipt.ResourceID).Count(&resources).Error; err != nil {
 		t.Fatalf("count replayed resources: %v", err)
 	}
 	if resources != 1 {
