@@ -145,7 +145,7 @@ func TestUpdateGroup_CategoryChange_LeavesInconsistentRelations(t *testing.T) {
 			"with relation type requiring FromCategory X, but it succeeded")
 	}
 
-	// Cleanup (shared in-memory DB)
+	// Clean up fixture rows after the assertions.
 	ctx.db.Where("from_group_id IN ? OR to_group_id IN ?",
 		[]uint{groupA.ID, groupB.ID, groupC.ID},
 		[]uint{groupA.ID, groupB.ID, groupC.ID}).Delete(&models.GroupRelation{})

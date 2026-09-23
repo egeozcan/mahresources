@@ -37,7 +37,7 @@ import (
 // nothing else, for tests that never enter the Job control plane.
 func importTestContext(t *testing.T, name string) *MahresourcesContext {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(testSQLiteMemoryDSN(name)), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

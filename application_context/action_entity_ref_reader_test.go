@@ -16,10 +16,8 @@ import (
 	"mahresources/plugin_system"
 )
 
-// createIsolatedTestContext opens a private in-memory SQLite database (not shared
-// with other tests) and returns a fully migrated MahresourcesContext. Use this
-// when a test creates a large number of rows that would pollute the shared
-// file::memory:?cache=shared instance used by createTestContext.
+// createIsolatedTestContext opens a private-cache in-memory SQLite database and
+// returns a fully migrated MahresourcesContext for tests that need that setup.
 func createIsolatedTestContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
@@ -185,7 +183,7 @@ func TestActionEntityRefReader_GroupsMatching_FiltersByCategory(t *testing.T) {
 }
 
 func TestActionEntityRefReader_Chunking(t *testing.T) {
-	// Use an isolated DB so 600 resources don't pollute the shared in-memory DB.
+	// Use a private-cache DB for this large fixture.
 	ctx := createIsolatedTestContext(t)
 	var ids []uint
 	for i := 0; i < 600; i++ {

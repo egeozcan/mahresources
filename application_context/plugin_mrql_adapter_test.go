@@ -22,9 +22,7 @@ func TestPluginMRQLAdapterFlat(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "flat", result.Mode)
 	assert.Equal(t, "resource", result.EntityType)
-	// Items may or may not be present depending on shared DB state
-	// (other tests may populate resources in the shared in-memory DB).
-	// We only verify the structural correctness of the result.
+	// This test only verifies the structural correctness of the result.
 }
 
 func TestPluginMRQLAdapterFlatNotes(t *testing.T) {

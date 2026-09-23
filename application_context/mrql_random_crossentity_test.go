@@ -20,7 +20,7 @@ import (
 // would see its own empty database.
 func setupSharedCacheTestContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
-	dbName := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	dbName := testSQLiteMemoryDSN("mrql_crossentity")
 	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)

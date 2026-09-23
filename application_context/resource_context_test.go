@@ -26,7 +26,7 @@ import (
 func createTestContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(testSQLiteMemoryDSN("resource_context")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
@@ -77,6 +77,42 @@ func createTestContext(t *testing.T) *MahresourcesContext {
 	return ctx
 }
 
+func TestTestContextHelpersUseIndependentDatabases(t *testing.T) {
+	testCases := []struct {
+		name    string
+		context func(*testing.T) *MahresourcesContext
+	}{
+		{
+			name:    "resource context",
+			context: createTestContext,
+		},
+		{
+			name:    "block context",
+			context: createBlockTestContext,
+		},
+		{
+			name: "admin context",
+			context: func(t *testing.T) *MahresourcesContext {
+				return createAdminTestContext(t, "reused_admin_context_fixture")
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			first := testCase.context(t)
+			second := testCase.context(t)
+
+			if _, err := first.CreateTag(&query_models.TagCreator{Name: "first-context-only"}); err != nil {
+				t.Fatalf("create tag in first context: %v", err)
+			}
+			if _, err := second.GetTagByName("first-context-only"); !errors.Is(err, gorm.ErrRecordNotFound) {
+				t.Fatalf("second context lookup error = %v, want record not found", err)
+			}
+		})
+	}
+}
+
 func getMeTheFileOrPanic(path string) io.ReadSeeker {
 	file, err := os.Open(path)
 
@@ -122,8 +158,8 @@ func newBytesFile(data []byte) *bytesFile {
 // TestAddResource_ConcurrentSameHash verifies that concurrent uploads of the
 // same file content produce exactly one resource in the database.
 func TestAddResource_ConcurrentSameHash(t *testing.T) {
-	// Use a unique DSN to isolate this test from other tests sharing file::memory:?cache=shared
-	db, err := gorm.Open(sqlite.Open("file:concurrent_hash_test?mode=memory&cache=shared"), &gorm.Config{})
+	// Keep this fixture independent across repeated test counts.
+	db, err := gorm.Open(sqlite.Open(testSQLiteMemoryDSN("concurrent_hash_test")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}

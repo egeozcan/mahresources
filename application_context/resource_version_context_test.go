@@ -1529,7 +1529,7 @@ func TestCompareVersionsCross_SameHash(t *testing.T) {
 
 // TestMigrateResourceVersions_MigratesResourcesWithoutVersions tests that migration creates versions for resources without them
 func TestMigrateResourceVersions_MigratesResourcesWithoutVersions(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(testSQLiteMemoryDSN("resource_version_migration")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}

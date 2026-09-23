@@ -87,7 +87,7 @@ func TestGroupQuery_GroupsFilter_OwnedByOneGroupShouldNotMatchWhenFilteringByMul
 		}
 	}
 
-	// Clean up: shared in-memory DB means these groups would pollute other tests
+	// Clean up fixture rows after the assertions.
 	ctx.db.Exec("DELETE FROM group_related_groups WHERE group_id IN ? OR related_group_id IN ?",
 		[]uint{groupA.ID, groupB.ID}, []uint{groupA.ID, groupB.ID, relatedToBoth.ID, childOfA.ID})
 	ctx.db.Delete(&models.Group{}, []uint{childOfA.ID, relatedToBoth.ID, groupB.ID, groupA.ID})

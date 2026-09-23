@@ -124,22 +124,15 @@ func TestAddLocalResource_TagsAndGroupsAssociated(t *testing.T) {
 		t.Errorf("Expected 1 resource_notes row, got %d", noteCount)
 	}
 
-	// Clean up - delete the resource to not affect other tests using shared memory DB
+	// Clean up the fixture rows after checking their relationships.
 	ctx.db.Delete(&models.Resource{}, resource.ID)
 	ctx.db.Delete(&models.Group{}, group.ID)
 	ctx.db.Delete(&models.Tag{}, tag.ID)
 	ctx.db.Delete(&models.Note{}, note.ID)
 }
 
-// purgeResourcesAt clears any resource rows left at a path by an earlier run.
-//
-// createTestContext opens sqlite "file::memory:?cache=shared", so every test in
-// this package shares one database and it survives -count=N within a process.
-// Without this, the second iteration of a dedup test is answered by the first
-// iteration's row before AddLocalResource selects a filesystem or persists
-// anything -- the assertions still pass, having exercised none of the code they
-// name. Arming the cleanup before the create, rather than deferring it after,
-// is what makes the test independent of what ran before it.
+// purgeResourcesAt clears any resource rows already present at a test path so
+// the following upload assertion exercises its own setup.
 func purgeResourcesAt(t *testing.T, ctx *MahresourcesContext, location string) {
 	t.Helper()
 	if err := ctx.db.Unscoped().Where("location = ?", location).Delete(&models.Resource{}).Error; err != nil {

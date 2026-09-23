@@ -16,7 +16,7 @@ import (
 func createCoverageTestContext(t *testing.T, cacheName string) *MahresourcesContext {
 	t.Helper()
 
-	dsn := "file:" + cacheName + "?mode=memory&cache=shared"
+	dsn := testSQLiteMemoryDSN(cacheName)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)

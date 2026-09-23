@@ -23,7 +23,7 @@ import (
 func newThumbnailTestContext(t *testing.T, name string) *MahresourcesContext {
 	t.Helper()
 
-	dsn := "file:" + name + "?mode=memory&cache=shared"
+	dsn := testSQLiteMemoryDSN(name)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)

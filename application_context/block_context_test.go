@@ -18,7 +18,7 @@ import (
 func createBlockTestContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(testSQLiteMemoryDSN("block_context")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
