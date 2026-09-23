@@ -27,6 +27,11 @@ func TestStatusCodeToStringPreservesConflict(t *testing.T) {
 	if got := statusCodeToString(http.StatusConflict); got != "409" {
 		t.Fatalf("HTTP 409 must serialize as 409, got %q", got)
 	}
+	for code, want := range map[int]string{http.StatusSeeOther: "303", http.StatusGone: "410"} {
+		if got := statusCodeToString(code); got != want {
+			t.Fatalf("HTTP %d must serialize as %s, got %q", code, want, got)
+		}
+	}
 }
 
 func TestNewRegistry(t *testing.T) {

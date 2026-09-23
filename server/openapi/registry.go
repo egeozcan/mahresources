@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -438,32 +439,10 @@ func strPtr(s string) *string {
 }
 
 func statusCodeToString(code int) string {
-	switch code {
-	case 200:
-		return "200"
-	case 201:
-		return "201"
-	case 202:
-		return "202"
-	case 204:
-		return "204"
-	case 400:
-		return "400"
-	case 401:
-		return "401"
-	case 403:
-		return "403"
-	case 404:
-		return "404"
-	case 409:
-		return "409"
-	case 415:
-		return "415"
-	case 500:
-		return "500"
-	default:
-		return "default"
+	if code >= 100 && code <= 599 {
+		return strconv.Itoa(code)
 	}
+	return "default"
 }
 
 // MarshalYAML generates YAML output from the spec.

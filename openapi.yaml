@@ -6135,14 +6135,16 @@ paths:
                             schema:
                                 type: string
                     description: Successful response
+                "303":
+                    description: Output resolves to an authorized entity or external link
                 "400":
                     description: Invalid output key
                 "404":
                     description: Job or output not found
+                "410":
+                    description: Output is no longer available
                 "500":
                     description: Output could not be opened
-                default:
-                    description: Output is no longer available
             summary: Open a currently authorized typed Job output
             tags:
                 - jobs
