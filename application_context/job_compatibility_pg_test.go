@@ -11,6 +11,16 @@ import (
 	"mahresources/jobs"
 )
 
+func TestLegacyReplayAuthorizationSerializesWithRetryOnPostgres(t *testing.T) {
+	first, other, _ := newPostgresOwnershipFixture(t, 4)
+	assertLegacyReplaySerialization(t, first, other, false)
+}
+
+func TestLegacyExecuteCommandReplaySerializesWithRetryOnPostgres(t *testing.T) {
+	first, other, _ := newPostgresOwnershipFixture(t, 4)
+	assertLegacyReplaySerialization(t, first, other, true)
+}
+
 func TestCanonicalRetryAndStaleLegacyControlConflictOnPostgres(t *testing.T) {
 	first, _, _ := newPostgresOwnershipFixture(t, 1)
 	sqlDB, err := first.db.DB()

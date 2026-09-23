@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,7 +40,7 @@ type DownloadHistoryContext interface {
 // deployment with one creates a successor Job instead of re-running an execution
 // that already has an outcome (ADR 0007).
 type canonicalDownloadRetry interface {
-	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
+	ProjectDownloadJobForRetry(id string) (download_queue.DownloadProjection, bool, error)
 	DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error)
 	ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error)
 	ReplayJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, bool, error)
@@ -322,8 +323,20 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 	if entry.JobID == "" {
 		return "", "", false, nil
 	}
-	projection, err := canonical.ProjectDownloadJob(entry.JobID)
-	if err != nil || projection.CanonicalJobID == "" {
+	projection, handleFound, err := canonical.ProjectDownloadJobForRetry(entry.JobID)
+	if err != nil {
+		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
+			// A durable handle did resolve, so ErrNotFound means its current target is
+			// hidden. Any other projection failure is also fail-closed: neither case is
+			// evidence that queue-level Retry or payload resubmission is safe.
+			return "", "", true, err
+		}
+		return "", "", false, nil
+	}
+	if projection.CanonicalJobID == "" {
+		if handleFound {
+			return "", "", true, fmt.Errorf("%w: legacy handle has no current Job", jobs.ErrNotFound)
+		}
 		return "", "", false, nil
 	}
 
