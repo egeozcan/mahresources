@@ -5,7 +5,7 @@
  * "hide page-level chrome (keep card-header for overlay)". `.simple` is set on
  * <body>, so it was not page-level: rendered, the contact sheet carries eight
  * matching elements and none of them is that chrome. Seven are headings of
- * overlays that live in the base layout — the jobs cockpit, the lightbox's
+ * overlays that live in the base layout — the Jobs panel, the lightbox's
  * Edit Tags / Info / Crop panels, paste upload, the entity picker and the
  * confirm dialog — four of which are `aria-labelledby` targets, so a sighted
  * user saw a titleless dialog while a screen reader still announced its name.

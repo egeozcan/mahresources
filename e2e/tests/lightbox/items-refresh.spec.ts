@@ -6,8 +6,8 @@ import path from 'path';
  *
  * `initFromDOM()` rebuilds `items` from the cards currently in the DOM. Four callers invoke
  * it without checking whether the viewer is open — most importantly the `download-completed`
- * listener in src/main.js, which fires off the download cockpit's SSE stream with no user
- * action at all. Once `items` is rebuilt, `currentIndex` can point past the end, and because
+ * listener installed by the resource-list refresh coordinator in src/main.js. Once `items`
+ * is rebuilt, `currentIndex` can point past the end, and because
  * lightbox.tpl has no fallback branch every media element unmounts: the viewer stays open
  * over an empty black area, and only closing and reopening recovers (open() clamps).
  *
@@ -188,8 +188,8 @@ test.describe('Lightbox items refresh', () => {
     });
     createdResourceIds.push(added.ID);
 
-    // downloadCockpit.js dispatches exactly this off its SSE stream when a queued job
-    // finishes. main.js re-fetches the page, morphs the list, and re-scans the DOM.
+    // A completed download dispatches this browser event. The list-refresh coordinator
+    // re-fetches the page, morphs the list, and re-scans the DOM.
     await page.evaluate((resourceId) => {
       window.dispatchEvent(
         new CustomEvent('download-completed', { detail: { id: 1, resourceId, status: 'completed' } })

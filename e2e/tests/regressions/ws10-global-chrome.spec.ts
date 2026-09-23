@@ -121,7 +121,7 @@ test.describe('findings 83 and 102 — the jobs trigger must not cover page cont
           const el = document.elementFromPoint(x, y) as HTMLElement | null;
           if (!el) { samples.push('null'); continue; }
           if (el.closest('[data-pagination-next]')) samples.push('next');
-          else if (el.closest('[data-testid="cockpit-trigger"]')) samples.push('jobs-trigger');
+          else if (el.closest('.job-panel-trigger')) samples.push('jobs-trigger');
           else samples.push(el.tagName.toLowerCase());
         }
         return { samples, rect: [rect.left, rect.top, rect.width, rect.height].map(Math.round) };
@@ -161,7 +161,7 @@ test.describe('findings 83 and 102 — the jobs trigger must not cover page cont
       return {
         rect: [rect.left, rect.top, rect.width, rect.height].map(Math.round),
         hit: el?.tagName.toLowerCase() ?? 'null',
-        hitIsTheTrigger: !!el?.closest('[data-testid="cockpit-trigger"]'),
+        hitIsTheTrigger: !!el?.closest('.job-panel-trigger'),
       };
     });
 
@@ -174,18 +174,21 @@ test.describe('findings 83 and 102 — the jobs trigger must not cover page cont
     await page.setViewportSize(DESKTOP);
     await page.goto('/dashboard');
 
-    const trigger = page.locator('[data-testid="cockpit-trigger"]');
+    const trigger = page.getByRole('button', { name: 'Open Jobs panel' });
     await expect(trigger).toBeVisible();
     await trigger.click();
 
-    const panel = page.locator('[data-testid="cockpit-panel"]');
+    const panel = page.locator('#job-center-panel');
     await expect(panel).toBeVisible();
+    await expect.poll(() => page.evaluate(() =>
+      document.activeElement?.closest('#job-center-panel') !== null,
+    )).toBe(true);
     // The panel is fixed and teleported into `.overlays` (deferred-work item 7); if
     // that went wrong it would render behind the page rather than over it.
     const covers = await page.evaluate(() => {
-      const p = document.querySelector('[data-testid="cockpit-panel"]')!.getBoundingClientRect();
+      const p = document.querySelector('#job-center-panel')!.getBoundingClientRect();
       const el = document.elementFromPoint(p.left + p.width / 2, p.top + p.height / 2) as HTMLElement | null;
-      return !!el?.closest('[data-testid="cockpit-panel"]');
+      return !!el?.closest('#job-center-panel');
     });
     expect(covers, 'the panel is painted under the page content').toBe(true);
 

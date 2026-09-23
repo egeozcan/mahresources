@@ -147,7 +147,7 @@ test('menu appears on every registered list layout and not on detail pages', asy
     '/notes', '/notes/timeline', '/groups', '/groups/text', '/groups/timeline',
     '/tags', '/tags/timeline', '/categories', '/categories/timeline', '/resourceCategories',
     '/noteTypes', '/relations', '/relationTypes', '/queries', '/queries/timeline',
-    '/templatePartials', '/downloads', '/logs', '/reductions',
+    '/templatePartials', '/logs', '/reductions',
   ];
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

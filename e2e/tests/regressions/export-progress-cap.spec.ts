@@ -6,8 +6,7 @@
  * everything in the tar (manifest + JSONs + padding). For a small export
  * (e.g., 1 tiny image) this blows past 100% — often reads "5140%".
  *
- * Fix: (a) clamp both label sites (adminExport.tpl and downloadCockpit.js)
- * to Math.min(100, ...). (b) Improve backend totalBytes estimate to
+ * Fix: clamp the admin export label and improve the backend totalBytes estimate to
  * include JSON overhead so the raw number is accurate, not merely clamped.
  *
  * A separate Go unit test covers the backend estimate helper.
@@ -58,20 +57,4 @@ test.describe('BH-015: progress label caps at 100%', () => {
     expect(percent).toBeGreaterThanOrEqual(0);
   });
 
-  test('formatProgress in cockpit caps at 100% for overshoot input', async ({ page }) => {
-    await page.goto('/');
-    // The downloadCockpit factory is re-exposed via window.downloadCockpit (main.js) so we can unit-check formatProgress.
-    const result = await page.evaluate(() => {
-      const fn = (window as any).downloadCockpit;
-      if (typeof fn !== 'function') return { error: 'window.downloadCockpit factory not found' };
-      const inst = fn();
-      return {
-        ok: true,
-        result: inst.formatProgress({ totalSize: 352, progress: 18096, progressPercent: 5140.9 }),
-      };
-    });
-    expect(result).toMatchObject({ ok: true });
-    // Cap at 100.0 — capped format still uses one decimal.
-    expect((result as any).result).toMatch(/\(100\.0%\)/);
-  });
 });

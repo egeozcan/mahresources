@@ -37,7 +37,7 @@ test.describe('BH-035: admin shares dashboard', () => {
 
     // Check a and b, leave c unchecked, then submit from script rather than
     // clicking "Revoke Selected": the default a11y test rendering of the page
-    // has overlay DOM (downloadCockpit, pluginActionModal, pasteUpload) whose
+    // has overlay DOM (pluginActionModal, pasteUpload) whose
     // backdrops can intercept pointer events even when x-show is false, before
     // Alpine finishes initializing. A scripted submit reaches the server
     // regardless of which element is on top.
@@ -91,8 +91,7 @@ test.describe('BH-035: admin shares dashboard', () => {
     // Submit the hidden per-row revoke form directly (its id is
     // admin-share-revoke-form-<noteId>) to avoid the overlay-click
     // interception that sometimes happens while Alpine is still
-    // initializing the layout's lightbox / paste-upload / download-cockpit
-    // modals.
+    // initializing the layout's lightbox / paste-upload modals.
     //
     // form.submit() fires no submit event, so it also sidesteps the
     // confirmAction @submit handler that opens the in-app confirm dialog — the

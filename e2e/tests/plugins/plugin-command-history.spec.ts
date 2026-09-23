@@ -117,9 +117,13 @@ test.describe('administrator plugin command history', () => {
       return runs.find(run => run.ID === queued)?.Status;
     }).toBe('cancelled');
 
+    const firstJobID = (await commandRuns(request)).find(run => run.ID === first)?.JobID as string;
+    expect(firstJobID, 'the command run should have a canonical Job').toBeTruthy();
+
     await page.goto('/plugins/manage');
-    await page.getByTestId('cockpit-trigger').click();
-    const liveRow = page.getByTestId('cockpit-job').filter({ hasText: first });
+    await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    const liveRow = panel.locator(`article:has(a[href="/job?id=${firstJobID}"])`);
     await expect(liveRow).toContainText('Running');
     await expect(liveRow.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(liveRow.getByRole('button', { name: /Pause|Resume|Retry/ })).toHaveCount(0);
@@ -127,8 +131,14 @@ test.describe('administrator plugin command history', () => {
     const liveCancel = liveRow.getByRole('button', { name: 'Cancel' });
     await liveCancel.focus();
     await expect(liveCancel).toBeFocused();
-    const cancelResponsePromise = page.waitForResponse(response => response.url().includes('/v1/jobs/cancel'), { timeout: 30_000 });
+    const cancelResponsePromise = page.waitForResponse(response =>
+      response.url().includes(`/v1/jobs/${firstJobID}/commands/cancel`) && response.request().method() === 'POST',
+      { timeout: 30_000 },
+    );
     await page.keyboard.press('Enter');
+    const confirmation = page.getByRole('alertdialog');
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).last().click();
     const cancelResponse = await cancelResponsePromise;
     expect(cancelResponse.ok(), await cancelResponse.text()).toBe(true);
     await expect.poll(async () => {
@@ -136,11 +146,8 @@ test.describe('administrator plugin command history', () => {
       return runs.find(run => run.ID === first)?.Status;
     }).toBe('cancelled');
     await expect(liveRow).toContainText('Cancelled', { timeout: 10_000 });
-    await expect(page.locator('[role="status"]').filter({ hasText: `Plugin command cancelled: ${first}` })).toBeVisible();
 
-    const history = liveRow.getByRole('link', { name: 'View command history' });
-    await expect(history).toHaveAttribute('href', `/admin/plugin-command-runs?id=${first}`);
-    await history.click();
+    await page.goto(`/admin/plugin-command-runs?id=${first}`);
     await expect(page).toHaveURL(new RegExp(`/admin/plugin-command-runs\\?id=${first}$`));
     await expect(page.getByTestId('command-run-status')).toHaveText('cancelled');
 

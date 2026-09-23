@@ -189,7 +189,7 @@ test.describe('Bulk upload widget', () => {
 
     expect(announced.role).toBe('progressbar');
     expect(announced.valuemax).toBe('100');
-    // Never a bare prefix — the bug downloadCockpit.js:570 documents.
+    // Never a bare prefix: the progressbar needs a useful spoken description.
     expect(announced.label).not.toBe('Upload progress: ');
     expect(announced.label).toContain('of 11 files');
     // The total is known from the picker, so the bar must be determinate.

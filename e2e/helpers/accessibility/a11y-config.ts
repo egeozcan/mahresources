@@ -24,7 +24,7 @@ export const STATIC_PAGES = [
   { path: '/resourceCategories', name: 'Resource categories list' },
   { path: '/templatePartials', name: 'Template partials list' },
   { path: '/logs', name: 'Logs list' },
-  { path: '/downloads', name: 'Downloads list' },
+  { path: '/jobs', name: 'Job Center' },
   { path: '/reductions', name: 'Resource Reductions list' },
 
   // Pages the 2026-07-29 UI bug hunt touched that this sweep did not cover.

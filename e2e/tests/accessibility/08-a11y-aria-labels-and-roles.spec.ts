@@ -16,25 +16,15 @@ test.describe('Jobs Panel - Close button aria-label', () => {
     await page.waitForLoadState('load');
 
     // Open the jobs panel by clicking the trigger button
-    const triggerButton = page.locator('button[aria-label="Open jobs panel"]');
+    const triggerButton = page.getByRole('button', { name: 'Open Jobs panel' });
     await expect(triggerButton).toBeVisible({ timeout: 5000 });
     await triggerButton.click();
 
     // Wait for the panel to open - look for the Jobs heading
-    const jobsHeading = page.locator('h2:has-text("Jobs")');
-    await jobsHeading.waitFor({ state: 'visible', timeout: 5000 });
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    await expect(panel).toBeVisible({ timeout: 5000 });
 
-    // Scoped to the panel by its testid, which is the only locator that means "the
-    // panel's own close button".
-    //
-    // It used to be `.download-cockpit button[aria-label="Close jobs panel"], …` with
-    // `.first()`, and that was already vacuous before the panel moved: the *trigger*
-    // is inside `.download-cockpit` and its aria-label flips to "Close jobs panel"
-    // while the panel is open, so `.first()` always resolved to the trigger and this
-    // test asserted the trigger's label, not the close button's. Since deferred-work
-    // item 7 teleported the panel into `.overlays` the old selector cannot reach the
-    // close button at all.
-    const closeButton = page.locator('[data-testid="cockpit-panel"] button[aria-label="Close jobs panel"]').first();
+    const closeButton = panel.getByRole('button', { name: 'Close Jobs panel', exact: true });
     await closeButton.waitFor({ state: 'visible', timeout: 5000 });
 
     // The close button should have an aria-label since it's icon-only
@@ -43,7 +33,7 @@ test.describe('Jobs Panel - Close button aria-label', () => {
       ariaLabel,
       'Jobs panel close button is icon-only (SVG X) but has no aria-label. ' +
       'Screen readers cannot identify this button. WCAG 4.1.2.'
-    ).toBeTruthy();
+    ).toBe('Close Jobs panel');
   });
 });
 

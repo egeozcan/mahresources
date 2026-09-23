@@ -4,7 +4,7 @@
  * Every one of these is "focus ends up on <body>", which no Go test can see —
  * focus is a runtime property of the document, not of the markup. The shared
  * helpers are in src/utils/focus.js, extracted from the two places that already
- * did this correctly (downloadCockpit.js and reloadShortcode.js).
+ * did this correctly (jobPanel.js and reloadShortcode.js).
  *
  * Two things every test here does, both learned the expensive way:
  *  - It POLLS for the settled focus rather than sampling once. Alpine moves
@@ -283,9 +283,8 @@ test.describe('WS4: focus survives a re-render', () => {
 
     // The saved-query list is server state the whole worker shares, so an exact
     // count is not this test's to assert — other specs save queries too. Assert
-    // the delta instead. (This is the download-cockpit lesson: an assertion
-    // about a shared server's absolute state is not an assertion about your
-    // own behaviour.)
+    // the delta instead. The assertion is about this test's own change, not the
+    // shared server's absolute state.
     const rows = page.locator('[data-saved-id]');
     const before = await rows.count();
     expect(before, 'the two queries this test saved must be listed').toBeGreaterThanOrEqual(2);

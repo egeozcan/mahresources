@@ -251,6 +251,10 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
     ...process.env,
     FILE_ALT_COUNT: '0',
     PLUGIN_COMMAND_PATH: deterministicCommandPath,
+    // This harness starts a fresh, single-process database, so no pre-fence
+    // writer can still be attached while the startup migration advances the
+    // writer epoch and retires legacy plaintext inputs.
+    JOB_MIGRATION_WRITERS_DRAINED: '1',
     // The Job control plane refuses to start a deployment that could accept
     // durable secret work with no replay key it will still hold after a restart:
     // PostgreSQL for the multi-process reason, and a persistent SQLite database

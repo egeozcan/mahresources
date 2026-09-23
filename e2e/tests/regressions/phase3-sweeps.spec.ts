@@ -94,11 +94,11 @@ const focusMatrix: Array<{
     close: async (page) => page.keyboard.press('Escape'),
   },
   {
-    name: 'jobs cockpit, closed with Escape',
+    name: 'jobs panel, closed with Escape',
     path: '/resources',
     open: async (page) => {
-      await page.locator('[data-testid="cockpit-trigger"]').click();
-      await expect(page.locator('[data-testid="cockpit-panel"]')).toBeVisible();
+      await page.getByRole('button', { name: 'Open Jobs panel' }).click();
+      await expect(page.getByRole('dialog', { name: 'Jobs' })).toBeVisible();
     },
     close: async (page) => page.keyboard.press('Escape'),
   },
