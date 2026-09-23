@@ -54,8 +54,8 @@ func TestRegisteredKindCommandSelectorsMatchCommandsPostgres(t *testing.T) {
 		t.Fatalf("create other owner: %v", err)
 	}
 	seedSelectorJobs(t, ctx, &owner.ID, &otherOwner.ID)
-	if got := len(ctx.JobService().Registrations()); got != 8 {
-		t.Fatalf("registered Kind/version count = %d, want 8", got)
+	if got := len(ctx.JobService().Registrations()); got != 11 {
+		t.Fatalf("registered Kind/version count = %d, want 11", got)
 	}
 	admin := jobs.Access{Administrator: true}
 	ownerAccess := jobs.Access{UserID: owner.ID}
