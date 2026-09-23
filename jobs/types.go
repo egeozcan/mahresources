@@ -1103,6 +1103,11 @@ var (
 	// vocabulary this release can answer — an unknown state, a relationship that
 	// is not a LinkType, or a dimension that is not a durable fact.
 	ErrInvalidFilter = errors.New("jobs: invalid filter")
+	// ErrCommandFilterUnavailable means an installed Kind cannot provide an exact
+	// query selector for its dynamic command advertisements. The Service refuses
+	// the read rather than scanning an unbounded Job history or returning an
+	// incomplete page/summary.
+	ErrCommandFilterUnavailable = errors.New("jobs: exact command filter is unavailable")
 	// ErrInvalidCursor is a keyset position that cannot be continued from.
 	ErrInvalidCursor = errors.New("jobs: invalid cursor")
 	// ErrInvalidPage is a page size outside the bound a listing accepts.

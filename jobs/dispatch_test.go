@@ -12,6 +12,8 @@ import (
 
 	"mahresources/constants"
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 // This file drives the dispatch seam the same way a production runtime does:
@@ -34,8 +36,9 @@ type testAdapter struct {
 
 	cleanup func(context.Context, ArtifactCleanupRequest) (ArtifactCleanupResult, error)
 
-	advertise func(context.Context, CommandContext) ([]Command, error)
-	execute   func(context.Context, CommandExecution) (CommandOutcome, error)
+	advertise     func(context.Context, CommandContext) ([]Command, error)
+	selectCommand func(context.Context, CommandFilterRequest) (*gorm.DB, bool, error)
+	execute       func(context.Context, CommandExecution) (CommandOutcome, error)
 
 	mu         sync.Mutex
 	dispatched []Execution
@@ -93,6 +96,13 @@ func (a *testAdapter) Commands(ctx context.Context, commandContext CommandContex
 		return a.advertise(ctx, commandContext)
 	}
 	return nil, nil
+}
+
+func (a *testAdapter) SelectCommandJobs(ctx context.Context, request CommandFilterRequest) (*gorm.DB, bool, error) {
+	if a.selectCommand == nil {
+		return nil, false, nil
+	}
+	return a.selectCommand(ctx, request)
 }
 
 func (a *testAdapter) ExecuteCommand(ctx context.Context, execution CommandExecution) (CommandOutcome, error) {

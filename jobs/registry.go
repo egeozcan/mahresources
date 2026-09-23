@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // This file holds the Kind registry: the one place that knows which kinds of
@@ -48,6 +50,39 @@ type Adapter interface {
 	Commands(context.Context, CommandContext) ([]Command, error)
 	// ExecuteCommand runs one advertised control.
 	ExecuteCommand(context.Context, CommandExecution) (CommandOutcome, error)
+}
+
+// CommandFilterAdapter supplies an exact database selector for one command key.
+// It is separate from Adapter so older adapters can still execute work, but a
+// Service refuses command-filter reads when any registered adapter lacks this
+// query capability rather than falling back to an unbounded per-Job scan.
+type CommandFilterAdapter interface {
+	SelectCommandJobs(context.Context, CommandFilterRequest) (*gorm.DB, bool, error)
+}
+
+// CommandFilterRequest asks one Kind adapter to select Jobs where its Commands
+// method would advertise Key to Access. Jobs is an unpaginated query already
+// narrowed to the registered Kind/version, the shared visibility predicate,
+// and every ordinary list filter. Deps.DB is the same per-call handle (and the
+// caller's transaction for summary reads).
+//
+// When supported is false, the adapter guarantees it never advertises Key for
+// this Kind/version. When true, the returned query must select exactly the
+// matching jobs.id values, with no filesystem scans or per-Job N+1 reads. The
+// Service intersects it with its own visibility and filter query again, so an
+// adapter cannot widen what the caller may see or remove a request filter.
+type CommandFilterRequest struct {
+	Deps   Deps
+	Access Access
+	Key    string
+	Jobs   *gorm.DB
+}
+
+// CommandFilterKind is one (Kind, version) entry a caller expects this process
+// to register before enabling exact command-filter reads.
+type CommandFilterKind struct {
+	Kind    string
+	Version uint
 }
 
 // AdapterRegistration pairs a Kind's fixed definition with the adapter that runs
@@ -115,6 +150,49 @@ func (s *Service) Registrations() []AdapterRegistration {
 		return registered[i].Definition.KindVersion < registered[j].Definition.KindVersion
 	})
 	return registered
+}
+
+// ValidateCommandFilterCoverage checks the registered command-selector
+// inventory against the canonical Kind inventory a caller intends to expose.
+// Supplying the full expected inventory makes an omitted registration (for
+// example, a plugin-command Kind missing from this build) a cutover error rather
+// than a silent hole in command-filter results.
+func (s *Service) ValidateCommandFilterCoverage(expected []CommandFilterKind) error {
+	registered := make(map[kindVersion]AdapterRegistration)
+	for _, registration := range s.Registrations() {
+		key := kindVersion{kind: registration.Definition.Kind, version: registration.Definition.KindVersion}
+		registered[key] = registration
+		if _, ok := registration.Adapter.(CommandFilterAdapter); !ok {
+			return fmt.Errorf("%w: %s v%d has no Kind command selector",
+				ErrCommandFilterUnavailable, key.kind, key.version)
+		}
+	}
+
+	seen := make(map[kindVersion]struct{}, len(expected))
+	for _, required := range expected {
+		if strings.TrimSpace(required.Kind) == "" || required.Version == 0 {
+			return fmt.Errorf("%w: invalid expected Kind %q v%d",
+				ErrCommandFilterUnavailable, required.Kind, required.Version)
+		}
+		key := kindVersion{kind: required.Kind, version: required.Version}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("%w: duplicate expected Kind %s v%d",
+				ErrCommandFilterUnavailable, key.kind, key.version)
+		}
+		seen[key] = struct{}{}
+		registration, ok := registered[key]
+		if !ok {
+			return fmt.Errorf("%w: expected Kind %s v%d is not registered",
+				ErrCommandFilterUnavailable, key.kind, key.version)
+		}
+		if _, ok := registration.Adapter.(CommandFilterAdapter); !ok {
+			// Kept explicit although the all-registrations pass above checks this:
+			// it documents the two halves of the gate at the inventory boundary.
+			return fmt.Errorf("%w: expected Kind %s v%d has no selector",
+				ErrCommandFilterUnavailable, key.kind, key.version)
+		}
+	}
+	return nil
 }
 
 // adapterFor returns the adapter registered for one (Kind, version) pair, or
