@@ -624,6 +624,7 @@ func TestShutdownTimeoutLeavesRunningGroupForRecovery(t *testing.T) {
 	if err := recovery.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitForTestProcessExit(t, descendantPID, time.Second)
 	identity, err := (nativeProcessInspector{}).InspectGroup(pgid, runID)
 	if err != nil || identity.State != GroupDead {
 		t.Fatalf("recovery returned before terminating descendant %d: identity=%+v err=%v", descendantPID, identity, err)

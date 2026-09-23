@@ -40,6 +40,24 @@ func assertNativeZombieOnlyGroupIsDead(t *testing.T) {
 	}
 }
 
+func waitForTestProcessExit(t testing.TB, pid int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		alive, err := testProcessHasLiveState(pid)
+		if err != nil {
+			t.Fatalf("inspect descendant process %d: %v", pid, err)
+		}
+		if !alive {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("descendant process %d remained live after %s", pid, timeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestNativeProcessInspectorTreatsZombieOnlyGroupAsDead(t *testing.T) {
 	assertNativeZombieOnlyGroupIsDead(t)
 }
