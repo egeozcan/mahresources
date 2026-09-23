@@ -308,6 +308,17 @@ func (ctx *MahresourcesContext) importPlanExists(handle string) bool {
 	return err == nil && exists
 }
 
+// importPlanIsComplete verifies the durable file's identity and required header.
+// The writer publishes by atomic rename, but reconciliation still validates the
+// serialized artifact before treating it as a completed parse.
+func (ctx *MahresourcesContext) importPlanIsComplete(handle string) bool {
+	if !ctx.importPlanExists(handle) {
+		return false
+	}
+	plan, err := ctx.LoadImportPlan(handle)
+	return err == nil && plan != nil && plan.JobID == handle && plan.SchemaVersion > 0
+}
+
 // importStagedFileExists reports whether one staging path is readable, which is how
 // this Kind asks whether the file it was admitted with is still there.
 func (ctx *MahresourcesContext) importStagedFileExists(path string) bool {
@@ -518,20 +529,28 @@ func (a *importParseAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 		return jobs.ReconcileExternalWorkUnproven, nil
 	}
 	if _, published := findJobOutput(outputs, jobImportPlanOutput); published {
-		if _, statErr := a.ctx.GetDefaultFs().Stat(importPlanPathFor(input.Handle)); statErr != nil {
+		if !a.ctx.importPlanIsComplete(input.Handle) {
 			return jobs.ReconcileFail, nil
 		}
 		return jobs.ReconcileSucceed, nil
 	}
-	if a.ctx.importPlanExists(input.Handle) {
-		// The plan is there and unrecorded: publish it under the expired claim's own
-		// token and end the Job successfully — exactly what the execution that died
-		// would have done.
+	if a.ctx.importPlanIsComplete(input.Handle) {
+		// A complete plan can be renamed into place while ParseImport is still
+		// returning. Its existence is not proof the queue executor has ended; only
+		// a dead owning runtime or the output published by its terminal handoff is.
+		if !runtimeIsProvedGone(request) {
+			return jobs.ReconcileExternalWorkUnproven, nil
+		}
+		// The owner is proved gone, so publish this complete plan under the expired
+		// claim's token and settle the execution that produced it.
 		if err := a.ctx.publishQueueReport(request.Execution, jobImportPlanOutput, "Import plan",
 			importPlanPathFor(input.Handle), true); err != nil {
 			return jobs.ReconcileExternalWorkUnproven, nil
 		}
 		return jobs.ReconcileSucceed, nil
+	}
+	if !runtimeIsProvedGone(request) {
+		return jobs.ReconcileExternalWorkUnproven, nil
 	}
 	if a.ctx.importArchiveExists(input.Handle) {
 		// Nothing was produced and the archive is still there. Running the parse

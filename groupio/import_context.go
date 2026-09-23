@@ -2,9 +2,13 @@ package groupio
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -151,9 +155,17 @@ func (ctx *opCtx) loadPlanAt(path string) (*ImportPlan, error) {
 	}
 	defer f.Close()
 
+	decoder := json.NewDecoder(f)
 	var plan ImportPlan
-	if err := json.NewDecoder(f).Decode(&plan); err != nil {
+	if err := decoder.Decode(&plan); err != nil {
 		return nil, fmt.Errorf("decode plan: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, errors.New("decode plan: multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode plan trailing data: %w", err)
 	}
 	return &plan, nil
 }
@@ -194,7 +206,9 @@ func (ctx *opCtx) DeleteImportFiles(jobID string) error {
 	return nil
 }
 
-// persistImportPlan writes the plan as JSON to _imports/<jobID>.plan.json.
+// persistImportPlan writes a complete plan beside its final path, then renames it
+// into place. A reconciler treats the final path as durable evidence, so it must
+// never observe a file while this executor is still filling it.
 func (ctx *opCtx) persistImportPlan(plan *ImportPlan) error {
 	planPath := importPlanPath(plan.JobID)
 	dir := filepath.Dir(planPath)
@@ -207,7 +221,35 @@ func (ctx *opCtx) persistImportPlan(plan *ImportPlan) error {
 		return fmt.Errorf("marshal plan: %w", err)
 	}
 
-	return afero.WriteFile(ctx.fs, planPath, data, 0644)
+	nonce := make([]byte, 12)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("generate plan staging name: %w", err)
+	}
+	tempPath := planPath + ".tmp-" + hex.EncodeToString(nonce)
+	f, err := ctx.fs.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("create staged plan: %w", err)
+	}
+	defer func() { _ = ctx.fs.Remove(tempPath) }()
+
+	n, writeErr := f.Write(data)
+	if writeErr == nil && n != len(data) {
+		writeErr = io.ErrShortWrite
+	}
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write staged plan: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close staged plan: %w", closeErr)
+	}
+	if err := ctx.fs.Rename(tempPath, planPath); err != nil {
+		return fmt.Errorf("publish staged plan: %w", err)
+	}
+	return nil
 }
 
 func importPlanPath(jobID string) string {

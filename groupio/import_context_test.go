@@ -241,6 +241,21 @@ func TestParseImport_BasicPlan(t *testing.T) {
 	}
 }
 
+func TestLoadImportPlanRejectsTrailingPartialJSON(t *testing.T) {
+	ctx := createTestContext(t)
+	if err := ctx.fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("create imports directory: %v", err)
+	}
+	path := importPlanPath("partial")
+	if err := afero.WriteFile(ctx.fs, path,
+		[]byte(`{"job_id":"partial","schema_version":1} {"truncated":`), 0o644); err != nil {
+		t.Fatalf("write partial plan: %v", err)
+	}
+	if _, err := ctx.LoadImportPlan("partial"); err == nil {
+		t.Fatal("LoadImportPlan accepted a complete JSON object followed by a partial value")
+	}
+}
+
 func TestParseImport_AmbiguousNoteType(t *testing.T) {
 	ctx := createTestContext(t)
 

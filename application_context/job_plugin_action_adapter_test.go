@@ -99,6 +99,18 @@ end
 function nested_work(ctx)
     local token = ctx.params.credentials.token
     local recipient = ctx.params.recipients[1]
+    local pin = ctx.params.credentials.pin
+    if pin ~= nil then
+        local pin_text = tostring(pin)
+        local encoded_pin = mah.json.encode(pin)
+        mah.job_progress(ctx.job_id, 30, "checking pin " .. pin_text .. " JSON " .. encoded_pin)
+        mah.job_complete(ctx.job_id, {
+            message = "checked pin " .. pin_text .. " JSON " .. encoded_pin,
+            credentials = { pin = pin },
+            encoded_pin = encoded_pin,
+        })
+        return
+    end
     mah.job_progress(ctx.job_id, 25, "touching " .. token .. " for " .. recipient)
     mah.job_complete(ctx.job_id, {
         message = "finished for " .. recipient,
@@ -1110,6 +1122,47 @@ func TestAShortPluginParameterIsRedactedFromEveryReportSurface(t *testing.T) {
 		t.Fatalf("forget the short parameter's input: %v", err)
 	}
 	assertNoSecretInJobSurfaces(t, ctx, jobID, token)
+}
+
+// TestANumericPluginParameterIsRedactedFromTextAndTypedResults covers a JSON
+// number echoed both through Lua's string conversion and as a typed result value.
+func TestANumericPluginParameterIsRedactedFromTextAndTypedResults(t *testing.T) {
+	const pin = "1000000"
+	ctx := newPluginActionJobContext(t)
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "nested-work", 9,
+		map[string]any{
+			"credentials": map[string]any{"pin": 1000000},
+			"recipients":  []any{"unused"},
+		}, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the numeric-secret action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, pin)
+}
+
+func TestABooleanPluginParameterIsRedactedFromTextAndTypedResults(t *testing.T) {
+	ctx := newPluginActionJobContext(t)
+	_, jobID, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "nested-work", 9,
+		map[string]any{
+			"credentials": map[string]any{"pin": true},
+			"recipients":  []any{"unused"},
+		}, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	finished := waitForJobState(t, ctx, jobID, "the action to succeed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the boolean-secret action ended %s (%+v)", finished.State, finished.Failure)
+	}
+	assertNoSecretInJobSurfaces(t, ctx, jobID, "true")
 }
 
 // assertNoSecretInJobSurfaces reads every surface a viewer can list and refuses a

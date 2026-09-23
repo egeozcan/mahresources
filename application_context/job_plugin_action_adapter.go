@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -870,7 +871,90 @@ func (s *pluginActionSink) sanitizedValue(value any) any {
 		}
 		return values
 	default:
+		if pluginParamHasSameScalar(value, s.input) {
+			return pluginActionRedactionMarker
+		}
 		return value
+	}
+}
+
+func pluginParamHasSameScalar(value any, input *pluginActionJobInput) bool {
+	if input == nil {
+		return false
+	}
+	var matches func(any) bool
+	matches = func(param any) bool {
+		switch typed := param.(type) {
+		case map[string]any:
+			for _, nested := range typed {
+				if matches(nested) {
+					return true
+				}
+			}
+		case []any:
+			for _, nested := range typed {
+				if matches(nested) {
+					return true
+				}
+			}
+		default:
+			if scalarValuesEqual(value, param) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, param := range input.Params {
+		if matches(param) {
+			return true
+		}
+	}
+	return false
+}
+
+func scalarValuesEqual(left, right any) bool {
+	if l, ok := left.(bool); ok {
+		r, rightOK := right.(bool)
+		return rightOK && l == r
+	}
+	if l, ok := pluginNumericValue(left); ok {
+		r, rightOK := pluginNumericValue(right)
+		return rightOK && l == r
+	}
+	return false
+}
+
+func pluginNumericValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int8:
+		return float64(typed), true
+	case int16:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case uint:
+		return float64(typed), true
+	case uint8:
+		return float64(typed), true
+	case uint16:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	default:
+		return 0, false
 	}
 }
 
@@ -937,8 +1021,27 @@ func appendPluginParamValues(values []string, value any) []string {
 		if encoded, err := json.Marshal(typed); err == nil && len(encoded) > 0 {
 			values = append(values, string(encoded))
 		}
+	case bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+		values = appendPluginScalarText(values, typed)
 	default:
-		// nil, and the numeric or boolean scalars a JSON body produces.
+		// nil has no text representation a plugin can supply as a scalar.
+	}
+	return values
+}
+
+func appendPluginScalarText(values []string, value any) []string {
+	values = append(values, fmt.Sprint(value))
+	if number, ok := pluginNumericValue(value); ok {
+		// Go's default float formatting uses exponent notation for some integral
+		// values, while gopher-lua's LNumber.String emits those as decimal
+		// integers. JSON encoding also has its own decimal representation.
+		values = append(values, strconv.FormatFloat(number, 'f', -1, 64))
+		if number == float64(int64(number)) {
+			values = append(values, strconv.FormatInt(int64(number), 10))
+		}
+		if encoded, err := json.Marshal(value); err == nil {
+			values = append(values, string(encoded))
+		}
 	}
 	return values
 }

@@ -1,3 +1,33 @@
+# Job Center post-Task-9 checkpoint, sixth round — import plan publication and scalar redaction (2026-09-23)
+
+**Goal:** Close the post-round-4 Spec review findings: an import reconciler could treat a
+partially written plan as completed work, and plugin-action redaction omitted numeric and
+boolean parameter leaves in both echoed text and typed result values.
+
+## Findings closed
+
+| Finding (P1) | Fix | Regression |
+|---|---|---|
+| Import parse exposed its final plan path before writing was complete, and existence alone let another runtime succeed/release the claim | Write and sync a unique same-directory staging file, then atomically rename it; validate the plan's identity/header and only settle an unpublished plan after the owner is proved gone. An already-published plan output is the terminal handoff. | `TestASecondRuntimeCannotSettleAnImportFromAPlanBeforeItsExecutorIsQuiescent` holds a partial write and the post-rename/pre-return interval across two contexts |
+| Numeric and boolean plugin parameter leaves escaped text/result redaction | Collect Go, Lua integer-style, and JSON numeric text forms recursively; replace matching typed scalar results as well as text | `TestANumericPluginParameterIsRedactedFromTextAndTypedResults` (including `1000000` through `tostring` and `mah.json.encode`), `TestABooleanPluginParameterIsRedactedFromTextAndTypedResults` |
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./groupio ./application_context ./server/api_tests -count=1` — passed.
+- `npm run build` — passed (Vite reports the existing large `main.js` chunk warning).
+- Import browser E2E — 2 passed; `go vet --tags 'json1 fts5' ./groupio ./application_context`, `gofmt`, and `git diff --check` — clean.
+- `go test -race --tags 'json1 fts5' ./groupio ./application_context -count=1 -timeout 25m` — passed.
+- Red evidence: before atomic publication, the cross-runtime import regression observed `succeed`
+  while the plan writer was held halfway through the final-path write. Before scalar redaction,
+  the numeric plugin regression exposed `123456` in progress text; the expanded `1000000`
+  case exercises Lua `tostring`, `mah.json.encode`, and a typed result.
+
+## Files, commits and artifact
+
+- Code-fix commit: this round's `fix(jobs): ...` commit on `master`.
+- Baseline: `5a9ed0d65fc8859140228e83d75f1df97630264e`.
+
 # Job Center post-Task-9 checkpoint, fifth round — close the Astra round-4 review (2026-09-23)
 
 **Goal:** Close the six P1s a fresh Astra cumulative review of `e60a7007` raised after Task 9 —
