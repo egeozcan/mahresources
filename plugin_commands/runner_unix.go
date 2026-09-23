@@ -256,7 +256,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if e.deps.Store == nil || e.deps.Settings == nil {
 		return Outcome{Status: RunStatusFailed, Error: "plugin command runner dependencies are incomplete"}
 	}
-	outputSecrets := commandOutputSecrets(run)
+	outputSecrets, inputCoverageIncomplete := commandOutputSecrets(run)
 	defer clearCommandOutputSecrets(outputSecrets)
 	started := time.Now().UTC()
 	won, err := e.deps.Store.MarkRunRunning(run.RunID, started)
@@ -375,7 +375,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		stdoutW.Close()
 		stderrW.Close()
 		<-drainDone
-		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", startErr), OutputTail: redactCommandOutputTail(tail.String(), outputSecrets), FinishedAt: time.Now().UTC()})
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", startErr), OutputTail: redactCommandOutputTail(tail.String(), outputSecrets, inputCoverageIncomplete), FinishedAt: time.Now().UTC()})
 	}
 	if e.afterStart != nil {
 		e.afterStart()
@@ -674,7 +674,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if forcedCleanup && finish.Error == "" {
 		finish.Error = "command cleanup exceeded its deadline"
 	}
-	finish.OutputTail = redactCommandOutputTail(tail.String(), outputSecrets)
+	finish.OutputTail = redactCommandOutputTail(tail.String(), outputSecrets, inputCoverageIncomplete)
 	return e.finish(run, finish)
 }
 

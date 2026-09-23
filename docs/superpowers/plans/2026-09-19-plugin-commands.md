@@ -666,7 +666,7 @@ Resolve `argv[0]` with a private `resolveExecutable(base, Settings.CommandPath()
 
 - [x] **Step 4: Add the bounded combined tail**
 
-Drain both pipes concurrently into one mutex-protected 64 KiB ring. Strip terminal control characters before persistence, but preserve ordinary newlines/text. Do not HTML-escape in storage; escape at render time so JSON clients receive text rather than HTML entities.
+Drain both pipes concurrently into one mutex-protected 64 KiB ring. Strip terminal control characters before persistence. Redact exact declared-sensitive parameter values and supplied input patterns: the full normalized file, its first 256 nonempty lines, and up to 256 recognized credential values per file. If a line or credential parser limit is reached, or input remains unscanned, persist only `[redacted]` for the entire output tail so an uncollected partial echo cannot escape. When scanning completes, preserve ordinary newlines and text. Do not HTML-escape in storage; escape at render time so JSON clients receive text rather than HTML entities.
 
 - [x] **Step 5: Implement timeout, cancellation and group-death finalization**
 

@@ -313,6 +313,53 @@ func TestPluginCommandPartialMultilineInputEchoIsAbsentFromPersistedOutput(t *te
 	}
 }
 
+func TestPluginCommandIncompleteInputRedactionCoverageSuppressesPersistedAndDetailOutput(t *testing.T) {
+	harness := newCommandInputHarness(t)
+	fields := make([]string, 0, 257)
+	for i := 0; i < 256; i++ {
+		fields = append(fields, fmt.Sprintf("COOKIE_%03d=covered-cookie-value-%03d", i, i))
+	}
+	const lateCookieValue = "uncovered-cookie-value-257"
+	fields = append(fields, "TARGET="+lateCookieValue)
+	content := "Cookie: " + strings.Join(fields, "; ") + "\n"
+	declaration := plugin_commands.Declaration{
+		Name: "echo-late-cookie", Timeout: 30 * time.Second,
+		Argv:   []string{"sh", "-c", "line=$(cat cookies.txt); value=${line##*;}; value=${value#*=}; printf '%s\\n' \"$value\"; printf 'safe-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	runID, err := harness.dispatcher.Submit(plugin_commands.CommandRequest{
+		PluginName: "plug", Declaration: declaration,
+		Inputs: map[string]string{"cookies.txt": content},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.waitTerminal(t, runID, plugin_commands.RunStatusSucceeded)
+
+	var storedOutput models.PluginCommandRunOutput
+	if err := harness.ctx.db.First(&storedOutput, "run_id = ?", runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(storedOutput.OutputTail, lateCookieValue) {
+		t.Fatalf("plugin_command_run_outputs.output_tail persisted a partial echo after the input token-pattern budget: %q", storedOutput.OutputTail)
+	}
+	if storedOutput.OutputTail != "[redacted]" {
+		t.Fatalf("incomplete input coverage should redact the whole persisted tail, got %q", storedOutput.OutputTail)
+	}
+
+	view, available, err := harness.ctx.GetPluginCommandRun(runID)
+	if err != nil || !available {
+		t.Fatalf("read command detail: available=%t err=%v", available, err)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), lateCookieValue) || view.Output.OutputTail != "[redacted]" {
+		t.Fatalf("command detail exposed a partial input secret or unfiltered tail: %s", encoded)
+	}
+}
+
 func TestPluginCommandInputsAreSweptWithTheExpiredFolderAgainstTheRealStore(t *testing.T) {
 	harness := newCommandInputHarness(t)
 	runID, err := harness.dispatcher.Submit(plugin_commands.CommandRequest{

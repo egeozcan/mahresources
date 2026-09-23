@@ -9,18 +9,22 @@ import (
 const (
 	maxCommandOutputInputLinePatterns  = 256
 	maxCommandOutputInputTokenPatterns = 256
+	maxCommandOutputInputFields        = maxCommandOutputInputTokenPatterns + 2
 	minCommandOutputTokenBytes         = 8
 )
 
 // commandOutputSecrets returns the values the host knows are secret: exact
 // declared-sensitive parameter values, plus bounded patterns from supplied
 // inputs. Input patterns include the whole file, its first 256 nonempty lines,
-// and up to 256 recognized credential values per file. Patterns pass through
-// the same terminal-control filter as captured output. The copies survive the
+// and up to 256 recognized credential values per file. If those bounds leave
+// any input content without line coverage or a credential parser limit is
+// reached, the caller discards the captured tail. Patterns pass through the
+// same terminal-control filter as captured output. The copies survive the
 // runner's input-memory cleanup until the tail is sanitized.
-func commandOutputSecrets(run QueuedRun) [][]byte {
+func commandOutputSecrets(run QueuedRun) ([][]byte, bool) {
 	secrets := make([][]byte, 0, len(run.Request.Declaration.SensitiveParams)+len(run.Inputs))
 	seen := make(map[[sha256.Size]byte][]int)
+	incomplete := false
 	addNormalized := func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -54,7 +58,8 @@ func commandOutputSecrets(run QueuedRun) [][]byte {
 		normalized := normalizeCommandOutputBytes(input.Content)
 		addNormalized(normalized)
 		linePatterns, tokenPatterns := 0, 0
-		for start := 0; start < len(normalized) && (linePatterns < maxCommandOutputInputLinePatterns || tokenPatterns < maxCommandOutputInputTokenPatterns); {
+		start := 0
+		for start < len(normalized) && (linePatterns < maxCommandOutputInputLinePatterns || tokenPatterns < maxCommandOutputInputTokenPatterns) {
 			end := start + bytes.IndexByte(normalized[start:], '\n')
 			if end < start {
 				end = len(normalized)
@@ -64,19 +69,34 @@ func commandOutputSecrets(run QueuedRun) [][]byte {
 				if linePatterns < maxCommandOutputInputLinePatterns {
 					add(line)
 					linePatterns++
+				} else {
+					incomplete = true
 				}
 				if tokenPatterns < maxCommandOutputInputTokenPatterns && hasCommandOutputCredentialSyntax(line) {
-					tokenPatterns += addCommandOutputInputTokens(line, maxCommandOutputInputTokenPatterns-tokenPatterns, add)
+					added, fieldLimitReached := addCommandOutputInputTokens(line, maxCommandOutputInputTokenPatterns-tokenPatterns, add)
+					tokenPatterns += added
+					if fieldLimitReached {
+						incomplete = true
+					}
+					// A full budget may have stopped in the middle of this line.
+					if tokenPatterns >= maxCommandOutputInputTokenPatterns {
+						incomplete = true
+					}
 				}
 			}
 			if end == len(normalized) {
+				start = len(normalized)
 				break
 			}
 			start = end + 1
 		}
+		if start < len(normalized) {
+			// Both pattern budgets were exhausted before all input was scanned.
+			incomplete = true
+		}
 		clear(normalized)
 	}
-	return secrets
+	return secrets, incomplete
 }
 
 func hasCommandOutputCredentialSyntax(line []byte) bool {
@@ -100,19 +120,20 @@ func normalizeCommandOutputBytes(value []byte) []byte {
 
 // addCommandOutputInputTokens recognizes common credential fields in input
 // lines: name=value pairs, credential headers, Bearer/Basic values, and
-// Netscape cookie rows. It returns the number of candidates consumed so the
-// caller can keep the per-input token budget bounded.
-func addCommandOutputInputTokens(line []byte, budget int, add func([]byte)) int {
+// Netscape cookie rows. It returns the number of candidates consumed and
+// whether the field parser reached its ceiling.
+func addCommandOutputInputTokens(line []byte, budget int, add func([]byte)) (int, bool) {
 	if budget <= 0 {
-		return 0
+		return 0, false
 	}
 	initialBudget := budget
-	fields := commandOutputInputFields(line, maxCommandOutputInputTokenPatterns+2, true)
+	fields := commandOutputInputFields(line, maxCommandOutputInputFields, true)
+	fieldLimitReached := len(fields) == maxCommandOutputInputFields
 	if cookieValue, ok := netscapeCookieValue(line); ok {
 		add(cookieValue)
 		budget--
 		if budget == 0 {
-			return initialBudget
+			return initialBudget, fieldLimitReached
 		}
 	}
 
@@ -175,7 +196,7 @@ func addCommandOutputInputTokens(line []byte, budget int, add func([]byte)) int 
 			}
 		}
 	}
-	return initialBudget - budget + used
+	return initialBudget - budget + used, fieldLimitReached
 }
 
 func commandOutputInputFields(line []byte, limit int, splitCookieDelimiters bool) [][]byte {
@@ -257,10 +278,15 @@ func maxCommandOutputSecretLength(secrets [][]byte) int {
 }
 
 // redactCommandOutputTail scrubs exact known values from the terminal-filtered
-// capture, then applies the public tail limit. The runner retains at most one
-// tail plus the longest known value, so a secret crossing the final truncation
-// boundary is still present in full when this function scans it.
-func redactCommandOutputTail(output string, secrets [][]byte) string {
+// capture, then applies the public tail limit. When input scanning was
+// incomplete, it discards the whole tail because an uncollected value could be
+// echoed partially. The runner retains at most one tail plus the longest known
+// value, so a secret crossing the final truncation boundary is still present
+// in full when this function scans it.
+func redactCommandOutputTail(output string, secrets [][]byte, inputCoverageIncomplete bool) string {
+	if inputCoverageIncomplete {
+		return redactedValue
+	}
 	remaining := []byte(output)
 	defer clear(remaining)
 	if len(secrets) > 0 {

@@ -75,7 +75,9 @@ type RunFinish struct {
 	ExitCode *int
 	Error    string
 	// OutputTail is the bounded terminal-filtered capture after the runner has
-	// redacted exact declared-sensitive parameter values and supplied inputs.
+	// redacted exact declared-sensitive parameter values and supplied-input
+	// patterns. If input scanning reaches a per-file pattern/parser bound, the
+	// runner stores only the redaction marker for the tail.
 	OutputTail       string
 	OutputUnverified bool
 	FinishedAt       time.Time

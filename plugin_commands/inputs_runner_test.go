@@ -261,6 +261,122 @@ func TestRunnerRedactsLinesAndTokenizedValuesFromMultilineInput(t *testing.T) {
 	}
 }
 
+func TestRunnerFailsClosedWhenInputRedactionPatternBudgetIsReached(t *testing.T) {
+	var fields []string
+	for i := 0; i < maxCommandOutputInputTokenPatterns; i++ {
+		fields = append(fields, fmt.Sprintf("COOKIE_%03d=covered-cookie-value-%03d", i, i))
+	}
+	const lateCookieValue = "uncovered-cookie-value-257"
+	fields = append(fields, "TARGET="+lateCookieValue)
+	content := "Cookie: " + strings.Join(fields, "; ") + "\n"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(content)})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-late-cookie", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "line=$(cat cookies.txt); value=${line##*;}; value=${value#*=}; printf '%s\\n' \"$value\"; printf 'safe-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.OutputTail, lateCookieValue) {
+		t.Fatalf("output retained a partial echo after the input token-pattern budget: %q", output.OutputTail)
+	}
+	if output.OutputTail != redactedValue {
+		t.Fatalf("incomplete input coverage should redact the whole tail, got %q", output.OutputTail)
+	}
+}
+
+func TestRunnerFailsClosedWhenInputLinePatternCoverageIsExceeded(t *testing.T) {
+	lines := make([]string, 0, maxCommandOutputInputLinePatterns+1)
+	for i := 0; i < maxCommandOutputInputLinePatterns; i++ {
+		lines = append(lines, fmt.Sprintf("ordinary-line-%03d", i))
+	}
+	const lateLineSecret = "opaque-line-secret-at-257"
+	lines = append(lines, lateLineSecret)
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(strings.Join(lines, "\n") + "\n")})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-late-line", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "n=0; while IFS= read -r line; do n=$((n + 1)); if [ \"$n\" -eq 257 ]; then printf '%s\\n' \"$line\"; fi; done < cookies.txt", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.OutputTail, lateLineSecret) {
+		t.Fatalf("output retained an echo after the input line-pattern limit: %q", output.OutputTail)
+	}
+	if output.OutputTail != redactedValue {
+		t.Fatalf("incomplete input coverage should redact the whole tail, got %q", output.OutputTail)
+	}
+}
+
+func TestRunnerFailsClosedWhenCredentialFieldParsingIsTruncated(t *testing.T) {
+	fields := make([]string, 0, maxCommandOutputInputTokenPatterns+3)
+	for i := 0; i < maxCommandOutputInputTokenPatterns+2; i++ {
+		fields = append(fields, fmt.Sprintf("ordinary-field-%03d", i))
+	}
+	const lateFieldSecret = "unparsed-cookie-value-257"
+	fields = append(fields, "TOKEN="+lateFieldSecret)
+	content := strings.Join(fields, " ") + "\n"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(content)})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-unparsed-field", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "line=$(cat cookies.txt); value=${line##* }; value=${value#*=}; printf '%s\\n' \"$value\"; printf 'safe-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.OutputTail, lateFieldSecret) {
+		t.Fatalf("output retained an echo after credential-field parsing was truncated: %q", output.OutputTail)
+	}
+	if output.OutputTail != redactedValue {
+		t.Fatalf("incomplete input coverage should redact the whole tail, got %q", output.OutputTail)
+	}
+}
+
 func TestRunnerRedactsSuppliedInputAfterTerminalControlsAreStripped(t *testing.T) {
 	const printableSecret = "CONTROLLEDinput-corpus-34b1"
 	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte("CONTROLLED\x00input-corpus-34b1")})
