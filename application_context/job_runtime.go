@@ -110,7 +110,7 @@ func NewJobRuntime(ctx *MahresourcesContext, service *jobs.Service, config JobRu
 	// place the number comes from: the runtime and the host-side claim paths (a
 	// plugin action's own process) share it, so "the deployment is running as much
 	// as it may" is one fact rather than two counts that can disagree.
-	if config.GlobalCapacity <= 0 && ctx != nil {
+	if config.GlobalCapacity <= 0 && ctx != nil && ctx.Config != nil {
 		config.GlobalCapacity = ctx.Config.MaxJobConcurrency
 	}
 	if config.QuiesceTimeout <= 0 {
@@ -279,7 +279,7 @@ func deploymentCapacityBudget(limit int) []jobs.CapacityRef {
 // the deployment's own budget, so a host-side execution and a polling runtime's
 // execution are admitted against one count rather than two.
 func (ctx *MahresourcesContext) hostClaimCapacityBudget() []jobs.CapacityRef {
-	if ctx == nil {
+	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
 	return deploymentCapacityBudget(ctx.Config.MaxJobConcurrency)
