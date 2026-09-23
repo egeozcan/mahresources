@@ -41,6 +41,26 @@ the million-row fixture.
 These timings are one local run after fixture construction, included as
 practical evidence rather than a performance guarantee.
 
+**Retention and dispatch selector evidence:** The same opt-in fixture now gives
+terminal Jobs a finish time and a 30-day expiry, leaving roughly 296,000 of the
+million rows due for retention. It captures the production `sweepBound`,
+`expiredJobs` 50-row page, and `nextClaimable` selectors. In this run:
+
+| Selector | SQLite | PostgreSQL |
+|---|---|---|
+| Retention bound | 280 ms; `idx_jobs_retention`, then a temporary B-tree sort | 52 ms total (41 ms plan execution); parallel `idx_jobs_expiry` scan and top-N sort |
+| Retention candidate page | 270 ms for 50 rows; `idx_jobs_retention` and a temporary B-tree sort | 36.5 ms total (38 ms plan execution); parallel `idx_jobs_expiry` scan and top-N sort |
+| Claim candidate | 142 ms; `idx_jobs_kind_state` followed by a temporary B-tree sort | 0.66 ms total (0.018 ms plan execution); ordered `idx_jobs_admin_order` scan stopped after 35 filtered rows |
+
+The claim and retention selectors run in background dispatch and sweep paths;
+they do not add work to a Job list or summary request. The SQLite plans show
+sort work at this scale and dispatch can wait on its candidate read for about
+142 ms in this fixture. PostgreSQL stays below 53 ms for the retention reads
+and below 1 ms for candidate selection. No release-blocking user-facing impact
+was indicated, so this evidence does not justify a product change by itself.
+These are single local measurements; `EXPLAIN ANALYZE` on PostgreSQL and the
+selector wall times include the current test container, cache state, and schema.
+
 ---
 
 # Job Center post-Task-9 checkpoint, ninth round — receipt cascade and mutable Resource hash (2026-09-23)

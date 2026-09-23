@@ -51,8 +51,9 @@ func (c *jobQueryCapture) snapshot() []capturedJobQuery {
 }
 
 // TestJobQueryPlansMillionRowsSQLite seeds the production Job schema and then
-// captures plans and timings from the public list and summary service methods.
-// The matching PostgreSQL case lives in query_plan_postgres_test.go.
+// captures plans and timings from the public list and summary service methods,
+// plus the selectors used by retention and dispatch. The matching PostgreSQL
+// case lives in query_plan_postgres_test.go.
 func TestJobQueryPlansMillionRowsSQLite(t *testing.T) {
 	deps := newTestDeps(t)
 	runMillionJobQueryPlanEvidence(t, "sqlite", deps)
@@ -144,6 +145,63 @@ func runMillionJobQueryPlanEvidence(t *testing.T, engine string, deps Deps) {
 		t.Logf("query-scope shape=summary access=%s statements=%d tables=%s", tc.name, len(allStatements), strings.Join(tables, ","))
 		logJobQueryPlans(t, deps.DB, engine, "summary/"+tc.name, statements)
 	}
+
+	// Retention is a bounded keyset walk. Capture its real boundary and candidate
+	// selectors separately so the plan shows both how the cycle finds its high
+	// watermark and how it reads the next page of expired terminal Jobs.
+	capture.reset()
+	started := time.Now()
+	bound, err := sweepBound(deps.DB, SweepCursor{}, now)
+	boundElapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("retention sweep bound: %v", err)
+	}
+	if bound == nil {
+		t.Fatal("million-row fixture has no expired retention candidates")
+	}
+	boundStatements := onlyJobQueries(capture.snapshot())
+	if len(boundStatements) != 1 {
+		t.Fatalf("retention boundary queried %d Job statements, want one", len(boundStatements))
+	}
+	t.Logf("engine=%s rows=%d shape=retention-bound expired=true elapsed_ms=%.2f", engine, millionJobQueryPlanRows, float64(boundElapsed.Microseconds())/1000)
+	logJobQueryPlans(t, deps.DB, engine, "retention/bound", boundStatements)
+
+	capture.reset()
+	started = time.Now()
+	retainedPage, err := expiredJobs(deps.DB, SweepCursor{}, bound, 50, now)
+	retentionElapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("retention candidate page: %v", err)
+	}
+	if len(retainedPage) == 0 || len(retainedPage) > 50 {
+		t.Fatalf("retention candidate page size = %d, want 1..50", len(retainedPage))
+	}
+	retentionStatements := onlyJobQueries(capture.snapshot())
+	if len(retentionStatements) != 1 {
+		t.Fatalf("retention candidate page queried %d Job statements, want one", len(retentionStatements))
+	}
+	t.Logf("engine=%s rows=%d shape=retention-candidates batch=%d elapsed_ms=%.2f", engine, millionJobQueryPlanRows, len(retainedPage), float64(retentionElapsed.Microseconds())/1000)
+	logJobQueryPlans(t, deps.DB, engine, "retention/candidates", retentionStatements)
+
+	// Claim uses this same selector before its guarded state update and durable
+	// claim transaction. This measures the per-tick dispatch read against the full
+	// Job table without changing the seeded fixture's states.
+	capture.reset()
+	started = time.Now()
+	claimCandidate, found, err := nextClaimable(deps.DB, "download", 1, "", now)
+	claimElapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("claim candidate: %v", err)
+	}
+	if !found || claimCandidate.State != string(StateQueued) {
+		t.Fatalf("claim candidate found=%t state=%q, want a queued Job", found, claimCandidate.State)
+	}
+	claimStatements := onlyJobQueries(capture.snapshot())
+	if len(claimStatements) != 1 {
+		t.Fatalf("claim candidate queried %d Job statements, want one", len(claimStatements))
+	}
+	t.Logf("engine=%s rows=%d shape=claim-candidate kind=download found=%t state=%s elapsed_ms=%.2f", engine, millionJobQueryPlanRows, found, claimCandidate.State, float64(claimElapsed.Microseconds())/1000)
+	logJobQueryPlans(t, deps.DB, engine, "claim/candidate", claimStatements)
 }
 
 func onlyJobQueries(statements []capturedJobQuery) []capturedJobQuery {
@@ -187,7 +245,7 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 	states := []string{"scheduled", "queued", "running", "paused", "blocked", "succeeded", "failed", "cancelled", "interrupted"}
 	kinds := []string{"download", "plugin-action", "import-parse", "import-apply", "export", "reduction", "callback"}
 	const batchSize = 500
-	const columns = 15
+	const columns = 17
 	value := "(" + strings.TrimSuffix(strings.Repeat("?,", columns), ",") + ")"
 	window := 90 * 24 * time.Hour
 	step := time.Duration(int64(window) / millionJobQueryPlanRows)
@@ -206,6 +264,12 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 					startedAt = acceptedAt.Add(time.Second)
 					startedRows++
 				}
+				var finishedAt, expiresAt any
+				if state == "succeeded" || state == "failed" || state == "cancelled" || state == "interrupted" {
+					finished := acceptedAt.Add(2 * time.Minute)
+					finishedAt = finished
+					expiresAt = finished.Add(30 * 24 * time.Hour)
+				}
 				failureClass := ""
 				if state == "failed" {
 					if i%2 == 0 {
@@ -218,11 +282,11 @@ func seedMillionQueryPlanJobs(t *testing.T, db *gorm.DB, now time.Time) {
 				args = append(args,
 					fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1),
 					kinds[i%len(kinds)], uint(1), state, "ui", "owner", "actor", "non-replayable", uint64(1), uint((i/7)%20+1),
-					acceptedAt, startedAt,
+					acceptedAt, startedAt, finishedAt, expiresAt,
 					int64((i*17)%900)*int64(time.Second), int64((i*31)%3600)*int64(time.Second), failureClass,
 				)
 			}
-			query := "INSERT INTO jobs (id, kind, kind_version, state, origin, visibility_class, execution_principal, replay_class, version, owner_user_id, accepted_at, started_at, queue_duration, running_duration, failure_class) VALUES " + strings.Join(values, ",")
+			query := "INSERT INTO jobs (id, kind, kind_version, state, origin, visibility_class, execution_principal, replay_class, version, owner_user_id, accepted_at, started_at, finished_at, expires_at, queue_duration, running_duration, failure_class) VALUES " + strings.Join(values, ",")
 			if err := tx.Exec(query, args...).Error; err != nil {
 				return fmt.Errorf("insert jobs %d..%d: %w", start, end, err)
 			}
