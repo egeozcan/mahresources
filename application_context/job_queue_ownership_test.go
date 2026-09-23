@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -463,6 +464,33 @@ func TestAnOwnedExportPublishesItsOwnOutcomeAndHandsItsClaimBack(t *testing.T) {
 	})
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("the export ended %s (%+v)", finished.State, finished.Failure)
+	}
+	entry, found := ctx.DownloadManager().GetJob(submission.QueueJobID)
+	if !found {
+		t.Fatalf("the terminal export queue entry is missing")
+	}
+	terminalQueue := entry.Snapshot()
+	if terminalQueue.Phase != "completed" || terminalQueue.Progress <= 0 || terminalQueue.TotalSize <= 0 || terminalQueue.PhaseTotal <= 0 {
+		t.Fatalf("terminal export queue snapshot = phase %q, %d/%d bytes, %d/%d phase items; want completed with both byte and item progress",
+			terminalQueue.Phase, terminalQueue.Progress, terminalQueue.TotalSize, terminalQueue.PhaseCount, terminalQueue.PhaseTotal)
+	}
+	if finished.Progress.Unit != "bytes" {
+		t.Errorf("finished export progress unit = %q, want bytes", finished.Progress.Unit)
+	}
+	if finished.Progress.Completed == nil || *finished.Progress.Completed != terminalQueue.Progress {
+		t.Errorf("finished export byte progress = %v, want terminal queue count %d", finished.Progress.Completed, terminalQueue.Progress)
+	}
+	if finished.Progress.Total == nil || *finished.Progress.Total != terminalQueue.TotalSize {
+		t.Errorf("finished export byte estimate = %v, want terminal queue estimate %d", finished.Progress.Total, terminalQueue.TotalSize)
+	}
+
+	legacy, err := ctx.ProjectDownloadJob(submission.QueueJobID)
+	if err != nil {
+		t.Fatalf("project finished export for its legacy handle: %v", err)
+	}
+	if legacy.Row.Status != download_queue.JobStatusCompleted || legacy.Row.Progress <= 0 || legacy.Row.TotalSize <= 0 || legacy.Row.ProgressPercent < 0 {
+		t.Errorf("legacy finished export progress = status %s, %d/%d bytes (%.1f%%), want completed with known byte progress",
+			legacy.Row.Status, legacy.Row.Progress, legacy.Row.TotalSize, legacy.Row.ProgressPercent)
 	}
 	outputs, err := ctx.GetJobOutputs(finished.ID)
 	if err != nil {

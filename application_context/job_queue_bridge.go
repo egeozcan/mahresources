@@ -434,14 +434,17 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 			return nil, true
 		}
 		snap := entry.Snapshot()
-		if queueJobTerminal(snap.Status) {
-			return snap, false
-		}
 		if progress := queueJobProgress(snap); !sameProgress(progress, published) {
 			published = progress
 			if _, err := execution.Progress(progress); err != nil && !mirrorRefusalIsSilent(err) {
 				log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
 			}
+		}
+		// The queue can finish before this poll's first tick (small exports do
+		// exactly that). Mirror the terminal snapshot before returning so a fast
+		// completion still leaves its final phase and byte counts on the Job.
+		if queueJobTerminal(snap.Status) {
+			return snap, false
 		}
 		ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
 		<-ticker.C
@@ -830,6 +833,20 @@ func queueJobProgress(snap *download_queue.DownloadJob) jobs.Progress {
 		return jobs.Progress{}
 	}
 	progress := jobs.Progress{Phase: snap.Phase, Message: snap.Phase}
+	// Group exports expose a byte counter to their compatibility UI. Phase item
+	// counts are also present while streaming, but those cannot be projected as
+	// bytes written. Keep the Job's one progress measure in the units the export
+	// UI and the archive executor report.
+	if snap.Source == download_queue.JobSourceGroupExport {
+		done := snap.Progress
+		progress.Completed = &done
+		progress.Unit = "bytes"
+		if snap.TotalSize > 0 {
+			total := snap.TotalSize
+			progress.Total = &total
+		}
+		return progress
+	}
 	switch {
 	case snap.PhaseTotal > 0:
 		done, total := snap.PhaseCount, snap.PhaseTotal

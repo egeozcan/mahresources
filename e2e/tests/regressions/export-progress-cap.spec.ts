@@ -46,9 +46,14 @@ test.describe('BH-015: progress label caps at 100%', () => {
       return job?.status ?? null;
     }, { timeout: 30_000, intervals: [500] }).toBe('completed');
 
-    // Parse the "(N%)" badge text on the admin-export page.
+    // A small export can finish before the page's SSE subscription initializes, so
+    // wait for the completed projection to arrive with its persisted byte progress.
     const bytesCounter = page.locator('[data-testid="export-bytes-counter"]');
     await expect(bytesCounter).toBeVisible();
+    await expect.poll(async () => (await bytesCounter.textContent()) ?? '', {
+      timeout: 5_000,
+      intervals: [100, 250, 500],
+    }).toMatch(/[1-9]\d*(?:\.\d+)?\s*(?:B|KB|MB|GB|TB) written/);
     const text = await bytesCounter.textContent();
     const match = text?.match(/\((\d+)%\)/);
     expect(match, `expected (N%) in "${text}"`).not.toBeNull();
