@@ -10,6 +10,10 @@ const ACTIVE_STATES = ['scheduled', 'queued', 'running', 'paused'];
 const ATTENTION_STATES = ['blocked', 'failed', 'interrupted'];
 const FINISHED_STATES = ['succeeded', 'cancelled'];
 const FILTER_LIST_KEYS = Object.freeze({ kinds: 'kind', states: 'state', origins: 'origin' });
+const FILTER_QUERY_KEYS = Object.freeze([
+    'search', 'command', 'kind', 'state', 'origin', 'ownerId', 'actorId',
+    'acceptedAfter', 'acceptedBefore', 'relationship', 'pinned', 'dismissed',
+]);
 
 function readBoolean(params, key) {
     const value = params.get(key);
@@ -42,7 +46,7 @@ export function parseJobCenterURL(input = globalThis.location?.search || '') {
         ? input
         : new URLSearchParams(String(input).startsWith('?') ? String(input).slice(1) : String(input));
     return {
-        view: params.get('view') === 'all' || params.has('cursor') ? 'all' : 'home',
+        view: params.get('view') === 'all' || params.has('cursor') || FILTER_QUERY_KEYS.some(key => params.has(key)) ? 'all' : 'home',
         filters: {
             search: params.get('search') || '',
             command: params.get('command') || '',

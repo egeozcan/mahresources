@@ -75,6 +75,7 @@ test.describe('Job Center', () => {
   });
 
   test('the legacy Downloads page redirects to the canonical list with compatible filters', async ({ page }) => {
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs: [], nextCursor: 'next-download-page' } }));
     const response = await page.goto('/downloads?URL=legacy-search&Status=failed&CreatedAfter=2026-09-01');
 
     expect(response?.status()).toBe(200);
@@ -85,6 +86,7 @@ test.describe('Job Center', () => {
     expect(url.searchParams.get('search')).toBe('legacy-search');
     expect(url.searchParams.get('acceptedAfter')).toBe('2026-09-01T00:00:00Z');
     await expect(page.getByTestId('job-center')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more jobs' })).toBeVisible();
   });
 
   test('lists a failed job, opens its detail, and follows the advertised Retry successor', async ({ page, request }) => {

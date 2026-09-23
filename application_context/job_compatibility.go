@@ -204,17 +204,15 @@ func (ctx *MahresourcesContext) ProjectDownloadJobForRetry(id string) (download_
 		projection.LegacyNamespace = legacyNamespace
 		if entry, ok := ctx.downloadManager.GetJobByCanonicalJobID(canonical.ID); ok {
 			projection.Entry = entry
-			// The live entry wins while it is not behind the record. It is the thing
-			// actually transferring, and its progress is finer than a Job's snapshot.
-			// It does not win when the record has already ended the work and the entry
-			// has not caught up — a cancellation the queue has yet to unwind, a mirror
-			// still in flight — because reporting a transfer as running after its Job
-			// is finished is the one direction that misleads.
-			if !canonical.Terminal() || downloadRowTerminal(entry) {
+			// The live entry supplies finer progress while both records are active.
+			// A terminal queue entry cannot claim completion before the canonical
+			// Job has published its required output, and a terminal canonical Job
+			// cannot be overridden by a stale process-local entry.
+			if canonical.Terminal() || downloadRowTerminal(entry) {
+				projection.Row = downloadRowFromJob(*canonical, id, source)
+			} else {
 				projection.Row = downloadRowFromEntry(entry, id, canonical.ID)
-				return projection, handleFound, nil
 			}
-			projection.Row = downloadRowFromJob(*canonical, id, source)
 			return projection, handleFound, nil
 		}
 		// No queue entry in this process. The durable Job is what answers, whatever
@@ -474,18 +472,26 @@ func (ctx *MahresourcesContext) ProjectDownloadQueue() ([]*download_queue.Downlo
 				continue
 			}
 			if position, known := positionOfJob[canonical]; known {
-				// The live entry wins over the projection of the same Job: it is the
-				// thing actually running, its progress is finer than a snapshot, and the
-				// queue's own status vocabulary is what every legacy consumer switches
-				// on. It replaces the durable row rather than being skipped by it — the
-				// two are one row, and taking the projected one would report a running
-				// transfer as a Job state no panel row has ever carried.
-				rows[position] = downloadRowFromEntry(entry, entry.ID, canonical)
+				// Keep the durable row until required output publication catches
+				// up with a terminal queue entry. This matches single-Job polling.
+				if !downloadRowTerminal(entry) {
+					rows[position] = downloadRowFromEntry(entry, entry.ID, canonical)
+				}
 				continue
 			}
-			// No durable row: the Job behind this entry is terminal — the queue
-			// remembers finished work until it is evicted, and the panel has always
-			// shown it — or it is older than the durable listing's bound.
+			// The Job may be terminal or beyond the durable listing's bound.
+			// Resolve it through the same current-authority projection as polling
+			// so a stale queue outcome cannot override its canonical state.
+			projection, err := ctx.ProjectDownloadJob(entry.ID)
+			if err != nil || projection.Row == nil {
+				continue
+			}
+			if seenHandle[entry.ID] {
+				continue
+			}
+			seenHandle[entry.ID] = true
+			rows = append(rows, projection.Row)
+			continue
 		}
 		if seenHandle[entry.ID] {
 			continue

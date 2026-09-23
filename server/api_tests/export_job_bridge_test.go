@@ -276,6 +276,41 @@ func TestDurableExportDownloadWithholdsQueueFallbackBeforePublication(t *testing
 	if hidden := doReq(tc, http.MethodGet, "/v1/group?id="+itoa(int(child.ID)), headers, nil, nil); hidden.Code == http.StatusOK {
 		t.Fatalf("moved child remains visible to scoped owner: %s", hidden.Body.String())
 	}
+	poll := doReq(tc, http.MethodGet, "/v1/jobs/get?id="+legacyID, headers, nil, nil)
+	if poll.Code != http.StatusOK {
+		t.Fatalf("poll staged export: %d %s", poll.Code, poll.Body.String())
+	}
+	var projected struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(poll.Body.Bytes(), &projected); err != nil {
+		t.Fatalf("decode staged export status: %v", err)
+	}
+	if projected.Status == string(download_queue.JobStatusCompleted) {
+		t.Fatal("legacy status completed before the scoped archive was published")
+	}
+	listing := doReq(tc, http.MethodGet, "/v1/jobs/queue", headers, nil, nil)
+	if listing.Code != http.StatusOK {
+		t.Fatalf("list staged export: %d %s", listing.Code, listing.Body.String())
+	}
+	var listed struct {
+		Jobs []struct{ ID, Status string } `json:"jobs"`
+	}
+	if err := json.Unmarshal(listing.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode staged export listing: %v", err)
+	}
+	listedExport := false
+	for _, row := range listed.Jobs {
+		if row.ID == legacyID {
+			listedExport = true
+			if row.Status == string(download_queue.JobStatusCompleted) {
+				t.Fatal("legacy queue listed an export as completed before its archive was published")
+			}
+		}
+	}
+	if !listedExport {
+		t.Fatal("staged export missing from legacy queue listing")
+	}
 	response := doReq(tc, http.MethodGet, "/v1/exports/"+legacyID+"/download", headers, nil, nil)
 	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), "manifest.json") {
 		t.Fatalf("unpublished scoped artifact response = %d %q, want 409 with no archive bytes", response.Code, response.Body.String())

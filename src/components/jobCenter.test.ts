@@ -138,6 +138,15 @@ describe('Job Center API declarations', () => {
 });
 
 describe('Job Center URL state', () => {
+    test('opens filtered legacy and shared links in the paginated all view', () => {
+        const filtered = parseJobCenterURL('?kind=remote-download&state=failed');
+        expect(filtered.view).toBe('all');
+        expect(filtered.filters.kinds).toEqual(['remote-download']);
+        expect(filtered.filters.states).toEqual(['failed']);
+        expect(parseJobCenterURL('?pinned=false').view).toBe('all');
+        expect(parseJobCenterURL('').view).toBe('home');
+    });
+
     test('round-trips each filter, multi-value dimension, view and keyset cursor', () => {
         const state = {
             view: 'all',
