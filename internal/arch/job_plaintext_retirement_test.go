@@ -170,7 +170,7 @@ func checkPluginImportRetryReader(t *testing.T, root string) {
 			envelopePosition = call.Pos()
 		}
 		branch, ok := node.(*ast.IfStmt)
-		if !ok || !isNegatedIdentifier(branch.Cond, "retired") || !containsReturn(branch.Body) {
+		if !ok || !isPreRetirementCondition(branch.Cond, "retired") || !containsReturn(branch.Body) {
 			return true
 		}
 		legacyFallback = legacyFallback || hasSelector(branch.Body, "source", "FieldsJSON")
@@ -190,6 +190,9 @@ func checkPluginImportRetryReader(t *testing.T, root string) {
 		}
 		if !selectorWithinNegatedBranch(function.Body, selector, "retired") {
 			t.Errorf("pluginCommandImportFieldsJSON reads legacy FieldsJSON outside the pre-retirement branch")
+		}
+		if selector.Pos() <= fencePosition {
+			t.Errorf("pluginCommandImportFieldsJSON reads legacy FieldsJSON before the writer epoch")
 		}
 		return true
 	})
@@ -294,13 +297,29 @@ func selectorWithinNegatedBranch(root ast.Node, target *ast.SelectorExpr, name s
 	contained := false
 	ast.Inspect(root, func(node ast.Node) bool {
 		branch, ok := node.(*ast.IfStmt)
-		if ok && isNegatedIdentifier(branch.Cond, name) && nodeContains(branch.Body, target) {
+		if !ok || !isPreRetirementCondition(branch.Cond, name) {
+			return true
+		}
+		// In an && condition, the right side is evaluated only after !retired.
+		conditionRight := false
+		if conjunction, ok := branch.Cond.(*ast.BinaryExpr); ok && conjunction.Op == token.LAND {
+			conditionRight = nodeContains(conjunction.Y, target)
+		}
+		if nodeContains(branch.Body, target) || conditionRight {
 			contained = true
 			return false
 		}
 		return true
 	})
 	return contained
+}
+
+func isPreRetirementCondition(expression ast.Expr, name string) bool {
+	if isNegatedIdentifier(expression, name) {
+		return true
+	}
+	conjunction, ok := expression.(*ast.BinaryExpr)
+	return ok && conjunction.Op == token.LAND && isNegatedIdentifier(conjunction.X, name)
 }
 
 func nodeContains(root ast.Node, target ast.Node) bool {

@@ -937,7 +937,6 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 		limit = DefaultReplayPurgeBatch
 	}
 	now := deps.now()
-<<<<<<< HEAD
 	// Candidate discovery may happen before the transaction. The guarded UPDATE
 	// below rechecks every expiry and terminal-state predicate after it has taken
 	// SQLite's writer lock, so this snapshot never authorizes a purge on its own.
