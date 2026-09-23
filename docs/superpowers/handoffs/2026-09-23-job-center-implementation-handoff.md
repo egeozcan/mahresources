@@ -1,9 +1,9 @@
-# Job Center implementation handoff — post-Task-9, after the second Astra checkpoint round
+# Job Center implementation handoff — post-Task-9, after the Astra round-3 review
 
-**Written:** 2026-09-23, by the implementing worker session that closed the second
-post-Task-9 checkpoint round. **Status: implementation through Task 9 plus this round's
+**Written:** 2026-09-23, by the implementing worker session that closed the third
+post-Task-9 checkpoint round (Astra run `2a794586-e373-417f-b69a-ee2e6f758bf8`, six P1). **Status: implementation through Task 9 plus two rounds of
 corrections is committed, verified and *not* reviewed.** Nothing here is approved until a
-fresh Astra review reads commit `3db7ed41`.
+fresh Astra review reads commit `e60a7007`.
 
 ---
 
@@ -31,12 +31,12 @@ gate passes for every Kind.
 | --- | --- |
 | Baseline (plan/design/ADR commit) | `6fb0f97d94c48c5ccf7183447ab72907578cd4ba` — "docs: design, ADRs and plan for the unified job center" |
 | Branch | `master` |
-| HEAD at handoff | `3db7ed410ce82b02de2c1deba6400287fcec9120` — "fix(jobs): close the Astra checkpoint's second-round P1 findings on quiescence, authority and legacy projection" |
-| Handoff commit | the commit that adds this file (the next commit on `master`) |
-| Commits in the cumulative range | 32 |
-| Cumulative artifact | `/tmp/mahresources-job-center-cumulative-3db7ed410ce8.diff` (2.44 MB: `git log --format=medium --stat` for the range, then `git diff --full-index 6fb0f97d…3db7ed41`; 113 files changed, 48,708 insertions, 829 deletions) |
+| HEAD at handoff | `e60a7007575a14fc7e32213799dfed3b67d9eae5` — "fix(jobs): close the Astra round-3 checkpoint's six P1 findings on quarantine, plan ownership and lineage" |
+| Handoff commit | the commit that updates this file on `master` (the one after `e60a7007`) |
+| Commits in the cumulative range | 35 |
+| Cumulative artifact | `/tmp/mahresources-job-center-cumulative-e60a7007575a.diff` (full metadata `git log --format=medium --stat` for the range, then `git diff --full-index 6fb0f97d…e60a7007`) |
 
-Note on the artifact name: it embeds the short SHA of the **code** HEAD (`3db7ed410ce8`), not
+Note on the artifact name: it embeds the short SHA of the **code** HEAD (`e60a7007575a`), not
 the handoff commit. Regenerate with
 `git diff --full-index 6fb0f97d94c48c5ccf7183447ab72907578cd4ba..HEAD` after any further
 commit.
@@ -77,12 +77,21 @@ cycle at the named seam. Task 5 needed no correction in this round.
 | First post-Task-9 Astra checkpoint | findings recorded in `80b4bfe6`; fixed by `94d54e4b`, `e13393d2`, `9ebf3c14`, `581f7fea`, `f06c36a5`, `f007c2bb` | closed admission, termination and hook-feed findings |
 | The checkpoint's remaining open P1 | closed by `82ab5f6b` (+ `36d6ee24`) | a queue-backed submission now owns its executor's claim for its whole lifetime |
 | Second post-Task-9 Astra checkpoint (ten P1) | fixed by `5d400ccf` | quiescence before a plugin outcome, acting principal on a redispatched clustering run, import-apply reconciliation evidence, admission before resume, cross-process cancellation, durable plane installed before plugins activate, command recheck's own transaction, staging retention across Retry lineage, the legacy id a capacity-queued apply answers, queue-backed handle namespaces |
-| **Second post-Task-9 Astra checkpoint, second round (nine P1)** | **fixed by `3db7ed41` — this round** | quarantine released only by its owner's proof; a refused progress write no longer ends live work; commands and the scheduled path revalidate the actor's current role and plugin access; a redispatched import apply rechecks the write role; the legacy queue/SSE/action-job surfaces project durable Jobs; plugin results are redacted before publication; a terminal report is retained and retried until durable; retention no longer prunes ancestors a queued Retry reads |
+| Second post-Task-9 Astra checkpoint, second round (nine P1) | fixed by `3db7ed41` | quarantine released only by its owner's proof; a refused progress write no longer ends live work; commands and the scheduled path revalidate the actor's current role and plugin access; a redispatched import apply rechecks the write role; the legacy queue/SSE/action-job surfaces project durable Jobs; plugin results are redacted before publication; a terminal report is retained and retried until durable; retention no longer prunes ancestors a queued Retry reads |
 
-**This round's nine fixes still require a fresh Astra re-review.** They were verified by the
-implementing session only (red→green at the public seam, whole-tree, race, PostgreSQL,
-browser and CLI runs — §9 below). Do not treat Task 9 as cleared on the strength of this
-document.
+| **Fresh Astra cumulative review of `3db7ed41` (round 3, run `2a794586-e373-417f-b69a-ee2e6f758bf8`)** | **six P1 fixed by `e60a7007` — this round; two P2 not carried in this worker's brief and still open** | a quarantined runtime released its claim while its worker ran; a successful quarantined plugin action could never settle and held a slot for ever; an import Retry could reuse a plan another apply owned; import acceptance committed before the lineage dependency its input needs; PostgreSQL retention could prune a parse while a Retry committed; a hidden canonical handle fell back to an unfenced in-place Retry |
+
+**This round's six fixes still require a fresh Astra re-review.** They were verified by the
+implementing session only (red→green at the public seam, whole-tree, race and PostgreSQL Go
+runs — §9 below; **no browser or CLI run, and no `npm run build` asset check, in this
+session**). Do not treat Task 9 as cleared on the strength of this document, and do not read
+the two P2 findings as closed: they are recorded in §11 as open.
+
+**Reviewer findings, verbatim.** The round-3 review's own text is not in this repository; its
+six P1 findings and their corrections are quoted in the `docs/todo.md` entry for this round
+("Job Center post-Task-9 checkpoint, fourth round"), which is where the fix-by-fix record
+lives. The two P2 notes were not passed to this worker session and are therefore **not**
+recorded here — an operator holding the review should add them before Task 10.
 
 ## 7. Key architecture decisions carried forward
 
@@ -104,10 +113,33 @@ taken during implementation and are load-bearing for Tasks 10–18:
   so a restart leaves the Job for the next process to reconcile. This is what stops a second
   process's dispatch loop from finding no local entry and starting a second executor for the
   same work.
-- **A quarantine is released only by the owning execution's own proof.** `blocked` work whose
-  claim nobody could resolve keeps its claim, its token and its capacity; `Resume` is refused
-  while an unresolved claim exists (asked again inside the transaction that would queue the
-  Job), and the claim is released when the execution that owns the token finishes the Job.
+- **A quarantine is released only by the owning execution's own proof — and only by its
+  *outcome*.** `blocked` work whose claim nobody could resolve keeps its claim, its token and
+  its capacity; `Resume` is refused while an unresolved claim exists (asked again inside the
+  transaction that would queue the Job). This round corrected what "the proof" means twice
+  over: a quarantine is **not** a fence for the execution that owns it (`Heartbeat` grants a
+  quarantined claim whose token is the caller's own, so a live runtime does not stop observing
+  work that is still running), and the owning execution may take a quarantined Job to a
+  terminal state — `blocked -> succeeded` included — because `blocked` with a token still
+  recorded *is* the quarantine and the token is the fence (see `quarantineSettlementAllowed`).
+  An executor returning proves nothing about the worker behind it, so `finishOwnedExecution`
+  hands back no unresolved quarantine.
+- **Plan consumption is bound to the apply that consumed it.** An import's consumed plan is
+  named by the apply's own legacy handle, so a Retry and a fresh `/apply` for one review
+  arbitrate through one atomic per-parse consumption and the loser is refused. A consumed
+  path's *existence* never establishes ownership again (`claimPlanForApply`), and `ApplyImport`
+  takes the path the executor consumed rather than re-deriving it from the parse handle.
+- **Acceptance, claim and lineage commit together.** `jobs.Acceptance.Parents` writes the
+  parent-child link inside the acceptance's own transaction — a parent that is gone rolls the
+  acceptance back, and an apply whose parse has no durable record is refused rather than
+  committed unlinked. And `lockRetryChain` takes the whole staging lineage
+  (`jobs.LineageAncestors`), not just the linear Retry chain, which is what serializes a Retry
+  against the pruning of an ancestor its input names.
+- **A handle is resolved once, for the asker.** An authorization refusal on the Job a handle
+  currently names is returned rather than read as an absent handle — never a fall back to this
+  process's queue entry — and `DownloadManager.Retry` refuses an entry carrying a canonical
+  reference outright (`CanonicalJobError` → 409), because a retry of canonical work belongs to
+  the control plane and to ADR 0007's immutable lineage.
 - **Authority is read from the database on the handle the question is asked on.** A Kind's
   command advertisement resolves the actor's account (role, then per-plugin access) through
   `CommandContext.Deps` — the transaction's own handle during the recheck — so a list render,
@@ -140,37 +172,32 @@ taken during implementation and are load-bearing for Tasks 10–18:
 The panel/page cutover remains one release gate after every listed Kind is represented; no
 partial "unified" UI ships.
 
-## 9. Verification performed on `3db7ed41`
+## 9. Verification performed on `e60a7007` (this round)
 
 | Check | Command | Result |
 | --- | --- | --- |
 | Whole Go tree (SQLite) | `go test --tags 'json1 fts5' ./... -count=1` | clean |
-| Focused packages | `go test --tags 'json1 fts5' ./jobs ./plugin_system -count=1` | clean |
-| Application package | `go test --tags 'json1 fts5' ./application_context -count=1 -timeout 2400s` (≈102 s) | clean |
-| Race | `go test -race --tags 'json1 fts5' ./jobs ./plugin_system -count=1` | clean |
-| Race, this round's regressions | `go test -race --tags 'json1 fts5' ./application_context -run 'Test(AResumeIsRefused\|ARefusedProgressWrite\|APluginJobsCommands\|AScheduledOccurrenceIsRevalidated\|AQueuedImportApplyIsRefused\|ATerminalReportIsRetried\|TheLegacyQueueListing\|APluginActionJobAnswers\|APluginJobKeepsItsOwnText\|TheRetentionSweepKeeps)' -count=2` | clean |
-| PostgreSQL | `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./server/api_tests -count=1` | clean (see §10 for the one fixture that had to move) |
+| Race | `go test -race --tags 'json1 fts5' ./jobs ./download_queue -count=1` | clean |
+| Race, this round's regressions | `go test -race --tags 'json1 fts5' ./application_context -run 'Test(AQuarantined\|ASuccessfulQuarantined\|ARetryAndAFreshApply\|AnApplyWhoseParse\|AHandleMoved\|AnAcceptanceRolls)' -count=1` | clean |
+| PostgreSQL | `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./application_context ./server/api_tests -count=1` | clean (jobs ≈ 8.5 s, download_queue ≈ 11 s, application_context ≈ 115 s, api_tests ≈ 89 s) |
 | Vet / format / whitespace | `go vet --tags 'json1 fts5' ./...`; `gofmt -l` on every changed file; `git diff --check` | clean |
-| Frontend assets | `npm run build` | `public/dist/` and `public/tailwind.css` byte-identical (no frontend source changed) |
-| Browser E2E | `cd e2e && node scripts/run-tests.js test tests/downloads-history.spec.ts tests/admin-export/export.spec.ts tests/admin-import/ tests/plugins/plugin-actions.spec.ts tests/plugins/plugin-action-refusal.spec.ts tests/resource-reduction.spec.ts tests/regressions/ws9-jobs-cockpit.spec.ts` | 74 passed, **2 failed — pre-existing** (below) |
-| CLI E2E | `cd e2e && node scripts/run-tests.js test --project=cli tests/cli/cli-jobs.spec.ts` | 12 passed |
+| Red→green, per finding | six findings, each observed failing with the fix neutered or the pre-fix expression restored, then green | recorded in `docs/todo.md` |
 
-Pre-existing browser failures, verified by stashing this round's changes and re-running the
-same file at the base: `ws9-jobs-cockpit.spec.ts` → "Clear completed removes finished jobs and
-they stay gone", "a job that finishes while the clear is in flight does not come back". Both
-assert `GET /v1/jobs/get` returns 404 for a cleared entry, which stopped being true when the
-durable Job became the thing that answers a handle. Stale specs, not regressions.
+**Not run in this session** (the operator ended it before these): browser E2E, CLI E2E,
+`cd e2e && npm run test:with-server:all`, `npm run build` / `./scripts/css-scan-test.sh` (no
+frontend, template or CSS source changed this round), and `./mr docs lint` /
+`./mr docs check-examples` (no CLI command, flag or docs page changed).
 
-**Checks not run in this session** (unavailable or out of scope here):
+## 9a. What this round changed, by finding
 
-- `./mr docs lint` and `./mr docs check-examples` — no CLI command, flag or docs page changed
-  in this round; the CLI E2E project above did build the `mr` binary and pass.
-- `cd e2e && npm run test:with-server:postgres` (browser against PostgreSQL) — not run; Go
-  PostgreSQL suites were.
-- `cd e2e && npm run test:with-server:all` (the full 2,000-test sweep) — not run; the
-  jobs-related subset was.
-- `./scripts/css-scan-test.sh` — not run (no CSS, template or Tailwind source changed).
-- No crash/migration fixtures (Task 18 scope).
+| Finding (P1) | Fix | Regression |
+| --- | --- | --- |
+| A quarantined runtime released its claim before its worker stopped | `Heartbeat` grants a quarantined claim its own token owns; `JobRuntimeConfig.ExecutionLease` (test-only) lets the heartbeat clock be exercised; `finishOwnedExecution` leaves an unresolved quarantine alone | `TestAQuarantinedCapacityQueuedTransferKeepsItsClaimUntilItsWorkerStops` (two runtimes, capacity-queued dispatch, a still-held HTTP response), `TestAQuarantinedClaimIsNotAFenceForItsOwnExecution` |
+| A successful quarantined plugin action could never settle, holding capacity for ever | `quarantineSettlementAllowed` admits `blocked -> terminal` for the token that owns the Job; `commitTransition` releases the claim and the capacity with it | `TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot`, `TestTheExecutionThatOwnsAQuarantinedJobMayEndIt` |
+| An import Retry could reuse a consumed plan owned by another apply | consumed plans are named per apply lineage; one atomic per-parse consumption arbitrates a Retry against a fresh apply; `ApplyImport` reads the path the executor consumed | `TestARetryAndAFreshApplyCannotBothApplyOneReview` |
+| Import acceptance committed before its required lineage dependency | `jobs.Acceptance.Parents`, written by `linkLineage` inside the acceptance transaction; an unresolvable parse is a refusal | `TestAnAcceptanceRollsBackWhenAParentItNamesIsGone`, `TestAnApplyWhoseParseHasNoDurableRecordIsRefused` |
+| PostgreSQL retention could prune a parse while its descendant was retried | `lockRetryChain` takes the whole staging lineage FOR UPDATE, in ascending id order | `TestARetryHoldsItsStagingAncestorsRowsPG` |
+| A hidden canonical handle fell back to an unfenced in-place Retry | handle resolution separates absence from refusal; `DownloadManager.Retry` refuses canonical entries | `TestRetryRefusesWorkADurableJobOwns`, `TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue` |
 
 ## 10. Test and code notes a reviewer should know
 
@@ -194,27 +221,41 @@ durable Job became the thing that answers a handle. Stale specs, not regressions
 
 ## 11. Known P2 and residual risks
 
-1. **A quarantined Job whose work then succeeds stays blocked.** Its own execution releases
-   the claim (the proof §3 asks for) but cannot publish the success, because §1's table admits
-   no `blocked → succeeded`; §3's wording does permit terminal classification once quiescence
-   is proved, so the follow-up is to let the token-owning execution finish a blocked Job. That
-   state-machine change was deliberately not made inside a finding about release.
-2. **The retention dependency rule is lineage-wide, not staging-specific.** A Job with any
+1. **CLOSED by this round** (was: a quarantined Job whose work then succeeds stays blocked).
+   The token-owning execution now ends a quarantined Job with the outcome its work reached
+   (`quarantineSettlementAllowed`), and its claim and capacity go with it.
+2. **A quarantine whose owning runtime died has no resolution path.** Nothing revisits a
+   quarantined claim (`expiredClaims` excludes it), a `Resume` is refused while one is
+   unresolved, and only that runtime's own token can settle it. Before this round the
+   premature release was the only thing that ever cleared such a state; now a deployment that
+   loses a process mid-quarantine keeps the Job blocked and its capacity occupied until an
+   operator acts outside the Job Center. Closing it needs a proved-gone check plus an
+   operator-facing release, which is a design decision this round did not take.
+3. **The two P2 notes from this round's Astra review are open.** They were not carried in this
+   worker session's brief and their text is not in the repository, so nothing here addresses
+   them.
+4. **The retention dependency rule is lineage-wide, not staging-specific.** A Job with any
    nonterminal descendant is kept. It over-protects and never under-protects.
-3. **The retention dependency check is a read after the guarded delete.** A Retry committing
-   between that read and the transaction's commit is not seen; its own acceptance requires the
-   ancestor row, so the window is the one the pin/claim predicates close by re-assertion. No
-   test covers this specific interleaving.
-4. **A capacity-queued apply whose submission process died between acceptance and enqueue**
+5. **The retention dependency check is a read after the guarded delete, and the lock that now
+   serializes it is the retry's staging lineage.** `lockRetryChain` takes the whole ancestor
+   walk FOR UPDATE, so a Retry cannot commit inside that window; a writer that does *not* take
+   those rows (a hand-written insert into `job_links`, a Kind that links without an
+   acceptance) can still land there undetected.
+6. **The handle-projection fix is pinned only in the new direction.** The red run for
+   `TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue` did not reproduce a
+   projection fallback, because the harness's queue entry for a user-submitted download is
+   ownerless and so invisible to that user in either version. The in-place half has a
+   confirmed red (`TestRetryRefusesWorkADurableJobOwns`).
+7. **A capacity-queued apply whose submission process died between acceptance and enqueue**
    can be reconciled with the plan consumed and no executor ever started; reconciliation fails
    it once the runtime is proved gone (recorded in the previous round's todo entry).
-5. **A submission and a runtime can still both start one executor if the deployment budget
+8. **A submission and a runtime can still both start one executor if the deployment budget
    frees between them**; the queue entry is process memory and `activeDownloadForURL` plus the
    content hash are the remaining deduplication (previous round's entry).
-6. **The two stale `ws9-jobs-cockpit` specs** (§9) are open work for whoever owns the panel
-   cutover.
-7. **`models/query_models/filter_decode.go` is not gofmt-clean at the base commit** and was
-   left untouched to keep this round's diff scoped.
+9. **The two stale `ws9-jobs-cockpit` specs** are open work for whoever owns the panel
+   cutover, as are this round's unrun browser and CLI suites.
+10. **`models/query_models/filter_decode.go` is not gofmt-clean at the base commit** and was
+    left untouched to keep each round's diff scoped.
 
 ## 12. Clean-worktree proof
 
@@ -234,14 +275,16 @@ The handoff commit that adds this file is the only change after that; re-run
 
 1. `git log --oneline -1` on `master` and confirm the tree is clean
    (`git status --short` empty).
-2. **Fresh Astra cumulative review of `3db7ed41`** (the code-fix commit), reading the
-   cumulative artifact `/tmp/mahresources-job-center-cumulative-3db7ed410ce8.diff` and the
-   `docs/todo.md` entries for the two post-Task-9 rounds. Do not start Task 10 first.
+2. **Fresh Astra cumulative review of `e60a7007`** (the code-fix commit), reading the
+   cumulative artifact `/tmp/mahresources-job-center-cumulative-e60a7007575a.diff`, the
+   `docs/todo.md` entries for the two post-Task-9 rounds, and the two P2 findings from the
+   previous review run (`2a794586-e373-417f-b69a-ee2e6f758bf8`) that this round did not carry.
+   Do not start Task 10 first.
 3. **Fix every P0/P1 it raises** with a red-then-green cycle at the seam the finding names,
    then re-run: `go test --tags 'json1 fts5' ./... -count=1`;
-   `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./server/api_tests -count=1`;
-   `-race` on the touched packages; the jobs-related browser and CLI E2E specs. Commit each
-   round separately and record it in `docs/todo.md`.
+   `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./application_context ./server/api_tests -count=1`;
+   `-race` on the touched packages; `npm run build`; the jobs-related browser and CLI E2E specs.
+   Commit each round separately and record it in `docs/todo.md`.
 4. **Tasks 10–13** in order, each as its own commit with the plan's focused gate plus the
    package-level, race, PostgreSQL and E2E checks the task lists; then **a review of Tasks
    10–13** before continuing.
@@ -253,8 +296,9 @@ The handoff commit that adds this file is the only change after that; re-run
 
 | Artefact | Path / identifier |
 | --- | --- |
-| Cumulative diff (baseline → code HEAD) | `/tmp/mahresources-job-center-cumulative-3db7ed410ce8.diff` |
-| Code-fix commit for this round | `3db7ed41` |
-| Round records (findings, decisions, verification) | `docs/todo.md`: "Job Center post-Task-9 checkpoint, third round — close the Astra review's nine P1 findings (2026-09-23)" and the two entries below it |
+| Cumulative diff (baseline → code HEAD) | `/tmp/mahresources-job-center-cumulative-e60a7007575a.diff` |
+| Code-fix commit for this round | `e60a7007` |
+| Round records (findings, decisions, verification) | `docs/todo.md`: "Job Center post-Task-9 checkpoint, fourth round — close the Astra round-3 review's six P1 findings (2026-09-23)" |
+| Round-3 review run | `2a794586-e373-417f-b69a-ee2e6f758bf8` (six P1 carried into this round, two P2 not) |
 | Plan / design / ADRs | `docs/superpowers/plans/2026-09-22-job-center.md`, `docs/superpowers/specs/2026-09-22-job-center-design.md`, `docs/adr/0006-durable-job-control-plane.md`, `docs/adr/0007-retry-creates-a-new-job.md` |
-| Reviewer run IDs | not exposed to this worker session; the reviewer's findings are preserved verbatim in the `docs/todo.md` entries above, and no separate reviewer artefact files exist under `docs/superpowers/reviews/` for these checkpoints |
+| Reviewer run IDs | the round-3 run id above; the reviewer's findings are preserved verbatim in the round's `docs/todo.md` entry for the six P1s it did carry, and the two P2 notes exist only in the review itself |
