@@ -13473,7 +13473,53 @@ Residual risks and handoffs carried forward:
   `go test --tags 'json1 fts5' ./application_context -run
   'TestJobMigration|Test.*(ScheduledDownload|DownloadHistory)' -count=1`,
   `go test --tags 'json1 fts5 postgres' ./application_context -run
-  '^TestJobMigrationPostgresResumesAfterCrashMidScrub$' -count=1`, and
+  '^TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub$' -count=1`, and
   `go test -race --tags 'json1 fts5' ./application_context -run
   '^TestJobMigrationScrubAndMarkerAreAtomic$' -count=1`. `git diff --check`
   passed.
+
+## Job Center Task 12 plaintext retirement evidence (2026-09-23)
+
+- After writer epoch 2, download history and scheduled-download retries resolve
+  their canonical Job handles and decrypt the replay envelope before reading
+  legacy Payload or URL fields. Plugin command recovery hydrates ParamsJSON,
+  InputsJSON and FieldsJSON from canonical envelopes before returning recovered
+  rows; import retry also reads FieldsJSON from the canonical envelope after
+  epoch 2. The source columns remain safe display/compatibility projections.
+- `GetJobMigrationReadiness() (JobMigrationReadiness, error)` provides the
+  Task 17 cutover seam. Its report includes the writer epoch, safe phase,
+  per-kind/per-status source counts and bounded blocker counts; it omits source
+  IDs and replay values. It recomputes source coverage and post-scrub hashes,
+  verifies purge markers and empty replay copies, checks all database write
+  barriers, and opens canonical input for nonterminal replayable Jobs. A
+  completed checkpoint without those proofs does not report ready.
+- A restored scrubbed source is reverified against its canonical envelope and
+  rescrubbed. A restored purged source is cleared again without reopening or
+  recreating input. At epoch 2, a restart can continue this repair without a new
+  old-writer drain attestation; epoch 1 remains behind the explicit drain gate.
+- `ForgetReplay` and expiry retention now purge mapped download, scheduled,
+  command-run and import inputs in the same transaction as the envelope marker.
+  SQLite and PostgreSQL fault injection reject the mapping write and prove the
+  transaction leaves both envelope and source copies intact; a successful retry
+  clears all four sources and records a durable purged mapping.
+- Import claims with an omitted field selection canonicalize it to `{}` before
+  accepting the replay envelope. Controller recovery fixtures now provide the
+  ephemeral key required to exercise replayable commands; the import fixture
+  migrates the writer epoch and source mapping tables.
+- The architecture gate `TestPlaintextRetirementReadersDoNotUseLegacyReplay`
+  parses production retry/hydration functions and enforces the epoch guard and
+  canonical envelope reads before any legacy replay-field use, including import
+  retry.
+- Validation passed:
+  `go test --tags 'json1 fts5' ./application_context -run
+  'TestJobMigration|Test.*(ScheduledDownload|DownloadHistory)|TestPluginCommand' -count=1`;
+  `go test --tags 'json1 fts5' ./jobs -run
+  'TestReplay|TestForgetReplayAtomically|TestExpiredReplaySweepAtomically' -count=1`;
+  `go test --tags 'json1 fts5' ./internal/arch -count=1`;
+  the Task 12 SQLite plan selection `go test --tags 'json1 fts5'
+  ./application_context ./jobs ./internal/arch -run
+  'Test.*(Plaintext|Retirement|ReplaySource)' -count=1`; PostgreSQL Task 12
+  selections for `application_context` and `jobs`; and focused race runs for
+  migration/readers and atomic replay purging. Tagged `go vet` for
+  `application_context`, `jobs`, `plugin_commands`, and `internal/arch`, plus
+  `git diff --check`, passed.

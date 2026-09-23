@@ -44,6 +44,15 @@ func hashPluginCommandRun(row models.PluginCommandRun) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func hashRetiredPluginCommandRun(row models.PluginCommandRun) string {
+	return hashJobMigrationProjection(struct {
+		ID         string
+		JobID      string
+		ParamsJSON string
+		InputsJSON string
+	}{row.ID, row.JobID, row.ParamsJSON, row.InputsJSON})
+}
+
 type pluginCommandImportMigrationHash struct {
 	ID               string
 	RunID            string
@@ -64,18 +73,30 @@ func hashPluginCommandImport(row models.PluginCommandImport) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func hashRetiredPluginCommandImport(row models.PluginCommandImport) string {
+	return hashJobMigrationProjection(struct {
+		ID         string
+		JobID      string
+		RunID      string
+		FileName   string
+		FieldsJSON string
+	}{row.ID, row.JobID, row.RunID, row.FileName, row.FieldsJSON})
+}
+
 func (ctx *MahresourcesContext) recordDualPublishedPluginCommandRunTx(tx *gorm.DB, row models.PluginCommandRun, scrubbed bool, now time.Time) error {
 	if row.JobID == "" {
 		return errors.New("plugin command run has no canonical Job")
 	}
-	return ctx.recordDualPublishedSourceTx(tx, jobMigrationPluginCommandRun, row.ID, row.JobID, hashPluginCommandRun(row), scrubbed, now)
+	return ctx.recordDualPublishedSourceTx(tx, jobMigrationPluginCommandRun, row.ID, row.JobID,
+		hashPluginCommandRun(row), hashRetiredPluginCommandRun(row), scrubbed, now)
 }
 
 func (ctx *MahresourcesContext) recordDualPublishedPluginCommandImportTx(tx *gorm.DB, row models.PluginCommandImport, scrubbed bool, now time.Time) error {
 	if row.JobID == "" {
 		return errors.New("plugin command import has no canonical Job")
 	}
-	return ctx.recordDualPublishedSourceTx(tx, jobMigrationPluginCommandImport, row.ID, row.JobID, hashPluginCommandImport(row), scrubbed, now)
+	return ctx.recordDualPublishedSourceTx(tx, jobMigrationPluginCommandImport, row.ID, row.JobID,
+		hashPluginCommandImport(row), hashRetiredPluginCommandImport(row), scrubbed, now)
 }
 
 func validateCommandRunSource(row models.PluginCommandRun) error {
@@ -671,7 +692,7 @@ func (ctx *MahresourcesContext) scrubCommandSourceBatch(kind, cursor string, lim
 				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", current.SourceID).First(&row).Error; err != nil {
 					return errors.New("plugin command run disappeared before scrub")
 				}
-				if hashPluginCommandRun(row) != current.SourceHash {
+				if current.Status != models.JobSourceMappingPurged && hashPluginCommandRun(row) != current.SourceHash {
 					if err := quarantineJobSource(tx, &current, "plugin command input changed after verification"); err != nil {
 						return err
 					}
@@ -686,13 +707,13 @@ func (ctx *MahresourcesContext) scrubCommandSourceBatch(kind, cursor string, lim
 				if err := tx.Where("id = ?", row.ID).First(&after).Error; err != nil {
 					return errors.New("plugin command run could not be reread after scrub")
 				}
-				afterHash = hashPluginCommandRun(after)
+				afterHash = hashRetiredPluginCommandRun(after)
 			case jobMigrationPluginCommandImport:
 				var row models.PluginCommandImport
 				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", current.SourceID).First(&row).Error; err != nil {
 					return errors.New("plugin command import disappeared before scrub")
 				}
-				if hashPluginCommandImport(row) != current.SourceHash {
+				if current.Status != models.JobSourceMappingPurged && hashPluginCommandImport(row) != current.SourceHash {
 					if err := quarantineJobSource(tx, &current, "plugin command import changed after verification"); err != nil {
 						return err
 					}
@@ -707,7 +728,7 @@ func (ctx *MahresourcesContext) scrubCommandSourceBatch(kind, cursor string, lim
 				if err := tx.Where("id = ?", row.ID).First(&after).Error; err != nil {
 					return errors.New("plugin command import could not be reread after scrub")
 				}
-				afterHash = hashPluginCommandImport(after)
+				afterHash = hashRetiredPluginCommandImport(after)
 			default:
 				return errors.New("unknown plugin command migration source")
 			}

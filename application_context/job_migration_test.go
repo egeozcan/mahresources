@@ -18,6 +18,57 @@ import (
 //go:embed testdata/job-migration/release-a.sql
 var releaseAJobMigrationFixture string
 
+func TestJobMigrationReadinessDoesNotCreateMissingSchema(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.Migrator().DropTable(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["migration-schema-missing"] == 0 {
+		t.Fatalf("readiness without migration schema = %+v, want a safe blocked report", readiness)
+	}
+	for _, model := range []any{&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}} {
+		if ctx.db.Migrator().HasTable(model) {
+			t.Fatalf("readiness probe recreated missing table %T", model)
+		}
+	}
+}
+
+func TestJobMigrationReadinessBlocksUnknownSourceKindsWithoutEchoingThem(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true})
+	if err != nil || !result.Complete {
+		t.Fatalf("empty migration = %+v, %v", result, err)
+	}
+	now := time.Now().UTC()
+	mapping := models.JobSourceMapping{
+		SourceKind: "credential-bearing-future-source", SourceID: "header=private-token",
+		SourceRevision: 1, SourceHash: "safe-test-hash", Status: models.JobSourceMappingScrubbed,
+		Origin: models.JobSourceOriginBackfilled, CopiedAt: now, ScrubbedAt: &now,
+		PostScrubHash: "safe-post-hash", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := ctx.db.Create(&mapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["unknown-source-kind"] != 1 {
+		t.Fatalf("unknown source kind readiness = %+v, want a closed gate", readiness)
+	}
+	encoded, err := json.Marshal(readiness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "credential-bearing-future-source") || strings.Contains(string(encoded), "header=private-token") {
+		t.Fatalf("readiness leaked unknown mapping fields: %s", encoded)
+	}
+}
+
 func TestJobMigrationUpgradesReleaseASourceSchema(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 	if err := ctx.db.Migrator().DropTable(&models.PluginCommandImport{}, &models.PluginCommandRun{}, &models.DownloadHistoryEntry{}); err != nil {
@@ -280,6 +331,10 @@ func TestJobMigrationCopiesDownloadHistoryBeforeScrubbingAndIsIdempotent(t *test
 	if !first.Complete {
 		t.Fatalf("migration phase = %q, want complete", first.Phase)
 	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("completed retirement readiness = %+v, %v", readiness, err)
+	}
 
 	jobID, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, entry.JobID)
 	if err != nil {
@@ -331,6 +386,16 @@ func TestJobMigrationCopiesDownloadHistoryBeforeScrubbingAndIsIdempotent(t *test
 	if len(scrubbed.Payload) != 0 || scrubbed.URL != "https://example.invalid" {
 		t.Fatalf("legacy replay fields were not scrubbed safely: payload=%d bytes url=%q", len(scrubbed.Payload), scrubbed.URL)
 	}
+	stale := scrubbed
+	stale.Payload = []byte(`not canonical JSON`)
+	stale.URL = "https://attacker:secret@stale.example.invalid/replayed?token=wrong"
+	retried, err := ctx.DownloadHistoryPayload(&stale)
+	if err != nil {
+		t.Fatalf("retired history reader consulted stale legacy fields: %v", err)
+	}
+	if retried.URL != creator.URL || retried.Headers["Authorization"] != creator.Headers["Authorization"] {
+		t.Fatalf("retired history reader did not use canonical replay: %+v", retried)
+	}
 
 	var jobsBefore, mappingsBefore int64
 	if err := ctx.db.Model(&models.Job{}).Count(&jobsBefore).Error; err != nil {
@@ -352,6 +417,103 @@ func TestJobMigrationCopiesDownloadHistoryBeforeScrubbingAndIsIdempotent(t *test
 	}
 	if jobsAfter != jobsBefore || mappingsAfter != mappingsBefore || !second.Complete {
 		t.Fatalf("rerun changed Jobs/mappings or regressed phase: jobs %d→%d, mappings %d→%d, phase %q", jobsBefore, jobsAfter, mappingsBefore, mappingsAfter, second.Phase)
+	}
+}
+
+func TestPlaintextRetirementScheduledDownloadReaderUsesCanonicalReplay(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	creator := query_models.ResourceFromRemoteCreator{URL: "https://person:password@example.invalid/deferred?signature=private#fragment",
+		Headers: map[string]string{"Authorization": "Bearer scheduled-secret"}}
+	payload, err := json.Marshal(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := models.ScheduledDownload{PluginName: "worker", URL: creator.URL, Payload: payload,
+		DueAt: created.Add(time.Hour), Status: models.ScheduledDownloadStatusPending, CreatedAt: created, UpdatedAt: created}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 1, MaxBatches: 20, WritersDrained: true, Now: func() time.Time { return created.Add(2 * time.Hour) }})
+	if err != nil || !result.Complete {
+		t.Fatalf("scheduled migration = %+v, %v", result, err)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("scheduled retirement readiness = %+v, %v", readiness, err)
+	}
+	var scrubbed models.ScheduledDownload
+	if err := ctx.db.First(&scrubbed, row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(scrubbed.Payload) != 0 || scrubbed.URL != "https://example.invalid" {
+		t.Fatalf("scheduled replay projection was not retired: payload=%d URL=%q", len(scrubbed.Payload), scrubbed.URL)
+	}
+	stale := scrubbed
+	stale.Payload = []byte(`not canonical JSON`)
+	stale.URL = "https://attacker:secret@stale.example.invalid/replayed?token=wrong"
+	got, err := ctx.ScheduledDownloadPayload(&stale)
+	if err != nil {
+		t.Fatalf("retired scheduled reader consulted stale legacy fields: %v", err)
+	}
+	if got.URL != creator.URL || got.Headers["Authorization"] != creator.Headers["Authorization"] {
+		t.Fatalf("retired scheduled reader did not use canonical replay: %+v", got)
+	}
+
+	for _, trigger := range []string{"job_barrier_scheduled_download_insert", "job_barrier_scheduled_download_update"} {
+		if err := ctx.db.Exec("DROP TRIGGER IF EXISTS " + trigger).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["source-write-barrier-missing"] == 0 {
+		t.Fatalf("missing SQLite source-write barrier should fail readiness: %+v, %v", readiness, err)
+	}
+	if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+		Updates(map[string]any{"url": row.URL, "payload": row.Payload}).Error; err != nil {
+		t.Fatalf("restore pre-retirement scheduled source: %v", err)
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/"+jobMigrationScheduledDownload] == 0 {
+		t.Fatalf("restored source was trusted from the completion marker: %+v", readiness)
+	}
+	recovered, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 1, MaxBatches: 20, WritersDrained: false, Now: func() time.Time { return created.Add(3 * time.Hour) }})
+	if err != nil || !recovered.Complete {
+		t.Fatalf("restored source retirement recovery = %+v, %v", recovered, err)
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("recovered retirement readiness = %+v, %v", readiness, err)
+	}
+	var recoveredRow models.ScheduledDownload
+	if err := ctx.db.First(&recoveredRow, row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveredRow.Payload) != 0 || recoveredRow.URL != "https://example.invalid" {
+		t.Fatalf("restored scheduled source survived re-scrub: payload=%d URL=%q", len(recoveredRow.Payload), recoveredRow.URL)
+	}
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, strconv.FormatUint(uint64(row.ID), 10)).First(&mapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Where("job_id = ?", mapping.JobID).Delete(&models.JobReplayEnvelope{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.Blockers["nonterminal-replay-unavailable/"+jobMigrationScheduledDownload] == 0 {
+		t.Fatalf("nonterminal scheduled input loss did not block readiness: %+v", readiness)
 	}
 }
 
@@ -729,6 +891,13 @@ func TestJobMigrationWaitsForExplicitWriterDrainBeforeScrub(t *testing.T) {
 	if result.Complete || result.Phase != models.JobMigrationPhaseDrainFence {
 		t.Fatalf("unattested phase = %q complete=%v, want drain-fence/incomplete", result.Phase, result.Complete)
 	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readiness.Ready || readiness.WriterEpoch != models.JobWriterEpochDualPublisher || readiness.Blockers["writer-epoch-not-retired"] == 0 {
+		t.Fatalf("readiness passed before the writer fence: %+v", readiness)
+	}
 	var epoch models.JobWriterEpoch
 	if err := ctx.db.First(&epoch, models.JobWriterEpochRowID).Error; err != nil {
 		t.Fatal(err)
@@ -756,6 +925,10 @@ func TestJobMigrationWaitsForExplicitWriterDrainBeforeScrub(t *testing.T) {
 	}
 	if epoch.MinimumEpoch != models.JobWriterEpochRetiredPlaintext {
 		t.Fatalf("drained migration epoch = %d, want %d", epoch.MinimumEpoch, models.JobWriterEpochRetiredPlaintext)
+	}
+	readiness, err = ctx.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("readiness after writer fence = %+v, %v", readiness, err)
 	}
 }
 
@@ -793,6 +966,17 @@ func TestJobMigrationQuarantinesMalformedSourceWithoutPersistingSecrets(t *testi
 	}
 	if mapping.Status != models.JobSourceMappingQuarantined || mapping.BlockerCode != "payload-unreadable" || mapping.JobID != "" {
 		t.Fatalf("source mapping = status %q blocker %q job %q", mapping.Status, mapping.BlockerCode, mapping.JobID)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportJSON, err := json.Marshal(readiness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(reportJSON), "secret") || strings.Contains(string(reportJSON), "blocked.example.invalid") {
+		t.Fatalf("readiness report leaked source input: %s", reportJSON)
 	}
 	var epoch models.JobWriterEpoch
 	if err := ctx.db.First(&epoch, models.JobWriterEpochRowID).Error; err != nil {

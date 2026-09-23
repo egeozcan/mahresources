@@ -420,7 +420,7 @@ func (ctx *MahresourcesContext) DownloadHistoryPayload(entry *models.DownloadHis
 		return nil, errors.New("download history: no entry")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
-	if ctx.legacyJobInputsRetired() && len(entry.Payload) == 0 {
+	if ctx.legacyJobInputsRetired() {
 		service := ctx.JobService()
 		if service == nil {
 			return nil, errors.New("download history: canonical Job service is unavailable")

@@ -16,7 +16,10 @@ import (
 // LIMIT. SQLite tolerates several spellings of each; PostgreSQL does not.
 func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	deps := newPGDeps(t)
-	if err := deps.DB.AutoMigrate(&models.JobReplayEnvelope{}); err != nil {
+	if err := deps.DB.AutoMigrate(
+		&models.JobReplayEnvelope{}, &models.JobSourceMapping{}, &models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
+	); err != nil {
 		t.Fatalf("migrate replay envelopes: %v", err)
 	}
 	svc := NewService()
@@ -30,6 +33,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	// A finished Job whose window has passed, and one that is still running.
 	expired := acceptFixtureReplayJob(t, svc, deps)
 	advanceReplayJob(t, svc, deps, advanceReplayJob(t, svc, deps, expired, StateRunning), StateFailed)
+	legacySources := seedLegacyReplaySources(t, deps.DB, expired.ID, clock)
 	running := acceptFixtureReplayJob(t, svc, deps)
 	advanceReplayJob(t, svc, deps, running, StateRunning)
 
@@ -42,6 +46,22 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	}
 
 	clock = clock.Add(2 * time.Hour)
+	if err := deps.DB.Exec(`CREATE FUNCTION fail_source_mapping_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected mapping failure'; END $$`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.DB.Exec(`CREATE TRIGGER fail_source_mapping_update BEFORE UPDATE ON job_source_mappings FOR EACH ROW EXECUTE FUNCTION fail_source_mapping_update()`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PurgeExpiredReplay(deps, 10); err == nil {
+		t.Fatal("the Postgres purge should fail when its mapping marker cannot be saved")
+	}
+	assertReplayPurgeUnchanged(t, deps.DB, expired.ID, legacySources)
+	if err := deps.DB.Exec(`DROP TRIGGER fail_source_mapping_update ON job_source_mappings`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.DB.Exec(`DROP FUNCTION fail_source_mapping_update()`).Error; err != nil {
+		t.Fatal(err)
+	}
 	purged, err := svc.PurgeExpiredReplay(deps, 10)
 	if err != nil {
 		t.Fatalf("PurgeExpiredReplay on Postgres: %v", err)
@@ -56,6 +76,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	if envelope.Ciphertext != nil || envelope.Nonce != nil {
 		t.Fatalf("the purged envelope still holds a bytea value: %+v", envelope)
 	}
+	assertReplaySourcesPurged(t, deps.DB, expired.ID, legacySources, models.JobReplayPurgeExpired)
 	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, expired.ID)).ReplayAvailability; availability != ReplayExpired {
 		t.Fatalf("availability = %q, want %q", availability, ReplayExpired)
 	}

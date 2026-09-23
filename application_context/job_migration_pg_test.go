@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/afero"
 )
 
-func TestJobMigrationPostgresResumesAfterCrashMidScrub(t *testing.T) {
+func TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.ResourceVersion{}, &models.ResourceCategory{},
@@ -196,6 +196,53 @@ func TestJobMigrationPostgresResumesAfterCrashMidScrub(t *testing.T) {
 	}
 	if scrubbedImport.FieldsJSON != "" || scrubbedImport.JobID == "" {
 		t.Fatalf("import was not scrubbed and linked after resume: %+v", scrubbedImport)
+	}
+	readiness, err := restarted.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("completed PostgreSQL retirement readiness = %+v, %v", readiness, err)
+	}
+	var scheduledMapping models.JobSourceMapping
+	if err := restarted.db.Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, fmt.Sprint(scheduled.ID)).First(&scheduledMapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.db.Exec("DROP TRIGGER retired_job_source_plaintext_scheduled_downloads ON scheduled_downloads").Error; err != nil {
+		t.Fatalf("temporarily remove the retired source barrier: %v", err)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["source-write-barrier-missing"] == 0 {
+		t.Fatalf("missing PostgreSQL source-write barrier should fail readiness: %+v, %v", readiness, err)
+	}
+	if err := restarted.db.Model(&models.ScheduledDownload{}).Where("id = ?", scheduled.ID).Updates(map[string]any{
+		"url":     "https://restored-user:secret@pg-scheduled.example.invalid/private?token=restored",
+		"payload": scheduledPayload,
+	}).Error; err != nil {
+		t.Fatalf("simulate a restored pre-retirement source row: %v", err)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["source-retirement-hash-mismatch/scheduled-download"] == 0 {
+		t.Fatalf("restored PostgreSQL source should fail readiness: %+v, %v", readiness, err)
+	}
+	recovered, err := restarted.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 1, MaxBatches: 3, WritersDrained: false, Now: func() time.Time { return now.Add(2 * time.Hour) }})
+	if err != nil || !recovered.Complete {
+		t.Fatalf("restored PostgreSQL source retirement = %+v, %v", recovered, err)
+	}
+	var restoredScrubbed models.ScheduledDownload
+	if err := restarted.db.First(&restoredScrubbed, scheduled.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(restoredScrubbed.Payload) != 0 || restoredScrubbed.URL != "https://pg-scheduled.example.invalid" {
+		t.Fatalf("restored source was not rescrubbed: payload=%d URL=%q", len(restoredScrubbed.Payload), restoredScrubbed.URL)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("recovered PostgreSQL retirement readiness = %+v, %v", readiness, err)
+	}
+	if err := restarted.db.Where("job_id = ?", scheduledMapping.JobID).Delete(&models.JobReplayEnvelope{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["nonterminal-replay-unavailable/scheduled-download"] == 0 {
+		t.Fatalf("missing nonterminal PostgreSQL input should block readiness: %+v, %v", readiness, err)
 	}
 	unsafe := models.DownloadHistoryEntry{JobID: "post-fence-unsafe", URL: "https://user:secret@pg-migration.example.invalid/path?token=private",
 		Status: models.DownloadHistoryStatusFailed, CreatedAt: now, CompletedAt: &now, Payload: []byte(`{"url":"secret"}`)}

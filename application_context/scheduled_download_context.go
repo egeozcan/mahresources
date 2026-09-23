@@ -179,7 +179,7 @@ func (ctx *MahresourcesContext) ScheduledDownloadPayload(row *models.ScheduledDo
 		return nil, errors.New("scheduled download: no row")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
-	if ctx.legacyJobInputsRetired() && len(row.Payload) == 0 {
+	if ctx.legacyJobInputsRetired() {
 		service := ctx.JobService()
 		if service == nil {
 			return nil, errors.New("scheduled download: canonical Job service is unavailable")
