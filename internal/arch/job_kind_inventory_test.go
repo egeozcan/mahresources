@@ -82,6 +82,8 @@ func TestQueueSubmissionSourcesHaveAJobKind(t *testing.T) {
 		"job_queue_bridge.go":        true,
 		"plugin_command_runtime.go":  true,
 	}
+	seenSources := make(map[string]int, len(allowedSources))
+	seenCallers := make(map[string]int, len(allowedCallers))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -103,15 +105,22 @@ func TestQueueSubmissionSourcesHaveAJobKind(t *testing.T) {
 				if !ok || selector.Sel.Name != "JobOptions" {
 					break
 				}
+				foundSource := false
 				for _, field := range n.Elts {
 					entry, ok := field.(*ast.KeyValueExpr)
 					if !ok || sourceKey(entry.Key) != "Source" {
 						continue
 					}
+					foundSource = true
 					sources++
 					if source := sourceKey(entry.Value); !allowedSources[source] {
 						t.Errorf("%s: unlisted JobOptions.Source %q", name, source)
+					} else {
+						seenSources[source]++
 					}
+				}
+				if !foundSource {
+					t.Errorf("%s: JobOptions with no inventoried Source", name)
 				}
 			case *ast.CallExpr:
 				selector, ok := n.Fun.(*ast.SelectorExpr)
@@ -123,6 +132,8 @@ func TestQueueSubmissionSourcesHaveAJobKind(t *testing.T) {
 					submissions++
 					if !allowedCallers[name] {
 						t.Errorf("%s: new queue submission requires inventory and canonical publication proof", name)
+					} else {
+						seenCallers[name]++
 					}
 				}
 			}
@@ -131,6 +142,16 @@ func TestQueueSubmissionSourcesHaveAJobKind(t *testing.T) {
 	}
 	if sources < 12 || submissions < 8 {
 		t.Errorf("source inventory stopped matching queue paths: %d source declarations, %d submissions", sources, submissions)
+	}
+	for source := range allowedSources {
+		if seenSources[source] == 0 {
+			t.Errorf("inventoried queue Source %s has no submission", source)
+		}
+	}
+	for caller := range allowedCallers {
+		if seenCallers[caller] == 0 {
+			t.Errorf("inventoried queue caller %s has no submission", caller)
+		}
 	}
 }
 
