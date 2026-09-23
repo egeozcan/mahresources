@@ -8,6 +8,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
+	"mahresources/download_queue"
 	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -437,9 +438,18 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 
 				writer.Header().Set("Content-Type", constants.JSON)
 				writer.WriteHeader(http.StatusAccepted)
+				// The queue starts each worker before SubmitMultiple returns. Capture
+				// each mutable job under its own lock before encoding so a fast worker
+				// cannot race the JSON encoder while changing status or progress.
+				jobSnapshots := make([]*download_queue.DownloadJob, len(jobs))
+				for i, job := range jobs {
+					if job != nil {
+						jobSnapshots[i] = job.Snapshot()
+					}
+				}
 				_ = json.NewEncoder(writer).Encode(map[string]interface{}{
 					"queued": true,
-					"jobs":   jobs,
+					"jobs":   jobSnapshots,
 				})
 				return
 			}

@@ -2016,62 +2016,81 @@ func (ctx *MahresourcesContext) ClearPluginActionHandle(handle, removedCanonical
 	}
 	service := ctx.JobService()
 	access := ctx.jobAccess()
-	cleared := false
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		// Take the write lock before the first read. Besides serializing with
-		// Retry's handle movement on PostgreSQL, SQLite cannot promote a stale
-		// read snapshot to a writer after another transaction commits. Restricting
-		// the no-op update to the removed target also makes a concurrent Retry a
-		// clean no-op here instead of clearing its successor.
-		locked := tx.Model(&models.JobLegacyHandle{}).
-			Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
-			UpdateColumn("handle", gorm.Expr("handle"))
-		if locked.Error != nil {
-			return fmt.Errorf("application_context: lock plugin action handle to clear: %w", locked.Error)
-		}
-		if locked.RowsAffected == 0 {
-			return nil
-		}
+	const maxAttempts = 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		cleared := false
+		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+			// Take the write lock before the first read. Besides serializing with
+			// Retry's handle movement on PostgreSQL, SQLite cannot promote a stale
+			// read snapshot to a writer after another transaction commits. Restricting
+			// the no-op update to the removed target also makes a concurrent Retry a
+			// clean no-op here instead of clearing its successor.
+			locked := tx.Model(&models.JobLegacyHandle{}).
+				Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
+				UpdateColumn("handle", gorm.Expr("handle"))
+			if locked.Error != nil {
+				return fmt.Errorf("application_context: lock plugin action handle to clear: %w", locked.Error)
+			}
+			if locked.RowsAffected == 0 {
+				return nil
+			}
 
-		var row models.JobLegacyHandle
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("namespace = ? AND handle = ?", PluginActionHandleNamespace, handle).
-			First(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+			var row models.JobLegacyHandle
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("namespace = ? AND handle = ?", PluginActionHandleNamespace, handle).
+				First(&row).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("application_context: load plugin action handle to clear: %w", err)
+			}
+			// The manager may still hold an ancestor after Retry has already moved
+			// the durable handle. Never apply that clear to whatever the handle means
+			// now, even if the successor has also reached a terminal state.
+			if row.JobID != removedCanonicalID {
+				return nil
+			}
+			current, err := service.Get(ctx.jobDepsWithDB(tx), access, row.JobID)
+			if errors.Is(err, jobs.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("application_context: authorize plugin action handle clear: %w", err)
+			}
+			if current.Kind != JobKindPluginAction || !current.State.Terminal() {
+				return nil
+			}
+			result := tx.Model(&models.JobLegacyHandle{}).
+				Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
+				Updates(map[string]any{"cleared_job_id": removedCanonicalID, "updated_at": time.Now().UTC()})
+			if result.Error != nil {
+				return fmt.Errorf("application_context: mark plugin action handle cleared: %w", result.Error)
+			}
+			cleared = result.RowsAffected == 1
 			return nil
+		})
+		if err == nil {
+			return cleared, nil
 		}
-		if err != nil {
-			return fmt.Errorf("application_context: load plugin action handle to clear: %w", err)
+		if ctx.db.Dialector.Name() != "sqlite" || !pluginActionHandleClearLockError(err) || attempt+1 == maxAttempts {
+			return false, err
 		}
-		// The manager may still hold an ancestor after Retry has already moved
-		// the durable handle. Never apply that clear to whatever the handle means
-		// now, even if the successor has also reached a terminal state.
-		if row.JobID != removedCanonicalID {
-			return nil
-		}
-		current, err := service.Get(ctx.jobDepsWithDB(tx), access, row.JobID)
-		if errors.Is(err, jobs.ErrNotFound) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("application_context: authorize plugin action handle clear: %w", err)
-		}
-		if current.Kind != JobKindPluginAction || !current.State.Terminal() {
-			return nil
-		}
-		result := tx.Model(&models.JobLegacyHandle{}).
-			Where("namespace = ? AND handle = ? AND job_id = ?", PluginActionHandleNamespace, handle, removedCanonicalID).
-			Updates(map[string]any{"cleared_job_id": removedCanonicalID, "updated_at": time.Now().UTC()})
-		if result.Error != nil {
-			return fmt.Errorf("application_context: mark plugin action handle cleared: %w", result.Error)
-		}
-		cleared = result.RowsAffected == 1
-		return nil
-	})
-	if err != nil {
-		return false, err
+		// SQLITE_LOCKED can be returned without waiting on SQLite's busy timeout.
+		// Retry the entire transaction so each attempt gets a fresh snapshot.
+		time.Sleep(time.Duration(5*(1<<attempt)) * time.Millisecond)
 	}
-	return cleared, nil
+	panic("unreachable")
+}
+
+func pluginActionHandleClearLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database is busy")
 }
 
 // ClearVisibleTerminalPluginActionHandles clears current terminal targets the

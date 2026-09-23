@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,9 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -637,6 +640,31 @@ func TestClearPluginActionHandleLocksMappingBeforeReadingIt(t *testing.T) {
 	statements := counter.capturedStatements()
 	if len(statements) < 2 || !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statements[0])), "UPDATE ") {
 		t.Fatalf("clear transaction must take its SQLite writer lock before reading the handle; statements=%q", statements)
+	}
+}
+
+func TestClearPluginActionHandleRetriesSQLiteTableLock(t *testing.T) {
+	tc, owner, _, _ := setupRetryableActionProjectionEnv(t)
+	handle, terminal := runRetryableActionToFailure(t, tc, owner, "clear sqlite lock retry")
+
+	var injected atomic.Bool
+	const callbackName = "test:plugin_action_clear_table_lock_once"
+	err := tc.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "job_legacy_handles" && injected.CompareAndSwap(false, true) {
+			tx.AddError(errors.New("database table is locked: job_legacy_handles"))
+		}
+	})
+	if err != nil {
+		t.Fatalf("register lock fault: %v", err)
+	}
+	t.Cleanup(func() { _ = tc.DB.Callback().Update().Remove(callbackName) })
+
+	marked, err := tc.AppCtx.WithPrincipal(auth.FromUser(owner)).ClearPluginActionHandle(handle, terminal.ID)
+	if !injected.Load() {
+		t.Fatal("clear did not reach the injected SQLite table-lock fault")
+	}
+	if err != nil || !marked {
+		t.Fatalf("clear after transient SQLite table lock: marked=%v err=%v", marked, err)
 	}
 }
 

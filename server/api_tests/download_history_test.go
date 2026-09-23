@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"mahresources/application_context"
 	"mahresources/download_queue"
 	"mahresources/models"
@@ -22,20 +24,40 @@ import (
 // control plane was installed. Compatibility Retry must still handle it.
 func recordDownload(t *testing.T, tc *TestContext, jobID, status string, owner *uint, url string, completedAt time.Time) models.DownloadHistoryEntry {
 	t.Helper()
-	service := tc.AppCtx.JobService()
-	tc.AppCtx.SetJobService(nil)
-	defer tc.AppCtx.SetJobService(service)
 	payload := fmt.Sprintf(`{"URL":%q}`, url)
-	if err := tc.AppCtx.RecordTerminalDownload(download_queue.HistoryRecord{
-		JobID:           jobID,
-		URL:             url,
-		Name:            jobID,
-		Status:          status,
-		CreatedAt:       completedAt.Add(-time.Minute),
-		CompletedAt:     &completedAt,
-		CreatedByUserId: owner,
-		Payload:         []byte(payload),
-	}); err != nil {
+	// These tests need legacy history rows with no canonical Job mapping. Write
+	// the model fixture directly instead of toggling the shared application
+	// context's JobService, which races queue workers recording other outcomes.
+	if err := tc.DB.Table("download_history_entries").Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "job_id"}},
+		Where: clause.Where{Exprs: []clause.Expression{
+			gorm.Expr("download_history_entries.completed_at IS NULL OR excluded.completed_at IS NULL OR excluded.completed_at >= download_history_entries.completed_at"),
+		}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"status":       status,
+			"error":        "",
+			"resource_id":  nil,
+			"total_size":   int64(0),
+			"progress":     int64(0),
+			"started_at":   nil,
+			"completed_at": completedAt,
+			"url":          url,
+			"name":         jobID,
+			"payload":      payload,
+			"plugin_name":  "",
+			"attempts":     gorm.Expr("download_history_entries.attempts + 1"),
+		}),
+	}).Create(map[string]any{
+		"job_id":             jobID,
+		"url":                url,
+		"name":               jobID,
+		"status":             status,
+		"created_at":         completedAt.Add(-time.Minute),
+		"completed_at":       completedAt,
+		"created_by_user_id": owner,
+		"payload":            payload,
+		"attempts":           1,
+	}).Error; err != nil {
 		t.Fatalf("record %s: %v", jobID, err)
 	}
 	var entry models.DownloadHistoryEntry
@@ -749,7 +771,17 @@ func TestDownloadHistoryBulkRetryRunsEachURLOnce(t *testing.T) {
 // submit, not the checks before it.
 func TestDownloadHistoryConcurrentRetriesSubmitOnce(t *testing.T) {
 	tc := SetupTestEnv(t)
-	entry := recordDownload(t, tc, "contended-retry", models.DownloadHistoryStatusFailed, nil, "http://example.invalid/x", time.Now())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(started) })
+		<-release
+		http.Error(w, "test transfer released", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	defer close(release)
+	entry := recordDownload(t, tc, "contended-retry", models.DownloadHistoryStatusFailed, nil, server.URL+"/x", time.Now())
 
 	before := len(tc.AppCtx.DownloadManager().GetJobs())
 	body := fmt.Sprintf(`{"ids":[%d]}`, entry.ID)
@@ -764,6 +796,14 @@ func TestDownloadHistoryConcurrentRetriesSubmitOnce(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// Keep the first accepted transfer in flight until both API responses have
+	// returned. A fast failure can be retried legitimately by the second call
+	// after the first one has finished, which does not test simultaneous claims.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("accepted retry did not start its blocked transfer (codes %v)", codes)
+	}
 
 	accepted := 0
 	for _, code := range codes {
