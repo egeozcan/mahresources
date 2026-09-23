@@ -338,6 +338,41 @@ func TestBulkJobCommandSendsMixedAdvertisementSelectionForPerJobResults(t *testi
 	}
 }
 
+func TestBulkJobCommandContinuesWhenASelectedJobIsHidden(t *testing.T) {
+	const visible = `{"id":"job-visible","version":6,"commands":[{"key":"cancel","endpoint":"/v1/jobs/job-visible/commands/cancel","jobVersion":6,"bulk":true}]}`
+	var postBody map[string]any
+	postCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs/job-visible":
+			writeJobJSON(w, visible)
+		case "/v1/jobs/job-hidden":
+			w.WriteHeader(http.StatusNotFound)
+			writeJobJSON(w, `{"error":"not found"}`)
+		case "/v1/jobs/commands/cancel":
+			postCalls++
+			if err := json.NewDecoder(r.Body).Decode(&postBody); err != nil {
+				t.Errorf("decode bulk request: %v", err)
+			}
+			writeJobJSON(w, `{"results":[{"jobId":"job-visible","code":"succeeded"},{"jobId":"job-hidden","code":"not-found"}]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := runJobCLI(t, server.URL, true, "bulk-command", "cancel", "job-visible", "job-hidden", "--idempotency-key", "ops-43"); err != nil {
+		t.Fatalf("bulk command should defer hidden Job outcome to the bulk endpoint: %v", err)
+	}
+	if postCalls != 1 {
+		t.Fatalf("bulk POST calls = %d, want 1", postCalls)
+	}
+	if ids, ok := postBody["jobIds"].([]any); !ok || len(ids) != 2 || ids[0] != "job-visible" || ids[1] != "job-hidden" {
+		t.Fatalf("bulk jobIds = %#v", postBody["jobIds"])
+	}
+}
+
 func TestBulkJobCommandRejectsStaleAdvertisedVersionBeforeSubmitting(t *testing.T) {
 	postCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
