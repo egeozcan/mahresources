@@ -14,24 +14,78 @@ import (
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
+	"mahresources/auth"
 	"mahresources/jobs"
 )
 
 const (
 	// JobKindSummaryExport is a filtered long-range Job analytics export.
-	JobKindSummaryExport      = "job-summary-export"
-	jobSummaryExportVersion   = 1
-	jobSummaryExportOutput    = "summary"
-	jobSummaryExportDirectory = "_exports/job-summaries"
+	JobKindSummaryExport       = "job-summary-export"
+	jobSummaryExportVersion    = 1
+	jobSummaryExportOutput     = "summary"
+	jobSummaryExportDirectory  = "_exports/job-summaries"
+	jobSummaryExportAdminScope = "administrator"
+	jobSummaryExportOwnerScope = "owner"
 )
 
 // jobSummaryExportInput is the fixed, replayable question the export answers.
 // The range is explicit so a retry does not silently move the analysis window.
 type jobSummaryExportInput struct {
-	Filter jobs.Filter `json:"filter"`
-	From   time.Time   `json:"from"`
-	To     time.Time   `json:"to"`
-	Format string      `json:"format"`
+	Filter jobs.Filter               `json:"filter"`
+	From   time.Time                 `json:"from"`
+	To     time.Time                 `json:"to"`
+	Format string                    `json:"format"`
+	Scope  jobSummaryExportDataScope `json:"scope"`
+}
+
+// jobSummaryExportDataScope is the effective visibility of the data queried
+// when the export was accepted. It is sealed with the replay input so output
+// access and delayed execution can revalidate the same scope after a role
+// change or process restart.
+type jobSummaryExportDataScope struct {
+	Class       string `json:"class"`
+	OwnerUserID uint   `json:"ownerUserId,omitempty"`
+}
+
+func (scope jobSummaryExportDataScope) valid() bool {
+	switch scope.Class {
+	case jobSummaryExportAdminScope:
+		return scope.OwnerUserID == 0
+	case jobSummaryExportOwnerScope:
+		return scope.OwnerUserID != 0
+	default:
+		return false
+	}
+}
+
+func (scope jobSummaryExportDataScope) access() jobs.Access {
+	return jobs.Access{UserID: scope.OwnerUserID, Administrator: scope.Class == jobSummaryExportAdminScope}
+}
+
+func (scope jobSummaryExportDataScope) contains(principal *auth.Principal) bool {
+	if principal == nil || !principal.CanWrite() || !scope.valid() {
+		return false
+	}
+	if principal.IsAdmin() {
+		return true
+	}
+	return scope.Class == jobSummaryExportOwnerScope && principal.UserID == scope.OwnerUserID
+}
+
+func jobSummaryExportScopeFor(principal *auth.Principal, filter jobs.Filter) (jobSummaryExportDataScope, error) {
+	if principal == nil || !principal.CanWrite() {
+		return jobSummaryExportDataScope{}, ErrRoleCapability
+	}
+	if principal.IsAdmin() {
+		if filter.OwnerID != nil && *filter.OwnerID != 0 {
+			return jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: *filter.OwnerID}, nil
+		}
+		return jobSummaryExportDataScope{Class: jobSummaryExportAdminScope}, nil
+	}
+	if principal.UserID == 0 {
+		return jobSummaryExportDataScope{}, errors.New("a Job summary export needs a principal with a durable owner")
+	}
+	return jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: principal.UserID}, nil
 }
 
 type jobSummaryExportDescription struct {
@@ -81,6 +135,9 @@ func jobSummaryExportInputOf(raw json.RawMessage) (*jobSummaryExportInput, error
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return nil, fmt.Errorf("a Job summary export input is not readable: %w", err)
 	}
+	if !input.Scope.valid() {
+		return nil, errors.New("a Job summary export needs a valid creation-time data scope")
+	}
 	if input.From.IsZero() || input.To.IsZero() || !input.From.Before(input.To) {
 		return nil, errors.New("a Job summary export needs a start before its end")
 	}
@@ -121,8 +178,11 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 			return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "role-refused")
 		}
 	}
+	if !input.Scope.contains(a.ctx.Principal()) {
+		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "scope-refused")
+	}
 
-	summary, err := a.ctx.GetJobSummaryRange(input.Filter, input.From, input.To)
+	summary, err := a.ctx.getJobSummaryRange(input.Scope.access(), input.Filter, input.From, input.To)
 	if err != nil {
 		return fmt.Errorf("summarize Jobs for export: %w", err)
 	}
@@ -134,7 +194,8 @@ func (a *jobSummaryExportAdapter) Dispatch(ctx context.Context, execution jobs.E
 	if err := writeJobSummaryExport(a.ctx.GetDefaultFs(), path, content); err != nil {
 		return fmt.Errorf("write Job summary export: %w", err)
 	}
-	if err := a.ctx.publishQueueArtifact(execution, jobSummaryExportOutput, "Job summary export", path, a.ctx.exportArtifactExpiry()); err != nil {
+	if err := a.ctx.publishQueueArtifact(execution, jobSummaryExportOutput, "Job summary export", path,
+		a.ctx.exportArtifactExpiry(), input.Scope); err != nil {
 		return fmt.Errorf("publish Job summary export: %w", err)
 	}
 	return a.ctx.finishQueueJob(execution, jobs.StateSucceeded, nil, []string{jobSummaryExportOutput})
@@ -170,7 +231,8 @@ func (a *jobSummaryExportAdapter) Reconcile(_ context.Context, request jobs.Reco
 		return jobs.ReconcileSucceed, nil
 	}
 	if _, err := a.ctx.GetDefaultFs().Stat(path); err == nil {
-		if err := a.ctx.publishQueueArtifact(request.Execution, jobSummaryExportOutput, "Job summary export", path, a.ctx.exportArtifactExpiry()); err != nil {
+		if err := a.ctx.publishQueueArtifact(request.Execution, jobSummaryExportOutput, "Job summary export", path,
+			a.ctx.exportArtifactExpiry(), input.Scope); err != nil {
 			return jobs.ReconcileExternalWorkUnproven, nil
 		}
 		return jobs.ReconcileSucceed, nil
@@ -221,6 +283,34 @@ func writeJobSummaryExport(fileSystem afero.Fs, path string, content []byte) err
 	if err := fileSystem.Rename(partial, path); err != nil {
 		_ = fileSystem.Remove(partial)
 		return err
+	}
+	return nil
+}
+
+// AuthorizeJobOutput binds every advertised and opened export to the effective
+// visibility copied into its durable artifact reference. Older outputs without
+// this proof are denied, and artifact access does not depend on replay retention.
+func (a *jobSummaryExportAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if a == nil || a.ctx == nil || request.Principal == nil ||
+		request.Snapshot.Kind != JobKindSummaryExport || request.Snapshot.KindVersion != jobSummaryExportVersion ||
+		request.Output.Key != jobSummaryExportOutput || request.Output.Type != jobs.OutputTypeArtifact {
+		return ErrJobOutputForbidden
+	}
+	var reference queueArtifactReference
+	if len(request.Output.Reference) == 0 || json.Unmarshal(request.Output.Reference, &reference) != nil ||
+		reference.SummaryExportScope == nil || !reference.SummaryExportScope.valid() ||
+		!reference.SummaryExportScope.contains(request.Principal) {
+		return ErrJobOutputForbidden
+	}
+	if reference.SummaryExportScope.Class == jobSummaryExportOwnerScope &&
+		(request.Snapshot.OwnerUserID == nil || *request.Snapshot.OwnerUserID != reference.SummaryExportScope.OwnerUserID) {
+		return ErrJobOutputForbidden
+	}
+	var description jobSummaryExportDescription
+	if len(request.Snapshot.Summary) == 0 || json.Unmarshal(request.Snapshot.Summary, &description) != nil ||
+		(description.Format != "csv" && description.Format != "json") ||
+		reference.Path != jobSummaryExportPath(request.Snapshot.ID, description.Format) {
+		return ErrJobOutputForbidden
 	}
 	return nil
 }
@@ -299,7 +389,11 @@ func (ctx *MahresourcesContext) SubmitJobSummaryExport(filter jobs.Filter, from,
 	if len(origin) > jobs.MaxOriginBytes {
 		return jobs.Snapshot{}, fmt.Errorf("origin may not exceed %d bytes", jobs.MaxOriginBytes)
 	}
-	input := jobSummaryExportInput{Filter: filter, From: from.UTC(), To: to.UTC(), Format: format}
+	scope, err := jobSummaryExportScopeFor(ctx.Principal(), filter)
+	if err != nil {
+		return jobs.Snapshot{}, err
+	}
+	input := jobSummaryExportInput{Filter: filter, From: from.UTC(), To: to.UTC(), Format: format, Scope: scope}
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return jobs.Snapshot{}, err
@@ -321,9 +415,13 @@ func (ctx *MahresourcesContext) SubmitJobSummaryExport(filter jobs.Filter, from,
 
 // GetJobSummaryRange is the facade used by the summary export executor.
 func (ctx *MahresourcesContext) GetJobSummaryRange(filter jobs.Filter, from, to time.Time) (jobs.Summary, error) {
+	return ctx.getJobSummaryRange(ctx.jobAccess(), filter, from, to)
+}
+
+func (ctx *MahresourcesContext) getJobSummaryRange(access jobs.Access, filter jobs.Filter, from, to time.Time) (jobs.Summary, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
 		return jobs.Summary{}, err
 	}
-	return service.SummaryRange(ctx.jobDeps(), ctx.jobAccess(), filter, from, to)
+	return service.SummaryRange(ctx.jobDeps(), access, filter, from, to)
 }

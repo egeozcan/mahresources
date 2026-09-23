@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -76,6 +77,9 @@ func TestSummaryExportIsAnOwnerVisibleJobWithExpiringTypedOutput(t *testing.T) {
 	if finished.State != jobs.StateSucceeded {
 		t.Fatalf("summary export state = %s, want succeeded", finished.State)
 	}
+	if _, err := ctx.JobService().ForgetReplay(ctx.jobDeps(), jobs.Access{UserID: owner.ID}, accepted.ID); err != nil {
+		t.Fatalf("forget completed export input: %v", err)
+	}
 	outputs, err := ownerCtx.GetOpenableJobOutputs(accepted.ID)
 	if err != nil {
 		t.Fatalf("read output metadata: %v", err)
@@ -122,6 +126,7 @@ func TestSummaryExportCSVIsStableAndComplete(t *testing.T) {
 
 func TestSummaryExportInputRequiresLongExplicitRangeAndKnownFormat(t *testing.T) {
 	from := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	scope := jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: 7}
 	for _, tc := range []struct {
 		name   string
 		to     time.Time
@@ -131,10 +136,98 @@ func TestSummaryExportInputRequiresLongExplicitRangeAndKnownFormat(t *testing.T)
 		{name: "unknown format", to: from.Add(91 * 24 * time.Hour), format: "xml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input, _ := json.Marshal(jobSummaryExportInput{From: from, To: tc.to, Format: tc.format})
+			input, _ := json.Marshal(jobSummaryExportInput{From: from, To: tc.to, Format: tc.format, Scope: scope})
 			if _, err := jobSummaryExportInputOf(input); err == nil {
 				t.Fatal("invalid export input was accepted")
 			}
 		})
+	}
+}
+
+func TestSummaryExportInputRequiresCreationTimeScope(t *testing.T) {
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	input, err := json.Marshal(jobSummaryExportInput{
+		From: from, To: from.Add(91 * 24 * time.Hour), Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("encode scope-less summary export input: %v", err)
+	}
+	if _, err := jobSummaryExportInputOf(input); err == nil {
+		t.Fatal("summary export input without a creation-time scope was accepted")
+	}
+}
+
+func TestSummaryExportScopeRevalidatesAgainstCurrentVisibility(t *testing.T) {
+	owner := &auth.Principal{UserID: 7, Role: models.RoleEditor}
+	other := &auth.Principal{UserID: 8, Role: models.RoleEditor}
+	admin := &auth.Principal{UserID: 9, Role: models.RoleAdmin}
+	guest := &auth.Principal{UserID: 7, Role: models.RoleGuest}
+
+	adminScope := jobSummaryExportDataScope{Class: jobSummaryExportAdminScope}
+	if !adminScope.contains(admin) {
+		t.Fatal("administrator could not read an administrator-scoped export")
+	}
+	if adminScope.contains(owner) {
+		t.Fatal("editor retained access to an administrator-scoped export")
+	}
+	filteredOwnerID := owner.UserID
+	filteredAdminScope, err := jobSummaryExportScopeFor(admin, jobs.Filter{OwnerID: &filteredOwnerID})
+	if err != nil || filteredAdminScope != (jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: owner.UserID}) {
+		t.Fatalf("administrator scope filtered to one owner = %+v, err=%v; want that owner's effective scope", filteredAdminScope, err)
+	}
+	if !filteredAdminScope.contains(owner) {
+		t.Fatal("owner lost access to an administrator export filtered to their Jobs")
+	}
+
+	ownerScope := jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: owner.UserID}
+	if !ownerScope.contains(owner) {
+		t.Fatal("owner lost access to an export scoped to its own Jobs")
+	}
+	if ownerScope.contains(other) {
+		t.Fatal("another editor gained access to an owner-scoped export")
+	}
+	if !ownerScope.contains(admin) {
+		t.Fatal("administrator could not read an owner-scoped export within its current visibility")
+	}
+	if ownerScope.contains(guest) {
+		t.Fatal("read-only owner gained access to an owner-scoped export")
+	}
+	if got := ownerScope.access(); got != (jobs.Access{UserID: owner.UserID}) {
+		t.Fatalf("owner-scoped export query access = %+v, want owner-only access", got)
+	}
+}
+
+func TestSummaryExportLegacyArtifactWithoutPersistedScopeIsHidden(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	owner, err := ctx.CreateUser(&UserInput{Username: "legacy-summary-owner", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	input, err := json.Marshal(jobSummaryExportInput{
+		From: from, To: from.Add(91 * 24 * time.Hour), Format: "json",
+		Scope: jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: owner.ID},
+	})
+	if err != nil {
+		t.Fatalf("encode summary export input: %v", err)
+	}
+	accepted, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
+		Kind: JobKindSummaryExport, KindVersion: jobSummaryExportVersion,
+		State: jobs.StateQueued, OwnerUserID: &owner.ID, ActorUserID: &owner.ID,
+		Origin: "api", Title: "Legacy summary export", Replay: jobs.ReplayInput{Input: input},
+	})
+	if err != nil {
+		t.Fatalf("accept summary export: %v", err)
+	}
+	// This is the reference shape persisted before scope metadata was added.
+	publishTestOutput(t, ctx, accepted.ID, jobSummaryExportOutput, jobs.OutputTypeArtifact,
+		`{"path":"_exports/job-summaries/legacy.json","size":20}`, jobs.OutputAvailable, nil)
+	ownerCtx := ctx.WithPrincipal(auth.FromUser(owner))
+	outputs, err := ownerCtx.GetOpenableJobOutputs(accepted.ID)
+	if err != nil || len(outputs) != 0 {
+		t.Fatalf("legacy summary output metadata = %#v, err=%v; want hidden", outputs, err)
+	}
+	if _, err := ownerCtx.OpenJobOutput(context.Background(), accepted.ID, jobSummaryExportOutput); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("legacy summary output open error = %v, want forbidden", err)
 	}
 }

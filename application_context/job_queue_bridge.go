@@ -1151,12 +1151,21 @@ func (ctx *MahresourcesContext) publishQueueArtifact(
 	execution jobs.Execution,
 	key, label, path string,
 	expiresAt time.Time,
+	summaryScopes ...jobSummaryExportDataScope,
 ) error {
+	if len(summaryScopes) > 1 || (execution.Kind == JobKindSummaryExport && (len(summaryScopes) != 1 || !summaryScopes[0].valid())) ||
+		(execution.Kind != JobKindSummaryExport && len(summaryScopes) != 0) {
+		return errors.New("invalid summary export artifact scope")
+	}
 	info, err := ctx.GetDefaultFs().Stat(path)
 	if err != nil {
 		return fmt.Errorf("%w: the artifact %s is not there: %w", errQueueStagedOutputMissing, path, err)
 	}
 	artifactReference := queueArtifactReference{Path: path, Size: info.Size()}
+	if len(summaryScopes) == 1 {
+		scope := summaryScopes[0]
+		artifactReference.SummaryExportScope = &scope
+	}
 	if execution.Kind == JobKindGroupExport {
 		request, requestErr := exportRequestOf(execution.Input)
 		if requestErr != nil || path != exportArchivePath(execution.JobID, request.Gzip) {
@@ -1200,9 +1209,10 @@ var errQueueStagedOutputMissing = errors.New("the staged output is not there")
 // how many of them the publisher verified. The Kind's own reader understands it and
 // the control plane never interprets it.
 type queueArtifactReference struct {
-	Path                 string `json:"path"`
-	Size                 int64  `json:"size"`
-	ScopeManifestVersion uint   `json:"scopeManifestVersion,omitempty"`
+	Path                 string                     `json:"path"`
+	Size                 int64                      `json:"size"`
+	ScopeManifestVersion uint                       `json:"scopeManifestVersion,omitempty"`
+	SummaryExportScope   *jobSummaryExportDataScope `json:"summaryExportScope,omitempty"`
 }
 
 // publishQueueReport publishes one staged JSON document as a report output.
