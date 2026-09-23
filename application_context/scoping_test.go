@@ -36,7 +36,9 @@ func newScopingTestContext(t *testing.T) *MahresourcesContext {
 	}
 	sqlDB, _ := db.DB()
 	roDB := sqlx.NewDb(sqlDB, "sqlite3")
-	return NewMahresourcesContext(afero.NewMemMapFs(), db, roDB, &MahresourcesConfig{DbType: constants.DbTypeSqlite})
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, roDB, &MahresourcesConfig{DbType: constants.DbTypeSqlite})
+	cleanupMahresourcesTestContext(t, ctx)
+	return ctx
 }
 
 // scopingFixture builds a group tree root(1) > child(2) > grandchild(3) plus an

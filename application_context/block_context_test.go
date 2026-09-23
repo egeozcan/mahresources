@@ -57,6 +57,7 @@ func createBlockTestContext(t *testing.T) *MahresourcesContext {
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
 	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+	cleanupMahresourcesTestContext(t, ctx)
 
 	// Ensure default resource category exists
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}

@@ -64,9 +64,11 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 	}
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	return NewMahresourcesContext(afero.NewMemMapFs(), db, readOnlyDB, &MahresourcesConfig{
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, readOnlyDB, &MahresourcesConfig{
 		DbType: constants.DbTypeSqlite,
 	})
+	cleanupMahresourcesTestContext(t, ctx)
+	return ctx
 }
 
 func makeTestGroup(t *testing.T, ctx *MahresourcesContext, name string) *models.Group {

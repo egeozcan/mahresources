@@ -60,6 +60,7 @@ func createAdminTestContext(t *testing.T, cacheName string) *MahresourcesContext
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+	cleanupMahresourcesTestContext(t, ctx)
 
 	// Ensure default resource category exists
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}

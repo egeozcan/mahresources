@@ -70,10 +70,12 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 	}
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	return NewMahresourcesContext(afero.NewMemMapFs(), db, readOnlyDB, &MahresourcesConfig{
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, readOnlyDB, &MahresourcesConfig{
 		DbType:      constants.DbTypeSqlite,
 		AuthEnabled: authEnabled,
 	})
+	cleanupMahresourcesTestContext(t, ctx)
+	return ctx
 }
 
 // makeAdmin creates an enabled admin (which warms the root-admin cache via the
