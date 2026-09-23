@@ -198,6 +198,54 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('does not announce a failure first observed during replay after reconnect', async () => {
+        vi.useFakeTimers();
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'export-1', title: 'Export', kind: 'export', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' }];
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { failed: 1 } };
+            if (url.startsWith('/v1/jobs?')) {
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').includes('failed') ? [
+                    { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, acceptedAt: '2026-09-23T10:00:00Z' },
+                ] : [] };
+            }
+            return { id: 'export-1', title: 'Export', kind: 'export', state: 'failed', version: 2, commands: [] };
+        });
+        panel.connect();
+        const stream = panel.eventSource as unknown as FakeEventSource;
+        panel.streamCaughtUp = true;
+
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ id: 'progress-1', jobId: 'export-1', sequence: 2, jobVersion: 1, type: 'progress', deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+
+        stream.listeners.get('error')?.({});
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ id: 'failed-1', jobId: 'export-1', sequence: 3, jobVersion: 2, type: 'state-change', deliverySequence: 2 }),
+            lastEventId: 'v2:2',
+        });
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:2' }) });
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+
+        expect(panel.jobs[0]).toMatchObject({ id: 'export-1', state: 'failed' });
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('announces only events after the catch-up boundary, including after reconnect', () => {
         class FakeEventSource {
             listeners = new Map<string, Function>();

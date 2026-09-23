@@ -298,6 +298,7 @@ export function jobPanel() {
                 this._panelRefreshTimer = null;
                 this._panelRefreshMaxTimer = null;
                 this._panelRefreshRequested = false;
+                this._pendingLiveJobUpdates.clear();
             });
             this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
             for (const eventName of ['message', 'job']) {
@@ -315,6 +316,7 @@ export function jobPanel() {
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
             this._streamGeneration += 1;
+            this._pendingLiveJobUpdates.clear();
             if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
