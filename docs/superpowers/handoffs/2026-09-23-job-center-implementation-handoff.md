@@ -302,3 +302,68 @@ The handoff commit that adds this file is the only change after that; re-run
 | Round-3 review run | `2a794586-e373-417f-b69a-ee2e6f758bf8` (six P1 carried into this round, two P2 not) |
 | Plan / design / ADRs | `docs/superpowers/plans/2026-09-22-job-center.md`, `docs/superpowers/specs/2026-09-22-job-center-design.md`, `docs/adr/0006-durable-job-control-plane.md`, `docs/adr/0007-retry-creates-a-new-job.md` |
 | Reviewer run IDs | the round-3 run id above; the reviewer's findings are preserved verbatim in the round's `docs/todo.md` entry for the six P1s it did carry, and the two P2 notes exist only in the review itself |
+
+## 15. Superseding stop note: Astra round 4 and preserved WIP
+
+This section supersedes the resume instructions above where they conflict. After the clean
+handoff commit `60de1efe`, a fresh Astra review ran against that exact committed state:
+
+- **Review run:** `70a4ff5a-b5cb-4913-a2ea-313642d97602`
+- **Reviewer artifact:**
+  `/Users/egecan/.pi/agent/sessions/--Users-egecan-Code-mahresources--/subagent-artifacts/70a4ff5a-b5cb-4913-a2ea-313642d97602_reviewer_output.md`
+- **Verdict:** blocked — six P1 findings and one P2 finding.
+- **Stopped fix run:** `ccd4ab7f-2ba6-4932-bd85-a8eabe3b2048`. It was stopped at the
+  operator's requested session boundary. Its work was incomplete and had not completed its
+  test gate.
+
+The six P1s are:
+
+1. unreadable replay input can release ownership of an execution that may still be running;
+2. Reduction reconciliation can queue replacement work from local absence without proving
+   the original runtime quiescent;
+3. quarantined claims are never revisited after their owner later dies, permanently consuming
+   capacity;
+4. queue-backed terminal publication failures can overwrite the executor's real outcome;
+5. nested replay parameters can escape plugin progress/result redaction;
+6. transactional plugin-command rechecks can open another DB connection through the scoped
+   plugin-access cache.
+
+The P2 is that a losing Retry can disclose a hidden successor UUID in its conflict error.
+Read the reviewer artifact for exact evidence and required corrections before continuing.
+
+### 15.1 Preserved partial fix
+
+The stopped worker had made substantial partial progress. It is preserved twice:
+
+| Form | Identifier/path |
+| --- | --- |
+| Git stash | `9896f6df7ad1b68a32ffa3ae2caec6b9f3498d68` — message `WIP Task 9 Astra round 4 fixes (session handoff)` |
+| Standalone patch backup | `/tmp/mahresources-job-center-task9-round4-wip.patch` — 116,471 bytes, 2,306 lines |
+
+The stash contains 18 modified tracked files (1,448 insertions, 126 deletions) plus the
+untracked `application_context/job_quarantine_recovery_test.go` (214 lines). Treat it as WIP:
+it may not compile and no final verification was completed. Do not drop the stash until the
+work is committed and independently verified.
+
+### 15.2 Updated exact resume sequence
+
+1. Confirm `master` is at the handoff commit and clean:
+   `git rev-parse --short HEAD` should report the commit containing this section, and
+   `git status --short` must be empty.
+2. Inspect before applying:
+   `git stash show --stat stash@{0}` and
+   `git show --stat stash@{0}^3` (the third parent contains the untracked test).
+3. Apply without dropping the recovery copy: `git stash apply stash@{0}`. If the stash order
+   changed, resolve by the full stash commit `9896f6df7ad1b68a32ffa3ae2caec6b9f3498d68`.
+4. Continue the six round-4 P1 fixes with strict public-seam red→green TDD. Review every WIP
+   hunk rather than assuming it is correct. Run focused tests, the whole SQLite tree, touched
+   package race tests, and the PostgreSQL suites required by the plan. Commit code/tests,
+   update `docs/todo.md`, and regenerate the cumulative baseline-to-HEAD artifact.
+5. Run a **fresh GPT-6 Astra cumulative review after Task 9**. Fix/re-review until no P0/P1
+   remains. Do not start Task 10 before that clearance.
+6. Then follow the remaining sequence above: Tasks 10–13 + Astra checkpoint, Tasks 14–18 +
+   final Astra review and cutover verification.
+
+At this stop boundary, committed source is the previously verified `e60a7007` state, the
+round-4 review is recorded above, all partial implementation is recoverable from the stash
+and patch, and the working tree was cleaned before this handoff update.
