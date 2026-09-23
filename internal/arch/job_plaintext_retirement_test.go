@@ -150,7 +150,7 @@ func checkPluginCommandReader(t *testing.T, root, fileName, functionName string,
 
 func checkPluginImportRetryReader(t *testing.T, root string) {
 	t.Helper()
-	_, function := parseProductionFunction(t, root, "job_plugin_command_adapter.go", "importFieldsJSON")
+	_, function := parseProductionFunction(t, root, "plugin_command_import_command_facts.go", "pluginCommandImportFieldsJSON")
 	var fencePosition, envelopePosition token.Pos
 	var legacyFallback bool
 	for _, statement := range function.Body.List {
@@ -177,7 +177,7 @@ func checkPluginImportRetryReader(t *testing.T, root string) {
 		return true
 	})
 	if fencePosition == token.NoPos || envelopePosition <= fencePosition || !legacyFallback {
-		t.Fatal("importFieldsJSON must test the writer epoch before using a legacy field and open canonical replay in the retired branch")
+		t.Fatal("pluginCommandImportFieldsJSON must test the writer epoch before using a legacy field and open canonical replay in the retired branch")
 	}
 	ast.Inspect(function.Body, func(node ast.Node) bool {
 		selector, ok := node.(*ast.SelectorExpr)
@@ -189,7 +189,7 @@ func checkPluginImportRetryReader(t *testing.T, root string) {
 			return true
 		}
 		if !selectorWithinNegatedBranch(function.Body, selector, "retired") {
-			t.Errorf("importFieldsJSON reads legacy FieldsJSON outside the pre-retirement branch")
+			t.Errorf("pluginCommandImportFieldsJSON reads legacy FieldsJSON outside the pre-retirement branch")
 		}
 		return true
 	})
