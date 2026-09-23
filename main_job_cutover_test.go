@@ -20,6 +20,11 @@ func TestJobCenterCutoverRequiresRetirementAndCompleteKinds(t *testing.T) {
 	if err := validateJobCenterCutover(service, ready); err == nil || !strings.Contains(err.Error(), "migration") {
 		t.Fatalf("incomplete migration was admitted: %v", err)
 	}
+	ready.Ready = true
+	ready.WriterEpoch = 1
+	if err := validateJobCenterCutover(service, ready); err == nil {
+		t.Fatal("epoch 1 report was admitted despite ready flag")
+	}
 	if err := validateJobCenterCutover(jobs.NewService(), application_context.JobMigrationReadiness{Ready: true}); err == nil {
 		t.Fatal("missing Kind inventory was admitted")
 	}

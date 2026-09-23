@@ -6,6 +6,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/jobs"
+	"mahresources/models"
 )
 
 // Keep this independent of the runtime's own Registrations list. A missing
@@ -24,7 +25,7 @@ var jobCenterCutoverKinds = []jobs.CommandFilterKind{
 }
 
 func validateJobCenterCutover(service *jobs.Service, readiness application_context.JobMigrationReadiness) error {
-	if !readiness.Ready {
+	if !readiness.Ready || readiness.WriterEpoch < models.JobWriterEpochRetiredPlaintext || readiness.Phase != models.JobMigrationPhaseComplete {
 		return fmt.Errorf("Job Center cutover blocked: migration phase %s, writer epoch %d, blockers %v",
 			readiness.Phase, readiness.WriterEpoch, readiness.Blockers)
 	}
