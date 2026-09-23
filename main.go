@@ -930,6 +930,14 @@ func main() {
 	jobRuntime.Start()
 	defer jobRuntime.Stop()
 
+	// Canonical Job history and artifact retention belong to the process
+	// lifecycle too. The managed sweep starts immediately, continues bounded
+	// cursor batches while old work remains, and uses a database lease so only
+	// one server process sweeps at a time.
+	jobRetentionRuntime := application_context.NewJobRetentionRuntime(context, jobService, application_context.JobRetentionRuntimeConfig{})
+	jobRetentionRuntime.Start()
+	defer jobRetentionRuntime.Stop()
+
 	// Start share server if configured.
 	//
 	// Start binds synchronously, so the "available at" line is printed only

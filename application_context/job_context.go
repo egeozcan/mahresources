@@ -212,11 +212,26 @@ func (ctx *MahresourcesContext) SetJobPreference(request jobs.PreferenceRequest)
 // it must keep the cycle with it: the returned result says where to continue, or
 // that the cycle is over and the next pass starts a new one.
 func (ctx *MahresourcesContext) SweepJobHistory(cursor jobs.SweepCursor, limit int) (jobs.SweepResult, error) {
+	return ctx.SweepJobHistoryContext(context.Background(), cursor, limit)
+}
+
+// SweepJobHistoryContext is the cancellable form of SweepJobHistory used by
+// the managed retention lifecycle. The database handle and artifact cleanup
+// both observe the lifecycle context, so shutdown does not leave a sweep
+// running after its owner has stopped.
+func (ctx *MahresourcesContext) SweepJobHistoryContext(requestCtx context.Context, cursor jobs.SweepCursor, limit int) (jobs.SweepResult, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
 		return jobs.SweepResult{}, err
 	}
-	return service.Sweep(ctx.jobDeps(), ctx.jobRetentionPolicy(), cursor, limit)
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+	deps := ctx.jobDeps()
+	if deps.DB != nil {
+		deps.DB = deps.DB.WithContext(requestCtx)
+	}
+	return service.SweepContext(requestCtx, deps, ctx.jobRetentionPolicy(), cursor, limit)
 }
 
 // AdvertisedJobCommands returns the controls one visible Job offers this

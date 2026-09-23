@@ -57,12 +57,28 @@ import (
 // range ends the cycle and the next pass starts again at the oldest due work,
 // which is the next chance for whatever was left behind.
 func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, limit int) (SweepResult, error) {
+	return s.SweepContext(context.Background(), deps, policy, cursor, limit)
+}
+
+// SweepContext runs one bounded retention batch with a caller-owned lifecycle
+// context. The context reaches both database statements (through deps.DB) and
+// Kind artifact cleanup, so a managed sweep can stop cleanly with its owner.
+func (s *Service) SweepContext(ctx context.Context, deps Deps, policy RetentionPolicy, cursor SweepCursor, limit int) (SweepResult, error) {
 	size, err := sweepBatchSize(limit)
 	if err != nil {
 		return SweepResult{}, err
 	}
 	if err := validateSweepCursor(cursor); err != nil {
 		return SweepResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return SweepResult{}, err
+	}
+	if deps.DB != nil {
+		deps.DB = deps.DB.WithContext(ctx)
 	}
 	now := deps.now()
 	var result SweepResult
@@ -96,7 +112,7 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 	// an artifact promising an hour kept its bytes for the thirty days its history
 	// had left — and a pinned Job kept them indefinitely. What still protects an
 	// artifact is an unresolved execution claim, never a pin.
-	cleanedArtifacts, err := s.cleanupExpiredArtifacts(deps, size, now)
+	cleanedArtifacts, err := s.cleanupExpiredArtifacts(ctx, deps, size, now)
 	if err != nil {
 		return result, err
 	}
@@ -121,6 +137,9 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 	result.Examined = len(candidates)
 
 	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		// A Job retention may not take at all is decided before anything is asked
 		// of its artifacts: a pin or an unresolved claim keeps the history, and
 		// cleaning up what that history points at would destroy the only thing
@@ -143,7 +162,7 @@ func (s *Service) Sweep(deps Deps, policy RetentionPolicy, cursor SweepCursor, l
 		// adapter that cannot answer, a Kind this process has no adapter for at all
 		// — keeps the Job, which is the only thing still naming what was left
 		// behind.
-		accounted, outputs, err := s.accountForArtifacts(deps, candidate, now)
+		accounted, outputs, err := s.accountForArtifacts(ctx, deps, candidate, now)
 		if err != nil {
 			return result, err
 		}
@@ -568,7 +587,7 @@ func expireOutputsOfJob(deps Deps, jobID string, due []models.JobOutput, now tim
 // deferred, so an artifact nothing can act on waits its turn rather than holding the
 // head of every pass. Neither is a refusal to expire an output — the deadline pass
 // records that regardless — only a refusal to delete what nobody accounted for.
-func (s *Service) cleanupExpiredArtifacts(deps Deps, limit int, now time.Time) (int, error) {
+func (s *Service) cleanupExpiredArtifacts(ctx context.Context, deps Deps, limit int, now time.Time) (int, error) {
 	due, err := dueArtifactsForCleanup(deps.DB, limit, now)
 	if err != nil {
 		return 0, err
@@ -576,6 +595,9 @@ func (s *Service) cleanupExpiredArtifacts(deps Deps, limit int, now time.Time) (
 
 	recorded := 0
 	for _, batch := range outputsByJob(due) {
+		if err := ctx.Err(); err != nil {
+			return recorded, err
+		}
 		job, err := loadJob(deps.DB, batch.jobID)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
@@ -585,7 +607,7 @@ func (s *Service) cleanupExpiredArtifacts(deps Deps, limit int, now time.Time) (
 			return recorded, err
 		}
 
-		removed, unaccounted, err := s.removeJobArtifacts(deps, job, batch.rows, now)
+		removed, unaccounted, err := s.removeJobArtifacts(ctx, deps, job, batch.rows, now)
 		if err != nil {
 			return recorded, err
 		}
@@ -699,8 +721,9 @@ func outputsByJob(rows []models.JobOutput) []outputBatch {
 // cleanup ran.
 //
 // The call is bounded by the batch it belongs to — one Job's artifacts, at most
-// one cleanup per candidate — and runs without a cancellation source because a
-// sweep has none. An adapter whose cleanup can take a long time bounds itself.
+// one cleanup per candidate — and uses its caller's context, so a managed sweep
+// can stop with its owner. An adapter whose cleanup can take a long time also
+// observes that cancellation.
 //
 // Artifacts already recorded as removed are deliberately not part of the question.
 // Such a row is a removal this database durably acknowledged — the bytes went, an
@@ -710,7 +733,7 @@ func outputsByJob(rows []models.JobOutput) []outputBatch {
 // §7's own reading of the same fact: an already-missing artifact is treated as
 // removed. A publication of the same key clears the removal, so an artifact
 // produced again is asked about again.
-func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) (bool, int, error) {
+func (s *Service) accountForArtifacts(ctx context.Context, deps Deps, job models.Job, now time.Time) (bool, int, error) {
 	var rows []models.JobOutput
 	if err := deps.DB.Where("job_id = ? AND type = ?", job.ID, OutputTypeArtifact).
 		Where("availability <> ?", string(OutputRemoved)).
@@ -720,7 +743,7 @@ func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) 
 	if len(rows) == 0 {
 		return true, 0, nil
 	}
-	removed, unaccounted, err := s.removeJobArtifacts(deps, job, rows, now)
+	removed, unaccounted, err := s.removeJobArtifacts(ctx, deps, job, rows, now)
 	if err != nil {
 		return false, 0, err
 	}
@@ -755,7 +778,7 @@ func (s *Service) accountForArtifacts(deps Deps, job models.Job, now time.Time) 
 // run and an adapter that failed both answer nothing. Neither may be read as
 // "gone": the caller keeps whatever names the artifact — the history, where the
 // metadata path asked, and the deferral, where the deadline path did.
-func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
+func (s *Service) removeJobArtifacts(ctx context.Context, deps Deps, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
 	removed := 0
 	var unaccounted []models.JobOutput
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
@@ -795,7 +818,7 @@ func (s *Service) removeJobArtifacts(deps Deps, job models.Job, rows []models.Jo
 			return nil
 		}
 
-		removed, unaccounted, err = s.askForArtifactRemoval(tx, job, candidates, now)
+		removed, unaccounted, err = s.askForArtifactRemoval(ctx, tx, job, candidates, now)
 		// A candidate the pass was not looking at any more goes with the ones the
 		// Kind would not vouch for: neither is a removal this pass established.
 		unaccounted = append(unaccounted, superseded...)
@@ -907,7 +930,7 @@ func lockArtifactCleanupTarget(tx *gorm.DB, jobID string, now time.Time) (bool, 
 // the answer this Kind gives is about the artifacts that are there rather than
 // about a set that changed while it was being asked. An adapter's own error text is
 // discarded on purpose — it is a failure to answer, not a fact about the bytes.
-func (s *Service) askForArtifactRemoval(tx *gorm.DB, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
+func (s *Service) askForArtifactRemoval(ctx context.Context, tx *gorm.DB, job models.Job, rows []models.JobOutput, now time.Time) (int, []models.JobOutput, error) {
 	adapter, _, err := s.adapterFor(job.Kind, job.KindVersion)
 	if err != nil {
 		return 0, rows, nil
@@ -916,7 +939,7 @@ func (s *Service) askForArtifactRemoval(tx *gorm.DB, job models.Job, rows []mode
 	for _, row := range rows {
 		artifacts = append(artifacts, ArtifactRef{Key: row.Key, Reference: json.RawMessage(copyJSON(row.Reference))})
 	}
-	result, err := adapter.CleanupArtifacts(context.Background(), ArtifactCleanupRequest{
+	result, err := adapter.CleanupArtifacts(ctx, ArtifactCleanupRequest{
 		JobID: job.ID, Kind: job.Kind, KindVersion: job.KindVersion, Artifacts: artifacts,
 	})
 	if err != nil {
