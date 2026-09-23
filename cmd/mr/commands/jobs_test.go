@@ -197,6 +197,37 @@ func TestJobCommandUsesAdvertisementVersionEndpointAndStableIdempotency(t *testi
 	}
 }
 
+func TestJobCommandReplaysExplicitKeyAfterCommandDisappears(t *testing.T) {
+	var postedPath string
+	var postedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/jobs/job-123":
+			writeJobJSON(w, `{"id":"job-123","version":42,"commands":[]}`)
+		case r.Method == http.MethodPost:
+			postedPath = r.URL.Path
+			if err := json.NewDecoder(r.Body).Decode(&postedBody); err != nil {
+				t.Errorf("decode replay request: %v", err)
+			}
+			writeJobJSON(w, `{"replayed":true,"result":{"state":"succeeded"}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := runJobCLI(t, server.URL, true, "command", "job-123", "retry", "--idempotency-key", "retry-window-1"); err != nil {
+		t.Fatalf("replay job command: %v", err)
+	}
+	if postedPath != "/v1/jobs/job-123/commands/retry" {
+		t.Fatalf("replay path = %q", postedPath)
+	}
+	if postedBody["expectedVersion"] != float64(42) || postedBody["idempotencyKey"] != "retry-window-1" {
+		t.Fatalf("replay body = %v", postedBody)
+	}
+}
+
 func TestJobCommandRequiresConfirmationAndRejectsStaleOrForeignAdvertisement(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -266,6 +297,44 @@ func TestBulkJobCommandChecksCurrentBulkAdvertisementsAndPreservesPartialResult(
 	}
 	if ids, ok := postBody["jobIds"].([]any); !ok || len(ids) != 2 || ids[0] != "job-1" || ids[1] != "job-2" {
 		t.Fatalf("bulk jobIds = %#v", postBody["jobIds"])
+	}
+}
+
+func TestBulkJobCommandSendsMixedAdvertisementSelectionForPerJobResults(t *testing.T) {
+	const first = `{"id":"job-1","version":6,"commands":[{"key":"cancel","endpoint":"/v1/jobs/job-1/commands/cancel","jobVersion":6,"bulk":true}]}`
+	const second = `{"id":"job-2","version":9,"commands":[]}`
+	var postBody map[string]any
+	postCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs/job-1":
+			writeJobJSON(w, first)
+		case "/v1/jobs/job-2":
+			writeJobJSON(w, second)
+		case "/v1/jobs/commands/cancel":
+			postCalls++
+			if err := json.NewDecoder(r.Body).Decode(&postBody); err != nil {
+				t.Errorf("decode bulk request: %v", err)
+			}
+			writeJobJSON(w, `{"results":[{"jobId":"job-1","code":"succeeded"},{"jobId":"job-2","code":"not-advertised"}]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := runJobCLI(t, server.URL, true, "bulk-command", "cancel", "job-1", "job-2", "--idempotency-key", "ops-42"); err != nil {
+		t.Fatalf("bulk command should report per-Job outcomes: %v", err)
+	}
+	if postCalls != 1 {
+		t.Fatalf("bulk POST calls = %d, want 1", postCalls)
+	}
+	if ids, ok := postBody["jobIds"].([]any); !ok || len(ids) != 2 || ids[0] != "job-1" || ids[1] != "job-2" {
+		t.Fatalf("bulk jobIds = %#v", postBody["jobIds"])
+	}
+	if postBody["idempotencyKey"] != "ops-42" {
+		t.Fatalf("bulk idempotency key = %v", postBody["idempotencyKey"])
 	}
 }
 
