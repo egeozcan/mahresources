@@ -367,8 +367,11 @@ GET /v1/plugin/command-run?id={runId}
 Returns `{"run": <durable run with output and imports>,
 "outputAvailable": true}`. `outputAvailable` is false when retention has pruned
 the separate output row; that is not a missing run. The stored parameter view
-and argv redact `sensitive_params`, while captured stdout/stderr can still echo
-secrets. HTML renders escaped output after terminal control characters are stripped.
+and argv redact `sensitive_params`. Captured stdout/stderr also redact exact
+values of those parameters and exact supplied input-file contents when the
+command echoes them. Values transformed by the command, secrets from other
+sources, and unmarked parameters may still appear. HTML renders escaped output
+after terminal control characters are stripped.
 
 ### Cancel a Command Run
 

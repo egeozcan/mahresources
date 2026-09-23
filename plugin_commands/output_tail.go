@@ -18,7 +18,18 @@ type outputTail struct {
 }
 
 func newOutputTail() *outputTail {
-	return &outputTail{data: make([]byte, outputTailBytes)}
+	return newOutputTailWithCapacity(outputTailBytes)
+}
+
+// newOutputTailWithCapacity retains a bounded look-behind window before the
+// runner redacts known secret values and trims the persisted tail to
+// outputTailBytes. The ordinary constructor keeps the public output-tail
+// bound used by callers that do not need that window.
+func newOutputTailWithCapacity(capacity int) *outputTail {
+	if capacity < outputTailBytes {
+		capacity = outputTailBytes
+	}
+	return &outputTail{data: make([]byte, capacity)}
 }
 
 func (t *outputTail) Write(p []byte) (int, error) {
@@ -73,13 +84,17 @@ func (t *outputTail) appendByte(b byte) {
 }
 
 func (t *outputTail) String() string {
+	return string(t.bytes())
+}
+
+func (t *outputTail) bytes() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	result := make([]byte, t.size)
 	if t.size == 0 {
-		return ""
+		return result
 	}
 	first := copy(result, t.data[t.start:min(len(t.data), t.start+t.size)])
 	copy(result[first:], t.data[:t.size-first])
-	return string(result)
+	return result
 }

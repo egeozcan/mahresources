@@ -186,6 +186,110 @@ func TestRunnerWritesSuppliedInputsBeforeTheSpawn(t *testing.T) {
 	f.requireContentsDropped(t)
 }
 
+func TestRunnerRedactsSensitiveParameterAndSuppliedInputFromStdoutAndStderr(t *testing.T) {
+	const inputSecret = "COOKIE_CORPUS=runner-input-secret-9a31"
+	const parameterSecret = "https://user:password@media.example.invalid/file?token=runner-token-48fd"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(inputSecret)})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-secrets", Timeout: 10 * time.Second,
+		Argv:            []string{"sh", "-c", "cat cookies.txt; cat cookies.txt >&2; printf '%s\\n' \"$1\"; printf '%s\\n' \"$1\" >&2; printf 'safe-diagnostic\\n'", "command", "{{token}}"},
+		SensitiveParams: []string{"token"}, Inputs: []string{"cookies.txt"},
+	}
+	params := map[string]string{"token": parameterSecret}
+	invocation, err := BuildInvocation(declaration, params, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Request.Params = params
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{inputSecret, parameterSecret} {
+		if strings.Contains(output.OutputTail, secret) {
+			t.Fatalf("captured output persisted %q: %q", secret, output.OutputTail)
+		}
+	}
+	if strings.Count(output.OutputTail, "[redacted]") < 4 || !strings.Contains(output.OutputTail, "safe-diagnostic") {
+		t.Fatalf("output tail did not redact the echoes and keep ordinary diagnostics: %q", output.OutputTail)
+	}
+}
+
+func TestRunnerRedactsSuppliedInputAfterTerminalControlsAreStripped(t *testing.T) {
+	const printableSecret = "CONTROLLEDinput-corpus-34b1"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte("CONTROLLED\x00input-corpus-34b1")})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-controlled-input", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "cat cookies.txt; printf 'safe-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.OutputTail, printableSecret) {
+		t.Fatalf("terminal filtering exposed normalized secret bytes: %q", output.OutputTail)
+	}
+	if !strings.Contains(output.OutputTail, "safe-diagnostic") {
+		t.Fatalf("output tail lost the safe diagnostic: %q", output.OutputTail)
+	}
+}
+
+func TestRunnerRedactsSecretBeforeApplyingThePersistedTailBoundary(t *testing.T) {
+	const inputSecret = "boundary-secret-74fd"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(inputSecret)})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-boundary", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "i=0; while [ $i -lt 100 ]; do printf x; i=$((i + 1)); done; cat cookies.txt; i=0; while [ $i -lt 65503 ]; do printf x; i=$((i + 1)); done; printf 'tail-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.OutputTail, inputSecret) || strings.Contains(output.OutputTail, "ndary-secret-74fd") {
+		t.Fatalf("a secret crossing the old tail boundary remained visible: %q", output.OutputTail[:min(len(output.OutputTail), 100)])
+	}
+	if !strings.Contains(output.OutputTail, "tail-diagnostic") {
+		t.Fatalf("output tail lost the safe diagnostic: %q", output.OutputTail)
+	}
+}
+
 func TestRunnerRefusesTheSpawnWhenAnInputCannotBeWritten(t *testing.T) {
 	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte("SID=secret")})
 	f.executor.writeInputFileFn = func(dir, name string, content []byte) error {

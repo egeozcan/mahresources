@@ -221,6 +221,52 @@ func TestPluginCommandInputsAgainstTheRealStore(t *testing.T) {
 	}
 }
 
+func TestPluginCommandEchoedInputAndSensitiveParamAreAbsentFromPersistedOutput(t *testing.T) {
+	harness := newCommandInputHarness(t)
+	const inputSecret = "COOKIE_CORPUS=real-store-input-secret-7d4b"
+	const parameterSecret = "https://user:secret-password@media.example.invalid/file?token=command-token-93c2"
+	declaration := plugin_commands.Declaration{
+		Name: "echo-secrets", Timeout: 30 * time.Second,
+		Argv:            []string{"sh", "-c", "cat cookies.txt; cat cookies.txt >&2; printf '%s\\n' \"$1\"; printf '%s\\n' \"$1\" >&2; printf 'safe-diagnostic\\n'", "command", "{{token}}"},
+		SensitiveParams: []string{"token"}, Inputs: []string{"cookies.txt"},
+	}
+	runID, err := harness.dispatcher.Submit(plugin_commands.CommandRequest{
+		PluginName: "plug", Declaration: declaration, Params: map[string]string{"token": parameterSecret},
+		Inputs: map[string]string{"cookies.txt": inputSecret},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.waitTerminal(t, runID, plugin_commands.RunStatusSucceeded)
+
+	var storedOutput models.PluginCommandRunOutput
+	if err := harness.ctx.db.First(&storedOutput, "run_id = ?", runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{inputSecret, parameterSecret} {
+		if strings.Contains(storedOutput.OutputTail, secret) {
+			t.Fatalf("plugin_command_run_outputs.output_tail persisted %q: %q", secret, storedOutput.OutputTail)
+		}
+	}
+	if strings.Count(storedOutput.OutputTail, "[redacted]") < 4 || !strings.Contains(storedOutput.OutputTail, "safe-diagnostic") {
+		t.Fatalf("output tail did not redact echoed secrets and keep ordinary diagnostics: %q", storedOutput.OutputTail)
+	}
+
+	view, available, err := harness.ctx.GetPluginCommandRun(runID)
+	if err != nil || !available {
+		t.Fatalf("read command detail: available=%t err=%v", available, err)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{inputSecret, parameterSecret} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("command detail exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
 func TestPluginCommandInputsAreSweptWithTheExpiredFolderAgainstTheRealStore(t *testing.T) {
 	harness := newCommandInputHarness(t)
 	runID, err := harness.dispatcher.Submit(plugin_commands.CommandRequest{

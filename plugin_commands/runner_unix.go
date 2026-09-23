@@ -256,6 +256,8 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if e.deps.Store == nil || e.deps.Settings == nil {
 		return Outcome{Status: RunStatusFailed, Error: "plugin command runner dependencies are incomplete"}
 	}
+	outputSecrets := commandOutputSecrets(run)
+	defer clearCommandOutputSecrets(outputSecrets)
 	started := time.Now().UTC()
 	won, err := e.deps.Store.MarkRunRunning(run.RunID, started)
 	if err != nil {
@@ -307,7 +309,10 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	}
 	defer stderrR.Close()
 
-	tail := newOutputTail()
+	// Keep enough bounded look-behind to find a known secret that starts just
+	// before the persisted 64 KiB boundary. Sanitization runs after terminal
+	// control sequences are stripped, so ANSI decoration cannot evade it.
+	tail := newOutputTailWithCapacity(outputTailBytes + maxCommandOutputSecretLength(outputSecrets))
 	var drains sync.WaitGroup
 	drains.Add(2)
 	drainDone := make(chan struct{})
@@ -370,7 +375,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 		stdoutW.Close()
 		stderrW.Close()
 		<-drainDone
-		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", startErr), OutputTail: tail.String(), FinishedAt: time.Now().UTC()})
+		return e.finish(run, RunFinish{Status: RunStatusFailed, Error: fmt.Sprintf("start command: %v", startErr), OutputTail: redactCommandOutputTail(tail.String(), outputSecrets), FinishedAt: time.Now().UTC()})
 	}
 	if e.afterStart != nil {
 		e.afterStart()
@@ -669,6 +674,7 @@ func (e *commandExecutor) Execute(ctx context.Context, run QueuedRun) Outcome {
 	if forcedCleanup && finish.Error == "" {
 		finish.Error = "command cleanup exceeded its deadline"
 	}
+	finish.OutputTail = redactCommandOutputTail(tail.String(), outputSecrets)
 	return e.finish(run, finish)
 }
 

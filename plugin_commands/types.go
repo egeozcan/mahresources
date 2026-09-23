@@ -71,9 +71,11 @@ type SuppliedInput struct {
 }
 
 type RunFinish struct {
-	Status           string
-	ExitCode         *int
-	Error            string
+	Status   string
+	ExitCode *int
+	Error    string
+	// OutputTail is the bounded terminal-filtered capture after the runner has
+	// redacted exact declared-sensitive parameter values and supplied inputs.
 	OutputTail       string
 	OutputUnverified bool
 	FinishedAt       time.Time

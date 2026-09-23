@@ -152,9 +152,11 @@ A command-bearing plugin requires durable, explicit consent:
   shows a warning panel and the CLI first prints the exact declarations, then
   requires `mr plugin enable NAME --confirm-commands`.
 
-Redaction applies to the stored parameter view and argv. It cannot remove a
-secret the child writes to stdout or stderr, so captured output remains
-administrator-only and carries that warning.
+Redaction applies to the stored parameter view and argv. Captured stdout and
+stderr redact exact values from parameters marked `sensitive_params` and exact
+supplied input-file contents. A transformed value, a secret from another
+source, or an unmarked parameter can still appear in child output. Captured
+output remains administrator-only.
 
 ### `inject`, `render` and `pages` are browser-side code execution
 

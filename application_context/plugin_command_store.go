@@ -395,6 +395,8 @@ func (ctx *MahresourcesContext) FinishRun(id string, finish plugin_commands.RunF
 			if res.RowsAffected != 1 {
 				return errPluginCommandTransitionLost
 			}
+			// The runner scrubs known exact secret values before this durable
+			// boundary; this row feeds command-run detail and history surfaces.
 			out := tx.Model(&models.PluginCommandRunOutput{}).Where("run_id = ?", id).
 				Update("output_tail", finish.OutputTail)
 			if out.Error != nil {
