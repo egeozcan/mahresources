@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -598,6 +599,13 @@ func newJobBulkCommandCmd(c *client.Client, opts *output.Options) *cobra.Command
 			for _, id := range jobIDs {
 				job, err := getCLIJobDetail(c, id)
 				if err != nil {
+					var apiErr *client.APIError
+					if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+						// A detail 404 may mean the caller cannot see this Job.
+						// Keep it in the request so the bulk API can return its
+						// per-Job not-found result without exposing detail data.
+						continue
+					}
 					return err
 				}
 				advertised, found := findCLIJobCommand(job, commandKey)
