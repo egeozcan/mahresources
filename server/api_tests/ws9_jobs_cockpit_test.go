@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"mahresources/download_queue"
+	"mahresources/jobs"
+	"mahresources/models"
 )
 
 // WS9 — jobs and downloads compatibility contracts.
@@ -133,6 +135,87 @@ func TestCancelPausedJob_IsAccepted(t *testing.T) {
 	}
 	if got := job.GetStatus(); got != download_queue.JobStatusCancelled {
 		t.Errorf("finding 2: the paused job is %q after cancel, want cancelled", got)
+	}
+}
+
+func TestCancelBlockedJobRetriesSharedCacheTableLock(t *testing.T) {
+	tc := SetupTestEnv(t)
+	deps := jobs.Deps{DB: tc.DB}
+	service := tc.AppCtx.JobService()
+	accepted, err := service.Accept(deps, jobs.Acceptance{
+		Kind: "remote-download", KindVersion: 1, State: jobs.StateQueued,
+		Origin: "api", Title: "held download",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	if err != nil {
+		t.Fatalf("accept download Job: %v", err)
+	}
+	blocked, err := service.Transition(deps, jobs.Transition{
+		JobID: accepted.ID, ExpectedVersion: accepted.Version, To: jobs.StateBlocked, Phase: "paused",
+	})
+	if err != nil {
+		t.Fatalf("block download Job: %v", err)
+	}
+	if blocked.State != jobs.StateBlocked {
+		t.Fatalf("seeded download Job state = %q, want blocked", blocked.State)
+	}
+	var stored models.Job
+	if err := tc.DB.Where("id = ?", blocked.ID).First(&stored).Error; err != nil {
+		t.Fatalf("read seeded download Job: %v", err)
+	}
+	if stored.ExecutionToken != "" {
+		t.Fatalf("blocked download Job still owns execution token %q", stored.ExecutionToken)
+	}
+	var claims int64
+	if err := tc.DB.Model(&models.JobClaim{}).Where("job_id = ?", blocked.ID).Count(&claims).Error; err != nil {
+		t.Fatalf("count seeded download claims: %v", err)
+	}
+	if claims != 0 {
+		t.Fatalf("blocked download Job has %d claim rows, want none", claims)
+	}
+
+	// SetupTestEnv uses shared-cache in-memory SQLite, whose SQLITE_LOCKED table
+	// errors bypass busy_timeout. Hold a read transaction on the Job table while
+	// the public cancel route runs, then release it so the command's outer
+	// transaction can retry from a fresh snapshot.
+	reader := tc.DB.Begin()
+	if reader.Error != nil {
+		t.Fatalf("begin jobs read transaction: %v", reader.Error)
+	}
+	var locked struct{ ID string }
+	if err := reader.Table("jobs").Select("id").Where("id = ?", blocked.ID).Take(&locked).Error; err != nil {
+		_ = reader.Rollback().Error
+		t.Fatalf("hold read lock on job: %v", err)
+	}
+	probeErr := tc.DB.Exec("UPDATE jobs SET version = version WHERE id = ?", blocked.ID).Error
+	if probeErr == nil || !strings.Contains(strings.ToLower(probeErr.Error()), "database table is locked") {
+		_ = reader.Rollback().Error
+		t.Fatalf("shared-cache lock probe = %v, want SQLITE_LOCKED on jobs", probeErr)
+	}
+
+	released := make(chan error, 1)
+	releaseTimer := time.AfterFunc(100*time.Millisecond, func() {
+		released <- reader.Commit().Error
+	})
+	res := tc.MakeRequest(http.MethodPost, "/v1/jobs/"+blocked.ID+"/commands/cancel", map[string]any{
+		"expectedVersion": blocked.Version,
+		"idempotencyKey":  "sqlite-shared-lock-regression",
+	})
+	if releaseTimer.Stop() {
+		_ = reader.Rollback().Error
+	} else if err := <-released; err != nil {
+		t.Fatalf("release jobs read lock: %v", err)
+	}
+	if res.Code != http.StatusOK {
+		t.Fatalf("cancelling a blocked download under shared-cache contention answered %d %s, want 200", res.Code, res.Body.String())
+	}
+
+	current, err := service.Get(deps, jobs.Access{Administrator: true}, blocked.ID)
+	if err != nil {
+		t.Fatalf("read cancelled Job: %v", err)
+	}
+	if current.State != jobs.StateCancelled {
+		t.Errorf("the blocked Job is %q after cancel under contention, want cancelled", current.State)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/types"
 
+	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -1006,56 +1007,75 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 		requested bool
 		settled   *CommandResult
 	)
-	err = deps.DB.Transaction(func(tx *gorm.DB) error {
-		existing, claimed, err := claimCommandRequest(tx, claim)
-		if err != nil {
-			return err
-		}
-		if !claimed {
-			result, err := s.replayCommandResultInTransaction(tx, deps, request, *existing)
-			replayed, replayErr = &result, err
-			return nil
-		}
-
-		current, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
-		if err != nil {
-			return err
-		}
-		if err := recordCommandBulkEligibility(tx, claim.ID, bulkEligible); err != nil {
-			return err
-		}
-		target, err := prepareControlIntent(tx, current, request.Key, now)
-		if err != nil {
-			return err
-		}
-		if target == nil {
-			requested = true
-			return nil
-		}
-
-		// No execution owns this Job, so there is nobody to ask: the command's
-		// outcome is the host's to apply, in the same transaction that recorded it.
-		applied, err := s.applyCommandTransition(deps, tx, current, *target)
-		if err != nil {
-			return err
-		}
-		if hook, ok := adapter.(HostTransitionAdapter); ok {
-			scoped := deps
-			scoped.DB = tx
-			if err := hook.ApplyHostTransition(ctx, scoped, viewerSnapshot(current, request.Actor), request.Key, applied.State); err != nil {
+	for attempt := 0; ; attempt++ {
+		// The command transaction reads the Job and records its idempotency claim
+		// before it applies a host-side transition. In shared-cache SQLite, a
+		// different connection's read transaction can make the later UPDATE fail
+		// with SQLITE_LOCKED; busy_timeout does not wait for that table lock. Retry
+		// the whole transaction after rollback so the Job, claim and source row are
+		// all re-read and written atomically on the next attempt.
+		replayed = nil
+		replayErr = nil
+		requested = false
+		settled = nil
+		err = deps.DB.Transaction(func(tx *gorm.DB) error {
+			existing, claimed, err := claimCommandRequest(tx, claim)
+			if err != nil {
 				return err
 			}
+			if !claimed {
+				result, err := s.replayCommandResultInTransaction(tx, deps, request, *existing)
+				replayed, replayErr = &result, err
+				return nil
+			}
+
+			current, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
+			if err != nil {
+				return err
+			}
+			if err := recordCommandBulkEligibility(tx, claim.ID, bulkEligible); err != nil {
+				return err
+			}
+			target, err := prepareControlIntent(tx, current, request.Key, now)
+			if err != nil {
+				return err
+			}
+			if target == nil {
+				requested = true
+				return nil
+			}
+
+			// No execution owns this Job, so there is nobody to ask: the command's
+			// outcome is the host's to apply, in the same transaction that recorded it.
+			applied, err := s.applyCommandTransition(deps, tx, current, *target)
+			if err != nil {
+				return err
+			}
+			if hook, ok := adapter.(HostTransitionAdapter); ok {
+				scoped := deps
+				scoped.DB = tx
+				if err := hook.ApplyHostTransition(ctx, scoped, viewerSnapshot(current, request.Actor), request.Key, applied.State); err != nil {
+					return err
+				}
+			}
+			outcome := appliedOutcome(commandAppliedMessage(applied.State), nil)
+			if err := completeCommandRequest(tx, claim.ID, outcome, now); err != nil {
+				return err
+			}
+			settled = &CommandResult{
+				JobID: current.ID, Key: request.Key,
+				Status: CommandStatusSucceeded, Code: outcome.code, Message: outcome.message,
+			}
+			return nil
+		})
+		if err == nil || deps.DB.Dialector.Name() != "sqlite" || !sqliteCommandLockContention(err) || attempt >= 7 {
+			break
 		}
-		outcome := appliedOutcome(commandAppliedMessage(applied.State), nil)
-		if err := completeCommandRequest(tx, claim.ID, outcome, now); err != nil {
-			return err
-		}
-		settled = &CommandResult{
-			JobID: current.ID, Key: request.Key,
-			Status: CommandStatusSucceeded, Code: outcome.code, Message: outcome.message,
-		}
-		return nil
-	})
+		// The rollback above releases this attempt's connection and its table
+		// locks. A short bounded backoff lets the conflicting reader finish before
+		// the command rechecks its version and retries.
+		time.Sleep(time.Duration(5*(1<<attempt)) * time.Millisecond)
+	}
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -1086,6 +1106,20 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 		Access:          request.Actor,
 	})
 	return s.settleWorkloadOutcome(deps, request, current, claim.ID, outcome, execErr)
+}
+
+// sqliteCommandLockContention recognizes the transient lock errors that can
+// escape a shared-cache SQLite transaction. In the file-backed WAL database
+// used in production, readers do not block the writer this way; SQLite's
+// busy_timeout covers writer contention there. Shared-cache SQLITE_LOCKED table
+// locks bypass that handler, so a rolled-back outer command transaction can
+// retry them safely with its version checks intact.
+func sqliteCommandLockContention(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr sqlite3.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code == sqlite3.ErrLocked
 }
 
 // recheckCommand re-reads the Job a command is about inside the transaction that
