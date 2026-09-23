@@ -43,6 +43,7 @@ var nonDeterministicEndpoints = map[string]string{
 	// Reports live process measurements — uptime, allocation counters, goroutine
 	// count — which change between two calls by design.
 	"/v1/admin/server-stats": "reports live process metrics (uptime, memory, goroutines)",
+	"/v1/jobs/summary":       "defaults to a rolling window ending at the time of each request",
 }
 
 // TestParameterlessGETsAreByteStable calls every parameterless GET under /v1/

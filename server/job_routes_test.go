@@ -133,8 +133,8 @@ func TestLegacyJobOpenAPIAdvertisesRetirementAndControlKeyHeaders(t *testing.T) 
 	RegisterAPIRoutesWithOpenAPI(registry)
 	spec := registry.GenerateSpec()
 	paths := spec.Paths.Map()
-	if paths["/v1/jobs"] != nil {
-		t.Fatal("canonical Job list is public before Task 17 cutover")
+	if (paths["/v1/jobs"] != nil) != canonicalJobAPICutoverComplete {
+		t.Fatalf("canonical Job list publication does not match cutover gate: published=%t, gate=%t", paths["/v1/jobs"] != nil, canonicalJobAPICutoverComplete)
 	}
 
 	for _, route := range []struct {

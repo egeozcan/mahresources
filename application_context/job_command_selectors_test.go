@@ -35,8 +35,8 @@ func TestRegisteredKindCommandSelectorsMatchCommands(t *testing.T) {
 
 	seedSelectorJobs(t, ctx, &owner.ID, &otherOwner.ID)
 	registrations := ctx.JobService().Registrations()
-	if len(registrations) != 10 {
-		t.Fatalf("registered Kind/version count = %d, want 10 (including both download kinds and plugin commands)", len(registrations))
+	if len(registrations) != 11 {
+		t.Fatalf("registered Kind/version count = %d, want 11 (including downloads, plugin commands, and summary export)", len(registrations))
 	}
 	for _, registration := range registrations {
 		if _, ok := registration.Adapter.(jobs.CommandFilterAdapter); !ok {

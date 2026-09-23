@@ -234,7 +234,7 @@ func TestSeriesWithoutIdExplainsItself(t *testing.T) {
 func TestNotFound_V1PathsAnswerJSON(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	for _, path := range []string{"/v1/resources/count", "/v1/jobs", "/v1/nonexistent-endpoint"} {
+	for _, path := range []string{"/v1/resources/count", "/v1/nonexistent-endpoint"} {
 		t.Run(path, func(t *testing.T) {
 			resp := tc.requestWithAccept(http.MethodGet, path, "application/json", "")
 			if resp.Code != http.StatusNotFound {

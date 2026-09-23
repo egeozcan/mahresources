@@ -35,7 +35,7 @@ func TestListChrome_MassEditAllIsInTitleBar(t *testing.T) {
 func TestListChrome_SavedSearchesLeadTheSidebar(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	for _, path := range []string{"/resources", "/notes", "/groups", "/tags", "/downloads", "/logs"} {
+	for _, path := range []string{"/resources", "/notes", "/groups", "/tags", "/logs"} {
 		_, body := tc.getHTML(t, path)
 		asideStart := strings.Index(body, `<aside class="sidebar"`)
 		if asideStart < 0 {

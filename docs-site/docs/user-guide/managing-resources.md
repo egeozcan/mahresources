@@ -64,8 +64,8 @@ The URL field accepts multiple URLs (one per line) for batch imports.
 For large files or slow connections, enable **Download in background**:
 
 - The download starts immediately but you can navigate away
-- Progress is tracked in the **jobs panel**, opened from the download icon in the header
-- Failed downloads can be retried from the panel, or later from the [Downloads page](#downloads-page) -- a failed download is kept for a week by default, so it survives the panel and a server restart
+- Progress is tracked in the **Jobs panel**, opened from the header
+- Failed downloads remain in the [Job Center](#job-center) after restart and can be retried when the Job advertises Retry
 
 ### Paste Upload
 
@@ -361,43 +361,27 @@ You can replace the auto-generated thumbnail of any resource with your own image
 
 Uploading a custom thumbnail does not create a new version -- it only changes the stored preview. The image is resized so its longest edge is at most 1920px and stored as JPEG. For the full pipeline details, see [Thumbnail Generation](../features/thumbnail-generation.md).
 
-## Download Cockpit
+## Job Center
 
-The Download Cockpit manages background URL downloads and plugin action jobs:
+Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
+`/jobs` for the full Job Center. The panel shows active work and work needing
+attention. The Job Center also shows recent finished Jobs and includes downloads,
+exports, imports, Resource Reduction, maintenance, and plugin work.
 
-- Access it via the download icon in the page header, or press **Cmd/Ctrl+Shift+D**
-- View active, pending, and completed downloads. The limit (`-download-cockpit-limit`, 10 by default) applies only to *finished downloads*, which the [Downloads page](#downloads-page) also lists: anything still working, and every export, import or plugin action, stays on the panel regardless, because their controls exist nowhere else. A footer says how many rows are hidden and links to the full list
-- Pause pending or downloading jobs, and resume paused ones
-- Retry failed or cancelled downloads
-- Cancel pending or downloading jobs
+Filter Jobs by state, Kind, origin, time, owner, actor, and currently available
+command. Open a Job to see its progress, timeline, outputs, and related Jobs.
+Use only the controls displayed on that Job; available commands are checked
+again when submitted. Selecting several Jobs offers only commands they all
+advertise for bulk use, with a separate result for each Job.
 
-Each download shows:
-- Source URL
-- Progress percentage
-- Download speed
+A Retry creates a linked successor. Dismiss hides a finished Job from your
+view; Forget removes its stored replay input and cannot be undone. A pin keeps
+Job metadata and its event history from ordinary retention, while linked Jobs
+and output artifacts keep their own retention rules. Administrators can see
+Jobs across accounts; other accounts see only work allowed by current scope.
 
-## Downloads page
-
-`/downloads` is the durable record of background downloads. The jobs panel holds only what is still in memory -- a queue capped at 100 jobs, swept an hour after a job finishes, and emptied by a restart -- so this page is where a download from yesterday still exists.
-
-It lists finished downloads plus any that are still running, and lets you:
-
-- Filter by status (failed, cancelled, completed), by whether the download was ever retried, by a word in the URL or name, by when the download was submitted, by when it finished, and by why it failed. **Retries** answers both shapes a rerun takes: a download retried in place, and one resubmitted from its stored payload, which links the old row to the new attempt
-- **Submitted after/before** and **Finished after/before** are different questions: a download queued on Monday can finish on Tuesday, and only the second pair answers "what finished last night?". A download that is still running has no finish time, so a finish window lists none
-- **Failure reason** groups failures by what the error says: an HTTP error from the server, a timeout or stalled transfer, a refusal by the network policy, an unsupported or DRM-protected stream, a server limit, a file that could not be written, or a cancellation. It matches the error text, so it is best-effort, and the groups overlap: a gateway timeout is both an HTTP error and a timeout, and it is listed under either. **Other** keeps every failure none of the groups claim, which is where a failure the grouping has not learned about shows up. **Error contains** narrows further by a word in the message, and the two combine
-- Retry a failed or cancelled download, whether or not its job is still in the queue. Completed downloads are not retryable: the file is already stored, and fetching it again would transfer it for nothing. A retry is also refused while any job in the queue is already downloading the same URL
-- Delete rows individually or in bulk. A download that is still running or paused is refused -- cancel it first
-- Select rows with the checkboxes to retry or delete several at once
-
-Each row shows the status, the download name and URL, when it was submitted and when it finished, the error a failed attempt reported, how many attempts have been made, and a link to the resource a completed download created. A row that has already been retried names the job that retry produced, since a resubmitted download is a new job with its own row.
-
-A retry is refused while the attempt it already started is queued or running, and while that attempt's own row still exists after it succeeded -- retrying then would fetch a second copy of a file you already have. Once the successful attempt's row has aged out of its retention window the old failure can be retried again, and a repeated download is caught by content hash rather than refused. Selecting several rows that record the same URL retries it once, and a row whose retry is running shows that attempt's progress instead of offering Retry and Delete. Restarting the server records whatever was downloading or paused as cancelled, so it is still listed and retryable afterwards. Deleting a row is refused while its retry is still running, for the same reason a running download cannot be deleted.
-
-With authentication enabled, you see only the downloads you submitted; administrators see everyone's.
-
-How long rows are kept is configurable at runtime on `/admin/settings`:
-
-| Setting | Default | Covers |
-|---|---|---|
-| Failed download retention | 168h (one week) | failed and cancelled downloads |
-| Completed download retention | 24h | completed downloads (the resource is unaffected) |
+Old `/downloads` links redirect to `/jobs` with recognized filters translated.
+Legacy `/v1/downloads` API routes remain available during the compatibility
+window. Download history retention remains configurable on `/admin/settings`;
+see [Job System](../features/job-system.md#retention) for canonical Job and
+replay retention.

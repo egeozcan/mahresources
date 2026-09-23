@@ -18,10 +18,13 @@ import (
 	"mahresources/models/query_models"
 )
 
-// recordDownload writes one history row through the same entry point the
-// download manager uses, so these tests exercise the production write path.
+// recordDownload models a retained legacy history row written before the
+// control plane was installed. Compatibility Retry must still handle it.
 func recordDownload(t *testing.T, tc *TestContext, jobID, status string, owner *uint, url string, completedAt time.Time) models.DownloadHistoryEntry {
 	t.Helper()
+	service := tc.AppCtx.JobService()
+	tc.AppCtx.SetJobService(nil)
+	defer tc.AppCtx.SetJobService(service)
 	payload := fmt.Sprintf(`{"URL":%q}`, url)
 	if err := tc.AppCtx.RecordTerminalDownload(download_queue.HistoryRecord{
 		JobID:           jobID,
@@ -334,6 +337,9 @@ func TestDownloadHistoryRetryReportsPerID(t *testing.T) {
 // the whole queue on the next reconnect and the download reappears in the panel.
 func TestDownloadHistoryDeleteRemovesQueuedJob(t *testing.T) {
 	tc := SetupTestEnv(t)
+	service := tc.AppCtx.JobService()
+	tc.AppCtx.SetJobService(nil)
+	defer tc.AppCtx.SetJobService(service)
 	dm := tc.AppCtx.DownloadManager()
 
 	// A finished job in the queue, and the history row that names it.
@@ -430,10 +436,14 @@ func TestDownloadHistoryRetryRevalidatesScope(t *testing.T) {
 
 	// The row is the confined user's own, so visibility is not what refuses it.
 	payload := fmt.Sprintf(`{"URL":"http://example.invalid/x","OwnerId":%d}`, outside.ID)
-	if err := tc.AppCtx.RecordTerminalDownload(download_queue.HistoryRecord{
+	service := tc.AppCtx.JobService()
+	tc.AppCtx.SetJobService(nil)
+	err = tc.AppCtx.RecordTerminalDownload(download_queue.HistoryRecord{
 		JobID: "out-of-scope", URL: "http://example.invalid/x", Status: models.DownloadHistoryStatusFailed,
 		CreatedAt: time.Now(), CreatedByUserId: &confined.ID, Payload: []byte(payload),
-	}); err != nil {
+	})
+	tc.AppCtx.SetJobService(service)
+	if err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	var entry models.DownloadHistoryEntry

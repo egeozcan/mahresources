@@ -812,6 +812,177 @@ components:
                 Status:
                     type: string
             type: object
+        JobCommandConflictResponse:
+            properties:
+                error:
+                    type: string
+                job:
+                    $ref: '#/components/schemas/JobSnapshotResponse'
+                result:
+                    $ref: '#/components/schemas/JobCommandResultResponse'
+            type: object
+        JobCommandResponsePartial:
+            type: object
+        JobCommandResultResponse:
+            properties:
+                code:
+                    type: string
+                detail:
+                    format: binary
+                    type: string
+                job:
+                    $ref: '#/components/schemas/JobSnapshotResponse'
+                jobId:
+                    type: string
+                key:
+                    type: string
+                message:
+                    type: string
+                status:
+                    type: string
+                successorId:
+                    type: string
+            type: object
+        JobCommandResultResponsePartial:
+            type: object
+        JobDetailResponse:
+            properties:
+                acceptedAt:
+                    format: date-time
+                    type: string
+                actorUserId:
+                    nullable: true
+                    type: integer
+                blockedDuration:
+                    type: integer
+                commands:
+                    items:
+                        $ref: '#/components/schemas/JobCommandResponsePartial'
+                    type: array
+                controlIntent:
+                    type: string
+                executionPrincipal:
+                    type: string
+                expiresAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                failure:
+                    $ref: '#/components/schemas/JobFailureResponse'
+                finishedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                id:
+                    type: string
+                kind:
+                    type: string
+                kindVersion:
+                    type: integer
+                lastResumedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                lineage:
+                    $ref: '#/components/schemas/JobLineageResponse'
+                origin:
+                    type: string
+                outputs:
+                    items:
+                        $ref: '#/components/schemas/JobOutputResponsePartial'
+                    type: array
+                ownerUserId:
+                    nullable: true
+                    type: integer
+                pausedDuration:
+                    type: integer
+                phase:
+                    type: string
+                progress:
+                    $ref: '#/components/schemas/JobProgressResponse'
+                queueDuration:
+                    type: integer
+                queuedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                replayAvailability:
+                    type: string
+                replayClass:
+                    type: string
+                runningDuration:
+                    type: integer
+                scheduledFor:
+                    format: date-time
+                    nullable: true
+                    type: string
+                startedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                state:
+                    type: string
+                summary:
+                    format: binary
+                    type: string
+                title:
+                    type: string
+                version:
+                    type: integer
+                visibility:
+                    type: string
+            type: object
+        JobDurationStatsResponse:
+            properties:
+                median:
+                    type: integer
+                p95:
+                    type: integer
+            type: object
+        JobEventResponsePartial:
+            properties:
+                id:
+                    type: string
+            type: object
+        JobFailureClassCountResponsePartial:
+            type: object
+        JobFailureResponse:
+            properties:
+                class:
+                    type: string
+                code:
+                    type: string
+                message:
+                    type: string
+            type: object
+        JobLineageResponse:
+            properties:
+                ancestors:
+                    items:
+                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                    type: array
+                children:
+                    items:
+                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                    type: array
+                parents:
+                    items:
+                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                    type: array
+                successors:
+                    items:
+                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                    type: array
+            type: object
+        JobListResponse:
+            properties:
+                jobs:
+                    items:
+                        $ref: '#/components/schemas/JobSnapshotResponsePartial'
+                    type: array
+                nextCursor:
+                    type: string
+            type: object
         JobMigrationReadiness:
             properties:
                 blockers:
@@ -829,6 +1000,180 @@ components:
                         type: object
                     type: object
                 writerEpoch:
+                    type: integer
+            type: object
+        JobOutputResponsePartial:
+            properties:
+                id:
+                    type: string
+            type: object
+        JobProgressResponse:
+            properties:
+                completed:
+                    nullable: true
+                    type: integer
+                eta:
+                    format: date-time
+                    nullable: true
+                    type: string
+                message:
+                    type: string
+                phase:
+                    type: string
+                total:
+                    nullable: true
+                    type: integer
+                unit:
+                    type: string
+            type: object
+        JobSnapshotResponse:
+            properties:
+                acceptedAt:
+                    format: date-time
+                    type: string
+                actorUserId:
+                    nullable: true
+                    type: integer
+                blockedDuration:
+                    type: integer
+                controlIntent:
+                    type: string
+                executionPrincipal:
+                    type: string
+                expiresAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                failure:
+                    $ref: '#/components/schemas/JobFailureResponse'
+                finishedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                id:
+                    type: string
+                kind:
+                    type: string
+                kindVersion:
+                    type: integer
+                lastResumedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                origin:
+                    type: string
+                ownerUserId:
+                    nullable: true
+                    type: integer
+                pausedDuration:
+                    type: integer
+                phase:
+                    type: string
+                progress:
+                    $ref: '#/components/schemas/JobProgressResponse'
+                queueDuration:
+                    type: integer
+                queuedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                replayAvailability:
+                    type: string
+                replayClass:
+                    type: string
+                runningDuration:
+                    type: integer
+                scheduledFor:
+                    format: date-time
+                    nullable: true
+                    type: string
+                startedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                state:
+                    type: string
+                summary:
+                    format: binary
+                    type: string
+                title:
+                    type: string
+                version:
+                    type: integer
+                visibility:
+                    type: string
+            type: object
+        JobSnapshotResponsePartial:
+            properties:
+                id:
+                    type: string
+            type: object
+        JobSummaryExportRequest:
+            properties:
+                format:
+                    type: string
+                from:
+                    format: date-time
+                    type: string
+                to:
+                    format: date-time
+                    type: string
+            required:
+                - from
+                - to
+                - format
+            type: object
+        JobSummaryExportResponse:
+            properties:
+                job:
+                    $ref: '#/components/schemas/JobSnapshotResponse'
+            required:
+                - job
+            type: object
+        JobSummaryResponse:
+            properties:
+                byKind:
+                    additionalProperties:
+                        type: integer
+                    type: object
+                byState:
+                    additionalProperties:
+                        type: integer
+                    type: object
+                failed:
+                    type: integer
+                failures:
+                    items:
+                        $ref: '#/components/schemas/JobFailureClassCountResponsePartial'
+                    type: array
+                from:
+                    format: date-time
+                    type: string
+                queue:
+                    $ref: '#/components/schemas/JobDurationStatsResponse'
+                run:
+                    $ref: '#/components/schemas/JobDurationStatsResponse'
+                succeeded:
+                    type: integer
+                successRate:
+                    type: number
+                terminal:
+                    type: integer
+                to:
+                    format: date-time
+                    type: string
+                total:
+                    type: integer
+                window:
+                    type: integer
+            type: object
+        JobTimelineResponse:
+            properties:
+                events:
+                    items:
+                        $ref: '#/components/schemas/JobEventResponsePartial'
+                    type: array
+                nextSequence:
                     type: integer
             type: object
         LogEntry:
@@ -5512,6 +5857,295 @@ paths:
             summary: Get the import apply result
             tags:
                 - imports
+    /v1/jobs:
+        get:
+            operationId: listCanonicalJobs
+            parameters:
+                - description: Filter by state; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: state
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by states; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: states
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kind; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kind
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kinds; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kinds
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origin; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origin
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origins; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origins
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Search safe Job title, summary, and phase fields.
+                  in: query
+                  name: search
+                  schema:
+                    type: string
+                - description: Filter by a supported lineage relationship.
+                  in: query
+                  name: relationship
+                  schema:
+                    type: string
+                - description: Filter by owner user ID.
+                  in: query
+                  name: ownerId
+                  schema:
+                    type: integer
+                - description: Filter by actor user ID.
+                  in: query
+                  name: actorId
+                  schema:
+                    type: integer
+                - description: Inclusive RFC3339 lower bound.
+                  in: query
+                  name: acceptedAfter
+                  schema:
+                    type: string
+                - description: Inclusive RFC3339 upper bound.
+                  in: query
+                  name: acceptedBefore
+                  schema:
+                    type: string
+                - description: Filter this viewer's pin state.
+                  in: query
+                  name: pinned
+                  schema:
+                    type: boolean
+                - description: Filter this viewer's dismissal state.
+                  in: query
+                  name: dismissed
+                  schema:
+                    type: boolean
+                - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
+                  in: query
+                  name: command
+                  schema:
+                    type: string
+                - description: Opaque keyset cursor returned by the prior page.
+                  in: query
+                  name: cursor
+                  schema:
+                    type: string
+                - description: Page size, bounded by the server.
+                  in: query
+                  name: limit
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobListResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "500":
+                    description: Job request failed
+            summary: List visible canonical Jobs
+            tags:
+                - jobs
+    /v1/jobs/{id}:
+        get:
+            operationId: getCanonicalJob
+            parameters:
+                - description: Canonical Job ID.
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobDetailResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "500":
+                    description: Job request failed
+            summary: Get a visible Job with commands, outputs, and lineage
+            tags:
+                - jobs
+    /v1/jobs/{id}/commands/{command}:
+        post:
+            description: Send Idempotency-Key as a header or idempotencyKey in the JSON body. If both are set they must match. A stale visible Job returns 409 with its fresh snapshot.
+            operationId: executeCanonicalJobCommand
+            parameters:
+                - description: Canonical Job ID.
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+                - description: Advertised command key.
+                  in: path
+                  name: command
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                expectedVersion:
+                                    type: integer
+                                idempotencyKey:
+                                    type: string
+                                origin:
+                                    type: string
+                            required:
+                                - expectedVersion
+                            type: object
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobCommandResultResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobCommandConflictResponse'
+                    description: Command was not advertised, its idempotency key conflicted, or the visible Job version changed
+                "500":
+                    description: Job request failed
+            summary: Execute an advertised Job command
+            tags:
+                - jobs
+    /v1/jobs/{id}/events:
+        get:
+            operationId: getCanonicalJobTimeline
+            parameters:
+                - description: Canonical Job ID.
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+                - description: Return events after this per-Job sequence.
+                  in: query
+                  name: afterSequence
+                  schema:
+                    type: integer
+                - description: Alias for afterSequence.
+                  in: query
+                  name: cursor
+                  schema:
+                    type: integer
+                - description: Page size, bounded by the server.
+                  in: query
+                  name: limit
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobTimelineResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "500":
+                    description: Job request failed
+            summary: Read a visible Job timeline
+            tags:
+                - jobs
+    /v1/jobs/{id}/outputs:
+        get:
+            description: The output key comes from the Job detail response. The handler rechecks Job visibility, current principal capability, and output availability. Stored filesystem paths are never returned.
+            operationId: openCanonicalJobOutput
+            parameters:
+                - description: Canonical Job ID.
+                  in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+                - description: Advertised output key.
+                  in: query
+                  name: key
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                        application/octet-stream:
+                            schema:
+                                type: string
+                        text/plain:
+                            schema:
+                                type: string
+                    description: Successful response
+                "400":
+                    description: Invalid output key
+                "404":
+                    description: Job or output not found
+                "500":
+                    description: Output could not be opened
+                default:
+                    description: Output resolves to an authorized entity or external link
+            summary: Open a currently authorized typed Job output
+            tags:
+                - jobs
     /v1/jobs/action/job:
         get:
             deprecated: true
@@ -5994,6 +6628,55 @@ paths:
             summary: Dismiss every finished job (completed, failed or cancelled)
             tags:
                 - jobs
+    /v1/jobs/commands/{command}:
+        post:
+            description: Send Idempotency-Key as a header or idempotencyKey in the JSON body. If both are set they must match; select at most 200 Jobs and the response includes one result per selected Job.
+            operationId: executeBulkCanonicalJobCommand
+            parameters:
+                - description: Advertised bulk command key.
+                  in: path
+                  name: command
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                idempotencyKey:
+                                    type: string
+                                jobIds:
+                                    items:
+                                        type: string
+                                    type: array
+                                origin:
+                                    type: string
+                            required:
+                                - jobIds
+                            type: object
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                properties:
+                                    results:
+                                        items:
+                                            $ref: '#/components/schemas/JobCommandResultResponsePartial'
+                                        type: array
+                                type: object
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "500":
+                    description: Job request failed
+            summary: Execute an advertised bulk command across Jobs
+            tags:
+                - jobs
     /v1/jobs/download/submit:
         post:
             deprecated: true
@@ -6121,116 +6804,33 @@ paths:
                 - jobs
     /v1/jobs/events:
         get:
-            deprecated: true
-            description: This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.
-            operationId: jobsEvents
+            description: Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream.
+            operationId: streamCanonicalJobEvents
+            parameters:
+                - description: Set to 2 for the canonical stream; omit to retain the legacy compatibility stream.
+                  in: query
+                  name: version
+                  schema:
+                    type: string
+                - description: Resume at a canonical v2 delivery cursor.
+                  in: query
+                  name: cursor
+                  schema:
+                    type: string
             responses:
                 "200":
+                    content:
+                        text/event-stream:
+                            schema:
+                                type: string
                     description: Successful response
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
                 "400":
-                    description: Invalid input
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
-                "401":
-                    description: Authentication required
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
-                "403":
-                    description: Forbidden
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
+                    description: Invalid filter or request
                 "404":
-                    description: Not found
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
-                "409":
-                    description: Conflict
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
+                    description: Job not found or not visible
                 "500":
-                    description: Internal server error
-                    headers:
-                        Deprecation:
-                            description: Deprecation date in RFC 9745 structured date form.
-                            schema:
-                                type: string
-                        Link:
-                            description: Successor-version link to the canonical Job API.
-                            schema:
-                                type: string
-                        Sunset:
-                            description: Planned retirement date in HTTP-date form.
-                            schema:
-                                type: string
-            summary: Server-Sent Events stream for job updates (canonical path)
+                    description: Job request failed
+            summary: Stream resumable canonical Job events
             tags:
                 - jobs
     /v1/jobs/get:
@@ -6839,6 +7439,254 @@ paths:
                             schema:
                                 type: string
             summary: Retry a failed job (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/summary:
+        get:
+            operationId: summarizeCanonicalJobs
+            parameters:
+                - description: Filter by state; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: state
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by states; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: states
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kind; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kind
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kinds; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kinds
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origin; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origin
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origins; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origins
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Search safe Job title, summary, and phase fields.
+                  in: query
+                  name: search
+                  schema:
+                    type: string
+                - description: Filter by a supported lineage relationship.
+                  in: query
+                  name: relationship
+                  schema:
+                    type: string
+                - description: Filter by owner user ID.
+                  in: query
+                  name: ownerId
+                  schema:
+                    type: integer
+                - description: Filter by actor user ID.
+                  in: query
+                  name: actorId
+                  schema:
+                    type: integer
+                - description: Inclusive RFC3339 lower bound.
+                  in: query
+                  name: acceptedAfter
+                  schema:
+                    type: string
+                - description: Inclusive RFC3339 upper bound.
+                  in: query
+                  name: acceptedBefore
+                  schema:
+                    type: string
+                - description: Filter this viewer's pin state.
+                  in: query
+                  name: pinned
+                  schema:
+                    type: boolean
+                - description: Filter this viewer's dismissal state.
+                  in: query
+                  name: dismissed
+                  schema:
+                    type: boolean
+                - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
+                  in: query
+                  name: command
+                  schema:
+                    type: string
+                - description: Positive duration, at most 90 days; defaults to 30 days.
+                  in: query
+                  name: window
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobSummaryResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter or request
+                "404":
+                    description: Job not found or not visible
+                "500":
+                    description: Job request failed
+            summary: Summarize visible Jobs over a bounded window
+            tags:
+                - jobs
+    /v1/jobs/summary/export:
+        post:
+            description: Accepts an owner-visible durable Job for CSV or JSON aggregate export. The range must exceed the interactive 90-day limit; list filters are accepted as query parameters.
+            operationId: exportCanonicalJobSummary
+            parameters:
+                - description: Filter by state; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: state
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by states; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: states
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kind; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kind
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by Kinds; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: kinds
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origin; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origin
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Filter by origins; repeat or comma-separate values.
+                  explode: true
+                  in: query
+                  name: origins
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Search safe Job title, summary, and phase fields.
+                  in: query
+                  name: search
+                  schema:
+                    type: string
+                - description: Filter by a supported lineage relationship.
+                  in: query
+                  name: relationship
+                  schema:
+                    type: string
+                - description: Filter by owner user ID.
+                  in: query
+                  name: ownerId
+                  schema:
+                    type: integer
+                - description: Filter by actor user ID.
+                  in: query
+                  name: actorId
+                  schema:
+                    type: integer
+                - description: Inclusive RFC3339 lower bound.
+                  in: query
+                  name: acceptedAfter
+                  schema:
+                    type: string
+                - description: Inclusive RFC3339 upper bound.
+                  in: query
+                  name: acceptedBefore
+                  schema:
+                    type: string
+                - description: Filter this viewer's pin state.
+                  in: query
+                  name: pinned
+                  schema:
+                    type: boolean
+                - description: Filter this viewer's dismissal state.
+                  in: query
+                  name: dismissed
+                  schema:
+                    type: boolean
+                - description: Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation.
+                  in: query
+                  name: command
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/JobSummaryExportRequest'
+                required: true
+            responses:
+                "202":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/JobSummaryExportResponse'
+                    description: Successful response
+                "400":
+                    description: Invalid filter, date range, or format
+                "403":
+                    description: Insufficient permissions
+            summary: Queue a filtered long-range Job summary export
             tags:
                 - jobs
     /v1/log:

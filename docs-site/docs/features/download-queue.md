@@ -39,7 +39,7 @@ When the queue is full, completed jobs are evicted first (oldest first), then fa
 
 A finished download remains visible through the durable Job record and, while
 the compatibility projection is retained, through the legacy download history
-row at `/downloads`. The Job survives queue eviction and restart according to
+row in the Job Center at `/jobs`. The Job survives queue eviction and restart according to
 Job retention. Legacy handles follow the current Retry leaf during the
 compatibility window; a canonical UUID always identifies one Job. Group
 exports, imports, Resource Reduction computation, similarity recomputes, and
@@ -50,7 +50,7 @@ plugin actions also publish through the durable Job Service.
 - **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
 - A restart records whatever was downloading or paused as cancelled, so it stays retryable afterwards.
 
-See [Downloads page](../user-guide/managing-resources.md#downloads-page) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
+See [Job System](./job-system.md) for the UI, and [Runtime Settings](../configuration/runtime-settings.md) for the retention windows.
 
 ## Plugin download pacing and deferral
 
@@ -317,7 +317,7 @@ canonical Job Center API.
 
 Canonical list, detail, command, timeline, output, summary, and export routes
 are described in the [Job System API table](./job-system.md#canonical-api). They
-become externally available together after the release gate passes.
+are available together after the startup retirement barrier passes.
 
 ### Download history
 

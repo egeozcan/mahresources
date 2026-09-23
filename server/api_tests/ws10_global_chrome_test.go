@@ -175,7 +175,7 @@ func TestJobsTrigger_IsHeaderChromeNotAFixedCorner(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/resources")
 
-	trigger := findOpenTag(body, `data-testid="cockpit-trigger"`, "button")
+	trigger := findOpenTag(body, `aria-label="Open Jobs panel"`, "button")
 	if trigger == "" {
 		t.Fatalf("the jobs trigger is not in the page — this test measured nothing")
 	}
@@ -191,14 +191,14 @@ func TestJobsTrigger_IsHeaderChromeNotAFixedCorner(t *testing.T) {
 	if end < 0 {
 		t.Fatalf("no </header> in the page")
 	}
-	if !strings.Contains(header[:end], `data-testid="cockpit-trigger"`) {
+	if !strings.Contains(header[:end], `aria-label="Open Jobs panel"`) {
 		t.Errorf("findings 83/102: the jobs trigger is not inside the header, so it is not chrome and can still overlap page content")
 	}
 
 	// The panel it opens must stay a modal dialog: WS4 gave it x-trap and an
 	// explicit focus restore, and moving the trigger must not have moved those.
-	panel := findOpenTag(body, `data-testid="cockpit-panel"`, "div")
-	if !strings.Contains(panel, "x-trap.noreturn") || !strings.Contains(panel, `aria-modal="true"`) {
+	panel := findOpenTag(body, `id="job-center-panel"`, "section")
+	if !strings.Contains(panel, "x-trap.noscroll.noreturn") || !strings.Contains(panel, `aria-modal="true"`) {
 		t.Errorf("the jobs panel lost its trap or its dialog semantics.\ntag: %s", whitespaceRe.ReplaceAllString(panel, " "))
 	}
 }

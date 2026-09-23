@@ -232,8 +232,7 @@ func TestPluginCommandWritesUseCanonicalReplayAfterWriterFence(t *testing.T) {
 	staleImport.FieldsJSON = `{"stale":"secret"}`
 	require.NoError(t, ctx.hydratePluginCommandImport(&staleImport, ctx.db))
 	require.Equal(t, importInput.FieldsJSON, staleImport.FieldsJSON)
-	importAdapter := &pluginCommandJobAdapter{ctx: ctx, kind: JobKindPluginCommandImport}
-	fieldsJSON, ok := importAdapter.importFieldsJSON(ctx.db, models.PluginCommandImport{
+	fieldsJSON, ok := ctx.pluginCommandImportFieldsJSON(ctx.db, models.PluginCommandImport{
 		ID: storedImport.ID, JobID: storedImport.JobID, RunID: storedImport.RunID,
 		FileName: storedImport.FileName, FieldsJSON: `{"stale":"secret"}`,
 	})

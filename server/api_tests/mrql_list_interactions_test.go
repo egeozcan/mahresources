@@ -11,7 +11,7 @@ import (
 
 func TestMRQLSharedListTemplates(t *testing.T) {
 	tc := SetupTestEnv(t)
-	for _, path := range []string{"/resources", "/notes", "/groups", "/tags", "/downloads", "/mrql"} {
+	for _, path := range []string{"/resources", "/notes", "/groups", "/tags", "/mrql"} {
 		t.Run(path, func(t *testing.T) {
 			r := massEditFormPost(t, tc, http.MethodGet, path, "text/html", nil)
 			require.Equal(t, http.StatusOK, r.Code, r.Body.String())

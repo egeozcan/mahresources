@@ -18,12 +18,12 @@ and fences acceptance, execution, recovery, visibility, commands, and retention.
 
 ## Release status and compatibility
 
-Canonical Job APIs and the Job Center page remain behind a release gate until
-the complete Kind inventory, migration, and plaintext-retirement checks pass.
-The canonical routes below describe the API clients use after that gate opens.
-Until then, the older queue, download, import, export, and plugin routes remain
-the externally available compatibility surfaces; an unfiltered `mr jobs list`
-falls back to the legacy queue when the canonical list route returns 404.
+The Job Center is available at `/jobs`. Its canonical APIs, panel, and CLI are
+enabled together. Startup verifies the complete Kind inventory and the
+plaintext-retirement barrier before serving traffic. Older queue, download,
+import, export, and plugin routes remain available for compatibility. An older
+server without the canonical list route still works with an unfiltered
+`mr jobs list` through its legacy queue fallback.
 
 Legacy Job routes and handles remain supported for at least one documented
 release and six months after canonical cutover. A legacy download handle follows
@@ -48,10 +48,10 @@ available commands. Current adapters include:
 | `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |
 | `plugin-action@1` | Run an asynchronous plugin action or `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart |
 | `job-summary-export@1` | Export a filtered Job summary as CSV or JSON | Replayable; owner-visible; artifact expires by export retention |
+| `plugin-command@1` | Run a plugin command | Non-restorable; administrator-visible; protected by the command runtime fence |
+| `plugin-command-import@1` | Import an admitted plugin command output | Non-restorable; administrator-visible; retry requires current importer and file proof |
 
-The complete release inventory also includes plugin command runs and command
-imports. Those use a separate fenced command runtime; they are not enabled as
-canonical Job Kinds in this release branch.
+Plugin command runs and imports use their separate fenced command runtime.
 
 ## State and visibility
 
@@ -118,8 +118,8 @@ encrypted replay envelope, and output artifact have separate retention policies.
 
 ## Canonical API
 
-These routes become available together after the Job Center cutover gate passes.
-The generated public OpenAPI contract follows the same gate.
+These routes are available together. The generated public OpenAPI contract
+includes them.
 
 | Method | Path | Description |
 |--------|------|-------------|

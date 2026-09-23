@@ -130,12 +130,17 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		// wherever the suite exercises user deletion.
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{},
+		&models.JobSourceMapping{},
 		&models.JobImportCommandFact{},
+		&models.PluginCommandImportCommandFact{}, &models.PluginCommandImportCommandFactGroup{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("Failed to initialize Job writer epoch: %v", err)
 	}
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		t.Fatalf("Failed to create supplemental indexes: %v", err)
@@ -183,6 +188,15 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
 	appCtx.SetJobService(jobs.NewService())
+	replayKey, err := jobs.GenerateReplayKey()
+	if err != nil {
+		t.Fatalf("Generate test Job replay key: %v", err)
+	}
+	replayKeyring, err := jobs.NewKeyring(replayKey)
+	if err != nil {
+		t.Fatalf("Initialize test Job replay keyring: %v", err)
+	}
+	appCtx.SetJobReplayKeyring(replayKeyring)
 
 	// Wire runtime settings (mirrors main.go boot sequence).
 	settings := application_context.NewRuntimeSettings(

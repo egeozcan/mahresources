@@ -77,11 +77,15 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		// wherever the suite exercises user deletion.
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobLegacyHandle{}, &models.JobPinGuard{}, &models.JobImportCommandFact{},
+		&models.JobSourceMapping{}, &models.PluginCommandImportCommandFact{}, &models.PluginCommandImportCommandFactGroup{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
-		&models.JobCapacityLease{}, &models.JobCommandRequest{},
+		&models.JobCapacityLease{}, &models.JobCommandRequest{}, &models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("Failed to initialize Job writer epoch: %v", err)
 	}
 
 	if err := models.EnsureSupplementalIndexes(db); err != nil {

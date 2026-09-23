@@ -51,6 +51,24 @@ describe('Job Center panel', () => {
         expect(panel.eventSource?.listeners.has('job-caught-up')).toBe(true);
     });
 
+    test('refreshes resource lists once when a download Job succeeds', () => {
+        const dispatchEvent = vi.fn();
+        vi.stubGlobal('window', { dispatchEvent });
+        vi.stubGlobal('CustomEvent', class {
+            type: string;
+            detail: unknown;
+            constructor(type: string, init: { detail: unknown }) { this.type = type; this.detail = init.detail; }
+        });
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'running' });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
+        panel.trackResourceCompletion({ id: 'download-1', kind: 'remote-download', state: 'succeeded' });
+        panel.trackResourceCompletion({ id: 'export-1', kind: 'group-export', state: 'succeeded' });
+        expect(dispatchEvent).toHaveBeenCalledOnce();
+        expect(dispatchEvent.mock.calls[0][0]).toMatchObject({ type: 'download-completed', detail: { jobId: 'download-1' } });
+    });
+
     test('opens only advertised panel commands and sends per-job outcomes', async () => {
         const fetchMock = vi.fn(async () => ({
             ok: true,

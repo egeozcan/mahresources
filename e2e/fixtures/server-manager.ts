@@ -260,6 +260,9 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
     // test key is the honest configuration. It is a fixture value, never a
     // production key.
     JOB_REPLAY_KEY: 'ZTJlLWhhcm5lc3MtcmVwbGF5LWtleS0zMmJ5dGUhISE=',
+    // Each worker owns a new isolated database and has no older process to
+    // drain. Attest that fact so startup can complete plaintext retirement.
+    JOB_MIGRATION_WRITERS_DRAINED: '1',
   };
   for (const key of Object.keys(childEnv)) {
     if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {

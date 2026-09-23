@@ -91,7 +91,7 @@ export function setupDownloadListRefresh({
   };
 
   const handleCompletion = (event) => {
-    if (!event.detail?.resourceId || !findListContainer(root)) return;
+    if (!(event.detail?.resourceId || event.detail?.jobId) || !findListContainer(root)) return;
     refreshDirty = true;
     armRefresh();
   };

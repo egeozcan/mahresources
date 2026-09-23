@@ -64,6 +64,7 @@ export function jobPanel() {
         notice: '',
         outcomes: [],
         _pendingLiveJobUpdates: new Map(),
+        _resourceRefreshNotified: new Set(),
         busy: false,
         _liveRegion: null,
         _trigger: null,
@@ -201,6 +202,7 @@ export function jobPanel() {
                 }
                 const nextJobs = boundedPanelJobs([...byId.values()]);
                 this.announceRefreshedLiveTransitions(nextJobs, pendingLiveUpdates);
+                nextJobs.forEach(job => this.trackResourceCompletion(job));
                 this.jobs = nextJobs;
                 await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation).catch(() => null)));
             } catch (error) {
@@ -340,13 +342,28 @@ export function jobPanel() {
             }
             this._pendingLiveJobUpdates.delete(jobId);
             this.jobs = boundedPanelJobs(result.jobs);
+            this.jobs.forEach(job => this.trackResourceCompletion(job));
             if (result.announcement) this.announce(result.announcement);
+        },
+
+        trackResourceCompletion(job) {
+            if (!job?.id || job.state !== 'succeeded' ||
+                (job.kind !== 'remote-download' && job.kind !== 'deferred-download') ||
+                this._resourceRefreshNotified.has(job.id)) return;
+            this._resourceRefreshNotified.add(job.id);
+            if (this._resourceRefreshNotified.size > 256) {
+                this._resourceRefreshNotified.delete(this._resourceRefreshNotified.values().next().value);
+            }
+            if (this.streamCaughtUp && globalThis.window?.dispatchEvent && globalThis.CustomEvent) {
+                globalThis.window.dispatchEvent(new CustomEvent('download-completed', { detail: { jobId: job.id } }));
+            }
         },
 
         applyStreamSnapshot(job, announce = false, allowInsert = true) {
             const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert });
             if (!result.changed) return;
             this.jobs = boundedPanelJobs(result.jobs);
+            this.trackResourceCompletion(job);
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
             if (announce && result.announcement) this.announce(result.announcement);
         },

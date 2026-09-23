@@ -2454,9 +2454,6 @@
   .bg-green-100 {
     background-color: var(--color-green-100);
   }
-  .bg-green-500 {
-    background-color: var(--color-green-500);
-  }
   .bg-green-600 {
     background-color: var(--color-green-600);
   }
@@ -2487,17 +2484,11 @@
   .bg-purple-100 {
     background-color: var(--color-purple-100);
   }
-  .bg-purple-600 {
-    background-color: var(--color-purple-600);
-  }
   .bg-red-50 {
     background-color: var(--color-red-50);
   }
   .bg-red-100 {
     background-color: var(--color-red-100);
-  }
-  .bg-red-500 {
-    background-color: var(--color-red-500);
   }
   .bg-red-600 {
     background-color: var(--color-red-600);
@@ -2585,9 +2576,6 @@
   }
   .bg-yellow-200 {
     background-color: var(--color-yellow-200);
-  }
-  .bg-yellow-500 {
-    background-color: var(--color-yellow-500);
   }
   .object-contain {
     object-fit: contain;
@@ -2973,9 +2961,6 @@
   .text-indigo-700 {
     color: var(--color-indigo-700);
   }
-  .text-purple-600 {
-    color: var(--color-purple-600);
-  }
   .text-purple-700 {
     color: var(--color-purple-700);
   }
@@ -3059,9 +3044,6 @@
   }
   .text-yellow-500 {
     color: var(--color-yellow-500);
-  }
-  .text-yellow-600 {
-    color: var(--color-yellow-600);
   }
   .text-yellow-700 {
     color: var(--color-yellow-700);
@@ -3810,13 +3792,6 @@
       }
     }
   }
-  .hover\:text-purple-800 {
-    &:hover {
-      @media (hover: hover) {
-        color: var(--color-purple-800);
-      }
-    }
-  }
   .hover\:text-red-300 {
     &:hover {
       @media (hover: hover) {
@@ -3912,13 +3887,6 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-white);
-      }
-    }
-  }
-  .hover\:text-yellow-800 {
-    &:hover {
-      @media (hover: hover) {
-        color: var(--color-yellow-800);
       }
     }
   }
@@ -4074,11 +4042,6 @@
   .focus\:text-white {
     &:focus {
       color: var(--color-white);
-    }
-  }
-  .focus\:underline {
-    &:focus {
-      text-decoration-line: underline;
     }
   }
   .focus\:opacity-100 {

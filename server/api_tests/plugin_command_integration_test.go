@@ -170,9 +170,13 @@ func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, fi
 		&models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobPinGuard{}, &models.JobLegacyHandle{}, &models.JobOutput{},
+		&models.JobSourceMapping{}, &models.PluginCommandImportCommandFact{}, &models.PluginCommandImportCommandFactGroup{},
 		&models.JobReplayEnvelope{}, &models.JobClaim{}, &models.JobCapacityLease{}, &models.JobCommandRequest{},
 		&models.JobWriterEpoch{}, &models.JobRuntimeFence{},
 	); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
 		t.Fatal(err)
 	}
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
@@ -195,6 +199,11 @@ func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, fi
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 	appCtx := application_context.NewMahresourcesContext(filesystem, db, readOnlyDB, config)
 	appCtx.SetJobService(jobs.NewService())
+	replayKeyring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, KeyFilePath: dbPath + ".replay-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appCtx.SetJobReplayKeyring(replayKeyring)
 	settings := application_context.NewRuntimeSettings(
 		db, application_context.NewStdlibSettingsLogger(), application_context.BuildSpecsExported(),
 		application_context.BuildDefaultsFromConfig(config),
@@ -478,7 +487,7 @@ func createImportBlocker(t *testing.T, tc *TestContext, stagingRoot, id string, 
 	if err := tc.DB.Where("id = ?", id).First(&source).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, claimed, err := ctx.JobService().Claim(context.Background(), jobs.Deps{DB: tc.DB}, jobs.ClaimRequest{
+	if _, claimed, err := ctx.JobService().Claim(context.Background(), jobs.Deps{DB: tc.DB, Replay: &jobs.ReplayConfig{Keys: ctx.JobReplayKeyring()}}, jobs.ClaimRequest{
 		Kind: application_context.JobKindPluginCommand, KindVersion: 1, JobID: source.JobID, Claimant: "test-import-blocker",
 	}); err != nil || !claimed {
 		t.Fatalf("claim blocker Job: claimed=%v err=%v", claimed, err)

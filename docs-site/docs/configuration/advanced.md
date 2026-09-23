@@ -282,6 +282,13 @@ For an epoch-advancing rollout:
 4. Confirm every instance starts with the advanced database before restoring
    normal traffic.
 
+The Job Center release requires this barrier at startup. After draining every
+older writer, start the new release with
+`JOB_MIGRATION_WRITERS_DRAINED=1` (or `-job-migration-writers-drained`) until
+the migration reaches `complete` and the minimum writer epoch is 2. Do not set
+the attestation while an older writer is still connected. Later starts can
+read the completed barrier from the database.
+
 During rollout, an administrator can inspect the current barrier through
 `GET /v1/admin/jobs/migration-readiness`. The response's `ready` field is true
 only when the migration barrier is satisfied; `writerEpoch` reports the
@@ -296,9 +303,7 @@ the canonical schema. Do not roll back to a plaintext writer. Keep the release
 that advanced the epoch available until the rollback window closes.
 
 Legacy download and Job compatibility routes remain supported for at least one
-documented release and six months after canonical cutover. Deprecation does not
-mean the canonical UI is ready by itself: all advertised Job Kinds, backfill,
-replay, visibility, and output checks must pass before the cutover gate opens.
+documented release and six months after canonical cutover.
 
 ## Restoring a Pre-Retirement Backup
 
