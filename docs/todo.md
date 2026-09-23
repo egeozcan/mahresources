@@ -1,3 +1,110 @@
+# Job Center post-Task-9 checkpoint — close the Astra review's P1 findings (2026-09-23)
+
+**Goal:** Close the P1 findings the Astra checkpoint raised after Task 9 — durable
+admission, executor evidence, principal binding, hook-feed causality, the plugin
+lifecycle, and staging retention — with a public-seam regression for each.
+
+## Plan
+
+- [x] Re-read every cited site, ADR 0006/0007, the design (§3, §4, §8, §10, §15,
+      §16, §17), `CLAUDE.md` and the committed Tasks 1–9 before editing.
+- [x] Host-claimed plugin work occupies the deployment's own concurrency budget;
+      a full budget leaves accepted work queued for the loop rather than withdrawn.
+- [x] A legacy download handle resolves a *terminal* Job from the durable record.
+- [x] `jobs.Service.AcceptClaimed`: acceptance and the first claim in one transaction.
+- [x] The causal boundary of the plugin hook feed: a Job started from an
+      `after_job_*` delivery does not announce its own terminal event, and the
+      suppression is inherited down the lineage.
+- [x] Plugin failures are bounded host-owned classifications; plugin-supplied text
+      is redacted of the Job's own parameter values before it is persisted.
+- [x] Retry is an explicit registration declaration (`retry = true`) on an action or
+      a schedule, current at the moment it is advertised *and* at the moment it runs.
+- [x] `recheckCommand` re-asks the Kind inside the transaction that commits a control
+      intent or creates a successor.
+- [x] A dispatched plugin execution waits on its own lifecycle, not a wall clock.
+- [x] `Close` stops admissions, drains the VMs, and only then reports callbacks that
+      provably cannot finish.
+- [x] Reconciliation judges the claim's *execution* runtime identity rather than the
+      submitter recorded in the sealed input.
+- [x] The startup staging sweep consults durable nonterminal ownership.
+- [x] A queue-backed reconciliation needs proof the executor is gone before it
+      dispatches a replacement.
+- [x] `mah.download.submit` goes through durable acceptance.
+- [x] A queued import apply restarts from the plan it was admitted with.
+- [x] `docs/todo.md`, formatting, `go vet`, the focused suites, `-race` on the
+      touched packages, PostgreSQL, browser and CLI e2e.
+
+## Findings closed
+
+| Finding | Regression |
+|---|---|
+| Host-claimed plugin work bypasses the deployment budget | `TestAHostSidePluginActionObeysTheDeploymentConcurrencyBudget` |
+| Legacy download handles stop resolving terminal Jobs | `TestALegacyDownloadHandleResolvesATerminalJobAfterRestart` |
+| Closure acceptance races the generic dispatcher | `TestAClosureJobIsNeverClaimableByTheDispatchLoop` |
+| Plugin terminal hooks create an unbounded `start_job` loop | `TestAPluginJobEventHookThatStartsWorkCannotFeedItself` |
+| Raw plugin diagnostics escape into public durable history | `TestAPluginJobKeepsItsOwnTextOutOfDurableHistory` |
+| Plugin actions advertise Retry without registration opt-in | `TestAPluginRetryExistsOnlyWhereTheRegistrationDeclaresIt` |
+| Commands do not revalidate policy before creating successors | `TestACommandRechecksTheKindAdvertisementInsideItsTransaction`, `TestAControlIntentIsRecheckedInsideItsTransaction` |
+| The plugin wait timeout fails a live execution | `TestADispatchedPluginExecutionWaitsForItsOwnReportNotForAClock` |
+| Shutdown interrupts callbacks before they are quiescent | `TestClosingTheManagerLetsARunningCallbackFinish`, `TestClosingTheManagerReportsWorkItCanProveCannotFinish` |
+| Reconciliation reads the submitter's runtime | `TestAReconciliationJudgesTheClaimHolderNotTheSubmitter` |
+| Restored and repeated exports lose the acting subtree | `TestAScopedExportsRepeatKeepsTheExportsSubtree` |
+| Startup cleanup deletes inputs of nonterminal Jobs | `TestStartupCleanupKeepsTheInputsANonterminalJobStillNeeds`, `TestStartupCleanupKeepsAFinishedParentsFilesForItsQueuedChild` |
+| Queue-backed work reconciled from local absence | `TestAQueueBackedReconcileNeedsProofTheExecutorIsGone` |
+| `mah.download.submit` bypasses durable acceptance | `TestAPluginsImmediateDownloadIsADurableJob`, `TestAPluginsImmediateDownloadReportsAnAcceptanceFailure` |
+| A queued import apply cannot restart from its consumed plan | `TestAQueuedImportApplyRestartsFromItsAdmittedPlan` |
+
+Every one was observed failing first, with the source restored afterwards; the
+red→green pairs are in the commit messages.
+
+## Open: the submission path does not own a durable claim (P1)
+
+`SubmitRemoteDownloads`, `SubmitGroupExport`, `SubmitImportParse`,
+`SubmitImportApply` and the two compute paths accept a Job and then hand the work
+to the queue with `jobs.ExecutionRef{JobID: ...}` and **no execution token**, while
+the dispatch loop may claim that same Job in another process and call its
+adapter's `start`, which creates a second queue entry there. The claim-bearing half
+of that hazard is closed now (reconciliation no longer dispatches a replacement on
+another process's queue absence), what remains is the *dispatch* half: a queued
+Job that a live submitter is already running.
+
+Routing submissions through `AcceptClaimed` is not sufficient on its own, and that
+is why this is left for its own change rather than patched here: a claim that is
+not renewed expires in the middle of a long transfer, and an execution that
+publishes into a Job the reconciler has since blocked has its outcome refused
+(`blocked → succeeded` is not a transition). So the executor — the queue — has to
+own and renew the claim for the whole run: a heartbeat for the execution's token,
+started with the entry and stopped when it reaches a terminal status, in
+`job_queue_bridge.go`, plus the wiring through `download_queue`'s canonical ref. It
+is a design decision about who owns a queue-backed execution, not a line in the
+submission paths, and guessing at it would put the same duplicate execution behind
+a new mechanism.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test -race --tags 'json1 fts5' ./jobs ./download_queue -count=1` — clean.
+- `go test -race --tags 'json1 fts5' ./plugin_system ./server/api_handlers
+  ./server/api_tests -run 'Test.*(ActionJob|StartJob|Schedule|PluginAction|RuntimeLoss|Job)'
+  -count=1` — clean (Task 9's own gate).
+- `go test -race --tags 'json1 fts5' ./application_context -count=1 -timeout 1800s` —
+  clean (616s). It needs the explicit timeout, which is not this change: at the base
+  commit the same whole-package run takes 573s against the 600s default, so the
+  package sits on that limit already. The focused race run over the tests added here
+  is 4.4s.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./application_context -run
+  'Test.*(Job|Reconcile|Claim|Command|Import|Export|Download|Plugin)' -count=1` and
+  the same for `./server/api_tests -run 'Test.*(Job|Import|Export|Download|Plugin)'`
+  — clean.
+- Browser: `tests/plugins/plugin-actions.spec.ts` + `plugin-action-refusal.spec.ts`
+  (37 passed), `plugin-schedules.spec.ts` + `plugin-schedule-run-now.spec.ts` +
+  `tests/admin-import/` (7 passed), `tests/downloads-history.spec.ts` +
+  `tests/admin-export/` (12 passed). CLI: `cli-jobs.spec.ts` + `cli-plugins.spec.ts`
+  (27 passed).
+- `go vet --tags 'json1 fts5' ./...` clean, `gofmt -l` on every changed file clean,
+  `git diff --check` clean. `npm run build` (which the e2e runner performs) leaves
+  `public/dist/` and `public/tailwind.css` byte-identical: no frontend source changed.
+
 # Job Center Task 9 — adapt plugin actions, schedules, and non-restorable `mah.start_job` (2026-09-22)
 
 **Goal:** Land Task 9 of the unified Job Center plan: plugin background work — an async
