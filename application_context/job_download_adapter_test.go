@@ -130,6 +130,7 @@ function init() end
 		AllowPrivateFetch: []string{"127.0.0.1", "::1"},
 	}
 	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"), cfg)
+	cleanupMahresourcesTestContext(t, ctx)
 
 	ring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: constants.DbTypeSqlite, Ephemeral: true})
 	if err != nil {

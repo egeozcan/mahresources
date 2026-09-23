@@ -66,9 +66,13 @@ func TestMRQLSnapshotRejectsTamperingExpiryAndChangedBinding(t *testing.T) {
 	require.NoError(t, err)
 	token, err := f.ctx.IssueMRQLSnapshot(context.Background(), query, params, result)
 	require.NoError(t, err)
+	tamperedToken := "A" + token[1:]
+	if token[0] == 'A' {
+		tamperedToken = "B" + token[1:]
+	}
 	for name, resolve := range map[string]func() error{
 		"tampered": func() error {
-			_, err := f.ctx.ResolveMRQLSnapshot(context.Background(), query, params, "x"+token[1:])
+			_, err := f.ctx.ResolveMRQLSnapshot(context.Background(), query, params, tamperedToken)
 			return err
 		},
 		"query": func() error {
