@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"reflect"
+	"strings"
+	"time"
+
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
@@ -13,9 +18,6 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
-	"net/http"
-	"strings"
-	"time"
 )
 
 // DownloadQueueReader is the interface for reading download queue state
@@ -1040,5 +1042,6 @@ func sameLegacyActionProjection(left, right *plugin_system.ActionJob) bool {
 		return left == right
 	}
 	return left.CanonicalJobID == right.CanonicalJobID &&
-		left.Status == right.Status && left.Progress == right.Progress && left.Message == right.Message
+		left.Status == right.Status && left.Progress == right.Progress && left.Message == right.Message &&
+		reflect.DeepEqual(left.Result, right.Result)
 }

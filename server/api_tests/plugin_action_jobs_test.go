@@ -198,9 +198,20 @@ function fail_work(ctx)
     mah.job_fail(ctx.job_id, "the action refused")
 end
 
+function result_work(ctx)
+    mah.job_complete(ctx.job_id, {
+        message = "completed " .. ctx.params.secret,
+        secret = ctx.params.secret,
+        stable = "kept",
+    })
+end
+
 function init()
     mah.action({ id = "retryable", label = "Retryable", entity = "resource", async = true,
                  retry = true, handler = fail_work })
+    mah.action({ id = "result", label = "Result", entity = "resource", async = true,
+                 params = { {name = "secret", type = "text", label = "Secret"} },
+                 handler = result_work })
 end
 `
 	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.lua"), []byte(source), 0o644); err != nil {
@@ -261,6 +272,29 @@ func runRetryableActionToFailure(t *testing.T, tc *TestContext, owner *models.Us
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("retryable action %s did not fail", key)
+	return "", jobs.Snapshot{}
+}
+
+func runResultActionToCompletion(t *testing.T, tc *TestContext, owner *models.User, secret string) (string, jobs.Snapshot) {
+	t.Helper()
+	ownerCtx := tc.AppCtx.WithPrincipal(auth.FromUser(owner))
+	handle, canonicalID, err := ownerCtx.RunPluginActionAsync(&owner.ID, "retry-projection", "result", 1,
+		map[string]any{"secret": secret}, "")
+	if err != nil {
+		t.Fatalf("run result action: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		job, err := ownerCtx.GetJob(canonicalID)
+		if err == nil && job.State.Terminal() {
+			if job.State != jobs.StateSucceeded {
+				t.Fatalf("result action ended %s, want succeeded", job.State)
+			}
+			return handle, job
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("result action for %q did not succeed", secret)
 	return "", jobs.Snapshot{}
 }
 
@@ -481,6 +515,133 @@ func TestLegacyActionEventsInitProjectsQueuedRetryLeaf(t *testing.T) {
 	}
 }
 
+func TestProjectActionJobsHydratesSanitizedResultsInOneBatchAndSSEInit(t *testing.T) {
+	tc, owner, _, ownerToken := setupRetryableActionProjectionEnv(t)
+	firstHandle, _ := runResultActionToCompletion(t, tc, owner, "first-private-value")
+	secondHandle, _ := runResultActionToCompletion(t, tc, owner, "second-private-value")
+
+	counter := &actionHandleQueryCounter{Interface: logger.Default.LogMode(logger.Silent)}
+	priorLogger := tc.DB.Config.Logger
+	tc.DB.Config.Logger = counter
+	t.Cleanup(func() { tc.DB.Config.Logger = priorLogger })
+	projected, err := tc.AppCtx.WithPrincipal(auth.FromUser(owner)).ProjectActionJobs()
+	if err != nil {
+		t.Fatalf("project action jobs with results: %v", err)
+	}
+	if got := counter.count(); got != 1 {
+		t.Fatalf("bulk result projection issued %d handle queries, want one", got)
+	}
+	if got := counter.outputCount(); got != 1 {
+		t.Fatalf("bulk result projection issued %d output queries for two handles, want one", got)
+	}
+	byHandle := make(map[string]*plugin_system.ActionJob, len(projected))
+	for _, row := range projected {
+		byHandle[row.ID] = row
+	}
+	for handle, secret := range map[string]string{
+		firstHandle:  "first-private-value",
+		secondHandle: "second-private-value",
+	} {
+		row := byHandle[handle]
+		if row == nil {
+			t.Fatalf("bulk result projection omitted handle %q: %+v", handle, projected)
+		}
+		if row.Result["message"] != "completed [redacted]" || row.Result["secret"] != "[redacted]" || row.Result["stable"] != "kept" {
+			t.Fatalf("bulk result projection for %q returned %#v; want sanitized available result", handle, row.Result)
+		}
+		if strings.Contains(fmt.Sprint(row.Result), secret) {
+			t.Fatalf("bulk result projection leaked %q: %#v", secret, row.Result)
+		}
+	}
+
+	writer, cancel, done := startPluginActionEventsRequest(t, tc, ownerToken, false)
+	stopPluginActionEventsRequest(t, cancel, done)
+	frameEnd := strings.Index(writer.String(), "\n\n")
+	if frameEnd < 0 {
+		t.Fatalf("SSE response has no complete init frame: %q", writer.String())
+	}
+	frame := writer.String()[:frameEnd]
+	dataAt := strings.Index(frame, "data: ")
+	if dataAt < 0 {
+		t.Fatalf("SSE init frame has no data field: %q", frame)
+	}
+	var init struct {
+		ActionJobs []plugin_system.ActionJob `json:"actionJobs"`
+	}
+	if err := json.Unmarshal([]byte(frame[dataAt+len("data: "):]), &init); err != nil {
+		t.Fatalf("decode result-bearing SSE init: %v (%s)", err, frame)
+	}
+	for _, handle := range []string{firstHandle, secondHandle} {
+		found := false
+		for _, row := range init.ActionJobs {
+			if row.ID == handle && row.Result["stable"] == "kept" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("SSE init omitted completed result for handle %q: %+v", handle, init.ActionJobs)
+		}
+	}
+}
+
+func TestLegacyActionEventsDurablePollNotifiesResultAvailabilityChange(t *testing.T) {
+	tc, owner, _, _ := setupRetryableActionProjectionEnv(t)
+	handle, completed := runResultActionToCompletion(t, tc, owner, "poll-private-value")
+	ownerCtx := tc.AppCtx.WithPrincipal(auth.FromUser(owner))
+
+	streamContext := actionContextWithoutPluginManager{MahresourcesContext: ownerCtx}
+	handler := api_handlers.GetDownloadEventsHandler(streamContext)
+	streamCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events", nil).WithContext(streamCtx)
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.FromUser(owner)))
+	writer := newPluginActionEventsWriter(false)
+	done := make(chan struct{})
+	go func() {
+		handler(writer, request)
+		close(done)
+	}()
+	select {
+	case <-writer.initWritten:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("durable-poll SSE did not write init")
+	}
+	select {
+	case <-writer.initialFlushed:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("durable-poll SSE did not flush init")
+	}
+	defer stopPluginActionEventsRequest(t, cancel, done)
+	if !strings.Contains(writer.String(), `"id":"`+handle+`"`) || !strings.Contains(writer.String(), `"stable":"kept"`) {
+		t.Fatalf("SSE init omitted the completed action result: %s", writer.String())
+	}
+	if err := tc.DB.Model(&models.JobOutput{}).
+		Where("job_id = ? AND key = ?", completed.ID, "result").
+		Update("availability", string(jobs.OutputExpired)).Error; err != nil {
+		t.Fatalf("expire result output: %v", err)
+	}
+
+	select {
+	case <-writer.actionWritten:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("durable poll did not notify the result availability change for %q: %s", handle, writer.String())
+	}
+	body := writer.String()
+	foundResultUpdate := false
+	for _, frame := range strings.Split(body, "\n\n") {
+		if strings.HasPrefix(frame, "event: action_updated\n") &&
+			strings.Contains(frame, `"id":"`+handle+`"`) &&
+			strings.Contains(frame, `"status":"completed"`) &&
+			!strings.Contains(frame, `"result":`) {
+			foundResultUpdate = true
+		}
+	}
+	if !foundResultUpdate {
+		t.Fatalf("durable poll did not update the row after its available result expired: %s", body)
+	}
+}
+
 func TestLegacyActionEventsNotifyConnectedClientWhenRetryMovesHandle(t *testing.T) {
 	tc, owner, _, ownerToken := setupRetryableActionProjectionEnv(t)
 	ownerCtx := tc.AppCtx.WithPrincipal(auth.FromUser(owner))
@@ -532,9 +693,10 @@ func TestLegacyActionEventsNotifyConnectedClientWhenRetryMovesHandle(t *testing.
 
 type actionHandleQueryCounter struct {
 	logger.Interface
-	mu         sync.Mutex
-	reads      int
-	statements []string
+	mu          sync.Mutex
+	reads       int
+	outputReads int
+	statements  []string
 }
 
 func (counter *actionHandleQueryCounter) Trace(ctx context.Context, begin time.Time, query func() (string, int64), err error) {
@@ -543,6 +705,11 @@ func (counter *actionHandleQueryCounter) Trace(ctx context.Context, begin time.T
 		counter.mu.Lock()
 		counter.reads++
 		counter.statements = append(counter.statements, sql)
+		counter.mu.Unlock()
+	}
+	if strings.Contains(strings.ToLower(sql), "job_outputs") {
+		counter.mu.Lock()
+		counter.outputReads++
 		counter.mu.Unlock()
 	}
 	counter.Interface.Trace(ctx, begin, func() (string, int64) { return sql, rows }, err)
@@ -558,6 +725,12 @@ func (counter *actionHandleQueryCounter) count() int {
 	counter.mu.Lock()
 	defer counter.mu.Unlock()
 	return counter.reads
+}
+
+func (counter *actionHandleQueryCounter) outputCount() int {
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+	return counter.outputReads
 }
 
 func TestProjectActionJobsExcludesExpiredHandleHistoryInOneQuery(t *testing.T) {

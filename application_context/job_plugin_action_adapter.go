@@ -2014,9 +2014,30 @@ func (ctx *MahresourcesContext) ProjectActionJobs() ([]*plugin_system.ActionJob,
 	if err := query.Order("job_legacy_handles.handle asc").Scan(&candidates).Error; err != nil {
 		return nil, fmt.Errorf("application_context: list visible plugin action handles: %w", err)
 	}
+	results := make(map[string]map[string]any)
+	if len(candidates) > 0 {
+		jobIDs := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			jobIDs = append(jobIDs, candidate.Job.ID)
+		}
+		var outputs []models.JobOutput
+		if err := ctx.db.Where("job_id IN ? AND key = ? AND type = ? AND availability = ?",
+			jobIDs, "result", jobs.OutputTypeSummary, string(jobs.OutputAvailable)).
+			Select("job_id", "reference").Find(&outputs).Error; err != nil {
+			return nil, fmt.Errorf("application_context: read visible plugin action results: %w", err)
+		}
+		for _, output := range outputs {
+			var result map[string]any
+			if err := json.Unmarshal(output.Reference, &result); err == nil {
+				results[output.JobID] = result
+			}
+		}
+	}
 	rows := make([]*plugin_system.ActionJob, 0, len(candidates))
 	for _, candidate := range candidates {
-		rows = append(rows, projectActionJobSnapshot(pluginActionSnapshotFromModel(candidate.Job), candidate.Handle))
+		row := projectActionJobSnapshot(pluginActionSnapshotFromModel(candidate.Job), candidate.Handle)
+		row.Result = results[candidate.Job.ID]
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
