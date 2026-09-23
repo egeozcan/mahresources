@@ -76,6 +76,7 @@ export function jobPanel() {
         _panelRefreshPromise: null,
         _refreshGeneration: 0,
         _streamGeneration: 0,
+        _jobStreamGenerations: new Map(),
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -103,6 +104,7 @@ export function jobPanel() {
             if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._refreshGeneration += 1;
             this._streamGeneration += 1;
+            this._jobStreamGenerations.clear();
             this._panelRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
@@ -195,6 +197,10 @@ export function jobPanel() {
                     for (const job of payload.jobs || []) if (!byId.has(job.id)) byId.set(job.id, job);
                 }
                 this.jobs = boundedPanelJobs([...byId.values()]);
+                const visibleIds = new Set(this.jobs.map(job => job.id));
+                for (const jobId of this._jobStreamGenerations.keys()) {
+                    if (!visibleIds.has(jobId)) this._jobStreamGenerations.delete(jobId);
+                }
                 await Promise.all(this.jobs.map(job => this.loadAdvertisedCommands(job, generation).catch(() => null)));
             } catch (error) {
                 if (generation === this._refreshGeneration) this.error = error.message || 'Could not load jobs.';
@@ -243,8 +249,11 @@ export function jobPanel() {
                 return job;
             }
             const streamGeneration = this._streamGeneration;
+            const jobStreamGeneration = this._jobStreamGenerations.get(job.id) || 0;
             const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
-            if (generation !== this._refreshGeneration || streamGeneration !== this._streamGeneration || !this.jobs.some(current => current.id === job.id)) return null;
+            if (generation !== this._refreshGeneration || streamGeneration !== this._streamGeneration ||
+                jobStreamGeneration !== (this._jobStreamGenerations.get(job.id) || 0) ||
+                !this.jobs.some(current => current.id === job.id)) return null;
             const current = this.jobs.find(currentJob => currentJob.id === job.id);
             if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
@@ -298,15 +307,22 @@ export function jobPanel() {
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: false });
             this.lastSequence = result.lastSequence;
             if (this.lastSequence > previousSequence && this.streamCaughtUp) this.schedulePanelRefresh();
-            if (result.changed || this.lastSequence > previousSequence) this._streamGeneration += 1;
+            const jobId = result.jobId || message.job?.id || message.snapshot?.id ||
+                (message.id && message.state ? message.id : '') || message.jobId || message.jobID || '';
+            if (result.changed && this.jobs.some(job => job.id === jobId)) {
+                this._jobStreamGenerations.set(jobId, (this._jobStreamGenerations.get(jobId) || 0) + 1);
+            }
             if (!result.changed) return;
             if (result.needsSnapshot) {
                 if (!this.jobs.some(job => job.id === result.jobId)) return;
                 const streamGeneration = this._streamGeneration;
+                const jobStreamGeneration = this._jobStreamGenerations.get(result.jobId) || 0;
                 const refreshGeneration = this._refreshGeneration;
                 try {
                     const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`);
-                    if (streamGeneration !== this._streamGeneration || refreshGeneration !== this._refreshGeneration || !this.jobs.some(job => job.id === detail.id)) return;
+                    if (streamGeneration !== this._streamGeneration || refreshGeneration !== this._refreshGeneration ||
+                        jobStreamGeneration !== (this._jobStreamGenerations.get(result.jobId) || 0) ||
+                        !this.jobs.some(job => job.id === detail.id)) return;
                     this.applyStreamSnapshot(detail, announceSnapshot, false);
                 } catch { /* A hidden or expired Job stays absent from the panel. */ }
                 return;

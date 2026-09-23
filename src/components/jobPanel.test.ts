@@ -353,6 +353,42 @@ describe('Job Center panel accessibility hooks', () => {
         panel.destroy();
     });
 
+    test('keeps visible command details when unrelated live events arrive during the detail request', async () => {
+        vi.useFakeTimers();
+        let resolveDetail: (value: unknown) => void = () => {};
+        let markDetailStarted: () => void = () => {};
+        const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
+        const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+        const visibleJob = { id: 'visible-job', kind: 'maintenance', state: 'running', version: 4, acceptedAt: '2026-09-23T10:00:00Z' };
+        const commands = [{ key: 'pause', label: 'Pause', endpoint: '/v1/jobs/visible-job/commands/pause', jobVersion: 4 }];
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { running: 1 } };
+            if (url.startsWith('/v1/jobs?')) return { jobs: [visibleJob] };
+            markDetailStarted();
+            return detailRequest;
+        });
+
+        const refresh = panel.refresh();
+        await detailStarted;
+        for (let sequence = 1; sequence <= 8; sequence++) {
+            await panel.handleStreamMessage({
+                data: JSON.stringify({ id: `unrelated-${sequence}`, jobId: `other-${sequence}`, deliverySequence: sequence }),
+                lastEventId: `v2:${sequence}`,
+            });
+            await vi.advanceTimersByTimeAsync(10);
+        }
+
+        resolveDetail({ ...visibleJob, commands });
+        await refresh;
+
+        expect(panel.commandsFor(panel.jobs[0])).toEqual(commands);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('runs a maximum-wait refresh while stream events continue arriving', async () => {
         vi.useFakeTimers();
         const panel = jobPanel();
