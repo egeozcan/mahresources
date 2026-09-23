@@ -3,6 +3,7 @@ package api_tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	sqlite3 "github.com/mattn/go-sqlite3"
+	"gorm.io/gorm"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -175,9 +178,9 @@ func TestCancelBlockedJobRetriesSharedCacheTableLock(t *testing.T) {
 	}
 
 	// SetupTestEnv uses shared-cache in-memory SQLite, whose SQLITE_LOCKED table
-	// errors bypass busy_timeout. Hold a read transaction on the Job table while
-	// the public cancel route runs, then release it so the command's outer
-	// transaction can retry from a fresh snapshot.
+	// errors bypass busy_timeout. Hold a read transaction on the Job table until
+	// the public cancel route reaches its first locked UPDATE, then release it so
+	// the command's outer transaction can retry from a fresh snapshot.
 	reader := tc.DB.Begin()
 	if reader.Error != nil {
 		t.Fatalf("begin jobs read transaction: %v", reader.Error)
@@ -193,18 +196,71 @@ func TestCancelBlockedJobRetriesSharedCacheTableLock(t *testing.T) {
 		t.Fatalf("shared-cache lock probe = %v, want SQLITE_LOCKED on jobs", probeErr)
 	}
 
-	released := make(chan error, 1)
-	releaseTimer := time.AfterFunc(100*time.Millisecond, func() {
-		released <- reader.Commit().Error
-	})
-	res := tc.MakeRequest(http.MethodPost, "/v1/jobs/"+blocked.ID+"/commands/cancel", map[string]any{
-		"expectedVersion": blocked.Version,
-		"idempotencyKey":  "sqlite-shared-lock-regression",
-	})
-	if releaseTimer.Stop() {
+	lockedAttempt := make(chan struct{}, 1)
+	continueCommand := make(chan struct{})
+	const callbackName = "test:observe-cancel-blocked-job-sqlite-lock"
+	if err := tc.DB.Callback().Update().After("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "jobs" || tx.Error == nil {
+			return
+		}
+		var sqliteErr sqlite3.Error
+		if !errors.As(tx.Error, &sqliteErr) || sqliteErr.Code != sqlite3.ErrLocked {
+			return
+		}
+		for _, value := range tx.Statement.Vars {
+			jobID, ok := value.(string)
+			if ok && jobID == blocked.ID {
+				lockedAttempt <- struct{}{}
+				<-continueCommand
+				return
+			}
+		}
+	}); err != nil {
 		_ = reader.Rollback().Error
-	} else if err := <-released; err != nil {
+		t.Fatalf("observe blocked Job lock attempt: %v", err)
+	}
+	t.Cleanup(func() { _ = tc.DB.Callback().Update().Remove(callbackName) })
+
+	requestDone := make(chan *httptest.ResponseRecorder, 1)
+	awaitRequest := func() (*httptest.ResponseRecorder, bool) {
+		select {
+		case res := <-requestDone:
+			return res, true
+		case <-time.After(5 * time.Second):
+			return nil, false
+		}
+	}
+	go func() {
+		requestDone <- tc.MakeRequest(http.MethodPost, "/v1/jobs/"+blocked.ID+"/commands/cancel", map[string]any{
+			"expectedVersion": blocked.Version,
+			"idempotencyKey":  "sqlite-shared-lock-regression",
+		})
+	}()
+	select {
+	case <-lockedAttempt:
+		// The callback pauses the route after its first real SQLITE_LOCKED jobs
+		// UPDATE. The reader stays open until this point even on a slow scheduler.
+	case <-time.After(5 * time.Second):
+		close(continueCommand)
+		_ = reader.Rollback().Error
+		res, ok := awaitRequest()
+		if !ok {
+			t.Fatal("cancel route did not finish after releasing the jobs read lock")
+		}
+		t.Fatalf("cancel route answered %d without an observed SQLITE_LOCKED jobs UPDATE: %s", res.Code, res.Body.String())
+	}
+	if err := reader.Commit().Error; err != nil {
+		close(continueCommand)
+		_ = reader.Rollback().Error
+		if _, ok := awaitRequest(); !ok {
+			t.Fatalf("cancel route did not finish after failed read-lock release: %v", err)
+		}
 		t.Fatalf("release jobs read lock: %v", err)
+	}
+	close(continueCommand)
+	res, ok := awaitRequest()
+	if !ok {
+		t.Fatal("cancel route did not finish after releasing the jobs read lock")
 	}
 	if res.Code != http.StatusOK {
 		t.Fatalf("cancelling a blocked download under shared-cache contention answered %d %s, want 200", res.Code, res.Body.String())
