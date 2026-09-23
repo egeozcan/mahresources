@@ -67,6 +67,32 @@ func NewExchangeWithLeases(store Store, settings Settings, leases *LeaseManager)
 	return &exchangeService{store: store, settings: settings, leases: leases}
 }
 
+// HasRegularFile checks one admitted file using only the configured filesystem
+// root. It shares the exchange lease with List, Read, imports and sweeping, and
+// opens every path component and the file without following symlinks. Callers
+// must establish the run and file identity through their own durable records.
+func (e *exchangeService) HasRegularFile(pluginName, runID, name string) bool {
+	if e == nil || e.settings == nil || e.leases == nil || exchangePlatformSupported() != nil {
+		return false
+	}
+	if !validExchangeComponent(pluginName) || !validExchangeComponent(runID) || validateExchangeName(name) != nil {
+		return false
+	}
+	release, err := e.leases.Acquire(runID)
+	if err != nil {
+		return false
+	}
+	defer release()
+
+	dir, err := openExchangeRunDir(e.settings.StagingRoot(), pluginName, runID)
+	if err != nil {
+		return false
+	}
+	defer dir.Close()
+	_, err = statExchangeRegularAt(dir, name)
+	return err == nil
+}
+
 func (e *exchangeService) List(access Access, runID string) (Listing, error) {
 	if err := exchangePlatformSupported(); err != nil {
 		return Listing{}, err

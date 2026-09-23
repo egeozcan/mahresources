@@ -234,6 +234,88 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 	require.Equal(t, second.JobID, successor.JobID)
 }
 
+func TestPluginCommandImportRetryRecheckUsesOneConnection(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	root := t.TempDir()
+	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: root, commandPath: t.TempDir()}))
+	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
+	now := time.Now().UTC()
+	actor := uint(9)
+	run := testRun("one-connection-import-retry", &actor, false, now)
+	require.NoError(t, ctx.CreateRun(run, testOutput(run.ID, now)))
+	storedRun, _, err := ctx.Run(run.ID)
+	require.NoError(t, err)
+	_, claimedRun, err := ctx.claimPluginCommandJob(storedRun.JobID, JobKindPluginCommand, run.ID)
+	require.NoError(t, err)
+	require.True(t, claimedRun)
+	won, err := ctx.MarkRunRunning(run.ID, now.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = ctx.FinishRun(run.ID, plugin_commands.RunFinish{Status: plugin_commands.RunStatusSucceeded, FinishedAt: now.Add(2 * time.Second)})
+	require.NoError(t, err)
+	require.True(t, won)
+	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
+		ImportID: "one-connection-import-retry", RunID: run.ID, FileName: "asset.bin",
+		FieldsJSON: `{"name":"asset"}`, PluginGeneration: 1, CreatedByUserID: &actor, CreatedAt: now,
+	})
+	require.NoError(t, err)
+	execution, claimed, err := ctx.claimPluginCommandJob(claim.JobID, JobKindPluginCommandImport, claim.ImportID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	var source models.PluginCommandImport
+	require.NoError(t, ctx.db.First(&source, "id = ?", claim.ImportID).Error)
+	require.Equal(t, execution.ExecutionToken, source.JobExecutionToken)
+	won, err = ctx.MarkImportRunning(claim.ImportID, now.Add(3*time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = ctx.FinishImport(claim.ImportID, plugin_commands.ImportFinish{
+		Status: plugin_commands.ImportStatusFailed, Error: "transient import failure", FinishedAt: now.Add(4 * time.Second),
+	})
+	require.NoError(t, err)
+	require.True(t, won)
+
+	exchangeDir := filepath.Join(root, "plugin_exchange", run.PluginName, run.ID)
+	require.NoError(t, os.MkdirAll(exchangeDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(exchangeDir, "asset.bin"), []byte("source bytes"), 0o600))
+	snapshot, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, claim.JobID)
+	require.NoError(t, err)
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	require.NoError(t, ctx.db.Exec("PRAGMA busy_timeout = 100").Error)
+
+	type result struct {
+		command jobs.CommandResult
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		command, executeErr := service.ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+			JobID: claim.JobID, Key: "retry-import", IdempotencyKey: "one-connection-retry",
+			ExpectedVersion: snapshot.Version, Actor: jobs.Access{Administrator: true},
+		})
+		done <- result{command: command, err: executeErr}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil && !errors.Is(got.err, jobs.ErrCommandFailed) {
+			t.Fatalf("ExecuteCommand returned %v (result %+v), want completion or a command execution failure", got.err, got.command)
+		}
+	case <-time.After(3 * time.Second):
+		// Give a regression a chance to leave its one-connection wait and finish
+		// after the assertion, so teardown does not strand a goroutine.
+		sqlDB.SetMaxOpenConns(4)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		t.Fatal("ExecuteCommand deadlocked while rechecking Retry with the only database connection held")
+	}
+}
+
 func TestPluginCommandRunClaimPersistsTokenBeforeRunnerStart(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	ctx.SetJobService(jobs.NewService())

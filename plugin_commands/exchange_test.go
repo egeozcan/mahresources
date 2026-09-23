@@ -156,6 +156,42 @@ func TestExchangeOwnershipStateAndNameMatrix(t *testing.T) {
 	}
 }
 
+func TestExchangeHasRegularFileUsesExactPathAndRunLease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("v1 exchange mediation is unsupported on Windows")
+	}
+	root := t.TempDir()
+	runDir := exchangeRunDir(root, "alpha", "probe-run")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "asset.bin"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(runDir, "asset.bin"), filepath.Join(runDir, "linked.bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	leases := NewLeaseManager()
+	service := NewExchangeWithLeases(nil, exchangeTestSettings{root: root}, leases).(*exchangeService)
+	if !service.HasRegularFile("alpha", "probe-run", "asset.bin") {
+		t.Fatal("the exact admitted regular file was not found without a Store")
+	}
+	for _, name := range []string{"absent.bin", "linked.bin", "../asset.bin"} {
+		if service.HasRegularFile("alpha", "probe-run", name) {
+			t.Errorf("HasRegularFile(%q) = true, want false", name)
+		}
+	}
+	endSweep, ok := leases.BeginSweep("probe-run")
+	if !ok {
+		t.Fatal("run sweep did not reserve an idle run")
+	}
+	defer endSweep()
+	if service.HasRegularFile("alpha", "probe-run", "asset.bin") {
+		t.Fatal("a file probe succeeded while the run was reserved for sweeping")
+	}
+}
+
 func TestExchangeAuthorizesBeforeInputsAndLeaseState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("v1 exchange mediation is unsupported on Windows")

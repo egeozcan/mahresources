@@ -13381,6 +13381,21 @@ Residual risks and handoffs carried forward:
   integration test exercises the same quarantine/settlement transaction.
 - Import Retry availability now also checks that the admitted exchange file is
   present; the retry executor retains its existing file recheck before admission.
+- Sol review then found the availability check's `pluginCommandActive`/`List`
+  calls could open the context DB handle while `ExecuteCommand` held the only
+  SQLite connection in its recheck transaction. A red one-connection
+  `ExecuteCommand` regression reproduced the stall. The recheck now reads import
+  and run records through its supplied DB handle, then uses the active exchange's
+  exact descriptor-safe regular-file probe under the shared run lease; it does
+  not query the DB. The execution path keeps its later exchange-file recheck.
+- Race checks passed at `-count=10`:
+  `go test -race --tags 'json1 fts5' ./application_context -run
+  '^TestPluginCommandImportRetryRecheckUsesOneConnection$|^TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically$' -count=10`
+  (4.120s), and `go test -race --tags 'json1 fts5' ./plugin_commands -run
+  '^TestExchangeHasRegularFileUsesExactPathAndRunLease$' -count=10` (1.196s). The
+  PostgreSQL-tagged `Test.*PluginCommand` selection passed
+  (application_context 27.122s; server/api_tests 20.544s), as did tagged vet and
+  `git diff --check`.
 - The plan's broad race command
   `go test -race --tags 'json1 fts5' ./plugin_commands ./application_context
   -run 'Test.*(PluginCommand|CommandRun|CommandImport|RuntimeFence|Quarantine|Recovery)'

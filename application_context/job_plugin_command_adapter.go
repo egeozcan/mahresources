@@ -208,27 +208,31 @@ func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) boo
 }
 
 func (a *pluginCommandJobAdapter) importExchangeFilePresent(db *gorm.DB, jobID string) bool {
-	if db == nil {
+	if db == nil || a.ctx == nil {
 		return false
 	}
 	var source models.PluginCommandImport
 	if db.Where("job_id = ?", jobID).First(&source).Error != nil {
 		return false
 	}
-	active, err := a.ctx.pluginCommandActive()
-	if err != nil || active.exchange == nil {
+	var run models.PluginCommandRun
+	if db.Where("id = ?", source.RunID).First(&run).Error != nil {
 		return false
 	}
-	listing, err := active.exchange.List(plugin_commands.Access{Administrator: true}, source.RunID)
-	if err != nil {
+	controller := a.ctx.pluginCommandController
+	if controller == nil {
 		return false
 	}
-	for _, entry := range listing.Entries {
-		if entry.Name == source.FileName {
-			return true
-		}
+	controller.mu.Lock()
+	active := controller.active.Load()
+	controller.mu.Unlock()
+	if active == nil || active.exchange == nil {
+		return false
 	}
-	return false
+	probe, ok := active.exchange.(interface {
+		HasRegularFile(pluginName, runID, name string) bool
+	})
+	return ok && probe.HasRegularFile(run.PluginName, run.ID, source.FileName)
 }
 
 func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
