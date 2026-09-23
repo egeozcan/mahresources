@@ -545,25 +545,32 @@ func newJobCommandCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 			advertised, found := findCLIJobCommand(job, args[1])
-			if !found {
+			explicitKey := strings.TrimSpace(idempotencyKey) != ""
+			if !found && !explicitKey {
 				return fmt.Errorf("Job %s does not advertise command %q", args[0], args[1])
 			}
-			if advertised.JobVersion == 0 || advertised.JobVersion != job.Version {
-				return fmt.Errorf("Job command advertisement is stale; read the Job again")
-			}
-			if (advertised.Destructive || advertised.Confirmation != "") && !confirmed {
+			if found && (advertised.Destructive || advertised.Confirmation != "") && !confirmed {
 				return fmt.Errorf("command %q requires --confirm: %s", advertised.Key, advertised.Confirmation)
 			}
-			endpoint, err := validateCLIJobCommandEndpoint(advertised.Endpoint, job.ID, advertised.Key)
-			if err != nil {
-				return err
+			currentAdvertisement := found && advertised.JobVersion != 0 && advertised.JobVersion == job.Version
+			if found && !currentAdvertisement && !explicitKey {
+				return fmt.Errorf("Job command advertisement is stale; read the Job again")
 			}
 			key, err := commandIdempotencyKey(idempotencyKey)
 			if err != nil {
 				return err
 			}
+			endpoint := canonicalJobPath(job.ID) + "/commands/" + url.PathEscape(args[1])
+			expectedVersion := job.Version
+			if currentAdvertisement {
+				endpoint, err = validateCLIJobCommandEndpoint(advertised.Endpoint, job.ID, advertised.Key)
+				if err != nil {
+					return err
+				}
+				expectedVersion = advertised.JobVersion
+			}
 			var raw json.RawMessage
-			body := map[string]any{"expectedVersion": advertised.JobVersion, "idempotencyKey": key, "origin": "cli"}
+			body := map[string]any{"expectedVersion": expectedVersion, "idempotencyKey": key, "origin": "cli"}
 			if err := c.Post(endpoint, nil, body, &raw); err != nil {
 				return err
 			}
@@ -595,7 +602,10 @@ func newJobBulkCommandCmd(c *client.Client, opts *output.Options) *cobra.Command
 				}
 				advertised, found := findCLIJobCommand(job, commandKey)
 				if !found || !advertised.Bulk {
-					return fmt.Errorf("Job %s does not advertise bulk command %q", id, commandKey)
+					// The bulk endpoint returns a result for each Job. A missing
+					// advertisement is that Job's outcome, not a reason to suppress
+					// the server's answers for the rest of the selection.
+					continue
 				}
 				if advertised.JobVersion == 0 || advertised.JobVersion != job.Version {
 					return fmt.Errorf("Job %s command advertisement is stale; read the Job again", id)
