@@ -375,15 +375,12 @@ func TestAnImportApplyIsAChildOfItsParseAndRetriesOnlyOnRestoredEvidence(t *test
 	})
 
 	// Apply with the archive gone: Phase 1 cannot read it, so the apply fails before any
-	// row is written and the executor restores the plan — the replay-safe answer.
-	consumed, err := ConsumeImportPlan(ctx.GetDefaultFs(), handle)
-	if err != nil {
-		t.Fatalf("consume the plan: %v", err)
-	}
+	// row is written and the executor restores the plan — the replay-safe answer. The
+	// plan is bound to this apply by the submission itself.
 	if err := ctx.GetDefaultFs().Remove(importArchivePathFor(handle)); err != nil {
 		t.Fatalf("remove the staged archive: %v", err)
 	}
-	apply := ctx.SubmitImportApply(handle, consumed, &ImportDecisions{
+	apply := ctx.SubmitImportApply(handle, &ImportDecisions{
 		MappingActions:  map[string]MappingAction{},
 		DanglingActions: map[string]DanglingAction{},
 	}, "api")
@@ -423,7 +420,8 @@ func TestAnImportApplyIsAChildOfItsParseAndRetriesOnlyOnRestoredEvidence(t *test
 	}
 	planRestored, _ := afero.Exists(ctx.GetDefaultFs(), importPlanPathFor(handle))
 	if !planRestored {
-		if renameErr := ctx.GetDefaultFs().Rename(importConsumedPlanPathFor(handle), importPlanPathFor(handle)); renameErr != nil {
+		consumed := importConsumedPlanPathFor(handle, apply.QueueJobID)
+		if renameErr := ctx.GetDefaultFs().Rename(consumed, importPlanPathFor(handle)); renameErr != nil {
 			t.Fatalf("the executor did not restore the plan: %v", renameErr)
 		}
 	}
@@ -575,16 +573,12 @@ func TestStartupCleanupKeepsAFinishedParentsFilesForItsQueuedChild(t *testing.T)
 		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
 		State: jobs.StateQueued, Origin: "api",
 		Replay: jobs.ReplayInput{Input: json.RawMessage(
-			`{"parseHandle":"` + parseHandle + `","plan":"` + importConsumedPlanPathFor(parseHandle) + `","decisions":{}}`)},
+			`{"parseHandle":"` + parseHandle + `","plan":"` + importPlanPathFor(parseHandle) + `","decisions":{}}`)},
+		Parents: []string{finished.ID},
 	})
-	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
-		Type: jobs.LinkParentChild, FromJobID: finished.ID, ToJobID: apply.ID,
-	}); err != nil {
-		t.Fatalf("link the apply to its parse: %v", err)
-	}
 
 	archive := importArchivePathFor(parseHandle)
-	consumed := importConsumedPlanPathFor(parseHandle)
+	consumed := importConsumedPlanPathFor(parseHandle, apply.ID)
 	for _, path := range []string{archive, consumed} {
 		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -637,21 +631,16 @@ func TestAQueuedImportApplyRestartsFromItsAdmittedPlan(t *testing.T) {
 		t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
 	}
 
-	// The handler's half: consume the plan, exactly as the applied route does.
-	consumed, err := ConsumeImportPlan(ctx.GetDefaultFs(), handle)
-	if err != nil {
-		t.Fatalf("consume the plan: %v", err)
-	}
-
 	// The crash boundary: the Job is accepted durably and nothing is enqueued. The
 	// runtime's loop is running, so it claims the Job and dispatches it from the
-	// recorded input alone — which is exactly what a restart does.
+	// recorded input alone — which is exactly what a restart does. The plan it reads is
+	// the one its input names, consumed into this Job's own name by that dispatch.
 	decisions := ImportDecisions{
 		MappingActions:  map[string]MappingAction{},
 		DanglingActions: map[string]DanglingAction{},
 	}
 	input, err := json.Marshal(importApplyJobInput{
-		ParseHandle: handle, Plan: consumed, Decisions: decisions,
+		ParseHandle: handle, Plan: importPlanPathFor(handle), Decisions: decisions,
 	})
 	if err != nil {
 		t.Fatalf("encode the apply input: %v", err)
@@ -688,13 +677,13 @@ func TestAQueuedImportApplyRestartsFromItsAdmittedPlan(t *testing.T) {
 // distinguishes nothing from the outside: a consumed plan is written by the submission
 // before the executor exists, and it is what a live executor leaves behind for the whole
 // of its run.
-func stageConsumedApplyForTest(t *testing.T, ctx *MahresourcesContext, handle string) string {
+func stageConsumedApplyForTest(t *testing.T, ctx *MahresourcesContext, handle, applyHandle string) string {
 	t.Helper()
 	fs := ctx.GetDefaultFs()
 	if err := fs.MkdirAll("_imports", 0o755); err != nil {
 		t.Fatalf("mkdir _imports: %v", err)
 	}
-	consumed := importConsumedPlanPathFor(handle)
+	consumed := importConsumedPlanPathFor(handle, applyHandle)
 	for _, path := range []string{consumed, importArchivePathFor(handle)} {
 		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -742,7 +731,7 @@ func TestAnApplyReconciledWhereItIsNotRunningIsNotTerminatedWhileItMayBeLive(t *
 	other, _ := newSecondProcessJobContext(t, first, key)
 
 	const handle = "apply-live-1"
-	consumed := stageConsumedApplyForTest(t, first, handle)
+	consumed := stageConsumedApplyForTest(t, first, handle, "apply-live-1")
 	accepted := acceptApplyJobForTest(t, first, handle, "apply-live-1", consumed)
 
 	// The process that owns it: a real claim under this runtime's own identity, with
@@ -814,7 +803,7 @@ func TestAnApplyReconciledAfterItsRuntimeIsProvedGoneIsFailed(t *testing.T) {
 	ctx := newJobHarnessContext(t, false)
 
 	const handle = "apply-gone-1"
-	consumed := stageConsumedApplyForTest(t, ctx, handle)
+	consumed := stageConsumedApplyForTest(t, ctx, handle, "apply-gone-1")
 	accepted := acceptApplyJobForTest(t, ctx, handle, "apply-gone-1", consumed)
 	registerClaimableKind(t, ctx, JobKindGroupImportApply, jobImportKindVersion)
 
@@ -875,7 +864,7 @@ func TestStartupCleanupKeepsTheInputsARetriedApplyStillReads(t *testing.T) {
 	// The apply that decided on the parse, and was retried after failing.
 	input, err := json.Marshal(importApplyJobInput{
 		ParseHandle: parseHandle,
-		Plan:        importConsumedPlanPathFor(parseHandle),
+		Plan:        importPlanPathFor(parseHandle),
 		Decisions: ImportDecisions{
 			MappingActions:  map[string]MappingAction{},
 			DanglingActions: map[string]DanglingAction{},
@@ -914,7 +903,7 @@ func TestStartupCleanupKeepsTheInputsARetriedApplyStillReads(t *testing.T) {
 
 	required := []string{
 		importArchivePathFor(parseHandle),
-		importConsumedPlanPathFor(parseHandle),
+		importPlanPathFor(parseHandle),
 	}
 	for _, path := range required {
 		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
@@ -978,11 +967,6 @@ func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *test
 	waitForSnapshot(t, first, parse.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
 		return s.State.Terminal()
 	})
-	consumed, err := ConsumeImportPlan(first.GetDefaultFs(), handle)
-	if err != nil {
-		t.Fatalf("consume the plan: %v", err)
-	}
-
 	// The deployment's one slot is taken, so the apply is accepted durably and runs
 	// nowhere until a runtime has room.
 	server, _, unblock := heldTransferServer(t)
@@ -994,7 +978,7 @@ func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *test
 		return s.State == jobs.StateRunning
 	})
 
-	apply := actorCtx.SubmitImportApply(handle, consumed, &ImportDecisions{
+	apply := actorCtx.SubmitImportApply(handle, &ImportDecisions{
 		MappingActions:  map[string]MappingAction{},
 		DanglingActions: map[string]DanglingAction{},
 	}, "api")
@@ -1058,7 +1042,7 @@ func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *test
 	if imported != 0 {
 		t.Fatalf("a refused apply created %d groups from its archive", imported)
 	}
-	if exists, _ := afero.Exists(other.GetDefaultFs(), importConsumedPlanPathFor(handle)); !exists {
+	if exists, _ := afero.Exists(other.GetDefaultFs(), importConsumedPlanPathFor(handle, apply.QueueJobID)); !exists {
 		t.Fatalf("a refused apply consumed the plan it was told not to read")
 	}
 }
@@ -1096,7 +1080,7 @@ func TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads(t *testing.T) {
 
 	input, err := json.Marshal(importApplyJobInput{
 		ParseHandle: parseHandle,
-		Plan:        importConsumedPlanPathFor(parseHandle),
+		Plan:        importPlanPathFor(parseHandle),
 		Decisions: ImportDecisions{
 			MappingActions:  map[string]MappingAction{},
 			DanglingActions: map[string]DanglingAction{},
@@ -1135,7 +1119,7 @@ func TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads(t *testing.T) {
 
 	required := []string{
 		importArchivePathFor(parseHandle),
-		importConsumedPlanPathFor(parseHandle),
+		importPlanPathFor(parseHandle),
 	}
 	for _, path := range required {
 		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
@@ -1189,5 +1173,207 @@ func TestTheRetentionSweepKeepsAnAncestorAQueuedRetryStillReads(t *testing.T) {
 	}
 	if pruned.Pruned == 0 {
 		t.Fatalf("a lineage nothing depends on any more was not pruned at all")
+	}
+}
+
+// TestARetryAndAFreshApplyCannotBothApplyOneReview is the arbitration between the two
+// ways one review is applied twice over.
+//
+// A failed, replay-safe apply restores its plan, which is exactly the evidence a Retry
+// is advertised from — and the same review also accepts a *fresh* /apply, because the
+// plan is there for it too. Both may be admitted while the deployment has no room to run
+// either, and then both are dispatched. When "the plan I was admitted with is still
+// there" was asked of one shared file name, the Retry found the file the fresh apply had
+// just consumed, read it as its own admitted plan, and ran the import a second time
+// beside the apply already running it.
+//
+// The plan is therefore bound to the apply that consumed it: the consumed name is the
+// apply's own, so finding one there is evidence about that Job and nothing else, and the
+// loser of the pair is refused instead of reading somebody else's copy.
+func TestARetryAndAFreshApplyCannotBothApplyOneReview(t *testing.T) {
+	// Two slots, both taken below: the pair has to be *queued* for the arbitration to be
+	// about anything, and both have to be dispatched before either finishes for the
+	// duplicate the old scheme produced to be reachable at all.
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 2
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, otherRuntime := newSecondProcessJobContext(t, first, key)
+	// Two processes, each with its own runtime and its own queue: the pair is dispatched
+	// by both at once, which is the shape the duplicate needs — one process's queue
+	// serializes its own entries, and the arbitration is between two processes.
+	firstRuntime := NewJobRuntime(first, first.JobService(), JobRuntimeConfig{
+		Claimant: "importer-first-process", Interval: time.Hour, GlobalCapacity: 1,
+	})
+	otherRuntime.globalCapacity = 1
+
+	handle := "imp-double-apply"
+	staging := writeImportArchiveForTest(t, first, handle)
+	parse := first.SubmitImportParse(handle, staging, "api")
+	if parse.Err != nil {
+		t.Fatalf("submit the parse: %v", parse.Err)
+	}
+	waitForSnapshot(t, first, parse.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+
+	decisions := ImportDecisions{
+		MappingActions:  map[string]MappingAction{},
+		DanglingActions: map[string]DanglingAction{},
+	}
+
+	// An apply that fails before any row is written — the archive Phase 1 reads is
+	// corrupt — which is the failure that restores the plan and so offers a Retry. The
+	// real archive goes back afterwards: the winner of the pair below has to apply it.
+	archivePath := importArchivePathFor(handle)
+	archiveBytes, err := afero.ReadFile(first.GetDefaultFs(), archivePath)
+	if err != nil {
+		t.Fatalf("read the staged archive: %v", err)
+	}
+	if err := afero.WriteFile(first.GetDefaultFs(), archivePath, []byte("not a tar"), 0o644); err != nil {
+		t.Fatalf("corrupt the staged archive: %v", err)
+	}
+	failed := first.SubmitImportApply(handle, &decisions, "api")
+	if failed.Err != nil {
+		t.Fatalf("submit the failing apply: %v", failed.Err)
+	}
+	waitForSnapshot(t, first, failed.CanonicalJobID, "the apply to fail", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if !first.importPlanExists(handle) {
+		t.Fatalf("the failed apply did not restore its plan, so no Retry is offered")
+	}
+	if err := afero.WriteFile(first.GetDefaultFs(), archivePath, archiveBytes, 0o644); err != nil {
+		t.Fatalf("restore the archive: %v", err)
+	}
+
+	// The deployment's whole budget is taken — one held transfer per slot — so both
+	// admissions below accept and run nothing.
+	server, _, unblock := heldTransferServer(t)
+	for _, name := range []string{"/holding-a.bin", "/holding-b.bin"} {
+		holding := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + name}, nil, "", "api")
+		if len(holding) != 1 || holding[0].Err != nil {
+			t.Fatalf("the holding transfer %s: %+v", name, holding)
+		}
+		waitForSnapshot(t, first, holding[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+			return s.State == jobs.StateRunning
+		})
+	}
+
+	retry, err := first.JobService().ExecuteCommand(context.Background(), first.jobDeps(), jobs.CommandRequest{
+		JobID: failed.CanonicalJobID, Key: jobs.CommandRetry, IdempotencyKey: "double-apply-retry",
+		ExpectedVersion: jobSnapshot(t, first.JobService(), first, failed.CanonicalJobID).Version,
+		Actor:           jobs.Access{Administrator: true},
+	})
+	if err != nil {
+		t.Fatalf("retry the failed apply: %v", err)
+	}
+	if retry.SuccessorID == "" {
+		t.Fatalf("the Retry created no successor")
+	}
+
+	fresh := first.SubmitImportApply(handle, &decisions, "api")
+	if fresh.Err != nil {
+		t.Fatalf("the fresh apply was refused: %v", fresh.Err)
+	}
+	if fresh.CanonicalJobID == retry.SuccessorID {
+		t.Fatalf("the fresh apply was answered with the Retry's own job")
+	}
+	for _, id := range []string{retry.SuccessorID, fresh.CanonicalJobID} {
+		if _, found := first.queueEntryFor(id); found {
+			t.Fatalf("an apply started an executor while the deployment's budget was taken")
+		}
+	}
+
+	// The budget frees and both processes dispatch what they can claim, concurrently: each
+	// claimed execution runs in its own goroutine, which is the overlap the arbitration is
+	// for.
+	unblock()
+	firstRuntime.tick(context.Background())
+	otherRuntime.tick(context.Background())
+	deadline := time.Now().Add(20 * time.Second)
+	var states map[string]jobs.State
+	for time.Now().Before(deadline) {
+		firstRuntime.tick(context.Background())
+		otherRuntime.tick(context.Background())
+		states = map[string]jobs.State{}
+		settled := 0
+		for _, id := range []string{retry.SuccessorID, fresh.CanonicalJobID} {
+			snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, id)
+			if err != nil {
+				continue
+			}
+			states[id] = snap.State
+			if snap.State.Terminal() {
+				settled++
+			}
+		}
+		if settled == 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// The apply that consumed the plan is the one that applies it: the plan it took is at
+	// the path its own admission named, and that is the whole of its claim to it. A Retry
+	// whose own path is empty and whose source has been taken is refused — it may not read
+	// the copy another apply is deciding from, which is exactly what it did when the
+	// consumed name was shared: it ran the review itself and left the apply that had
+	// consumed it failing on a plan it no longer had.
+	if states[fresh.CanonicalJobID] != jobs.StateSucceeded {
+		t.Fatalf("the apply that consumed the plan settled as %s (%v), want it applied",
+			states[fresh.CanonicalJobID], states)
+	}
+	if states[retry.SuccessorID] == jobs.StateSucceeded {
+		t.Fatalf("a Retry applied a review another apply had consumed: %v", states)
+	}
+
+	// And the import was applied once: one group came out of one archive.
+	var imported int64
+	if err := other.db.Model(&models.Group{}).Where("name = ?", "Imported").Count(&imported).Error; err != nil {
+		t.Fatalf("count the imported group: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("%d groups named Imported, want the one import that ran", imported)
+	}
+}
+
+// TestAnApplyWhoseParseHasNoDurableRecordIsRefused is the other half of committing the
+// lineage with the acceptance.
+//
+// The parent link is execution-critical rather than presentation: it is how the startup
+// sweep learns that the parse's staged archive and plan are still required by live work.
+// An apply accepted without it — because the parse could not be resolved, or because the
+// second write failed — is durable work whose input nothing protects, and the next restart
+// deletes it. So a parse handle that names no durable Job is a refusal, and a refusal
+// leaves the review exactly as it found it.
+func TestAnApplyWhoseParseHasNoDurableRecordIsRefused(t *testing.T) {
+	ctx := newWorkflowJobContext(t)
+
+	const handle = "imp-no-parse"
+	if err := afero.WriteFile(ctx.GetDefaultFs(), importPlanPathFor(handle),
+		[]byte(`{"jobId":"`+handle+`"}`), 0o644); err != nil {
+		t.Fatalf("stage the plan: %v", err)
+	}
+	decisions := ImportDecisions{
+		MappingActions:  map[string]MappingAction{},
+		DanglingActions: map[string]DanglingAction{},
+	}
+
+	submission := ctx.SubmitImportApply(handle, &decisions, "api")
+	if submission.Err == nil {
+		t.Fatalf("an apply whose parse has no durable record was accepted")
+	}
+	if submission.CanonicalJobID != "" {
+		t.Fatalf("the refusal left a durable job behind: %s", submission.CanonicalJobID)
+	}
+	if !ctx.importPlanExists(handle) {
+		t.Fatalf("the refused apply consumed the plan, so the review is not usable any more")
+	}
+	page, err := ctx.ListJobs(jobs.Filter{Kinds: []string{JobKindGroupImportApply}}, jobs.Cursor{}, 20)
+	if err != nil {
+		t.Fatalf("list the applies: %v", err)
+	}
+	if len(page.Jobs) != 0 {
+		t.Fatalf("the refusal committed %d apply jobs", len(page.Jobs))
 	}
 }

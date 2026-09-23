@@ -67,6 +67,11 @@ type JobRuntimeConfig struct {
 	// QuiesceTimeout bounds how long Stop waits for running executions to
 	// acknowledge cancellation.
 	QuiesceTimeout time.Duration
+	// ExecutionLease overrides the lease a dispatched execution's claim is
+	// heartbeated at. 0 selects the Kind's own declared lease, which is what a
+	// deployment gets; a test sets it so that a lease can elapse — and several
+	// heartbeats can happen — inside one test rather than inside two minutes.
+	ExecutionLease time.Duration
 }
 
 // JobRuntime claims and dispatches this process's share of the durable work.
@@ -84,6 +89,7 @@ type JobRuntime struct {
 	interval       time.Duration
 	globalCapacity int
 	quiesceTimeout time.Duration
+	executionLease time.Duration
 
 	lifeCtx    context.Context
 	cancelLife context.CancelFunc
@@ -124,6 +130,7 @@ func NewJobRuntime(ctx *MahresourcesContext, service *jobs.Service, config JobRu
 		interval:       config.Interval,
 		globalCapacity: config.GlobalCapacity,
 		quiesceTimeout: config.QuiesceTimeout,
+		executionLease: config.ExecutionLease,
 		lifeCtx:        lifeCtx,
 		cancelLife:     cancelLife,
 		stop:           make(chan struct{}),
@@ -223,7 +230,7 @@ func (r *JobRuntime) tick(ctx context.Context) {
 			log.Printf("job runtime: resumed job %s names a kind this process cannot run", execution.JobID)
 			continue
 		}
-		r.startExecution(adapter, execution, adapter.Definition().EffectiveLease())
+		r.startExecution(adapter, execution, r.executionLeaseFor(adapter))
 	}
 
 	// A Kind this process cannot run at all leaves its pending work in a state
@@ -251,9 +258,19 @@ func (r *JobRuntime) tick(ctx context.Context) {
 				// nothing more to do for this Kind.
 				break
 			}
-			r.startExecution(registration.Adapter, execution, registration.Definition.EffectiveLease())
+			r.startExecution(registration.Adapter, execution, r.executionLeaseFor(registration.Adapter))
 		}
 	}
+}
+
+// executionLeaseFor is the lease this runtime heartbeats one execution at: the
+// override a test set, or the Kind's own declaration, which is the lease its claim
+// was taken under.
+func (r *JobRuntime) executionLeaseFor(adapter jobs.Adapter) time.Duration {
+	if r.executionLease > 0 {
+		return r.executionLease
+	}
+	return adapter.Definition().EffectiveLease()
 }
 
 // capacityBudget is the deployment-wide budget this runtime asks every claim to
@@ -310,6 +327,12 @@ func (r *JobRuntime) startExecution(adapter jobs.Adapter, execution jobs.Executi
 // to log: it is the fence telling this runtime that its execution was released,
 // replaced by a reconciliation or taken over, so the work is cancelled rather
 // than left running and publishing into a Job somebody else owns.
+//
+// A quarantine is not that refusal. The claim is still this execution's and nobody
+// else may take it, so the heartbeat goes on succeeding and the work goes on
+// running: an execution that stopped here would abandon a worker that is still
+// transferring, and the Job it owns would be settled by nobody. What ends a
+// quarantined Job is the execution's own outcome, under the token it still holds.
 func (r *JobRuntime) heartbeatLoop(ctx context.Context, execution jobs.Execution, lease time.Duration, done <-chan struct{}, cancel context.CancelFunc) {
 	if lease <= 0 {
 		lease = jobs.DefaultClaimLease

@@ -127,7 +127,7 @@ func TestApplyImport_NoGUIDResourceMarksRetryUnsafe(t *testing.T) {
 		DanglingActions:          map[string]application_context.DanglingAction{},
 	}
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, &noopImportSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, filepath.Join("_imports", jobID+".plan.json"), decisions, &noopImportSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestApplyImport_SkipPolicyMarksResultRetryUnsafe(t *testing.T) {
 		}
 	}
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, &noopImportSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, filepath.Join("_imports", jobID+".plan.json"), decisions, &noopImportSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}

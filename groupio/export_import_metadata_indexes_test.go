@@ -41,7 +41,7 @@ func TestExportImportPreservesCategoryMetadataIndexes(t *testing.T) {
 	require.NoError(t, err)
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "merge"
-	_, err = dst.ApplyImport(context.Background(), "indexes", decisions, noopSinkAltFS{})
+	_, err = dst.ApplyImport(context.Background(), "indexes", importPlanPath("indexes"), decisions, noopSinkAltFS{})
 	require.NoError(t, err)
 
 	for _, table := range []string{"categories", "note_types", "resource_categories"} {

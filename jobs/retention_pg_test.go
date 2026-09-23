@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -393,4 +394,127 @@ func TestRetentionSweepDoesNotPruneOnASupersededArtifactCandidatePG(t *testing.T
 	policy := expiredHistory(time.Hour)
 
 	runSupersededArtifactCandidatePrune(t, svc, deps, deps, policy)
+}
+
+// TestARetryHoldsItsStagingAncestorsRowsPG is the lock that closes the window
+// retention's dependency read leaves open.
+//
+// Retention decides whether a finished Job is history by taking its row, deleting it,
+// and then walking *down* its lineage to see whether a live Job still names it. A Retry
+// commits a live Job that names its ancestor's inputs — the plan and archive a parse
+// staged — and that ancestor is a parent-child ancestor, not a retry-of one, so locking
+// the linear retry chain alone leaves it unheld: the retry could commit between the
+// dependency read ("no live descendant") and the pruning commit, and both transactions
+// would commit — the ancestor gone, the queued successor left naming files nothing
+// protects, which the next startup sweep then deletes.
+//
+// So the retry takes its staging ancestors' rows as well, and this is that fact: while
+// one Retry is inside its chain lock, another transaction cannot take the parse's row.
+func TestARetryHoldsItsStagingAncestorsRowsPG(t *testing.T) {
+	deps := newPGDeps(t)
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retry-vs-prune-key")}
+	svc := NewService()
+	registerTestCodec(t, svc)
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(context.Context, CommandContext) ([]Command, error) {
+		return []Command{{Key: CommandRetry, Label: "Retry"}}, nil
+	}
+	clock := time.Date(2035, 6, 7, 8, 9, 10, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	acceptReplayable := func(t *testing.T) Snapshot {
+		t.Helper()
+		snap, err := svc.Accept(deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: uintPtr(3), ActorUserID: uintPtr(3), Title: "import.tar",
+			Replay: ReplayInput{Input: json.RawMessage(commandKindInput)},
+		})
+		if err != nil {
+			t.Fatalf("accept a replayable job: %v", err)
+		}
+		return snap
+	}
+
+	// The parse a staged hand-off is named by, and the apply that decided on it.
+	parse := acceptReplayable(t)
+	apply := acceptReplayable(t)
+	if err := svc.Link(deps, LinkRequest{Type: LinkParentChild, FromJobID: parse.ID, ToJobID: apply.ID}); err != nil {
+		t.Fatalf("link the apply to its parse: %v", err)
+	}
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef: ExecutionRef{JobID: apply.ID}, ExpectedVersion: apply.Version,
+		Outcome: StateFailed, Failure: &Failure{Code: "apply-failed", Class: FailureClassInternal},
+	}); err != nil {
+		t.Fatalf("fail the apply: %v", err)
+	}
+
+	// The retry's own chain lock, held: the instant the pruning transaction has to wait
+	// for.
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	// A flag rather than sync.Once: the body blocks, and a second caller of Once.Do waits
+	// for the first body to return — which would hold this test's own second transaction
+	// on the hook instead of on the lock it is asserting.
+	var fired atomic.Bool
+	const hook = "test:hold-the-retry-chain-lock"
+	if err := deps.DB.Callback().Query().After("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "jobs" ||
+			!strings.Contains(tx.Statement.SQL.String(), "FOR UPDATE") {
+			return
+		}
+		if !fired.CompareAndSwap(false, true) {
+			return
+		}
+		close(holding)
+		<-release
+	}); err != nil {
+		t.Fatalf("register the holding hook: %v", err)
+	}
+	t.Cleanup(func() { _ = deps.DB.Callback().Query().Remove(hook) })
+
+	retried := make(chan error, 1)
+	go func() {
+		_, err := svc.ExecuteCommand(context.Background(), deps, CommandRequest{
+			JobID: apply.ID, Key: CommandRetry, IdempotencyKey: "retry-held",
+			ExpectedVersion: jobRow(t, deps, apply.ID).Version, Actor: Access{Administrator: true},
+		})
+		retried <- err
+	}()
+	select {
+	case <-holding:
+	case err := <-retried:
+		t.Fatalf("the Retry never took its chain lock: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the Retry never reached its chain lock")
+	}
+
+	// A second transaction cannot take the parse's row: the retry holds it, which is
+	// what makes a pruning pass that has decided about that row wait rather than commit.
+	lockErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL lock_timeout = '250ms'").Error; err != nil {
+			return err
+		}
+		var locked []string
+		return tx.Model(&models.Job{}).Where("id = ?", parse.ID).
+			Clauses(clause.Locking{Strength: "UPDATE"}).Pluck("id", &locked).Error
+	})
+	if lockErr == nil {
+		t.Fatalf("the parse's row was free while a Retry was inside its chain lock")
+	}
+	if !strings.Contains(lockErr.Error(), "lock timeout") && !strings.Contains(lockErr.Error(), "canceling statement") {
+		t.Fatalf("taking the parse's row while a Retry held it failed for another reason: %v", lockErr)
+	}
+
+	close(release)
+	if err := <-retried; err != nil {
+		t.Fatalf("the Retry: %v", err)
+	}
+	var successors int64
+	if err := deps.DB.Model(&models.JobLink{}).
+		Where("type = ? AND to_job_id = ?", string(LinkRetryOf), apply.ID).Count(&successors).Error; err != nil {
+		t.Fatalf("count the retry successors: %v", err)
+	}
+	if successors != 1 {
+		t.Fatalf("%d retry successors exist, want the one the Retry created", successors)
+	}
 }

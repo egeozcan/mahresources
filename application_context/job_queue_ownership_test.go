@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -544,5 +545,139 @@ func TestAQueuedClusteringRunLeavesTheReductionFreeForTheRuntimeThatRunsIt(t *te
 	}
 	if stored.Status != models.ReductionStatusReady {
 		t.Fatalf("the Reduction is %q after the queued run, want ready", stored.Status)
+	}
+}
+
+// TestAQuarantinedCapacityQueuedTransferKeepsItsClaimUntilItsWorkerStops is the
+// runtime-owned half of the quarantine rule, and the case that was wrong.
+//
+// A capacity-queued submission is dispatched by whichever runtime has a free slot, so
+// the Job's owner is that runtime and its executor is a queue entry in *its* memory. A
+// reconciliation in another process cannot see that entry, cannot prove the runtime
+// gone, and quarantines the claim — which is the honest answer, because a transfer is
+// still in flight. What must not happen then is the owner letting go: a runtime that
+// reads the quarantine as a fence stops observing a transfer that is still running,
+// releases the claim and the deployment's slot, and a Resume — permitted again the
+// moment no unresolved claim is left — starts a second transfer of one URL. The claim
+// belongs to the execution until its worker stops, and the outcome it then reports is
+// what settles the Job.
+func TestAQuarantinedCapacityQueuedTransferKeepsItsClaimUntilItsWorkerStops(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 1
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, otherRuntime := newSecondProcessJobContext(t, first, key)
+	// A lease short enough for several heartbeats to fit inside the window below.
+	// Only a test sets this; a deployment's Kind declares two minutes.
+	otherRuntime.executionLease = 400 * time.Millisecond
+
+	server, requests, unblock := heldTransferServer(t)
+
+	// The deployment's one slot, taken by a claim of the runtime test Kind.
+	holder := holdTheDeploymentBudgetIn(t, first)
+
+	// Accepted with nowhere to run: the Job is durable, answers the id the client was
+	// handed, and starts no executor anywhere.
+	waiting := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+		URL: server.URL + "/quarantined.bin",
+	}, nil, "", "api")
+	if len(waiting) != 1 || waiting[0].Err != nil || waiting[0].Row == nil {
+		t.Fatalf("the queued submission: %+v", waiting)
+	}
+	jobID := waiting[0].CanonicalJobID
+	handle := waiting[0].Row.ID
+	if _, found := first.queueEntryFor(jobID); found {
+		t.Fatalf("the submission started an executor it had no capacity to admit")
+	}
+
+	// The slot frees, and the second process's runtime claims the Job and starts the
+	// transfer from the durable input alone.
+	if _, err := first.JobService().Finish(first.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: holder.JobID, ExecutionToken: holder.ExecutionToken},
+		ExpectedVersion: jobSnapshot(t, first.JobService(), first, holder.JobID).Version,
+		Outcome:         jobs.StateCancelled,
+	}); err != nil {
+		t.Fatalf("free the deployment's slot: %v", err)
+	}
+	otherRuntime.tick(context.Background())
+
+	if snap := waitForSnapshot(t, other, jobID, "the queued transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	}); snap.State != jobs.StateRunning {
+		t.Fatalf("the queued transfer is %s, want running", snap.State)
+	}
+	waitFor(t, "the transfer's request to reach the server", func() bool { return requests.Load() >= 1 })
+
+	// The other process's reconciliation finds the claim expired and no entry of its
+	// own, and the runtime that owns the transfer is alive, so the only honest answer is
+	// that the work is unproven: quarantine it.
+	expired := time.Now().Add(-time.Minute).UTC()
+	if err := first.db.Model(&models.JobClaim{}).Where("job_id = ?", jobID).
+		Update("lease_expires_at", expired).Error; err != nil {
+		t.Fatalf("expire the claim: %v", err)
+	}
+	if decision := reconcileOnce(t, first, jobID); decision != jobs.ReconcileExternalWorkUnproven {
+		t.Fatalf("a live transfer's expired claim was decided %q, want it left unresolved", decision)
+	}
+	waitForSnapshot(t, first, jobID, "the quarantine to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateBlocked
+	})
+	if claim := storedClaim(t, first, jobID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the claim is %s, want quarantined", claim.State)
+	}
+
+	// Several heartbeat intervals pass while the HTTP response is still held. The
+	// owning runtime is the only thing that can renew or end this claim, and its
+	// executor has not stopped: nothing may have been released, no second transfer may
+	// have started, and the hold may not have become resumable.
+	time.Sleep(1200 * time.Millisecond)
+	if claim := storedClaim(t, first, jobID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the quarantined claim is %s while its worker is still running, want it kept", claim.State)
+	}
+	if held := storedCapacity(t, first, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the deployment budget holds %d slots, want the quarantined execution's one", held)
+	}
+	if snap := jobSnapshot(t, first.JobService(), first, jobID); snap.State != jobs.StateBlocked {
+		t.Fatalf("the job is %s while its transfer is quarantined, want blocked", snap.State)
+	}
+	commands, err := first.AdvertisedJobCommands(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("advertise commands: %v", err)
+	}
+	if hasCommand(commands, jobs.CommandResume) {
+		t.Fatalf("a quarantined transfer offered a resume: %+v", commands)
+	}
+	if _, err := first.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandResume, IdempotencyKey: "resume-quarantined-transfer",
+		ExpectedVersion: jobSnapshot(t, first.JobService(), first, jobID).Version,
+	}); !errors.Is(err, jobs.ErrCommandNotAdvertised) {
+		t.Fatalf("resuming a quarantined transfer = %v, want ErrCommandNotAdvertised", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("the server was asked for the file %d times while the quarantine stood", got)
+	}
+
+	// The worker stops. Its own report is the proof the quarantine was waiting for, and
+	// it carries the outcome the transfer actually reached: success, with the claim and
+	// the slot handed back in the same transaction.
+	unblock()
+	finished := waitForSnapshot(t, first, jobID, "the quarantined transfer to settle", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the quarantined transfer settled as %s (%+v), want the outcome its worker reached",
+			finished.State, finished.Failure)
+	}
+	if claim := storedClaim(t, first, jobID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("the claim is %s after its execution settled the job, want released", claim.State)
+	}
+	if held := storedCapacity(t, first, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the deployment budget still holds %d slots after the transfer settled", held)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("the file was fetched %d times, want the one attempt: %d", got, got)
+	}
+	if _, found := other.DownloadManager().GetJob(handle); !found {
+		t.Fatalf("the transfer's queue entry disappeared from the process that ran it")
 	}
 }

@@ -1048,24 +1048,24 @@ func TestAResumeIsRefusedWhileAQuarantinedClaimOwnsTheWork(t *testing.T) {
 	}
 
 	// The owning execution is the thing that may prove the work stopped, and it does:
-	// the transfer returns, its own report releases the claim it was quarantined under,
-	// and the capacity that claim held goes with it. What it may not do is *rewrite* the
-	// quarantine's state: §1 admits no blocked -> succeeded edge, so a job a quarantine
-	// blocked stays blocked for a person to resolve rather than silently reporting an
-	// outcome decided elsewhere. Nothing dispatched a second transfer.
+	// the transfer returns, its own report is kept — the outcome the work actually
+	// reached, success included, because the execution that holds the token is the only
+	// thing that can prove anything here — and the claim and the capacity go with it in
+	// the same transaction. A quarantine a person had to guess about would leave the
+	// slot occupied for ever; nothing dispatched a second transfer either way.
 	unblock()
-	waitFor(t, "the owning execution's transfer to return", func() bool {
-		snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, jobID)
-		return err == nil && snap.Progress.Phase == "saving"
+	settled := waitForSnapshot(t, first, jobID, "the quarantined transfer to settle", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
 	})
-	waitFor(t, "the quarantined claim to be released by its own execution", func() bool {
-		return storedClaim(t, first, jobID).State == models.JobClaimStateReleased
-	})
+	if settled.State != jobs.StateSucceeded {
+		t.Fatalf("the quarantined transfer settled as %s (%+v), want the outcome its worker reached",
+			settled.State, settled.Failure)
+	}
+	if claim := storedClaim(t, first, jobID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("the claim is %s after its own execution settled the job, want released", claim.State)
+	}
 	if held := storedCapacity(t, first, jobs.CapacityGroupGlobal); held != 0 {
 		t.Fatalf("the deployment budget still holds %d slots after the quarantined execution returned", held)
-	}
-	if snap := jobSnapshot(t, other.JobService(), other, jobID); snap.State.Terminal() {
-		t.Fatalf("the job ended %s: a quarantine is not a classification its own runtime may overwrite", snap.State)
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("the file was fetched %d times, want the one attempt: %d", got, got)

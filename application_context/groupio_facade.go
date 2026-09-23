@@ -86,8 +86,8 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 }
 
 // ApplyImport executes a reviewed import plan.
-func (ctx *MahresourcesContext) ApplyImport(cancelCtx context.Context, parseJobID string, decisions *ImportDecisions, sink download_queue.ProgressSink) (*ImportApplyResult, error) {
-	return ctx.groupio.ApplyImport(ctx.groupioDeps(), cancelCtx, parseJobID, decisions, sink)
+func (ctx *MahresourcesContext) ApplyImport(cancelCtx context.Context, parseJobID, planPath string, decisions *ImportDecisions, sink download_queue.ProgressSink) (*ImportApplyResult, error) {
+	return ctx.groupio.ApplyImport(ctx.groupioDeps(), cancelCtx, parseJobID, planPath, decisions, sink)
 }
 
 // LoadImportPlan reads back a previously persisted import plan.

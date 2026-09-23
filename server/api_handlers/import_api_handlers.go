@@ -27,7 +27,7 @@ import (
 // signatures name the import DTOs, which live in groupio/.
 type GroupImporter interface {
 	ParseImport(ctx context.Context, jobID, tarPath string) (*application_context.ImportPlan, error)
-	ApplyImport(ctx context.Context, parseJobID string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error)
+	ApplyImport(ctx context.Context, parseJobID, planPath string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error)
 	LoadImportPlan(jobID string) (*application_context.ImportPlan, error)
 	DeleteImportFiles(jobID string) error
 	DownloadManager() *download_queue.DownloadManager
@@ -194,7 +194,7 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 // durable Job behind an import submission and dispatches it.
 type importSubmitter interface {
 	SubmitImportParse(handle, stagingTarPath, origin string) application_context.QueueJobSubmission
-	SubmitImportApply(parseHandle, consumedPlanPath string, decisions *application_context.ImportDecisions, origin string) application_context.QueueJobSubmission
+	SubmitImportApply(parseHandle string, decisions *application_context.ImportDecisions, origin string) application_context.QueueJobSubmission
 }
 
 // GetImportPlanHandler — GET /v1/imports/{jobId}/plan
@@ -327,19 +327,18 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			requestCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
 		}
 		if submitter, ok := requestCtx.(importSubmitter); ok && submitter != nil {
-			consumedPath, consumeErr := application_context.ConsumeImportPlan(fs, parseJobID)
-			if consumeErr != nil {
-				if errors.Is(consumeErr, application_context.ErrImportPlanConsumed) {
+			// The plan is consumed by the submission itself, inside the same call that
+			// accepts and links the Job: the consumption is a rename, so it arbitrates a
+			// fresh /apply against a Retry of the apply that restored this plan, and the
+			// name it lands on belongs to the apply that took it. Doing it here instead
+			// left the handler restoring a file the application layer had already moved,
+			// and let two applies read one plan.
+			submission := submitter.SubmitImportApply(parseJobID, &decisions, "api")
+			if submission.Err != nil {
+				if errors.Is(submission.Err, application_context.ErrImportPlanConsumed) {
 					http.Error(w, "already applied or expired", http.StatusConflict)
 					return
 				}
-				http.Error(w, consumeErr.Error(), http.StatusInternalServerError)
-				return
-			}
-			submission := submitter.SubmitImportApply(parseJobID, consumedPath, &decisions, "api")
-			if submission.Err != nil {
-				// Restore the plan file on enqueue failure.
-				_ = fs.Rename(consumedPath, planPath)
 				http.Error(w, submission.Err.Error(), http.StatusServiceUnavailable)
 				return
 			}

@@ -105,9 +105,10 @@ func (s *Service) ParseImport(d Deps, cancelCtx context.Context, jobID, tarPath 
 	return s.op(d).ParseImport(cancelCtx, jobID, tarPath)
 }
 
-// ApplyImport executes a reviewed plan.
-func (s *Service) ApplyImport(d Deps, cancelCtx context.Context, parseJobID string, decisions *ImportDecisions, sink download_queue.ProgressSink) (*ImportApplyResult, error) {
-	return s.op(d).ApplyImport(cancelCtx, parseJobID, decisions, sink)
+// ApplyImport executes a reviewed plan, read from the exact path the caller consumed it
+// to.
+func (s *Service) ApplyImport(d Deps, cancelCtx context.Context, parseJobID, planPath string, decisions *ImportDecisions, sink download_queue.ProgressSink) (*ImportApplyResult, error) {
+	return s.op(d).ApplyImport(cancelCtx, parseJobID, planPath, decisions, sink)
 }
 
 // LoadImportPlan reads back a persisted plan.

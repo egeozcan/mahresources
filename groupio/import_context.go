@@ -126,15 +126,28 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 // LoadImportPlan reads a previously persisted plan from _imports/<jobID>.plan.json.
 // Falls back to _imports/<jobID>.plan.applied.json if the original has been
 // consumed by an apply operation.
+//
+// It is the *review* read, for a caller that has only a parse handle: a plan an apply has
+// taken lives at a path that apply owns, which this name cannot express (see
+// loadPlanAt), so the fallback covers only the single name older releases used.
 func (ctx *opCtx) LoadImportPlan(jobID string) (*ImportPlan, error) {
 	planPath := importPlanPath(jobID)
-	f, err := ctx.fs.Open(planPath)
+	if exists, err := afero.Exists(ctx.fs, planPath); err == nil && exists {
+		return ctx.loadPlanAt(planPath)
+	}
+	consumedPath := filepath.Join("_imports", jobID+".plan.applied.json")
+	return ctx.loadPlanAt(consumedPath)
+}
+
+// loadPlanAt reads one plan from the exact path it is at.
+//
+// An apply executor knows which file it consumed — it took it there itself — and asking
+// for it by name would be a second derivation of a fact the executor already holds, and
+// one that cannot be right once the consumed name belongs to the Job that consumed it.
+func (ctx *opCtx) loadPlanAt(path string) (*ImportPlan, error) {
+	f, err := ctx.fs.Open(path)
 	if err != nil {
-		consumedPath := filepath.Join("_imports", jobID+".plan.applied.json")
-		f, err = ctx.fs.Open(consumedPath)
-		if err != nil {
-			return nil, fmt.Errorf("open plan file: %w", err)
-		}
+		return nil, fmt.Errorf("open plan file: %w", err)
 	}
 	defer f.Close()
 
@@ -162,6 +175,21 @@ func (ctx *opCtx) DeleteImportFiles(jobID string) error {
 	_ = ctx.fs.Remove(tarPath)
 	tarGzPath := filepath.Join("_imports", jobID+".tar.gz")
 	_ = ctx.fs.Remove(tarGzPath)
+
+	// And every file named after this import with a suffix no list here anticipates: a
+	// consumed plan is named by the apply that consumed it (`<handle>.<apply>.plan.applied.json`),
+	// so the names above cover the ones this release writes by hand and the scan covers
+	// the rest. The comparison is on the stem, the same tolerance the startup sweep's
+	// own protection uses, because the pairing of handle and suffix is the executors'
+	// convention rather than a list this function could keep in sync.
+	if entries, err := afero.ReadDir(ctx.fs, "_imports"); err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.HasPrefix(name, jobID+".") {
+				_ = ctx.fs.Remove(filepath.Join("_imports", name))
+			}
+		}
+	}
 
 	return nil
 }

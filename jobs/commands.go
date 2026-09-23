@@ -1495,6 +1495,19 @@ func requireNoRetrySuccessor(tx *gorm.DB, job models.Job) error {
 // idempotency claim), which is the same exclusion by a different mechanism —
 // which is also why this writes nothing there rather than touching a finished
 // Job's row for no reason.
+//
+// The *staging ancestors* are taken as well as the Retry chain, and that is
+// retention's side of the same rule rather than a second concern. A successor still
+// names the inputs its ancestor named — a Retry copies the ancestor's sealed input —
+// so what a staged hand-off depends on is the whole lineage walk
+// (jobs.LineageAncestors), not the linear chain. Retention prunes a candidate by
+// taking its row, deleting it, and then walking *down* to see whether a live Job still
+// depends on it; a retry that locked only its own chain could commit inside that
+// window — after the walk had read "no live descendant" — and both transactions would
+// commit: the ancestor gone, the queued successor left naming files nothing protects.
+// Taking the ancestors FOR UPDATE makes the window unreachable: the pruning
+// transaction holds the candidate, so this one waits, and by the time it can look the
+// candidate is gone — the refusal this lock exists to produce.
 func lockRetryChain(tx *gorm.DB, job models.Job) error {
 	if tx.Dialector.Name() == "sqlite" {
 		return nil
@@ -1503,8 +1516,14 @@ func lockRetryChain(tx *gorm.DB, job models.Job) error {
 	if err != nil {
 		return err
 	}
-	ids := append(chain, job.ID)
+	start := append(append([]string(nil), chain...), job.ID)
+	ancestors, err := LineageAncestors(tx, start, MaxStagingLineageHops)
+	if err != nil {
+		return err
+	}
+	ids := append(append([]string(nil), start...), ancestors...)
 	slices.Sort(ids)
+	ids = slices.Compact(ids)
 
 	var locked []string
 	if err := tx.Model(&models.Job{}).Where("id IN ?", ids).Order("id").

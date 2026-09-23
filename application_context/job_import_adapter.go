@@ -74,9 +74,22 @@ func importPlanPathFor(handle string) string {
 	return filepath.Join("_imports", handle+".plan.json")
 }
 
-// importConsumedPlanPathFor is where a plan goes while an apply is deciding from it.
-func importConsumedPlanPathFor(handle string) string {
-	return filepath.Join("_imports", handle+".plan.applied.json")
+// importConsumedPlanPathFor is where one apply's plan goes while that apply is
+// deciding from it.
+//
+// It is named by the apply *Job's* own legacy handle rather than by the parse alone,
+// and that is the whole of the ownership: the file a Job finds at this path was put
+// there by this Job's own admission, so its presence is evidence about this Job and
+// not about whichever apply last renamed the plan. A shared name made the two
+// indistinguishable, and a Retry therefore ran the plan another apply had just
+// consumed — two executors applying one archive.
+//
+// A Retry successor carries its ancestor's handle (that is what makes an unchanged
+// client id follow the lineage), so one lineage has one plan slot: the successor of a
+// failed, restore-safe apply re-consumes the restored plan into the same name its
+// ancestor used.
+func importConsumedPlanPathFor(handle, applyHandle string) string {
+	return filepath.Join("_imports", handle+"."+applyHandle+".plan.applied.json")
 }
 
 // importResultPathFor is the report an apply writes.
@@ -95,6 +108,12 @@ type importParseJobInput struct {
 // and the decisions themselves. The decisions are part of the sealed input because
 // they are what makes this apply *this* apply, and a Retry that lost them would
 // re-run the import with a different set of choices.
+//
+// Plan names the plan the apply was admitted for — the staged review artifact at its
+// *unconsumed* path. It is deliberately not the path the job will read from: which file
+// an apply may read is decided by that apply's own admission, which moves the plan to
+// the path its Job owns (importConsumedPlanPathFor), and a sealed path that named the
+// consumed file would let a Retry read one another apply had taken.
 type importApplyJobInput struct {
 	ParseHandle string          `json:"parseHandle"`
 	Plan        string          `json:"plan"`
@@ -235,8 +254,18 @@ func importApplyInputOf(input json.RawMessage) (*importApplyJobInput, error) {
 	if strings.TrimSpace(decoded.ParseHandle) == "" {
 		return nil, errors.New("an import apply Job's input names no parse")
 	}
-	if err := requireImportStagingPath(decoded.Plan, ".plan.applied.json"); err != nil {
-		return nil, err
+	// The plan may be named at either staging path this Kind hands out: the review
+	// artifact at its unconsumed path, which is what this release seals, or the
+	// consumed file an apply admitted by an earlier release was admitted with. Which
+	// one it is decides nothing at dispatch — the plan is bound to the Job there
+	// (claimImportPlanForApply) — and refusing the second would refuse an in-flight Job
+	// across the upgrade for no safety at all.
+	planErr := requireImportStagingPath(decoded.Plan, ".plan.json")
+	if planErr != nil {
+		planErr = requireImportStagingPath(decoded.Plan, ".plan.applied.json")
+	}
+	if planErr != nil {
+		return nil, planErr
 	}
 	return &decoded, nil
 }
@@ -290,25 +319,23 @@ func (ctx *MahresourcesContext) importStagedFileExists(path string) bool {
 	return err == nil && exists
 }
 
-// consumeImportPlan moves one plan into its consumed name, refusing when there is
-// no plan left to consume.
+// consumeImportPlan moves one plan into the name one apply owns, refusing when there
+// is no plan left to consume.
 //
-// One definition, used by the handler (so a second /apply is a 409 rather than a
-// queued Job that fails) and by a Retry's dispatch (so a retried apply consumes
-// exactly what the handler would have).
-func consumeImportPlan(fs afero.Fs, handle string) (string, error) {
-	planPath := importPlanPathFor(handle)
-	if _, err := fs.Stat(planPath); err != nil {
+// The rename is the whole arbitration: a plan may be consumed once, and the loser of
+// two attempts — a fresh /apply and a Retry of the apply that restored it, which is the
+// pair that used to end up sharing one file — is refused rather than handed a path it
+// does not own. One definition, used by the submission (so a second /apply is a 409
+// rather than a queued Job that fails) and by a dispatch that is consuming the plan its
+// Job was admitted for.
+func consumeImportPlan(fs afero.Fs, source, consumed string) error {
+	if err := fs.Rename(source, consumed); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", ErrImportPlanConsumed
+			return ErrImportPlanConsumed
 		}
-		return "", err
+		return err
 	}
-	consumedPath := importConsumedPlanPathFor(handle)
-	if err := fs.Rename(planPath, consumedPath); err != nil {
-		return "", err
-	}
-	return consumedPath, nil
+	return nil
 }
 
 // ImportApplyPlanShouldBeRestored decides whether a failed apply's consumed plan
@@ -628,43 +655,28 @@ func (a *importApplyAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 	return a.publishOutcome(execution, input, snap)
 }
 
-// start consumes the plan and submits the apply this execution needs.
+// start binds the plan to this execution's Job and submits the apply it needs.
 //
-// Which plan that is has two answers, and telling them apart is what makes an
-// accepted-but-undispatched apply runnable at all.
+// Two plans could be in play, and telling them apart is what makes an
+// accepted-but-undispatched apply runnable at all:
 //
-//   - The plan the Job was *admitted* with (`input.Plan`, the consumed one) is
-//     still there: this apply was accepted and never started. The request that
-//     accepted it consumed the plan — which is what makes a second /apply on the
-//     same review a refusal — so nothing has been applied, and the queue entry it
-//     was going to get either never existed (the process stopped between
-//     acceptance and submission) or was claimed away by the very runtime that is
-//     dispatching it now. Reading the recorded plan applies the import exactly
-//     once. Consuming it again cannot work and must not be attempted: the
-//     unconsumed path is empty by construction, and failing the Job for a refusal
-//     nobody made leaves work nobody can run.
-//   - The plan is back at its *unconsumed* path: the executor restored it as its
-//     own replay-safety evidence, so this consumes it now exactly as the handler
-//     would have. A consumed plan without a restored one never reaches here — that
-//     is the uncertain partially-executed apply reconciliation refuses, not work
-//     this Kind may rerun.
+//   - The plan is at the path *this Job owns* (`importConsumedPlanPathFor`, named by
+//     this apply's own handle): this apply consumed it and never ran it. The queue
+//     entry it was going to get either never existed (the process stopped between
+//     acceptance and submission) or was claimed away by the very runtime dispatching
+//     it now. Reading that file applies the import exactly once.
+//   - The plan is at its *unconsumed* path, which is what this Job's input names: the
+//     executor restored it as its own replay-safety evidence, or the Job is a Retry of
+//     one that did, so this consumes it now exactly as the submission would have. The
+//     rename is atomic, so of a Retry and a fresh /apply for one review exactly one
+//     takes the plan and the other is refused; neither may read the other's copy.
 //
 // The archive is required either way: the plan names rows, the archive has their
 // bytes.
 func (a *importApplyAdapter) start(bound *MahresourcesContext, execution jobs.Execution, input *importApplyJobInput) (*download_queue.DownloadJob, error) {
-	plan := strings.TrimSpace(input.Plan)
-	if !a.ctx.importStagedFileExists(plan) {
-		consumed, err := consumeImportPlan(a.ctx.GetDefaultFs(), input.ParseHandle)
-		if err != nil {
-			// A plan that is gone is a refusal to *admit* the work: nothing can run it,
-			// and the Job is blocked for a person to decide about rather than failed for
-			// something nobody did wrong.
-			if errors.Is(err, ErrImportPlanConsumed) {
-				return nil, fmt.Errorf("the plan for import %s is no longer there", input.ParseHandle)
-			}
-			return nil, err
-		}
-		plan = consumed
+	plan, err := a.claimPlanForApply(execution, input)
+	if err != nil {
+		return nil, err
 	}
 	if !a.ctx.importArchiveExists(input.ParseHandle) {
 		return nil, fmt.Errorf("the archive for import %s is no longer there", input.ParseHandle)
@@ -684,6 +696,47 @@ func (a *importApplyAdapter) start(bound *MahresourcesContext, execution jobs.Ex
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		bound.buildImportApplyRunFn(input.ParseHandle, plan, &input.Decisions),
 	)
+}
+
+// claimPlanForApply answers the plan path one apply may read, binding the plan to that
+// apply's Job if its admission did not already.
+//
+// The binding is the file's *name*: the plan is consumed into a path derived from this
+// Job's own handle, so finding one there is evidence about this Job — its admission put
+// it there — and never about whichever apply consumed a shared name last. That is the
+// difference between the two executors the old scheme could not tell apart: a Retry
+// whose plan had been consumed by a fresh /apply found the consumed file, read it as
+// "my admission consumed this and never ran it", and applied the same archive a second
+// time beside the apply already running it.
+//
+// The plan the input names is the *source* it is consumed from, so an apply that has not
+// consumed anything yet (a Retry, whose input is its ancestor's) takes it exactly once,
+// and a refusal means somebody else has. A refusal is a refusal to *admit* the work —
+// nothing can run it — rather than a failure of the work, which is why the caller blocks
+// the Job for a person instead of ending it.
+func (a *importApplyAdapter) claimPlanForApply(execution jobs.Execution, input *importApplyJobInput) (string, error) {
+	handle, err := a.ctx.jobHandleFor(execution.JobID, ImportApplyHandleNamespace)
+	if err != nil {
+		return "", err
+	}
+	if handle == "" {
+		// A Job accepted without the handle the client is answered with (a test, or a
+		// migration): the canonical id is unique per Job and names the same lineage.
+		handle = execution.JobID
+	}
+	mine := importConsumedPlanPathFor(input.ParseHandle, handle)
+	if a.ctx.importStagedFileExists(mine) {
+		return mine, nil
+	}
+	source := strings.TrimSpace(input.Plan)
+	if err := consumeImportPlan(a.ctx.GetDefaultFs(), source, mine); err != nil {
+		if errors.Is(err, ErrImportPlanConsumed) {
+			return "", fmt.Errorf("%w: the plan for import %s is no longer there",
+				ErrImportPlanConsumed, input.ParseHandle)
+		}
+		return "", err
+	}
+	return mine, nil
 }
 
 func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *importApplyJobInput, snap *download_queue.DownloadJob) error {
@@ -903,7 +956,7 @@ func (ctx *MahresourcesContext) buildImportApplyRunFn(parseHandle, consumedPlanP
 // context and stamps CreatedByUserId. One binding covers every entity the import
 // creates.
 func (ctx *MahresourcesContext) runImportApplyJob(jobCtx context.Context, sink download_queue.ProgressSink, parseHandle, consumedPlanPath string, decisions *ImportDecisions) error {
-	result, err := ctx.ApplyImport(jobCtx, parseHandle, decisions, sink)
+	result, err := ctx.ApplyImport(jobCtx, parseHandle, consumedPlanPath, decisions, sink)
 
 	// The result is persisted even on failure: a partial-failure result lists the
 	// IDs it created for manual cleanup, and it is the report a Job publishes.
@@ -1025,11 +1078,17 @@ func (ctx *MahresourcesContext) SubmitImportParse(handle, stagingTarPath string,
 
 // SubmitImportApply is the one door an apply is submitted through.
 //
-// The plan is consumed first: a second /apply on the same review is a refusal
-// rather than a queued Job that fails, which is the behaviour every deployed client
-// already relies on. The Job is then accepted, linked to the parse it decided on as
-// a child, and dispatched.
-func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPlanPath string, decisions *ImportDecisions, origin string) QueueJobSubmission {
+// The plan is bound to this apply *before* the Job is accepted — the review artifact is
+// renamed to the name this apply's Job owns — which is what makes a second /apply on the
+// same review a refusal rather than a queued Job that fails, and what makes the file a
+// Job finds at that path evidence about its own admission. The Job is then accepted,
+// claimed, and linked to the parse it decided on in **one** transaction: the link is
+// what carries the parse's handle — and so the protection of the archive and plan it
+// staged — to a live descendant, so an apply that committed without it would be durable
+// work whose input the startup sweep is entitled to delete. The parse is therefore
+// resolved first, and a handle that names no durable Job is a refusal rather than an
+// unlinked acceptance. The executor starts only after that transaction commits.
+func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, decisions *ImportDecisions, origin string) QueueJobSubmission {
 	result := QueueJobSubmission{}
 	if ctx == nil || ctx.downloadManager == nil {
 		result.Err = errors.New("the download queue is not available")
@@ -1048,9 +1107,15 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 	}
 	service := ctx.JobService()
 	if service == nil {
+		consumedPath := importConsumedPlanPathFor(parseHandle, download_queue.NewJobID())
+		if err := consumeImportPlan(ctx.GetDefaultFs(), importPlanPathFor(parseHandle), consumedPath); err != nil {
+			result.Err = err
+			return result
+		}
 		job, err := ctx.downloadManager.SubmitJobWithOptions(opts,
-			ctx.buildImportApplyRunFn(parseHandle, consumedPlanPath, decisions))
+			ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions))
 		if err != nil {
+			_ = ctx.GetDefaultFs().Rename(consumedPath, importPlanPathFor(parseHandle))
 			result.Err = err
 			return result
 		}
@@ -1058,16 +1123,32 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 		return result
 	}
 
-	input, err := json.Marshal(importApplyJobInput{
-		ParseHandle: parseHandle,
-		Plan:        consumedPlanPath,
-		Decisions:   *decisions,
-	})
+	// The parse whose files this apply reads. A handle that names no canonical Job — an
+	// import from before this release, or a deployment whose handle row is gone — cannot
+	// be linked, and an unlinked apply is work the sweep may delete the input of.
+	parentID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ImportParseHandleNamespace, parseHandle)
 	if err != nil {
+		result.Err = fmt.Errorf("%w: the import %s this apply belongs to has no durable record", err, parseHandle)
+		return result
+	}
+
+	legacyID := download_queue.NewJobID()
+	consumedPath := importConsumedPlanPathFor(parseHandle, legacyID)
+	if err := consumeImportPlan(ctx.GetDefaultFs(), importPlanPathFor(parseHandle), consumedPath); err != nil {
 		result.Err = err
 		return result
 	}
-	legacyID := download_queue.NewJobID()
+
+	input, err := json.Marshal(importApplyJobInput{
+		ParseHandle: parseHandle,
+		Plan:        importPlanPathFor(parseHandle),
+		Decisions:   *decisions,
+	})
+	if err != nil {
+		ctx.restoreImportPlan(consumedPath, parseHandle)
+		result.Err = err
+		return result
+	}
 	// Answered before the capacity question, because it is the id the caller is
 	// handed whatever happens next: the Job is durable and answers this handle
 	// whether this process runs its executor or a runtime with a free slot does.
@@ -1082,25 +1163,25 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 		Title:       "Apply import",
 		Replay:      jobs.ReplayInput{Input: input},
 		LegacyRefs:  []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: legacyID}},
+		Parents:     []string{parentID},
 	})
 	if err != nil {
+		ctx.restoreImportPlan(consumedPath, parseHandle)
 		result.Err = err
 		return result
 	}
 	result.CanonicalJobID = admission.Accepted.ID
-	ctx.linkImportChild(admission.Accepted, parseHandle)
 	if !admission.Owned() {
 		// The deployment's budget is full: the Job is durable, answers the id the
 		// client was handed, and starts no executor here. A runtime with a free slot
-		// takes it, from the plan its input records — which is what the consumed plan
-		// exists for. See admitQueueJob.
+		// takes it and consumes the plan its input names. See admitQueueJob.
 		return result
 	}
 
-	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: consumedPlanPath, Decisions: *decisions}
+	applyInput := &importApplyJobInput{ParseHandle: parseHandle, Plan: importPlanPathFor(parseHandle), Decisions: *decisions}
 	entry, err := ctx.submitQueueJob(opts, legacyID,
 		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken},
-		ctx.buildImportApplyRunFn(parseHandle, consumedPlanPath, decisions))
+		ctx.buildImportApplyRunFn(parseHandle, consumedPath, decisions))
 	if err != nil {
 		ctx.failUndispatchedQueueJob(admission, err)
 		result.Err = err
@@ -1113,33 +1194,24 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 	return result
 }
 
-// linkImportChild records the parse→apply parentage.
-//
-// It is a second write after acceptance rather than part of it, because the parent
-// is named by a legacy handle and the child by its own identity: the link is a
-// fact about two Jobs, and a parse Job this process cannot resolve leaves the apply
-// unlinked rather than failing it — the apply is still correct work, it just cannot
-// be read as a child of a parent nobody here can name.
-func (ctx *MahresourcesContext) linkImportChild(child jobs.Snapshot, parseHandle string) {
-	service := ctx.JobService()
-	if service == nil {
-		return
-	}
-	parentID, err := service.ResolveLegacyHandle(ctx.jobDeps(), ImportParseHandleNamespace, parseHandle)
-	if err != nil {
-		return
-	}
-	if err := service.Link(ctx.jobDeps(), jobs.LinkRequest{
-		Type: jobs.LinkParentChild, FromJobID: parentID, ToJobID: child.ID,
-	}); err != nil {
-		log.Printf("warning: could not link import apply %s to its parse %s: %v", child.ID, parentID, err)
-	}
+// restoreImportPlan hands a consumed plan back to its review path after an admission
+// that did not commit. The consumption is part of the submission, so a refused one must
+// leave the review exactly as it found it — the client's next /apply has to work.
+func (ctx *MahresourcesContext) restoreImportPlan(consumedPath, parseHandle string) {
+	_ = ctx.GetDefaultFs().Rename(consumedPath, importPlanPathFor(parseHandle))
 }
 
-// ConsumeImportPlan moves one plan into its consumed name, for the handler that has
-// to answer 409 rather than queue an apply with nothing to decide on.
-func ConsumeImportPlan(fs afero.Fs, handle string) (string, error) {
-	return consumeImportPlan(fs, handle)
+// ImportJobAuthorized answers whether this context's principal may act on the import
+
+// ClaimImportPlanForJob is the submission's own consumption rule, exposed for the one
+// caller that has to answer 409 rather than queue an apply with nothing to decide on,
+// and for tests that need the exact state a running apply is in.
+func ClaimImportPlanForJob(fs afero.Fs, parseHandle, applyHandle string) (string, error) {
+	consumed := importConsumedPlanPathFor(parseHandle, applyHandle)
+	if err := consumeImportPlan(fs, importPlanPathFor(parseHandle), consumed); err != nil {
+		return "", err
+	}
+	return consumed, nil
 }
 
 // ImportJobAuthorized answers whether this context's principal may act on the import

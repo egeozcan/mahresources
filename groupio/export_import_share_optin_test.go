@@ -61,7 +61,7 @@ func TestExportImport_PreservesNoteTypeShareOptIn(t *testing.T) {
 	}
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "merge"
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSinkAltFS{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSinkAltFS{}); err != nil {
 		t.Fatalf("ApplyImport: %v", err)
 	}
 

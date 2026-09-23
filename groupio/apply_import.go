@@ -30,10 +30,11 @@ const applyBatchSize = 500
 func (ctx *opCtx) ApplyImport(
 	cancelCtx context.Context,
 	parseJobID string,
+	planPath string,
 	decisions *ImportDecisions,
 	sink download_queue.ProgressSink,
 ) (*ImportApplyResult, error) {
-	plan, err := ctx.LoadImportPlan(parseJobID)
+	plan, err := ctx.loadPlanAt(planPath)
 	if err != nil {
 		return nil, fmt.Errorf("load plan: %w", err)
 	}

@@ -128,7 +128,7 @@ func TestExportImport_PreservesStorageLocation(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "merge"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSinkAltFS{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSinkAltFS{})
 	if err != nil {
 		t.Fatalf("ApplyImport: %v", err)
 	}

@@ -1,3 +1,122 @@
+# Job Center post-Task-9 checkpoint, fourth round — close the Astra round-3 review's six P1 findings (2026-09-23)
+
+**Goal:** Close the six P1s a fresh Astra cumulative review of `3db7ed41` (run
+`2a794586-e373-417f-b69a-ee2e6f758bf8`) raised after Task 9 — a quarantined runtime that
+released its own claim while its worker was still running, a successful quarantined plugin
+action that could never settle and held a capacity slot for ever, an import Retry that could
+reuse a consumed plan another apply owned, an import acceptance that committed before the
+lineage dependency its input needs, a PostgreSQL retention window a Retry could commit
+inside, and a hidden canonical handle that fell back to an unfenced in-place queue Retry —
+each through the public seam with an observed failure first. The reviewer also raised two P2
+notes; they were not carried in this worker session's brief and are **not** addressed here,
+so they remain open for whoever holds the review.
+
+## Findings closed
+
+| Finding | Regression |
+|---|---|
+| A quarantined runtime released its claim before its worker stopped | `TestAQuarantinedCapacityQueuedTransferKeepsItsClaimUntilItsWorkerStops`, `TestAQuarantinedClaimIsNotAFenceForItsOwnExecution` |
+| A successful quarantined plugin action could never settle, holding capacity for ever | `TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot`, `TestTheExecutionThatOwnsAQuarantinedJobMayEndIt` |
+| An import Retry could reuse a plan consumed by another apply | `TestARetryAndAFreshApplyCannotBothApplyOneReview` |
+| Import acceptance committed before the lineage dependency it needs | `TestAnAcceptanceRollsBackWhenAParentItNamesIsGone`, `TestAnApplyWhoseParseHasNoDurableRecordIsRefused` |
+| PostgreSQL retention could prune a parse while a Retry of its descendant committed | `TestARetryHoldsItsStagingAncestorsRowsPG` |
+| A hidden canonical handle fell back to an unfenced in-place Retry | `TestRetryRefusesWorkADurableJobOwns`; `TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue` pins the projection rule |
+
+Every one was observed failing first, with the source restored afterwards (the red runs were
+produced by neutering the fix in place, or by restoring the pre-fix expression).
+
+## Decisions worth recording
+
+- **A quarantine is not a fence for the execution that owns it.** `Heartbeat` no longer
+  refuses a quarantined claim whose token is the caller's own: the quarantine withholds the
+  *renewal*, not the ownership — nobody else can take the work (a Resume is refused while an
+  unresolved claim exists, and an expired scan never revisits a quarantined claim) — and a
+  refusal there told a live runtime its execution had been fenced, so it stopped observing a
+  transfer that was still running and handed back the claim and the slot. The check is
+  ordered before the held/ours test so the ownership answer is the one that decides.
+- **The execution that owns a quarantined Job may end it, success included.** One lifecycle
+  edge is deliberately not in `legalTargets`: `blocked -> terminal` is admitted when, and
+  only when, the Job still carries the transition's own non-empty execution token
+  (`quarantineSettlementAllowed`). A quarantine is `blocked` with the token still recorded,
+  because nobody could prove the external work stopped; the execution holding that token is
+  the one thing that *can* prove it, and it proves it by reporting the outcome its work
+  reached. Without the edge a Job whose work in fact succeeded stayed blocked for ever with a
+  deployment-wide slot occupied, across restarts; the fence is the token, and every other
+  path is unchanged — an ordinary hold has no token, and a foreign token cannot write.
+- **An execution's return is not the worker's termination.** `finishOwnedExecution` no longer
+  releases a claim that is still the execution's own on a blocked Job: the executor returning
+  says the *observer* let go, while the worker behind it (a queue entry, a Lua function) may
+  still be running. The settlement above is what resolves a quarantine.
+- **Plan consumption is bound to the apply that consumed it.** An import's consumed plan is
+  named by the apply's own legacy handle (`_imports/<parse>.<apply>.plan.applied.json`), so
+  finding one there is evidence about *that* Job rather than about whichever apply renamed a
+  shared name last. A Retry carries its ancestor's handle, so one lineage has one plan slot;
+  the loser of a Retry/fresh-apply pair is refused (blocked or failed) instead of reading the
+  other's copy, and `ApplyImport` now takes the plan path the executor consumed rather than
+  re-deriving it from the parse handle.
+- **Acceptance, claim and lineage are one transaction.** `jobs.Acceptance` gained `Parents`:
+  `linkLineage` runs inside the acceptance's own transaction, so a parent that is gone rolls
+  the acceptance back, and an apply whose parse cannot be resolved is refused rather than
+  committed unlinked. The link is execution-critical, not presentation: the startup sweep
+  protects a Job's staged hand-off by walking up its lineage.
+- **A Retry takes its staging ancestors' rows, not just its chain.** `lockRetryChain` locks
+  the whole `jobs.LineageAncestors` walk as well as the linear chain, because a retry-of
+  successor still names the inputs a *parent-child* ancestor staged. Retention prunes by
+  taking the candidate, deleting it and then walking *down*; without that lock the retry
+  committed inside the walk's window and both transactions committed.
+- **A handle whose current target is inaccessible is not an absent handle.** Resolution asks
+  the handle table first and then the Job it names, and an authorization refusal is returned
+  rather than read as "no such handle" — the fallback to this process's queue entry would
+  publish the ancestor under a Retry successor's handle. `DownloadManager.Retry` refuses an
+  entry carrying a canonical reference outright (`CanonicalJobError` → 409): in-place it
+  would rewrite one attempt as another under one Job, which is what ADR 0007 forbids.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test -race --tags 'json1 fts5' ./jobs ./download_queue -count=1` and the same over this
+  round's `application_context` regressions — clean.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./application_context ./server/api_tests -count=1`
+  — clean, including the new `TestARetryHoldsItsStagingAncestorsRowsPG`.
+- `go vet --tags 'json1 fts5' ./...` clean; `gofmt -l` clean on every changed file;
+  `git diff --check` clean.
+- Browser and CLI E2E were **not** run in this session (the operator ended it); the changed
+  surfaces are the import apply route's refusal shape, the queue's in-place Retry, and
+  application-layer seams, and the Go API tests over the import routes are green.
+
+## Residual, known and deliberate
+
+- **The two P2 notes from this round are not addressed.** They were not part of this worker's
+  brief; the round-3 review's own text is not in this repository, so they are recorded here as
+  open rather than guessed at.
+- **A quarantine whose owning runtime died has no resolution path.** Nothing revisits a
+  quarantined claim (`expiredClaims` excludes it), a Resume is refused while one is
+  unresolved, and only the blocking runtime's own token can now settle it. That state
+  predates this round — the premature release this round removed was the only thing that ever
+  cleared it — so a deployment that loses a process mid-quarantine keeps the Job blocked and
+  its capacity occupied until an operator acts outside the Job Center. Closing it needs an
+  operator-facing resolution (a proved-gone check plus a release), which is a design decision
+  this round did not take.
+- **`finishOwnedExecution` leaves such a quarantine's capacity held.** By design: the release
+  it used to make was the P1. Its cost is the residual above.
+- **The `TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue` red run did not
+  reproduce a projection fallback**: the harness's queue entry for a user-submitted download
+  is ownerless, so the owner could not see the entry in either the old or the new code, and
+  the assertion passed before the fix too. The *in-place* half of the finding has a confirmed
+  red→green (`TestRetryRefusesWorkADurableJobOwns`), and the projection rule is pinned in the
+  new direction (a moved, unreachable handle is `ErrNotFound`).
+- **The PostgreSQL barrier test the finding asked for was replaced by a lock assertion.**
+  `TestARetryHoldsItsStagingAncestorsRowsPG` holds the Retry inside its chain lock and shows a
+  second transaction cannot take the parse's row; the end-to-end shape (a pruning pass parked
+  in its dependency read while the Retry commits) was written first and is what the earlier
+  attempts in this session could not make deterministic, so the deterministic form ships.
+
+## Files, commits and artefact
+
+- Code-fix commit: this round's `fix(jobs): ...` commit on `master`.
+- Artefact: `/tmp/mahresources-job-center-cumulative-<code HEAD>.diff` (baseline
+  `6fb0f97d94c48c5ccf7183447ab72907578cd4ba..HEAD` with full metadata).
+
 # Job Center post-Task-9 checkpoint, third round — close the Astra review's nine P1 findings (2026-09-23)
 
 **Goal:** Close every P0/P1 the second Astra checkpoint raised after Task 9, each through

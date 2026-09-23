@@ -32,3 +32,22 @@ type StateConflictError struct {
 func (e *StateConflictError) Error() string {
 	return fmt.Sprintf("job %s cannot be %s (status: %s)", e.JobID, e.Action, e.Status)
 }
+
+// CanonicalJobError is returned when an in-place control is asked for work a durable Job
+// owns. It maps to HTTP 409.
+//
+// A queue entry carrying a canonical reference is one execution of a Job that has
+// lineage, an execution token and a claim: retrying it in place would rewrite the entry
+// under the same Job — bypassing the immutable lineage ADR 0007 makes Retry a new Job —
+// and leave the new transfer running under a token that describes the attempt it
+// replaced. The control plane's Retry is the only door for that work.
+type CanonicalJobError struct {
+	JobID     string
+	Canonical string
+	Action    string
+}
+
+func (e *CanonicalJobError) Error() string {
+	return fmt.Sprintf("job %s cannot be %s in place: it is the execution of durable job %s",
+		e.JobID, e.Action, e.Canonical)
+}

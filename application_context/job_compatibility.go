@@ -124,17 +124,30 @@ var queueBackedHandleNamespaces = []struct {
 // ids, so two spaces holding one string is not a case that arises; trying the download
 // space first is what keeps every already-deployed client on exactly the path it had.
 func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snapshot, string, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, "", err
+	}
 	for _, candidate := range queueBackedHandleNamespaces {
-		resolved, err := ctx.ResolveJobHandle(candidate.Namespace, id)
-		switch {
-		case err == nil:
-			return &resolved, candidate.Source, nil
-		case errors.Is(err, jobs.ErrNotFound):
-			// Not a handle in this space. It may be one in the next, or a raw queue id.
-			continue
-		default:
+		jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), candidate.Namespace, id)
+		if err != nil {
+			if errors.Is(err, jobs.ErrNotFound) {
+				// Not a handle in this space. It may be one in the next, or a raw queue id.
+				continue
+			}
 			return nil, "", err
 		}
+		// The handle exists, so the Job it *currently* names is the answer, and this
+		// principal's authorization for that Job is the next question — not a reason to
+		// look somewhere else. A Retry may have moved the handle onto a successor somebody
+		// else owns: falling back to this process's queue entry would then publish the
+		// ancestor under the successor's handle, and a control on that row would act on
+		// work the asker was just refused.
+		resolved, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
+		if err != nil {
+			return nil, "", err
+		}
+		return &resolved, candidate.Source, nil
 	}
 	return nil, "", nil
 }

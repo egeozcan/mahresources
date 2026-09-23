@@ -62,6 +62,15 @@ function lingering_work(ctx)
     mah.kv.set("lingering", "returned")
 end
 
+-- Reports success after a sleep: the callback is still executing when it has
+-- spoken, which is the window a quarantine can land in.
+function holding_work(ctx)
+    mah.kv.set("holding", "running")
+    mah.sleep(2)
+    mah.job_complete(ctx.job_id, { message = "held done" })
+    mah.kv.set("holding", "returned")
+end
+
 function closure_work(job_id)
     mah.kv.set("closure", "ran")
     mah.job_complete(job_id, { message = "closure done" })
@@ -107,6 +116,8 @@ function init()
                  handler = failing_work })
     mah.action({ id = "lingering-work", label = "Lingering Work", entity = "resource", async = true,
                  handler = lingering_work })
+    mah.action({ id = "holding-work", label = "Holding Work", entity = "resource", async = true,
+                 handler = holding_work })
     mah.action({ id = "retryable-work", label = "Retryable Work", entity = "resource", async = true,
                  retry = true, handler = failing_work })
     mah.action({ id = "parent-work", label = "Parent Work", entity = "resource", async = true,
@@ -1569,4 +1580,70 @@ func TestAPluginActionJobAnswersItsHandleWithNoInMemoryEntry(t *testing.T) {
 			projected.PluginName, projected.ActionID, pluginActionTestPlugin)
 	}
 	unblock()
+}
+
+// TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot is the plugin half of the
+// quarantine rule, and the half that had no way to end.
+//
+// A quarantine is `blocked` with the execution's token still on the Job, and this
+// Kind's execution reports its outcome from the callback that is still running. When
+// the state machine admitted no `blocked -> succeeded`, that report was refused as an
+// illegal transition, the sink treated the refusal as final delivery, and the Job
+// stayed blocked for ever with a deployment-wide capacity slot occupied — across a
+// restart, since an expired scan never revisits a quarantined claim and no Resume is
+// offered while one is unresolved. The execution that holds the token is the only
+// thing that can prove what became of the work, so its own outcome has to be able to
+// settle it, success included.
+func TestASuccessfulQuarantinedPluginJobSettlesAndFreesItsSlot(t *testing.T) {
+	ctx := newPluginActionJobContextWithDeploymentBudget(t, 2)
+
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "holding-work", 7, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+	waitFor(t, "the handler to start", func() bool {
+		return pluginKVForTest(t, ctx, "holding") == "running"
+	})
+
+	// The other process's reconciliation finds the claim expired and its runtime
+	// alive, so the work is unproven: the claim is quarantined and the Job blocked.
+	expireAndReconcile(t, ctx)
+	blocked := waitForJobState(t, ctx, canonical, "the quarantine to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateBlocked
+	})
+	if claim := storedClaim(t, ctx, canonical); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the claim is %s after an unproven reconciliation, want quarantined", claim.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the quarantined handler holds %d capacity slots, want the one it was admitted against", held)
+	}
+	commands, err := ctx.AdvertisedJobCommands(context.Background(), canonical)
+	if err != nil {
+		t.Fatalf("advertise commands: %v", err)
+	}
+	if hasCommand(commands, jobs.CommandResume) {
+		t.Fatalf("a quarantined plugin job offered a resume: %+v", commands)
+	}
+	if blocked.Version == 0 {
+		t.Fatalf("the blocked job reported no version")
+	}
+
+	// The callback returns and reports success, which is the proof the quarantine was
+	// waiting for. The outcome is kept — a Job whose work in fact succeeded is not a
+	// Job for a person to classify — and the claim and the slot go with it.
+	waitFor(t, "the handler to return", func() bool {
+		return pluginKVForTest(t, ctx, "holding") == "returned"
+	})
+	finished := waitForJobState(t, ctx, canonical, "the quarantined job to settle", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the quarantined handler's success settled as %s (%+v)", finished.State, finished.Failure)
+	}
+	if claim := storedClaim(t, ctx, canonical); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("the claim is %s after the handler's own outcome, want released", claim.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the deployment budget still holds %d slots after a quarantined job settled", held)
+	}
 }

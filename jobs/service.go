@@ -219,6 +219,17 @@ func (s *Service) accept(ctx context.Context, deps Deps, acceptance Acceptance, 
 		if err := storeLegacyHandles(tx, job.ID, acceptance.LegacyRefs, now); err != nil {
 			return err
 		}
+		// The lineage is written with the Job it describes. linkLineage takes the
+		// endpoints' rows — and, on an engine with row locks, holds them for the rest of
+		// this transaction — so a parent another transaction is inside, or a parent that
+		// is gone, is answered here rather than assumed from a read taken before it.
+		for _, parent := range acceptance.Parents {
+			if err := linkLineage(tx, LinkRequest{
+				Type: LinkParentChild, FromJobID: parent, ToJobID: job.ID,
+			}, now); err != nil {
+				return err
+			}
+		}
 		event := newEvent(job.ID, 1, job.Version, EventAccepted, nil, true, now)
 		if err := tx.Create(&event).Error; err != nil {
 			return fmt.Errorf("jobs: store accepted event: %w", err)
@@ -405,6 +416,16 @@ func validateAcceptance(a *Acceptance) error {
 			return invalid("legacy reference %s/%s is repeated", ref.Namespace, ref.Handle)
 		}
 		seen[ref] = struct{}{}
+	}
+	parentSeen := make(map[string]struct{}, len(a.Parents))
+	for _, parent := range a.Parents {
+		if strings.TrimSpace(parent) == "" {
+			return invalid("a parent link needs a job id")
+		}
+		if _, duplicate := parentSeen[parent]; duplicate {
+			return invalid("parent %s is repeated", parent)
+		}
+		parentSeen[parent] = struct{}{}
 	}
 	return nil
 }
@@ -825,12 +846,40 @@ func copyUint(v *uint) *uint {
 // or an operator unblocks it. Running is deliberately absent from every target set,
 // including running's own: entering running is what a claim does, and
 // validateTransition refuses it here before the table is consulted.
+//
+// One edge is deliberately not in the table because it is not the machine's to make:
+// the execution that owns a *quarantined* Job may end it, success included. See
+// quarantineSettlementAllowed, which is where the token fence for it lives.
 var legalTargets = map[State][]State{
 	StateScheduled: {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateQueued:    {StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateRunning:   {StateQueued, StatePaused, StateBlocked, StateSucceeded, StateFailed, StateCancelled, StateInterrupted},
 	StatePaused:    {StateQueued, StateBlocked, StateCancelled, StateFailed, StateInterrupted},
 	StateBlocked:   {StateQueued, StateCancelled, StateFailed, StateInterrupted},
+}
+
+// quarantineSettlementAllowed answers the one lifecycle edge the state machine does
+// not name: the execution that owns a quarantined Job may end it.
+//
+// A quarantine is `blocked` with the execution token still recorded, because nobody
+// could prove the external work the claim started had stopped (§3). The execution
+// that owns that token is the one thing that *can* prove it, and it proves it by
+// reporting what became of its own work — its real outcome, a success included.
+// Without this edge a quarantined Job whose work in fact succeeded could never reach
+// its outcome: the row would stay blocked and its capacity — a deployment-wide slot —
+// would stay occupied for ever, including across a restart, because an expired scan
+// never revisits a quarantined claim and a Resume is refused while one is unresolved.
+//
+// The fence is the token, and that is why this is not a hole in the machine. The
+// block path releases the claim in the same transaction that enters `blocked`, so a
+// blocked Job carrying a token is a quarantined one by construction, while a blocked
+// Job with no token is an ordinary hold no execution owns. A caller naming some other
+// execution's token cannot write at all: requireExecutionToken has refused it already.
+func quarantineSettlementAllowed(job models.Job, transition Transition) bool {
+	if State(job.State) != StateBlocked || !transition.To.Terminal() {
+		return false
+	}
+	return job.ExecutionToken != "" && transition.ExecutionToken == job.ExecutionToken
 }
 
 // canTransition reports whether the state machine permits from -> to. A
@@ -978,7 +1027,7 @@ func prepareTransition(deps Deps, transition Transition) (preparedTransition, er
 	if err := requireExecutionToken(job, transition.ExecutionToken); err != nil {
 		return preparedTransition{}, err
 	}
-	if !canTransition(State(job.State), transition.To) {
+	if !canTransition(State(job.State), transition.To) && !quarantineSettlementAllowed(job, transition) {
 		return preparedTransition{}, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, job.State, transition.To)
 	}
 	// A cancellation that won owns the outcome: §4 makes a later success

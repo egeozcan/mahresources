@@ -976,6 +976,17 @@ type Acceptance struct {
 	Replay             ReplayInput
 	ScheduledFor       *time.Time
 	LegacyRefs         []LegacyRef
+	// Parents names the Jobs this Job is a parent-child child of. They are linked in
+	// the same transaction as the acceptance, and a parent that is gone rolls the
+	// acceptance back rather than committing a child that names nothing.
+	//
+	// It is part of the acceptance rather than a second write because the relation is
+	// what carries a staged hand-off: an import apply reads the plan and archive its
+	// parse staged, and the startup sweep protects those bytes by walking from a live
+	// Job up to its ancestors. An acceptance committed without its link left durable
+	// work whose input nothing protected — a crash between the two writes was enough for
+	// the sweep to delete it.
+	Parents []string
 }
 
 // Snapshot is the bounded public view of one Job: what a list, a detail page or

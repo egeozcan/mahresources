@@ -1244,3 +1244,33 @@ func TestExportRetention_RuntimeOverride(t *testing.T) {
 		t.Fatalf("after override: got %v, want 2h", dm.ExportRetention())
 	}
 }
+
+// TestRetryRefusesWorkADurableJobOwns is the legacy door closing on canonical work.
+//
+// A queue entry carrying a canonical reference is one execution of a durable Job: it has
+// lineage, an execution token and a claim of its own. The in-place retry rewrites that
+// entry — same Job id, same token, no successor — which is exactly what ADR 0007 says a
+// Retry is not, and it leaves the transfer it starts running under a token describing the
+// attempt it replaced. The control plane's Retry is the only door for that work, so the
+// raw one refuses and says which Job the caller should have named.
+func TestRetryRefusesWorkADurableJobOwns(t *testing.T) {
+	dm := createTestManager()
+	job := addTestJob(dm, "canonical", JobStatusFailed)
+	job.creator = &query_models.ResourceFromRemoteCreator{URL: "http://example.com/file.txt"}
+	if !job.AttachCanonical(CanonicalRef{JobID: "01a0cc55-0000-7000-8000-000000000001", ExecutionToken: "token-1"}) {
+		t.Fatalf("the test entry refused its canonical reference")
+	}
+
+	err := dm.Retry("canonical")
+	var canonical *CanonicalJobError
+	if !errors.As(err, &canonical) {
+		t.Fatalf("retrying a canonical entry in place = %v, want *CanonicalJobError", err)
+	}
+	if canonical.Canonical != "01a0cc55-0000-7000-8000-000000000001" {
+		t.Fatalf("the refusal names job %q, want the durable job", canonical.Canonical)
+	}
+	// Nothing happened to the entry: it is still the failed execution it was.
+	if stored, ok := dm.GetJob("canonical"); !ok || stored.GetStatus() != JobStatusFailed {
+		t.Fatalf("the refused retry changed the entry: %v", stored)
+	}
+}

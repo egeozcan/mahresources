@@ -1197,3 +1197,57 @@ func TestJobExecutionPrincipalVocabularyIsClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestAnAcceptanceRollsBackWhenAParentItNamesIsGone is the atomicity an acceptance's
+// lineage depends on.
+//
+// The parent-child link is what carries a staged hand-off: an import apply reads the plan
+// and archive its parse staged, and the startup sweep protects those bytes by walking
+// from a live Job up to its ancestors. Written after the acceptance rather than inside
+// it, a crash — or a transient failure — between the two commits left durable work whose
+// input nothing protected. So the link is written in the acceptance's own transaction,
+// with both endpoints held, and a parent that is gone takes the whole acceptance with it:
+// no Job, no handle, no event, nothing for a sweep or a dispatch to find.
+func TestAnAcceptanceRollsBackWhenAParentItNamesIsGone(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "acceptance-rollback.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+
+	parent := acceptQueued(t, svc, deps, nil)
+	missing := "0192f0aa-0000-7000-8000-0000000000ff"
+
+	_, err := svc.Accept(deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay:  ReplayInput{NonReplayable: true},
+		Parents: []string{missing},
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("accepting with a parent that does not exist = %v, want ErrNotFound", err)
+	}
+	var jobs []models.Job
+	if err := deps.DB.Where("kind = ?", testKind).Find(&jobs).Error; err != nil {
+		t.Fatalf("read the jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != parent.ID {
+		t.Fatalf("%d jobs exist after the refusal, want only the parent: %+v", len(jobs), jobs)
+	}
+
+	// And with a parent that is there, the relation is committed by the same write: the
+	// child is not durable without it.
+	child, err := svc.Accept(deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		Replay:  ReplayInput{NonReplayable: true},
+		Parents: []string{parent.ID},
+	})
+	if err != nil {
+		t.Fatalf("accept a child of a live parent: %v", err)
+	}
+	var links []models.JobLink
+	if err := deps.DB.Where("type = ? AND from_job_id = ? AND to_job_id = ?",
+		string(LinkParentChild), parent.ID, child.ID).Find(&links).Error; err != nil {
+		t.Fatalf("read the link: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("the acceptance committed %d parent links, want the one it named", len(links))
+	}
+}

@@ -59,7 +59,7 @@ func retryableApplyForTest(t *testing.T, ctx *MahresourcesContext, handle string
 	}
 	input, err := json.Marshal(importApplyJobInput{
 		ParseHandle: handle,
-		Plan:        importConsumedPlanPathFor(handle),
+		Plan:        importPlanPathFor(handle),
 		Decisions: ImportDecisions{
 			MappingActions:  map[string]MappingAction{},
 			DanglingActions: map[string]DanglingAction{},

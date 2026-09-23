@@ -365,6 +365,12 @@ func (ctx *MahresourcesContext) queueIsShuttingDown() bool {
 // reconciliation, and no executor owns it. So it is ended here, bounded and classed,
 // with the claim and the capacity.
 //
+// The one Job this does *not* hand anything back for is a quarantined one: blocked
+// work whose claim nobody could resolve, still carrying this execution's token. Its
+// claim is not the runtime's to return — the executor returning proves the observer
+// let go, not that the worker stopped — so it is left for the execution's own
+// outcome, which is the only proof §3 accepts.
+//
 // The executor's own error text is deliberately not recorded or logged. Only the Kind
 // knows what in it is safe — a URL, a header, a plugin value — and the durable record
 // is a bounded taxonomy instead. An executor that wants to explain itself appends a
@@ -382,6 +388,27 @@ func (ctx *MahresourcesContext) finishOwnedExecution(service *jobs.Service, exec
 	}
 
 	if snap.State != jobs.StateRunning {
+		quarantined, ownErr := service.OwnsQuarantinedJob(deps, ref)
+		if ownErr != nil {
+			log.Printf("job execution: reading the claim state of job %s failed: %v", execution.JobID, ownErr)
+			return
+		}
+		if quarantined {
+			// The Job is blocked with this execution's token still recorded, which
+			// is what a quarantine is: nobody could prove the external work the
+			// claim started had stopped (§3). An executor returning is not that
+			// proof — it says the *observer* let go, while the worker behind it (a
+			// queue entry, a lua.LFunction) may still be running. Releasing here did
+			// exactly that: a capacity-queued transfer was handed its claim and its
+			// slot back mid-flight, and a Resume — which is then permitted, because
+			// no unresolved claim is left — started a second transfer of one URL.
+			//
+			// The proof the design asks for is the execution's own outcome, and
+			// that is what settles this Job: a terminal transition under the token
+			// takes the claim and the capacity with it in one transaction. Until
+			// then the quarantine is left exactly where it is.
+			return
+		}
 		if _, err := service.ReleaseClaim(deps, jobs.ReleaseRequest{
 			ExecutionRef: ref, Reason: jobs.ReleaseReasonExecutionEnded,
 		}); err != nil {

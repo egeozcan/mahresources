@@ -2115,3 +2115,138 @@ func TestReconcileRetryScheduleWidensAndStops(t *testing.T) {
 		}
 	}
 }
+
+// TestAQuarantinedClaimIsNotAFenceForItsOwnExecution is the other half of the
+// quarantine rule, and the half a live executor depends on.
+//
+// A quarantine says nobody could prove what became of the work, so no *other*
+// executor may take it. What it must not say is that the execution holding the token
+// has been fenced: a runtime that reads that refusal as a fence stops an executor
+// whose worker is still running, and the Job it owns is then settled by nobody. The
+// heartbeat therefore succeeds for the owning token — there is nothing to extend, and
+// nothing to report as lost — and is refused exactly as before for any other one.
+func TestAQuarantinedClaimIsNotAFenceForItsOwnExecution(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "quarantine-heartbeat.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileExternalWorkUnproven, nil
+	}
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a", CapacityRef{Group: CapacityGroupGlobal, Limit: 1})
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	expireClaim(t, deps, accepted.ID, clock)
+	reconcileOnce(t, svc, deps, "runtime-b")
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+
+	own := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+	if err := svc.Heartbeat(deps, own, time.Minute); err != nil {
+		t.Fatalf("the owning execution's heartbeat was refused: %v", err)
+	}
+	// Still quarantined, and nobody else's: the heartbeat extends nothing and
+	// releases nothing.
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s after the owner's heartbeat, want quarantined", claim.State)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal); count != 1 {
+		t.Fatalf("capacity rows = %d while the quarantine stands, want its one slot", count)
+	}
+
+	other := ExecutionRef{JobID: accepted.ID, ExecutionToken: "0192f0aa-0000-7000-8000-00000000dead"}
+	if err := svc.Heartbeat(deps, other, time.Minute); !errors.Is(err, ErrStaleExecution) {
+		t.Fatalf("a foreign token's heartbeat = %v, want ErrStaleExecution", err)
+	}
+}
+
+// TestTheExecutionThatOwnsAQuarantinedJobMayEndIt is §3's quiescence rule at the
+// state machine: a quarantined Job's owner is the only thing that can prove what
+// became of the work, and it proves it by reporting the outcome it reached — which
+// may be a success, or a Job whose work in fact succeeded could never be settled and
+// would hold a deployment-wide capacity slot for ever.
+//
+// The fence is the token, and the negative cases below are what keep it one: a hold
+// nobody owns has no execution that may end it, and a foreign token cannot write.
+func TestTheExecutionThatOwnsAQuarantinedJobMayEndIt(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "quarantine-settled.db")
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.reconcile = func(context.Context, ReconcileRequest) (ReconcileDecision, error) {
+		return ReconcileExternalWorkUnproven, nil
+	}
+	clock := time.Date(2033, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "runtime-a", CapacityRef{Group: CapacityGroupGlobal, Limit: 1})
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	expireClaim(t, deps, accepted.ID, clock)
+	reconcileOnce(t, svc, deps, "runtime-b")
+	blocked := jobRow(t, deps, accepted.ID)
+	if State(blocked.State) != StateBlocked || blocked.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the quarantined job is %s under token %q, want blocked under the owner's",
+			blocked.State, blocked.ExecutionToken)
+	}
+
+	// A foreign execution cannot settle it, and says so rather than writing.
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: accepted.ID, ExecutionToken: "0192f0aa-0000-7000-8000-00000000dead"},
+		ExpectedVersion: blocked.Version,
+		Outcome:         StateSucceeded,
+	}); !errors.Is(err, ErrStaleExecution) {
+		t.Fatalf("a foreign token's success = %v, want ErrStaleExecution", err)
+	}
+
+	// The owner may, and its outcome is kept verbatim: succeeded, not blocked, not a
+	// person's guess. The claim and the capacity go in the same transaction.
+	settled, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: blocked.Version,
+		Outcome:         StateSucceeded,
+	})
+	if err != nil {
+		t.Fatalf("the owning execution's success: %v", err)
+	}
+	if settled.State != StateSucceeded {
+		t.Fatalf("the settled job is %s, want succeeded", settled.State)
+	}
+	if claim := claimRow(t, deps, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("claim state = %s after the owner settled it, want released", claim.State)
+	}
+	if token := jobRow(t, deps, accepted.ID).ExecutionToken; token != "" {
+		t.Fatalf("the settled job still carries token %q", token)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 0 {
+		t.Fatalf("capacity rows = %d after the quarantine was settled, want none", count)
+	}
+
+	// A Job blocked with no token is an ordinary hold, and nothing may end it by
+	// declaring an outcome: this is the edge that is *not* open.
+	held := acceptQueued(t, svc, deps, nil)
+	heldExecution, ok := claimOnce(t, svc, deps, "runtime-a")
+	if !ok {
+		t.Fatal("the second queued Job was not claimed")
+	}
+	heldBlocked, err := svc.Transition(deps, Transition{
+		JobID: held.ID, ExpectedVersion: heldExecution.Version,
+		ExecutionToken: heldExecution.ExecutionToken, To: StateBlocked,
+	})
+	if err != nil {
+		t.Fatalf("block the second job: %v", err)
+	}
+	if _, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef:    ExecutionRef{JobID: held.ID},
+		ExpectedVersion: heldBlocked.Version,
+		Outcome:         StateSucceeded,
+	}); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("a held job's host-side success = %v, want ErrIllegalTransition", err)
+	}
+}

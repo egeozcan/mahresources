@@ -42,7 +42,7 @@ func TestExportImportPreservesEntityPickerSlots(t *testing.T) {
 	require.NoError(t, err)
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "merge"
-	_, err = dst.ApplyImport(context.Background(), "picker", decisions, noopSinkAltFS{})
+	_, err = dst.ApplyImport(context.Background(), "picker", importPlanPath("picker"), decisions, noopSinkAltFS{})
 	require.NoError(t, err)
 	for _, table := range []string{"categories", "note_types", "resource_categories"} {
 		var saved struct{ CustomEntityPickerResult, CustomEntityPickerResultCSS string }

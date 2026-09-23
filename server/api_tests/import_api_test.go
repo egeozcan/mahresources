@@ -45,7 +45,7 @@ func (m *mockImportContext) LoadImportPlan(jobID string) (*application_context.I
 	return &application_context.ImportPlan{JobID: jobID}, nil
 }
 
-func (m *mockImportContext) ApplyImport(_ context.Context, parseJobID string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error) {
+func (m *mockImportContext) ApplyImport(_ context.Context, parseJobID, planPath string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error) {
 	return &application_context.ImportApplyResult{}, nil
 }
 

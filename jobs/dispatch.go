@@ -595,6 +595,17 @@ func (r *executionReport) Finish(request FinishRequest) (Snapshot, error) {
 // heartbeat is refused. A runtime that sees this refusal knows its execution was
 // fenced and can stop it.
 //
+// A *quarantined* claim whose token is still this execution's is deliberately not
+// refused. The quarantine withholds the renewal, not the ownership: nobody could
+// prove what became of the work, so no other executor may take it — a Resume is
+// refused while an unresolved claim exists, and an expired scan never revisits a
+// quarantined claim — and the execution holding the token is the one thing that can
+// end it, by reporting its own outcome. Refusing here told a live executor it had
+// been fenced, and an executor that obeys that instruction stops its work while its
+// worker is still running: a capacity-queued transfer was abandoned mid-flight and
+// its claim released, which is the duplicate dispatch the quarantine exists to
+// prevent.
+//
 // The new expiry is the later of the stored one and now plus the extension, so
 // a heartbeat arriving inside the lease never shortens it and one arriving after
 // the lease ran out still leaves a usable lease rather than one in the past.
@@ -619,6 +630,11 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 	if err != nil {
 		return err
 	}
+	if claim.State == models.JobClaimStateQuarantined && claim.ExecutionToken == ref.ExecutionToken {
+		// Still this execution's, and nobody else may take it: there is nothing to
+		// extend here, and nothing to report as lost.
+		return nil
+	}
 	if claim.State != models.JobClaimStateHeld || claim.ExecutionToken != ref.ExecutionToken {
 		return fmt.Errorf("%w: job %s is not owned by this execution", ErrStaleExecution, ref.JobID)
 	}
@@ -642,6 +658,33 @@ func (s *Service) Heartbeat(deps Deps, ref ExecutionRef, extension time.Duration
 		return fmt.Errorf("%w: job %s was taken over while its lease was being extended", ErrStaleExecution, ref.JobID)
 	}
 	return nil
+}
+
+// OwnsQuarantinedJob reports whether one execution is the owner of a Job whose
+// claim was quarantined: the Job is blocked, still carries this execution's token,
+// and its claim row is the unresolved one. It is the question a runtime has to ask
+// before it hands an execution's ownership back, because a quarantine is not the
+// executor saying its work stopped — it is the admission that nobody could prove it
+// did, and only the owning execution's own outcome resolves it.
+func (s *Service) OwnsQuarantinedJob(deps Deps, ref ExecutionRef) (bool, error) {
+	if err := validateExecutionRef(ref); err != nil {
+		return false, err
+	}
+	if ref.ExecutionToken == "" {
+		return false, nil
+	}
+	job, err := loadJob(deps.DB, ref.JobID)
+	if err != nil {
+		return false, err
+	}
+	if State(job.State) != StateBlocked || job.ExecutionToken != ref.ExecutionToken {
+		return false, nil
+	}
+	claim, err := loadClaim(deps.DB, ref.JobID)
+	if err != nil {
+		return false, err
+	}
+	return claim.State == models.JobClaimStateQuarantined && claim.ExecutionToken == ref.ExecutionToken, nil
 }
 
 // ReleaseClaim ends one execution's ownership of a Job.

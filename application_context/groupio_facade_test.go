@@ -385,7 +385,7 @@ func TestImport_StampsActingUserOnCreatedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
-	if _, err := importer.ApplyImport(context.Background(), jobID, facadeDecisions(plan), facadeSink{}); err != nil {
+	if _, err := importer.ApplyImport(context.Background(), jobID, importPlanPathFor(jobID), facadeDecisions(plan), facadeSink{}); err != nil {
 		t.Fatalf("ApplyImport: %v", err)
 	}
 

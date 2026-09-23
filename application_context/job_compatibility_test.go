@@ -311,3 +311,91 @@ func TestALegacyDownloadHandleResolvesATerminalJobAfterRestart(t *testing.T) {
 		t.Fatalf("the handle names %s after a retry, want the successor %s", resolved.ID, result.SuccessorID)
 	}
 }
+
+// TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue is the handle question
+// asked once, by the principal asking it.
+//
+// A Retry moves the legacy handle onto a successor, and the successor belongs to whoever
+// asked for the retry — so the process that still holds the ancestor's queue entry has an
+// id whose current meaning it may not see. Reading that "may not see" as "no such handle"
+// sent the caller back to the queue: the ancestor's entry was published under the
+// successor's handle, and the in-place Retry control on it rewrote work the caller had
+// just been refused. Absence and inaccessibility are different answers, and only the first
+// one falls back to the queue.
+func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 2
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, _ := newSecondProcessJobContext(t, first, key)
+
+	owner, err := first.CreateUser(&UserInput{Username: "handle-owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the owner: %v", err)
+	}
+
+	// A transfer that fails, submitted by an ordinary user, so the handle names a Job that
+	// user owns and this process holds an entry for.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not here", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	ownerCtx := first.WithPrincipal(auth.FromUser(owner))
+	submission := ownerCtx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{
+		URL: server.URL + "/missing.bin",
+	}, nil, "", "api")
+	if len(submission) != 1 || submission[0].Err != nil || submission[0].Row == nil {
+		t.Fatalf("submit: %+v", submission)
+	}
+	handle := submission[0].Row.ID
+	failed := waitForSnapshot(t, first, submission[0].CanonicalJobID, "the transfer to fail", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if failed.State != jobs.StateFailed {
+		t.Fatalf("the transfer ended %s, want failed", failed.State)
+	}
+	if _, found := first.DownloadManager().GetJob(handle); !found {
+		t.Fatalf("this process holds no entry for the failed transfer")
+	}
+
+	// Another process retries it as an administrator. The handle moves onto the successor,
+	// which is ownerless — and an ownerless Job is nobody's but an administrator's.
+	retry, err := other.JobService().ExecuteCommand(context.Background(), other.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "handle-moved",
+		ExpectedVersion: jobSnapshot(t, other.JobService(), other, failed.ID).Version,
+		Actor:           jobs.Access{Administrator: true},
+	})
+	if err != nil {
+		t.Fatalf("the administrator's retry: %v", err)
+	}
+	if retry.SuccessorID == "" || retry.SuccessorID == failed.ID {
+		t.Fatalf("the retry produced no successor: %+v", retry)
+	}
+	if _, err := other.ResolveJobHandle(DownloadHandleNamespace, handle); err != nil {
+		t.Fatalf("the handle no longer names the successor: %v", err)
+	}
+	if _, err := ownerCtx.ResolveJobHandle(DownloadHandleNamespace, handle); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("the owner's own read of the moved handle = %v, want ErrNotFound", err)
+	}
+
+	// So the projection answers the same way rather than falling back to the ancestor's
+	// entry, and the raw in-place retry of that entry is refused: the work belongs to a
+	// durable Job the asker may not act on.
+	projected, err := ownerCtx.ProjectDownloadJob(handle)
+	if err == nil {
+		t.Fatalf("the moved handle projected the ancestor's entry: %+v", projected.Row)
+	}
+	if !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("projecting a handle whose target is unreachable = %v, want ErrNotFound", err)
+	}
+	if err := first.DownloadManager().Retry(handle); err == nil {
+		t.Fatalf("an in-place retry of a canonical entry was accepted")
+	}
+
+	// And the id is not lost to this process: it still holds the ancestor's entry, which is
+	// what the control plane's own projection of the successor needs.
+	if entry, found := first.DownloadManager().GetJob(handle); !found || entry.CanonicalJobID != failed.ID {
+		t.Fatalf("the ancestor's entry is missing or names another job: %v", entry)
+	}
+}

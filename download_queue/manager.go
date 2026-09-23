@@ -1430,6 +1430,13 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	if job.isManaged() {
 		return &StateConflictError{JobID: jobID, Action: "retried", Status: job.GetStatus()}
 	}
+	// Work a durable Job owns is retried through the control plane, never here. In place it
+	// would rewrite one attempt as another under the same Job — no lineage, no new token
+	// and no capacity admission for the transfer it started — which is the immutable-lineage
+	// contract ADR 0007 states. The legacy door is for ids from before a Job existed.
+	if ref, ok := job.CanonicalExecution(); ok && ref.JobID != "" {
+		return &CanonicalJobError{JobID: jobID, Canonical: ref.JobID, Action: "retried"}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	status, ok := job.claimRetry(ctx, cancel)

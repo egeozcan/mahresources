@@ -274,6 +274,12 @@ func statusCodeForJobError(err error) int {
 	if errors.As(err, &conflict) {
 		return http.StatusConflict
 	}
+	// Work a durable Job owns cannot be retried in place at all, which is a conflict
+	// about where the retry belongs rather than a malformed request.
+	var canonical *download_queue.CanonicalJobError
+	if errors.As(err, &canonical) {
+		return http.StatusConflict
+	}
 	// Anything else is unexpected from these four entry points; fall back to the
 	// shared classifier rather than inventing a code.
 	return statusCodeForError(err, http.StatusBadRequest)

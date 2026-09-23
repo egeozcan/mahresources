@@ -114,7 +114,7 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 	decisions.GUIDCollisionPolicy = "replace"
 
 	// Apply
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestApplyImport_ResourceCollisionSkip(t *testing.T) {
 	decisions.ResourceCollisionPolicy = "skip"
 	decisions.GUIDCollisionPolicy = "skip"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestApplyImport_SchemaDefsMapToExisting(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.ResourceCollisionPolicy = "skip"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestApplyImport_VersionHistoryRoundTrip(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestApplyImport_PreviewsRoundTrip(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -603,7 +603,7 @@ func TestApplyImport_SeriesSlugPreserved(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -775,7 +775,7 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 		t.Fatalf("expected ValidateForApply to pass after fix, got: %v", err)
 	}
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -890,7 +890,7 @@ func TestApplyImport_SchemaDefsOffCreatesMinimal(t *testing.T) {
 	var catCountBefore int64
 	ctx.db.Model(&models.Category{}).Count(&catCountBefore)
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -974,7 +974,7 @@ func TestApplyImport_ShellGroupCreate(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestApplyImport_ShellGroupMapToExisting(t *testing.T) {
 		DestinationID: &targetGroup.ID,
 	}
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1170,7 +1170,7 @@ func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 	}
 
 	// Apply must succeed despite the duplicate GroupRelation
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply should succeed despite duplicate relation: %v", err)
 	}
@@ -1320,7 +1320,7 @@ func TestApplyImport_GUIDSkipDoesNotPolluteM2MLinks(t *testing.T) {
 	decisions.GUIDCollisionPolicy = "skip"
 	decisions.ResourceCollisionPolicy = "skip"
 
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1379,7 +1379,7 @@ func TestApplyImport_PreservesGUIDsOnCreate(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "merge" // irrelevant — no collisions in fresh dst
 
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1469,7 +1469,7 @@ func TestApplyImport_ReplaceUsesAttachedFs(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1546,7 +1546,7 @@ func TestApplyImport_ReplaceBlobCopyFailureFailsImport(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 	decisions.GUIDCollisionPolicy = "replace"
 
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err == nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err == nil {
 		t.Fatal("expected ApplyImport to fail when alt fs is not attached, got nil")
 	}
 }
@@ -1649,7 +1649,7 @@ func TestApplyImport_PreservesSchemaDefGUIDsOnCreate(t *testing.T) {
 	}
 
 	decisions := buildDefaultDecisions(plan)
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1746,7 +1746,7 @@ func TestApplyImport_RetryAfterPartialApplyIsIdempotent(t *testing.T) {
 	decisions := buildDefaultDecisions(plan)
 
 	// First apply — succeeds, creates schema defs.
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
@@ -1768,7 +1768,7 @@ func TestApplyImport_RetryAfterPartialApplyIsIdempotent(t *testing.T) {
 	// Retry with the same plan + decisions — must succeed without duplicating.
 	// LoadImportPlan falls back to .plan.applied.json so the second call
 	// resolves the plan even after the normal handler flow has renamed it.
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
 
@@ -1849,7 +1849,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessSchemaDefs(t *testing.T) {
 	}
 	decisions := buildDefaultDecisions(plan)
 
-	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
@@ -1867,7 +1867,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessSchemaDefs(t *testing.T) {
 
 	// Retry. The plan still has no GUIDs on the synthesized entries, so
 	// GUID lookup misses and name lookup must kick in.
-	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
 
@@ -1920,7 +1920,7 @@ func TestApplyImport_RetryAfterSeriesCreatedIsIdempotent(t *testing.T) {
 
 	// First apply: creates the series (dst is empty, so plan's SeriesInfo
 	// entry has Action="create").
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	var seriesCount int64
@@ -1931,7 +1931,7 @@ func TestApplyImport_RetryAfterSeriesCreatedIsIdempotent(t *testing.T) {
 
 	// Retry with the same plan (which still says Action="create"). Must
 	// not fail on the unique slug constraint.
-	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
 	dstCtx.db.Model(&models.Series{}).Where("slug = ?", "retry-series-slug").Count(&seriesCount)
@@ -2017,7 +2017,7 @@ func TestApplyImport_NoGUIDNoteTypeCreateRespectsUserChoice(t *testing.T) {
 		}
 	}
 
-	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -2095,7 +2095,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessGRT(t *testing.T) {
 	}
 	decisions := buildDefaultDecisions(plan)
 
-	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
@@ -2108,7 +2108,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessGRT(t *testing.T) {
 		t.Fatalf("expected 1 GRT after first apply, got %d", got)
 	}
 
-	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+	if _, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{}); err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
 	if got := countRow("group_relation_types", grtName); got != 1 {
@@ -2200,7 +2200,7 @@ func TestApplyImport_NoGUIDNoteTypeMappedIsRetrySafe(t *testing.T) {
 
 	decisions := buildDefaultDecisions(plan)
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -2272,7 +2272,7 @@ func TestApplyImport_NoGUIDNoteTypeDefMarksRetryUnsafe(t *testing.T) {
 	}
 	decisions := buildDefaultDecisions(plan)
 
-	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, importPlanPath(jobID), decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
