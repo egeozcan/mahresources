@@ -653,49 +653,79 @@ func (ctx *MahresourcesContext) scrubCommandSourceBatch(kind, cursor string, lim
 		return false, cursor, errors.New("plugin command scrub mappings could not be read")
 	}
 	for _, mapping := range mappings {
-		switch kind {
-		case jobMigrationPluginCommandRun:
-			var row models.PluginCommandRun
-			if err := ctx.db.Where("id = ?", mapping.SourceID).First(&row).Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command run disappeared before scrub")
+		var changedAfterVerification bool
+		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+			var current models.JobSourceMapping
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("source_kind = ? AND source_id = ?", kind, mapping.SourceID).First(&current).Error; err != nil {
+				return errors.New("plugin command scrub mapping disappeared")
 			}
-			if hashPluginCommandRun(row) != mapping.SourceHash {
-				return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "plugin command input changed after verification")
+			if current.Status != models.JobSourceMappingVerified &&
+				!(current.Status == models.JobSourceMappingPurged && current.ScrubbedAt == nil) {
+				return nil
 			}
-			if err := ctx.db.Model(&models.PluginCommandRun{}).Where("id = ?", row.ID).
-				Updates(map[string]any{"params_json": "", "inputs_json": ""}).Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command run plaintext scrub failed")
+			var afterHash string
+			switch kind {
+			case jobMigrationPluginCommandRun:
+				var row models.PluginCommandRun
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", current.SourceID).First(&row).Error; err != nil {
+					return errors.New("plugin command run disappeared before scrub")
+				}
+				if hashPluginCommandRun(row) != current.SourceHash {
+					if err := quarantineJobSource(tx, &current, "plugin command input changed after verification"); err != nil {
+						return err
+					}
+					changedAfterVerification = true
+					return nil
+				}
+				if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", row.ID).
+					Updates(map[string]any{"params_json": "", "inputs_json": ""}).Error; err != nil {
+					return errors.New("plugin command run plaintext scrub failed")
+				}
+				var after models.PluginCommandRun
+				if err := tx.Where("id = ?", row.ID).First(&after).Error; err != nil {
+					return errors.New("plugin command run could not be reread after scrub")
+				}
+				afterHash = hashPluginCommandRun(after)
+			case jobMigrationPluginCommandImport:
+				var row models.PluginCommandImport
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", current.SourceID).First(&row).Error; err != nil {
+					return errors.New("plugin command import disappeared before scrub")
+				}
+				if hashPluginCommandImport(row) != current.SourceHash {
+					if err := quarantineJobSource(tx, &current, "plugin command import changed after verification"); err != nil {
+						return err
+					}
+					changedAfterVerification = true
+					return nil
+				}
+				if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", row.ID).
+					Update("fields_json", "").Error; err != nil {
+					return errors.New("plugin command import plaintext scrub failed")
+				}
+				var after models.PluginCommandImport
+				if err := tx.Where("id = ?", row.ID).First(&after).Error; err != nil {
+					return errors.New("plugin command import could not be reread after scrub")
+				}
+				afterHash = hashPluginCommandImport(after)
+			default:
+				return errors.New("unknown plugin command migration source")
 			}
-			var after models.PluginCommandRun
-			if err := ctx.db.Where("id = ?", row.ID).First(&after).Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command run could not be reread after scrub")
+			at := now
+			if current.Status != models.JobSourceMappingPurged {
+				current.Status = models.JobSourceMappingScrubbed
 			}
-			mapping.PostScrubHash = hashPluginCommandRun(after)
-		case jobMigrationPluginCommandImport:
-			var row models.PluginCommandImport
-			if err := ctx.db.Where("id = ?", mapping.SourceID).First(&row).Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command import disappeared before scrub")
+			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, afterHash, now
+			if err := tx.Save(&current).Error; err != nil {
+				return errors.New("plugin command scrub marker could not be stored")
 			}
-			if hashPluginCommandImport(row) != mapping.SourceHash {
-				return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "plugin command import changed after verification")
-			}
-			if err := ctx.db.Model(&models.PluginCommandImport{}).Where("id = ?", row.ID).
-				Update("fields_json", "").Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command import plaintext scrub failed")
-			}
-			var after models.PluginCommandImport
-			if err := ctx.db.Where("id = ?", row.ID).First(&after).Error; err != nil {
-				return false, mapping.SourceID, errors.New("plugin command import could not be reread after scrub")
-			}
-			mapping.PostScrubHash = hashPluginCommandImport(after)
+			return nil
+		})
+		if err != nil {
+			return false, mapping.SourceID, err
 		}
-		at := now
-		if mapping.Status != models.JobSourceMappingPurged {
-			mapping.Status = models.JobSourceMappingScrubbed
-		}
-		mapping.ScrubbedAt, mapping.UpdatedAt = &at, now
-		if err := ctx.db.Save(&mapping).Error; err != nil {
-			return false, mapping.SourceID, errors.New("plugin command scrub marker could not be stored")
+		if changedAfterVerification {
+			return false, mapping.SourceID, fmt.Errorf("job source %s/%s changed after verification and was quarantined", mapping.SourceKind, mapping.SourceID)
 		}
 	}
 	if len(mappings) == limit {

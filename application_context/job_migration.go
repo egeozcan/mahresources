@@ -1255,34 +1255,56 @@ func (ctx *MahresourcesContext) scrubDownloadHistoryBatch(cursor string, limit i
 		return false, cursor, err
 	}
 	for _, mapping := range mappings {
-		id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
+		var changedAfterVerification bool
+		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+			var current models.JobSourceMapping
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, mapping.SourceID).First(&current).Error; err != nil {
+				return errors.New("download history scrub mapping disappeared")
+			}
+			if current.Status != models.JobSourceMappingVerified &&
+				!(current.Status == models.JobSourceMappingPurged && current.ScrubbedAt == nil) {
+				return nil
+			}
+			id, err := strconv.ParseUint(current.SourceID, 10, 64)
+			if err != nil {
+				return errors.New("download history mapping id is invalid")
+			}
+			var row models.DownloadHistoryEntry
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+				return errors.New("download history disappeared before scrub")
+			}
+			if hashDownloadHistory(row) != current.SourceHash {
+				if err := quarantineJobSource(tx, &current, "source changed after verification"); err != nil {
+					return err
+				}
+				changedAfterVerification = true
+				return nil
+			}
+			projection := downloadURLProjection(row.URL)
+			if err := tx.Model(&models.DownloadHistoryEntry{}).Where("id = ?", row.ID).
+				Updates(map[string]any{"payload": nil, "url": projection}).Error; err != nil {
+				return errors.New("download history plaintext scrub failed")
+			}
+			var scrubbed models.DownloadHistoryEntry
+			if err := tx.First(&scrubbed, row.ID).Error; err != nil {
+				return errors.New("download history could not be reread after scrub")
+			}
+			at := now
+			if current.Status != models.JobSourceMappingPurged {
+				current.Status = models.JobSourceMappingScrubbed
+			}
+			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashDownloadHistory(scrubbed), now
+			if err := tx.Save(&current).Error; err != nil {
+				return errors.New("download history scrub marker could not be stored")
+			}
+			return nil
+		})
 		if err != nil {
-			return false, cursor, err
-		}
-		var row models.DownloadHistoryEntry
-		if err := ctx.db.First(&row, uint(id)).Error; err != nil {
-			return false, cursor, err
-		}
-		if hashDownloadHistory(row) != mapping.SourceHash {
-			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "source changed after verification")
-		}
-		row.Payload = nil
-		row.URL = downloadURLProjection(row.URL)
-		if err := ctx.db.Model(&models.DownloadHistoryEntry{}).Where("id = ?", row.ID).
-			Updates(map[string]any{"payload": nil, "url": row.URL}).Error; err != nil {
 			return false, mapping.SourceID, err
 		}
-		var scrubbed models.DownloadHistoryEntry
-		if err := ctx.db.First(&scrubbed, row.ID).Error; err != nil {
-			return false, mapping.SourceID, err
-		}
-		at := now
-		if mapping.Status != models.JobSourceMappingPurged {
-			mapping.Status = models.JobSourceMappingScrubbed
-		}
-		mapping.ScrubbedAt, mapping.PostScrubHash, mapping.UpdatedAt = &at, hashDownloadHistory(scrubbed), now
-		if err := ctx.db.Save(&mapping).Error; err != nil {
-			return false, mapping.SourceID, err
+		if changedAfterVerification {
+			return false, mapping.SourceID, fmt.Errorf("job source %s/%s changed after verification and was quarantined", mapping.SourceKind, mapping.SourceID)
 		}
 	}
 	if len(mappings) == limit {
@@ -1319,32 +1341,56 @@ func (ctx *MahresourcesContext) scrubScheduledDownloadBatch(cursor string, limit
 		return false, cursor, errors.New("scheduled download scrub mappings could not be read")
 	}
 	for _, mapping := range mappings {
-		id, err := strconv.ParseUint(mapping.SourceID, 10, 64)
+		var changedAfterVerification bool
+		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+			var current models.JobSourceMapping
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("source_kind = ? AND source_id = ?", jobMigrationScheduledDownload, mapping.SourceID).First(&current).Error; err != nil {
+				return errors.New("scheduled download scrub mapping disappeared")
+			}
+			if current.Status != models.JobSourceMappingVerified &&
+				!(current.Status == models.JobSourceMappingPurged && current.ScrubbedAt == nil) {
+				return nil
+			}
+			id, err := strconv.ParseUint(current.SourceID, 10, 64)
+			if err != nil {
+				return errors.New("scheduled download mapping id is invalid")
+			}
+			var row models.ScheduledDownload
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+				return errors.New("scheduled download disappeared before scrub")
+			}
+			if hashScheduledDownload(row) != current.SourceHash {
+				if err := quarantineJobSource(tx, &current, "source changed after verification"); err != nil {
+					return err
+				}
+				changedAfterVerification = true
+				return nil
+			}
+			projection := downloadURLProjection(row.URL)
+			if err := tx.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).
+				Updates(map[string]any{"payload": nil, "url": projection}).Error; err != nil {
+				return errors.New("scheduled download plaintext scrub failed")
+			}
+			var scrubbed models.ScheduledDownload
+			if err := tx.First(&scrubbed, row.ID).Error; err != nil {
+				return errors.New("scheduled download could not be reread after scrub")
+			}
+			at := now
+			if current.Status != models.JobSourceMappingPurged {
+				current.Status = models.JobSourceMappingScrubbed
+			}
+			current.ScrubbedAt, current.PostScrubHash, current.UpdatedAt = &at, hashScheduledDownload(scrubbed), now
+			if err := tx.Save(&current).Error; err != nil {
+				return errors.New("scheduled download scrub marker could not be stored")
+			}
+			return nil
+		})
 		if err != nil {
-			return false, cursor, errors.New("scheduled download mapping id is invalid")
+			return false, mapping.SourceID, err
 		}
-		var row models.ScheduledDownload
-		if err := ctx.db.First(&row, uint(id)).Error; err != nil {
-			return false, cursor, errors.New("scheduled download disappeared before scrub")
-		}
-		if hashScheduledDownload(row) != mapping.SourceHash {
-			return false, mapping.SourceID, quarantineJobSource(ctx.db, &mapping, "source changed after verification")
-		}
-		projection := downloadURLProjection(row.URL)
-		if err := ctx.db.Model(&models.ScheduledDownload{}).Where("id = ?", row.ID).Updates(map[string]any{"payload": nil, "url": projection}).Error; err != nil {
-			return false, mapping.SourceID, errors.New("scheduled download plaintext scrub failed")
-		}
-		var scrubbed models.ScheduledDownload
-		if err := ctx.db.First(&scrubbed, row.ID).Error; err != nil {
-			return false, mapping.SourceID, errors.New("scheduled download could not be reread after scrub")
-		}
-		at := now
-		if mapping.Status != models.JobSourceMappingPurged {
-			mapping.Status = models.JobSourceMappingScrubbed
-		}
-		mapping.ScrubbedAt, mapping.PostScrubHash, mapping.UpdatedAt = &at, hashScheduledDownload(scrubbed), now
-		if err := ctx.db.Save(&mapping).Error; err != nil {
-			return false, mapping.SourceID, errors.New("scheduled download scrub marker could not be stored")
+		if changedAfterVerification {
+			return false, mapping.SourceID, fmt.Errorf("job source %s/%s changed after verification and was quarantined", mapping.SourceKind, mapping.SourceID)
 		}
 	}
 	if len(mappings) == limit {

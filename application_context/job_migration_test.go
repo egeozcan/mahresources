@@ -802,3 +802,153 @@ func TestJobMigrationQuarantinesMalformedSourceWithoutPersistingSecrets(t *testi
 		t.Fatalf("quarantined migration advanced epoch to %d", epoch.MinimumEpoch)
 	}
 }
+
+func TestJobMigrationScrubAndMarkerAreAtomic(t *testing.T) {
+	tests := []struct {
+		name string
+		kind string
+		seed func(*testing.T, *MahresourcesContext) (string, string, func() bool)
+	}{
+		{
+			name: "download history",
+			kind: jobMigrationDownloadHistory,
+			seed: func(t *testing.T, ctx *MahresourcesContext) (string, string, func() bool) {
+				t.Helper()
+				row := models.DownloadHistoryEntry{JobID: "atomic-scrub-history", URL: "https://user:secret@download.example.invalid/private?token=secret",
+					Payload: []byte(`{"url":"https://user:secret@download.example.invalid/private?token=secret"}`),
+					Status:  models.DownloadHistoryStatusFailed, CreatedAt: time.Now().UTC()}
+				if err := ctx.db.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				id := strconv.FormatUint(uint64(row.ID), 10)
+				return id, hashDownloadHistory(row), func() bool {
+					var got models.DownloadHistoryEntry
+					if err := ctx.db.First(&got, row.ID).Error; err != nil {
+						t.Fatal(err)
+					}
+					return string(got.Payload) == string(row.Payload) && got.URL == row.URL
+				}
+			},
+		},
+		{
+			name: "scheduled download",
+			kind: jobMigrationScheduledDownload,
+			seed: func(t *testing.T, ctx *MahresourcesContext) (string, string, func() bool) {
+				t.Helper()
+				row := models.ScheduledDownload{PluginName: "worker", URL: "https://user:secret@scheduled.example.invalid/private?token=secret",
+					Payload: []byte(`{"url":"https://user:secret@scheduled.example.invalid/private?token=secret"}`),
+					DueAt:   time.Now().UTC(), Status: models.ScheduledDownloadStatusPending, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+				if err := ctx.db.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				id := strconv.FormatUint(uint64(row.ID), 10)
+				return id, hashScheduledDownload(row), func() bool {
+					var got models.ScheduledDownload
+					if err := ctx.db.First(&got, row.ID).Error; err != nil {
+						t.Fatal(err)
+					}
+					return string(got.Payload) == string(row.Payload) && got.URL == row.URL
+				}
+			},
+		},
+		{
+			name: "plugin command run",
+			kind: jobMigrationPluginCommandRun,
+			seed: func(t *testing.T, ctx *MahresourcesContext) (string, string, func() bool) {
+				t.Helper()
+				row := models.PluginCommandRun{ID: "atomic-scrub-run", PluginName: "worker", CommandName: "ingest",
+					ParamsJSON: `{"token":"secret"}`, InputsJSON: `[{"name":"private.csv"}]`,
+					Status: models.PluginCommandRunStatusQueued, CreatedAt: time.Now().UTC()}
+				if err := ctx.db.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				return row.ID, hashPluginCommandRun(row), func() bool {
+					var got models.PluginCommandRun
+					if err := ctx.db.First(&got, "id = ?", row.ID).Error; err != nil {
+						t.Fatal(err)
+					}
+					return got.ParamsJSON == row.ParamsJSON && got.InputsJSON == row.InputsJSON
+				}
+			},
+		},
+		{
+			name: "plugin command import",
+			kind: jobMigrationPluginCommandImport,
+			seed: func(t *testing.T, ctx *MahresourcesContext) (string, string, func() bool) {
+				t.Helper()
+				row := models.PluginCommandImport{ID: "atomic-scrub-import", RunID: "atomic-scrub-run", FileName: "private.csv",
+					FieldsJSON: `{"column":"secret"}`, Status: models.PluginCommandImportStatusPending, CreatedAt: time.Now().UTC()}
+				if err := ctx.db.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				return row.ID, hashPluginCommandImport(row), func() bool {
+					var got models.PluginCommandImport
+					if err := ctx.db.First(&got, "id = ?", row.ID).Error; err != nil {
+						t.Fatal(err)
+					}
+					return got.FieldsJSON == row.FieldsJSON
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newJobHarnessContext(t, false)
+			if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Truncate(time.Second)
+			sourceID, sourceHash, sourceIntact := tt.seed(t, ctx)
+			mapping := models.JobSourceMapping{SourceKind: tt.kind, SourceID: sourceID, JobID: "canonical-job",
+				SourceRevision: 1, SourceHash: sourceHash, Status: models.JobSourceMappingVerified,
+				Origin: models.JobSourceOriginBackfilled, CopiedAt: now, VerifiedAt: &now, CreatedAt: now, UpdatedAt: now}
+			if err := ctx.db.Create(&mapping).Error; err != nil {
+				t.Fatal(err)
+			}
+			checkpoint := models.JobMigrationCheckpoint{ID: models.JobMigrationCheckpointRowID, Phase: models.JobMigrationPhaseScrub,
+				SourceKind: tt.kind, UpdatedAt: now}
+			if err := ctx.db.Create(&checkpoint).Error; err != nil {
+				t.Fatal(err)
+			}
+			trigger := "CREATE TRIGGER fail_scrub_marker BEFORE UPDATE ON job_source_mappings WHEN OLD.source_kind = '" + tt.kind +
+				"' AND OLD.source_id = '" + sourceID + "' AND NEW.status = 'scrubbed' BEGIN SELECT RAISE(ABORT, 'injected scrub marker failure'); END"
+			if err := ctx.db.Exec(trigger).Error; err != nil {
+				t.Fatal(err)
+			}
+			_, err := ctx.RunJobMigration(JobMigrationOptions{BatchSize: 1, MaxBatches: 1})
+			if err == nil {
+				t.Fatal("migration unexpectedly saved scrubbed source without writing its marker")
+			}
+			if !sourceIntact() {
+				t.Fatal("source plaintext was scrubbed even though its mapping marker failed")
+			}
+			var afterFailure models.JobSourceMapping
+			if err := ctx.db.Where("source_kind = ? AND source_id = ?", tt.kind, sourceID).First(&afterFailure).Error; err != nil {
+				t.Fatal(err)
+			}
+			if afterFailure.Status != models.JobSourceMappingVerified || afterFailure.ScrubbedAt != nil || afterFailure.PostScrubHash != "" {
+				t.Fatalf("failed marker write changed mapping state: %+v", afterFailure)
+			}
+			if err := ctx.db.Exec("DROP TRIGGER fail_scrub_marker").Error; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ctx.RunJobMigration(JobMigrationOptions{BatchSize: 1, MaxBatches: 1}); err != nil {
+				t.Fatalf("resumed scrub failed: %v", err)
+			}
+			var afterResume models.JobSourceMapping
+			if err := ctx.db.Where("source_kind = ? AND source_id = ?", tt.kind, sourceID).First(&afterResume).Error; err != nil {
+				t.Fatal(err)
+			}
+			if afterResume.Status != models.JobSourceMappingScrubbed || afterResume.ScrubbedAt == nil || afterResume.PostScrubHash == "" {
+				t.Fatalf("resumed source did not acquire scrub marker: %+v", afterResume)
+			}
+			if sourceIntact() {
+				t.Fatal("resumed scrub retained replay plaintext")
+			}
+		})
+	}
+}

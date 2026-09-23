@@ -13451,3 +13451,29 @@ Residual risks and handoffs carried forward:
   'TestJobMigration|TestPluginCommandWritesUseCanonicalReplayAfterWriterFence|TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction' -count=1`.
   Tagged `go vet` for `application_context`, `jobs`, and `plugin_commands`, plus
   `git diff --check`, passed.
+
+### Task 11 scrub atomicity review fix
+
+- Sol review found a crash window between clearing a source's legacy replay
+  fields and saving its scrub marker. Download history, scheduled downloads,
+  command runs and imports now lock/reload the source mapping and source row,
+  scrub the row, compute its post-scrub hash and save the marker in one database
+  transaction. A changed source is quarantined transactionally before the
+  migration returns its safe blocker.
+- Red first: `TestJobMigrationScrubAndMarkerAreAtomic` injected a mapping update
+  failure for each source kind and initially showed that all four source rows
+  had already lost plaintext. After the fix, each transaction rolls back the
+  source scrub and marker together; removing the injected fault lets a resumed
+  pass scrub and mark the same source.
+- The PostgreSQL crash-resume test now also rejects the marker write for the
+  next download row, proves its plaintext and verified mapping both remain,
+  then removes the fault and resumes from a new controller. It passed with the
+  regular migration fixture.
+- Validation passed:
+  `go test --tags 'json1 fts5' ./application_context -run
+  'TestJobMigration|Test.*(ScheduledDownload|DownloadHistory)' -count=1`,
+  `go test --tags 'json1 fts5 postgres' ./application_context -run
+  '^TestJobMigrationPostgresResumesAfterCrashMidScrub$' -count=1`, and
+  `go test -race --tags 'json1 fts5' ./application_context -run
+  '^TestJobMigrationScrubAndMarkerAreAtomic$' -count=1`. `git diff --check`
+  passed.

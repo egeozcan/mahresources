@@ -100,6 +100,49 @@ func TestJobMigrationPostgresResumesAfterCrashMidScrub(t *testing.T) {
 	if len(unswept.Payload) == 0 {
 		t.Fatal("the second source was already scrubbed before the simulated crash")
 	}
+	var unsweptMapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, fmt.Sprint(unswept.ID)).First(&unsweptMapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unsweptMapping.Status != models.JobSourceMappingVerified {
+		t.Fatalf("unswept source mapping status = %q, want verified", unsweptMapping.Status)
+	}
+	functionSQL := fmt.Sprintf(`CREATE FUNCTION fail_scrub_marker_for_test() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.source_kind = 'download-history' AND NEW.source_id = '%d' AND NEW.status = 'scrubbed' THEN
+				RAISE EXCEPTION 'injected scrub marker failure';
+			END IF;
+			RETURN NEW;
+		END $$;`, unswept.ID)
+	if err := ctx.db.Exec(functionSQL).Error; err != nil {
+		t.Fatalf("install injected marker function: %v", err)
+	}
+	if err := ctx.db.Exec("CREATE TRIGGER fail_scrub_marker_for_test BEFORE UPDATE ON job_source_mappings FOR EACH ROW EXECUTE FUNCTION fail_scrub_marker_for_test()").Error; err != nil {
+		t.Fatalf("install injected marker failure: %v", err)
+	}
+	if _, err := ctx.RunJobMigration(options); err == nil {
+		t.Fatal("scrub unexpectedly succeeded while the mapping marker write was rejected")
+	}
+	var afterFault models.DownloadHistoryEntry
+	if err := ctx.db.First(&afterFault, unswept.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(afterFault.Payload) == 0 || afterFault.URL != unswept.URL {
+		t.Fatalf("failed marker write committed a partial source scrub: payload=%d URL=%q", len(afterFault.Payload), afterFault.URL)
+	}
+	var afterFaultMapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, fmt.Sprint(unswept.ID)).First(&afterFaultMapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if afterFaultMapping.Status != models.JobSourceMappingVerified || afterFaultMapping.ScrubbedAt != nil || afterFaultMapping.PostScrubHash != "" {
+		t.Fatalf("failed marker write changed mapping state: %+v", afterFaultMapping)
+	}
+	if err := ctx.db.Exec("DROP TRIGGER fail_scrub_marker_for_test ON job_source_mappings").Error; err != nil {
+		t.Fatalf("remove injected marker trigger: %v", err)
+	}
+	if err := ctx.db.Exec("DROP FUNCTION fail_scrub_marker_for_test()").Error; err != nil {
+		t.Fatalf("remove injected marker failure: %v", err)
+	}
 	// Lifecycle-only updates on unswept rows of every source kind must remain
 	// writable after the PostgreSQL fence. The triggers are scoped to writes of
 	// legacy replay columns.
