@@ -17,7 +17,7 @@ import (
 func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	deps := newPGDeps(t)
 	if err := deps.DB.AutoMigrate(
-		&models.JobReplayEnvelope{}, &models.JobSourceMapping{}, &models.DownloadHistoryEntry{},
+		&models.JobReplayEnvelope{}, &models.JobSourceMapping{}, &models.JobLegacyHandle{}, &models.DownloadHistoryEntry{},
 		&models.ScheduledDownload{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
 	); err != nil {
 		t.Fatalf("migrate replay envelopes: %v", err)
@@ -34,6 +34,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	expired := acceptFixtureReplayJob(t, svc, deps)
 	advanceReplayJob(t, svc, deps, advanceReplayJob(t, svc, deps, expired, StateRunning), StateFailed)
 	legacySources := seedLegacyReplaySources(t, deps.DB, expired.ID, clock)
+	unmappedSources := seedUnmappedLegacyReplaySources(t, deps.DB, expired.ID, clock)
 	running := acceptFixtureReplayJob(t, svc, deps)
 	advanceReplayJob(t, svc, deps, running, StateRunning)
 
@@ -56,6 +57,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 		t.Fatal("the Postgres purge should fail when its mapping marker cannot be saved")
 	}
 	assertReplayPurgeUnchanged(t, deps.DB, expired.ID, legacySources)
+	assertUnmappedReplaySourcesIntact(t, deps.DB, unmappedSources)
 	if err := deps.DB.Exec(`DROP TRIGGER fail_source_mapping_update ON job_source_mappings`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +79,7 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 		t.Fatalf("the purged envelope still holds a bytea value: %+v", envelope)
 	}
 	assertReplaySourcesPurged(t, deps.DB, expired.ID, legacySources, models.JobReplayPurgeExpired)
+	assertUnmappedReplaySourcesPurged(t, deps.DB, expired.ID, unmappedSources, models.JobReplayPurgeExpired)
 	if availability := svc.snapshotFor(deps, Access{Administrator: true}, jobRow(t, deps, expired.ID)).ReplayAvailability; availability != ReplayExpired {
 		t.Fatalf("availability = %q, want %q", availability, ReplayExpired)
 	}
@@ -91,5 +94,25 @@ func TestReplayEnvelopeLifecycleOnPostgresPG(t *testing.T) {
 	}
 	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, running.ID); err == nil {
 		t.Fatal("Forget of a running Job must be refused")
+	}
+
+	forgotten := acceptFixtureReplayJob(t, svc, deps)
+	advanceReplayJob(t, svc, deps, advanceReplayJob(t, svc, deps, forgotten, StateRunning), StateFailed)
+	forgottenSources := seedUnmappedLegacyReplaySources(t, deps.DB, forgotten.ID, clock)
+	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, forgotten.ID); err != nil {
+		t.Fatalf("ForgetReplay on Postgres: %v", err)
+	}
+	assertUnmappedReplaySourcesPurged(t, deps.DB, forgotten.ID, forgottenSources, models.JobReplayPurgeForgotten)
+
+	withoutMappingSchema := acceptFixtureReplayJob(t, svc, deps)
+	advanceReplayJob(t, svc, deps, advanceReplayJob(t, svc, deps, withoutMappingSchema, StateRunning), StateFailed)
+	if err := deps.DB.Migrator().DropTable(&models.JobSourceMapping{}); err != nil {
+		t.Fatalf("drop source mapping table: %v", err)
+	}
+	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, withoutMappingSchema.ID); err == nil {
+		t.Fatal("ForgetReplay succeeded without the schema needed to prove legacy source copies are retired")
+	}
+	if envelope := replayEnvelopeRow(t, deps, withoutMappingSchema.ID); envelope.PurgedAt != nil || len(envelope.Ciphertext) == 0 {
+		t.Fatalf("missing mapping schema did not roll back canonical purge: %+v", envelope)
 	}
 }

@@ -37,10 +37,14 @@ func newHistoryTestContext(t *testing.T, cfg *MahresourcesConfig) *MahresourcesC
 	if err := db.AutoMigrate(
 		&models.DownloadHistoryEntry{},
 		&models.ScheduledDownload{},
+		&models.JobWriterEpoch{},
 		&models.PluginSchedule{}, &models.User{}, &models.Group{},
 		&models.RuntimeSetting{}, &models.LogEntry{}, &models.Session{}, &models.ApiToken{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")

@@ -13523,3 +13523,33 @@ Residual risks and handoffs carried forward:
   migration/readers and atomic replay purging. Tagged `go vet` for
   `application_context`, `jobs`, `plugin_commands`, and `internal/arch`, plus
   `git diff --check`, passed.
+
+### Task 12 review fixes: writer epoch fail-closed and unmapped source purge
+
+- Download-history and scheduled-download read/write paths now propagate writer
+  epoch query errors. Reads refuse legacy payloads when the fence cannot be
+  checked; writes query through their transaction and persist no plaintext when
+  that query fails. Resource Reduction's dual-publish mapping path also returns
+  the epoch error.
+- Forget and expiry now require the source mapping and legacy-handle schema.
+  Within the purge transaction they find both mapped sources and bounded,
+  indexed source rows reachable through the Job's legacy handles or direct
+  canonical JobID, clear each plaintext copy, and create a durable purged source
+  mapping for rows whose earlier writer omitted the mapping. Schema or source
+  conflicts roll back the envelope purge.
+- Red first: SQLite regressions showed all four API paths using legacy input or
+  persisting plaintext on an epoch-table failure; Forget and expiry retained
+  unmapped source data; and both purges succeeded after the mapping table was
+  dropped. PostgreSQL's lifecycle regression also retained the unmapped source.
+- Validation passed:
+  `go test --tags 'json1 fts5' ./application_context -run
+  'TestJobMigration|Test.*(ScheduledDownload|DownloadHistory)|TestPluginCommand' -count=1`;
+  `go test --tags 'json1 fts5' ./jobs -run
+  'TestReplay|TestForgetReplayAtomically|TestExpiredReplaySweepAtomically|TestReplayPurgeRefusesWhenSourceMappingSchemaIsUnavailable' -count=1`;
+  `go test --tags 'json1 fts5 postgres' ./application_context -run
+  'TestJobMigration' -count=1`;
+  `go test --tags 'json1 fts5 postgres' ./jobs -run
+  '^TestReplayEnvelopeLifecycleOnPostgresPG$' -count=1`;
+  focused race selections for epoch error handling, Reduction publication,
+  unmapped source purge and missing-schema rollback; the architecture retirement
+  gate; tagged `go vet`; and `git diff --check`.

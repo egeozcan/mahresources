@@ -48,9 +48,12 @@ func newHostFetchContext(t *testing.T, allowPrivate ...string) *MahresourcesCont
 		&models.Resource{}, &models.Note{}, &models.Tag{}, &models.Group{},
 		&models.Category{}, &models.NoteType{}, &models.ResourceCategory{},
 		&models.Series{}, &models.Preview{}, &models.LogEntry{},
-		&models.ResourceVersion{}, &models.NoteBlock{}, &models.User{},
+		&models.ResourceVersion{}, &models.NoteBlock{}, &models.User{}, &models.JobWriterEpoch{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 
 	sqlDB, _ := db.DB()

@@ -22,6 +22,7 @@ import (
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // This file holds replay input: the key material a deployment seals it with, the
@@ -1053,43 +1054,34 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 	return s.snapshotFor(deps, access, job), nil
 }
 
-// purgeLegacyReplaySourcesTx removes every mapped plaintext replay copy in the
-// same transaction that marks the canonical envelope purged. Mappings are the
-// durable bridge between pre-Job rows and the canonical Job; a source row may
-// already have been scrubbed, or may have been restored from an older backup,
-// so this operation clears it again even when the mapping was purged earlier.
+// purgeLegacyReplaySourcesTx removes every mapped or resolvable unmapped
+// plaintext replay copy in the same transaction that marks the canonical
+// envelope purged. Source mappings are the normal bridge between pre-Job rows
+// and a canonical Job, but a mixed writer may have committed a legacy source and
+// its canonical handle/JobID before it committed the mapping. Those rows are
+// resolved and given a durable purged mapping here so a later migration cannot
+// reconstruct input that Forget or expiry already removed.
 func purgeLegacyReplaySourcesTx(tx *gorm.DB, jobID, reason string, now time.Time) error {
 	if !tx.Migrator().HasTable(&models.JobSourceMapping{}) {
-		return nil
+		return errors.New("legacy replay source mapping schema is unavailable")
+	}
+	if !tx.Migrator().HasTable(&models.JobLegacyHandle{}) {
+		return errors.New("legacy Job handle schema is unavailable")
 	}
 	var mappings []models.JobSourceMapping
-	if err := tx.Where("job_id = ?", jobID).Find(&mappings).Error; err != nil {
+	if err := tx.Where("job_id = ?", jobID).Limit(maxLegacyReplaySourcesPerJob + 1).Find(&mappings).Error; err != nil {
 		return err
 	}
+	if len(mappings) > maxLegacyReplaySourcesPerJob {
+		return errors.New("too many mapped legacy replay sources to purge safely")
+	}
+	mapped := make(map[string]struct{}, len(mappings))
 	for _, mapping := range mappings {
+		mapped[legacyReplaySourceKey(mapping.SourceKind, mapping.SourceID)] = struct{}{}
 		updates := map[string]any{"updated_at": now}
 		mappingReason := reason
-		switch mapping.SourceKind {
-		case "download-history":
-			if err := tx.Model(&models.DownloadHistoryEntry{}).Where("id = ?", mapping.SourceID).
-				Updates(map[string]any{"payload": nil, "url": ""}).Error; err != nil {
-				return err
-			}
-		case "scheduled-download":
-			if err := tx.Model(&models.ScheduledDownload{}).Where("id = ?", mapping.SourceID).
-				Updates(map[string]any{"payload": nil, "url": ""}).Error; err != nil {
-				return err
-			}
-		case "plugin-command-run":
-			if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", mapping.SourceID).
-				Updates(map[string]any{"params_json": "", "inputs_json": ""}).Error; err != nil {
-				return err
-			}
-		case "plugin-command-import":
-			if err := tx.Model(&models.PluginCommandImport{}).Where("id = ?", mapping.SourceID).
-				Updates(map[string]any{"fields_json": ""}).Error; err != nil {
-				return err
-			}
+		if err := clearLegacyReplaySourceTx(tx, mapping.SourceKind, mapping.SourceID); err != nil {
+			return err
 		}
 		if mapping.Status == models.JobSourceMappingPurged && mapping.PurgeReason != "" {
 			mappingReason = mapping.PurgeReason
@@ -1107,7 +1099,189 @@ func purgeLegacyReplaySourcesTx(tx *gorm.DB, jobID, reason string, now time.Time
 			return err
 		}
 	}
+
+	unmapped, err := findUnmappedLegacyReplaySourcesTx(tx, jobID)
+	if err != nil {
+		return err
+	}
+	for _, source := range unmapped {
+		key := legacyReplaySourceKey(source.kind, source.id)
+		if _, ok := mapped[key]; ok {
+			continue
+		}
+		var existing models.JobSourceMapping
+		err := tx.Where("source_kind = ? AND source_id = ?", source.kind, source.id).First(&existing).Error
+		if err == nil {
+			if existing.JobID != jobID {
+				return errors.New("legacy replay source is mapped to a different Job")
+			}
+			// A mapping committed after the initial scan. Its source is still
+			// cleared below, and the existing marker is refreshed after the update.
+			if err := clearLegacyReplaySourceTx(tx, source.kind, source.id); err != nil {
+				return err
+			}
+			at := now
+			if err := tx.Model(&models.JobSourceMapping{}).
+				Where("source_kind = ? AND source_id = ? AND job_id = ?", source.kind, source.id, jobID).
+				Updates(map[string]any{
+					"status": models.JobSourceMappingPurged, "purged_at": at, "purge_reason": reason,
+					"scrubbed_at": at, "post_scrub_hash": "", "blocker_code": "", "updated_at": at,
+				}).Error; err != nil {
+				return err
+			}
+			mapped[key] = struct{}{}
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := clearLegacyReplaySourceTx(tx, source.kind, source.id); err != nil {
+			return err
+		}
+		at := now
+		marker := models.JobSourceMapping{
+			SourceKind: source.kind, SourceID: source.id, JobID: jobID, SourceRevision: 1,
+			Status: models.JobSourceMappingPurged, Origin: models.JobSourceOriginBackfilled,
+			CopiedAt: at, ScrubbedAt: &at, PurgedAt: &at, PurgeReason: reason,
+			CreatedAt: at, UpdatedAt: at,
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&marker).Error; err != nil {
+			return err
+		}
+		var saved models.JobSourceMapping
+		if err := tx.Where("source_kind = ? AND source_id = ?", source.kind, source.id).First(&saved).Error; err != nil {
+			return err
+		}
+		if saved.JobID != jobID || saved.Status != models.JobSourceMappingPurged || saved.PurgedAt == nil {
+			return errors.New("legacy replay purge marker conflicts with another Job")
+		}
+		mapped[key] = struct{}{}
+	}
 	return nil
+}
+
+const maxLegacyReplaySourcesPerJob = 10000
+
+type legacyReplaySourceRef struct {
+	kind string
+	id   string
+}
+
+func legacyReplaySourceKey(kind, id string) string { return kind + "\x00" + id }
+
+func clearLegacyReplaySourceTx(tx *gorm.DB, kind, id string) error {
+	switch kind {
+	case "download-history":
+		return tx.Model(&models.DownloadHistoryEntry{}).Where("id = ?", id).
+			Updates(map[string]any{"payload": nil, "url": ""}).Error
+	case "scheduled-download":
+		return tx.Model(&models.ScheduledDownload{}).Where("id = ?", id).
+			Updates(map[string]any{"payload": nil, "url": ""}).Error
+	case "plugin-command-run":
+		return tx.Model(&models.PluginCommandRun{}).Where("id = ?", id).
+			Updates(map[string]any{"params_json": "", "inputs_json": ""}).Error
+	case "plugin-command-import":
+		return tx.Model(&models.PluginCommandImport{}).Where("id = ?", id).
+			Updates(map[string]any{"fields_json": ""}).Error
+	case "resource-reduction":
+		return nil
+	default:
+		return errors.New("unknown legacy replay source kind")
+	}
+}
+
+func findUnmappedLegacyReplaySourcesTx(tx *gorm.DB, jobID string) ([]legacyReplaySourceRef, error) {
+	var handles []models.JobLegacyHandle
+	if err := tx.Where("job_id = ?", jobID).Order("namespace ASC, handle ASC").
+		Limit(maxLegacyReplaySourcesPerJob + 1).Find(&handles).Error; err != nil {
+		return nil, err
+	}
+	if len(handles) > maxLegacyReplaySourcesPerJob {
+		return nil, errors.New("too many legacy handles to prove replay purge safely")
+	}
+	byNamespace := make(map[string][]string)
+	for _, handle := range handles {
+		byNamespace[handle.Namespace] = append(byNamespace[handle.Namespace], handle.Handle)
+	}
+	var result []legacyReplaySourceRef
+	add := func(kind string, ids []string) error {
+		if len(ids) > maxLegacyReplaySourcesPerJob {
+			return errors.New("too many unmapped legacy replay sources to purge safely")
+		}
+		for _, id := range ids {
+			result = append(result, legacyReplaySourceRef{kind: kind, id: id})
+		}
+		return nil
+	}
+
+	if tx.Migrator().HasTable(&models.DownloadHistoryEntry{}) {
+		var ids []uint
+		query := tx.Model(&models.DownloadHistoryEntry{}).Select("id").Where("job_id = ?", jobID)
+		if values := byNamespace["download"]; len(values) > 0 {
+			query = tx.Model(&models.DownloadHistoryEntry{}).Select("id").Where("job_id = ? OR job_id IN ?", jobID, values)
+		}
+		if err := query.Order("id ASC").Limit(maxLegacyReplaySourcesPerJob+1).Pluck("id", &ids).Error; err != nil {
+			return nil, err
+		}
+		sourceIDs := make([]string, len(ids))
+		for i, id := range ids {
+			sourceIDs[i] = strconv.FormatUint(uint64(id), 10)
+		}
+		if err := add("download-history", sourceIDs); err != nil {
+			return nil, err
+		}
+	}
+	if tx.Migrator().HasTable(&models.ScheduledDownload{}) {
+		var handlesAsIDs []uint
+		for _, handle := range byNamespace["scheduled-download"] {
+			id, err := strconv.ParseUint(handle, 10, 64)
+			if err != nil || id == 0 {
+				return nil, errors.New("scheduled download handle is invalid")
+			}
+			handlesAsIDs = append(handlesAsIDs, uint(id))
+		}
+		var ids []uint
+		if len(handlesAsIDs) > 0 {
+			if err := tx.Model(&models.ScheduledDownload{}).Select("id").Where("id IN ?", handlesAsIDs).
+				Order("id ASC").Limit(maxLegacyReplaySourcesPerJob+1).Pluck("id", &ids).Error; err != nil {
+				return nil, err
+			}
+		}
+		sourceIDs := make([]string, len(ids))
+		for i, id := range ids {
+			sourceIDs[i] = strconv.FormatUint(uint64(id), 10)
+		}
+		if err := add("scheduled-download", sourceIDs); err != nil {
+			return nil, err
+		}
+	}
+	if tx.Migrator().HasTable(&models.PluginCommandRun{}) {
+		var ids []string
+		query := tx.Model(&models.PluginCommandRun{}).Select("id").Where("job_id = ?", jobID)
+		if values := byNamespace["plugin-command-run"]; len(values) > 0 {
+			query = tx.Model(&models.PluginCommandRun{}).Select("id").Where("job_id = ? OR id IN ?", jobID, values)
+		}
+		if err := query.Order("id ASC").Limit(maxLegacyReplaySourcesPerJob+1).Pluck("id", &ids).Error; err != nil {
+			return nil, err
+		}
+		if err := add("plugin-command-run", ids); err != nil {
+			return nil, err
+		}
+	}
+	if tx.Migrator().HasTable(&models.PluginCommandImport{}) {
+		var ids []string
+		query := tx.Model(&models.PluginCommandImport{}).Select("id").Where("job_id = ?", jobID)
+		if values := byNamespace["plugin-command-import"]; len(values) > 0 {
+			query = tx.Model(&models.PluginCommandImport{}).Select("id").Where("job_id = ? OR id IN ?", jobID, values)
+		}
+		if err := query.Order("id ASC").Limit(maxLegacyReplaySourcesPerJob+1).Pluck("id", &ids).Error; err != nil {
+			return nil, err
+		}
+		if err := add("plugin-command-import", ids); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 // HasReplayCodec reports whether any registered codec could decode an envelope

@@ -91,10 +91,6 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 	if len(rec.Payload) > 0 {
 		entry.Payload = types.JSON(rec.Payload)
 	}
-	if ctx.legacyJobInputsRetired() {
-		entry.URL = downloadURLProjection(rec.URL)
-		entry.Payload = nil
-	}
 
 	// The actor is bound explicitly because the stamp callback overwrites
 	// CreatedByUserId from the db context, falling back to the default actor — and
@@ -112,6 +108,14 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 	}
 
 	err := db.Transaction(func(tx *gorm.DB) error {
+		retired, err := legacyJobInputsRetiredOn(tx)
+		if err != nil {
+			return err
+		}
+		if retired {
+			entry.URL = downloadURLProjection(rec.URL)
+			entry.Payload = nil
+		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "job_id"}},
 			// An outcome never overwrites a newer one. The recording goroutine runs
@@ -155,7 +159,7 @@ func (ctx *MahresourcesContext) RecordTerminalDownload(rec download_queue.Histor
 			if err := tx.Where("job_id = ?", rec.JobID).First(&stored).Error; err != nil {
 				return err
 			}
-			if err := ctx.recordDualPublishedDownloadHistoryTx(tx, stored, ctx.legacyJobInputsRetired(), time.Now().UTC()); err != nil {
+			if err := ctx.recordDualPublishedDownloadHistoryTx(tx, stored, retired, time.Now().UTC()); err != nil {
 				return err
 			}
 		}
@@ -420,7 +424,11 @@ func (ctx *MahresourcesContext) DownloadHistoryPayload(entry *models.DownloadHis
 		return nil, errors.New("download history: no entry")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
-	if ctx.legacyJobInputsRetired() {
+	retired, err := ctx.legacyJobInputsRetired()
+	if err != nil {
+		return nil, fmt.Errorf("download history: check canonical replay fence: %w", err)
+	}
+	if retired {
 		service := ctx.JobService()
 		if service == nil {
 			return nil, errors.New("download history: canonical Job service is unavailable")

@@ -60,12 +60,19 @@ type JobMigrationResult struct {
 	BlockedSources int
 }
 
-func (ctx *MahresourcesContext) legacyJobInputsRetired() bool {
+func (ctx *MahresourcesContext) legacyJobInputsRetired() (bool, error) {
 	if ctx == nil || ctx.db == nil {
-		return false
+		return false, errors.New("job input writer epoch is unavailable")
 	}
-	epoch, err := models.JobWriterEpochMinimum(ctx.db)
-	return err == nil && epoch >= models.JobWriterEpochRetiredPlaintext
+	return legacyJobInputsRetiredOn(ctx.db)
+}
+
+func legacyJobInputsRetiredOn(db *gorm.DB) (bool, error) {
+	epoch, err := models.JobWriterEpochMinimum(db)
+	if err != nil {
+		return false, fmt.Errorf("job input writer epoch cannot be read: %w", err)
+	}
+	return epoch >= models.JobWriterEpochRetiredPlaintext, nil
 }
 
 func (ctx *MahresourcesContext) recordDualPublishedDownloadHistory(row models.DownloadHistoryEntry, scrubbed bool, now time.Time) error {

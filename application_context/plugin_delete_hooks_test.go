@@ -70,8 +70,12 @@ func createTestContextWithPlugins(t *testing.T, pluginDir string) *MahresourcesC
 		// the context, and resolving root reads this table.
 		&models.User{},
 		&models.JobRuntimeFence{},
+		&models.JobWriterEpoch{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 
 	sqlDB, _ := db.DB()

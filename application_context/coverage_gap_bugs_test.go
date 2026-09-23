@@ -41,9 +41,13 @@ func createCoverageTestContext(t *testing.T, cacheName string) *MahresourcesCont
 		&models.NoteBlock{},
 		&models.PluginKV{},
 		&models.ResourceVersion{},
+		&models.JobWriterEpoch{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 
 	config := &MahresourcesConfig{
