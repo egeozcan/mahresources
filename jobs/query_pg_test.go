@@ -103,6 +103,14 @@ func TestListSearchCursorAndAggregatesOnPostgres(t *testing.T) {
 	}
 }
 
+func TestListCommandFilterPaginatesSparseMatchesOnPostgres(t *testing.T) {
+	testListCommandFilterPaginatesSparseMatches(t, newPGDeps(t))
+}
+
+func TestCommandFilterUsesCurrentRoleForListAndSummaryOnPostgres(t *testing.T) {
+	testCommandFilterUsesCurrentRoleForListAndSummary(t, newPGDeps(t))
+}
+
 // TestRetentionSweepPrunesExpiredWorkOnPostgres drives the retention decision —
 // a qualified delete guarded by two NOT EXISTS subqueries against the table it is
 // deleting from — over PostgreSQL, together with the pin that exempts a Job and

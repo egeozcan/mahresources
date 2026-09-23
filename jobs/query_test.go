@@ -1,8 +1,10 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -313,7 +315,8 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 		{name: "unknown state", filter: Filter{States: []string{"finished"}}, want: ErrInvalidFilter},
 		{name: "empty kind", filter: Filter{Kinds: []string{" "}}, want: ErrInvalidFilter},
 		{name: "inverted window", filter: Filter{AcceptedAfter: timePtr(time.Date(2032, 1, 1, 0, 0, 0, 0, time.UTC)), AcceptedBefore: timePtr(time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC))}, want: ErrInvalidFilter},
-		{name: "command dimension", filter: Filter{Command: "cancel"}, want: ErrInvalidFilter},
+		{name: "blank command key", filter: Filter{Command: " \t"}, want: ErrInvalidFilter},
+		{name: "oversized command key", filter: Filter{Command: strings.Repeat("x", MaxCommandKeyBytes+1)}, want: ErrInvalidFilter},
 		{name: "cursor without identity", cursor: Cursor{AcceptedAt: time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)}, want: ErrInvalidCursor},
 		{name: "cursor without instant", cursor: Cursor{ID: "5c7b5b4a-0000-7000-8000-000000000000"}, want: ErrInvalidCursor},
 		{name: "negative page", limit: -1, want: ErrInvalidPage},
@@ -325,6 +328,11 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("List = %v, want %v", err, tc.want)
 			}
+			if tc.filter.Command != "" {
+				if _, err := svc.Summary(deps, admin, tc.filter, 0); !errors.Is(err, ErrInvalidFilter) {
+					t.Fatalf("Summary with invalid command key = %v, want ErrInvalidFilter", err)
+				}
+			}
 		})
 	}
 
@@ -333,6 +341,173 @@ func TestListRefusesQuestionsItCannotAnswer(t *testing.T) {
 	page := listFor(t, svc, deps, admin, Filter{}, Cursor{}, 0)
 	if len(page.Jobs) != 1 || page.Next != nil {
 		t.Fatalf("page = %d jobs, next = %v", len(page.Jobs), page.Next)
+	}
+}
+
+// TestListCommandFilterPaginatesSparseMatches verifies that Command is evaluated
+// before the page boundary: a sparse key must not produce short pages, and the
+// next cursor must name the last returned match rather than a candidate the scan
+// skipped over.
+func TestListCommandFilterPaginatesSparseMatches(t *testing.T) {
+	testListCommandFilterPaginatesSparseMatches(t, newTestDeps(t))
+}
+
+func testListCommandFilterPaginatesSparseMatches(t *testing.T, deps Deps) {
+	t.Helper()
+	sqlDB, err := deps.DB.DB()
+	if err != nil {
+		t.Fatalf("underlying database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		// A nested adapter read proves the candidate rows were materialized before
+		// advertisement: this entire test uses a one-connection pool.
+		var found string
+		if err := commandContext.Deps.DB.Model(&models.Job{}).Select("id").
+			Where("id = ?", commandContext.Snapshot.ID).Scan(&found).Error; err != nil {
+			return nil, err
+		}
+		if found != commandContext.Snapshot.ID {
+			t.Fatalf("adapter could not read candidate %s on the caller's handle", commandContext.Snapshot.ID)
+		}
+		if strings.HasPrefix(commandContext.Snapshot.Title, "match-") {
+			return []Command{{Key: "inspect"}}, nil
+		}
+		return nil, nil
+	}
+	owner := uint(7)
+	clock := time.Date(2034, 8, 1, 0, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	const candidates = 2*MaxPageSize + 3
+	matches := make(map[int]bool)
+	matches[0] = true
+	matches[MaxPageSize] = true
+	matches[2*MaxPageSize] = true
+	created := make(map[int]Snapshot, len(matches))
+	for i := 0; i < candidates; i++ {
+		clock = clock.Add(time.Second)
+		title := fmt.Sprintf("other-%03d", i)
+		if matches[i] {
+			title = fmt.Sprintf("match-%03d", i)
+		}
+		job := acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &owner, Title: title, Replay: ReplayInput{NonReplayable: true},
+		})
+		if matches[i] {
+			created[i] = job
+		}
+	}
+
+	access := Access{UserID: owner}
+	first := listFor(t, svc, deps, access, Filter{Command: "inspect"}, Cursor{}, 2)
+	requireIDs(t, "first command page", pageIDs(first), created[2*MaxPageSize].ID, created[MaxPageSize].ID)
+	if first.Next == nil || first.Next.ID != created[MaxPageSize].ID || !first.Next.AcceptedAt.Equal(created[MaxPageSize].AcceptedAt) {
+		t.Fatalf("first page cursor = %+v, want cursor at the last returned match %+v", first.Next, created[MaxPageSize])
+	}
+
+	second := listFor(t, svc, deps, access, Filter{Command: "inspect"}, *first.Next, 2)
+	requireIDs(t, "second command page", pageIDs(second), created[0].ID)
+	if second.Next != nil {
+		t.Fatalf("last sparse command page unexpectedly has next cursor %+v", second.Next)
+	}
+
+	summary, err := svc.Summary(deps, access, Filter{Command: "inspect"}, 0)
+	if err != nil {
+		t.Fatalf("sparse command summary: %v", err)
+	}
+	if summary.Total != 3 || summary.ByState[string(StateQueued)] != 3 || summary.ByKind[testKind] != 3 {
+		t.Fatalf("sparse command summary = %+v, want the three matches across candidate batches", summary)
+	}
+}
+
+// TestCommandFilterUsesCurrentRoleForListAndSummary shows command availability
+// is asked from the current principal for each read, never cached on a Job or
+// inherited from a prior administrator request.
+func TestCommandFilterUsesCurrentRoleForListAndSummary(t *testing.T) {
+	testCommandFilterUsesCurrentRoleForListAndSummary(t, newTestDeps(t))
+}
+
+func testCommandFilterUsesCurrentRoleForListAndSummary(t *testing.T, deps Deps) {
+	t.Helper()
+	sqlDB, err := deps.DB.DB()
+	if err != nil {
+		t.Fatalf("underlying database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	svc := NewService()
+	adapter := registerTestAdapter(t, svc, testDefinition())
+	adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		var found string
+		if err := commandContext.Deps.DB.Model(&models.Job{}).Select("id").
+			Where("id = ?", commandContext.Snapshot.ID).Scan(&found).Error; err != nil {
+			return nil, err
+		}
+		if commandContext.Access.Administrator || commandContext.Snapshot.Title == "viewer-inspect" {
+			return []Command{{Key: "inspect"}}, nil
+		}
+		return nil, nil
+	}
+	owner := uint(7)
+	clock := time.Date(2034, 8, 2, 0, 0, 0, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(time.Minute)
+		title := fmt.Sprintf("job-%d", i)
+		if i == 0 {
+			title = "viewer-inspect"
+		}
+		acceptFor(t, svc, deps, Acceptance{
+			Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+			OwnerUserID: &owner, Title: title, Replay: ReplayInput{NonReplayable: true},
+		})
+	}
+	clock = clock.Add(time.Minute)
+	otherOwner := uint(8)
+	acceptFor(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api",
+		OwnerUserID: &otherOwner, Title: "viewer-inspect", Replay: ReplayInput{NonReplayable: true},
+	})
+	filter := Filter{Command: "inspect"}
+	viewer := Access{UserID: owner}
+	admin := Access{UserID: owner, Administrator: true}
+
+	if got := listFor(t, svc, deps, viewer, filter, Cursor{}, 10); len(got.Jobs) != 1 {
+		t.Fatalf("viewer list matched %d jobs before promotion, want only its advertised command", len(got.Jobs))
+	}
+	viewerSummary, err := svc.Summary(deps, viewer, filter, 0)
+	if err != nil {
+		t.Fatalf("viewer summary: %v", err)
+	}
+	if viewerSummary.Total != 1 || viewerSummary.ByKind[testKind] != 1 {
+		t.Fatalf("viewer summary = %+v, want only its advertised command", viewerSummary)
+	}
+
+	adminPage := listFor(t, svc, deps, admin, filter, Cursor{}, 10)
+	if len(adminPage.Jobs) != 4 {
+		t.Fatalf("administrator list matched %d jobs after promotion, want 4 including the other owner's work", len(adminPage.Jobs))
+	}
+	adminSummary, err := svc.Summary(deps, admin, filter, 0)
+	if err != nil {
+		t.Fatalf("administrator summary: %v", err)
+	}
+	if adminSummary.Total != 4 || adminSummary.ByState[string(StateQueued)] != 4 || adminSummary.ByKind[testKind] != 4 {
+		t.Fatalf("administrator command summary = %+v, want four queued %s jobs", adminSummary, testKind)
+	}
+
+	// Demotion is observed by the next read, including when the same user id is
+	// retained by the session.
+	if got := listFor(t, svc, deps, viewer, filter, Cursor{}, 10); len(got.Jobs) != 1 {
+		t.Fatalf("demoted viewer list matched %d jobs, want only its advertised command", len(got.Jobs))
+	}
+	demotedSummary, err := svc.Summary(deps, viewer, filter, 0)
+	if err != nil {
+		t.Fatalf("demoted summary: %v", err)
+	}
+	if demotedSummary.Total != 1 {
+		t.Fatalf("demoted summary total = %d, want 1", demotedSummary.Total)
 	}
 }
 

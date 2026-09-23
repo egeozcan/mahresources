@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -10,6 +11,7 @@ import (
 
 	"mahresources/models"
 	"mahresources/models/database_scopes"
+	"mahresources/models/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,7 +19,9 @@ import (
 
 // This file holds the read side of the control plane: the one query constructor
 // every Job read goes through, the listing that paginates it, and the bounded
-// views those reads return.
+// views those reads return. The command filter is the dynamic exception to SQL
+// predicates: it asks each visible candidate's registered adapter before a
+// page or summary is formed.
 //
 // The constructor is the point of the file. A Job is reachable through a list, a
 // detail read, a timeline join, an output lookup, a lineage join, the resumable
@@ -81,6 +85,9 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 	if err := validateCursor(cursor); err != nil {
 		return Page{}, err
 	}
+	if filter.Command != "" {
+		return s.listByAdvertisedCommand(deps, access, filter, cursor, size)
+	}
 
 	query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
 	if err != nil {
@@ -111,6 +118,86 @@ func (s *Service) List(deps Deps, access Access, filter Filter, cursor Cursor, l
 		return Page{}, err
 	}
 	return page, nil
+}
+
+const commandFilterScanBatchSize = MaxPageSize
+
+// listByAdvertisedCommand scans bounded candidate batches because command
+// availability is a live answer from the Kind adapter, not a durable column.
+// Each batch is fully materialized before an adapter is called: Commands may
+// read through the same one-connection handle, so holding the DB cursor open
+// while asking would deadlock a one-connection pool.
+func (s *Service) listByAdvertisedCommand(deps Deps, access Access, filter Filter, cursor Cursor, size int) (Page, error) {
+	ctx := queryContext(deps.DB)
+	matched := make([]models.Job, 0, size+1)
+	candidateCursor := cursor
+	for len(matched) < size+1 {
+		query, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, filter)
+		if err != nil {
+			return Page{}, err
+		}
+		query = continueAfter(query, candidateCursor)
+		var candidates []models.Job
+		if err := query.Order("jobs.accepted_at DESC, jobs.id DESC").Limit(commandFilterScanBatchSize).Find(&candidates).Error; err != nil {
+			return Page{}, fmt.Errorf("jobs: list command-filter candidates: %w", err)
+		}
+		if len(candidates) == 0 {
+			break
+		}
+		for _, candidate := range candidates {
+			candidateCursor = Cursor{AcceptedAt: candidate.AcceptedAt, ID: candidate.ID}
+			matches, err := s.jobAdvertisesCommand(ctx, deps, access, candidate, filter.Command)
+			if err != nil {
+				return Page{}, fmt.Errorf("jobs: evaluate command filter for %s: %w", candidate.ID, err)
+			}
+			if matches {
+				matched = append(matched, candidate)
+				if len(matched) == size+1 {
+					break
+				}
+			}
+		}
+		if len(matched) == size+1 || len(candidates) < commandFilterScanBatchSize {
+			break
+		}
+	}
+
+	page := Page{Jobs: make([]Snapshot, 0, min(len(matched), size))}
+	for i, row := range matched {
+		if i == size {
+			last := matched[size-1]
+			page.Next = &Cursor{AcceptedAt: last.AcceptedAt, ID: last.ID}
+			break
+		}
+		page.Jobs = append(page.Jobs, viewerSnapshot(row, access))
+	}
+	if err := s.fillReplayAvailability(deps, page.Jobs); err != nil {
+		return Page{}, err
+	}
+	return page, nil
+}
+
+// jobAdvertisesCommand asks the same internal advertisement used by detail reads
+// and command execution rechecks. It receives a row already read through the
+// visibility query, so it adds no per-row visible lookup of its own.
+func (s *Service) jobAdvertisesCommand(ctx context.Context, deps Deps, access Access, job models.Job, key string) (bool, error) {
+	commands, err := s.advertisedCommands(ctx, deps, access, job)
+	if err != nil {
+		return false, err
+	}
+	for _, command := range commands {
+		if command.Key == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func queryContext(db *gorm.DB) context.Context {
+	if db != nil && db.Statement != nil && db.Statement.Context != nil {
+		return db.Statement.Context
+	}
+	return context.Background()
 }
 
 // fillReplayAvailability answers each listed Job's replay question from one
@@ -183,8 +270,12 @@ func validateFilter(filter Filter) error {
 		return invalid("the accepted window ends before it starts")
 	}
 	if filter.Command != "" {
-		return fmt.Errorf("%w: the command filter is not answerable from durable facts yet; "+
-			"a command's availability is advertised by its Kind adapter, not stored on the Job", ErrInvalidFilter)
+		if strings.TrimSpace(filter.Command) == "" {
+			return invalid("command key is empty")
+		}
+		if len(filter.Command) > MaxCommandKeyBytes {
+			return invalid("command key is %d bytes, over the %d-byte ceiling", len(filter.Command), MaxCommandKeyBytes)
+		}
 	}
 	return nil
 }
@@ -817,11 +908,18 @@ func (s *Service) Summary(deps Deps, access Access, filter Filter, window time.D
 	scoped := filter
 	scoped.AcceptedAfter = &from
 	scoped.AcceptedBefore = &to
+	if filter.Command != "" {
+		return s.summaryByAdvertisedCommand(deps, access, scoped, window, from, to)
+	}
 
 	base, err := applyFilter(jobQuery(deps.DB.Model(&models.Job{}), access), access, scoped)
 	if err != nil {
 		return Summary{}, err
 	}
+	return summarizeQuery(base, window, from, to)
+}
+
+func summarizeQuery(base *gorm.DB, window time.Duration, from, to time.Time) (Summary, error) {
 	summary := Summary{
 		Window: window, From: from, To: to,
 		ByState: map[string]int64{}, ByKind: map[string]int64{},
@@ -866,6 +964,89 @@ func (s *Service) Summary(deps Deps, access Access, filter Filter, window time.D
 		return Summary{}, err
 	}
 	return summary, nil
+}
+
+// summaryByAdvertisedCommand first records matching visible Job IDs in a
+// connection-local temporary table, then lets the database calculate every
+// aggregate and percentile over that exact set. Only one fixed-size candidate
+// batch and its matching IDs live in process memory at once; this keeps the
+// dynamic adapter predicate correct without collecting an unbounded Job or
+// duration slice in Go.
+func (s *Service) summaryByAdvertisedCommand(deps Deps, access Access, filter Filter, window time.Duration, from, to time.Time) (Summary, error) {
+	var summary Summary
+	err := deps.DB.Transaction(func(tx *gorm.DB) (txErr error) {
+		table := "job_command_filter_" + strings.ReplaceAll(types.NewUUIDv7(), "-", "")
+		if err := tx.Exec("CREATE TEMP TABLE " + table + " (job_id VARCHAR(36) PRIMARY KEY)").Error; err != nil {
+			return fmt.Errorf("jobs: create command-filter summary table: %w", err)
+		}
+		defer func() {
+			if err := tx.Exec("DROP TABLE " + table).Error; txErr == nil && err != nil {
+				txErr = fmt.Errorf("jobs: drop command-filter summary table: %w", err)
+			}
+		}()
+
+		commandDeps := deps
+		commandDeps.DB = tx
+		if err := s.storeCommandMatches(tx, commandDeps, access, filter, table); err != nil {
+			return err
+		}
+		base, err := applyFilter(jobQuery(tx.Model(&models.Job{}), access), access, filter)
+		if err != nil {
+			return err
+		}
+		base = base.Where("jobs.id IN (SELECT job_id FROM " + table + ")")
+		summary, txErr = summarizeQuery(base, window, from, to)
+		return txErr
+	})
+	if err != nil {
+		return Summary{}, err
+	}
+	return summary, nil
+}
+
+type commandFilterID struct {
+	JobID string `gorm:"column:job_id"`
+}
+
+// storeCommandMatches walks the same visible, filtered, newest-first candidate
+// set as List, in materialized batches. Adapter reads reuse the transaction's
+// connection and happen only after Find has closed its result rows.
+func (s *Service) storeCommandMatches(tx *gorm.DB, deps Deps, access Access, filter Filter, table string) error {
+	ctx := queryContext(tx)
+	cursor := Cursor{}
+	for {
+		query, err := applyFilter(jobQuery(tx.Model(&models.Job{}), access), access, filter)
+		if err != nil {
+			return err
+		}
+		query = continueAfter(query, cursor)
+		var candidates []models.Job
+		if err := query.Order("jobs.accepted_at DESC, jobs.id DESC").Limit(commandFilterScanBatchSize).Find(&candidates).Error; err != nil {
+			return fmt.Errorf("jobs: scan command-filter summary candidates: %w", err)
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		matched := make([]commandFilterID, 0, len(candidates))
+		for _, candidate := range candidates {
+			cursor = Cursor{AcceptedAt: candidate.AcceptedAt, ID: candidate.ID}
+			matches, err := s.jobAdvertisesCommand(ctx, deps, access, candidate, filter.Command)
+			if err != nil {
+				return fmt.Errorf("jobs: evaluate summary command filter for %s: %w", candidate.ID, err)
+			}
+			if matches {
+				matched = append(matched, commandFilterID{JobID: candidate.ID})
+			}
+		}
+		if len(matched) > 0 {
+			if err := tx.Table(table).CreateInBatches(&matched, commandFilterScanBatchSize).Error; err != nil {
+				return fmt.Errorf("jobs: store command-filter summary batch: %w", err)
+			}
+		}
+		if len(candidates) < commandFilterScanBatchSize {
+			return nil
+		}
+	}
 }
 
 // summaryWindow resolves the analysis window, defaulting an unset one and
