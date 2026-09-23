@@ -22,6 +22,10 @@ const (
 	defaultJobRetentionInterval         = 5 * time.Minute
 	defaultJobRetentionContinueInterval = 2 * time.Second
 	defaultJobRetentionLease            = 2 * time.Minute
+	// SQLite databases use a 10 second busy_timeout in production. Keep this
+	// above that bound so a serialized writer wait reports SQLite lock contention
+	// rather than this caller's context expiring first.
+	defaultJobRetentionLeaseRefreshWait = 15 * time.Second
 	defaultJobRetentionQuiesceTimeout   = 5 * time.Second
 )
 
@@ -33,8 +37,11 @@ type JobRetentionRuntimeConfig struct {
 	ContinuationInterval time.Duration
 	LeaseDuration        time.Duration
 	LeaseRefreshInterval time.Duration
-	QuiesceTimeout       time.Duration
-	BatchSize            int
+	// LeaseRefreshTimeout bounds one renewal call. Zero chooses a value below
+	// both the lease duration and the refresh cadence.
+	LeaseRefreshTimeout time.Duration
+	QuiesceTimeout      time.Duration
+	BatchSize           int
 }
 
 // JobRetentionRuntime owns the process lifecycle for canonical Job retention.
@@ -49,6 +56,7 @@ type JobRetentionRuntime struct {
 	continuationInterval time.Duration
 	leaseDuration        time.Duration
 	leaseRefreshInterval time.Duration
+	leaseRefreshTimeout  time.Duration
 	quiesceTimeout       time.Duration
 	batchSize            int
 
@@ -80,6 +88,21 @@ func NewJobRetentionRuntime(ctx *MahresourcesContext, service *jobs.Service, con
 	if config.LeaseRefreshInterval <= 0 || config.LeaseRefreshInterval >= config.LeaseDuration {
 		config.LeaseRefreshInterval = config.LeaseDuration / 3
 	}
+	if config.LeaseRefreshTimeout <= 0 || config.LeaseRefreshTimeout >= config.LeaseDuration {
+		config.LeaseRefreshTimeout = defaultJobRetentionLeaseRefreshWait
+		if config.LeaseRefreshTimeout >= config.LeaseDuration {
+			config.LeaseRefreshTimeout = config.LeaseDuration / 4
+		}
+		if config.LeaseRefreshTimeout <= 0 {
+			config.LeaseRefreshTimeout = config.LeaseDuration
+		}
+	}
+	if config.LeaseRefreshTimeout >= config.LeaseRefreshInterval {
+		config.LeaseRefreshTimeout = config.LeaseRefreshInterval / 2
+		if config.LeaseRefreshTimeout <= 0 {
+			config.LeaseRefreshTimeout = config.LeaseRefreshInterval
+		}
+	}
 	if config.QuiesceTimeout <= 0 {
 		config.QuiesceTimeout = defaultJobRetentionQuiesceTimeout
 	}
@@ -94,6 +117,7 @@ func NewJobRetentionRuntime(ctx *MahresourcesContext, service *jobs.Service, con
 		continuationInterval: config.ContinuationInterval,
 		leaseDuration:        config.LeaseDuration,
 		leaseRefreshInterval: config.LeaseRefreshInterval,
+		leaseRefreshTimeout:  config.LeaseRefreshTimeout,
 		quiesceTimeout:       config.QuiesceTimeout,
 		batchSize:            config.BatchSize,
 		lifeCtx:              lifeCtx,
@@ -176,19 +200,22 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 	}
 
 	sweepCtx, cancelSweep := context.WithCancel(r.lifeCtx)
-	stopHeartbeat := make(chan struct{})
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(sweepCtx)
 	heartbeatDone := make(chan struct{})
 	leaseLost := make(chan struct{}, 1)
 	go func() {
 		defer close(heartbeatDone)
-		r.refreshJobRetentionLease(token, stopHeartbeat, cancelSweep, leaseLost)
+		r.refreshJobRetentionLease(heartbeatCtx, token, cancelSweep, leaseLost)
 	}()
 
 	result, sweepErr := r.ctx.SweepJobHistoryContext(sweepCtx, r.cursor, r.batchSize)
-	close(stopHeartbeat)
-	<-heartbeatDone
+	cancelHeartbeat()
 	cancelSweep()
-	if err := releaseJobRetentionLease(r.ctx.db, token); err != nil {
+	<-heartbeatDone
+	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), r.leaseRefreshTimeout)
+	err = releaseJobRetentionLease(releaseCtx, r.ctx.db, token)
+	cancelRelease()
+	if err != nil {
 		log.Printf("job retention: release sweep lease failed: %v", err)
 	}
 
@@ -208,29 +235,36 @@ func (r *JobRetentionRuntime) sweepOneBatch() bool {
 	}
 	if result.Next == nil {
 		r.cursor = jobs.SweepCursor{}
-		return false
+		return result.MoreReplay || result.MoreOutputExpiry || result.MoreArtifactCleanup || result.MoreDeadlines
 	}
 	r.cursor = *result.Next
 	return true
 }
 
-func (r *JobRetentionRuntime) refreshJobRetentionLease(token string, stop <-chan struct{}, cancelSweep context.CancelFunc, lost chan<- struct{}) {
+func (r *JobRetentionRuntime) refreshJobRetentionLease(ctx context.Context, token string, cancelSweep context.CancelFunc, lost chan<- struct{}) {
 	ticker := time.NewTicker(r.leaseRefreshInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := renewJobRetentionLease(token, r.ctx.db)
+			renewCtx, cancelRenew := context.WithTimeout(ctx, r.leaseRefreshTimeout)
+			err := renewJobRetentionLease(renewCtx, token, r.ctx.db)
+			cancelRenew()
 			if err == nil {
 				continue
+			}
+			if ctx.Err() != nil {
+				return
 			}
 			if isLockContentionError(err) {
 				// A bounded SQLite sweep can hold its writer transaction while a
 				// Kind removes an artifact. That same writer lock temporarily keeps
 				// another process from claiming the lease, so retry renewal instead
-				// of canceling work that still owns the serialized database turn.
+				// of canceling work that still owns the serialized database turn. A
+				// bare context deadline is not enough evidence to retry: unless the
+				// database confirms serialization, loss of lease cancels the sweep.
 				continue
 			}
 			select {
@@ -277,11 +311,14 @@ func acquireJobRetentionLease(ctx context.Context, db *gorm.DB, token string, le
 	return acquired, err
 }
 
-func renewJobRetentionLease(token string, db *gorm.DB) error {
+func renewJobRetentionLease(ctx context.Context, token string, db *gorm.DB) error {
 	if db == nil {
 		return errors.New("job retention database is not configured")
 	}
-	result := db.Model(&models.JobRuntimeFence{}).
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := db.WithContext(ctx).Model(&models.JobRuntimeFence{}).
 		Where("key = ? AND token = ?", jobHistoryRetentionFenceKey, token).
 		Update("acquired_at", jobRetentionDatabaseClock(db))
 	if result.Error != nil {
@@ -293,11 +330,14 @@ func renewJobRetentionLease(token string, db *gorm.DB) error {
 	return nil
 }
 
-func releaseJobRetentionLease(db *gorm.DB, token string) error {
+func releaseJobRetentionLease(ctx context.Context, db *gorm.DB, token string) error {
 	if db == nil {
 		return nil
 	}
-	result := db.Model(&models.JobRuntimeFence{}).
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := db.WithContext(ctx).Model(&models.JobRuntimeFence{}).
 		Where("key = ? AND token = ?", jobHistoryRetentionFenceKey, token).
 		Update("token", "")
 	if result.Error != nil {

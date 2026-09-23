@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 const retentionRuntimeTestKind = "retention-runtime-test"
@@ -62,6 +64,50 @@ func TestJobRetentionRuntimeStartsAndContinuesItsBoundedCursor(t *testing.T) {
 	restarted.Stop()
 	if retentionJobExists(t, ctx, restartedID) {
 		t.Fatal("a restarted runtime failed to start a new cursor cycle")
+	}
+}
+
+func TestJobRetentionRuntimeContinuesAncillaryBacklogsWithoutExpiredJobs(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
+		t.Fatalf("migrate runtime fence: %v", err)
+	}
+	service := ctx.JobService()
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = retentionRuntimeTestKind
+	if err := service.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register retention test Kind: %v", err)
+	}
+
+	jobIDs := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		jobIDs = append(jobIDs, createExpiredArtifactJob(t, ctx))
+	}
+
+	runtime := NewJobRetentionRuntime(ctx, service, JobRetentionRuntimeConfig{
+		Interval: time.Hour, ContinuationInterval: 10 * time.Millisecond,
+		LeaseDuration: time.Second, LeaseRefreshInterval: 250 * time.Millisecond,
+		BatchSize: 1,
+	})
+	runtime.Start()
+	waitFor(t, "all expired artifacts to be removed across bounded batches", func() bool {
+		var remaining int64
+		return ctx.db.Model(&models.JobOutput{}).
+			Where("job_id IN ? AND availability <> ?", jobIDs, string(jobs.OutputRemoved)).
+			Count(&remaining).Error == nil && remaining == 0
+	})
+	runtime.Stop()
+
+	for _, jobID := range jobIDs {
+		if !retentionJobExists(t, ctx, jobID) {
+			t.Fatalf("Job %s had a due metadata deadline; the fixture must exercise ancillary work only", jobID)
+		}
+	}
+	adapter.mu.Lock()
+	cleanupCalls := len(adapter.cleanups)
+	adapter.mu.Unlock()
+	if cleanupCalls != len(jobIDs) {
+		t.Fatalf("artifact cleanup ran %d times, want one per Job (%d)", cleanupCalls, len(jobIDs))
 	}
 }
 
@@ -139,15 +185,131 @@ func TestJobRetentionLeaseSerializesDatabaseHandles(t *testing.T) {
 	if acquired, err := acquireJobRetentionLease(context.Background(), second.db, secondToken, lease); err != nil || acquired {
 		t.Fatalf("second handle entered an active lease: acquired=%v err=%v", acquired, err)
 	}
-	if err := releaseJobRetentionLease(first.db, firstToken); err != nil {
+	if err := releaseJobRetentionLease(context.Background(), first.db, firstToken); err != nil {
 		t.Fatalf("release first lease: %v", err)
 	}
 	if acquired, err := acquireJobRetentionLease(context.Background(), second.db, secondToken, lease); err != nil || !acquired {
 		t.Fatalf("second handle acquire after release: acquired=%v err=%v", acquired, err)
 	}
-	if err := releaseJobRetentionLease(second.db, secondToken); err != nil {
+	if err := releaseJobRetentionLease(context.Background(), second.db, secondToken); err != nil {
 		t.Fatalf("release second lease: %v", err)
 	}
+}
+
+func TestJobRetentionRuntimeShutdownCancelsBlockedLeaseRenewal(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
+		t.Fatalf("migrate runtime fence: %v", err)
+	}
+	service := ctx.JobService()
+	adapter := newRuntimeTestAdapter()
+	adapter.def.Kind = retentionRuntimeTestKind
+	if err := service.RegisterAdapter(adapter); err != nil {
+		t.Fatalf("register retention test Kind: %v", err)
+	}
+	cleanupEntered := make(chan struct{})
+	cleanupCanceled := make(chan struct{})
+	adapter.cleanup = func(callCtx context.Context, _ jobs.ArtifactCleanupRequest) (jobs.ArtifactCleanupResult, error) {
+		close(cleanupEntered)
+		<-callCtx.Done()
+		close(cleanupCanceled)
+		return jobs.ArtifactCleanupResult{}, callCtx.Err()
+	}
+	createExpiredArtifactJob(t, ctx)
+
+	renewalEntered := make(chan struct{})
+	var fenceUpdates atomic.Int32
+	if err := ctx.db.Callback().Update().Before("gorm:update").Register("test:block-retention-lease-renewal", func(tx *gorm.DB) {
+		if tx.Statement.Table != "job_runtime_fences" || fenceUpdates.Add(1) != 2 {
+			return
+		}
+		close(renewalEntered)
+		<-tx.Statement.Context.Done()
+		tx.AddError(tx.Statement.Context.Err())
+	}); err != nil {
+		t.Fatalf("register lease renewal blocker: %v", err)
+	}
+
+	runtime := NewJobRetentionRuntime(ctx, service, JobRetentionRuntimeConfig{
+		Interval: time.Hour, ContinuationInterval: 10 * time.Millisecond,
+		LeaseDuration: 10 * time.Second, LeaseRefreshInterval: 10 * time.Millisecond,
+		QuiesceTimeout: time.Second, BatchSize: 1,
+	})
+	runtime.Start()
+	select {
+	case <-cleanupEntered:
+	case <-time.After(2 * time.Second):
+		runtime.Stop()
+		t.Fatal("startup sweep did not reach the blocked artifact cleanup")
+	}
+	select {
+	case <-renewalEntered:
+	case <-time.After(2 * time.Second):
+		runtime.Stop()
+		t.Fatal("lease renewal did not block while the sweep was active")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		runtime.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-cleanupCanceled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("shutdown did not cancel artifact cleanup")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("shutdown remained blocked on lease renewal after lifecycle cancellation")
+	}
+}
+
+func TestJobRetentionRuntimeCancelsSweepWhenLeaseTokenIsReplaced(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.AutoMigrate(&models.JobRuntimeFence{}); err != nil {
+		t.Fatalf("migrate runtime fence: %v", err)
+	}
+	queryEntered := make(chan struct{})
+	queryCanceled := make(chan struct{})
+	var replayQueries atomic.Int32
+	if err := ctx.db.Callback().Query().Before("gorm:query").Register("test:block-retention-replay-scan", func(tx *gorm.DB) {
+		if tx.Statement.Table != models.JobReplayEnvelopeTable || replayQueries.Add(1) != 1 {
+			return
+		}
+		close(queryEntered)
+		<-tx.Statement.Context.Done()
+		close(queryCanceled)
+		tx.AddError(tx.Statement.Context.Err())
+	}); err != nil {
+		t.Fatalf("register replay query blocker: %v", err)
+	}
+
+	runtime := NewJobRetentionRuntime(ctx, ctx.JobService(), JobRetentionRuntimeConfig{
+		Interval: time.Hour, LeaseDuration: 2 * time.Second,
+		LeaseRefreshInterval: 10 * time.Millisecond, BatchSize: 1,
+	})
+	runtime.Start()
+	select {
+	case <-queryEntered:
+	case <-time.After(2 * time.Second):
+		runtime.Stop()
+		t.Fatal("startup sweep did not reach the replay selection")
+	}
+	if err := ctx.db.Model(&models.JobRuntimeFence{}).
+		Where("key = ?", jobHistoryRetentionFenceKey).
+		Update("token", "another-process").Error; err != nil {
+		runtime.Stop()
+		t.Fatalf("replace the active lease token: %v", err)
+	}
+	select {
+	case <-queryCanceled:
+	case <-time.After(time.Second):
+		runtime.Stop()
+		t.Fatal("the sweep kept running after its lease token was replaced")
+	}
+	runtime.Stop()
 }
 
 func TestJobRetentionLeaseSurvivesSQLiteArtifactCleanupContention(t *testing.T) {
@@ -182,12 +344,13 @@ func TestJobRetentionLeaseSurvivesSQLiteArtifactCleanupContention(t *testing.T) 
 
 	firstRuntime := NewJobRetentionRuntime(first, service, JobRetentionRuntimeConfig{
 		Interval: time.Hour, LeaseDuration: 2 * time.Second,
-		LeaseRefreshInterval: 100 * time.Millisecond, BatchSize: 1,
+		LeaseRefreshInterval: 200 * time.Millisecond, LeaseRefreshTimeout: 100 * time.Millisecond, BatchSize: 1,
 	})
 	secondRuntime := NewJobRetentionRuntime(second, service, JobRetentionRuntimeConfig{
 		Interval: 150 * time.Millisecond, ContinuationInterval: 25 * time.Millisecond,
-		LeaseDuration: 2 * time.Second, LeaseRefreshInterval: 100 * time.Millisecond,
-		BatchSize: 1,
+		LeaseDuration: 2 * time.Second, LeaseRefreshInterval: 200 * time.Millisecond,
+		LeaseRefreshTimeout: 100 * time.Millisecond,
+		BatchSize:           1,
 	})
 	firstRuntime.Start()
 	select {

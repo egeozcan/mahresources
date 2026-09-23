@@ -933,19 +933,19 @@ const DefaultReplayPurgeBatch = 200
 // eligibility predicates are checked again by the update so stale choices are
 // harmless.
 func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
+	return s.purgeExpiredReplay(deps, limit, deps.now())
+}
+
+func (s *Service) purgeExpiredReplay(deps Deps, limit int, now time.Time) (int, error) {
 	if limit <= 0 {
 		limit = DefaultReplayPurgeBatch
 	}
-	now := deps.now()
 	// Candidate discovery may happen before the transaction. The guarded UPDATE
 	// below rechecks every expiry and terminal-state predicate after it has taken
 	// SQLite's writer lock, so this snapshot never authorizes a purge on its own.
 	var candidateIDs []string
-	if err := deps.DB.Model(&models.JobReplayEnvelope{}).
+	if err := expiredReplayEnvelopes(deps.DB, now).
 		Select("job_replay_envelopes.job_id").
-		Where("job_replay_envelopes.purged_at IS NULL").
-		Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
-		Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
 		Order("job_replay_envelopes.expires_at, job_replay_envelopes.job_id").
 		Limit(limit).Pluck("job_replay_envelopes.job_id", &candidateIDs).Error; err != nil {
 		return 0, fmt.Errorf("jobs: select expired replay input: %w", err)
@@ -963,11 +963,8 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 
 	purged := int64(0)
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&models.JobReplayEnvelope{}).
+		result := expiredReplayEnvelopes(tx, now).
 			Where("job_replay_envelopes.job_id IN ?", candidateIDs).
-			Where("job_replay_envelopes.purged_at IS NULL").
-			Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
-			Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
 			Updates(purge)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: purge expired replay input: %w", result.Error)
@@ -996,6 +993,20 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 		return 0, err
 	}
 	return int(purged), nil
+}
+
+func expiredReplayEnvelopes(db *gorm.DB, now time.Time) *gorm.DB {
+	return db.Model(&models.JobReplayEnvelope{}).
+		Where("job_replay_envelopes.purged_at IS NULL").
+		Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
+		Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates())
+}
+
+func moreExpiredReplayEnvelopes(db *gorm.DB, now time.Time) (bool, error) {
+	var candidate string
+	err := expiredReplayEnvelopes(db, now).
+		Select("job_replay_envelopes.job_id").Limit(1).Scan(&candidate).Error
+	return candidate != "", err
 }
 
 // terminalStates lists the states an ordinary retention sweep may touch.

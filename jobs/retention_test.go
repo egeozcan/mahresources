@@ -56,6 +56,97 @@ func countRows(t *testing.T, deps Deps, model any, query string, args ...any) in
 	return count
 }
 
+func TestRetentionSweepReportsRemainingWorkInEveryPhase(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2035, 1, 2, 3, 4, 5, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	past := clock.Add(-time.Minute)
+
+	finished := func() Snapshot {
+		job := acceptQueued(t, svc, deps, nil)
+		job = advanceReplayJob(t, svc, deps, job, StateRunning)
+		return advanceReplayJob(t, svc, deps, job, StateSucceeded)
+	}
+	ancillaryJobs := []Snapshot{finished(), finished()}
+	for i, job := range ancillaryJobs {
+		if err := deps.DB.Create(&models.JobReplayEnvelope{
+			JobID: job.ID, Kind: job.Kind, KindVersion: job.KindVersion,
+			SchemaVersion: ReplayEnvelopeSchemaVersion, KeyID: "test-key", Nonce: []byte{byte(i + 1)},
+			Ciphertext: []byte{byte(i + 1)}, CreatedAt: clock, ExpiresAt: &past,
+		}).Error; err != nil {
+			t.Fatalf("seed expired replay envelope: %v", err)
+		}
+		for _, output := range []models.JobOutput{
+			{
+				Key: "report", Type: OutputTypeReport, Availability: string(OutputAvailable), ExpiresAt: &past,
+			},
+			{
+				Key: "artifact", Type: OutputTypeArtifact, Availability: string(OutputExpired), ExpiresAt: &past,
+			},
+		} {
+			output.ID = types.NewUUIDv7()
+			output.JobID = job.ID
+			output.Reference = types.JSON(`{"ref":"expired"}`)
+			output.Version = 1
+			output.CreatedAt = clock
+			output.UpdatedAt = clock
+			if err := deps.DB.Create(&output).Error; err != nil {
+				t.Fatalf("seed due output: %v", err)
+			}
+		}
+	}
+
+	missingDeadlineJobs := []Snapshot{finished(), finished()}
+	for _, job := range missingDeadlineJobs {
+		if err := deps.DB.Model(&models.Job{}).Where("id = ?", job.ID).Update("expires_at", nil).Error; err != nil {
+			t.Fatalf("clear legacy deadline: %v", err)
+		}
+	}
+
+	result, err := svc.Sweep(deps, policy, SweepCursor{}, 1)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if result.Next != nil || result.Examined != 0 {
+		t.Fatalf("metadata phase had work, want an empty metadata cursor: %+v", result)
+	}
+	if !result.MoreReplay || !result.MoreOutputExpiry || !result.MoreArtifactCleanup || !result.MoreDeadlines {
+		t.Fatalf("bounded phase backlogs were not all reported: %+v", result)
+	}
+}
+
+func TestRetentionSweepDoesNotReportDeferredArtifactsAsImmediateWork(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	policy := expiredHistory(time.Hour)
+	deps.Retention = &policy
+	clock := time.Date(2035, 1, 3, 3, 4, 5, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+
+	job := acceptQueued(t, svc, deps, nil)
+	job = advanceReplayJob(t, svc, deps, job, StateRunning)
+	job = advanceReplayJob(t, svc, deps, job, StateSucceeded)
+	past := clock.Add(-time.Minute)
+	if err := deps.DB.Create(&models.JobOutput{
+		ID: types.NewUUIDv7(), JobID: job.ID, Key: "deferred-artifact", Type: OutputTypeArtifact,
+		Reference: types.JSON(`{"ref":"missing-adapter"}`), Availability: string(OutputExpired),
+		ExpiresAt: &past, Version: 1, CreatedAt: clock, UpdatedAt: clock,
+	}).Error; err != nil {
+		t.Fatalf("seed due artifact: %v", err)
+	}
+
+	result, err := svc.Sweep(deps, policy, SweepCursor{}, 1)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if result.MoreArtifactCleanup {
+		t.Fatalf("an artifact deferred for retry was reported as immediate work: %+v", result)
+	}
+}
+
 // TestRetentionSweepStartsAtFinishedAtAndLeavesNonterminalWorkAlone is §9's
 // retention contract: the window opens when a Job reached its terminal state,
 // the two windows are separate, and nonterminal work — including blocked work,

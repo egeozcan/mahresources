@@ -752,6 +752,18 @@ type SweepResult struct {
 	Outputs int
 	// Envelopes is how many replay envelopes the pass purged.
 	Envelopes int
+	// MoreReplay reports whether another expired replay envelope remains after
+	// this pass's bounded purge.
+	MoreReplay bool
+	// MoreOutputExpiry reports whether another available output has reached its
+	// own expiry deadline after this pass's bounded output update.
+	MoreOutputExpiry bool
+	// MoreArtifactCleanup reports whether another due artifact can be offered to
+	// its Kind after this pass's bounded cleanup. Deferred artifacts are omitted.
+	MoreArtifactCleanup bool
+	// MoreDeadlines reports whether another finished Job still needs its initial
+	// retention deadline stamped.
+	MoreDeadlines bool
 	// Next continues the walk inside the cycle this pass belongs to, or is nil when
 	// this pass reached the end of that cycle's range — which is the cue for the
 	// caller to start a new one from the oldest expired work.

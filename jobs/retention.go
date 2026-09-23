@@ -89,11 +89,15 @@ func (s *Service) SweepContext(ctx context.Context, deps Deps, policy RetentionP
 	// Replay retention runs from terminal completion: an envelope whose window
 	// passed is purged whether or not the Job's metadata is due, and a Job whose
 	// metadata goes takes its envelope row with it.
-	envelopes, err := s.PurgeExpiredReplay(deps, size)
+	envelopes, err := s.purgeExpiredReplay(deps, size, now)
 	if err != nil {
 		return result, err
 	}
 	result.Envelopes = envelopes
+	result.MoreReplay, err = moreExpiredReplayEnvelopes(deps.DB, now)
+	if err != nil {
+		return result, fmt.Errorf("jobs: check for expired replay input: %w", err)
+	}
 
 	// Output deadlines run from publication: an artifact that expires in an hour
 	// is gone in an hour, whether its Job finished a minute ago, has a month of
@@ -105,6 +109,10 @@ func (s *Service) SweepContext(ctx context.Context, deps Deps, policy RetentionP
 		return result, err
 	}
 	result.Outputs += expiredOutputs
+	result.MoreOutputExpiry, err = moreOutputExpiries(deps.DB, now)
+	if err != nil {
+		return result, fmt.Errorf("jobs: check for outputs past their deadline: %w", err)
+	}
 
 	// The bytes go on the same clock, and for the same reason: §7 makes an
 	// artifact's retention its own, and §9 makes a pin exempt Job metadata and Job
@@ -117,8 +125,13 @@ func (s *Service) SweepContext(ctx context.Context, deps Deps, policy RetentionP
 		return result, err
 	}
 	result.Outputs += cleanedArtifacts
+	result.MoreArtifactCleanup, err = moreArtifactCleanup(deps.DB, now)
+	if err != nil {
+		return result, err
+	}
 
-	if err := s.stampMissingDeadlines(deps, policy, size); err != nil {
+	result.MoreDeadlines, err = s.stampMissingDeadlines(deps, policy, size)
+	if err != nil {
 		return result, err
 	}
 
@@ -485,9 +498,7 @@ func sweepProtected(db *gorm.DB, jobID string) (bool, error) {
 // it replaced.
 func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, error) {
 	var due []models.JobOutput
-	if err := deps.DB.Model(&models.JobOutput{}).
-		Where("availability = ?", string(OutputAvailable)).
-		Where("expires_at IS NOT NULL AND expires_at <= ?", now).
+	if err := dueOutputExpiries(deps.DB, now).
 		Order("expires_at ASC, id ASC").Limit(limit).
 		Find(&due).Error; err != nil {
 		return 0, fmt.Errorf("jobs: read outputs past their deadline: %w", err)
@@ -505,6 +516,18 @@ func expireOutputsOnTheirDeadline(deps Deps, limit int, now time.Time) (int, err
 		recorded += expired
 	}
 	return recorded, nil
+}
+
+func dueOutputExpiries(db *gorm.DB, now time.Time) *gorm.DB {
+	return db.Model(&models.JobOutput{}).
+		Where("availability = ?", string(OutputAvailable)).
+		Where("expires_at IS NOT NULL AND expires_at <= ?", now)
+}
+
+func moreOutputExpiries(db *gorm.DB, now time.Time) (bool, error) {
+	var candidate string
+	err := dueOutputExpiries(db, now).Select("id").Limit(1).Scan(&candidate).Error
+	return candidate != "", err
 }
 
 // expireOutputsOfJob records one Job's due expiries, and the event each one
@@ -622,6 +645,14 @@ func (s *Service) cleanupExpiredArtifacts(ctx context.Context, deps Deps, limit 
 		}
 	}
 	return recorded, nil
+}
+
+func moreArtifactCleanup(db *gorm.DB, now time.Time) (bool, error) {
+	due, err := dueArtifactsForCleanup(db, 1, now)
+	if err != nil {
+		return false, err
+	}
+	return len(due) != 0, nil
 }
 
 // dueArtifactsForCleanup reads the expired artifacts a pass may act on: their own
@@ -1031,7 +1062,7 @@ func recordArtifactRemovals(tx *gorm.DB, job models.Job, removed []models.JobOut
 // is still NULL, and it measures from the Job's own finish instant rather than
 // from now — so a legacy Job is not handed a full window from the moment someone
 // upgraded.
-func (s *Service) stampMissingDeadlines(deps Deps, policy RetentionPolicy, limit int) error {
+func (s *Service) stampMissingDeadlines(deps Deps, policy RetentionPolicy, limit int) (bool, error) {
 	var rows []models.Job
 	err := deps.DB.Model(&models.Job{}).
 		Where("state IN ?", terminalStates()).
@@ -1040,17 +1071,28 @@ func (s *Service) stampMissingDeadlines(deps Deps, policy RetentionPolicy, limit
 		Limit(limit).
 		Find(&rows).Error
 	if err != nil {
-		return fmt.Errorf("jobs: read jobs without a deadline: %w", err)
+		return false, fmt.Errorf("jobs: read jobs without a deadline: %w", err)
 	}
 	for _, row := range rows {
 		expires := row.FinishedAt.UTC().Add(policy.windowFor(State(row.State)))
 		if err := deps.DB.Model(&models.Job{}).
 			Where("id = ? AND expires_at IS NULL", row.ID).
 			Update("expires_at", expires).Error; err != nil {
-			return fmt.Errorf("jobs: stamp deadline for %s: %w", row.ID, err)
+			return false, fmt.Errorf("jobs: stamp deadline for %s: %w", row.ID, err)
 		}
 	}
-	return nil
+	var remaining []models.Job
+	err = deps.DB.Model(&models.Job{}).
+		Select("id").
+		Where("state IN ?", terminalStates()).
+		Where("finished_at IS NOT NULL AND expires_at IS NULL").
+		Order("finished_at ASC, jobs.id ASC").
+		Limit(1).
+		Find(&remaining).Error
+	if err != nil {
+		return false, fmt.Errorf("jobs: check jobs without a deadline: %w", err)
+	}
+	return len(remaining) != 0, nil
 }
 
 // sweepBatchSize resolves a requested batch, refusing one beyond the ceiling
