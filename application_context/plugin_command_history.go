@@ -25,6 +25,13 @@ func (ctx *MahresourcesContext) GetPluginCommandRuns(offset, limit int) ([]plugi
 	}
 	runs := make([]plugin_commands.RunRecord, len(rows))
 	for i, row := range rows {
+		// The writer epoch retires ParamsJSON and InputsJSON in this source
+		// table. Show the safe input names and byte counts from canonical replay
+		// while it is available. A forgotten or unreadable envelope leaves this
+		// history row visible with its input metadata empty.
+		if err := ctx.hydratePluginCommandRun(&row, ctx.db); err != nil {
+			row.ParamsJSON, row.InputsJSON = "", ""
+		}
 		runs[i] = runRecord(row)
 	}
 	return runs, count, nil

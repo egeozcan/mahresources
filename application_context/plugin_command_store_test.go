@@ -212,6 +212,10 @@ func TestPluginCommandWritesUseCanonicalReplayAfterWriterFence(t *testing.T) {
 	require.NoError(t, ctx.hydratePluginCommandRun(&staleRun, ctx.db))
 	require.Equal(t, runInput.ParamsJSON, staleRun.ParamsJSON)
 	require.Equal(t, runInput.InputsJSON, staleRun.InputsJSON)
+	listedRuns, _, err := ctx.GetPluginCommandRuns(0, 10)
+	require.NoError(t, err)
+	require.Len(t, listedRuns, 1)
+	require.Equal(t, run.Inputs, listedRuns[0].Inputs, "admin history must show safe input metadata from canonical replay")
 
 	claim, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{
 		ImportID: "post-fence-import", RunID: run.ID, FileName: "admitted.csv",
