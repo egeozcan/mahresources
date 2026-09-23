@@ -44,6 +44,7 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 		&models.RuntimeSetting{}, &models.LogEntry{},
 	)
 	require.NoError(t, db.AutoMigrate(modelsToMigrate...))
+	require.NoError(t, models.EnsureJobWriterEpoch(db))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
@@ -53,6 +54,65 @@ func newPluginCommandStoreTestContext(t *testing.T) *MahresourcesContext {
 	require.NoError(t, err)
 	ctx.SetJobReplayKeyring(keyring)
 	return ctx
+}
+
+func TestCreateRunRetriesSQLiteSnapshotLock(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+
+	createReached := make(chan struct{}, 1)
+	releaseCreate := make(chan struct{})
+	var releaseOnce sync.Once
+	unblockCreate := func() { releaseOnce.Do(func() { close(releaseCreate) }) }
+	const callbackName = "test:block_plugin_command_run_create"
+	require.NoError(t, ctx.db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "plugin_command_runs" {
+			return
+		}
+		select {
+		case createReached <- struct{}{}:
+		default:
+		}
+		<-releaseCreate
+	}))
+	t.Cleanup(func() {
+		unblockCreate()
+		_ = ctx.db.Callback().Create().Remove(callbackName)
+	})
+
+	now := time.Now().UTC()
+	record := testRun("sqlite-snapshot-retry", nil, true, now)
+	result := make(chan error, 1)
+	go func() {
+		result <- ctx.CreateRun(record, testOutput(record.ID, now))
+	}()
+
+	select {
+	case <-createReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CreateRun did not reach the run insert")
+	}
+
+	// CreateRun has read the writer-epoch row inside its transaction. Commit a
+	// competing WAL write before releasing the insert callback so that the old
+	// snapshot cannot be upgraded; a retry must start a fresh transaction.
+	require.NoError(t, ctx.db.Model(&models.JobWriterEpoch{}).
+		Where("id = ?", models.JobWriterEpochRowID).
+		UpdateColumn("updated_at", time.Now().UTC()).Error)
+	unblockCreate()
+
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("CreateRun did not finish after the competing writer committed")
+	}
+
+	stored, _, err := ctx.Run(record.ID)
+	require.NoError(t, err)
+	require.Equal(t, record.ID, stored.ID)
 }
 
 func migratePluginCommandJobTestModels(t *testing.T, ctx *MahresourcesContext) {

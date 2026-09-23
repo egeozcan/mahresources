@@ -266,47 +266,52 @@ func (ctx *MahresourcesContext) CreateRun(record plugin_commands.RunRecord, outp
 	if record.Status != plugin_commands.RunStatusQueued {
 		return fmt.Errorf("new plugin command run must be %q", plugin_commands.RunStatusQueued)
 	}
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
-			return err
-		}
-		retired, err := pluginCommandInputsRetired(tx)
-		if err != nil {
-			return err
-		}
-		row := runModel(record)
-		if retired {
-			row.ParamsJSON, row.InputsJSON = "", ""
-		}
-		if err := tx.Create(&row).Error; err != nil {
-			return err
-		}
-		// Intentional actorlessness is durable provenance. In no-auth mode the
-		// global create callback attributes context-less rows to root, so clear
-		// that automatic stamp inside this same transaction only for a request
-		// that explicitly records actorless provenance.
-		if record.ActorlessAtSubmission {
-			if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).
-				Update("created_by_user_id", nil).Error; err != nil {
+	// Acceptance reads the writer epoch before its first insert. A concurrent
+	// WAL commit can make that transaction's snapshot unwritable, so retry from
+	// a fresh transaction rather than returning SQLite's lock error.
+	return retryPluginCommandSQLiteWrite(ctx, func() error {
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
 				return err
 			}
-		}
-		out := outputModel(output)
-		if err := tx.Create(&out).Error; err != nil {
-			return err
-		}
-		jobID, err := ctx.acceptPluginCommandRunJob(tx, record)
-		if err != nil {
-			return err
-		}
-		if jobID != "" {
-			if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Update("job_id", jobID).Error; err != nil {
+			retired, err := pluginCommandInputsRetired(tx)
+			if err != nil {
 				return err
 			}
-			row.JobID = jobID
-			return ctx.recordDualPublishedPluginCommandRunTx(tx, row, retired, record.CreatedAt.UTC())
-		}
-		return nil
+			row := runModel(record)
+			if retired {
+				row.ParamsJSON, row.InputsJSON = "", ""
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			// Intentional actorlessness is durable provenance. In no-auth mode the
+			// global create callback attributes context-less rows to root, so clear
+			// that automatic stamp inside this same transaction only for a request
+			// that explicitly records actorless provenance.
+			if record.ActorlessAtSubmission {
+				if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).
+					Update("created_by_user_id", nil).Error; err != nil {
+					return err
+				}
+			}
+			out := outputModel(output)
+			if err := tx.Create(&out).Error; err != nil {
+				return err
+			}
+			jobID, err := ctx.acceptPluginCommandRunJob(tx, record)
+			if err != nil {
+				return err
+			}
+			if jobID != "" {
+				if err := tx.Model(&models.PluginCommandRun{}).Where("id = ?", record.ID).Update("job_id", jobID).Error; err != nil {
+					return err
+				}
+				row.JobID = jobID
+				return ctx.recordDualPublishedPluginCommandRunTx(tx, row, retired, record.CreatedAt.UTC())
+			}
+			return nil
+		})
 	})
 }
 
