@@ -195,6 +195,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// implicit super-user used when auth is disabled is intentionally not
 		// surfaced, so the no-auth UI is unchanged.
 		ctx["authEnabled"] = appContext.AuthEnabled()
+		ctx["jobCenterCutoverEnabled"] = template_context_providers.JobCenterCutoverEnabled
 		if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
 			ctx["currentUser"] = p
 		}
@@ -500,6 +501,29 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	}
 }
 
+// registerJobCenterRoutes keeps the new HTML surfaces unreachable until the
+// complete-kind cutover. Task 17 flips the shared gate after its inventory passes.
+func registerJobCenterRoutes(router *mux.Router, appContext *application_context.MahresourcesContext, enabled bool) {
+	if !enabled {
+		return
+	}
+	routes := map[string]templateInformation{
+		"/jobs": {adaptTemplate(template_context_providers.JobCenterListContextProvider), "listJobs.tpl", http.MethodGet},
+		"/job":  {adaptTemplate(template_context_providers.JobDetailContextProvider), "displayJob.tpl", http.MethodGet},
+	}
+	for path, templateInfo := range routes {
+		info := templateInfo
+		contextForRequest := func(request *http.Request) pongo2.Context {
+			scoped := scopedCtx(appContext, request)
+			return wrapContextWithPlugins(scoped, info.contextFn(scoped))(request)
+		}
+		handler := template_handlers.RenderTemplate(info.templateName, contextForRequest)
+		for _, suffix := range []string{"", ".json", ".body"} {
+			router.Methods(http.MethodGet).Path(path + suffix).HandlerFunc(handler)
+		}
+	}
+}
+
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {
 	for path, templateInfo := range templates {
 		info := templateInfo
@@ -524,6 +548,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			template_handlers.RenderTemplate(info.templateName, scopedCtxFn),
 		)
 	}
+	registerJobCenterRoutes(router, appContext, template_context_providers.JobCenterCutoverEnabled)
 
 	router.Methods(http.MethodGet).
 		Path("/partials/autocompleter").

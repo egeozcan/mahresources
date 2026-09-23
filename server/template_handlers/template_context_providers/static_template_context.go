@@ -160,6 +160,7 @@ var baseTemplateContext = pongo2.Context{
 // listed here.
 var navSectionByFirstSegment = map[string]string{
 	"dashboard": "/dashboard",
+	"jobs":      "/jobs",
 
 	"note":  "/notes",
 	"notes": "/notes",
@@ -339,16 +340,30 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 			currentId += 1
 			return fmt.Sprintf("input_%v_%v", elName, currentId)
 		},
-		"dereference": dereference,
-		"bulkActions": bulkActionDeclarations,
-		"bulkMetaURL": func(entity string) string { return "/v1/" + entity + "s/meta/keys" },
+		"dereference":             dereference,
+		"bulkActions":             bulkActionDeclarations,
+		"bulkMetaURL":             func(entity string) string { return "/v1/" + entity + "s/meta/keys" },
+		"jobCenterCutoverEnabled": JobCenterCutoverEnabled,
 	}
 
 	if errMessage := request.URL.Query().Get("Error"); errMessage != "" {
 		context.Update(pongo2.Context{"errorMessage": errMessage})
 	}
 
-	return context.Update(baseTemplateContext)
+	if !JobCenterCutoverEnabled {
+		return context.Update(baseTemplateContext)
+	}
+
+	baseContext := make(pongo2.Context, len(baseTemplateContext))
+	for key, value := range baseTemplateContext {
+		baseContext[key] = value
+	}
+	if JobCenterCutoverEnabled {
+		menu := append([]template_entities.Entry(nil), baseTemplateContext["menu"].([]template_entities.Entry)...)
+		menu = append(menu, template_entities.Entry{Name: "Jobs", Url: "/jobs"})
+		baseContext["menu"] = menu
+	}
+	return context.Update(baseContext)
 }
 
 func getHasQuery(request *http.Request) func(name string, value string) bool {
