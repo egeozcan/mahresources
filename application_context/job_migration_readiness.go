@@ -30,7 +30,8 @@ type JobMigrationReadiness struct {
 // GetJobMigrationReadiness recomputes the retirement gate from the current
 // stores. A completed checkpoint alone is not proof: the check re-reads every
 // retained mapped source, looks for unmapped source rows, and opens execution
-// input for every nonterminal replayable Job.
+// input for every nonterminal replayable Job, including Jobs without a legacy
+// source mapping.
 func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadiness, error) {
 	if ctx == nil || ctx.db == nil {
 		return JobMigrationReadiness{}, errors.New("job migration readiness requires a database")
@@ -167,6 +168,35 @@ func (ctx *MahresourcesContext) GetJobMigrationReadiness() (JobMigrationReadines
 				}
 				cursor = mappings[len(mappings)-1].SourceID
 			}
+		}
+
+		var cursor string
+		for {
+			var canonicalOnly []struct{ ID string }
+			query := tx.Model(&models.Job{}).
+				Select("id").
+				Where("replay_class = ?", jobs.ReplayClassReplayable).
+				Where("state IN ?", []string{
+					string(jobs.StateScheduled), string(jobs.StateQueued), string(jobs.StateRunning),
+					string(jobs.StatePaused), string(jobs.StateBlocked),
+				}).
+				Where("NOT EXISTS (SELECT 1 FROM job_source_mappings AS mapping WHERE mapping.job_id = jobs.id)").
+				Order("id ASC").Limit(jobMigrationReadinessBatchSize)
+			if cursor != "" {
+				query = query.Where("id > ?", cursor)
+			}
+			if err := query.Find(&canonicalOnly).Error; err != nil {
+				return errors.New("job migration canonical replay candidates could not be read")
+			}
+			for _, job := range canonicalOnly {
+				if !canonicalJobReplayReady(ctx.JobService(), ctx.jobDepsWithDB(tx), job.ID) {
+					report.Blockers["nonterminal-replay-unavailable/canonical"]++
+				}
+			}
+			if len(canonicalOnly) < jobMigrationReadinessBatchSize {
+				break
+			}
+			cursor = canonicalOnly[len(canonicalOnly)-1].ID
 		}
 		return nil
 	}); err != nil {
@@ -555,6 +585,25 @@ func migrationJobReplayReady(db *gorm.DB, service *jobs.Service, deps jobs.Deps,
 	default:
 		return false
 	}
+}
+
+// canonicalJobReplayReady checks a canonical-only Job's required execution
+// input through the same authenticated decrypt and Kind decoder dispatch uses.
+// The opened bytes are used only as a success signal and cleared before return;
+// the readiness report contains neither input nor Job identity.
+func canonicalJobReplayReady(service *jobs.Service, deps jobs.Deps, jobID string) bool {
+	if service == nil {
+		return false
+	}
+	opened, err := service.OpenReplay(deps, jobs.Access{Administrator: true}, jobID)
+	if err != nil {
+		return false
+	}
+	readable := len(opened.Input) != 0
+	for i := range opened.Input {
+		opened.Input[i] = 0
+	}
+	return readable
 }
 
 func safeJobMigrationKind(kind string) string {

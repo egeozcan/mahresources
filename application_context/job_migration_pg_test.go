@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
 
@@ -236,6 +237,44 @@ func TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub(t *tes
 	readiness, err = restarted.GetJobMigrationReadiness()
 	if err != nil || !readiness.Ready {
 		t.Fatalf("recovered PostgreSQL retirement readiness = %+v, %v", readiness, err)
+	}
+	groupID := createExportGroupForTest(t, restarted, "pg-canonical-only-readiness-export")
+	input, err := json.Marshal(exportJobInput{Request: *exportRequestForTest(groupID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalOnlyExport, err := restarted.JobService().Accept(restarted.jobDeps(), jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", Title: "Group export", Replay: jobs.ReplayInput{Input: input},
+	})
+	if err != nil {
+		t.Fatalf("accept canonical-only PostgreSQL export: %v", err)
+	}
+	canonicalOnlyExportID := canonicalOnlyExport.ID
+	var exportMappings int64
+	if err := restarted.db.Model(&models.JobSourceMapping{}).Where("job_id = ?", canonicalOnlyExportID).Count(&exportMappings).Error; err != nil {
+		t.Fatalf("count canonical-only PostgreSQL export mappings: %v", err)
+	}
+	if exportMappings != 0 {
+		t.Fatalf("canonical-only PostgreSQL export has %d source mappings, want none", exportMappings)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("valid canonical-only PostgreSQL export should be ready: %+v, %v", readiness, err)
+	}
+	holdJobReplayKey(t, restarted, sharedReplayKey(t))
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["nonterminal-replay-unavailable/canonical"] != 1 {
+		t.Fatalf("missing canonical-only PostgreSQL export key should block readiness: %+v, %v", readiness, err)
+	}
+	holdJobReplayKey(t, restarted, key)
+	if err := restarted.db.Model(&models.JobReplayEnvelope{}).Where("job_id = ?", canonicalOnlyExportID).
+		Update("ciphertext", []byte("corrupt ciphertext")).Error; err != nil {
+		t.Fatalf("corrupt canonical-only PostgreSQL replay envelope: %v", err)
+	}
+	readiness, err = restarted.GetJobMigrationReadiness()
+	if err != nil || readiness.Ready || readiness.Blockers["nonterminal-replay-unavailable/canonical"] != 1 {
+		t.Fatalf("corrupt canonical-only PostgreSQL export should block readiness: %+v, %v", readiness, err)
 	}
 	if err := restarted.db.Where("job_id = ?", scheduledMapping.JobID).Delete(&models.JobReplayEnvelope{}).Error; err != nil {
 		t.Fatal(err)

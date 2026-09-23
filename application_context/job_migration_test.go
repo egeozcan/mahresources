@@ -1330,3 +1330,87 @@ func TestJobMigrationScrubAndMarkerAreAtomic(t *testing.T) {
 		})
 	}
 }
+
+func TestJobMigrationReadinessChecksCanonicalOnlyQueuedReplay(t *testing.T) {
+	tests := []struct {
+		name        string
+		breakReplay func(t *testing.T, ctx *MahresourcesContext, jobID string)
+	}{
+		{
+			name: "missing key",
+			breakReplay: func(t *testing.T, ctx *MahresourcesContext, _ string) {
+				holdJobReplayKey(t, ctx, sharedReplayKey(t))
+			},
+		},
+		{
+			name: "corrupt envelope",
+			breakReplay: func(t *testing.T, ctx *MahresourcesContext, jobID string) {
+				if err := ctx.db.Model(&models.JobReplayEnvelope{}).Where("job_id = ?", jobID).
+					Update("ciphertext", []byte("corrupt ciphertext")).Error; err != nil {
+					t.Fatalf("corrupt canonical replay envelope: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newJobHarnessContext(t, false)
+			migrated, err := ctx.RunJobMigrationToGate(JobMigrationOptions{BatchSize: 10, MaxBatches: 20, WritersDrained: true})
+			if err != nil || !migrated.Complete {
+				t.Fatalf("empty source migration = %+v, %v", migrated, err)
+			}
+			jobID := acceptCanonicalOnlyQueuedExportForReadiness(t, ctx)
+
+			readiness, err := ctx.GetJobMigrationReadiness()
+			if err != nil || !readiness.Ready {
+				t.Fatalf("valid canonical-only queued export should be ready: %+v, %v", readiness, err)
+			}
+
+			tt.breakReplay(t, ctx, jobID)
+			readiness, err = ctx.GetJobMigrationReadiness()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if readiness.Ready || readiness.Blockers["nonterminal-replay-unavailable/canonical"] != 1 {
+				t.Fatalf("unreadable canonical-only queued export should block readiness: %+v", readiness)
+			}
+			encoded, err := json.Marshal(readiness)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), "corrupt ciphertext") || strings.Contains(string(encoded), jobID) {
+				t.Fatalf("readiness exposed replay data or a Job id: %s", encoded)
+			}
+		})
+	}
+}
+
+func acceptCanonicalOnlyQueuedExportForReadiness(t *testing.T, ctx *MahresourcesContext) string {
+	t.Helper()
+	ctx.Config.MaxJobConcurrency = 1
+	holdTheDeploymentBudgetIn(t, ctx)
+	groupID := createExportGroupForTest(t, ctx, "canonical-only-readiness-export")
+	submission := ctx.SubmitGroupExport(exportRequestForTest(groupID), "api")
+	if submission.Err != nil {
+		t.Fatalf("submit capacity-queued export: %v", submission.Err)
+	}
+	if submission.CanonicalJobID == "" {
+		t.Fatal("capacity-queued export has no canonical Job id")
+	}
+	var job models.Job
+	if err := ctx.db.Where("id = ?", submission.CanonicalJobID).First(&job).Error; err != nil {
+		t.Fatalf("read canonical-only queued export: %v", err)
+	}
+	if job.State != string(jobs.StateQueued) || job.ReplayClass != string(jobs.ReplayClassReplayable) {
+		t.Fatalf("capacity-queued export is %s/%s, want queued/replayable", job.State, job.ReplayClass)
+	}
+	var mappings int64
+	if err := ctx.db.Model(&models.JobSourceMapping{}).Where("job_id = ?", job.ID).Count(&mappings).Error; err != nil {
+		t.Fatalf("count source mappings for queued export: %v", err)
+	}
+	if mappings != 0 {
+		t.Fatalf("canonical-only export has %d source mappings, want none", mappings)
+	}
+	return job.ID
+}
