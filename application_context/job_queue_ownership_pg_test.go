@@ -75,7 +75,7 @@ func newPostgresOwnershipFixture(t *testing.T, concurrency int) (*MahresourcesCo
 		&models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{},
 		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
 		&models.ResourceReduction{},
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
 		&models.JobCommandRequest{}, &models.JobLegacyHandle{},

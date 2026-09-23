@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -219,6 +222,104 @@ func TestAddResource_CommittedHashLookupPrecedesDestinationRepair(t *testing.T) 
 	require.ErrorAs(t, err, &existsErr)
 	require.Equal(t, first.ID, existsErr.ResourceID)
 	ff.AssertDestinationWasNotTouched(t)
+}
+
+func TestAddResourceForJobRecoversCommitBeforeQueueAcknowledgement(t *testing.T) {
+	payload := []byte("committed before the queue recorded its resource id")
+	ctx := newJobHarnessContext(t, false)
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "receipt test",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	jobID := accepted.ID
+	creator := func() *query_models.ResourceCreator {
+		return &query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{Name: "replayed download"}}
+	}
+
+	// The returned ID stands for the process-local value lost when the process
+	// exits after the resource transaction commits but before the queue stamps it.
+	first, err := ctx.AddResourceForJob(jobID, nil, newBytesFile(payload), "download.bin", creator())
+	require.NoError(t, err)
+	require.NotNil(t, first)
+
+	replayed, err := ctx.AddResourceForJob(jobID, nil, newBytesFile(payload), "download.bin", creator())
+	require.NoError(t, err)
+	require.Equal(t, first.ID, replayed.ID, "reconciliation must recover the committed resource receipt")
+
+	var resources int64
+	require.NoError(t, ctx.db.Model(&models.Resource{}).Where("hash = ?", first.Hash).Count(&resources).Error)
+	require.EqualValues(t, 1, resources)
+	var receipts int64
+	require.NoError(t, ctx.db.Model(&models.JobResourceReceipt{}).Where("job_id = ?", jobID).Count(&receipts).Error)
+	require.EqualValues(t, 1, receipts)
+
+	// The receipt is specific to this canonical Job. A separate upload of the
+	// same bytes keeps the ordinary duplicate refusal.
+	_, err = ctx.AddResource(newBytesFile(payload), "independent.bin", creator())
+	var exists *ResourceExistsError
+	require.ErrorAs(t, err, &exists)
+	require.Equal(t, first.ID, exists.ResourceID)
+	registerClaimableKind(t, ctx, runtimeTestKind, 1)
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: runtimeTestKind, KindVersion: 1, JobID: jobID, Claimant: "receipt-retention-test",
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	_, err = ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: jobID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: execution.Version, Outcome: jobs.StateSucceeded,
+	})
+	require.NoError(t, err)
+	require.NoError(t, ctx.db.Model(&models.Job{}).Where("id = ?", jobID).
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error)
+	// This harness opens SQLite directly, unlike the production connection
+	// helper. Pin one connection and enable production's FK pragma so the
+	// Job→receipt cascade is exercised by retention.
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, ctx.db.Exec("PRAGMA foreign_keys = ON").Error)
+	sweep, err := ctx.JobService().Sweep(ctx.jobDeps(), jobs.RetentionPolicy{History: time.Second}, jobs.SweepCursor{}, 32)
+	require.NoError(t, err)
+	require.Equal(t, 1, sweep.Pruned, "the expired Job should be pruned with its receipt")
+	require.NoError(t, ctx.db.Model(&models.JobResourceReceipt{}).Where("job_id = ?", jobID).Count(&receipts).Error)
+	require.Zero(t, receipts, "the receipt must follow canonical Job retention")
+}
+
+func TestAddResourceForJobRecordsReceiptWhenAttachingSecondOwner(t *testing.T) {
+	payload := []byte("shared bytes attached to a second owner")
+	ctx := newJobHarnessContext(t, false)
+	firstOwner := &models.Group{Name: "receipt-first-owner"}
+	secondOwner := &models.Group{Name: "receipt-second-owner"}
+	require.NoError(t, ctx.db.Create(firstOwner).Error)
+	require.NoError(t, ctx.db.Create(secondOwner).Error)
+	first, err := ctx.AddResource(newBytesFile(payload), "first.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "first", OwnerId: firstOwner.ID},
+	})
+	require.NoError(t, err)
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "second owner receipt",
+		Replay: jobs.ReplayInput{NonReplayable: true},
+	})
+	added, err := ctx.AddResourceForJob(accepted.ID, nil, newBytesFile(payload), "second.bin", &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "second", OwnerId: secondOwner.ID},
+	})
+	require.NoError(t, err)
+	require.Equal(t, first.ID, added.ID, "same bytes should attach the owner to the existing Resource")
+	var receipt models.JobResourceReceipt
+	require.NoError(t, ctx.db.First(&receipt, "job_id = ?", accepted.ID).Error)
+	require.Equal(t, first.ID, receipt.ResourceID, "owner attachment and receipt must commit together")
+	var owners int64
+	require.NoError(t, ctx.db.Table("groups_related_resources").Where("resource_id = ? AND group_id = ?", first.ID, secondOwner.ID).Count(&owners).Error)
+	require.EqualValues(t, 1, owners)
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, ctx.db.Exec("PRAGMA foreign_keys = ON").Error)
+	require.NoError(t, ctx.db.Delete(&models.Resource{}, first.ID).Error, "Resource deletion should cascade to its receipt")
+	var receipts int64
+	require.NoError(t, ctx.db.Model(&models.JobResourceReceipt{}).Where("job_id = ?", accepted.ID).Count(&receipts).Error)
+	require.Zero(t, receipts)
 }
 
 // TestAddResource_ConcurrentSameContentNeverUnlinksTheWinner verifies that

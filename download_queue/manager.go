@@ -103,6 +103,13 @@ type ResourceCreator interface {
 	AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
 }
 
+// CanonicalResourceCreator atomically binds a newly created Resource to the
+// durable Job that requested it, allowing an executor replay to recover a
+// commit made before its local acknowledgement.
+type CanonicalResourceCreator interface {
+	AddResourceForJob(jobID string, actorUserID *uint, file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
+}
+
 // CanonicalRef names the durable Job execution one queue entry publishes into:
 // which Job, and the fencing token its claim was created with.
 //
@@ -1269,7 +1276,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 		}
 	}
 
-	return creator.AddResource(progressBody, fileName, &query_models.ResourceCreator{
+	resourceQuery := &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name:               name,
 			Description:        job.creator.Description,
@@ -1293,7 +1300,15 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 		// replayed on retry -- dropping it only here would have made a retried
 		// download land somewhere other than the original.
 		PathName: job.creator.PathName,
-	})
+	}
+	if ref, ok := job.CanonicalExecution(); ok {
+		canonicalCreator, ok := creator.(CanonicalResourceCreator)
+		if !ok {
+			return nil, fmt.Errorf("canonical download %s requires a receipt-capable resource creator", ref.JobID)
+		}
+		return canonicalCreator.AddResourceForJob(ref.JobID, job.GetOwnerUserID(), progressBody, fileName, resourceQuery)
+	}
+	return creator.AddResource(progressBody, fileName, resourceQuery)
 }
 
 // Cancel cancels a download job by ID.

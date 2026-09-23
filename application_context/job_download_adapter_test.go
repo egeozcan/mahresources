@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,7 +78,7 @@ func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
 		&models.PluginKV{}, &models.PluginState{}, &models.RuntimeSetting{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
 		&models.Query{}, &models.SavedMRQLQuery{}, &models.SavedSearch{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{},
 		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{}, &models.ResourceReduction{},
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
 		&models.JobCommandRequest{}, &models.JobLegacyHandle{},
@@ -203,12 +204,16 @@ func waitForSnapshot(t *testing.T, ctx *MahresourcesContext, jobID string, what 
 func TestASubmissionAcceptsADurableJobBeforeDispatchAndRunsItToSuccess(t *testing.T) {
 	ctx := newDownloadJobContext(t)
 	server := plainContentServer(t, "canonical download body")
+	actor, err := ctx.CreateUser(&UserInput{Username: "download-owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create download actor: %v", err)
+	}
 
 	creator := &query_models.ResourceFromRemoteCreator{
 		URL:     server.URL + "/clip.mp4?token=super-secret#frag",
 		Headers: map[string]string{"Referer": "https://internal.example/secret-page"},
 	}
-	submissions := ctx.SubmitRemoteDownloads(creator, nil, "", "api")
+	submissions := ctx.SubmitRemoteDownloads(creator, &actor.ID, "", "api")
 	if len(submissions) != 1 {
 		t.Fatalf("%d submissions, want one", len(submissions))
 	}
@@ -274,6 +279,16 @@ func TestASubmissionAcceptsADurableJobBeforeDispatchAndRunsItToSuccess(t *testin
 	if resourceID == 0 {
 		t.Fatalf("a succeeded download published no resource output: %+v", outputs)
 	}
+	var receipt models.JobResourceReceipt
+	if err := ctx.db.First(&receipt, "job_id = ?", canonicalID).Error; err != nil {
+		t.Fatalf("the queue did not commit the canonical resource receipt: %v", err)
+	}
+	if receipt.ResourceID != resourceID {
+		t.Fatalf("receipt names resource %d, output names %d", receipt.ResourceID, resourceID)
+	}
+	if receipt.ActorUserID == nil || *receipt.ActorUserID != actor.ID {
+		t.Fatalf("receipt actor is %v, want %d; the actor-bound resource creator must keep the canonical capability", receipt.ActorUserID, actor.ID)
+	}
 	var stored models.Resource
 	if err := ctx.db.Where("id = ?", resourceID).First(&stored).Error; err != nil {
 		t.Fatalf("the output names resource %d, which does not exist: %v", resourceID, err)
@@ -295,6 +310,111 @@ func TestASubmissionAcceptsADurableJobBeforeDispatchAndRunsItToSuccess(t *testin
 		if strings.Contains(string(event.Detail), "super-secret") {
 			t.Fatalf("a job event leaked the URL's query: %s", event.Detail)
 		}
+	}
+}
+
+func TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	const body = "durable resource created before the queue stamped its id"
+	var fetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		http.Error(w, "expired", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	creator := &query_models.ResourceFromRemoteCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{Name: "crash-window.txt"},
+		URL:               server.URL + "/crash-window.txt",
+	}
+	input, err := remoteDownloadInputJSON(creator, "")
+	if err != nil {
+		t.Fatalf("encode download input: %v", err)
+	}
+	accepted, err := ctx.JobService().Accept(ctx.jobDeps(), jobs.Acceptance{
+		Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion,
+		State: jobs.StateQueued, Origin: "api", Title: "crash-window.txt",
+		Replay: jobs.ReplayInput{Input: input},
+	})
+	if err != nil {
+		t.Fatalf("accept canonical download: %v", err)
+	}
+
+	// Model process death after AddResource commits its transaction and before
+	// the queue stamps ResourceID: deliberately discard the only process-local
+	// return value, leaving just the transactional receipt.
+	created, err := ctx.AddResourceForJob(accepted.ID, nil, newBytesFile([]byte(body)), "crash-window.txt",
+		&query_models.ResourceCreator{ResourceQueryBase: query_models.ResourceQueryBase{Name: "crash-window.txt"}})
+	if err != nil {
+		t.Fatalf("commit resource before simulated crash: %v", err)
+	}
+	resourceID := created.ID
+	created = nil
+
+	_, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindRemoteDownload, KindVersion: jobDownloadKindVersion, JobID: accepted.ID,
+		Claimant: goneRuntimeIdentityForTest(), Lease: 20 * time.Millisecond,
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim before simulated process loss: claimed=%v err=%v", claimed, err)
+	}
+	if err := ctx.db.Model(&models.JobClaim{}).Where("job_id = ?", accepted.ID).
+		UpdateColumn("lease_expires_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("expire crashed execution claim: %v", err)
+	}
+
+	// A fresh runtime sees no queue entry in memory. Reconciliation proves the
+	// previous process gone and publishes the Resource from its receipt, so it
+	// never replays the now-expired URL.
+	restarted := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{
+		Claimant: "download-recovery-runtime", GlobalCapacity: 4,
+	})
+	t.Cleanup(restarted.Stop)
+	report, err := ctx.JobService().ReconcileExpired(context.Background(), ctx.jobDeps(), "download-recovery-runtime", 32)
+	if err != nil {
+		t.Fatalf("reconcile crashed download: %v", err)
+	}
+	if len(report.Outcomes) != 1 || report.Outcomes[0].JobID != accepted.ID || report.Outcomes[0].Decision != jobs.ReconcileSucceed {
+		t.Fatalf("crashed download reconciliation = %+v, want the Job succeeded from its receipt", report)
+	}
+	if got := fetches.Load(); got != 0 {
+		t.Fatalf("recovery fetched the expired URL %d times, want no fetch", got)
+	}
+	succeeded := waitForSnapshot(t, ctx, accepted.ID, "the replayed download to publish its resource", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if succeeded.State != jobs.StateSucceeded {
+		t.Fatalf("replayed download ended %s (%+v)", succeeded.State, succeeded.Failure)
+	}
+	outputs, err := ctx.GetJobOutputs(accepted.ID)
+	if err != nil {
+		t.Fatalf("read replayed outputs: %v", err)
+	}
+	var outputResourceID uint
+	for _, output := range outputs {
+		if output.Key != jobDownloadResourceOutput {
+			continue
+		}
+		var reference struct {
+			ResourceID uint `json:"resourceId"`
+		}
+		if err := json.Unmarshal(output.Reference, &reference); err != nil {
+			t.Fatalf("decode replayed resource output: %v", err)
+		}
+		outputResourceID = reference.ResourceID
+	}
+	if outputResourceID != resourceID {
+		t.Fatalf("replayed Job output names resource %d, want committed resource %d", outputResourceID, resourceID)
+	}
+	var receipt models.JobResourceReceipt
+	if err := ctx.db.First(&receipt, "job_id = ?", accepted.ID).Error; err != nil {
+		t.Fatalf("read replayed receipt: %v", err)
+	}
+	var resources int64
+	if err := ctx.db.Model(&models.Resource{}).Where("hash = ?", receipt.Hash).Count(&resources).Error; err != nil {
+		t.Fatalf("count replayed resources: %v", err)
+	}
+	if resources != 1 {
+		t.Fatalf("the replay left %d resources for the same payload, want 1", resources)
 	}
 }
 

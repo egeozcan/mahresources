@@ -28,6 +28,10 @@ func (c *capturingResourceCreator) AddResource(file contracts.File, fileName str
 	return &models.Resource{ID: 1, Name: resourceQuery.Name}, nil
 }
 
+func (c *capturingResourceCreator) AddResourceForJob(_ string, _ *uint, file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	return c.AddResource(file, fileName, resourceQuery)
+}
+
 // createTestManager creates a DownloadManager for testing with a small max queue size
 func createTestManager() *DownloadManager {
 	return &DownloadManager{

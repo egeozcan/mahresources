@@ -1,3 +1,33 @@
+# Job Center post-Task-9 checkpoint, eighth round — download receipt recovery (2026-09-23)
+
+**Goal:** Recover a committed download Resource after the executor dies before the queue records
+its ID, including when the source URL has expired and when the download attached a new owner to
+an existing same-hash Resource.
+
+## Findings closed
+
+| Finding (P1) | Fix | Regression |
+|---|---|---|
+| A queue acknowledgement crash left a Resource without a Job output, and replay downloaded the URL before consulting its receipt | On an expired claim, require positive runtime-death proof, validate the durable receipt and actor/resource/hash, publish the required output with the old execution token, then succeed without dispatch | `TestARecoveredDownloadJobPublishesAResourceCommittedBeforeQueueAcknowledgement` makes the source return 404 and asserts zero fetches during recovery |
+| Successful same-hash attachment to a different owner committed without the canonical Job receipt | Insert the receipt in the same transaction as the owner association | `TestAddResourceForJobRecordsReceiptWhenAttachingSecondOwner` |
+| Generic Job retention assumed every host had the application download receipt table | Prune receipts when the app extension table exists; jobs-only stores remain independent of download schema | Existing Job retention suite plus `TestAddResourceForJobRecoversCommitBeforeQueueAcknowledgement` |
+
+## Verification
+
+- Red: the expired-URL integration test observed reconciliation requeue instead of succeed.
+- Green: focused receipt creation, different-owner attachment, and expired-URL recovery tests passed.
+- `go test --tags 'json1 fts5' ./... -count=1` — passed.
+- `go test --tags 'json1 fts5 postgres' ./jobs ./download_queue ./groupio ./application_context ./server/api_tests -count=1` — passed.
+- `go test -race --tags 'json1 fts5' ./jobs ./download_queue -count=1` and focused application-context receipt/recovery race tests — passed.
+- `npm run build` — passed (Vite reports the existing large `main.js` chunk warning).
+- `go vet --tags 'json1 fts5' ./jobs ./download_queue ./application_context`, `gofmt`, and `git diff --check` — clean.
+- No browser E2E flow changed; the end-to-end download adapter/runtime regression covers receipt recovery, 404 avoidance, and terminal Job output.
+
+## Files, commits and artifact
+
+- Code-fix commit: this round's `fix(downloads): ...` commit on `master`.
+- Baseline: `06001baa`.
+
 # Job Center post-Task-9 checkpoint, seventh round — quarantine capacity recovery (2026-09-23)
 
 **Goal:** Recover deployment capacity after a quarantined execution's actor or Kind disappears,

@@ -998,6 +998,7 @@ func installJobControlPlaneBeforePluginActivation(context *application_context.M
 func migrateJobCore(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&models.Job{},
+		&models.JobResourceReceipt{},
 		&models.JobEvent{},
 		&models.JobEventSequence{},
 		&models.JobLink{},

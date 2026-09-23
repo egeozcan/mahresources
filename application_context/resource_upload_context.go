@@ -790,7 +790,7 @@ func (ctx *MahresourcesContext) withUploadTxRetry(run func() error) error {
 //
 // Extracted so it can be retried as a unit on lock contention. See the call site
 // for why that is safe.
-func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, resourceQuery *query_models.ResourceCreator) (err error) {
+func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, resourceQuery *query_models.ResourceCreator, receipt *models.JobResourceReceipt) (err error) {
 	tx := ctx.db.Begin()
 	// The named return is load-bearing. recover() here exists to guarantee the
 	// rollback, but a bare recover in a function with unnamed results returns
@@ -892,6 +892,13 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 		tx.Rollback()
 		return err
 	}
+	if receipt != nil {
+		receipt.ResourceID = res.ID
+		if err := tx.Create(receipt).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		return err
@@ -908,7 +915,7 @@ func (ctx *MahresourcesContext) insertUploadedResource(res *models.Resource, res
 // transactions of its own, so that the upload path never opens a transaction
 // with a read. See the phase-1 comment in AddResource for why that matters.
 // The caller must hold the per-hash idlock.
-func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator, opts addResourceOptions) (*models.Resource, error) {
 	if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
 		return ctx.mergeSameOwnerAssociations(existingResource, resourceQuery)
 	}
@@ -923,7 +930,7 @@ func (ctx *MahresourcesContext) mergeIntoExistingResource(existingResource *mode
 		}
 	}
 
-	return ctx.attachOwnerToExistingResource(existingResource, resourceQuery)
+	return ctx.attachOwnerToExistingResource(existingResource, resourceQuery, opts)
 }
 
 // mergeSameOwnerAssociations appends whatever associations a duplicate upload
@@ -1002,7 +1009,7 @@ func (ctx *MahresourcesContext) mergeSameOwnerAssociations(existingResource *mod
 // mergeSameOwnerAssociations — Append would otherwise resurrect a group deleted
 // since the request was made, as a blank row with the right id and nothing else.
 // Master validated nothing here at all.
-func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *models.Resource, resourceQuery *query_models.ResourceCreator, opts addResourceOptions) (*models.Resource, error) {
 	err := ctx.withUploadTxRetry(func() (err error) {
 		tx := ctx.db.Begin()
 		defer func() {
@@ -1028,6 +1035,16 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 		if attachToGroupErr := tx.Model(target).Association("Groups").Append(groups); attachToGroupErr != nil {
 			tx.Rollback()
 			return attachToGroupErr
+		}
+		if opts.CanonicalJobID != "" {
+			receipt := &models.JobResourceReceipt{
+				JobID: opts.CanonicalJobID, ResourceID: existingResource.ID,
+				Hash: opts.Hash, ActorUserID: cloneUploadActorID(opts.ActorUserID),
+			}
+			if createErr := tx.Create(receipt).Error; createErr != nil {
+				tx.Rollback()
+				return createErr
+			}
 		}
 
 		return tx.Commit().Error
@@ -1055,12 +1072,36 @@ func (ctx *MahresourcesContext) attachOwnerToExistingResource(existingResource *
 // (e.g. managed command import) supply a ScratchDir so the temporary copy
 // lives on the same volume as the final destination.
 type addResourceOptions struct {
-	ScratchDir    string
-	CreateScratch func() (*os.File, func() error, error)
+	ScratchDir     string
+	CreateScratch  func() (*os.File, func() error, error)
+	CanonicalJobID string
+	ActorUserID    *uint
+	Hash           string
 }
 
 func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
 	return ctx.addResourceWithOptions(file, fileName, resourceQuery, addResourceOptions{})
+}
+
+// AddResourceForJob creates a resource for one canonical download Job. The
+// receipt is written in the resource transaction so a replay can recover the
+// committed row if the process exits before the queue records its ResourceID.
+func (ctx *MahresourcesContext) AddResourceForJob(jobID string, actorUserID *uint, file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, fmt.Errorf("a canonical resource receipt needs a Job id")
+	}
+	return ctx.addResourceWithOptions(file, fileName, resourceQuery, addResourceOptions{
+		CanonicalJobID: jobID,
+		ActorUserID:    cloneUploadActorID(actorUserID),
+	})
+}
+
+func cloneUploadActorID(actorID *uint) *uint {
+	if actorID == nil {
+		return nil
+	}
+	value := *actorID
+	return &value
 }
 
 func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator, opts addResourceOptions) (*models.Resource, error) {
@@ -1212,6 +1253,17 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	ctx.locks.ResourceHashLock.Acquire(hash)
 	defer ctx.locks.ResourceHashLock.Release(hash)
 
+	if opts.CanonicalJobID != "" {
+		opts.Hash = hash
+		recovered, found, receiptErr := ctx.recoverJobResourceReceipt(opts, hash)
+		if receiptErr != nil {
+			return nil, receiptErr
+		}
+		if found {
+			return recovered, nil
+		}
+	}
+
 	// ---------------------------------------------------------------------
 	// Phase 1: the content-hash existence check, deliberately OUTSIDE any
 	// transaction.
@@ -1234,7 +1286,7 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 
 	switch lookupErr := ctx.db.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; {
 	case lookupErr == nil:
-		return ctx.mergeIntoExistingResource(&existingResource, resourceQuery)
+		return ctx.mergeIntoExistingResource(&existingResource, resourceQuery, opts)
 	case errors.Is(lookupErr, gorm.ErrRecordNotFound):
 		// Genuinely new content: fall through and create it.
 	default:
@@ -1423,7 +1475,13 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	var res *models.Resource
 	if insertErr := ctx.withUploadTxRetry(func() error {
 		res = newResource()
-		return ctx.insertUploadedResource(res, resourceQuery)
+		var receipt *models.JobResourceReceipt
+		if opts.CanonicalJobID != "" {
+			receipt = &models.JobResourceReceipt{
+				JobID: opts.CanonicalJobID, Hash: hash, ActorUserID: cloneUploadActorID(opts.ActorUserID),
+			}
+		}
+		return ctx.insertUploadedResource(res, resourceQuery, receipt)
 	}); insertErr != nil {
 		return nil, insertErr
 	}
@@ -1454,4 +1512,23 @@ func (ctx *MahresourcesContext) addResourceWithOptions(file contracts.File, file
 	}
 
 	return res, nil
+}
+
+func (ctx *MahresourcesContext) recoverJobResourceReceipt(opts addResourceOptions, hash string) (*models.Resource, bool, error) {
+	var receipt models.JobResourceReceipt
+	err := ctx.db.Where("job_id = ?", opts.CanonicalJobID).First(&receipt).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if receipt.Hash != hash || !sameOptionalUint(receipt.ActorUserID, opts.ActorUserID) {
+		return nil, false, fmt.Errorf("canonical Job %s resource receipt does not match the replayed content and actor", opts.CanonicalJobID)
+	}
+	var resource models.Resource
+	if err := ctx.db.Preload("Groups").First(&resource, receipt.ResourceID).Error; err != nil {
+		return nil, false, fmt.Errorf("load resource for canonical Job %s receipt: %w", opts.CanonicalJobID, err)
+	}
+	return &resource, true, nil
 }

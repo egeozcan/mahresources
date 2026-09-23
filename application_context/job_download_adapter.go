@@ -13,7 +13,10 @@ import (
 	"mahresources/download_queue"
 	"mahresources/hostfetch"
 	"mahresources/jobs"
+	"mahresources/models"
 	"mahresources/models/query_models"
+
+	"gorm.io/gorm"
 )
 
 // This file is the download Kind adapter: the one place that knows how a remote or
@@ -511,9 +514,41 @@ func (a *downloadJobAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 	}
 	entry, found := a.ctx.downloadManager.GetJobByCanonicalJobID(request.Snapshot.ID)
 	if !found {
-		// Nothing here is running this transfer, and whether another process is is
-		// the question the claim's own identity answers.
-		return a.ctx.queueOnlyIfTheRuntimeIsProvedGone(request), nil
+		// A committed receipt is durable evidence that the transfer ended even if
+		// its source URL has since expired. Require positive runtime quiescence
+		// before publishing that side effect under the expired execution token.
+		if !runtimeIsProvedGone(request) {
+			return jobs.ReconcileExternalWorkUnproven, nil
+		}
+		var receipt models.JobResourceReceipt
+		err := a.ctx.db.Where("job_id = ?", request.Snapshot.ID).First(&receipt).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", err
+		}
+		if err == nil {
+			if !sameOptionalUint(receipt.ActorUserID, request.Snapshot.ActorUserID) {
+				return "", fmt.Errorf("download receipt actor does not match Job %s", request.Snapshot.ID)
+			}
+			var resource models.Resource
+			if err := a.ctx.db.First(&resource, receipt.ResourceID).Error; err != nil {
+				return "", fmt.Errorf("load resource for download receipt: %w", err)
+			}
+			if resource.Hash != receipt.Hash {
+				return "", fmt.Errorf("download receipt hash does not match Resource %d", resource.ID)
+			}
+			reference, err := json.Marshal(map[string]any{"resourceId": resource.ID})
+			if err != nil {
+				return "", err
+			}
+			if _, err := request.Execution.Output(jobs.OutputInput{
+				Key: jobDownloadResourceOutput, Type: jobs.OutputTypeEntity,
+				Label: "Created resource", Reference: reference, Required: true,
+			}); err != nil {
+				return "", err
+			}
+			return jobs.ReconcileSucceed, nil
+		}
+		return jobs.ReconcileQueue, nil
 	}
 	if downloadTerminal(entry.GetStatus()) {
 		return jobs.ReconcileQueue, nil

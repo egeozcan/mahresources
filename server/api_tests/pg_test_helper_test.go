@@ -75,7 +75,7 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		// The durable job core. Deleting a user nulls a Job's owner and actor and
 		// removes the viewer-keyed preferences beside it, so these tables exist
 		// wherever the suite exercises user deletion.
-		&models.Job{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
+		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobPreference{}, &models.JobLegacyHandle{}, &models.JobPinGuard{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobCommandRequest{},
