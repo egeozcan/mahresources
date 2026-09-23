@@ -199,6 +199,11 @@ func validateFilter(filter Filter) error {
 	return nil
 }
 
+// ValidateFilter checks one list or summary filter before it is accepted or read.
+// Kind adapters that persist a filtered request can use the same validation at
+// submission time rather than accepting work that will fail only when dispatched.
+func ValidateFilter(filter Filter) error { return validateFilter(filter) }
+
 // applyFilter adds the filter's predicates to a visible-Jobs query. The asker is
 // passed in because the preference dimensions are the asker's own rows: a
 // dismissal belongs to one viewer's list, never to the Job.
@@ -966,13 +971,42 @@ func (s *Service) Summary(deps Deps, access Access, filter Filter, window time.D
 	if filter.AcceptedAfter != nil && filter.AcceptedAfter.After(from) {
 		from = filter.AcceptedAfter.UTC()
 	}
+	return s.summaryRange(deps, access, filter, window, from, to)
+}
 
-	// The window is written into the filter, so the aggregate is literally the
-	// listing's predicate over a narrower accepted range rather than a second
-	// spelling of it.
+// SummaryRange reports the same filtered, visible aggregate as Summary over an
+// explicit historical interval. Summary is intentionally capped at
+// MaxSummaryWindow for interactive requests; this method is for a durable export
+// whose accepted input fixes the dates it will analyze.
+func (s *Service) SummaryRange(deps Deps, access Access, filter Filter, from, to time.Time) (Summary, error) {
+	if err := validateFilter(filter); err != nil {
+		return Summary{}, err
+	}
+	if from.IsZero() || to.IsZero() || !from.Before(to) {
+		return Summary{}, fmt.Errorf("%w: an explicit range needs a start before its end", ErrInvalidWindow)
+	}
+	from, to = from.UTC(), to.UTC()
+	window := to.Sub(from)
+	if filter.AcceptedAfter != nil && filter.AcceptedAfter.After(from) {
+		from = filter.AcceptedAfter.UTC()
+	}
+	if filter.AcceptedBefore != nil && filter.AcceptedBefore.Before(to) {
+		to = filter.AcceptedBefore.UTC()
+	}
+
+	return s.summaryRange(deps, access, filter, window, from, to)
+}
+
+// summaryRange is the shared query path for interactive and exported summaries.
+// It writes the accepted interval into the ordinary filter so every aggregate
+// dimension uses exactly the same visibility and filter predicates as listing.
+func (s *Service) summaryRange(deps Deps, access Access, filter Filter, window time.Duration, from, to time.Time) (Summary, error) {
 	scoped := filter
 	scoped.AcceptedAfter = &from
 	scoped.AcceptedBefore = &to
+	if from.After(to) {
+		return Summary{Window: window, From: from, To: to, ByState: map[string]int64{}, ByKind: map[string]int64{}}, nil
+	}
 	if filter.Command != "" {
 		var summary Summary
 		err := deps.DB.Transaction(func(tx *gorm.DB) error {

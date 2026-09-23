@@ -57,14 +57,21 @@ sidebar_label: CLI
 | `mr groups meta-keys` | List all unique metadata keys used across groups | [Details](./groups/meta-keys.md) |
 | `mr groups remove-tags` | Remove tags from multiple groups | [Details](./groups/remove-tags.md) |
 | `mr groups timeline` | Display a timeline of group activity | [Details](./groups/timeline.md) |
-| `mr job` | Submit, cancel, pause, or retry a download job | [Details](./job/index.md) |
+| `mr job` | Control Jobs and submit legacy downloads | [Details](./job/index.md) |
+| `mr job bulk-command` | Run one advertised bulk command for several Jobs | [Details](./job/bulk-command.md) |
 | `mr job cancel` | Cancel a job | [Details](./job/cancel.md) |
+| `mr job command` | Run a command advertised by Job detail | [Details](./job/command.md) |
 | `mr job pause` | Pause a job | [Details](./job/pause.md) |
 | `mr job resume` | Resume a job | [Details](./job/resume.md) |
 | `mr job retry` | Retry a failed job | [Details](./job/retry.md) |
 | `mr job submit` | Submit URLs for download | [Details](./job/submit.md) |
-| `mr jobs` | View the download job queue | [Details](./jobs/index.md) |
-| `mr jobs list` | List the download queue | [Details](./jobs/list.md) |
+| `mr jobs` | Browse and summarize background Jobs | [Details](./jobs/index.md) |
+| `mr jobs get` | Read Job detail and advertised commands | [Details](./jobs/get.md) |
+| `mr jobs list` | List visible Jobs | [Details](./jobs/list.md) |
+| `mr jobs queue` | Read the legacy download queue | [Details](./jobs/queue.md) |
+| `mr jobs summary` | Aggregate visible Jobs over at most 90 days | [Details](./jobs/summary/index.md) |
+| `mr jobs summary export` | Queue a CSV or JSON summary export longer than 90 days | [Details](./jobs/summary/export.md) |
+| `mr jobs timeline` | Read a Job event timeline | [Details](./jobs/timeline.md) |
 | `mr log` | View a log entry or entity history | [Details](./log/index.md) |
 | `mr log entity` | Get log entries for a specific entity | [Details](./log/entity.md) |
 | `mr log get` | Get a log entry by ID | [Details](./log/get.md) |

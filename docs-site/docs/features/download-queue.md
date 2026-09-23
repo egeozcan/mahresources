@@ -6,6 +6,13 @@ sidebar_position: 6
 
 Queue up to 100 URLs for background download. Concurrency is the shared background-job budget set by `-max-job-concurrency` (default 6), with real-time progress via Server-Sent Events.
 
+Every newly accepted download also publishes a durable `remote-download` Job.
+Its canonical UUID and lifecycle remain stable across retries and restarts. The
+legacy queue and history endpoints continue to project their established
+download response during the Job Center compatibility window. See the [Job
+System](./job-system.md) for canonical states, commands, retention, and the
+release-gated API.
+
 ![Download queue on dashboard](/img/download-queue.png)
 
 ## How It Works
@@ -30,10 +37,16 @@ When the queue is full, completed jobs are evicted first (oldest first), then fa
 
 ## Download history
 
-A finished job whose source is `download` is also written to a durable history row, listed at `/downloads`. That row survives the 100-job cap, the one-hour eviction sweep and a restart. Group export, import and plugin action jobs stay memory-only: they have no URL to retry and their artifacts have their own retention.
+A finished download remains visible through the durable Job record and, while
+the compatibility projection is retained, through the legacy download history
+row at `/downloads`. The Job survives queue eviction and restart according to
+Job retention. Legacy handles follow the current Retry leaf during the
+compatibility window; a canonical UUID always identifies one Job. Group
+exports, imports, Resource Reduction computation, similarity recomputes, and
+plugin actions also publish through the durable Job Service.
 
 - Every non-admin principal sees only the rows it submitted.
-- **Retry** re-runs the row in place when its job is still in the queue, and otherwise resubmits it from the stored payload, re-validated against the retrying principal's own scope. It is refused for a completed row, and while any queued or running job is already fetching the same URL.
+- **Retry** through the legacy handle creates a new canonical Job and moves the handle to that Retry leaf. The source Job keeps its original outcome. Current authorization and download scope are checked again, and a duplicate active transfer is refused.
 - **Delete** removes the queue entry along with the row, so the SSE stream's `init` replay cannot resurrect it.
 - A restart records whatever was downloading or paused as cancelled, so it stays retryable afterwards.
 
@@ -132,7 +145,8 @@ copying to the root filesystem is the same problem one step later.
 
 ## Job Lifecycle
 
-Each download job goes through these statuses:
+The legacy queue projects these download statuses. They are not canonical Job
+states:
 
 | Status | Description |
 |--------|-------------|
@@ -146,10 +160,13 @@ Each download job goes through these statuses:
 
 ## Job Operations
 
-- **Cancel** -- Stop a pending, downloading, processing or paused job
-- **Pause** -- Pause a pending or downloading job (can be resumed later)
-- **Resume** -- Resume a paused job (restarts the download from the beginning)
-- **Retry** -- Retry a failed or cancelled job
+- **Cancel, pause, resume, retry** -- The compatibility endpoints remain
+  available while clients migrate. The canonical interface renders only the
+  commands the current Job detail advertises and rechecks role, scope, and Job
+  version when the command runs.
+- **Retry** -- Creates a linked Job and preserves the earlier Job's terminal
+  state. A failed legacy download handle resolves to the current Retry leaf for
+  at least one documented release and six months after canonical cutover.
 
 ## Submitting Downloads
 
@@ -280,9 +297,11 @@ address, is written to the activity log for administrators.
 | `POST` | `/v1/download/retry` | Retry a failed download (`id`) |
 | `GET` | `/v1/download/events` | SSE event stream (downloads and plugin action jobs) |
 
-### Unified Job Routes
+### Legacy Job Compatibility Routes
 
-These are the canonical routes. Plugin action jobs appear only in the SSE event stream, not in the queue endpoint.
+These routes preserve their existing download queue and handle shapes. They
+remain available during the documented compatibility window; they are not the
+canonical Job Center API.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -295,6 +314,10 @@ These are the canonical routes. Plugin action jobs appear only in the SSE event 
 | `GET` | `/v1/jobs/get` | Return one job snapshot by id |
 | `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
+
+Canonical list, detail, command, timeline, output, summary, and export routes
+are described in the [Job System API table](./job-system.md#canonical-api). They
+become externally available together after the release gate passes.
 
 ### Download history
 

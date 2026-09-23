@@ -1090,6 +1090,7 @@ func registerCanonicalJobRoutes(router *mux.Router, appContext *application_cont
 	}
 	// Register static paths before /{id}, which can otherwise capture names such
 	// as "summary". Compatibility aliases above retain their existing routing.
+	router.Methods(http.MethodPost).Path("/v1/jobs/summary/export").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobSummaryExportHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/summary").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobSummaryHandler))
 	router.Methods(http.MethodPost).Path("/v1/jobs/commands/{command}").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkJobCommandHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs").HandlerFunc(scopedAPI(appContext, api_handlers.GetJobListHandler))

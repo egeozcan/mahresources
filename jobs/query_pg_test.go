@@ -119,6 +119,42 @@ func TestCommandHostSelectorsMatchAdvertisedCommandsOnPostgres(t *testing.T) {
 	testCommandHostSelectorsMatchAdvertisedCommands(t, newPGDeps(t))
 }
 
+func TestSummaryRangeUsesSharedVisibilityOnPostgres(t *testing.T) {
+	deps := newPGDeps(t)
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	now := time.Date(2032, 4, 1, 9, 0, 0, 0, time.UTC)
+	acceptedAt := now.Add(-180 * 24 * time.Hour)
+	deps.Now = func() time.Time { return acceptedAt }
+	owner, other := uint(7), uint(8)
+	acceptForPG(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: "older owner Job",
+		OwnerUserID: &owner, Replay: ReplayInput{NonReplayable: true},
+	})
+	acceptedAt = acceptedAt.Add(time.Hour)
+	acceptForPG(t, svc, deps, Acceptance{
+		Kind: testKind, KindVersion: 1, State: StateQueued, Origin: "api", Title: "older other Job",
+		OwnerUserID: &other, Replay: ReplayInput{NonReplayable: true},
+	})
+
+	from := now.Add(-181 * 24 * time.Hour)
+	to := now
+	viewer, err := svc.SummaryRange(deps, Access{UserID: owner}, Filter{Kinds: []string{testKind}}, from, to)
+	if err != nil {
+		t.Fatalf("SummaryRange as owner: %v", err)
+	}
+	if viewer.Total != 1 || viewer.ByKind[testKind] != 1 {
+		t.Fatalf("owner-visible historical summary = %+v, want one Job", viewer)
+	}
+	admin, err := svc.SummaryRange(deps, Access{Administrator: true}, Filter{Kinds: []string{testKind}}, from, to)
+	if err != nil {
+		t.Fatalf("SummaryRange as administrator: %v", err)
+	}
+	if admin.Total != 2 {
+		t.Fatalf("administrator summary total = %d, want 2", admin.Total)
+	}
+}
+
 // TestRetentionSweepPrunesExpiredWorkOnPostgres drives the retention decision —
 // a qualified delete guarded by two NOT EXISTS subqueries against the table it is
 // deleting from — over PostgreSQL, together with the pin that exempts a Job and

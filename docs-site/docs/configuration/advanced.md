@@ -257,6 +257,70 @@ the runtime setting [`job_replay_retention`](./runtime-settings.md); the window
 always starts when the Job finishes, never when it was accepted, and nonterminal
 work is never purged.
 
+The generated file is created with owner-only `0600` permissions. Keep the key
+material protected like the database backup: without it, encrypted accepted
+inputs cannot be replayed. During rotation, deploy the same ordered keyring to
+every server process, with the new key first and prior keys after it. Remove an
+old decrypt-only key only after no retained replay envelope refers to its key
+ID; checking that all affected envelopes have expired or been explicitly
+forgotten is part of the rotation.
+
+## Job Writer Epoch and Safe Rollout
+
+Every server checks the database's minimum Job writer epoch immediately after
+opening the database and before schema migration, cleanup, plugin activation,
+or dispatch. A binary that does not support the recorded minimum refuses to
+start. This is the downgrade fence: an older process must not write rows or
+legacy replay fields after a newer release advances the database.
+
+For an epoch-advancing rollout:
+
+1. Deploy a release that understands the new epoch to every database writer.
+2. Drain and stop all older processes, including scheduled or standby hosts.
+3. Run the migration/retirement step that verifies the retained inputs and
+   advances the minimum epoch.
+4. Confirm every instance starts with the advanced database before restoring
+   normal traffic.
+
+During rollout, an administrator can inspect the current barrier through
+`GET /v1/admin/jobs/migration-readiness`. The response's `ready` field is true
+only when the migration barrier is satisfied; `writerEpoch` reports the
+database minimum, `phase` reports the current migration phase, `sourceCounts`
+reports per-source counts, and `blockers` lists remaining conditions. The
+endpoint is read-only and requires an administrator role. Check readiness
+before admitting traffic after an epoch advance, and investigate every blocker
+before proceeding.
+
+Rollback after epoch advancement uses a compatible release that understands
+the canonical schema. Do not roll back to a plaintext writer. Keep the release
+that advanced the epoch available until the rollback window closes.
+
+Legacy download and Job compatibility routes remain supported for at least one
+documented release and six months after canonical cutover. Deprecation does not
+mean the canonical UI is ready by itself: all advertised Job Kinds, backfill,
+replay, visibility, and output checks must pass before the cutover gate opens.
+
+## Restoring a Pre-Retirement Backup
+
+A database backup taken before plaintext retirement may contain old replay
+payloads and URLs. Restore it into an isolated environment with the matching
+file storage and `JOB_REPLAY_KEY`, then run the current migration and retirement
+verification barrier again. Do not expose the restored instance or allow an old
+writer to connect until the barrier verifies every retained source and the
+writer epoch. Then inspect `GET /v1/admin/jobs/migration-readiness` as an
+administrator and confirm `ready` is true and `blockers` is empty. A previous
+completion marker is not proof for the restored copy.
+
+## Plugin Command Runtime Ownership
+
+Plugin command runs and command imports use an exclusive staging-root lease and
+a database runtime fence. The supported deployment has one fenced command
+runtime owner per database and staging namespace. Other Job Kinds and the Job
+Service may run on multiple processes, but independent command runtimes with
+different staging roots must not share one database. A replacement owner must
+prove the prior process and its child process groups are quiescent before it
+dispatches or cleans up work.
+
 ## Upload and Request Size Limits
 
 Bound the size of request bodies the server accepts:

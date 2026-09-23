@@ -5,180 +5,176 @@ title: Job System
 
 # Job System
 
-The job system aggregates download queue jobs, group export and import jobs, admin maintenance jobs, and plugin action jobs into a single SSE event stream.
+A Job is the durable record of accepted background work. It stores its owner and
+actor, Kind and input version, state, events, outputs, lineage, and the controls
+currently permitted for the requesting account. Job IDs are canonical UUIDs;
+retrying or repeating work creates a new Job linked to its source instead of
+rewriting the source outcome.
 
-## Job Sources
+The Job Service is installed before plugin activation and is the lifecycle
+authority for work that publishes through an adapter. Download queues and
+specialized exporters/importers still execute the work. The Job Service records
+and fences acceptance, execution, recovery, visibility, commands, and retention.
 
-| Source | Origin | ID Format | Max Concurrent |
-|--------|--------|-----------|---------------|
-| `download` | Download queue | Random 16-char hex | `-max-job-concurrency` (default 6), shared with export/import |
-| `group-export` | [Group export](./export-import.md) | Random 16-char hex | Same shared budget |
-| `group-import-parse` | [Group import](./export-import.md), manifest parse | Random 16-char hex | Same shared budget |
-| `group-import-apply` | [Group import](./export-import.md), apply | Random 16-char hex | Same shared budget |
-| `recompute-similarities` | Admin [image similarity](./image-similarity.md) recompute | Random 16-char hex | Same shared budget |
-| `plugin` | Async plugin actions and `mah.start_job()` | Random 16-char hex | 3 |
+## Release status and compatibility
 
-All job types share the same SSE infrastructure. Every job the download manager holds, downloads, group export and import, and admin maintenance jobs, is also available via a dedicated listing endpoint (`/v1/jobs/queue`), filtered to what the caller may see; plugin action jobs appear only in the SSE event stream (via the `init` payload and subsequent `action_*` events).
+Canonical Job APIs and the Job Center page remain behind a release gate until
+the complete Kind inventory, migration, and plaintext-retirement checks pass.
+The canonical routes below describe the API clients use after that gate opens.
+Until then, the older queue, download, import, export, and plugin routes remain
+the externally available compatibility surfaces; an unfiltered `mr jobs list`
+falls back to the legacy queue when the canonical list route returns 404.
 
-## Download Jobs
+Legacy Job routes and handles remain supported for at least one documented
+release and six months after canonical cutover. A legacy download handle follows
+its latest Retry leaf during that window; a canonical UUID continues to identify
+one immutable Job. See [Download Queue](./download-queue.md) for the older
+download routes and [Backup and Restore](../deployment/backups.md) for the
+restore barrier.
 
-Download jobs are created when URLs are submitted to the download queue. See [Download Queue](./download-queue.md) for submission, pause/resume, and retry details.
+## Job Kinds
 
-### Download Job Statuses
+Each Kind owns its replay input, execution and recovery rules, presentation, and
+available commands. Current adapters include:
 
-| Status | Description |
-|--------|-------------|
-| `pending` | Queued, waiting for a download slot |
-| `downloading` | Actively transferring data |
-| `processing` | Download complete, creating a Resource |
-| `completed` | Resource created |
-| `failed` | Error occurred |
-| `cancelled` | Cancelled by user |
-| `paused` | Paused by user |
+| Kind | Work | Recovery and visibility |
+|------|------|------------------------|
+| `remote-download@1` | Fetch one remote URL into a Resource | Replayable; owner-visible |
+| `deferred-download@1` | A remote download accepted for a future time | Replayable; owner-visible |
+| `group-export@1` | Build a group archive | Replayable; owner-visible; artifact retention is separate from Job history |
+| `group-import-parse@1` | Parse an uploaded archive into a review plan | Replayable from durable staged input; owner-visible |
+| `group-import-apply@1` | Apply a reviewed plan | Replayable only when import evidence proves it safe; owner-visible |
+| `resource-reduction-compute@1` | Compute clusters for a Resource Reduction | Replayable; owner-visible |
+| `similarity-recompute@1` | Recompute image similarity data | Replayable; administrator-visible |
+| `plugin-action@1` | Run an asynchronous plugin action or `mah.start_job` closure | Owner-visible; process-local closures are not blindly re-run after restart |
+| `job-summary-export@1` | Export a filtered Job summary as CSV or JSON | Replayable; owner-visible; artifact expires by export retention |
 
-## Plugin Action Jobs
+The complete release inventory also includes plugin command runs and command
+imports. Those use a separate fenced command runtime; they are not enabled as
+canonical Job Kinds in this release branch.
 
-Plugin action jobs are created when an async action is triggered. See [Plugin Actions](./plugin-actions.md) for registration and handler details.
+## State and visibility
 
-### Action Job Structure
+Canonical state is one of `scheduled`, `queued`, `running`, `paused`, `blocked`,
+`succeeded`, `failed`, `cancelled`, or `interrupted`. A Kind may publish a finer
+phase such as parsing, downloading, or assembling without changing the Job
+state. The old queue endpoints may continue to use their established status
+names during compatibility.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Random hex ID |
-| `source` | string | Always `"plugin"` |
-| `pluginName` | string | Source plugin name |
-| `actionId` | string | Action identifier |
-| `label` | string | Action display label |
-| `entityId` | uint | Target entity ID |
-| `entityType` | string | `"resource"`, `"note"`, `"group"`, or `"custom"` (for `mah.start_job()`) |
-| `status` | string | `"pending"`, `"running"`, `"completed"`, or `"failed"` |
-| `progress` | int | 0-100 |
-| `message` | string | Current status message |
-| `result` | object | Action result data (on completion) |
-| `createdAt` | timestamp | Job creation time |
+An owner may inspect their Jobs, subject to the Kind's visibility rule. Admin
+visibility and resource scope are checked on every read. Ownership grants
+visibility, not permanent authority: each command and output access rechecks
+current role, scope, plugin permission, and Kind policy. A filter for another
+owner or actor never grants access to that person's Jobs.
 
-### Progress Control from Lua
+## CLI
 
-```lua
-mah.job_progress(job_id, 50, "Processing image...")
-mah.job_complete(job_id, { message = "Done", redirect = "/resource?id=42" })
-mah.job_fail(job_id, "API returned 500")
-```
-
-## Programmatic Action Jobs (`mah.start_job`)
-
-Plugins can create action jobs programmatically using `mah.start_job(label, fn)`, without requiring a user to click an action button. The job is an `ActionJob` with `source: "plugin"`, `actionId: "start_job"`, and `entityType: "custom"`. The callback runs in a background goroutine with a 5-minute timeout and receives the `job_id` as its first argument.
-
-The job is **owned by whoever triggered the plugin code that called it**, so a non-admin sees the work they started. With authentication disabled the job has no owner, which is only visible to admins -- the same rule every other job follows. Any `mah.db` write the callback makes is attributed to that same user.
-
-```lua
-local job_id = mah.start_job("Import data", function(job_id)
-    for i = 1, 100 do
-        mah.job_progress(job_id, i, "Processing row " .. i)
-    end
-    mah.job_complete(job_id, { rows = 100 })
-end)
-```
-
-## SSE Event Stream
-
-Subscribe to real-time job updates from all sources:
-
-```
-GET /v1/jobs/events
-```
-
-The stream uses SSE event names to distinguish job types and lifecycle events.
-
-**Initialization**: On connect, an `init` event is sent with all current jobs:
-
-```
-event: init
-data: {"jobs":[...],"actionJobs":[...]}
-```
-
-**Download events** use event names `added`, `updated`, `removed`:
-
-```
-event: updated
-data: {"type":"updated","job":{"id":"abcd1234","status":"downloading","progress":50}}
-```
-
-**Plugin action events** use event names `action_added`, `action_updated`, `action_removed`:
-
-```
-event: action_updated
-data: {"job":{"id":"a1b2c3d4e5f6g7h8","source":"plugin","status":"running","progress":50}}
-```
-
-### Event Types
-
-| SSE Event Name | Source | Trigger |
-|---------------|--------|---------|
-| `added` | Download | New download job created |
-| `updated` | Download | Download status, progress, or message changed |
-| `removed` | Download | Download job removed: retention sweep, eviction when the queue is full, `clearCompleted`, or a history delete |
-| `action_added` | Plugin | New action job created |
-| `action_updated` | Plugin | Action status, progress, or message changed |
-| `action_removed` | Plugin | Action job cleaned up after retention period |
-
-### Progress Throttling
-
-SSE notifications are rate-limited to prevent flooding clients:
-
-| Source | Throttle Interval |
-|--------|------------------|
-| Plugin actions | 200ms |
-| Downloads | 500ms |
-
-For plugin actions, progress updates at 100% are always sent immediately regardless of throttling. On the download side there is no percentage bypass, but the status change to `processing` at the end of a transfer is sent immediately.
-
-Subscribers receive events through a buffered channel (capacity 100). Slow subscribers that fall behind are skipped (non-blocking send).
-
-## Download Job Listing
-
-```
-GET /v1/jobs/queue
-```
-
-Returns every job the download manager holds, downloads, group export and import, and admin maintenance jobs, filtered to what the caller may see. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
+The plural `mr jobs` command is the canonical browsing and analytics surface:
 
 ```bash
-curl http://localhost:8181/v1/jobs/queue
+mr jobs list --state failed --kind remote-download --limit 50
+mr jobs get 018f4db1-9b40-7f54-8f16-37a449bcf01d --json
+mr jobs timeline 018f4db1-9b40-7f54-8f16-37a449bcf01d --after-sequence 20
+mr jobs summary --window 30d --json
 ```
 
-## Job Cleanup
+`jobs list` returns a bounded page with an opaque `nextCursor`. Filters include
+state, Kind, origin, owner, actor, accepted time, lineage relationship, text,
+advertised command, and the viewer's pin and dismissal preferences. `get`
+returns the current command and output declarations. `timeline` reads ordered
+durable events by per-Job sequence. `summary` uses the same visibility and
+filters as listing and accepts windows up to 90 days.
 
-Completed and failed jobs are removed automatically:
+The CLI does not infer command eligibility from Kind or state. `mr job command`
+reads detail, requires the server to advertise the key, checks the advertised
+Job version and endpoint, and sends an idempotency key. Destructive commands or
+commands with an advertised confirmation require `--confirm`. `mr job
+bulk-command` checks that every selected Job advertises the same bulk-capable
+key at its current version, then reports the server's per-Job results. Pass
+`--idempotency-key` to retry the same request after a network failure; the CLI
+generates and prints a key if none is supplied.
 
-| Setting | Value |
-|---------|-------|
-| Cleanup interval | Every 5 minutes |
-| Action job retention | 1 hour |
-| Completed group-export job retention | `-export-retention` (default 24h) |
-| Every other terminal job retention (completed/failed/cancelled) | 1 hour |
-| Download job retention (paused) | 24 hours |
+The singular `mr job submit`, `cancel`, `pause`, `resume`, and `retry` commands
+remain compatibility aliases for existing download scripts. `mr jobs queue`
+returns the legacy queue response explicitly.
 
-Removed jobs trigger `"removed"` SSE events so clients can update their UI.
+## Summary analytics and exports
 
-## API Endpoints
+Interactive `summary` is capped at 90 days. For an explicit range longer than
+90 days, queue an owner-visible export:
+
+```bash
+mr jobs summary export \
+  --from 2025-01-01T00:00:00Z \
+  --to 2026-01-01T00:00:00Z \
+  --kind remote-download \
+  --format csv
+```
+
+The export Job applies the same visibility predicate and filters as interactive
+summary. Its CSV or JSON is a typed artifact, not a replacement for the Job
+record; export retention controls when the bytes expire. A Job's history,
+encrypted replay envelope, and output artifact have separate retention policies.
+
+## Canonical API
+
+These routes become available together after the Job Center cutover gate passes.
+The generated public OpenAPI contract follows the same gate.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/jobs/queue` | List download jobs |
-| `GET` | `/v1/jobs/get?id={id}` | Get a single job by ID (polling alternative to SSE) |
-| `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
-| `POST` | `/v1/jobs/action/run` | Run a plugin action |
-| `GET` | `/v1/jobs/action/job?id={id}` | Get plugin action job status |
-| `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
-| `POST` | `/v1/jobs/cancel` | Cancel a download |
-| `POST` | `/v1/jobs/pause` | Pause a download |
-| `POST` | `/v1/jobs/resume` | Resume a download |
-| `POST` | `/v1/jobs/retry` | Retry a download |
-| `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
+| `GET` | `/v1/jobs` | Filtered, cursor-paginated visible Jobs |
+| `GET` | `/v1/jobs/{id}` | Job detail, current commands, outputs, and lineage |
+| `GET` | `/v1/jobs/{id}/events` | Ordered timeline; `afterSequence` resumes a page |
+| `GET` | `/v1/jobs/{id}/outputs?key={key}` | Reauthorize and open a typed output |
+| `GET` | `/v1/jobs/events?version=2` | Canonical resumable Job SSE |
+| `POST` | `/v1/jobs/{id}/commands/{command}` | Recheck and run one advertised command |
+| `POST` | `/v1/jobs/commands/{command}` | Run one advertised bulk command, returning per-Job outcomes |
+| `GET` | `/v1/jobs/summary` | Visible aggregate with a window up to 90 days |
+| `POST` | `/v1/jobs/summary/export` | Queue a CSV or JSON export for an explicit range over 90 days |
 
-## Related Pages
+Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
+server recomputes the command under current authorization and rejects a stale
+version. Bulk requests accept at most 200 Job IDs; each result commits
+independently, so a response can contain both successes and refusals.
 
-- [Download Queue](./download-queue.md) -- URL submission, pause/resume, and retry details
-- [Plugin Actions](./plugin-actions.md) -- action registration, parameters, and async execution
-- [Plugin System](./plugin-system.md) -- plugin installation, configuration, and lifecycle
+## Replay keys and writer epoch
+
+`JOB_REPLAY_KEY` seals accepted inputs so an authorized Retry can replay the
+same request. Keep its active value stable across every PostgreSQL process.
+Rotation puts the new key first and keeps old decrypt-only keys until every
+envelope they sealed has expired or been explicitly forgotten. Persistent
+SQLite can use the generated `_job_replay_key` file, which is created with mode
+`0600`; include it with the database in backups. See [Advanced Configuration](../configuration/advanced.md#job-replay-key).
+
+The database's Job writer epoch is checked before application migrations or
+dispatch. Deploy the fence-aware binary to every writer and drain old processes
+before an epoch is advanced. After advancement, an older binary must refuse to
+start; rollback uses a compatible canonical reader, never a plaintext writer.
+Restoring a backup from before plaintext retirement requires rerunning the
+retirement verification barrier before serving traffic.
+
+Plugin command runs and command imports require one fenced runtime owner per
+database and staging namespace. Other Job Kinds and the Job Service can run in
+multiple processes. Do not point independent plugin-command runtimes at one
+database with separate staging roots.
+
+## Retention
+
+| Data | Default | Rule |
+|------|---------|------|
+| Succeeded and cancelled Job history | 30 days | From terminal completion |
+| Failed and interrupted Job history | 90 days | From terminal completion; unresolved work is retained |
+| Replay envelope after terminal completion | 7 days | Nonterminal execution-required input is retained |
+| Job summary export artifact | `EXPORT_RETENTION` (24 hours) | Independent from Job history |
+
+Pins and dismissal change a person's view, not expiry. Output artifacts are
+reauthorized when opened; holding a visible Job does not grant an output access
+token.
+
+## Related pages
+
+- [Download Queue](./download-queue.md)
+- [Group Export / Import](./export-import.md)
+- [Advanced Configuration](../configuration/advanced.md)
+- [Backup and Restore](../deployment/backups.md)

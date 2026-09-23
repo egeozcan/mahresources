@@ -1,24 +1,21 @@
 ---
 title: mr jobs
-description: View the download job queue
+description: Browse and summarize background Jobs
 sidebar_label: jobs
 ---
 
 # mr jobs
 
-The download queue is the server's in-memory job list. Most entries are URL
-downloads; group exports and imports run on the same queue and appear in
-`jobs list` with a `source` of `group-export`, `group-import-parse` or
-`group-import-apply` and no URL. Each job tracks a source URL, a status
-(pending, downloading, processing, paused, completed, failed, cancelled),
-progress counters, and the resulting Resource ID once finished.
+Browse durable background Jobs with `list`, `get`, and `timeline`, and
+aggregate them with `summary`. A Job keeps its identity, owner, state, events,
+and outputs after execution finishes, subject to the server's retention
+settings. The server decides which Jobs and controls the current account can
+see.
 
-The plural `jobs` command group exposes read-only views of the queue. Use
-`jobs list` for a snapshot of the jobs visible to you: administrators see
-every job the server is tracking, and every other account sees only the
-jobs it submitted. For
-lifecycle controls (submit, pause, resume, retry, cancel) on a single job,
-use the singular `job` subcommands.
+`job submit` remains the compatibility command for remote downloads. The
+singular `job cancel`, `pause`, `resume`, and `retry` commands also remain
+available for older clients and scripts. Use `job command` or
+`job bulk-command` for controls currently advertised by canonical Job detail.
 
 ## Usage
 
@@ -45,5 +42,6 @@ This command has no local flags.
 ## See Also
 
 - [`mr job submit`](../job/submit.md)
-- [`mr job cancel`](../job/cancel.md)
-- [`mr resource from-url`](../resource/from-url.md)
+- [`mr job command`](../job/command.md)
+- [`mr jobs get`](./get.md)
+- [`mr jobs summary`](./summary/index.md)

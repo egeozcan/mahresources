@@ -6,6 +6,23 @@ test.describe('Jobs list', () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed).toBeDefined();
   });
+
+  test('canonical list command retains its compatibility fallback while the release gate is closed', async ({ cli }) => {
+    const result = cli.runOrFail('jobs', 'list', '--json');
+    const parsed = JSON.parse(result.stdout);
+    expect(Array.isArray(parsed.jobs)).toBe(true);
+  });
+
+  test('job command help exposes canonical detail, timeline, summary, and control commands', async ({ cli }) => {
+    const jobsHelp = cli.runOrFail('jobs', '--help');
+    expect(jobsHelp.stdout).toContain('get');
+    expect(jobsHelp.stdout).toContain('timeline');
+    expect(jobsHelp.stdout).toContain('summary');
+    const singularHelp = cli.runOrFail('job', '--help');
+    expect(singularHelp.stdout).toContain('command');
+    expect(singularHelp.stdout).toContain('bulk-command');
+    expect(singularHelp.stdout).toContain('submit');
+  });
 });
 
 test.describe('Job submit', () => {

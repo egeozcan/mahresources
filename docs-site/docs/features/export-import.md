@@ -7,6 +7,14 @@ title: Group Export / Import
 
 Export and import move groups and their associated entities between mahresources instances as self-contained tar archives. A single export captures groups, resources (with file bytes), notes, tags, categories, series, and typed group relations into a portable archive. The feature is available through the web UI (group detail page), the REST API, and the `mr` CLI.
 
+Each accepted group export, import parse, and import apply also has a durable
+Job record. Parse and apply are separate Jobs linked by lineage, so their
+outcomes and commands can be inspected independently. Their staged input,
+review plan, and output artifacts have retention rules separate from Job
+history. The compatibility endpoints below remain available during the Job
+Center rollout; see the [Job System](./job-system.md) for canonical controls
+and the release-gated Job APIs.
+
 ## Export
 
 An export starts from one or more root groups and walks outward according to three sets of toggles: scope, fidelity, and schema definitions.
@@ -228,11 +236,18 @@ mr group import backup.tar --json
 
 Export and import jobs run through the shared [job system](./job-system). Poll `/v1/jobs/events` for real-time progress, or use the CLI's built-in polling (`--poll-interval`, `--timeout`).
 
+Once canonical Job routes are enabled, group archives appear as typed Job
+outputs. Opening an output rechecks current visibility and authorization; a
+visible Job does not itself grant access to its files. `EXPORT_RETENTION`
+controls how long export bytes remain available, independently of the Job's
+history retention. Import Retry is offered only when the adapter's durable
+staging and apply evidence prove that replay is safe.
+
 ## Configuration
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
-| `-export-retention` | `EXPORT_RETENTION` | `24h` | How long a completed export tar stays on disk before cleanup. Once it expires, `GET /v1/exports/{jobId}/download` returns **410 Gone** |
+| `-export-retention` | `EXPORT_RETENTION` | `24h` | How long completed group-export and Job summary-export artifacts stay on disk before cleanup. Once a legacy group export expires, `GET /v1/exports/{jobId}/download` returns **410 Gone** |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | `10 GB` | Maximum size of an import tar uploaded to `POST /v1/groups/import/parse` |
 
 Both settings are runtime-editable at `/admin/settings`, so neither needs a restart: the import size limit is read on every parse upload and the export retention on every cleanup sweep.

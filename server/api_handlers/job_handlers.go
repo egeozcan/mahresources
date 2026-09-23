@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"mahresources/application_context"
 	"mahresources/jobs"
 )
 
@@ -23,6 +24,22 @@ type JobListContext interface {
 
 type JobSummaryContext interface {
 	GetJobSummary(filter jobs.Filter, window time.Duration) (jobs.Summary, error)
+}
+
+type JobSummaryExportSubmitter interface {
+	SubmitJobSummaryExport(filter jobs.Filter, from, to time.Time, format, origin string) (jobs.Snapshot, error)
+}
+
+// JobSummaryExportRequest fixes the historical bounds and artifact format. The
+// normal Job filters are query parameters, shared with list and summary reads.
+type JobSummaryExportRequest struct {
+	From   time.Time `json:"from" openapi:"required"`
+	To     time.Time `json:"to" openapi:"required"`
+	Format string    `json:"format" openapi:"required"`
+}
+
+type JobSummaryExportResponse struct {
+	Job JobSnapshotResponse `json:"job" openapi:"required"`
 }
 
 // JobDetailContext is the request-scoped application facade required by a Job
@@ -274,6 +291,49 @@ func GetJobSummaryHandler(ctx JobSummaryContext) func(http.ResponseWriter, *http
 			return
 		}
 		writeJobJSON(w, http.StatusOK, jobSummaryResponse(summary))
+	}
+}
+
+// GetJobSummaryExportHandler accepts one durable export of a filtered summary
+// whose explicit date range exceeds the interactive 90-day ceiling.
+func GetJobSummaryExportHandler(ctx JobSummaryExportSubmitter) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filter, err := parseJobFilter(r.URL.Query())
+		if err != nil {
+			writeJobError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var body JobSummaryExportRequest
+		if err := decodeJobJSONBody(r, &body); err != nil {
+			writeJobError(w, http.StatusBadRequest, "invalid summary export request body")
+			return
+		}
+		if err := jobs.ValidateFilter(filter); err != nil {
+			writeJobServiceError(w, err)
+			return
+		}
+		if body.From.IsZero() || body.To.IsZero() || !body.From.Before(body.To) {
+			writeJobError(w, http.StatusBadRequest, "from must be before to")
+			return
+		}
+		if body.To.Sub(body.From) <= jobs.MaxSummaryWindow {
+			writeJobError(w, http.StatusBadRequest, fmt.Sprintf("summary export range must exceed %s", jobs.MaxSummaryWindow))
+			return
+		}
+		if body.Format != "csv" && body.Format != "json" {
+			writeJobError(w, http.StatusBadRequest, "format must be csv or json")
+			return
+		}
+		accepted, err := ctx.SubmitJobSummaryExport(filter, body.From, body.To, body.Format, "api")
+		if err != nil {
+			if errors.Is(err, application_context.ErrRoleCapability) {
+				writeJobError(w, http.StatusForbidden, "insufficient permissions")
+				return
+			}
+			writeJobServiceError(w, err)
+			return
+		}
+		writeJobJSON(w, http.StatusAccepted, JobSummaryExportResponse{Job: jobSnapshotResponse(accepted)})
 	}
 }
 

@@ -1,40 +1,35 @@
 ---
-title: mr jobs list
-description: List visible Jobs
-sidebar_label: list
+title: mr jobs summary
+description: Aggregate visible Jobs over at most 90 days
+sidebar_label: summary
 ---
 
-# mr jobs list
+# mr jobs summary
 
-List the durable Jobs visible to the current account. The server orders results
-newest first and returns an opaque `nextCursor` when another page is available.
-Pass that value to `--cursor` to continue. Use the repeatable state, kind, and
-origin filters, or narrow by owner, actor, accepted time, relationship, text,
-advertised command, or your pin and dismissal preferences.
-
-The canonical list endpoint is controlled by the server's Job Center release
-gate. While that endpoint is unavailable, an unfiltered `jobs list` request
-falls back to the legacy download queue. Use `jobs queue` when a script needs
-the legacy response explicitly.
+Aggregate visible Jobs over the last 90 days or less. Apply the same state,
+kind, origin, owner, actor, relationship, search, and viewer-preference filters
+as `jobs list`. Use `--window` to choose a shorter interval. For an explicit
+range longer than 90 days, use `jobs summary export` to create a durable Job
+with a CSV or JSON artifact.
 
 ## Usage
 
 ```bash
-mr jobs list
+mr jobs summary
 ```
 
 ## Examples
 
-**Find failed remote downloads**
+**Count a month of remote downloads**
 
 ```bash
-mr jobs list --state failed --kind remote-download --limit 50
+mr jobs summary --window 30d --kind remote-download --json
 ```
 
-**Continue from an opaque cursor on the next page**
+**Queue a longer explicit range as a CSV export**
 
 ```bash
-mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
+mr jobs summary export --from 2025-01-01T00:00:00Z --to 2026-01-01T00:00:00Z --format csv
 ```
 
 
@@ -54,8 +49,7 @@ mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
 | `--command` | string | `` | Filter Jobs currently advertising this command key |
 | `--pinned` | string | `` | Filter this viewer's pin preference (true or false) |
 | `--dismissed` | string | `` | Filter this viewer's dismissal preference (true or false) |
-| `--cursor` | string | `` | Opaque cursor returned by the previous page |
-| `--limit` | int | `0` | Jobs per page (server maximum: 200) |
+| `--window` | string | `` | Aggregate window such as 7d or 12h (maximum: 90d) |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |
@@ -67,7 +61,7 @@ mr jobs list --accepted-after 2026-01-01T00:00:00Z --cursor 'opaque-value'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Canonical page with visible Jobs and an optional nextCursor
+Aggregate counts and duration statistics for visible Jobs
 
 ## Exit Codes
 
@@ -75,7 +69,5 @@ Canonical page with visible Jobs and an optional nextCursor
 
 ## See Also
 
-- [`mr jobs get`](./get.md)
-- [`mr jobs timeline`](./timeline.md)
-- [`mr jobs summary`](./summary/index.md)
-- [`mr job submit`](../job/submit.md)
+- [`mr jobs list`](../list.md)
+- [`mr jobs summary export`](./export.md)
