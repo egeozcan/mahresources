@@ -5,12 +5,13 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"mahresources/server/template_handlers/template_context_providers"
 )
 
-// canonicalJobUICutoverComplete is the Task 17 rollout gate for the public
-// Job Center page. The URL translator is ready, while the legacy page remains
-// mounted until the complete-Kind and retirement readiness gates pass.
-const canonicalJobUICutoverComplete = false
+// The redirect and the new page use the same release gate. A partial flip would
+// redirect /downloads to a page that the router has not mounted yet.
+const canonicalJobUICutoverComplete = template_context_providers.JobCenterCutoverEnabled
 
 const (
 	legacyJobDeprecation = "@1790121600"
