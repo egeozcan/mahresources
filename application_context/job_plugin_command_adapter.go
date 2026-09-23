@@ -460,6 +460,9 @@ func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (
 }
 
 func (ctx *MahresourcesContext) registerPluginCommandJobKinds(service *jobs.Service) error {
+	if ctx == nil || service == nil {
+		return nil
+	}
 	for _, kind := range []string{JobKindPluginCommand, JobKindPluginCommandImport} {
 		if !jobs.HasReplayCodec(service, kind, jobPluginCommandVersion) {
 			if err := service.RegisterReplayCodec(kind, jobPluginCommandVersion, pluginCommandReplayCodec(kind)); err != nil {
