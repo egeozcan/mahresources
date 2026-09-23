@@ -13311,3 +13311,22 @@ Residual risks and handoffs carried forward:
   test context that exercises user deletion had to grow it (the same shape of
   change Task 1 made for `jobs`). Production is unaffected: `migrateJobCore`
   creates it.
+
+## Task 9 final gate follow-up (2026-09-23)
+
+- Full SQLite suite passed: `go test --tags 'json1 fts5' ./... -count=1`.
+- Full race suite passed for `jobs`, `download_queue`, and `application_context`
+  with `-timeout 25m`.
+- The PostgreSQL package matrix passed everywhere except one initial
+  `application_context` run; isolated JSON reruns both passed. The final captured
+  rerun is `/tmp/mahresources_pg_application_context_final.jsonl` and reports
+  `ok mahresources/application_context` (148.654s).
+- `go vet --tags 'json1 fts5' ./...`, `npm run build`, and `git diff --check`
+  passed. Build emitted Vite's existing advisory about chunks over 500 kB.
+- The selected browser suite initially passed 50 tests and exposed two stale
+  cockpit assertions expecting cleared cancelled handles to return 404. The
+  legacy detail route intentionally continues to return `cancelled`; dismissal
+  is a cockpit history preference. Updated those expectations while retaining
+  the row absence and reload checks; both focused browser cases now pass.
+- Selected CLI E2E passed 34 tests covering jobs, plugin commands, group import,
+  and group export.

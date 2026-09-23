@@ -233,9 +233,9 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
     await expect(clear).toBeVisible({ timeout: 10_000 });
     await clear.click();
 
-    // Gone from the queue, which is what makes it durable: a client-only hide is
-    // undone by the next SSE init event.
-    await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('http-404');
+    // Clearing hides this terminal queue row. The legacy detail endpoint continues
+    // to expose the cancelled handle, while the cockpit must keep it dismissed.
+    await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('cancelled');
     await expect(rowFor(page, id)).toHaveCount(0);
     await expect(rowFor(page, kept)).toHaveCount(1);
 
@@ -291,9 +291,9 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
     // `removed` is emitted. Both events reach the browser on one ordered SSE stream, so
     // by the time `removed` arrives the client's copy of the racer is terminal — and
     // the old `removed` handler retains a terminal job it has not been told to dismiss.
-    await expect.poll(() => jobStatus(page, racer), { timeout: 10_000 }).toBe('http-404');
-    // The row must not be retained for display: the server has no such job, so the
-    // panel would be showing a job that does not exist until the next reconnect.
+    await expect.poll(() => jobStatus(page, racer), { timeout: 10_000 }).toBe('cancelled');
+    // The cancelled handle remains available through the legacy detail endpoint;
+    // the cockpit must still keep its cleared row dismissed after the event race.
     await expect(rowFor(page, racer)).toHaveCount(0);
     await expect(rowFor(page, finished)).toHaveCount(0);
     await page.unroute('**/v1/jobs/clearCompleted');
