@@ -162,6 +162,7 @@ func (s *dispatcherTestStore) NonterminalRuns() ([]RecoveryRun, error) {
 	}
 	return result, nil
 }
+func (*dispatcherTestStore) QuarantineRun(RecoveryBlocker) error { return nil }
 func (s *dispatcherTestStore) ExpiredTerminalRunBoundary(time.Time) (*RetentionCursor, error) {
 	return nil, nil
 }

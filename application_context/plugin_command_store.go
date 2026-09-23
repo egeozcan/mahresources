@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 
@@ -407,6 +408,44 @@ func (ctx *MahresourcesContext) NonterminalRuns() ([]plugin_commands.RecoveryRun
 		result[i] = plugin_commands.RecoveryRun{RunRecord: runRecord(row), BootSessionID: row.BootSessionID}
 	}
 	return result, nil
+}
+
+// QuarantineRun publishes an unproven process-group recovery as a canonical
+// blocked Job while retaining its token, claim and capacity. The controller
+// calls this only after it acquired the staging lease and database fence.
+func (ctx *MahresourcesContext) QuarantineRun(blocker plugin_commands.RecoveryBlocker) error {
+	if blocker.RunID == "" {
+		return fmt.Errorf("plugin command recovery blocker has no run id")
+	}
+	return retryPluginCommandSQLiteWrite(ctx, func() error {
+		return ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
+				return err
+			}
+			var source models.PluginCommandRun
+			if err := tx.Where("id = ?", blocker.RunID).First(&source).Error; err != nil {
+				return err
+			}
+			// Recovery blockers are reported only for running source rows. If the
+			// durable outcome already changed, that source no longer owns live work.
+			if source.Status != plugin_commands.RunStatusRunning || source.JobID == "" {
+				return nil
+			}
+			if source.JobExecutionToken == "" {
+				return fmt.Errorf("plugin command run %s has no canonical execution token", source.ID)
+			}
+			service := ctx.JobService()
+			if service == nil {
+				return fmt.Errorf("plugin command Job service is unavailable")
+			}
+			deps := ctx.jobDeps()
+			deps.DB = tx
+			_, err := service.QuarantineExternalWork(deps, jobs.ExecutionRef{
+				JobID: source.JobID, ExecutionToken: source.JobExecutionToken,
+			}, "plugin-command-recovery-unproven")
+			return err
+		})
+	})
 }
 
 func terminalCommandStatuses() []string {

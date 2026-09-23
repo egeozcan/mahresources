@@ -3,6 +3,8 @@ package application_context
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -159,7 +161,8 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 	ctx := newPluginCommandStoreTestContext(t)
 	service := jobs.NewService()
 	ctx.SetJobService(service)
-	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: t.TempDir(), commandPath: t.TempDir()}))
+	root := t.TempDir()
+	require.NoError(t, ctx.StartPluginCommands(context.Background(), testPluginCommandSettings{root: root, commandPath: t.TempDir()}))
 	t.Cleanup(func() { _ = ctx.StopPluginCommands() })
 	now := time.Now().UTC()
 	actor := uint(9)
@@ -194,6 +197,10 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 		Error: "import failed", FinishedAt: now.Add(2 * time.Second)})
 	require.NoError(t, err)
 	require.True(t, won)
+	exchangeDir := filepath.Join(root, "plugin_exchange", run.PluginName, run.ID)
+	require.NoError(t, os.MkdirAll(exchangeDir, 0o700))
+	exchangeFile := filepath.Join(exchangeDir, "asset.bin")
+	require.NoError(t, os.WriteFile(exchangeFile, []byte("source bytes"), 0o600))
 	commands, err := service.AdvertisedCommands(context.Background(), ctx.jobDeps(), jobs.Access{Administrator: true}, first.JobID)
 	require.NoError(t, err)
 	keys := make(map[string]bool)
@@ -202,6 +209,17 @@ func TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically(t *testi
 	}
 	require.True(t, keys["inspect"])
 	require.True(t, keys["retry-import"], "retry requires the durable failed source, fields and successful parent run")
+	require.NoError(t, os.Remove(exchangeFile))
+	commands, err = service.AdvertisedCommands(context.Background(), ctx.jobDeps(), jobs.Access{Administrator: true}, first.JobID)
+	require.NoError(t, err)
+	keys = make(map[string]bool)
+	for _, command := range commands {
+		keys[command.Key] = true
+	}
+	require.False(t, keys["retry-import"], "a missing admitted exchange file cannot be retried")
+	// Restore the file so the later import lineage operation is testing its own
+	// transactional claim behaviour rather than a missing staging artifact.
+	require.NoError(t, os.WriteFile(exchangeFile, []byte("source bytes"), 0o600))
 	second, err := ctx.ClaimImport(plugin_commands.ImportClaimRequest{ImportID: "import-second", RunID: run.ID,
 		FileName: "asset.bin", FieldsJSON: `{"name":"asset"}`, PluginGeneration: 2, CreatedByUserID: &actor, CreatedAt: now.Add(3 * time.Second)})
 	require.NoError(t, err)

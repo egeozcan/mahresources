@@ -166,11 +166,13 @@ type controllerRecoveryInspector struct {
 	state  plugin_commands.GroupState
 	states map[int]plugin_commands.GroupState
 	errs   map[int]error
+	seen   []int
 }
 
 func (i *controllerRecoveryInspector) InspectGroup(pgid int, _ string) (plugin_commands.GroupIdentity, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.seen = append(i.seen, pgid)
 	if err := i.errs[pgid]; err != nil {
 		return plugin_commands.GroupIdentity{}, err
 	}
@@ -364,6 +366,172 @@ func TestPluginCommandControllerRecoveryQuarantineHeals(t *testing.T) {
 	second, leaseErr = plugin_commands.AcquireRuntimeLease(root)
 	require.ErrorIs(t, leaseErr, plugin_commands.ErrRuntimeLeaseBusy)
 	require.Nil(t, second)
+}
+
+func TestPluginCommandCrashRecoveryDoesNotNeedFormerDispatcherReport(t *testing.T) {
+	const pgid = 6141
+	for _, test := range []struct {
+		name           string
+		inspectorError error
+	}{
+		{name: "process inspection proves no worker remains"},
+		{name: "uninspectable worker stays blocked until proof arrives", inspectorError: errors.New("process table unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := newPluginCommandStoreTestContext(t)
+			service := jobs.NewService()
+			ctx.SetJobService(service)
+			root := t.TempDir()
+			settings := testPluginCommandSettings{root: root, commandPath: t.TempDir()}
+
+			// Leave a previous controller's dispatcher with its report channel open,
+			// as it would be after a crash. The replacement gets a new context and has
+			// no reference through which it could ask this dispatcher to quiesce.
+			oldLease, err := plugin_commands.AcquireRuntimeLease(root)
+			require.NoError(t, err)
+			oldFence, err := ctx.acquirePluginCommandDBFence(root)
+			require.NoError(t, err)
+			oldDispatcher := plugin_commands.NewDispatcher(plugin_commands.Dependencies{
+				Store: ctx, Jobs: lifecycleAsyncJobs{}, Executor: &lifecycleStubbornExecutor{},
+				Settings: settings,
+			})
+			oldController := ctx.pluginCommandController
+			oldController.mu.Lock()
+			oldController.settings = commandSettings{Settings: settings}
+			oldController.config = defaultPluginCommandControllerConfig()
+			oldController.lease = oldLease
+			oldController.dbFence = oldFence
+			oldController.state = pluginCommandRuntimeActive
+			oldController.active.Store(&pluginCommandActiveRuntime{dispatcher: oldDispatcher})
+			oldController.mu.Unlock()
+			require.False(t, oldDispatcher.RuntimeLeaseReleasable(), "the crashed owner's report must remain unavailable")
+
+			now := time.Now().UTC()
+			run := testRun("crash-recovery-command", uintPtr(7), false, now)
+			require.NoError(t, ctx.CreateRun(run, testOutput(run.ID, now)))
+			stored, _, err := ctx.Run(run.ID)
+			require.NoError(t, err)
+			execution, claimed, err := ctx.claimPluginCommandJob(stored.JobID, JobKindPluginCommand, run.ID)
+			require.NoError(t, err)
+			require.True(t, claimed)
+			won, err := ctx.MarkRunRunning(run.ID, now.Add(time.Second))
+			require.NoError(t, err)
+			require.True(t, won)
+			require.NoError(t, ctx.SetRunProcessGroup(run.ID, pgid, "former-boot"))
+			var running models.Job
+			require.NoError(t, ctx.db.First(&running, "id = ?", stored.JobID).Error)
+			require.Equal(t, string(jobs.StateRunning), running.State)
+			require.Equal(t, execution.ExecutionToken, running.ExecutionToken)
+
+			// Releasing the OS lease models process death. The stale database token
+			// is intentionally left behind; the replacement CAS-rotates it after it
+			// takes the same staging root.
+			require.NoError(t, oldLease.Close())
+			recoveryCtx := NewMahresourcesContext(ctx.fs, ctx.db, ctx.readOnlyDB, ctx.Config)
+			recoveryService := jobs.NewService()
+			recoveryCtx.SetJobService(recoveryService)
+			if manager := recoveryCtx.PluginManager(); manager != nil {
+				t.Cleanup(manager.Close)
+			}
+			inspector := &controllerRecoveryInspector{state: plugin_commands.GroupDead}
+			if test.inspectorError != nil {
+				inspector.errs = map[int]error{pgid: test.inspectorError}
+			}
+			cfg := defaultPluginCommandControllerConfig()
+			cfg.bootSessionID = func() (string, error) { return "former-boot", nil }
+			cfg.inspector = inspector
+			cfg.recoveryInterval = 5 * time.Millisecond
+			require.NoError(t, recoveryCtx.startPluginCommandsWithConfig(context.Background(), settings, cfg))
+			t.Cleanup(func() {
+				if err := recoveryCtx.StopPluginCommands(); err != nil {
+					// A failing assertion may leave startup recovery quarantined. Test
+					// teardown can release its temporary resources after cancelling the
+					// retry loop; production keeps both fences in this case.
+					controller := recoveryCtx.pluginCommandController
+					controller.mu.Lock()
+					lease, token := controller.lease, controller.dbFence
+					controller.lease, controller.dbFence = nil, ""
+					controller.mu.Unlock()
+					_ = recoveryCtx.releasePluginCommandDBFence(token)
+					if lease != nil {
+						_ = lease.Close()
+					}
+				}
+			})
+			if test.inspectorError == nil {
+				var source models.PluginCommandRun
+				require.NoError(t, recoveryCtx.db.First(&source, "id = ?", run.ID).Error)
+				require.Equal(t, plugin_commands.RunStatusInterrupted, source.Status)
+				var recovered models.Job
+				require.NoError(t, recoveryCtx.db.First(&recovered, "id = ?", stored.JobID).Error)
+				require.Equal(t, string(jobs.StateInterrupted), recovered.State)
+				var claim models.JobClaim
+				require.NoError(t, recoveryCtx.db.First(&claim, "job_id = ?", stored.JobID).Error)
+				require.Equal(t, models.JobClaimStateReleased, claim.State)
+				var capacityCount int64
+				require.NoError(t, recoveryCtx.db.Model(&models.JobCapacityLease{}).Where("job_id = ?", stored.JobID).Count(&capacityCount).Error)
+				require.Zero(t, capacityCount)
+				inspector.mu.Lock()
+				require.Equal(t, []int{pgid}, inspector.seen, "the replacement must prove the process group dead before it releases ownership")
+				inspector.mu.Unlock()
+				return
+			}
+
+			// Each failed inspection keeps the canonical Job, claim, and admitted
+			// slot quarantined. The source stays running and no replacement runtime
+			// is published while process death remains uncertain.
+			recoveryCtx.pluginCommandController.mu.Lock()
+			pending := recoveryCtx.pluginCommandController.pending
+			recoveryCtx.pluginCommandController.mu.Unlock()
+			require.NotNil(t, pending)
+			require.Nil(t, recoveryCtx.pluginCommandController.active.Load())
+			assertQuarantined := func() {
+				t.Helper()
+				var blocked models.Job
+				require.NoError(t, recoveryCtx.db.First(&blocked, "id = ?", stored.JobID).Error)
+				require.Equal(t, string(jobs.StateBlocked), blocked.State)
+				require.Equal(t, execution.ExecutionToken, blocked.ExecutionToken)
+				var source models.PluginCommandRun
+				require.NoError(t, recoveryCtx.db.First(&source, "id = ?", run.ID).Error)
+				require.Equal(t, plugin_commands.RunStatusRunning, source.Status)
+				var claim models.JobClaim
+				require.NoError(t, recoveryCtx.db.First(&claim, "job_id = ?", stored.JobID).Error)
+				require.Equal(t, models.JobClaimStateQuarantined, claim.State)
+				require.Equal(t, execution.ExecutionToken, claim.ExecutionToken)
+				var capacityCount int64
+				require.NoError(t, recoveryCtx.db.Model(&models.JobCapacityLease{}).Where("job_id = ?", stored.JobID).Count(&capacityCount).Error)
+				require.EqualValues(t, 1, capacityCount)
+			}
+			assertQuarantined()
+			time.Sleep(50 * time.Millisecond)
+			assertQuarantined()
+			recoveryCtx.pluginCommandController.mu.Lock()
+			state := recoveryCtx.pluginCommandController.state
+			recoveryCtx.pluginCommandController.mu.Unlock()
+			require.Equal(t, pluginCommandRuntimeQuarantined, state)
+
+			// Give the test a safe shutdown boundary. Recovery cannot publish or
+			// free capacity until a later process inspection supplies positive proof.
+			inspector.setGroup(pgid, plugin_commands.GroupDead)
+			require.Eventually(t, func() bool {
+				_, err := recoveryCtx.pluginCommandActive()
+				return err == nil
+			}, time.Second, 5*time.Millisecond)
+			var recoveredSource models.PluginCommandRun
+			require.NoError(t, recoveryCtx.db.First(&recoveredSource, "id = ?", run.ID).Error)
+			require.Equal(t, plugin_commands.RunStatusInterrupted, recoveredSource.Status)
+			var recovered models.Job
+			require.NoError(t, recoveryCtx.db.First(&recovered, "id = ?", stored.JobID).Error)
+			require.Equal(t, string(jobs.StateInterrupted), recovered.State)
+			require.Empty(t, recovered.ExecutionToken, "proven-dead recovery must clear the original token only when it terminalizes")
+			var recoveredClaim models.JobClaim
+			require.NoError(t, recoveryCtx.db.First(&recoveredClaim, "job_id = ?", stored.JobID).Error)
+			require.Equal(t, models.JobClaimStateReleased, recoveredClaim.State)
+			var recoveredCapacityCount int64
+			require.NoError(t, recoveryCtx.db.Model(&models.JobCapacityLease{}).Where("job_id = ?", stored.JobID).Count(&recoveredCapacityCount).Error)
+			require.Zero(t, recoveredCapacityCount)
+		})
+	}
 }
 
 func TestPluginCommandControllerRecoveryQuarantineLogsRetryFailureOnceAndHealing(t *testing.T) {

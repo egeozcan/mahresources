@@ -95,6 +95,12 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 				return fmt.Errorf("recover plugin command %s: %w", run.ID, err)
 			}
 			if blocker != nil {
+				if err := d.deps.Store.QuarantineRun(*blocker); err != nil {
+					// Process uncertainty remains the dominant recovery result. A
+					// transient publication failure must keep both runtime fences held
+					// so the next scan can retry the canonical Job transition.
+					blocker.Reason = fmt.Sprintf("%s; canonical Job quarantine publication failed: %v", blocker.Reason, err)
+				}
 				blocked = append(blocked, *blocker)
 				continue
 			}

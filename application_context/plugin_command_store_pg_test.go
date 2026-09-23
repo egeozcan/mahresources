@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"mahresources/constants"
+	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
 )
@@ -80,6 +81,68 @@ func TestPluginCommandRunStartPGPersistsBootSessionWithProcessGroup(t *testing.T
 	require.NotNil(t, row.ProcessGroupID)
 	require.Equal(t, 4321, *row.ProcessGroupID)
 	require.Equal(t, "boot-session-pg", row.BootSessionID)
+}
+
+func TestPluginCommandRecoveryQuarantinePGRetainsClaimUntilProof(t *testing.T) {
+	ctx := newPluginCommandStorePGContext(t)
+	migratePluginCommandJobTestModels(t, ctx)
+	ctx.SetJobService(jobs.NewService())
+	root := t.TempDir()
+	lease, err := plugin_commands.AcquireRuntimeLease(root)
+	require.NoError(t, err)
+	dbFence, err := ctx.acquirePluginCommandDBFence(root)
+	require.NoError(t, err)
+	installPluginCommandActiveForTest(ctx, nil, nil, lease)
+	ctx.pluginCommandController.mu.Lock()
+	ctx.pluginCommandController.dbFence = dbFence
+	ctx.pluginCommandController.mu.Unlock()
+	t.Cleanup(func() {
+		_ = ctx.releasePluginCommandDBFence(dbFence)
+		_ = lease.Close()
+	})
+
+	now := time.Now().UTC()
+	owner := uint(19)
+	require.NoError(t, ctx.CreateRun(testRun("pg-recovery-quarantine", &owner, false, now), testOutput("pg-recovery-quarantine", now)))
+	run, _, err := ctx.Run("pg-recovery-quarantine")
+	require.NoError(t, err)
+	execution, claimed, err := ctx.claimPluginCommandJob(run.JobID, JobKindPluginCommand, run.ID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	won, err := ctx.MarkRunRunning(run.ID, now.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, ctx.SetRunProcessGroup(run.ID, 6141, "former-boot"))
+
+	require.NoError(t, ctx.QuarantineRun(plugin_commands.RecoveryBlocker{
+		RunID: run.ID, ProcessGroupID: 6141, Reason: "process table unavailable",
+	}))
+	var blocked models.Job
+	require.NoError(t, ctx.db.First(&blocked, "id = ?", run.JobID).Error)
+	require.Equal(t, string(jobs.StateBlocked), blocked.State)
+	require.Equal(t, execution.ExecutionToken, blocked.ExecutionToken)
+	var claim models.JobClaim
+	require.NoError(t, ctx.db.First(&claim, "job_id = ?", run.JobID).Error)
+	require.Equal(t, models.JobClaimStateQuarantined, claim.State)
+	require.Equal(t, execution.ExecutionToken, claim.ExecutionToken)
+	var capacityCount int64
+	require.NoError(t, ctx.db.Model(&models.JobCapacityLease{}).Where("job_id = ?", run.JobID).Count(&capacityCount).Error)
+	require.EqualValues(t, 1, capacityCount)
+
+	won, err = ctx.FinishRun(run.ID, plugin_commands.RunFinish{
+		Status: plugin_commands.RunStatusInterrupted, Error: "process group proven dead",
+		FinishedAt: now.Add(2 * time.Second),
+	})
+	require.NoError(t, err)
+	require.True(t, won)
+	var interrupted models.Job
+	require.NoError(t, ctx.db.First(&interrupted, "id = ?", run.JobID).Error)
+	require.Equal(t, string(jobs.StateInterrupted), interrupted.State)
+	require.Empty(t, interrupted.ExecutionToken)
+	require.NoError(t, ctx.db.First(&claim, "job_id = ?", run.JobID).Error)
+	require.Equal(t, models.JobClaimStateReleased, claim.State)
+	require.NoError(t, ctx.db.Model(&models.JobCapacityLease{}).Where("job_id = ?", run.JobID).Count(&capacityCount).Error)
+	require.Zero(t, capacityCount)
 }
 
 func TestPluginCommandRunFinishPGHasExactlyOneWinner(t *testing.T) {

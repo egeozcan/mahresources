@@ -27,6 +27,7 @@ type Store interface {
 	Run(id string) (RunRecord, RunOutput, error)
 	Runs(Access) ([]RunView, error)
 	NonterminalRuns() ([]RecoveryRun, error)
+	QuarantineRun(RecoveryBlocker) error
 	ExpiredTerminalRunBoundary(before time.Time) (*RetentionCursor, error)
 	ExpiredTerminalRuns(before time.Time, after, through *RetentionCursor, limit int) ([]RunRecord, error)
 	MarkRunExchangeRemoved(runID string, removedAt time.Time) error

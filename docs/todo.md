@@ -13365,3 +13365,33 @@ Residual risks and handoffs carried forward:
 - `go vet --tags 'json1 fts5 postgres' ./application_context ./plugin_commands
   ./jobs ./server/api_tests` passed. Whole-repository Go/CLI/browser suites were
   last run at Task 9; final whole-tree gates remain scheduled for Task 18.
+
+## Task 10 review follow-up (2026-09-23)
+
+- Red first: `TestPluginCommandCrashRecoveryDoesNotNeedFormerDispatcherReport`
+  initially failed because uninspectable startup recovery left the canonical Job
+  `running`. Recovery now publishes the token-fenced Job `blocked` state and
+  quarantines its claim in the same fenced transaction, retaining the source PGID,
+  execution token and capacity until inspection proves the group dead. The same
+  token then finishes the Job as interrupted and releases the claim/capacity.
+- The new crash-to-new-controller test confirms recovery does not ask the former
+  dispatcher's unavailable `RuntimeLeaseReleasable` report: a proven-dead group
+  recovers immediately; an uninspectable group remains blocked over repeated
+  scans and only recovers after the inspector supplies proof. A PostgreSQL store
+  integration test exercises the same quarantine/settlement transaction.
+- Import Retry availability now also checks that the admitted exchange file is
+  present; the retry executor retains its existing file recheck before admission.
+- The plan's broad race command
+  `go test -race --tags 'json1 fts5' ./plugin_commands ./application_context
+  -run 'Test.*(PluginCommand|CommandRun|CommandImport|RuntimeFence|Quarantine|Recovery)'
+  -count=10` was interrupted after 193s because the broad application-context
+  selection was still running. `plugin_commands` had passed; I sent SIGQUIT to
+  stop the application test process, and no assertion failure had appeared
+  before the interruption. The focused changed-seam race gate passed ten runs:
+  `go test -race --tags 'json1 fts5' ./plugin_commands ./jobs ./application_context
+  -run 'TestPluginCommandCrashRecoveryDoesNotNeedFormerDispatcherReport|TestExternalRecoveryQuarantineRetainsCapacityAndExecutionFence|TestPluginCommandImportClaimPersistsTokenAndRetryLineageAtomically|TestRecoveryClassifiesNonterminalRuns|TestPluginCommandControllerRecoveryQuarantineHeals'
+  -count=10` (1.513s, 1.633s, 6.419s respectively).
+- PostgreSQL selection passed:
+  `go test --tags 'json1 fts5 postgres' ./application_context ./server/api_tests
+  -run 'Test.*PluginCommand' -count=1` (27.149s and 20.649s). Tagged vet and
+  `git diff --check` passed.

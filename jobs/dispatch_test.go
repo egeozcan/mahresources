@@ -1604,6 +1604,68 @@ func TestClaimBlocksAJobWhoseInputCannotBeOpened(t *testing.T) {
 	}
 }
 
+func TestExternalRecoveryQuarantineRetainsCapacityAndExecutionFence(t *testing.T) {
+	_, deps := newDispatchDatabase(t, "external-recovery-quarantine.db")
+	svc := NewService()
+	registerTestAdapter(t, svc, testDefinition())
+	accepted := acceptQueued(t, svc, deps, nil)
+	execution, ok := claimOnce(t, svc, deps, "plugin-command:runtime-a",
+		CapacityRef{Group: CapacityGroupGlobal, Limit: 2}, CapacityRef{Group: testKind, Limit: 2})
+	if !ok {
+		t.Fatal("the queued Job was not claimed")
+	}
+	ref := ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken}
+
+	blocked, err := svc.QuarantineExternalWork(deps, ref, "plugin-command-recovery-unproven")
+	if err != nil {
+		t.Fatalf("QuarantineExternalWork: %v", err)
+	}
+	blockedJob := jobRow(t, deps, accepted.ID)
+	if blocked.State != StateBlocked || blockedJob.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("blocked Job = state %s token %q, want blocked with token %q", blocked.State, blockedJob.ExecutionToken, execution.ExecutionToken)
+	}
+	claim := claimRow(t, deps, accepted.ID)
+	if claim.State != models.JobClaimStateQuarantined || claim.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("claim = state %s token %q, want quarantined with the same token", claim.State, claim.ExecutionToken)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 2 {
+		t.Fatalf("capacity rows while quarantined = %d, want both admitted slots", count)
+	}
+
+	// A repeated recovery scan is idempotent, while another execution token
+	// cannot publish the blocked state or take ownership from the unresolved run.
+	again, err := svc.QuarantineExternalWork(deps, ref, "plugin-command-recovery-unproven")
+	if err != nil || again.Version != blocked.Version {
+		t.Fatalf("repeated quarantine = version %d, err %v; want version %d and no error", again.Version, err, blocked.Version)
+	}
+	stale := ExecutionRef{JobID: accepted.ID, ExecutionToken: "different-execution"}
+	if _, err := svc.QuarantineExternalWork(deps, stale, "stale-runtime"); !errors.Is(err, ErrStaleExecution) {
+		t.Fatalf("QuarantineExternalWork with a stale token = %v, want ErrStaleExecution", err)
+	}
+	if stored := jobRow(t, deps, accepted.ID); stored.State != string(StateBlocked) || stored.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("stale quarantine changed the Job: state %s token %q", stored.State, stored.ExecutionToken)
+	}
+
+	// Positive recovery evidence lets the very same execution report its real
+	// terminal result; only then are the quarantine and its capacity released.
+	finished, err := svc.Finish(deps, FinishRequest{
+		ExecutionRef: ref, ExpectedVersion: blocked.Version, Outcome: StateInterrupted,
+	})
+	if err != nil {
+		t.Fatalf("Finish through the quarantined execution token: %v", err)
+	}
+	if finished.State != StateInterrupted {
+		t.Fatalf("finished Job state = %s, want interrupted", finished.State)
+	}
+	claim = claimRow(t, deps, accepted.ID)
+	if claim.State != models.JobClaimStateReleased {
+		t.Fatalf("claim state after recovery = %s, want released", claim.State)
+	}
+	if count := capacityCount(t, deps, CapacityGroupGlobal) + capacityCount(t, deps, testKind); count != 0 {
+		t.Fatalf("capacity rows after proven recovery = %d, want none", count)
+	}
+}
+
 // TestAQuarantinedClaimIsReleasedWhenItsOwnerFinishesTheJob is the exception
 // that proves the quarantine rule: a claim nobody could prove anything about is
 // kept, and the one thing that does prove something is its own execution — which

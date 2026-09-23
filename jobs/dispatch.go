@@ -1656,6 +1656,39 @@ func (s *Service) resumeClaim(deps Deps, job models.Job, claim models.JobClaim, 
 // which execution the quarantine is about. Releasing any of it would be a claim
 // that nobody proved anything about, and the whole point of this path is that
 // dispatch over unproven work is how duplicate external side effects happen.
+// QuarantineExternalWork applies that same rule when a specialized external
+// runtime (rather than the Job lease reconciler) proves it cannot establish
+// whether the work stopped. The execution token is required because the Job
+// remains owned: a stale runtime must not be able to block a later execution.
+// Repeating the call for the same already-quarantined execution is safe, which
+// lets a recovery scan retry after a transient publication failure.
+func (s *Service) QuarantineExternalWork(deps Deps, ref ExecutionRef, reason string) (Snapshot, error) {
+	if err := validateExecutionRef(ref); err != nil {
+		return Snapshot{}, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = quarantineReasonUnprovenWork
+	}
+	job, err := loadJob(deps.DB, ref.JobID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if job.ExecutionToken != ref.ExecutionToken {
+		return Snapshot{}, fmt.Errorf("%w: job %s is not owned by this execution", ErrStaleExecution, ref.JobID)
+	}
+	claim, err := loadClaim(deps.DB, ref.JobID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if State(job.State) == StateBlocked && claim.State == models.JobClaimStateQuarantined && claim.ExecutionToken == ref.ExecutionToken {
+		return snapshot(job), nil
+	}
+	if State(job.State) != StateRunning || claim.State != models.JobClaimStateHeld || claim.ExecutionToken != ref.ExecutionToken {
+		return Snapshot{}, fmt.Errorf("%w: job %s is not held by this execution", ErrStaleExecution, ref.JobID)
+	}
+	return s.quarantineClaim(deps, job, claim, reason, deps.now())
+}
+
 func (s *Service) quarantineClaim(deps Deps, job models.Job, claim models.JobClaim, reason string, now time.Time) (Snapshot, error) {
 	detail, err := json.Marshal(map[string]string{"reason": reason})
 	if err != nil {

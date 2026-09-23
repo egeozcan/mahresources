@@ -47,7 +47,7 @@ func (a *pluginCommandJobAdapter) Commands(_ context.Context, command jobs.Comma
 	commands := []jobs.Command{{Key: jobs.CommandCancel, Label: "Cancel", Destructive: true, Confirmation: "Cancel this plugin command?"},
 		{Key: "inspect", Label: "Inspect command history"}}
 	if a.kind == JobKindPluginCommandImport {
-		if a.importRetryable(command.Deps.DB, command.Snapshot.ID) {
+		if a.importRetryable(command.Deps.DB, command.Snapshot.ID) && a.importExchangeFilePresent(command.Deps.DB, command.Snapshot.ID) {
 			commands = append(commands, jobs.Command{Key: "retry-import", Label: "Retry import", Destructive: true,
 				Confirmation: "Retry this import from its admitted exchange file?"})
 		}
@@ -205,6 +205,30 @@ func (a *pluginCommandJobAdapter) importRetryable(db *gorm.DB, jobID string) boo
 		return false
 	}
 	return true
+}
+
+func (a *pluginCommandJobAdapter) importExchangeFilePresent(db *gorm.DB, jobID string) bool {
+	if db == nil {
+		return false
+	}
+	var source models.PluginCommandImport
+	if db.Where("job_id = ?", jobID).First(&source).Error != nil {
+		return false
+	}
+	active, err := a.ctx.pluginCommandActive()
+	if err != nil || active.exchange == nil {
+		return false
+	}
+	listing, err := active.exchange.List(plugin_commands.Access{Administrator: true}, source.RunID)
+	if err != nil {
+		return false
+	}
+	for _, entry := range listing.Entries {
+		if entry.Name == source.FileName {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *pluginCommandJobAdapter) retryImport(execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
@@ -452,9 +476,9 @@ func (ctx *MahresourcesContext) finishPluginCommandJobTx(tx *gorm.DB, jobID, tok
 	if state == outcome {
 		return nil
 	}
-	if state == jobs.StateRunning {
+	if state == jobs.StateRunning || state == jobs.StateBlocked {
 		if token == "" {
-			return fmt.Errorf("plugin command Job %s is running without an execution token", jobID)
+			return fmt.Errorf("plugin command Job %s is owned without an execution token", jobID)
 		}
 		failure := pluginCommandFailure(sourceStatus)
 		_, err := service.Finish(deps, jobs.FinishRequest{ExecutionRef: ref, ExpectedVersion: uint64(current.Version), Outcome: outcome, Failure: failure,
