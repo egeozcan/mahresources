@@ -224,6 +224,43 @@ func TestRunnerRedactsSensitiveParameterAndSuppliedInputFromStdoutAndStderr(t *t
 	}
 }
 
+func TestRunnerRedactsLinesAndTokenizedValuesFromMultilineInput(t *testing.T) {
+	const echoedLine = "SESSIONID=first-cookie-secret-a321"
+	const echoedCookieValue = "multi-line-cookie-value-42ac"
+	content := echoedLine + "\nCookie: MEDIAID=" + echoedCookieValue + "; OTHERID=other-cookie-value-82cd\n"
+	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte(content)})
+	f.settings.commandDir = "/bin"
+	f.executor.deps.Settings = f.settings
+	declaration := Declaration{
+		Name: "echo-cookie-parts", Timeout: 10 * time.Second,
+		Argv:   []string{"sh", "-c", "exec 3<cookies.txt; IFS= read -r first <&3; IFS= read -r second <&3; printf '%s\\n' \"$first\"; value=${second#*=}; value=${value%%;*}; printf '%s\\n' \"$value\"; printf 'safe-diagnostic\\n'", "command"},
+		Inputs: []string{"cookies.txt"},
+	}
+	invocation, err := BuildInvocation(declaration, nil, f.exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Request.Declaration = declaration
+	f.run.Invocation = invocation
+	outcome := f.executor.Execute(context.Background(), f.run)
+	if outcome.Status != RunStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	_, output, err := f.store.Run(f.run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{echoedLine, echoedCookieValue} {
+		if strings.Contains(output.OutputTail, secret) {
+			t.Fatalf("captured output persisted partial input secret %q: %q", secret, output.OutputTail)
+		}
+	}
+	if strings.Count(output.OutputTail, "[redacted]") < 2 || !strings.Contains(output.OutputTail, "safe-diagnostic") {
+		t.Fatalf("output tail did not redact the line and cookie value while keeping ordinary output: %q", output.OutputTail)
+	}
+}
+
 func TestRunnerRedactsSuppliedInputAfterTerminalControlsAreStripped(t *testing.T) {
 	const printableSecret = "CONTROLLEDinput-corpus-34b1"
 	f := newInputRunnerFixture(t, InputFile{Name: "cookies.txt", Content: []byte("CONTROLLED\x00input-corpus-34b1")})

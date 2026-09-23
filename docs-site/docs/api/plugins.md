@@ -368,8 +368,11 @@ Returns `{"run": <durable run with output and imports>,
 "outputAvailable": true}`. `outputAvailable` is false when retention has pruned
 the separate output row; that is not a missing run. The stored parameter view
 and argv redact `sensitive_params`. Captured stdout/stderr also redact exact
-values of those parameters and exact supplied input-file contents when the
-command echoes them. Values transformed by the command, secrets from other
+values of those parameters and supplied-input echoes. For each input file,
+redaction checks the whole file, its first 256 nonempty lines, and up to 256
+recognized credential values, including cookie key/value fields, Bearer or
+Basic values, and Netscape cookie rows. Values transformed by the command,
+unrecognized formats, patterns beyond those per-file limits, secrets from other
 sources, and unmarked parameters may still appear. HTML renders escaped output
 after terminal control characters are stripped.
 

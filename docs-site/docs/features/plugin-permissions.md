@@ -153,10 +153,13 @@ A command-bearing plugin requires durable, explicit consent:
   requires `mr plugin enable NAME --confirm-commands`.
 
 Redaction applies to the stored parameter view and argv. Captured stdout and
-stderr redact exact values from parameters marked `sensitive_params` and exact
-supplied input-file contents. A transformed value, a secret from another
-source, or an unmarked parameter can still appear in child output. Captured
-output remains administrator-only.
+stderr redact exact values from parameters marked `sensitive_params` and
+supplied-input echoes. For each input file, this covers the whole file, the
+first 256 nonempty lines, and up to 256 recognized credential values such as
+cookie fields and authorization tokens. Transformed values, unrecognized input
+formats, values beyond those limits, secrets from another source, and unmarked
+parameters can still appear in child output. Captured output remains
+administrator-only.
 
 ### `inject`, `render` and `pages` are browser-side code execution
 

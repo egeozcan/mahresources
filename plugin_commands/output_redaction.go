@@ -1,14 +1,39 @@
 package plugin_commands
 
-import "bytes"
+import (
+	"bytes"
+	"crypto/sha256"
+	"strings"
+)
 
-// commandOutputSecrets returns the values the host knows are secret:
-// parameters explicitly marked sensitive by the declaration and supplied
-// input-file contents. Patterns pass through the same terminal-control filter
-// as captured output so filtering cannot expose their remaining bytes. The
-// copies survive the runner's input-memory cleanup until the tail is sanitized.
+const (
+	maxCommandOutputInputLinePatterns  = 256
+	maxCommandOutputInputTokenPatterns = 256
+	minCommandOutputTokenBytes         = 8
+)
+
+// commandOutputSecrets returns the values the host knows are secret: exact
+// declared-sensitive parameter values, plus bounded patterns from supplied
+// inputs. Input patterns include the whole file, its first 256 nonempty lines,
+// and up to 256 recognized credential values per file. Patterns pass through
+// the same terminal-control filter as captured output. The copies survive the
+// runner's input-memory cleanup until the tail is sanitized.
 func commandOutputSecrets(run QueuedRun) [][]byte {
 	secrets := make([][]byte, 0, len(run.Request.Declaration.SensitiveParams)+len(run.Inputs))
+	seen := make(map[[sha256.Size]byte][]int)
+	addNormalized := func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+		digest := sha256.Sum256(value)
+		for _, index := range seen[digest] {
+			if bytes.Equal(secrets[index], value) {
+				return
+			}
+		}
+		seen[digest] = append(seen[digest], len(secrets))
+		secrets = append(secrets, append([]byte(nil), value...))
+	}
 	add := func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -17,17 +42,8 @@ func commandOutputSecrets(run QueuedRun) [][]byte {
 		_, _ = filtered.Write(value)
 		normalized := filtered.bytes()
 		clear(filtered.data)
-		if len(normalized) == 0 {
-			clear(normalized)
-			return
-		}
-		for _, previous := range secrets {
-			if bytes.Equal(previous, normalized) {
-				clear(normalized)
-				return
-			}
-		}
-		secrets = append(secrets, normalized)
+		addNormalized(normalized)
+		clear(normalized)
 	}
 	for _, name := range run.Request.Declaration.SensitiveParams {
 		if value, ok := run.Request.Params[name]; ok {
@@ -35,9 +51,199 @@ func commandOutputSecrets(run QueuedRun) [][]byte {
 		}
 	}
 	for _, input := range run.Inputs {
-		add(input.Content)
+		normalized := normalizeCommandOutputBytes(input.Content)
+		addNormalized(normalized)
+		linePatterns, tokenPatterns := 0, 0
+		for start := 0; start < len(normalized) && (linePatterns < maxCommandOutputInputLinePatterns || tokenPatterns < maxCommandOutputInputTokenPatterns); {
+			end := start + bytes.IndexByte(normalized[start:], '\n')
+			if end < start {
+				end = len(normalized)
+			}
+			line := bytes.TrimSpace(normalized[start:end])
+			if len(line) > 0 {
+				if linePatterns < maxCommandOutputInputLinePatterns {
+					add(line)
+					linePatterns++
+				}
+				if tokenPatterns < maxCommandOutputInputTokenPatterns && hasCommandOutputCredentialSyntax(line) {
+					tokenPatterns += addCommandOutputInputTokens(line, maxCommandOutputInputTokenPatterns-tokenPatterns, add)
+				}
+			}
+			if end == len(normalized) {
+				break
+			}
+			start = end + 1
+		}
+		clear(normalized)
 	}
 	return secrets
+}
+
+func hasCommandOutputCredentialSyntax(line []byte) bool {
+	if bytes.IndexByte(line, '=') >= 0 || bytes.IndexByte(line, ':') >= 0 || bytes.IndexByte(line, '\t') >= 0 {
+		return true
+	}
+	firstEnd := bytes.IndexAny(line, " \t")
+	if firstEnd < 0 {
+		firstEnd = len(line)
+	}
+	return isAuthScheme(bytes.TrimSpace(line[:firstEnd]))
+}
+
+func normalizeCommandOutputBytes(value []byte) []byte {
+	filtered := newOutputTailWithCapacity(len(value))
+	_, _ = filtered.Write(value)
+	normalized := filtered.bytes()
+	clear(filtered.data)
+	return normalized
+}
+
+// addCommandOutputInputTokens recognizes common credential fields in input
+// lines: name=value pairs, credential headers, Bearer/Basic values, and
+// Netscape cookie rows. It returns the number of candidates consumed so the
+// caller can keep the per-input token budget bounded.
+func addCommandOutputInputTokens(line []byte, budget int, add func([]byte)) int {
+	if budget <= 0 {
+		return 0
+	}
+	initialBudget := budget
+	fields := commandOutputInputFields(line, maxCommandOutputInputTokenPatterns+2, true)
+	if cookieValue, ok := netscapeCookieValue(line); ok {
+		add(cookieValue)
+		budget--
+		if budget == 0 {
+			return initialBudget
+		}
+	}
+
+	trimmedLine := bytes.TrimSpace(line)
+	cookieHeader := hasPrefixFold(trimmedLine, "cookie:")
+	setCookieHeader := hasPrefixFold(trimmedLine, "set-cookie:")
+	used := 0
+	for i := 0; i < len(fields) && used < budget; i++ {
+		field := trimCommandOutputToken(fields[i])
+		if len(field) == 0 {
+			continue
+		}
+
+		if isAuthScheme(field) && i+1 < len(fields) {
+			value := trimCommandOutputToken(fields[i+1])
+			if len(value) > 0 {
+				add(value)
+				used++
+				i++
+			}
+			continue
+		}
+
+		if separator := bytes.IndexByte(field, '='); separator > 0 {
+			key := trimCommandOutputToken(field[:separator])
+			value := trimCommandOutputToken(field[separator+1:])
+			allowShort := cookieHeader || isCredentialKey(key)
+			if setCookieHeader && used == 0 {
+				allowShort = true
+			}
+			if len(value) > 0 && (allowShort || len(value) >= minCommandOutputTokenBytes) {
+				add(value)
+				used++
+			}
+			continue
+		}
+
+		if separator := bytes.IndexByte(field, ':'); separator > 0 {
+			key := trimCommandOutputToken(field[:separator])
+			value := trimCommandOutputToken(field[separator+1:])
+			if isCredentialKey(key) {
+				if isAuthScheme(value) && i+1 < len(fields) {
+					next := trimCommandOutputToken(fields[i+1])
+					if len(next) > 0 {
+						add(next)
+						used++
+						i++
+					}
+				} else if len(value) > 0 {
+					add(value)
+					used++
+				} else if i+1 < len(fields) && !isAuthScheme(trimCommandOutputToken(fields[i+1])) && bytes.IndexByte(fields[i+1], '=') < 0 {
+					next := trimCommandOutputToken(fields[i+1])
+					if len(next) > 0 {
+						add(next)
+						used++
+						i++
+					}
+				}
+			}
+		}
+	}
+	return initialBudget - budget + used
+}
+
+func commandOutputInputFields(line []byte, limit int, splitCookieDelimiters bool) [][]byte {
+	fields := make([][]byte, 0, min(limit, 16))
+	for start := 0; start < len(line) && len(fields) < limit; {
+		for start < len(line) && isCommandOutputFieldSeparator(line[start], splitCookieDelimiters) {
+			start++
+		}
+		if start == len(line) {
+			break
+		}
+		end := start
+		for end < len(line) && !isCommandOutputFieldSeparator(line[end], splitCookieDelimiters) {
+			end++
+		}
+		fields = append(fields, line[start:end])
+		start = end
+	}
+	return fields
+}
+
+func isCommandOutputFieldSeparator(value byte, splitCookieDelimiters bool) bool {
+	if value == ' ' || value == '\t' || value == '\r' || value == '\n' {
+		return true
+	}
+	return splitCookieDelimiters && (value == ';' || value == '&' || value == ',')
+}
+
+func trimCommandOutputToken(value []byte) []byte {
+	return bytes.Trim(value, "\"'`{}[]()<>,;")
+}
+
+func hasPrefixFold(value []byte, prefix string) bool {
+	return len(value) >= len(prefix) && bytes.EqualFold(value[:len(prefix)], []byte(prefix))
+}
+
+func isAuthScheme(value []byte) bool {
+	return bytes.EqualFold(value, []byte("bearer")) || bytes.EqualFold(value, []byte("basic"))
+}
+
+func isCredentialKey(key []byte) bool {
+	name := strings.ToLower(string(trimCommandOutputToken(key)))
+	for _, marker := range []string{"token", "cookie", "session", "auth", "secret", "password", "passwd", "credential", "csrf", "api_key", "apikey"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return name == "key" || name == "sid" || strings.HasSuffix(name, "_sid") || strings.HasSuffix(name, "-sid")
+}
+
+func netscapeCookieValue(line []byte) ([]byte, bool) {
+	fields := commandOutputInputFields(line, 8, false)
+	if len(fields) != 7 || (line[0] == '#' && !bytes.HasPrefix(line, []byte("#HttpOnly_"))) {
+		return nil, false
+	}
+	if !isCookieBoolean(fields[1]) || !bytes.HasPrefix(fields[2], []byte("/")) || !isCookieBoolean(fields[3]) || len(fields[4]) == 0 || len(fields[5]) == 0 || len(fields[6]) == 0 {
+		return nil, false
+	}
+	for _, digit := range fields[4] {
+		if digit < '0' || digit > '9' {
+			return nil, false
+		}
+	}
+	return fields[6], true
+}
+
+func isCookieBoolean(value []byte) bool {
+	return bytes.EqualFold(value, []byte("TRUE")) || bytes.EqualFold(value, []byte("FALSE"))
 }
 
 func maxCommandOutputSecretLength(secrets [][]byte) int {
