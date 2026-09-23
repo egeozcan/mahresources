@@ -40,6 +40,7 @@ test.describe('Admin export', () => {
 
     // Wait for the download link to become visible (Alpine shows it when job.status === 'completed').
     await expect(exportPage.downloadLink).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId('export-phase-value')).toHaveText('completed');
 
     // Verify the download link points to a valid tar file by reading its href.
     const href = await exportPage.downloadLink.getAttribute('href');

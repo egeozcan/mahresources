@@ -150,7 +150,7 @@
 
     <div x-show="job" class="mt-3 space-y-2" data-testid="export-progress-panel">
       <div class="text-sm text-stone-600"><span class="font-semibold">Status:</span> <span x-text="job?.status || ''"></span></div>
-      <div class="text-sm text-stone-600"><span class="font-semibold">Phase:</span> <span x-text="job?.phase || 'queued'"></span></div>
+      <div class="text-sm text-stone-600"><span class="font-semibold">Phase:</span> <span data-testid="export-phase-value" x-text="job?.phase || (job?.status === 'completed' ? 'completed' : 'queued')"></span></div>
 
       <div class="text-sm text-stone-600" x-show="(job?.phaseTotal || 0) > 0" data-testid="export-phase-counter">
         <span x-text="job?.phaseCount || 0"></span>
