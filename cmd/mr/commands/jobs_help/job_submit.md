@@ -27,6 +27,6 @@ progress with `jobs list` or the `/v1/download/events` SSE stream.
   mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -e '.queued == true and (.jobs | length == 1) and (.jobs[0].id | length > 0)'
 
   # mr-doctest: submit, capture the ID, confirm the job appears in the queue listing
-  JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].id')
+  JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].canonicalJobId')
   mr jobs list --json | jq -e --arg j "$JID" '.jobs | map(.id) | index($j) != null'
   mr job cancel $JID --json >/dev/null || true

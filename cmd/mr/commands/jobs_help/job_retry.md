@@ -28,7 +28,9 @@ Persistent failures need an updated URL, which means calling
   mr jobs list --json | jq -r '.jobs[] | select(.status == "failed") | .id' | xargs -I {} mr job retry {}
 
   # mr-doctest: submit to an unreachable URL, wait for it to fail, retry it, assert the response
-  JID=$(mr job submit --urls "http://127.0.0.1:9/nope.bin" --json | jq -r '.jobs[0].id')
+  SUBMISSION=$(mr job submit --urls "http://127.0.0.1:9/nope.bin" --json)
+  JID=$(printf '%s' "$SUBMISSION" | jq -r '.jobs[0].id')
+  CID=$(printf '%s' "$SUBMISSION" | jq -r '.jobs[0].canonicalJobId')
   sleep 0.3
-  mr jobs list --json | jq -e --arg j "$JID" '.jobs[] | select(.id == $j) | .status == "failed"'
+  mr jobs list --json | jq -e --arg j "$CID" '.jobs[] | select(.id == $j) | .state == "failed"'
   mr job retry $JID --json | jq -e '.status == "retrying"'
