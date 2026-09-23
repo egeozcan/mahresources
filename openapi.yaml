@@ -812,6 +812,25 @@ components:
                 Status:
                     type: string
             type: object
+        JobMigrationReadiness:
+            properties:
+                blockers:
+                    additionalProperties:
+                        type: integer
+                    type: object
+                phase:
+                    type: string
+                ready:
+                    type: boolean
+                sourceCounts:
+                    additionalProperties:
+                        additionalProperties:
+                            type: integer
+                        type: object
+                    type: object
+                writerEpoch:
+                    type: integer
+            type: object
         LogEntry:
             properties:
                 action:
@@ -2890,22 +2909,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                properties:
-                                    blockers:
-                                        items:
-                                            type: string
-                                        type: array
-                                    phase:
-                                        type: string
-                                    ready:
-                                        type: boolean
-                                    sourceCounts:
-                                        additionalProperties:
-                                            type: integer
-                                        type: object
-                                    writerEpoch:
-                                        type: integer
-                                type: object
+                                $ref: '#/components/schemas/JobMigrationReadiness'
                     description: Successful response
                 "403":
                     description: Administrator role required

@@ -3343,18 +3343,11 @@ func registerPluginRoutes(r *openapi.Registry) {
 }
 
 func registerAdminRoutes(r *openapi.Registry) {
-	jobMigrationReadinessResponse := reflect.TypeOf(struct {
-		Ready        bool             `json:"ready"`
-		WriterEpoch  uint64           `json:"writerEpoch"`
-		Phase        string           `json:"phase"`
-		SourceCounts map[string]int64 `json:"sourceCounts"`
-		Blockers     []string         `json:"blockers"`
-	}{})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/admin/jobs/migration-readiness",
 		OperationID: "getJobMigrationReadiness", Summary: "Inspect Job migration readiness",
 		Description: "Administrator-only read-only status for the Job backfill and plaintext-retirement barrier. Reports readiness, the minimum writer epoch, current phase, per-source counts, and blockers. A restored pre-retirement backup must be checked again; a previous completion marker is not sufficient.",
-		Tags: []string{"admin", "jobs"}, ResponseType: jobMigrationReadinessResponse,
+		Tags:        []string{"admin", "jobs"}, ResponseType: reflect.TypeOf(application_context.JobMigrationReadiness{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       map[int]string{http.StatusForbidden: "Administrator role required"},
 	})

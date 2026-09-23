@@ -92,7 +92,8 @@ func TestCanonicalSummaryExportOpenAPIRouteIsDefinedButGated(t *testing.T) {
 func TestJobMigrationReadinessOpenAPIIsAdminRoute(t *testing.T) {
 	registry := openapi.NewRegistry()
 	RegisterAPIRoutesWithOpenAPI(registry)
-	operation := registry.GenerateSpec().Paths.Map()["/v1/admin/jobs/migration-readiness"]
+	spec := registry.GenerateSpec()
+	operation := spec.Paths.Map()["/v1/admin/jobs/migration-readiness"]
 	if operation == nil || operation.Get == nil {
 		t.Fatal("Job migration readiness is missing from the admin OpenAPI routes")
 	}
@@ -100,13 +101,30 @@ func TestJobMigrationReadinessOpenAPIIsAdminRoute(t *testing.T) {
 		t.Fatalf("migration readiness operation = %+v, want stable operation id and 200/403 responses", operation.Get)
 	}
 	response := operation.Get.Responses.Value("200").Value.Content["application/json"]
-	if response == nil || response.Schema == nil || response.Schema.Value == nil {
+	if response == nil || response.Schema == nil {
 		t.Fatal("migration readiness response has no JSON schema")
 	}
+	schema := response.Schema
+	if schema.Value == nil && schema.Ref == "#/components/schemas/JobMigrationReadiness" {
+		schema = spec.Components.Schemas["JobMigrationReadiness"]
+	}
+	if schema == nil || schema.Value == nil {
+		t.Fatal("migration readiness response schema reference is unresolved")
+	}
 	for _, field := range []string{"ready", "writerEpoch", "phase", "sourceCounts", "blockers"} {
-		if response.Schema.Value.Properties[field] == nil {
+		if schema.Value.Properties[field] == nil {
 			t.Errorf("migration readiness response is missing %q", field)
 		}
+	}
+	counts := schema.Value.Properties["sourceCounts"]
+	if counts == nil || counts.Value == nil || counts.Value.AdditionalProperties.Schema == nil ||
+		counts.Value.AdditionalProperties.Schema.Value == nil ||
+		counts.Value.AdditionalProperties.Schema.Value.AdditionalProperties.Schema == nil {
+		t.Error("sourceCounts must map source Kind to status-count maps")
+	}
+	blockers := schema.Value.Properties["blockers"]
+	if blockers == nil || blockers.Value == nil || blockers.Value.AdditionalProperties.Schema == nil || blockers.Value.Items != nil {
+		t.Error("blockers must be a map of safe blocker code to count")
 	}
 }
 
