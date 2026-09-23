@@ -272,6 +272,116 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
+    test('refreshes the bounded panel for unknown live events instead of fetching every Job detail', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        const detailRequests: string[] = [];
+        const listRequests: string[] = [];
+        const visibleRows = ['blocked', 'running', 'succeeded'].flatMap(state => Array.from({ length: 5 }, (_, index) => ({
+            id: `visible-${state}-${index}`,
+            kind: 'maintenance',
+            state,
+            version: 1,
+            acceptedAt: `2026-09-23T10:${String(index).padStart(2, '0')}:00Z`,
+        })));
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { running: 5 } };
+            if (url.startsWith('/v1/jobs?')) {
+                listRequests.push(url);
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: visibleRows.filter(job => query.getAll('state').includes(job.state)) };
+            }
+            detailRequests.push(url);
+            const id = decodeURIComponent(url.slice('/v1/jobs/'.length));
+            return { id, kind: 'maintenance', state: 'running', version: 1, commands: [] };
+        });
+
+        await Promise.all(Array.from({ length: 1000 }, (_, index) => panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: `event-${index + 1}`, jobId: `live-unknown-${index + 1}`,
+                type: 'state-change', deliverySequence: index + 1,
+            }),
+            lastEventId: `v2:${index + 1}`,
+        })));
+
+        await panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: 'event-1001', deliverySequence: 1001,
+                job: { id: 'snapshot-only', kind: 'maintenance', state: 'running', version: 1 },
+            }),
+            lastEventId: 'v2:1001',
+        });
+
+        expect(detailRequests).toEqual([]);
+        expect(panel.jobs.some(job => job.id === 'snapshot-only')).toBe(false);
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+        expect(listRequests).toHaveLength(3);
+        expect(detailRequests).toHaveLength(15);
+        expect(panel.jobs).toHaveLength(15);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not apply an event detail response after a newer page refresh excludes that job', async () => {
+        let resolveDetail: (value: unknown) => void = () => {};
+        const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        panel.jobs = [{ id: 'job-1', title: 'Old job', state: 'running', version: 1 }];
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/job-1') return detailRequest;
+            if (url === '/v1/jobs/summary') return { byState: { running: 0 } };
+            if (url.startsWith('/v1/jobs?')) return { jobs: [] };
+            return {};
+        });
+
+        const eventUpdate = panel.handleStreamMessage({
+            data: JSON.stringify({ jobId: 'job-1', type: 'succeeded', deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        await panel.refresh();
+        expect(panel.jobs).toEqual([]);
+
+        resolveDetail({ id: 'job-1', title: 'Old job', state: 'succeeded', version: 2 });
+        await eventUpdate;
+
+        expect(panel.jobs).toEqual([]);
+        panel.destroy();
+    });
+
+    test('runs a maximum-wait refresh while stream events continue arriving', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        let pageRequests = 0;
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: {} };
+            if (url.startsWith('/v1/jobs?')) {
+                pageRequests += 1;
+                return { jobs: [] };
+            }
+            const id = decodeURIComponent(url.slice('/v1/jobs/'.length));
+            return { id, state: 'running', version: 1 };
+        });
+
+        for (let sequence = 1; sequence <= 10; sequence++) {
+            await panel.handleStreamMessage({
+                data: JSON.stringify({ id: `event-${sequence}`, jobId: `unknown-${sequence}`, deliverySequence: sequence }),
+                lastEventId: `v2:${sequence}`,
+            });
+            await vi.advanceTimersByTimeAsync(100);
+        }
+
+        expect(pageRequests).toBeGreaterThan(0);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
     test('refreshes the active and attention counts after a delivered state event', async () => {
         vi.useFakeTimers();
         const panel = jobPanel();

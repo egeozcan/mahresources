@@ -12,6 +12,7 @@ import {
 } from './jobCenter.js';
 
 const PANEL_LIMIT = 5;
+const PANEL_REFRESH_MAX_WAIT_MS = 500;
 const PANEL_STATE_FILTERS = [
     ['blocked', 'failed', 'interrupted'],
     ['scheduled', 'queued', 'running', 'paused'],
@@ -70,9 +71,11 @@ export function jobPanel() {
         _keydownHandler: null,
         _panelOpenHandler: null,
         _panelRefreshTimer: null,
+        _panelRefreshMaxTimer: null,
         _panelRefreshRequested: false,
         _panelRefreshPromise: null,
         _refreshGeneration: 0,
+        _streamGeneration: 0,
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -97,7 +100,9 @@ export function jobPanel() {
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+            if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._refreshGeneration += 1;
+            this._streamGeneration += 1;
             this._panelRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
@@ -171,6 +176,7 @@ export function jobPanel() {
         async refresh() {
             const generation = ++this._refreshGeneration;
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+            if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
             this._panelRefreshRequested = false;
             return this.refreshAtGeneration(generation);
         },
@@ -196,21 +202,39 @@ export function jobPanel() {
         },
 
         schedulePanelRefresh() {
-            this._refreshGeneration += 1;
             this._panelRefreshRequested = true;
-            if (this._panelRefreshPromise) return;
+            if (this._panelRefreshPromise) {
+                if (!this._panelRefreshMaxTimer) {
+                    this._panelRefreshMaxTimer = setTimeout(() => this.startScheduledPanelRefresh(), PANEL_REFRESH_MAX_WAIT_MS);
+                }
+                return;
+            }
+            if (!this._panelRefreshMaxTimer) {
+                this._panelRefreshMaxTimer = setTimeout(() => this.startScheduledPanelRefresh(), PANEL_REFRESH_MAX_WAIT_MS);
+            }
             if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
             this._panelRefreshTimer = setTimeout(() => {
-                this._panelRefreshTimer = null;
-                this._panelRefreshRequested = false;
-                const generation = this._refreshGeneration;
-                this._panelRefreshPromise = this.refreshAtGeneration(generation)
-                    .catch(() => {})
-                    .finally(() => {
-                        this._panelRefreshPromise = null;
-                        if (this._panelRefreshRequested) this.schedulePanelRefresh();
-                    });
+                this.startScheduledPanelRefresh();
             }, 150);
+        },
+
+        startScheduledPanelRefresh() {
+            if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+            if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
+            this._panelRefreshTimer = null;
+            this._panelRefreshMaxTimer = null;
+            if (this._panelRefreshPromise) {
+                this._panelRefreshRequested = true;
+                return;
+            }
+            this._panelRefreshRequested = false;
+            const generation = ++this._refreshGeneration;
+            this._panelRefreshPromise = this.refreshAtGeneration(generation)
+                .catch(() => {})
+                .finally(() => {
+                    this._panelRefreshPromise = null;
+                    if (this._panelRefreshRequested) this.startScheduledPanelRefresh();
+                });
         },
 
         async loadAdvertisedCommands(job, generation = this._refreshGeneration) {
@@ -218,8 +242,11 @@ export function jobPanel() {
                 this.details[job.id] = job;
                 return job;
             }
+            const streamGeneration = this._streamGeneration;
             const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
-            if (generation !== this._refreshGeneration || !this.jobs.some(current => current.id === job.id)) return null;
+            if (generation !== this._refreshGeneration || streamGeneration !== this._streamGeneration || !this.jobs.some(current => current.id === job.id)) return null;
+            const current = this.jobs.find(currentJob => currentJob.id === job.id);
+            if (Number(detail.version || 0) < Number(current?.version || 0)) return null;
             this.details[job.id] = detail;
             this.jobs = boundedPanelJobs(this.jobs.map(current => current.id === job.id ? { ...current, ...detail } : current));
             return detail;
@@ -234,8 +261,11 @@ export function jobPanel() {
                 this.connectionStatus = 'reconnecting';
                 this.streamCaughtUp = false;
                 this._refreshGeneration += 1;
+                this._streamGeneration += 1;
                 if (this._panelRefreshTimer) clearTimeout(this._panelRefreshTimer);
+                if (this._panelRefreshMaxTimer) clearTimeout(this._panelRefreshMaxTimer);
                 this._panelRefreshTimer = null;
+                this._panelRefreshMaxTimer = null;
                 this._panelRefreshRequested = false;
             });
             this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
@@ -253,6 +283,7 @@ export function jobPanel() {
             const wasCaughtUp = this.streamCaughtUp;
             this.lastSequence = Math.max(this.lastSequence, sequence);
             this.streamCaughtUp = true;
+            this._streamGeneration += 1;
             if (!wasCaughtUp) this.schedulePanelRefresh();
         },
 
@@ -264,16 +295,19 @@ export function jobPanel() {
             message.replay = message.replay === true || !this.streamCaughtUp;
             const announceSnapshot = !message.replay;
             const previousSequence = this.lastSequence;
-            const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: !message.replay });
+            const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: false });
             this.lastSequence = result.lastSequence;
             if (this.lastSequence > previousSequence && this.streamCaughtUp) this.schedulePanelRefresh();
+            if (result.changed || this.lastSequence > previousSequence) this._streamGeneration += 1;
             if (!result.changed) return;
             if (result.needsSnapshot) {
-                if (message.replay && !this.jobs.some(job => job.id === result.jobId)) return;
+                if (!this.jobs.some(job => job.id === result.jobId)) return;
+                const streamGeneration = this._streamGeneration;
+                const refreshGeneration = this._refreshGeneration;
                 try {
                     const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`);
-                    if (message.replay && !this.jobs.some(job => job.id === detail.id)) return;
-                    this.applyStreamSnapshot(detail, announceSnapshot);
+                    if (streamGeneration !== this._streamGeneration || refreshGeneration !== this._refreshGeneration || !this.jobs.some(job => job.id === detail.id)) return;
+                    this.applyStreamSnapshot(detail, announceSnapshot, false);
                 } catch { /* A hidden or expired Job stays absent from the panel. */ }
                 return;
             }
@@ -281,8 +315,9 @@ export function jobPanel() {
             if (result.announcement) this.announce(result.announcement);
         },
 
-        applyStreamSnapshot(job, announce = false) {
-            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert: true });
+        applyStreamSnapshot(job, announce = false, allowInsert = true) {
+            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert });
+            if (!result.changed) return;
             this.jobs = boundedPanelJobs(result.jobs);
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
             if (announce && result.announcement) this.announce(result.announcement);
