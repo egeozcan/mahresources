@@ -43,8 +43,12 @@ func (ctx *MahresourcesContext) recordDualPublishedReduction(row models.Resource
 	if err := ctx.db.Where("namespace = ? AND handle = ?", ReductionComputeHandleNamespace, row.ComputeJobID).First(&handle).Error; err != nil {
 		return errors.New("Resource Reduction canonical handle is unavailable")
 	}
+	retired, err := ctx.legacyJobInputsRetired()
+	if err != nil {
+		return fmt.Errorf("Resource Reduction writer epoch cannot be read: %w", err)
+	}
 	return ctx.recordDualPublishedSource(jobMigrationReduction, strconv.FormatUint(uint64(row.ID), 10), handle.JobID,
-		hashReductionExecution(row), ctx.legacyJobInputsRetired(), now)
+		hashReductionExecution(row), retired, now)
 }
 
 func (ctx *MahresourcesContext) copyReductionsBatch(cursor string, limit int, now time.Time) (bool, string, error) {

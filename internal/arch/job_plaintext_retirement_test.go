@@ -43,18 +43,25 @@ func checkDownloadReader(t *testing.T, root, fileName, functionName, receiver, g
 	t.Helper()
 	fset, function := parseProductionFunction(t, root, fileName, functionName)
 	var gate *ast.IfStmt
-	var gatePosition token.Pos
+	var guardPosition, errorReturnPosition, gatePosition token.Pos
 	var canonicalResolve, canonicalOpen bool
 	var earliestLegacyRead token.Pos
 	ast.Inspect(function.Body, func(node ast.Node) bool {
 		switch current := node.(type) {
-		case *ast.IfStmt:
-			if gate == nil && callsNamed(current.Cond, guardName) && callsNamed(current.Body, "ResolveLegacyHandle") && callsNamed(current.Body, "OpenReplay") && containsReturn(current.Body) {
-				gate, gatePosition = current, current.Pos()
-			}
 		case *ast.CallExpr:
+			if callName(current.Fun) == guardName && guardPosition == token.NoPos {
+				guardPosition = current.Pos()
+			}
 			canonicalResolve = canonicalResolve || selectorCallNamed(current, "ResolveLegacyHandle")
 			canonicalOpen = canonicalOpen || selectorCallNamed(current, "OpenReplay")
+		case *ast.IfStmt:
+			if errorReturnPosition == token.NoPos && isErrNotNil(current.Cond) && containsReturn(current.Body) {
+				errorReturnPosition = current.Pos()
+			}
+			retired, ok := current.Cond.(*ast.Ident)
+			if gate == nil && ok && retired.Name == "retired" && callsNamed(current.Body, "ResolveLegacyHandle") && callsNamed(current.Body, "OpenReplay") && containsReturn(current.Body) {
+				gate, gatePosition = current, current.Pos()
+			}
 		case *ast.SelectorExpr:
 			if current.Sel.Name != "Payload" && current.Sel.Name != "URL" {
 				break
@@ -69,8 +76,8 @@ func checkDownloadReader(t *testing.T, root, fileName, functionName, receiver, g
 		}
 		return true
 	})
-	if gate == nil || !canonicalResolve || !canonicalOpen {
-		t.Fatalf("%s must return from the retired-epoch branch only after canonical handle resolution and envelope open", functionName)
+	if gate == nil || !canonicalResolve || !canonicalOpen || guardPosition == token.NoPos || errorReturnPosition <= guardPosition || gatePosition <= errorReturnPosition {
+		t.Fatalf("%s must fail on writer-epoch read errors and return from the retired-epoch branch only after canonical handle resolution and envelope open", functionName)
 	}
 	if earliestLegacyRead <= gatePosition {
 		t.Fatalf("%s reads legacy Payload/URL before the retired-epoch branch", functionName)
@@ -78,6 +85,16 @@ func checkDownloadReader(t *testing.T, root, fileName, functionName, receiver, g
 	if fset.Position(gatePosition).Line >= fset.Position(earliestLegacyRead).Line {
 		t.Fatalf("%s legacy replay access is not lexically after its retirement gate", functionName)
 	}
+}
+
+func isErrNotNil(expression ast.Expr) bool {
+	binary, ok := expression.(*ast.BinaryExpr)
+	if !ok || binary.Op != token.NEQ {
+		return false
+	}
+	left, leftOK := binary.X.(*ast.Ident)
+	right, rightOK := binary.Y.(*ast.Ident)
+	return leftOK && rightOK && left.Name == "err" && right.Name == "nil"
 }
 
 func checkPluginCommandReader(t *testing.T, root, fileName, functionName string, sensitiveFields []string) {

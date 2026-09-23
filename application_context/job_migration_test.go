@@ -827,6 +827,12 @@ func TestJobMigrationImportsProvableReductionOutcomeOnly(t *testing.T) {
 	if mapping.Status != models.JobSourceMappingScrubbed || mapping.PostScrubHash != hashReductionExecution(ready) {
 		t.Fatalf("post-fence Reduction write regressed scrub marker: %+v", mapping)
 	}
+	if err := ctx.db.Migrator().DropTable(&models.JobWriterEpoch{}); err != nil {
+		t.Fatalf("drop writer epoch to inject query failure: %v", err)
+	}
+	if err := ctx.recordDualPublishedReduction(ready, computed.Add(2*time.Hour)); err == nil {
+		t.Fatal("dual-published Reduction write succeeded when the writer epoch was unavailable")
+	}
 
 	// A ready historical Reduction without a canonical Job handle has a proven
 	// result but no proven acceptance time. It remains ordinary domain data and

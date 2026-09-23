@@ -94,14 +94,16 @@ func (ctx *MahresourcesContext) CreateScheduledDownload(pluginName string, actor
 		Status:          models.ScheduledDownloadStatusPending,
 		CreatedByUserId: &owner,
 	}
-	retired := ctx.legacyJobInputsRetired()
-	if retired {
-		row.URL = downloadURLProjection(creator.URL)
-		row.Payload = nil
-	}
-
 	db := ctx.WithPrincipal(&auth.Principal{UserID: actorUserID}).db
 	err = db.Transaction(func(tx *gorm.DB) error {
+		retired, err := legacyJobInputsRetiredOn(tx)
+		if err != nil {
+			return err
+		}
+		if retired {
+			row.URL = downloadURLProjection(creator.URL)
+			row.Payload = nil
+		}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -179,7 +181,11 @@ func (ctx *MahresourcesContext) ScheduledDownloadPayload(row *models.ScheduledDo
 		return nil, errors.New("scheduled download: no row")
 	}
 	creator := &query_models.ResourceFromRemoteCreator{}
-	if ctx.legacyJobInputsRetired() {
+	retired, err := ctx.legacyJobInputsRetired()
+	if err != nil {
+		return nil, fmt.Errorf("scheduled download: check canonical replay fence: %w", err)
+	}
+	if retired {
 		service := ctx.JobService()
 		if service == nil {
 			return nil, errors.New("scheduled download: canonical Job service is unavailable")

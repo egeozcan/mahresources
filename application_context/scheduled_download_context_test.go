@@ -34,9 +34,12 @@ func newScheduledDownloadTestContext(t *testing.T) *MahresourcesContext {
 	}
 	if err := db.AutoMigrate(
 		&models.ScheduledDownload{}, &models.User{}, &models.Group{}, &models.Note{},
-		&models.RuntimeSetting{}, &models.LogEntry{}, &models.Session{}, &models.ApiToken{},
+		&models.RuntimeSetting{}, &models.LogEntry{}, &models.Session{}, &models.ApiToken{}, &models.JobWriterEpoch{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 	sqlDB, _ := db.DB()
 	cfg := &MahresourcesConfig{DbType: constants.DbTypeSqlite}

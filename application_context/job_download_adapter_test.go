@@ -81,9 +81,12 @@ func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
-		&models.JobCommandRequest{}, &models.JobLegacyHandle{},
+		&models.JobCommandRequest{}, &models.JobLegacyHandle{}, &models.JobWriterEpoch{}, &models.JobSourceMapping{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 
 	// One plugin the deferred tests can schedule through: a deferred download

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,11 +80,152 @@ func TestExpiredReplaySweepAtomicallyPurgesLegacySourceCopies(t *testing.T) {
 	assertReplaySourcesPurged(t, deps.DB, jobID, sources, models.JobReplayPurgeExpired)
 }
 
+func TestForgetReplayPurgesUnmappedLegacySourceCopies(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	if err := deps.DB.AutoMigrate(
+		&models.JobSourceMapping{}, &models.JobLegacyHandle{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2039, 4, 5, 6, 7, 8, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retirement-key"), Retention: time.Hour}
+	jobID := terminalReplayJob(t, svc, deps, &clock)
+	sources := seedUnmappedLegacyReplaySources(t, deps.DB, jobID, clock)
+
+	if _, err := svc.ForgetReplay(deps, Access{Administrator: true}, jobID); err != nil {
+		t.Fatalf("ForgetReplay: %v", err)
+	}
+	assertUnmappedReplaySourcesPurged(t, deps.DB, jobID, sources, models.JobReplayPurgeForgotten)
+}
+
+func TestExpiredReplaySweepPurgesUnmappedLegacySourceCopies(t *testing.T) {
+	deps, _ := newReplayDeps(t)
+	if err := deps.DB.AutoMigrate(
+		&models.JobSourceMapping{}, &models.JobLegacyHandle{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
+		&models.PluginCommandRun{}, &models.PluginCommandImport{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService()
+	if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2040, 5, 6, 7, 8, 9, 0, time.UTC)
+	deps.Now = func() time.Time { return clock }
+	deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retirement-key"), Retention: time.Hour}
+	jobID := terminalReplayJob(t, svc, deps, &clock)
+	sources := seedUnmappedLegacyReplaySources(t, deps.DB, jobID, clock)
+	clock = clock.Add(2 * time.Hour)
+
+	if purged, err := svc.PurgeExpiredReplay(deps, 10); err != nil || purged != 1 {
+		t.Fatalf("PurgeExpiredReplay = %d, %v; want 1, nil", purged, err)
+	}
+	assertUnmappedReplaySourcesPurged(t, deps.DB, jobID, sources, models.JobReplayPurgeExpired)
+}
+
+func TestReplayPurgeRefusesWhenSourceMappingSchemaIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		purge func(*testing.T, *Service, Deps, string) error
+	}{
+		{
+			name: "forget",
+			purge: func(t *testing.T, svc *Service, deps Deps, jobID string) error {
+				t.Helper()
+				_, err := svc.ForgetReplay(deps, Access{Administrator: true}, jobID)
+				return err
+			},
+		},
+		{
+			name: "expiry",
+			purge: func(t *testing.T, svc *Service, deps Deps, jobID string) error {
+				t.Helper()
+				_, err := svc.PurgeExpiredReplay(deps, 10)
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deps, _ := newReplayDeps(t)
+			if err := deps.DB.AutoMigrate(&models.JobSourceMapping{}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService()
+			if err := svc.RegisterReplayCodec("remote-download", 1, fixtureReplayCodec()); err != nil {
+				t.Fatal(err)
+			}
+			clock := time.Date(2041, 6, 7, 8, 9, 10, 0, time.UTC)
+			deps.Now = func() time.Time { return clock }
+			deps.Replay = &ReplayConfig{Keys: replayKeyringFromSeeds(t, "retirement-key"), Retention: time.Hour}
+			jobID := terminalReplayJob(t, svc, deps, &clock)
+			if test.name == "expiry" {
+				clock = clock.Add(2 * time.Hour)
+			}
+			if err := deps.DB.Migrator().DropTable(&models.JobSourceMapping{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := test.purge(t, svc, deps, jobID); err == nil {
+				t.Fatal("purge succeeded without the schema needed to prove legacy source copies are retired")
+			}
+			envelope := replayEnvelopeRow(t, deps, jobID)
+			if envelope.PurgedAt != nil || len(envelope.Ciphertext) == 0 {
+				t.Fatalf("failed purge changed canonical input: %+v", envelope)
+			}
+		})
+	}
+}
+
 type replaySourceIDs struct {
 	download  uint
 	scheduled uint
 	run       string
 	importID  string
+}
+
+func seedUnmappedLegacyReplaySources(t *testing.T, db *gorm.DB, jobID string, now time.Time) replaySourceIDs {
+	t.Helper()
+	suffix := strings.ReplaceAll(jobID, "-", "")
+	if len(suffix) > 16 {
+		suffix = suffix[len(suffix)-16:]
+	}
+	downloadHandle := "unmapped-download-" + suffix
+	if err := db.Create(&models.JobLegacyHandle{Namespace: "download", Handle: downloadHandle, JobID: jobID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	download := models.DownloadHistoryEntry{
+		JobID: downloadHandle, URL: "https://user:pass@example.test/unmapped?token=raw", Payload: []byte(`{"token":"unmapped-download-secret"}`),
+		Status: models.DownloadHistoryStatusFailed, CreatedAt: now, Attempts: 1,
+	}
+	if err := db.Create(&download).Error; err != nil {
+		t.Fatal(err)
+	}
+	scheduled := models.ScheduledDownload{
+		PluginName: "fixture", URL: "https://user:pass@example.test/unmapped-later?token=raw", Payload: []byte(`{"token":"unmapped-scheduled-secret"}`),
+		DueAt: now, Status: models.ScheduledDownloadStatusSubmitted, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&scheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.JobLegacyHandle{
+		Namespace: "scheduled-download", Handle: strconv.FormatUint(uint64(scheduled.ID), 10), JobID: jobID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := models.PluginCommandRun{ID: "ur" + suffix, JobID: jobID, PluginName: "fixture", CommandName: "run", ParamsJSON: `{"secret":"unmapped-run-secret"}`, InputsJSON: `[{"name":"x"}]`, Status: models.PluginCommandRunStatusFailed, CreatedAt: now}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	commandImport := models.PluginCommandImport{ID: "ui" + suffix, JobID: jobID, RunID: run.ID, FileName: "input.json", FieldsJSON: `{"secret":"unmapped-import-secret"}`, Status: models.PluginCommandImportStatusFailed, CreatedAt: now}
+	if err := db.Create(&commandImport).Error; err != nil {
+		t.Fatal(err)
+	}
+	return replaySourceIDs{download: download.ID, scheduled: scheduled.ID, run: run.ID, importID: commandImport.ID}
 }
 
 func terminalReplayJob(t *testing.T, svc *Service, deps Deps, clock *time.Time) string {
@@ -183,16 +325,77 @@ func assertReplaySourcesPurged(t *testing.T, db *gorm.DB, jobID string, ids repl
 	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON != "" {
 		t.Fatalf("import source retained replay data: %+v, %v", commandImport, err)
 	}
-	var mappings []models.JobSourceMapping
-	if err := db.Where("job_id = ?", jobID).Find(&mappings).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(mappings) != 4 {
-		t.Fatalf("found %d purge mappings, want 4", len(mappings))
-	}
-	for _, mapping := range mappings {
-		if mapping.Status != models.JobSourceMappingPurged || mapping.PurgedAt == nil || mapping.PurgeReason != reason || mapping.ScrubbedAt == nil {
-			t.Errorf("source purge marker = %+v", mapping)
+	for _, source := range []struct{ kind, id string }{
+		{kind: "download-history", id: strconv.FormatUint(uint64(ids.download), 10)},
+		{kind: "scheduled-download", id: strconv.FormatUint(uint64(ids.scheduled), 10)},
+		{kind: "plugin-command-run", id: ids.run},
+		{kind: "plugin-command-import", id: ids.importID},
+	} {
+		var mapping models.JobSourceMapping
+		if err := db.Where("job_id = ? AND source_kind = ? AND source_id = ?", jobID, source.kind, source.id).First(&mapping).Error; err != nil {
+			t.Fatalf("load %s purge marker: %v", source.kind, err)
 		}
+		if mapping.Status != models.JobSourceMappingPurged || mapping.PurgedAt == nil || mapping.PurgeReason != reason || mapping.ScrubbedAt == nil {
+			t.Errorf("%s source purge marker = %+v", source.kind, mapping)
+		}
+	}
+}
+
+func assertUnmappedReplaySourcesPurged(t *testing.T, db *gorm.DB, jobID string, ids replaySourceIDs, reason string) {
+	t.Helper()
+	assertSourceFieldsPurged(t, db, ids)
+	for _, source := range []struct{ kind, id string }{
+		{kind: "download-history", id: strconv.FormatUint(uint64(ids.download), 10)},
+		{kind: "scheduled-download", id: strconv.FormatUint(uint64(ids.scheduled), 10)},
+		{kind: "plugin-command-run", id: ids.run},
+		{kind: "plugin-command-import", id: ids.importID},
+	} {
+		var mapping models.JobSourceMapping
+		if err := db.Where("source_kind = ? AND source_id = ?", source.kind, source.id).First(&mapping).Error; err != nil {
+			t.Fatalf("load discovered %s purge marker: %v", source.kind, err)
+		}
+		if mapping.JobID != jobID || mapping.Status != models.JobSourceMappingPurged || mapping.PurgedAt == nil || mapping.PurgeReason != reason || mapping.ScrubbedAt == nil {
+			t.Errorf("discovered %s purge marker = %+v", source.kind, mapping)
+		}
+	}
+}
+
+func assertUnmappedReplaySourcesIntact(t *testing.T, db *gorm.DB, ids replaySourceIDs) {
+	t.Helper()
+	var download models.DownloadHistoryEntry
+	if err := db.First(&download, ids.download).Error; err != nil || len(download.Payload) == 0 || download.URL == "" {
+		t.Fatalf("unmapped download source changed during rejected purge: %+v, %v", download, err)
+	}
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
+		t.Fatalf("unmapped scheduled source changed during rejected purge: %+v, %v", scheduled, err)
+	}
+	var run models.PluginCommandRun
+	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON == "" || run.InputsJSON == "" {
+		t.Fatalf("unmapped command source changed during rejected purge: %+v, %v", run, err)
+	}
+	var commandImport models.PluginCommandImport
+	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON == "" {
+		t.Fatalf("unmapped import source changed during rejected purge: %+v, %v", commandImport, err)
+	}
+}
+
+func assertSourceFieldsPurged(t *testing.T, db *gorm.DB, ids replaySourceIDs) {
+	t.Helper()
+	var download models.DownloadHistoryEntry
+	if err := db.First(&download, ids.download).Error; err != nil || len(download.Payload) != 0 || download.URL != "" {
+		t.Fatalf("unmapped download source retained replay data: %+v, %v", download, err)
+	}
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) != 0 || scheduled.URL != "" {
+		t.Fatalf("unmapped scheduled source retained replay data: %+v, %v", scheduled, err)
+	}
+	var run models.PluginCommandRun
+	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON != "" || run.InputsJSON != "" {
+		t.Fatalf("unmapped command source retained replay data: %+v, %v", run, err)
+	}
+	var commandImport models.PluginCommandImport
+	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON != "" {
+		t.Fatalf("unmapped import source retained replay data: %+v, %v", commandImport, err)
 	}
 }

@@ -36,9 +36,12 @@ func schedulerTestContext(t *testing.T, pluginDir string) *MahresourcesContext {
 	if err := db.AutoMigrate(
 		&models.PluginSchedule{}, &models.ScheduledDownload{}, &models.PluginKV{}, &models.PluginState{},
 		&models.LogEntry{}, &models.User{}, &models.Group{}, &models.Note{},
-		&models.Resource{}, &models.Tag{},
+		&models.Resource{}, &models.Tag{}, &models.JobWriterEpoch{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := models.EnsureJobWriterEpoch(db); err != nil {
+		t.Fatalf("seed writer epoch: %v", err)
 	}
 	sqlDB, _ := db.DB()
 	return NewMahresourcesContext(afero.NewMemMapFs(), db, sqlx.NewDb(sqlDB, "sqlite3"),
