@@ -22,6 +22,7 @@ var jobCenterCutoverKinds = []jobs.CommandFilterKind{
 	{Kind: application_context.JobKindPluginAction, Version: 1},
 	{Kind: application_context.JobKindPluginCommand, Version: 1},
 	{Kind: application_context.JobKindPluginCommandImport, Version: 1},
+	{Kind: application_context.JobKindSummaryExport, Version: 1},
 }
 
 func validateJobCenterCutover(service *jobs.Service, readiness application_context.JobMigrationReadiness) error {

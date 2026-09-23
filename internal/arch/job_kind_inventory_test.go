@@ -15,7 +15,7 @@ import (
 
 // This is the release inventory, not a list inferred from registrations. Adding a
 // user-facing submission path must extend this list and prove its adapter in the
-// same change. The summary-export Kind joins when its adapter is integrated.
+// same change.
 func TestJobKindInventory(t *testing.T) {
 	expected := map[string]uint{
 		"remote-download":            1,
@@ -28,6 +28,7 @@ func TestJobKindInventory(t *testing.T) {
 		"plugin-action":              1, // registered, scheduled, and closure-backed actions
 		"plugin-command":             1,
 		"plugin-command-import":      1,
+		"job-summary-export":         1,
 	}
 
 	var ctx application_context.MahresourcesContext
