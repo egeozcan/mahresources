@@ -1256,16 +1256,65 @@ func findUnmappedLegacyReplaySourcesTx(tx *gorm.DB, jobID string) ([]legacyRepla
 			}
 			handlesAsIDs = append(handlesAsIDs, uint(id))
 		}
-		var ids []uint
-		if len(handlesAsIDs) > 0 {
-			if err := tx.Model(&models.ScheduledDownload{}).Select("id").Where("id IN ?", handlesAsIDs).
-				Order("id ASC").Limit(maxLegacyReplaySourcesPerJob+1).Pluck("id", &ids).Error; err != nil {
+		var candidates []struct {
+			ID    uint
+			JobID string
+		}
+		query := tx.Model(&models.ScheduledDownload{}).Select("id", "job_id")
+		downloadHandles := byNamespace["download"]
+		if len(handlesAsIDs) > 0 && len(downloadHandles) > 0 {
+			query = query.Where("id IN ? OR job_id IN ?", handlesAsIDs, downloadHandles)
+		} else if len(handlesAsIDs) > 0 {
+			query = query.Where("id IN ?", handlesAsIDs)
+		} else if len(downloadHandles) > 0 {
+			query = query.Where("job_id IN ?", downloadHandles)
+		}
+		if len(handlesAsIDs) > 0 || len(downloadHandles) > 0 {
+			if err := query.Order("id ASC").Limit(maxLegacyReplaySourcesPerJob + 1).Scan(&candidates).Error; err != nil {
 				return nil, err
 			}
+			if len(candidates) > maxLegacyReplaySourcesPerJob {
+				return nil, errors.New("too many scheduled downloads to prove replay purge safely")
+			}
 		}
-		sourceIDs := make([]string, len(ids))
-		for i, id := range ids {
-			sourceIDs[i] = strconv.FormatUint(uint64(id), 10)
+		candidateHandles := make([]string, len(candidates))
+		for i, candidate := range candidates {
+			candidateHandles[i] = strconv.FormatUint(uint64(candidate.ID), 10)
+		}
+		var scheduledOwners []models.JobLegacyHandle
+		if len(candidateHandles) > 0 {
+			if err := tx.Where("namespace = ? AND handle IN ?", "scheduled-download", candidateHandles).
+				Limit(maxLegacyReplaySourcesPerJob + 1).Find(&scheduledOwners).Error; err != nil {
+				return nil, err
+			}
+			if len(scheduledOwners) > maxLegacyReplaySourcesPerJob {
+				return nil, errors.New("too many scheduled download handles to prove replay purge safely")
+			}
+		}
+		ownerByHandle := make(map[string]string, len(scheduledOwners))
+		for _, owner := range scheduledOwners {
+			ownerByHandle[owner.Handle] = owner.JobID
+		}
+		downloadHandleSet := make(map[string]struct{}, len(downloadHandles))
+		for _, handle := range downloadHandles {
+			downloadHandleSet[handle] = struct{}{}
+		}
+		sourceIDs := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			handle := strconv.FormatUint(uint64(candidate.ID), 10)
+			if ownerJobID, hasScheduledOwner := ownerByHandle[handle]; hasScheduledOwner {
+				if ownerJobID == jobID {
+					sourceIDs = append(sourceIDs, handle)
+				}
+				continue
+			}
+			if _, resolvesThroughDownload := downloadHandleSet[candidate.JobID]; !resolvesThroughDownload {
+				continue
+			}
+			// Migration gives a row's scheduled-download handle precedence over
+			// its JobID download-handle fallback. Only adopt the fallback when
+			// the row has no scheduled handle at all.
+			sourceIDs = append(sourceIDs, handle)
 		}
 		if err := add("scheduled-download", sourceIDs); err != nil {
 			return nil, err
