@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"mahresources/archive"
 	"mahresources/auth"
+	"mahresources/contracts"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/models/types"
@@ -20,9 +22,16 @@ type jobOutputOpenerTestAdapter struct {
 	request JobOutputOpenRequest
 }
 
-func (a *jobOutputOpenerTestAdapter) OpenJobOutput(_ context.Context, request JobOutputOpenRequest) (JobOutputContent, error) {
+func (a *jobOutputOpenerTestAdapter) OpenJobOutput(_ context.Context, request JobOutputOpenRequest) (contracts.JobOutputContent, error) {
 	a.request = request
-	return JobOutputContent{Data: json.RawMessage(`{"tail":"redacted"}`), ContentType: "application/json"}, nil
+	return contracts.JobOutputContent{Data: json.RawMessage(`{"tail":"redacted"}`), ContentType: "application/json"}, nil
+}
+
+func (a *jobOutputOpenerTestAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if request.Principal == nil || !request.Principal.CanWrite() {
+		return ErrJobOutputForbidden
+	}
+	return nil
 }
 
 func publishTestOutput(t *testing.T, ctx *MahresourcesContext, jobID, key, kind string, reference string, availability jobs.OutputAvailability, expiresAt *time.Time) {
@@ -50,11 +59,15 @@ func TestOpenJobOutputRechecksJobAndOutputAuthorization(t *testing.T) {
 	publishTestOutput(t, ctx, job.ID, "artifact", jobs.OutputTypeArtifact, `{"path":"_exports/archive.tar"}`, jobs.OutputAvailable, nil)
 
 	owner := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser})
+	ownerOutputs, err := owner.GetOpenableJobOutputs(job.ID)
+	if err != nil || len(ownerOutputs) != 1 || ownerOutputs[0].Key != "artifact" {
+		t.Fatalf("owner openable outputs = %#v, err=%v; want artifact", ownerOutputs, err)
+	}
 	content, err := owner.OpenJobOutput(context.Background(), job.ID, "artifact")
 	if err != nil {
 		t.Fatalf("owner could not open output: %v", err)
 	}
-	if content.Filename != "artifact" || content.Output.Reference == nil {
+	if content.Filename != "artifact" {
 		t.Fatalf("opened output metadata = %#v", content)
 	}
 	body, err := io.ReadAll(content.Body)
@@ -64,12 +77,61 @@ func TestOpenJobOutputRechecksJobAndOutputAuthorization(t *testing.T) {
 	}
 
 	guest := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleGuest})
+	guestOutputs, err := guest.GetOpenableJobOutputs(job.ID)
+	if err != nil || len(guestOutputs) != 0 {
+		t.Fatalf("guest openable outputs = %#v, err=%v; want no advertised outputs", guestOutputs, err)
+	}
 	if _, err := guest.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, ErrJobOutputForbidden) {
 		t.Fatalf("guest output access error = %v, want forbidden", err)
 	}
 	other := ctx.WithPrincipal(&auth.Principal{UserID: 8, Role: models.RoleUser})
 	if _, err := other.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("foreign Job output error = %v, want not found", err)
+	}
+}
+
+func TestGroupExportOutputRechecksCurrentRootGroupScope(t *testing.T) {
+	ctx := newJobContext(t)
+	if err := ctx.db.Exec("CREATE TABLE groups (id integer PRIMARY KEY, owner_id integer)").Error; err != nil {
+		t.Fatalf("create test group scope table: %v", err)
+	}
+	if err := ctx.db.Exec("INSERT INTO groups(id, owner_id) VALUES (1, NULL), (2, NULL)").Error; err != nil {
+		t.Fatalf("create test groups: %v", err)
+	}
+	request, err := json.Marshal(exportJobInput{Request: ExportRequest{
+		RootGroupIDs: []uint{1}, Scope: archive.ExportScope{Subtree: true},
+	}})
+	if err != nil {
+		t.Fatalf("encode export input: %v", err)
+	}
+	job := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, State: jobs.StateQueued,
+		Origin: "api", OwnerUserID: jobUintPtr(7), Title: "Export of one group",
+		Replay: jobs.ReplayInput{Input: request},
+	})
+	if err := afero.WriteFile(ctx.GetDefaultFs(), "_exports/group.tar", []byte("private export"), 0o600); err != nil {
+		t.Fatalf("write test export: %v", err)
+	}
+	publishTestOutput(t, ctx, job.ID, "artifact", jobs.OutputTypeArtifact, `{"path":"_exports/group.tar"}`, jobs.OutputAvailable, nil)
+
+	inside := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(1)})
+	insideOutputs, err := inside.GetOpenableJobOutputs(job.ID)
+	if err != nil || len(insideOutputs) != 1 {
+		t.Fatalf("in-scope outputs = %#v, err=%v; want the export", insideOutputs, err)
+	}
+	content, err := inside.OpenJobOutput(context.Background(), job.ID, "artifact")
+	if err != nil {
+		t.Fatalf("in-scope export could not be opened: %v", err)
+	}
+	_ = content.Body.Close()
+
+	revoked := ctx.WithPrincipal(&auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: jobUintPtr(2)})
+	revokedOutputs, err := revoked.GetOpenableJobOutputs(job.ID)
+	if err != nil || len(revokedOutputs) != 0 {
+		t.Fatalf("revoked-scope outputs = %#v, err=%v; want no advertised output", revokedOutputs, err)
+	}
+	if _, err := revoked.OpenJobOutput(context.Background(), job.ID, "artifact"); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("revoked-scope output open error = %v, want forbidden", err)
 	}
 }
 

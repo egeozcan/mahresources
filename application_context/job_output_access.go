@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	stdfs "io/fs"
 	"mime"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"mahresources/auth"
+	"mahresources/contracts"
 	"mahresources/jobs"
 )
 
@@ -36,67 +36,93 @@ type JobOutputOpenRequest struct {
 	Principal *auth.Principal
 }
 
-// JobOutputContent is one typed resource returned by an output reader. Exactly
-// one of Body, Data or Location is generally populated.
-type JobOutputContent struct {
-	Output      jobs.Output
-	Body        io.ReadCloser
-	Data        json.RawMessage
-	Location    string
-	ContentType string
-	Filename    string
-	Inline      bool
-}
-
 // JobOutputOpener is an optional Kind adapter capability for outputs that need
 // specialized access, such as a command-history reference resolved by runId.
 // Implementations receive only the stored reference and visible canonical Job;
 // they must not accept caller-provided IDs, must verify source Job identity, and
 // must return a sanitized bounded representation.
 type JobOutputOpener interface {
-	OpenJobOutput(context.Context, JobOutputOpenRequest) (JobOutputContent, error)
+	OpenJobOutput(context.Context, JobOutputOpenRequest) (contracts.JobOutputContent, error)
+}
+
+// JobOutputAuthorizer is the Kind-specific half of the current-principal output
+// policy. It is evaluated both when detail advertises an output and immediately
+// before the stored reference is opened. A Kind that supplies an opener must
+// also supply this policy; otherwise its outputs are hidden and refused.
+type JobOutputAuthorizer interface {
+	AuthorizeJobOutput(context.Context, JobOutputOpenRequest) error
+}
+
+// GetOpenableJobOutputs returns only outputs the current principal may open.
+// Availability remains in the response so the UI can show expired outputs, but
+// hidden Kind-specific outputs are indistinguishable from absent outputs.
+func (ctx *MahresourcesContext) GetOpenableJobOutputs(jobID string) ([]jobs.Output, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := service.Outputs(ctx.jobDeps(), ctx.jobAccess(), jobID)
+	if err != nil {
+		return nil, err
+	}
+	principal := ctx.Principal()
+	openable := make([]jobs.Output, 0, len(outputs))
+	for _, output := range outputs {
+		request := JobOutputOpenRequest{Snapshot: snapshot, Output: output, Principal: principal}
+		if err := ctx.authorizeJobOutput(context.Background(), service, request); err != nil {
+			if errors.Is(err, ErrJobOutputForbidden) {
+				continue
+			}
+			return nil, err
+		}
+		openable = append(openable, output)
+	}
+	return openable, nil
 }
 
 // OpenJobOutput reauthorizes the canonical Job and its output on every open.
 // Job visibility, current write capability, the output's own availability, and
 // Kind-specific policy are separate checks; a bookmark to an old output cannot
 // act as a bearer capability.
-func (ctx *MahresourcesContext) openJobOutput(requestCtx context.Context, jobID, key string) (JobOutputContent, error) {
+func (ctx *MahresourcesContext) openJobOutput(requestCtx context.Context, jobID, key string) (contracts.JobOutputContent, error) {
 	if requestCtx == nil {
 		requestCtx = context.Background()
 	}
 	service, err := ctx.requireJobService()
 	if err != nil {
-		return JobOutputContent{}, err
+		return contracts.JobOutputContent{}, err
 	}
 	snapshot, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
 	if err != nil {
-		return JobOutputContent{}, err
+		return contracts.JobOutputContent{}, err
 	}
 	principal := ctx.Principal()
-	if principal == nil || (!principal.IsAdmin() && !principal.CanWrite()) {
-		return JobOutputContent{}, ErrJobOutputForbidden
-	}
 	outputs, err := service.Outputs(ctx.jobDeps(), ctx.jobAccess(), jobID)
 	if err != nil {
-		return JobOutputContent{}, err
+		return contracts.JobOutputContent{}, err
 	}
 	output, found := findJobOutput(outputs, key)
 	if !found {
-		return JobOutputContent{}, jobs.ErrNotFound
+		return contracts.JobOutputContent{}, jobs.ErrNotFound
+	}
+	request := JobOutputOpenRequest{Snapshot: snapshot, Output: output, Principal: principal}
+	if err := ctx.authorizeJobOutput(requestCtx, service, request); err != nil {
+		return contracts.JobOutputContent{}, err
 	}
 	if output.Availability != jobs.OutputAvailable || (output.ExpiresAt != nil && !output.ExpiresAt.After(time.Now().UTC())) {
-		return JobOutputContent{}, ErrJobOutputUnavailable
+		return contracts.JobOutputContent{}, ErrJobOutputUnavailable
 	}
 
-	request := JobOutputOpenRequest{Snapshot: snapshot, Output: output, Principal: principal}
 	if adapter, ok := service.AdapterFor(snapshot.Kind, snapshot.KindVersion); ok {
 		if opener, ok := adapter.(JobOutputOpener); ok {
 			content, err := opener.OpenJobOutput(requestCtx, request)
 			if err != nil {
-				return JobOutputContent{}, err
+				return contracts.JobOutputContent{}, err
 			}
-			content.Output = output
 			return content, nil
 		}
 	}
@@ -104,29 +130,52 @@ func (ctx *MahresourcesContext) openJobOutput(requestCtx context.Context, jobID,
 	return ctx.openStandardJobOutput(output)
 }
 
-func (ctx *MahresourcesContext) openStandardJobOutput(output jobs.Output) (JobOutputContent, error) {
+func (ctx *MahresourcesContext) authorizeJobOutput(requestCtx context.Context, service *jobs.Service, request JobOutputOpenRequest) error {
+	principal := request.Principal
+	if principal == nil || (!principal.IsAdmin() && !principal.CanWrite()) {
+		return ErrJobOutputForbidden
+	}
+	adapter, registered := service.AdapterFor(request.Snapshot.Kind, request.Snapshot.KindVersion)
+	if !registered {
+		return nil
+	}
+	authorizer, hasPolicy := adapter.(JobOutputAuthorizer)
+	_, hasOpener := adapter.(JobOutputOpener)
+	if hasOpener && !hasPolicy {
+		return ErrJobOutputForbidden
+	}
+	if hasPolicy {
+		if requestCtx == nil {
+			requestCtx = context.Background()
+		}
+		return authorizer.AuthorizeJobOutput(requestCtx, request)
+	}
+	return nil
+}
+
+func (ctx *MahresourcesContext) openStandardJobOutput(output jobs.Output) (contracts.JobOutputContent, error) {
 	switch output.Type {
 	case jobs.OutputTypeSummary:
 		if !json.Valid(output.Reference) {
-			return JobOutputContent{}, ErrJobOutputInvalid
+			return contracts.JobOutputContent{}, ErrJobOutputInvalid
 		}
-		return JobOutputContent{Output: output, Data: append(json.RawMessage(nil), output.Reference...), ContentType: "application/json"}, nil
+		return contracts.JobOutputContent{Data: append(json.RawMessage(nil), output.Reference...), ContentType: "application/json"}, nil
 	case jobs.OutputTypeEntity:
 		location, err := ctx.resolveJobEntityOutput(output.Reference)
 		if err != nil {
-			return JobOutputContent{}, err
+			return contracts.JobOutputContent{}, err
 		}
-		return JobOutputContent{Output: output, Location: location}, nil
+		return contracts.JobOutputContent{Location: location}, nil
 	case jobs.OutputTypeExternalLink:
 		location, err := safeJobExternalLink(output.Reference)
 		if err != nil {
-			return JobOutputContent{}, err
+			return contracts.JobOutputContent{}, err
 		}
-		return JobOutputContent{Output: output, Location: location}, nil
+		return contracts.JobOutputContent{Location: location}, nil
 	case jobs.OutputTypeArtifact, jobs.OutputTypeReport, jobs.OutputTypeLog:
 		return ctx.openJobFileOutput(output)
 	default:
-		return JobOutputContent{}, ErrJobOutputInvalid
+		return contracts.JobOutputContent{}, ErrJobOutputInvalid
 	}
 }
 
@@ -181,33 +230,33 @@ func safeJobExternalLink(reference json.RawMessage) (string, error) {
 	return parsed.String(), nil
 }
 
-func (ctx *MahresourcesContext) openJobFileOutput(output jobs.Output) (JobOutputContent, error) {
+func (ctx *MahresourcesContext) openJobFileOutput(output jobs.Output) (contracts.JobOutputContent, error) {
 	var reference struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(output.Reference, &reference); err != nil || reference.Path == "" {
-		return JobOutputContent{}, ErrJobOutputInvalid
+		return contracts.JobOutputContent{}, ErrJobOutputInvalid
 	}
 	path, err := rootedJobOutputPath(reference.Path)
 	if err != nil {
-		return JobOutputContent{}, ErrJobOutputInvalid
+		return contracts.JobOutputContent{}, ErrJobOutputInvalid
 	}
 	fileSystem := ctx.GetDefaultFs()
 	file, err := fileSystem.Open(path)
 	if err != nil {
 		if errors.Is(err, stdfs.ErrNotExist) {
-			return JobOutputContent{}, ErrJobOutputUnavailable
+			return contracts.JobOutputContent{}, ErrJobOutputUnavailable
 		}
-		return JobOutputContent{}, fmt.Errorf("open job output: %w", err)
+		return contracts.JobOutputContent{}, fmt.Errorf("open job output: %w", err)
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return JobOutputContent{}, fmt.Errorf("inspect job output: %w", err)
+		return contracts.JobOutputContent{}, fmt.Errorf("inspect job output: %w", err)
 	}
 	if info.IsDir() {
 		_ = file.Close()
-		return JobOutputContent{}, ErrJobOutputInvalid
+		return contracts.JobOutputContent{}, ErrJobOutputInvalid
 	}
 	contentType := "application/octet-stream"
 	inline := output.Type == jobs.OutputTypeReport || output.Type == jobs.OutputTypeLog
@@ -217,8 +266,8 @@ func (ctx *MahresourcesContext) openJobFileOutput(output jobs.Output) (JobOutput
 	if output.Type == jobs.OutputTypeReport && strings.HasSuffix(strings.ToLower(path), ".json") {
 		contentType = "application/json"
 	}
-	return JobOutputContent{
-		Output: output, Body: file, ContentType: contentType,
+	return contracts.JobOutputContent{
+		Body: file, ContentType: contentType,
 		Filename: safeJobOutputFilename(output.Label, path), Inline: inline,
 	}, nil
 }

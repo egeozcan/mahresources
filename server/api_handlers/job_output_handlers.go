@@ -12,13 +12,14 @@ import (
 
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
+	"mahresources/contracts"
 	"mahresources/jobs"
 )
 
 const maxJobOutputJSONBytes = 64 << 10
 
 type JobOutputOpenContext interface {
-	OpenJobOutput(requestCtx context.Context, jobID, key string) (application_context.JobOutputContent, error)
+	OpenJobOutput(requestCtx context.Context, jobID, key string) (contracts.JobOutputContent, error)
 }
 
 // GetJobOutputHandler resolves a typed output through the application facade,

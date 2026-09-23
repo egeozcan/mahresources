@@ -25,13 +25,14 @@ type jobListContextStub struct {
 }
 
 type jobDetailContextStub struct {
-	snapshot jobs.Snapshot
-	outputs  []jobs.Output
-	lineage  jobs.Lineage
-	commands []jobs.Command
-	err      error
-	gets     int
-	called   []string
+	snapshot          jobs.Snapshot
+	outputs           []jobs.Output
+	unfilteredOutputs []jobs.Output
+	lineage           jobs.Lineage
+	commands          []jobs.Command
+	err               error
+	gets              int
+	called            []string
 }
 
 type jobSummaryContextStub struct {
@@ -52,9 +53,14 @@ func (s *jobDetailContextStub) GetJob(id string) (jobs.Snapshot, error) {
 	return s.snapshot, s.err
 }
 
-func (s *jobDetailContextStub) GetJobOutputs(id string) ([]jobs.Output, error) {
+func (s *jobDetailContextStub) GetOpenableJobOutputs(id string) ([]jobs.Output, error) {
 	s.called = append(s.called, "outputs")
 	return s.outputs, nil
+}
+
+func (s *jobDetailContextStub) GetJobOutputs(id string) ([]jobs.Output, error) {
+	s.called = append(s.called, "unfiltered-outputs")
+	return s.unfilteredOutputs, nil
 }
 
 func (s *jobDetailContextStub) GetJobTimeline(id string, afterSequence uint64, limit int) ([]jobs.Event, error) {
@@ -195,6 +201,37 @@ func TestJobDetailReturnsVersionBoundCommandsAndSafeOutputLinks(t *testing.T) {
 	}
 	if len(response.Outputs) != 1 || !strings.Contains(response.Outputs[0].URL, "/v1/jobs/job-123/outputs?key=archive") {
 		t.Fatalf("outputs = %#v, want a typed output URL", response.Outputs)
+	}
+}
+
+func TestJobDetailAdvertisesOnlyCurrentPrincipalOpenableOutputs(t *testing.T) {
+	ctx := &jobDetailContextStub{
+		snapshot: jobs.Snapshot{ID: "job-123", Kind: "group-export", KindVersion: 1, State: jobs.StateSucceeded, Version: 7},
+		unfilteredOutputs: []jobs.Output{{
+			JobID: "job-123", Key: "private", Type: jobs.OutputTypeArtifact, Label: "private.tar",
+			Availability: jobs.OutputAvailable, Version: 1,
+		}},
+		lineage: jobs.Lineage{Job: jobs.Snapshot{ID: "job-123", Version: 7}},
+	}
+	recorder := httptest.NewRecorder()
+	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123", nil), map[string]string{"id": "job-123"})
+
+	GetJobDetailHandler(ctx)(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response JobDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Outputs) != 0 {
+		t.Fatalf("detail advertised outputs not returned by current-principal policy: %#v", response.Outputs)
+	}
+	for _, call := range ctx.called {
+		if call == "unfiltered-outputs" {
+			t.Fatal("detail read unfiltered outputs instead of the authorized output view")
+		}
 	}
 }
 

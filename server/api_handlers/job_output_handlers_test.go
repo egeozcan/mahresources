@@ -11,24 +11,24 @@ import (
 
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
-	"mahresources/jobs"
+	"mahresources/contracts"
 )
 
 type jobOutputContextStub struct {
 	jobID string
 	key   string
-	item  application_context.JobOutputContent
+	item  contracts.JobOutputContent
 	err   error
 }
 
-func (s *jobOutputContextStub) OpenJobOutput(_ context.Context, jobID, key string) (application_context.JobOutputContent, error) {
+func (s *jobOutputContextStub) OpenJobOutput(_ context.Context, jobID, key string) (contracts.JobOutputContent, error) {
 	s.jobID, s.key = jobID, key
 	return s.item, s.err
 }
 
 func TestJobOutputStreamsSafeDownload(t *testing.T) {
-	ctx := &jobOutputContextStub{item: application_context.JobOutputContent{
-		Output: jobs.Output{Label: "archive.tar"}, Body: io.NopCloser(strings.NewReader("tar data")),
+	ctx := &jobOutputContextStub{item: contracts.JobOutputContent{
+		Body:        io.NopCloser(strings.NewReader("tar data")),
 		ContentType: "application/x-tar", Filename: "archive.tar",
 	}}
 	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/outputs?key=artifact", nil), map[string]string{"id": "job-123"})
@@ -48,7 +48,7 @@ func TestJobOutputStreamsSafeDownload(t *testing.T) {
 }
 
 func TestJobOutputJSONCannotSelectAnActiveContentType(t *testing.T) {
-	ctx := &jobOutputContextStub{item: application_context.JobOutputContent{
+	ctx := &jobOutputContextStub{item: contracts.JobOutputContent{
 		Data: []byte(`{"tail":"sanitized"}`), ContentType: "text/html",
 	}}
 	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/outputs?key=command-history", nil), map[string]string{"id": "job-123"})
@@ -62,7 +62,7 @@ func TestJobOutputJSONCannotSelectAnActiveContentType(t *testing.T) {
 }
 
 func TestJobOutputRedirectsOnlyAfterApplicationAuthorization(t *testing.T) {
-	ctx := &jobOutputContextStub{item: application_context.JobOutputContent{Location: "/resource?id=7"}}
+	ctx := &jobOutputContextStub{item: contracts.JobOutputContent{Location: "/resource?id=7"}}
 	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/outputs?key=entity", nil), map[string]string{"id": "job-123"})
 	recorder := httptest.NewRecorder()
 
@@ -74,7 +74,7 @@ func TestJobOutputRedirectsOnlyAfterApplicationAuthorization(t *testing.T) {
 }
 
 func TestJobOutputRejectsUnsafeRedirectLocation(t *testing.T) {
-	ctx := &jobOutputContextStub{item: application_context.JobOutputContent{Location: "javascript:alert(1)"}}
+	ctx := &jobOutputContextStub{item: contracts.JobOutputContent{Location: "javascript:alert(1)"}}
 	request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/v1/jobs/job-123/outputs?key=entity", nil), map[string]string{"id": "job-123"})
 	recorder := httptest.NewRecorder()
 

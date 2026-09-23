@@ -221,6 +221,29 @@ func (a *groupExportAdapter) Definition() jobs.Definition {
 	}
 }
 
+// AuthorizeJobOutput rechecks that every requested export root remains inside
+// the asking principal's current group scope. The Job's sanitized summary carries
+// the accepted root IDs; an old artifact cannot outlive the scope that allowed
+// its source groups to be read.
+func (a *groupExportAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if a == nil || a.ctx == nil || request.Principal == nil ||
+		request.Snapshot.Kind != a.kind || request.Snapshot.KindVersion != jobExportKindVersion ||
+		request.Output.Type != jobs.OutputTypeArtifact {
+		return ErrJobOutputForbidden
+	}
+	var summary exportSummary
+	if len(request.Snapshot.Summary) == 0 || json.Unmarshal(request.Snapshot.Summary, &summary) != nil || len(summary.RootGroups) == 0 {
+		return ErrJobOutputForbidden
+	}
+	scoped := a.ctx.WithPrincipal(request.Principal)
+	for _, groupID := range summary.RootGroups {
+		if !scoped.GroupVisible(groupID) {
+			return ErrJobOutputForbidden
+		}
+	}
+	return nil
+}
+
 // forExecution returns this adapter bound to the principal one execution acts as,
 // so that what is *authorized* and what is *executed* are one view of the
 // subtree.

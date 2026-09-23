@@ -30,7 +30,7 @@ type JobSummaryContext interface {
 type JobDetailContext interface {
 	GetJob(jobID string) (jobs.Snapshot, error)
 	GetJobTimeline(jobID string, afterSequence uint64, limit int) ([]jobs.Event, error)
-	GetJobOutputs(jobID string) ([]jobs.Output, error)
+	GetOpenableJobOutputs(jobID string) ([]jobs.Output, error)
 	GetJobLineage(jobID string) (jobs.Lineage, error)
 	AdvertisedJobCommands(requestCtx context.Context, jobID string) ([]jobs.Command, error)
 }
@@ -117,7 +117,7 @@ func GetJobDetailHandler(ctx JobDetailContext) func(http.ResponseWriter, *http.R
 				continue
 			}
 			snap = latest
-			outputs, err = ctx.GetJobOutputs(jobID)
+			outputs, err = ctx.GetOpenableJobOutputs(jobID)
 			if err != nil {
 				writeJobServiceError(w, err)
 				return
