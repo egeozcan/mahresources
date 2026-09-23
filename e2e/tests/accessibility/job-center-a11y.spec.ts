@@ -32,7 +32,39 @@ test.describe('Job Center panel accessibility', () => {
   });
 
   test('axe finds no serious or critical violations in the open panel', async ({ page, checkComponentA11y }) => {
+    const job = {
+      id: 'a11y-advertised-command',
+      kind: 'remote-download',
+      state: 'failed',
+      version: 2,
+      title: 'Accessibility regression job',
+      acceptedAt: new Date().toISOString(),
+    };
+    await page.route('**/v1/jobs/summary', route => route.fulfill({ json: { byState: { failed: 1 } } }));
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const states = new URL(route.request().url()).searchParams.getAll('state');
+      return route.fulfill({
+        json: { jobs: states.includes('failed') ? [job] : [], nextCursor: null },
+      });
+    });
+    await page.route(`**/v1/jobs/${job.id}`, route => route.fulfill({
+      json: {
+        ...job,
+        commands: [{
+          key: 'retry',
+          label: 'Retry',
+          endpoint: `/v1/jobs/${job.id}/commands/retry`,
+          jobVersion: job.version,
+        }],
+        outputs: [],
+        lineage: { ancestors: [], successors: [], parents: [], children: [] },
+      },
+    }));
+
     await openPanel(page);
+    const controls = page.getByRole('group', { name: 'Advertised controls' });
+    await expect(controls).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Retry' })).toBeVisible();
     await checkComponentA11y('#job-center-panel', {
       // The dialog uses local header/footer sections; these are not the page's
       // banner or contentinfo landmarks.

@@ -52,7 +52,7 @@
                                 </div>
                                 <a :href="detailURL(job)" :aria-label="'Details for ' + (job.title || job.kind || job.id)" class="shrink-0 text-xs font-medium text-stone-700 underline">Details</a>
                             </div>
-                            <div class="mt-2 flex flex-wrap gap-2" aria-label="Advertised controls">
+                            <div class="mt-2 flex flex-wrap gap-2" role="group" aria-label="Advertised controls">
                                 <template x-for="command in commandsFor(job)" :key="command.key">
                                     <button type="button" @click="runCommand(job, command)" class="rounded border border-stone-300 px-2 py-1 text-xs font-medium text-stone-800 hover:bg-stone-50" x-text="command.label || command.key"></button>
                                 </template>
