@@ -182,10 +182,12 @@ func TestReplayPurgeRefusesWhenSourceMappingSchemaIsUnavailable(t *testing.T) {
 }
 
 type replaySourceIDs struct {
-	download  uint
-	scheduled uint
-	run       string
-	importID  string
+	download          uint
+	scheduled         uint
+	fallbackScheduled uint
+	shadowedScheduled uint
+	run               string
+	importID          string
 }
 
 func seedUnmappedLegacyReplaySources(t *testing.T, db *gorm.DB, jobID string, now time.Time) replaySourceIDs {
@@ -217,6 +219,27 @@ func seedUnmappedLegacyReplaySources(t *testing.T, db *gorm.DB, jobID string, no
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	fallbackScheduled := models.ScheduledDownload{
+		PluginName: "fixture", URL: "https://user:pass@example.test/unmapped-fallback?token=raw", Payload: []byte(`{"token":"unmapped-fallback-secret"}`),
+		DueAt: now, Status: models.ScheduledDownloadStatusSubmitted, CreatedAt: now, UpdatedAt: now,
+		JobID: downloadHandle,
+	}
+	if err := db.Create(&fallbackScheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	shadowedScheduled := models.ScheduledDownload{
+		PluginName: "fixture", URL: "https://user:pass@example.test/unmapped-shadowed?token=raw", Payload: []byte(`{"token":"unmapped-shadowed-secret"}`),
+		DueAt: now, Status: models.ScheduledDownloadStatusSubmitted, CreatedAt: now, UpdatedAt: now,
+		JobID: downloadHandle,
+	}
+	if err := db.Create(&shadowedScheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.JobLegacyHandle{
+		Namespace: "scheduled-download", Handle: strconv.FormatUint(uint64(shadowedScheduled.ID), 10), JobID: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	run := models.PluginCommandRun{ID: "ur" + suffix, JobID: jobID, PluginName: "fixture", CommandName: "run", ParamsJSON: `{"secret":"unmapped-run-secret"}`, InputsJSON: `[{"name":"x"}]`, Status: models.PluginCommandRunStatusFailed, CreatedAt: now}
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatal(err)
@@ -225,7 +248,7 @@ func seedUnmappedLegacyReplaySources(t *testing.T, db *gorm.DB, jobID string, no
 	if err := db.Create(&commandImport).Error; err != nil {
 		t.Fatal(err)
 	}
-	return replaySourceIDs{download: download.ID, scheduled: scheduled.ID, run: run.ID, importID: commandImport.ID}
+	return replaySourceIDs{download: download.ID, scheduled: scheduled.ID, fallbackScheduled: fallbackScheduled.ID, shadowedScheduled: shadowedScheduled.ID, run: run.ID, importID: commandImport.ID}
 }
 
 func terminalReplayJob(t *testing.T, svc *Service, deps Deps, clock *time.Time) string {
@@ -293,6 +316,12 @@ func assertReplayPurgeUnchanged(t *testing.T, db *gorm.DB, jobID string, ids rep
 	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
 		t.Fatalf("failed purge changed scheduled source: %+v, %v", scheduled, err)
 	}
+	if ids.fallbackScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.fallbackScheduled, "failed purge changed fallback scheduled source")
+	}
+	if ids.shadowedScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.shadowedScheduled, "failed purge changed shadowed scheduled source")
+	}
 	var run models.PluginCommandRun
 	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON == "" || run.InputsJSON == "" {
 		t.Fatalf("failed purge changed command source: %+v, %v", run, err)
@@ -317,6 +346,12 @@ func assertReplaySourcesPurged(t *testing.T, db *gorm.DB, jobID string, ids repl
 	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) != 0 || scheduled.URL != "" {
 		t.Fatalf("scheduled source retained replay data: %+v, %v", scheduled, err)
 	}
+	if ids.fallbackScheduled != 0 {
+		assertScheduledReplaySourcePurged(t, db, ids.fallbackScheduled, "fallback scheduled source retained replay data")
+	}
+	if ids.shadowedScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.shadowedScheduled, "purge changed a scheduled row owned by another scheduled handle")
+	}
 	var run models.PluginCommandRun
 	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON != "" || run.InputsJSON != "" {
 		t.Fatalf("command source retained replay data: %+v, %v", run, err)
@@ -325,12 +360,16 @@ func assertReplaySourcesPurged(t *testing.T, db *gorm.DB, jobID string, ids repl
 	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON != "" {
 		t.Fatalf("import source retained replay data: %+v, %v", commandImport, err)
 	}
-	for _, source := range []struct{ kind, id string }{
+	sources := []struct{ kind, id string }{
 		{kind: "download-history", id: strconv.FormatUint(uint64(ids.download), 10)},
 		{kind: "scheduled-download", id: strconv.FormatUint(uint64(ids.scheduled), 10)},
 		{kind: "plugin-command-run", id: ids.run},
 		{kind: "plugin-command-import", id: ids.importID},
-	} {
+	}
+	if ids.fallbackScheduled != 0 {
+		sources = append(sources, struct{ kind, id string }{kind: "scheduled-download", id: strconv.FormatUint(uint64(ids.fallbackScheduled), 10)})
+	}
+	for _, source := range sources {
 		var mapping models.JobSourceMapping
 		if err := db.Where("job_id = ? AND source_kind = ? AND source_id = ?", jobID, source.kind, source.id).First(&mapping).Error; err != nil {
 			t.Fatalf("load %s purge marker: %v", source.kind, err)
@@ -370,6 +409,12 @@ func assertUnmappedReplaySourcesIntact(t *testing.T, db *gorm.DB, ids replaySour
 	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
 		t.Fatalf("unmapped scheduled source changed during rejected purge: %+v, %v", scheduled, err)
 	}
+	if ids.fallbackScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.fallbackScheduled, "unmapped fallback scheduled source changed during rejected purge")
+	}
+	if ids.shadowedScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.shadowedScheduled, "unmapped shadowed scheduled source changed during rejected purge")
+	}
 	var run models.PluginCommandRun
 	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON == "" || run.InputsJSON == "" {
 		t.Fatalf("unmapped command source changed during rejected purge: %+v, %v", run, err)
@@ -390,6 +435,12 @@ func assertSourceFieldsPurged(t *testing.T, db *gorm.DB, ids replaySourceIDs) {
 	if err := db.First(&scheduled, ids.scheduled).Error; err != nil || len(scheduled.Payload) != 0 || scheduled.URL != "" {
 		t.Fatalf("unmapped scheduled source retained replay data: %+v, %v", scheduled, err)
 	}
+	if ids.fallbackScheduled != 0 {
+		assertScheduledReplaySourcePurged(t, db, ids.fallbackScheduled, "unmapped fallback scheduled source retained replay data")
+	}
+	if ids.shadowedScheduled != 0 {
+		assertScheduledReplaySourceIntact(t, db, ids.shadowedScheduled, "purge changed a scheduled row owned by another scheduled handle")
+	}
 	var run models.PluginCommandRun
 	if err := db.First(&run, "id = ?", ids.run).Error; err != nil || run.ParamsJSON != "" || run.InputsJSON != "" {
 		t.Fatalf("unmapped command source retained replay data: %+v, %v", run, err)
@@ -397,5 +448,21 @@ func assertSourceFieldsPurged(t *testing.T, db *gorm.DB, ids replaySourceIDs) {
 	var commandImport models.PluginCommandImport
 	if err := db.First(&commandImport, "id = ?", ids.importID).Error; err != nil || commandImport.FieldsJSON != "" {
 		t.Fatalf("unmapped import source retained replay data: %+v, %v", commandImport, err)
+	}
+}
+
+func assertScheduledReplaySourceIntact(t *testing.T, db *gorm.DB, id uint, message string) {
+	t.Helper()
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, id).Error; err != nil || len(scheduled.Payload) == 0 || scheduled.URL == "" {
+		t.Fatalf("%s: %+v, %v", message, scheduled, err)
+	}
+}
+
+func assertScheduledReplaySourcePurged(t *testing.T, db *gorm.DB, id uint, message string) {
+	t.Helper()
+	var scheduled models.ScheduledDownload
+	if err := db.First(&scheduled, id).Error; err != nil || len(scheduled.Payload) != 0 || scheduled.URL != "" {
+		t.Fatalf("%s: %+v, %v", message, scheduled, err)
 	}
 }
