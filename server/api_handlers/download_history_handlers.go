@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,9 +40,19 @@ type DownloadHistoryContext interface {
 // deployment with one creates a successor Job instead of re-running an execution
 // that already has an outcome (ADR 0007).
 type canonicalDownloadRetry interface {
-	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
+	ProjectDownloadJobForRetry(id string) (download_queue.DownloadProjection, bool, error)
 	DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error)
 	ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error)
+	ReplayJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, bool, error)
+}
+
+type downloadHistoryJobProjector interface {
+	ProjectDownloadJob(id string) (download_queue.DownloadProjection, error)
+}
+
+type downloadHistoryListEntry struct {
+	models.DownloadHistoryEntry
+	CanonicalJobID string `json:"canonicalJobId,omitempty"`
 }
 
 // downloadHistoryPageSize is how many rows one listing returns. The page is a
@@ -64,7 +75,8 @@ func historyScope(p *auth.Principal) (ownerID *uint, restricted bool) {
 // a JSON array or as repeated `ids` form fields, so both the page's fetch calls
 // and a plain curl work.
 type idListRequest struct {
-	IDs []uint `json:"ids" schema:"ids"`
+	IDs            []uint `json:"ids" schema:"ids"`
+	IdempotencyKey string `json:"idempotencyKey" schema:"idempotencyKey"`
 }
 
 // bulkResult is one id's outcome. Bulk actions report per id rather than failing
@@ -107,9 +119,23 @@ func GetDownloadHistoryListHandler(ctx DownloadHistoryContext) func(http.Respons
 			return
 		}
 
+		listed := make([]downloadHistoryListEntry, 0, len(entries))
+		projector, canProject := ctx.(downloadHistoryJobProjector)
+		for i := range entries {
+			item := downloadHistoryListEntry{DownloadHistoryEntry: entries[i]}
+			if canProject {
+				// Resolve the stable legacy id again under this request's principal.
+				// A deleted or newly hidden mapping adds no canonical identity.
+				if projection, err := projector.ProjectDownloadJob(entries[i].JobID); err == nil {
+					item.CanonicalJobID = projection.CanonicalJobID
+				}
+			}
+			listed = append(listed, item)
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"downloads": entries,
+			"downloads": listed,
 			"count":     count,
 			"page":      page,
 			"pageSize":  downloadHistoryPageSize,
@@ -125,7 +151,7 @@ func GetDownloadHistoryListHandler(ctx DownloadHistoryContext) func(http.Respons
 // is stored.
 func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		entries, principal, ok := loadRequestedEntries(ctx, writer, request)
+		entries, principal, idempotencyKey, ok := loadRequestedEntries(ctx, writer, request)
 		if !ok {
 			return
 		}
@@ -173,7 +199,7 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 				continue
 			}
 
-			jobID, successorID, err := retryOrResubmit(ctx, entry, creator, owner, principal)
+			jobID, successorID, err := retryOrResubmit(ctx, entry, creator, owner, principal, idempotencyKey)
 			if err != nil {
 				res.Reason = err.Error()
 				results = append(results, res)
@@ -203,7 +229,7 @@ func GetDownloadHistoryRetryHandler(ctx DownloadHistoryContext) func(http.Respon
 
 // retryOrResubmit re-runs one stored download and returns the job id that is now
 // carrying it.
-func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry, creator *query_models.ResourceFromRemoteCreator, owner *uint, principal *auth.Principal) (string, string, error) {
+func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry, creator *query_models.ResourceFromRemoteCreator, owner *uint, principal *auth.Principal, idempotencyKey string) (string, string, error) {
 	dm := ctx.DownloadManager()
 	if dm == nil {
 		return "", "", fmt.Errorf("the download queue is unavailable")
@@ -215,7 +241,7 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 	// so the client keeps polling one id while the failed execution it described
 	// keeps the outcome it reached.
 	if canonical, ok := any(ctx).(canonicalDownloadRetry); ok {
-		jobID, successorID, retried, err := retryCanonicalRow(canonical, ctx, entry, principal)
+		jobID, successorID, retried, err := retryCanonicalRow(canonical, ctx, entry, principal, idempotencyKey)
 		if retried {
 			return jobID, successorID, err
 		}
@@ -292,12 +318,24 @@ func retryOrResubmit(ctx DownloadHistoryContext, entry *models.DownloadHistoryEn
 // retried reports whether the canonical path owned the request. A row whose queue
 // entry has no Job behind it — one from before the cutover, or one whose
 // deployment has no control plane — is left to the legacy path above.
-func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChecker, entry *models.DownloadHistoryEntry, principal *auth.Principal) (jobID, successorID string, retried bool, err error) {
+func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChecker, entry *models.DownloadHistoryEntry, principal *auth.Principal, idempotencyKey string) (jobID, successorID string, retried bool, err error) {
 	if entry.JobID == "" {
 		return "", "", false, nil
 	}
-	projection, err := canonical.ProjectDownloadJob(entry.JobID)
-	if err != nil || projection.CanonicalJobID == "" {
+	projection, handleFound, err := canonical.ProjectDownloadJobForRetry(entry.JobID)
+	if err != nil {
+		if handleFound || !errors.Is(err, jobs.ErrNotFound) {
+			// A durable handle did resolve, so ErrNotFound means its current target is
+			// hidden. Any other projection failure is also fail-closed: neither case is
+			// evidence that queue-level Retry or payload resubmission is safe.
+			return "", "", true, err
+		}
+		return "", "", false, nil
+	}
+	if projection.CanonicalJobID == "" {
+		if handleFound {
+			return "", "", true, fmt.Errorf("%w: legacy handle has no current Job", jobs.ErrNotFound)
+		}
 		return "", "", false, nil
 	}
 
@@ -313,13 +351,24 @@ func retryCanonicalRow(canonical canonicalDownloadRetry, scope DownloadScopeChec
 		return "", "", true, err
 	}
 
-	result, err := canonical.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+	commandRequest := jobs.CommandRequest{
 		JobID:           projection.CanonicalJobID,
 		Key:             jobs.CommandRetry,
-		IdempotencyKey:  fmt.Sprintf("downloads-retry:%d:%d", entry.ID, time.Now().UnixNano()),
+		IdempotencyKey:  legacyIdempotencyKey(idempotencyKey, entry.JobID, jobs.CommandRetry),
 		ExpectedVersion: projection.CanonicalVersion,
 		Origin:          "api",
-	})
+		LegacyRef:       legacyJobReference(projection),
+	}
+	if idempotencyKey != "" {
+		result, replayed, err := canonical.ReplayJobCommand(context.Background(), commandRequest)
+		if err != nil {
+			return "", "", true, err
+		}
+		if replayed {
+			return entry.JobID, result.SuccessorID, true, nil
+		}
+	}
+	result, err := canonical.ExecuteJobCommand(context.Background(), commandRequest)
 	if err != nil {
 		return "", "", true, err
 	}
@@ -400,7 +449,7 @@ func linkedRetry(ctx DownloadHistoryContext, entry *models.DownloadHistoryEntry)
 func GetDownloadHistoryDeleteHandler(ctx DownloadHistoryContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		loadedAt := time.Now()
-		entries, principal, ok := loadRequestedEntries(ctx, writer, request)
+		entries, principal, _, ok := loadRequestedEntries(ctx, writer, request)
 		if !ok {
 			return
 		}
@@ -506,15 +555,18 @@ func GetDownloadHistoryDeleteHandler(ctx DownloadHistoryContext) func(http.Respo
 //
 // Ids the caller may not see are simply absent, so a 404-shaped answer covers
 // both "no such row" and "not yours" — row ids cannot be probed.
-func loadRequestedEntries(ctx DownloadHistoryContext, writer http.ResponseWriter, request *http.Request) ([]models.DownloadHistoryEntry, *auth.Principal, bool) {
+func loadRequestedEntries(ctx DownloadHistoryContext, writer http.ResponseWriter, request *http.Request) ([]models.DownloadHistoryEntry, *auth.Principal, string, bool) {
 	var req idListRequest
 	if err := tryFillStructValuesFromRequest(&req, request); err != nil {
 		http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-		return nil, nil, false
+		return nil, nil, "", false
+	}
+	if key := strings.TrimSpace(request.Header.Get("Idempotency-Key")); key != "" {
+		req.IdempotencyKey = key
 	}
 	if len(req.IDs) == 0 {
 		http_utils.HandleError(fmt.Errorf("at least one id is required"), writer, request, http.StatusBadRequest)
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 
 	principal := auth.PrincipalFromContext(request.Context())
@@ -522,13 +574,13 @@ func loadRequestedEntries(ctx DownloadHistoryContext, writer http.ResponseWriter
 	entries, err := ctx.GetDownloadHistoryEntries(req.IDs, ownerID, restricted)
 	if err != nil {
 		http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	if len(entries) == 0 {
 		http_utils.HandleError(fmt.Errorf("no matching downloads"), writer, request, http.StatusNotFound)
-		return nil, nil, false
+		return nil, nil, "", false
 	}
-	return entries, principal, true
+	return entries, principal, strings.TrimSpace(req.IdempotencyKey), true
 }
 
 // respondBulk writes the per-id outcomes.

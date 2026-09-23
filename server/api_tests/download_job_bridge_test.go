@@ -153,7 +153,46 @@ func TestLegacyRetryKeepsTheHandleAndCreatesANewCanonicalJob(t *testing.T) {
 		t.Fatalf("legacy get reported %+v, want id %s with a canonical id", before, handle)
 	}
 
-	res = tc.MakeRequest(http.MethodPost, "/v1/download/retry?id="+handle, nil)
+	// The durable history row keeps the same legacy id while adding the current
+	// canonical identity. Wait for terminal recording to finish before checking the
+	// API projection; a queue status can become terminal just before it is stored.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		res = tc.MakeRequest(http.MethodGet, "/v1/downloads?url=bridge-test.bin", nil)
+		if res.Code == http.StatusOK {
+			var history struct {
+				Downloads []struct {
+					JobID          string `json:"jobId"`
+					CanonicalJobID string `json:"canonicalJobId"`
+				} `json:"downloads"`
+			}
+			if err := json.Unmarshal(res.Body.Bytes(), &history); err == nil && len(history.Downloads) > 0 {
+				row := history.Downloads[0]
+				if row.JobID != handle || row.CanonicalJobID != before.CanonicalJobID {
+					t.Fatalf("legacy history row = %+v, want stable handle %s and canonical id %s", row, handle, before.CanonicalJobID)
+				}
+				break
+			}
+		}
+		if time.Now().Add(25 * time.Millisecond).After(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if res.Code != http.StatusOK {
+		t.Fatalf("legacy history list answered %d: %s", res.Code, res.Body.String())
+	}
+	var history struct {
+		Downloads []struct {
+			JobID          string `json:"jobId"`
+			CanonicalJobID string `json:"canonicalJobId"`
+		} `json:"downloads"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &history); err != nil || len(history.Downloads) == 0 || history.Downloads[0].CanonicalJobID != before.CanonicalJobID {
+		t.Fatalf("legacy history did not expose its canonical job id: %s (%v)", res.Body.String(), err)
+	}
+
+	res = doReq(tc, http.MethodPost, "/v1/download/retry?id="+handle, map[string]string{"Idempotency-Key": "legacy-retry-once"}, nil, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("legacy retry answered %d: %s", res.Code, res.Body.String())
 	}
@@ -170,6 +209,40 @@ func TestLegacyRetryKeepsTheHandleAndCreatesANewCanonicalJob(t *testing.T) {
 	if retried.CanonicalJobID == "" || retried.CanonicalJobID == before.CanonicalJobID {
 		t.Fatalf("the retry created canonical job %q, want a new one beside %q",
 			retried.CanonicalJobID, before.CanonicalJobID)
+	}
+	queueResponse := tc.MakeRequest(http.MethodGet, "/v1/jobs/queue", nil)
+	if queueResponse.Code != http.StatusOK {
+		t.Fatalf("legacy queue answered %d: %s", queueResponse.Code, queueResponse.Body.String())
+	}
+	var queue struct {
+		Jobs []struct {
+			ID             string `json:"id"`
+			CanonicalJobID string `json:"canonicalJobId"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(queueResponse.Body.Bytes(), &queue); err != nil {
+		t.Fatalf("decode legacy queue: %v", err)
+	}
+	foundSuccessor := false
+	for _, row := range queue.Jobs {
+		if row.ID == handle && row.CanonicalJobID == retried.CanonicalJobID {
+			foundSuccessor = true
+		}
+	}
+	if !foundSuccessor {
+		t.Fatalf("legacy queue has no stable handle %s projected onto canonical successor %s: %+v", handle, retried.CanonicalJobID, queue.Jobs)
+	}
+	// Replaying the same keyed request through the moved handle returns the
+	// original successor even though that successor is now an active transfer.
+	replayed := doReq(tc, http.MethodPost, "/v1/download/retry?id="+handle, map[string]string{"Idempotency-Key": "legacy-retry-once"}, nil, nil)
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("keyed retry replay answered %d: %s", replayed.Code, replayed.Body.String())
+	}
+	var replayedRetry struct {
+		CanonicalJobID string `json:"canonicalJobId"`
+	}
+	if err := json.Unmarshal(replayed.Body.Bytes(), &replayedRetry); err != nil || replayedRetry.CanonicalJobID != retried.CanonicalJobID {
+		t.Fatalf("keyed retry replay = %s (%v), want canonical id %s", replayed.Body.String(), err, retried.CanonicalJobID)
 	}
 
 	// The unchanged handle now names the successor, and reports the same id the

@@ -74,6 +74,10 @@ type RouteInfo struct {
 	// Additional query parameters not derived from QueryType
 	ExtraQueryParams []QueryParam
 
+	// Additional header parameters such as the compatibility command's
+	// Idempotency-Key.
+	ExtraHeaderParams []HeaderParam
+
 	// HTTP status codes and their response types
 	ErrorResponses map[int]string
 	// ErrorResponseTypes optionally gives an HTTP error response a JSON schema.
@@ -82,6 +86,11 @@ type RouteInfo struct {
 
 	// Whether this endpoint supports pagination (adds page parameter)
 	Paginated bool
+
+	// LegacyJobCompatibility marks a retained pre-Job-Center route. Generated
+	// operations are deprecated and document the retirement headers returned by
+	// every response.
+	LegacyJobCompatibility bool
 }
 
 // QueryParam represents a single query parameter.
@@ -92,6 +101,14 @@ type QueryParam struct {
 	ItemType    string // For arrays, the type of items
 	Required    bool
 	Default     interface{}
+}
+
+// HeaderParam represents one explicit request header.
+type HeaderParam struct {
+	Name        string
+	Description string
+	Type        string
+	Required    bool
 }
 
 // PathParam represents a single path parameter.

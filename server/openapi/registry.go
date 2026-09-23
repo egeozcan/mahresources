@@ -173,6 +173,16 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 		Description: route.Description,
 		Tags:        route.Tags,
 		Responses:   &openapi3.Responses{},
+		Deprecated:  route.LegacyJobCompatibility,
+	}
+	if route.LegacyJobCompatibility {
+		deprecation := "@1790121600"
+		sunset := "Wed, 24 Mar 2027 00:00:00 GMT"
+		link := `</v1/jobs>; rel="successor-version"`
+		if op.Description != "" {
+			op.Description += " "
+		}
+		op.Description += "This compatibility endpoint is deprecated. Responses include Deprecation (" + deprecation + "), Sunset (" + sunset + ") and Link (" + link + ") headers."
 	}
 
 	// Add path parameters
@@ -243,6 +253,26 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 		op.Parameters = append(op.Parameters, &openapi3.ParameterRef{Value: p})
 	}
 
+	// Add explicit request headers after query parameters so callers can use
+	// compatibility idempotency without pretending the key is a URL filter.
+	for _, param := range route.ExtraHeaderParams {
+		p := &openapi3.Parameter{
+			Name:        param.Name,
+			In:          "header",
+			Required:    param.Required,
+			Description: param.Description,
+		}
+		switch param.Type {
+		case "integer":
+			p.Schema = openapi3.NewSchemaRef("", openapi3.NewIntegerSchema())
+		case "boolean":
+			p.Schema = openapi3.NewSchemaRef("", openapi3.NewBoolSchema())
+		default:
+			p.Schema = openapi3.NewSchemaRef("", openapi3.NewStringSchema())
+		}
+		op.Parameters = append(op.Parameters, &openapi3.ParameterRef{Value: p})
+	}
+
 	// Add pagination parameter for paginated endpoints
 	if route.Paginated {
 		pageParam := &openapi3.ParameterRef{
@@ -266,11 +296,18 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 	if successStatus == 0 {
 		successStatus = http.StatusOK
 	}
-	op.Responses.Set(statusCodeToString(successStatus), r.generateSuccessResponse(route))
+	successResponse := r.generateSuccessResponse(route)
+	if route.LegacyJobCompatibility && successResponse.Value != nil {
+		addLegacyJobResponseHeaders(successResponse.Value)
+	}
+	op.Responses.Set(statusCodeToString(successStatus), successResponse)
 
 	// Add error responses
 	for code, desc := range route.ErrorResponses {
 		response := &openapi3.Response{Description: strPtr(desc)}
+		if route.LegacyJobCompatibility {
+			addLegacyJobResponseHeaders(response)
+		}
 		if errorType := route.ErrorResponseTypes[code]; errorType != nil {
 			response.Content = openapi3.Content{
 				string(ContentTypeJSON): &openapi3.MediaType{Schema: r.generator.GenerateSchema(errorType)},
@@ -278,8 +315,46 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 		}
 		op.Responses.Set(statusCodeToString(code), &openapi3.ResponseRef{Value: response})
 	}
+	if route.LegacyJobCompatibility {
+		// Compatibility handlers can fail before they reach their route body
+		// (authentication, visibility and stale-command checks included). Keep
+		// those observable statuses in the public contract with the retirement
+		// headers even when an older registration omitted explicit error metadata.
+		for code, description := range map[int]string{
+			http.StatusBadRequest:          "Invalid input",
+			http.StatusUnauthorized:        "Authentication required",
+			http.StatusForbidden:           "Forbidden",
+			http.StatusNotFound:            "Not found",
+			http.StatusConflict:            "Conflict",
+			http.StatusInternalServerError: "Internal server error",
+		} {
+			key := statusCodeToString(code)
+			if op.Responses.Value(key) != nil {
+				continue
+			}
+			response := &openapi3.Response{Description: strPtr(description)}
+			addLegacyJobResponseHeaders(response)
+			op.Responses.Set(key, &openapi3.ResponseRef{Value: response})
+		}
+	}
 
 	return op
+}
+
+func addLegacyJobResponseHeaders(response *openapi3.Response) {
+	if response.Headers == nil {
+		response.Headers = openapi3.Headers{}
+	}
+	for name, description := range map[string]string{
+		"Deprecation": "Deprecation date in RFC 9745 structured date form.",
+		"Sunset":      "Planned retirement date in HTTP-date form.",
+		"Link":        "Successor-version link to the canonical Job API.",
+	} {
+		response.Headers[name] = &openapi3.HeaderRef{Value: &openapi3.Header{Parameter: openapi3.Parameter{
+			Description: description,
+			Schema:      openapi3.NewSchemaRef("", openapi3.NewStringSchema()),
+		}}}
+	}
 }
 
 func (r *Registry) generateRequestBody(route RouteInfo) *openapi3.RequestBodyRef {
@@ -368,6 +443,8 @@ func statusCodeToString(code int) string {
 		return "200"
 	case 201:
 		return "201"
+	case 202:
+		return "202"
 	case 204:
 		return "204"
 	case 400:

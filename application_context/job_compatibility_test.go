@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"gorm.io/gorm"
 	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
@@ -220,6 +223,251 @@ func TestARefusedRetryLeavesTheHandleWhereItWas(t *testing.T) {
 	}
 }
 
+func TestLegacyCommandRejectsAProjectionWhoseHandleMoved(t *testing.T) {
+	ctx := newJobContext(t)
+	sqlDB, err := ctx.db.DB()
+	if err != nil {
+		t.Fatalf("underlying SQLite database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	registerCompatKind(t, ctx)
+	access := jobs.Access{UserID: 7, Administrator: true}
+
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7),
+		Replay:      jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://example.test/a"}`)},
+		LegacyRefs:  []jobs.LegacyRef{{Namespace: DownloadHandleNamespace, Handle: "race-handle"}},
+	})
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: compatTestKind, KindVersion: 1, Claimant: "legacy-control-race",
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim Job before legacy projection: claimed=%t err=%v", claimed, err)
+	}
+	// This is the legacy control's already-rendered running projection. The
+	// execution ends and canonical Retry moves the handle before that stale
+	// cancellation reaches the command service.
+	legacyProjection, err := ctx.GetJob(accepted.ID)
+	if err != nil || legacyProjection.State != jobs.StateRunning {
+		t.Fatalf("read running legacy projection: state=%s err=%v", legacyProjection.State, err)
+	}
+	failed, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: legacyProjection.Version,
+		Outcome:         jobs.StateFailed,
+		Failure:         &jobs.Failure{Code: "boom", Class: jobs.FailureClassInternal},
+	})
+	if err != nil {
+		t.Fatalf("finish source Job after projection: %v", err)
+	}
+	canonicalRetry, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "canonical-race-retry",
+		ExpectedVersion: failed.Version, Actor: access,
+	})
+	if err != nil {
+		t.Fatalf("canonical Retry: %v", err)
+	}
+
+	_, err = ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: legacyProjection.ID, Key: jobs.CommandCancel, IdempotencyKey: "legacy-stale-control",
+		ExpectedVersion: legacyProjection.Version, Actor: access,
+		LegacyRef: &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: "race-handle"},
+	})
+	if !errors.Is(err, jobs.ErrVersionConflict) {
+		t.Fatalf("stale legacy projection command error = %v, want ErrVersionConflict", err)
+	}
+
+	successor, err := ctx.GetJob(canonicalRetry.SuccessorID)
+	if err != nil || successor.State != jobs.StateQueued || successor.ControlIntent != "" {
+		t.Fatalf("stale cancel affected the successor: state=%s intent=%s err=%v", successor.State, successor.ControlIntent, err)
+	}
+	resolved, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, "race-handle")
+	if err != nil || resolved != canonicalRetry.SuccessorID {
+		t.Fatalf("handle after stale control = %q, %v; want canonical successor %q", resolved, err, canonicalRetry.SuccessorID)
+	}
+}
+
+func TestLegacyRetryKeyReplaysAfterItsHandleMoves(t *testing.T) {
+	ctx := newJobContext(t)
+	registerCompatKind(t, ctx)
+	access := jobs.Access{UserID: 7, Administrator: true}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7),
+		Replay:      jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://example.test/a"}`)},
+		LegacyRefs:  []jobs.LegacyRef{{Namespace: DownloadHandleNamespace, Handle: "keyed-handle"}},
+	})
+	failed := finishJobFor(t, ctx, accepted, jobs.StateFailed)
+	ref := &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: "keyed-handle"}
+
+	first, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "client-retry-1",
+		ExpectedVersion: failed.Version, Actor: access, LegacyRef: ref,
+	})
+	if err != nil {
+		t.Fatalf("first keyed legacy Retry: %v", err)
+	}
+	secondSnapshot, err := ctx.GetJob(first.SuccessorID)
+	if err != nil {
+		t.Fatalf("read retry successor: %v", err)
+	}
+	second, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: secondSnapshot.ID, Key: jobs.CommandRetry, IdempotencyKey: "client-retry-1",
+		ExpectedVersion: secondSnapshot.Version, Actor: access, LegacyRef: ref,
+	})
+	if err != nil {
+		t.Fatalf("repeat keyed legacy Retry after handle movement: %v", err)
+	}
+	if second.SuccessorID != first.SuccessorID {
+		t.Fatalf("replayed Retry successor = %q, want original %q", second.SuccessorID, first.SuccessorID)
+	}
+	var retries int64
+	if err := ctx.db.Model(&models.JobLink{}).Where("type = ? AND to_job_id = ?", string(jobs.LinkRetryOf), failed.ID).Count(&retries).Error; err != nil {
+		t.Fatalf("count Retry links: %v", err)
+	}
+	if retries != 1 {
+		t.Fatalf("Retry created %d successors, want one", retries)
+	}
+}
+
+func TestLegacyReplaySerializesHandleAuthorizationWithRecordedOutcome(t *testing.T) {
+	ctx := newJobContext(t)
+	assertLegacyReplaySerialization(t, ctx, ctx, false)
+}
+
+func TestLegacyExecuteCommandSerializesRecordedOutcomeWithHandleAuthorization(t *testing.T) {
+	ctx := newJobContext(t)
+	assertLegacyReplaySerialization(t, ctx, ctx, true)
+}
+
+func assertLegacyReplaySerialization(t *testing.T, ctx, adminCtx *MahresourcesContext, executeCommand bool) {
+	t.Helper()
+	registerCompatKind(t, ctx)
+	if adminCtx != ctx {
+		registerCompatKind(t, adminCtx)
+	}
+	access := jobs.Access{UserID: 7}
+	ref := &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: "replay-lock-handle"}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7),
+		Replay:      jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://example.test/a"}`)},
+		LegacyRefs:  []jobs.LegacyRef{*ref},
+	})
+	failed := finishJobFor(t, ctx, accepted, jobs.StateFailed)
+	first, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "same-legacy-retry",
+		ExpectedVersion: failed.Version, Actor: access, LegacyRef: ref,
+	})
+	if err != nil {
+		t.Fatalf("first keyed Retry: %v", err)
+	}
+	firstSuccessor, err := ctx.GetJob(first.SuccessorID)
+	if err != nil {
+		t.Fatalf("read first Retry successor: %v", err)
+	}
+	failedSuccessor := finishJobFor(t, ctx, firstSuccessor, jobs.StateFailed)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce atomic.Bool
+	var pauseNext atomic.Bool
+	pauseNext.Store(true)
+	callbackName := "test:legacy-replay-authorization-lock"
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
+		if db.Statement == nil || db.Statement.Table != "job_command_requests" || !pauseNext.CompareAndSwap(true, false) {
+			return
+		}
+		close(entered)
+		<-release
+	}); err != nil {
+		t.Fatalf("register command-outcome query gate: %v", err)
+	}
+	t.Cleanup(func() {
+		if releaseOnce.CompareAndSwap(false, true) {
+			close(release)
+		}
+		ctx.db.Callback().Query().Remove(callbackName)
+	})
+
+	replayDone := make(chan struct {
+		result   jobs.CommandResult
+		replayed bool
+		err      error
+	}, 1)
+	request := jobs.CommandRequest{
+		JobID: failedSuccessor.ID, Key: jobs.CommandRetry, IdempotencyKey: "same-legacy-retry",
+		ExpectedVersion: failedSuccessor.Version, Actor: access, LegacyRef: ref,
+	}
+	go func() {
+		result := jobs.CommandResult{}
+		replayed := true
+		var err error
+		if executeCommand {
+			result, err = ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), request)
+		} else {
+			result, replayed, err = ctx.JobService().ReplayCommand(context.Background(), ctx.jobDeps(), request)
+		}
+		replayDone <- struct {
+			result   jobs.CommandResult
+			replayed bool
+			err      error
+		}{result, replayed, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("keyed replay did not reach its recorded-outcome read")
+	}
+
+	adminDone := make(chan struct {
+		result jobs.CommandResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := adminCtx.JobService().ExecuteCommand(context.Background(), adminCtx.jobDeps(), jobs.CommandRequest{
+			JobID: failedSuccessor.ID, Key: jobs.CommandRetry, IdempotencyKey: "admin-moves-handle",
+			ExpectedVersion: failedSuccessor.Version, Actor: jobs.Access{Administrator: true},
+		})
+		adminDone <- struct {
+			result jobs.CommandResult
+			err    error
+		}{result, err}
+	}()
+	select {
+	case moved := <-adminDone:
+		if releaseOnce.CompareAndSwap(false, true) {
+			close(release)
+		}
+		<-replayDone
+		t.Fatalf("admin Retry moved the handle while the saved result was being read: %+v", moved)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if releaseOnce.CompareAndSwap(false, true) {
+		close(release)
+	}
+
+	replayed := <-replayDone
+	if replayed.err != nil || !replayed.replayed {
+		t.Fatalf("the keyed request did not replay: result=%+v replayed=%t err=%v", replayed.result, replayed.replayed, replayed.err)
+	}
+	if replayed.result.SuccessorID != first.SuccessorID {
+		t.Fatalf("the keyed replay returned successor %q, want original %q", replayed.result.SuccessorID, first.SuccessorID)
+	}
+	moved := <-adminDone
+	if moved.err != nil || moved.result.SuccessorID == "" || moved.result.SuccessorID == first.SuccessorID {
+		t.Fatalf("admin Retry did not move the handle after replay: result=%+v err=%v", moved.result, moved.err)
+	}
+	resolved, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), ref.Namespace, ref.Handle)
+	if err != nil || resolved != moved.result.SuccessorID {
+		t.Fatalf("handle resolved to %q, %v after the concurrent Retry; want %q", resolved, err, moved.result.SuccessorID)
+	}
+	if _, err := ctx.JobService().Get(ctx.jobDeps(), access, resolved); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("the successor is visible to the former owner: %v", err)
+	}
+}
+
 // TestALegacyDownloadHandleResolvesATerminalJobAfterRestart pins the compatibility
 // contract in the direction the process-local queue cannot answer.
 //
@@ -378,6 +626,14 @@ func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.
 	if _, err := ownerCtx.ResolveJobHandle(DownloadHandleNamespace, handle); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("the owner's own read of the moved handle = %v, want ErrNotFound", err)
 	}
+	_, err = ownerCtx.JobService().ExecuteCommand(context.Background(), ownerCtx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandPin, IdempotencyKey: "hidden-successor-replay",
+		ExpectedVersion: failed.Version, Actor: ownerCtx.jobAccess(),
+		LegacyRef: &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: handle},
+	})
+	if !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("legacy command against a hidden current successor = %v, want ErrNotFound", err)
+	}
 
 	// So the projection answers the same way rather than falling back to the ancestor's
 	// entry, and the raw in-place retry of that entry is refused: the work belongs to a
@@ -388,6 +644,10 @@ func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.
 	}
 	if !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("projecting a handle whose target is unreachable = %v, want ErrNotFound", err)
+	}
+	_, handleFound, err := ownerCtx.ProjectDownloadJobForRetry(handle)
+	if !handleFound || !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("retry projection found=%t err=%v, want an existing but hidden handle", handleFound, err)
 	}
 	if err := first.DownloadManager().Retry(handle); err == nil {
 		t.Fatalf("an in-place retry of a canonical entry was accepted")

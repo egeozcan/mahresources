@@ -198,13 +198,14 @@ func TestCanonicalJobSSEWaitsForAllCatchUpPagesBeforeControlMarker(t *testing.T)
 
 type legacyJobEventsContextStub struct {
 	manager *download_queue.DownloadManager
+	rows    []*download_queue.DownloadJob
 }
 
 func (s *legacyJobEventsContextStub) DownloadManager() *download_queue.DownloadManager {
 	return s.manager
 }
 func (s *legacyJobEventsContextStub) ProjectDownloadQueue() ([]*download_queue.DownloadJob, error) {
-	return nil, nil
+	return s.rows, nil
 }
 func (s *legacyJobEventsContextStub) ProjectDownloadJob(id string) (download_queue.DownloadProjection, error) {
 	if s.manager == nil {
@@ -269,6 +270,43 @@ func TestJobsEventsWithoutVersionKeepsLegacyWireFormat(t *testing.T) {
 	}
 	if canonical.called != 0 {
 		t.Fatal("unversioned request was sent to the canonical event reader")
+	}
+}
+
+func TestLegacyJobEventsKeepHandleAndAddCanonicalIdentity(t *testing.T) {
+	manager := download_queue.NewDownloadManager(nil, download_queue.TimeoutConfig{})
+	t.Cleanup(manager.Shutdown)
+	legacy := &legacyJobEventsContextStub{manager: manager, rows: []*download_queue.DownloadJob{{
+		ID: "legacy-handle-1", CanonicalJobID: "job-uuid-1", Status: download_queue.JobStatusPending,
+	}}}
+	canonical := &jobEventContextStub{}
+	response := newSSETestWriter()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/v1/jobs/events", nil).WithContext(requestCtx)
+	finished := make(chan struct{})
+	go func() {
+		GetJobsEventsHandler(legacy, canonical, false)(response, request)
+		close(finished)
+	}()
+	select {
+	case <-response.initWritten:
+		cancel()
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("legacy stream did not send its initial state")
+	}
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy stream did not stop after the client disconnected")
+	}
+
+	body := response.String()
+	if !strings.Contains(body, `"id":"legacy-handle-1"`) || !strings.Contains(body, `"canonicalJobId":"job-uuid-1"`) {
+		t.Fatalf("legacy stream did not preserve the handle and add its canonical identity: %q", body)
+	}
+	if strings.Contains(body, "id: ") || canonical.called != 0 {
+		t.Fatalf("unversioned stream acquired canonical cursor behavior: %q (canonical reads %d)", body, canonical.called)
 	}
 }
 

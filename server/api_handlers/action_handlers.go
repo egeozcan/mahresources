@@ -338,6 +338,7 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 				entry := map[string]any{"entity_id": eid, "job_id": jobID}
 				if canonicalJobID != "" {
 					entry["canonical_job_id"] = canonicalJobID
+					entry["canonicalJobId"] = canonicalJobID
 				}
 				jobs = append(jobs, entry)
 			}
@@ -365,6 +366,7 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 				body["job_id"] = jobs[0]["job_id"]
 				if canonical, ok := jobs[0]["canonical_job_id"]; ok {
 					body["canonical_job_id"] = canonical
+					body["canonicalJobId"] = canonical
 				}
 			} else {
 				ids := make([]string, 0, len(jobs))

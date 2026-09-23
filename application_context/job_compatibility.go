@@ -123,10 +123,10 @@ var queueBackedHandleNamespaces = []struct {
 // The namespaces are tried in order and the first hit wins. Each is a space of random
 // ids, so two spaces holding one string is not a case that arises; trying the download
 // space first is what keeps every already-deployed client on exactly the path it had.
-func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snapshot, string, error) {
+func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snapshot, string, string, bool, error) {
 	service, err := ctx.requireJobService()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", false, err
 	}
 	for _, candidate := range queueBackedHandleNamespaces {
 		jobID, err := service.ResolveLegacyHandle(ctx.jobDeps(), candidate.Namespace, id)
@@ -135,7 +135,7 @@ func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snaps
 				// Not a handle in this space. It may be one in the next, or a raw queue id.
 				continue
 			}
-			return nil, "", err
+			return nil, "", "", false, err
 		}
 		// The handle exists, so the Job it *currently* names is the answer, and this
 		// principal's authorization for that Job is the next question — not a reason to
@@ -145,11 +145,11 @@ func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snaps
 		// work the asker was just refused.
 		resolved, err := service.Get(ctx.jobDeps(), ctx.jobAccess(), jobID)
 		if err != nil {
-			return nil, "", err
+			return nil, candidate.Source, candidate.Namespace, true, err
 		}
-		return &resolved, candidate.Source, nil
+		return &resolved, candidate.Source, candidate.Namespace, true, nil
 	}
-	return nil, "", nil
+	return nil, "", "", false, nil
 }
 
 // ProjectDownloadJob answers the legacy row one download identifier currently names.
@@ -167,20 +167,33 @@ func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snaps
 // A raw queue id that no handle names is still resolved as an entry, which is what
 // keeps every legacy client that has an id from before this release working.
 func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.DownloadProjection, error) {
+	projection, _, err := ctx.ProjectDownloadJobForRetry(id)
+	return projection, err
+}
+
+// ProjectDownloadJobForRetry also reports whether the id resolved through a
+// durable handle before authorization. Retry needs that distinction to avoid
+// treating a hidden current successor like an absent handle and falling back to
+// the process-local queue entry for its ancestor.
+func (ctx *MahresourcesContext) ProjectDownloadJobForRetry(id string) (download_queue.DownloadProjection, bool, error) {
 	projection := download_queue.DownloadProjection{ID: id}
 	if ctx == nil {
-		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+		return projection, false, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
 	}
 
 	var canonical *jobs.Snapshot
 	source := download_queue.JobSourceDownload
+	legacyNamespace := ""
+	handleFound := false
 	if ctx.JobService() != nil {
-		resolved, resolvedSource, err := ctx.resolveQueueBackedHandle(id)
+		resolved, resolvedSource, resolvedNamespace, found, err := ctx.resolveQueueBackedHandle(id)
+		handleFound = found
 		switch {
 		case err != nil:
-			return projection, err
+			return projection, handleFound, err
 		case resolved != nil:
 			canonical, source = resolved, resolvedSource
+			legacyNamespace = resolvedNamespace
 		}
 	}
 
@@ -188,6 +201,7 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 		projection.CanonicalJobID = canonical.ID
 		projection.CanonicalVersion = canonical.Version
 		projection.CanonicalState = string(canonical.State)
+		projection.LegacyNamespace = legacyNamespace
 		if entry, ok := ctx.downloadManager.GetJobByCanonicalJobID(canonical.ID); ok {
 			projection.Entry = entry
 			// The live entry wins while it is not behind the record. It is the thing
@@ -198,10 +212,10 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 			// is finished is the one direction that misleads.
 			if !canonical.Terminal() || downloadRowTerminal(entry) {
 				projection.Row = downloadRowFromEntry(entry, id, canonical.ID)
-				return projection, nil
+				return projection, handleFound, nil
 			}
 			projection.Row = downloadRowFromJob(*canonical, id, source)
-			return projection, nil
+			return projection, handleFound, nil
 		}
 		// No queue entry in this process. The durable Job is what answers, whatever
 		// state it reached: a handle onto finished work still names that work, and the
@@ -212,22 +226,22 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 		// deletion, and a client that kept one id may still read its outcome and ask
 		// for a Retry.
 		projection.Row = downloadRowFromJob(*canonical, id, source)
-		return projection, nil
+		return projection, handleFound, nil
 	}
 
 	entry, ok := ctx.downloadManager.GetJob(id)
 	if !ok {
-		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+		return projection, handleFound, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
 	}
 	// Visibility is the queue's own rule for a row that has no Job behind it: a
 	// non-administrator sees only what they submitted, and an ownerless row is
 	// nobody's.
 	if !ctx.downloadRowVisible(entry) {
-		return projection, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
+		return projection, handleFound, fmt.Errorf("%w: download %s", jobs.ErrNotFound, id)
 	}
 	projection.Entry = entry
 	projection.Row = downloadRowFromEntry(entry, id, entry.CanonicalJobID)
-	return projection, nil
+	return projection, handleFound, nil
 }
 
 // downloadRowVisible applies the queue's visibility rule to one entry, at the

@@ -208,6 +208,10 @@ type DownloadProjection struct {
 	CanonicalJobID   string
 	CanonicalVersion uint64
 	CanonicalState   string
+	// LegacyNamespace is the durable handle namespace that resolved ID. Command
+	// handlers pass the pair back to the Job service, which checks it atomically
+	// against the projected canonical identity before applying a control.
+	LegacyNamespace string
 }
 
 // SubmissionOptions carries the durable identity a submission was *already*

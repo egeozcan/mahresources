@@ -1992,16 +1992,17 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 	}
 
 	return plugin_system.ProjectedActionJob{
-		Handle:     handle,
-		Plugin:     summary.Plugin,
-		ActionID:   actionID,
-		Label:      label,
-		EntityType: entityType,
-		Status:     actionJobStatusFromState(projected.State),
-		Progress:   percent,
-		Message:    truncateTo(message, jobs.MaxProgressMessageBytes),
-		Owner:      projected.OwnerUserID,
-		CreatedAt:  projected.AcceptedAt,
+		Handle:         handle,
+		CanonicalJobID: projected.ID,
+		Plugin:         summary.Plugin,
+		ActionID:       actionID,
+		Label:          label,
+		EntityType:     entityType,
+		Status:         actionJobStatusFromState(projected.State),
+		Progress:       percent,
+		Message:        truncateTo(message, jobs.MaxProgressMessageBytes),
+		Owner:          projected.OwnerUserID,
+		CreatedAt:      projected.AcceptedAt,
 	}.ActionJob(), nil
 }
 
