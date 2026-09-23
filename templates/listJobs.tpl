@@ -130,7 +130,7 @@
                                     <template x-if="job.progress">
                                         <div class="mt-3 max-w-xl">
                                             <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600"><span x-text="progressText(job)"></span><span x-text="progressValue(job) === null ? 'In progress' : `${progressValue(job)}%`"></span></div>
-                                            <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(job)" :aria-valuetext="progressText(job)" :aria-label="'Job progress: ' + progressText(job)">
+                                            <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(job)" :aria-valuetext="progressAccessibleText(job)" :aria-label="(job.title || job.kind || 'Job') + ' progress: ' + progressAccessibleText(job)">
                                                 <div class="h-2 rounded bg-amber-800" :class="progressValue(job) === null ? 'w-full animate-pulse' : ''" :style="progressValue(job) === null ? '' : `width:${progressValue(job)}%`"></div>
                                             </div>
                                         </div>

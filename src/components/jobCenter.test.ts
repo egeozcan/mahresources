@@ -13,6 +13,7 @@ import {
     jobCenter,
     outputEndpoint,
     parseJobCenterURL,
+    progressAccessibleText,
     progressText,
     progressValue,
     reduceJobStreamEvent,
@@ -344,6 +345,7 @@ describe('canonical event reducer', () => {
         const job = { ...unfamiliarJob, progress: { phase: 'Scanning', completed: 0, total: null } };
         expect(progressText(job)).toBe('Scanning');
         expect(progressValue(job)).toBeNull();
+        expect(progressAccessibleText(job)).toBe('Scanning; 0 processed; total unknown');
         expect(progressValue({ progress: { completed: 1, total: 4 } })).toBe(25);
     });
 });
@@ -549,10 +551,12 @@ describe('Job Center templates', () => {
         expect(buildJobListURL({ filters: { command: 'retry' } })).toContain('command=retry');
     });
 
-    test('keeps state text and indeterminate progress readable without color', () => {
+    test('findings 41 and 113: paused and indeterminate progress stay visible and named', () => {
         expect(listTemplate).toContain('x-text="stateLabel(job)"');
+        expect(listTemplate).toContain('<template x-if="job.progress">');
         expect(listTemplate).toContain('role="progressbar"');
-        expect(listTemplate).toContain(':aria-valuetext="progressText(job)"');
+        expect(listTemplate).toContain(':aria-valuetext="progressAccessibleText(job)"');
+        expect(listTemplate).toContain("(job.title || job.kind || 'Job') + ' progress: '");
         expect(listTemplate).toContain(':aria-valuenow="progressValue(job)"');
     });
 

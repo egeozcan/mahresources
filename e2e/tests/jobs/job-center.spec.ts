@@ -51,6 +51,29 @@ async function waitForJobState(
 }
 
 test.describe('Job Center', () => {
+  test('findings 41 and 113: paused progress stays visible and unknown totals keep a named indeterminate bar', async ({ page }) => {
+    const acceptedAt = new Date().toISOString();
+    const jobs = [
+      { id: 'progress-paused', kind: 'remote-download', state: 'paused', version: 2,
+        title: 'Paused transfer', acceptedAt, progress: { completed: 20, total: 50, unit: 'MB' } },
+      { id: 'progress-unknown', kind: 'remote-download', state: 'running', version: 2,
+        title: 'Unknown size transfer', acceptedAt, progress: { completed: 7, total: null, unit: 'bytes' } },
+    ];
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs, nextCursor: null } }));
+    await page.route('**/v1/jobs/summary', route => route.fulfill({ json: { byState: { paused: 1, running: 1 } } }));
+
+    await page.goto('/jobs?view=all');
+    const paused = page.locator('[data-job-id="progress-paused"]');
+    await expect(paused).toContainText('Paused');
+    await expect(paused.getByRole('progressbar', { name: /Paused transfer progress/ })).toHaveAttribute('aria-valuenow', '40');
+
+    const unknown = page.locator('[data-job-id="progress-unknown"]');
+    const bar = unknown.getByRole('progressbar', { name: /Unknown size transfer progress/ });
+    await expect(bar).toBeVisible();
+    await expect(bar).not.toHaveAttribute('aria-valuenow', /.+/);
+    await expect(bar).toHaveAttribute('aria-valuetext', /7 bytes processed; total unknown/);
+  });
+
   test('the legacy Downloads page redirects to the canonical list with compatible filters', async ({ page }) => {
     const response = await page.goto('/downloads?URL=legacy-search&Status=failed&CreatedAfter=2026-09-01');
 

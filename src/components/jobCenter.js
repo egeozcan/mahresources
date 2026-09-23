@@ -288,6 +288,18 @@ export function progressValue(job) {
     return Math.max(0, Math.min(100, Math.round((progress.completed / progress.total) * 100)));
 }
 
+export function progressAccessibleText(job) {
+    const label = progressText(job);
+    if (progressValue(job) !== null) return label;
+    const progress = job?.progress || {};
+    const completed = progress.completed;
+    if (completed !== null && completed !== undefined) {
+        const amount = `${completed}${progress.unit ? ` ${progress.unit}` : ''} processed`;
+        return `${progress.message || progress.phase ? `${label}; ` : ''}${amount}; total unknown`;
+    }
+    return `${label}; total unknown`;
+}
+
 function safeJSON(response) {
     return response.json().catch(() => ({}));
 }
@@ -814,6 +826,7 @@ export function jobCenter(options = {}) {
 
         progressText(job) { return progressText(job); },
         progressValue(job) { return progressValue(job); },
+        progressAccessibleText(job) { return progressAccessibleText(job); },
         dateTimeLocalValue(value) { return dateTimeLocalValue(value); },
         stateLabel(job) { return stateLabel(job); },
         stateClass(job) { return classifyJobState(job); },
