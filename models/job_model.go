@@ -522,6 +522,11 @@ type JobCommandRequest struct {
 	// key reused for a different request is refused rather than answered with the
 	// other request's outcome.
 	RequestHash string `gorm:"size:64;not null" json:"requestHash"`
+	// BulkEligible records whether the command was advertised for bulk use in the
+	// transaction that claimed it. A later bulk retry may replay a result only if
+	// this was true; the bit is separate from RequestHash so a valid bulk outcome
+	// can still replay through the single-command surface.
+	BulkEligible bool `gorm:"not null;default:false" json:"-"`
 
 	// Status is running, succeeded or failed. Code, Message, Detail and
 	// SuccessorJobID are the recorded outcome a repeat is answered with.

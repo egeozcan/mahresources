@@ -1289,6 +1289,72 @@ func TestBulkCommandReplaysBeforeCheckingCurrentAdvertisement(t *testing.T) {
 	}
 }
 
+// TestSingleCommandOutcomeDoesNotBecomeBulkEligibleOnReplay verifies that an
+// idempotent replay does not let a single-only command cross the bulk boundary.
+// A bulk-origin outcome remains reusable by the single surface, which preserves
+// the lost-response case when a client retries through a different route.
+func TestSingleCommandOutcomeDoesNotBecomeBulkEligibleOnReplay(t *testing.T) {
+	h := newCommandHarness(t)
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	singleOnly := h.acceptReplayable(&owner)
+	bulkCapable := h.acceptReplayable(&owner)
+
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		return []Command{{Key: "inspect", Label: "Inspect", Bulk: commandContext.Snapshot.ID == bulkCapable.ID}}, nil
+	}
+
+	single, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(singleOnly.ID, "inspect", "idem-single-only", viewer))
+	if err != nil {
+		t.Fatalf("the single-only command failed: %v", err)
+	}
+	requireResult(t, "the single-only command", single, CommandStatusSucceeded, CommandCodeApplied)
+
+	bulk := h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{singleOnly.ID}, Key: "inspect", IdempotencyKey: "idem-single-only",
+		Actor: viewer, Origin: "api",
+	})
+	if len(bulk) != 1 || bulk[0].Status != CommandStatusFailed || bulk[0].Code != CommandCodeNotAdvertised {
+		t.Fatalf("replaying the single-only command as bulk answered %+v, want a bulk eligibility refusal", bulk)
+	}
+
+	// The failed mode crossing does not alter the recorded request or block its
+	// original single-command replay.
+	single, err = h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(singleOnly.ID, "inspect", "idem-single-only", viewer))
+	if err != nil {
+		t.Fatalf("replaying the single-only command through its original surface: %v", err)
+	}
+	requireResult(t, "the repeated single-only command", single, CommandStatusSucceeded, CommandCodeApplied)
+	if rows := commandRequestRows(t, h.deps, singleOnly.ID); len(rows) != 1 || rows[0].BulkEligible {
+		t.Fatalf("single-only command has recorded requests %+v, want one non-bulk-eligible request", rows)
+	}
+
+	// A command that was bulk-capable when first executed can replay across to
+	// the single surface even after a response was lost.
+	bulk = h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{bulkCapable.ID}, Key: "inspect", IdempotencyKey: "idem-bulk-origin",
+		Actor: viewer, Origin: "api",
+	})
+	if len(bulk) != 1 {
+		t.Fatalf("the bulk-capable command answered %d results, want one", len(bulk))
+	}
+	requireResult(t, "the bulk-capable command", bulk[0], CommandStatusSucceeded, CommandCodeApplied)
+	if rows := commandRequestRows(t, h.deps, bulkCapable.ID); len(rows) != 1 || !rows[0].BulkEligible {
+		t.Fatalf("bulk-capable command has recorded requests %+v, want one bulk-eligible request", rows)
+	}
+	single, err = h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(bulkCapable.ID, "inspect", "idem-bulk-origin", viewer))
+	if err != nil {
+		t.Fatalf("replaying the bulk command through the single surface: %v", err)
+	}
+	requireResult(t, "the bulk-to-single replay", single, CommandStatusSucceeded, CommandCodeApplied)
+	if h.adapter.commandCount() != 2 {
+		t.Fatalf("the adapter ran %d times, want one execution for each Job", h.adapter.commandCount())
+	}
+}
+
 // TestCommandRefusesRequestsOutsideItsBounds is the boundary half of the command
 // contract: a malformed request is refused before anything is read, nothing is
 // recorded for it, and no executor ever hears about it.

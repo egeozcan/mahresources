@@ -163,6 +163,61 @@ func TestBulkCommandReplaysRunningAndCompletedOutcomeBeforeAdvertisementPG(t *te
 	}
 }
 
+// TestSingleCommandOutcomeDoesNotBecomeBulkEligibleOnReplayPG pins the two
+// cross-surface directions on PostgreSQL: a stored single-only command cannot
+// be replayed as a bulk success, while a valid bulk command can be replayed
+// through the single route after its response is lost.
+func TestSingleCommandOutcomeDoesNotBecomeBulkEligibleOnReplayPG(t *testing.T) {
+	h := newCommandHarnessOn(t, newPGDeps(t))
+	owner := uint(7)
+	viewer := Access{UserID: owner}
+	singleOnly := h.acceptReplayable(&owner)
+	bulkCapable := h.acceptReplayable(&owner)
+
+	h.adapter.advertise = func(_ context.Context, commandContext CommandContext) ([]Command, error) {
+		return []Command{{Key: "inspect", Label: "Inspect", Bulk: commandContext.Snapshot.ID == bulkCapable.ID}}, nil
+	}
+
+	single, err := h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(singleOnly.ID, "inspect", "idem-pg-single-only", viewer))
+	if err != nil {
+		t.Fatalf("the single-only command failed: %v", err)
+	}
+	if single.Status != CommandStatusSucceeded || single.Code != CommandCodeApplied {
+		t.Fatalf("the single-only command answered %s/%s, want succeeded/applied", single.Status, single.Code)
+	}
+
+	bulk := h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{singleOnly.ID}, Key: "inspect", IdempotencyKey: "idem-pg-single-only",
+		Actor: viewer, Origin: "api",
+	})
+	if len(bulk) != 1 || bulk[0].Status != CommandStatusFailed || bulk[0].Code != CommandCodeNotAdvertised {
+		t.Fatalf("replaying the single-only command as bulk answered %+v, want a bulk eligibility refusal", bulk)
+	}
+	if rows := commandRequestRows(t, h.deps, singleOnly.ID); len(rows) != 1 || rows[0].BulkEligible {
+		t.Fatalf("single-only command has recorded requests %+v, want one non-bulk-eligible request", rows)
+	}
+
+	bulk = h.svc.ExecuteBulkCommand(context.Background(), h.deps, BulkCommandRequest{
+		JobIDs: []string{bulkCapable.ID}, Key: "inspect", IdempotencyKey: "idem-pg-bulk-origin",
+		Actor: viewer, Origin: "api",
+	})
+	if len(bulk) != 1 || bulk[0].Status != CommandStatusSucceeded || bulk[0].Code != CommandCodeApplied {
+		t.Fatalf("the bulk-capable command answered %+v, want succeeded/applied", bulk)
+	}
+	if rows := commandRequestRows(t, h.deps, bulkCapable.ID); len(rows) != 1 || !rows[0].BulkEligible {
+		t.Fatalf("bulk-capable command has recorded requests %+v, want one bulk-eligible request", rows)
+	}
+	single, err = h.svc.ExecuteCommand(context.Background(), h.deps,
+		h.request(bulkCapable.ID, "inspect", "idem-pg-bulk-origin", viewer))
+	if err != nil || single.Status != CommandStatusSucceeded || single.Code != CommandCodeApplied {
+		t.Fatalf("bulk-to-single replay answered %+v with error %v, want succeeded/applied", single, err)
+	}
+	if h.adapter.commandCount() != 2 {
+		t.Fatalf("the adapter ran %d times, want one execution for each Job", h.adapter.commandCount())
+	}
+}
+
 // TestRetryChainAdmitsOneSuccessorAcrossConnectionsPG races two Retries of one
 // Job, each with its own idempotency key, on two connections. The ancestor's row
 // is taken FOR UPDATE before the successor predicate is read, so the loser reads

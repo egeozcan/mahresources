@@ -661,6 +661,24 @@ func completeCommandRequest(tx *gorm.DB, id string, outcome commandOutcome, now 
 	return nil
 }
 
+// recordCommandBulkEligibility stores the bulk capability rechecked under the
+// same transaction as the claim. This is what lets a later bulk replay
+// distinguish an outcome recorded for a single-only command from one that was
+// eligible to run in bulk, even after the command's current advertisement has
+// changed.
+func recordCommandBulkEligibility(tx *gorm.DB, id string, eligible bool) error {
+	result := tx.Model(&models.JobCommandRequest{}).
+		Where("id = ? AND status = ?", id, models.JobCommandStatusRunning).
+		Update("bulk_eligible", eligible)
+	if result.Error != nil {
+		return fmt.Errorf("jobs: record command bulk eligibility: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: command request %s changed while its eligibility was recorded", ErrVersionConflict, id)
+	}
+	return nil
+}
+
 // newCommandClaim builds the idempotency row one command request is recorded
 // under.
 func newCommandClaim(request CommandRequest, now time.Time) models.JobCommandRequest {
@@ -769,6 +787,15 @@ func claimCommandRequest(tx *gorm.DB, claim models.JobCommandRequest) (*models.J
 func (s *Service) replayCommandResult(deps Deps, request CommandRequest, row models.JobCommandRequest) (CommandResult, error) {
 	if row.RequestHash != commandRequestHash(request) {
 		return CommandResult{}, fmt.Errorf("%w: job %s %s", ErrCommandKeyReused, row.JobID, row.CommandKey)
+	}
+	if request.requireBulk && !row.BulkEligible {
+		job, err := loadVisibleJob(deps.DB, request.Actor, row.JobID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return refusedResult(job, request, CommandCodeNotAdvertised,
+			"the job did not offer that command in bulk when it was run",
+			fmt.Errorf("%w: job %s was not bulk eligible", ErrCommandNotAdvertised, row.JobID))
 	}
 	if row.Status == models.JobCommandStatusRunning {
 		return CommandResult{
@@ -990,8 +1017,11 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 			return nil
 		}
 
-		current, err := s.recheckCommand(ctx, deps, tx, request)
+		current, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
 		if err != nil {
+			return err
+		}
+		if err := recordCommandBulkEligibility(tx, claim.ID, bulkEligible); err != nil {
 			return err
 		}
 		target, err := prepareControlIntent(tx, current, request.Key, now)
@@ -1075,33 +1105,34 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 //
 // The refusals are typed and write nothing: the claim, the effect and the
 // outcome still commit together or not at all.
-func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest) (models.Job, error) {
+func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest) (models.Job, bool, error) {
 	if request.LegacyRef != nil {
 		if err := recheckLegacyCommandTarget(tx, request.Actor, *request.LegacyRef, request.JobID); err != nil {
-			return models.Job{}, err
+			return models.Job{}, false, err
 		}
 	}
 	current, err := loadVisibleJob(tx, request.Actor, request.JobID)
 	if err != nil {
-		return models.Job{}, err
+		return models.Job{}, false, err
 	}
 	if current.Version != request.ExpectedVersion {
-		return models.Job{}, fmt.Errorf("%w: job %s changed while the command was being claimed",
+		return models.Job{}, false, fmt.Errorf("%w: job %s changed while the command was being claimed",
 			ErrVersionConflict, current.ID)
 	}
 	scoped := deps
 	scoped.DB = tx
 	offered, err := s.advertisedCommands(ctx, scoped, request.Actor, current)
 	if err != nil {
-		return models.Job{}, err
+		return models.Job{}, false, err
 	}
 	if !commandOffered(offered, request) {
 		if request.requireBulk {
-			return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s in bulk", ErrCommandNotAdvertised, current.ID, request.Key)
+			return models.Job{}, false, fmt.Errorf("%w: job %s no longer offers %s in bulk", ErrCommandNotAdvertised, current.ID, request.Key)
 		}
-		return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, current.ID, request.Key)
+		return models.Job{}, false, fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, current.ID, request.Key)
 	}
-	return current, nil
+	command, _ := commandByKey(offered, request.Key)
+	return current, command.Bulk, nil
 }
 
 // recheckLegacyCommandTarget binds a legacy command to the exact mapping the
@@ -1388,8 +1419,11 @@ func (s *Service) executeHostCommand(ctx context.Context, deps Deps, request Com
 			replayed, replayErr = &result, err
 			return nil
 		}
-		current, err := s.recheckCommand(ctx, deps, tx, request)
+		current, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
 		if err != nil {
+			return err
+		}
+		if err := recordCommandBulkEligibility(tx, claim.ID, bulkEligible); err != nil {
 			return err
 		}
 		scoped := deps
@@ -1566,8 +1600,11 @@ func (s *Service) executeLineageCommand(ctx context.Context, deps Deps, request 
 // createSuccessor accepts the linked Job one Retry or Repeat asks for, inside the
 // transaction that claimed the command.
 func (s *Service) createSuccessor(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest, linkType LinkType, claimID string, now time.Time, settled **CommandResult) error {
-	job, err := s.recheckCommand(ctx, deps, tx, request)
+	job, bulkEligible, err := s.recheckCommand(ctx, deps, tx, request)
 	if err != nil {
+		return err
+	}
+	if err := recordCommandBulkEligibility(tx, claimID, bulkEligible); err != nil {
 		return err
 	}
 	if err := lockRetryChain(tx, job); err != nil {
