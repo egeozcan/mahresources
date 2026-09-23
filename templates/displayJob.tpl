@@ -24,6 +24,24 @@
                 </div>
             </header>
 
+            <section aria-labelledby="job-context-heading" class="rounded border border-stone-200 bg-white p-4">
+                <h2 id="job-context-heading" class="font-mono text-sm font-semibold text-stone-800">Job context</h2>
+                <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+                    <div x-show="detail.ownerUserId !== null && detail.ownerUserId !== undefined">
+                        <dt class="text-xs text-stone-500">Owner</dt>
+                        <dd class="break-all font-mono text-stone-800" x-text="detail.ownerUserId"></dd>
+                    </div>
+                    <div x-show="detail.actorUserId !== null && detail.actorUserId !== undefined">
+                        <dt class="text-xs text-stone-500">Actor</dt>
+                        <dd class="break-all font-mono text-stone-800" x-text="detail.actorUserId"></dd>
+                    </div>
+                    <div x-show="detail.origin">
+                        <dt class="text-xs text-stone-500">Origin</dt>
+                        <dd class="break-words text-stone-800" x-text="detail.origin"></dd>
+                    </div>
+                </dl>
+            </section>
+
             <p x-show="notice" x-cloak class="rounded border border-stone-200 bg-white p-3 text-sm text-stone-800" x-text="notice"></p>
 
             <template x-if="detail.progress">
@@ -59,9 +77,10 @@
                             <div class="min-w-0">
                                 <p class="break-words text-sm font-medium text-stone-800" x-text="output.label || output.key"></p>
                                 <p class="mt-0.5 text-xs text-stone-500"><span x-text="output.type"></span><span> · </span><span x-text="output.availability"></span></p>
+                                <time x-show="output.expiresAt" class="mt-0.5 block text-xs text-stone-500" :datetime="output.expiresAt" x-text="output.expiresAt ? 'Expires ' + new Date(output.expiresAt).toLocaleString() : ''"></time>
                             </div>
                             <template x-if="outputEndpoint(output) && output.availability === 'available'">
-                                <a :href="outputEndpoint(output)" :aria-label="'Open ' + (output.label || output.key)" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900">Open output</a>
+                                <a :href="outputEndpoint(output)" :aria-label="(output.type === 'log' ? 'Open log ' : 'Open ') + (output.label || output.key)" class="rounded border border-stone-300 px-3 py-1.5 text-sm text-amber-900 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-900" x-text="output.type === 'log' ? 'Open log' : 'Open output'"></a>
                             </template>
                             <span x-show="output.availability !== 'available'" class="text-xs text-stone-600" x-text="output.availability === 'expired' ? 'Expired' : 'Unavailable'"></span>
                         </li>
@@ -93,6 +112,18 @@
                     <span class="text-xs text-stone-500">Earlier events are not announced again.</span>
                 </div>
                 <p x-show="timelineError" class="mt-2 text-sm text-stone-600" x-text="timelineError"></p>
+                <section x-show="warningEvents().length" x-cloak aria-labelledby="job-warnings-heading" class="mt-3 rounded border border-amber-300 bg-amber-50 p-3">
+                    <h3 id="job-warnings-heading" class="font-mono text-sm font-semibold text-amber-950">Warnings</h3>
+                    <ul class="mt-2 space-y-2">
+                        <template x-for="event in warningEvents()" :key="event.id || event.sequence">
+                            <li class="break-words text-sm text-amber-950">
+                                <span class="font-medium" x-text="event.type === 'events-truncated' ? 'Earlier event history omitted' : 'Warning'"></span>
+                                <time x-show="event.createdAt" class="ml-1 text-xs text-amber-900" :datetime="event.createdAt" x-text="event.createdAt ? new Date(event.createdAt).toLocaleString() : ''"></time>
+                                <pre x-show="event.detail" class="mt-1 whitespace-pre-wrap break-words text-xs text-amber-950" x-text="typeof event.detail === 'string' ? event.detail : JSON.stringify(event.detail)"></pre>
+                            </li>
+                        </template>
+                    </ul>
+                </section>
                 <ol class="mt-3 space-y-3 border-l border-stone-300 pl-4" data-testid="job-timeline">
                     <template x-for="event in timeline" :key="event.id || event.sequence">
                         <li class="relative">

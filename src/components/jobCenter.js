@@ -4,6 +4,7 @@ export const JOB_STATES = Object.freeze([
     'scheduled', 'queued', 'running', 'paused', 'blocked',
     'succeeded', 'failed', 'cancelled', 'interrupted',
 ]);
+export const JOB_COMMAND_FILTER_ENABLED = false;
 
 const ACTIVE_STATES = ['scheduled', 'queued', 'running', 'paused'];
 const ATTENTION_STATES = ['blocked', 'failed', 'interrupted'];
@@ -44,6 +45,7 @@ export function parseJobCenterURL(input = globalThis.location?.search || '') {
         view: params.get('view') === 'all' || params.has('cursor') ? 'all' : 'home',
         filters: {
             search: params.get('search') || '',
+            command: params.get('command') || '',
             kinds: params.getAll('kind'),
             states: params.getAll('state'),
             origins: params.getAll('origin'),
@@ -64,6 +66,7 @@ export function serializeJobCenterURL(state) {
     if (state.view === 'all') params.set('view', 'all');
     const filters = state.filters || {};
     if (filters.search) params.set('search', filters.search);
+    if (filters.command) params.set('command', filters.command);
     for (const [key, parameter] of Object.entries(FILTER_LIST_KEYS)) {
         for (const value of filters[key] || []) {
             if (value !== '') params.append(parameter, value);
@@ -105,6 +108,12 @@ export function advertisedCommands(job) {
 
 export function advertisedOutputs(job) {
     return Array.isArray(job?.outputs) ? job.outputs : [];
+}
+
+export function warningEvents(events) {
+    return (Array.isArray(events) ? events : []).filter(event =>
+        event?.type === 'warning' || event?.type === 'events-truncated',
+    );
 }
 
 export function commandLabel(command) {
@@ -160,7 +169,7 @@ function eventJob(message) {
     return null;
 }
 
-export function reduceJobStreamEvent(jobs, message, lastSequence = 0) {
+export function reduceJobStreamEvent(jobs, message, lastSequence = 0, options = {}) {
     const parsedSequence = streamSequence(message?.deliverySequence ?? message?.delivery_sequence ?? message?.lastEventId ?? 0);
     const sequence = Number.isFinite(parsedSequence) ? parsedSequence : 0;
     if (sequence > 0 && sequence <= Number(lastSequence || 0)) {
@@ -183,15 +192,27 @@ export function reduceJobStreamEvent(jobs, message, lastSequence = 0) {
         };
     }
 
-    return reduceJobSnapshot(jobs, incoming, message?.replay === true, nextSequence);
+    return reduceJobSnapshot(jobs, incoming, message?.replay === true, nextSequence, options);
 }
 
-export function reduceJobSnapshot(jobs, incoming, replay = false, lastSequence = 0) {
+export function reduceJobSnapshot(jobs, incoming, replay = false, lastSequence = 0, options = {}) {
     if (!incoming?.id) {
         return { jobs, lastSequence, changed: false, announcement: '', previousClass: '', nextClass: '' };
     }
     const index = jobs.findIndex(job => job.id === incoming.id);
     const current = index >= 0 ? jobs[index] : null;
+    if (!current && options.allowInsert !== true) {
+        return {
+            jobs,
+            lastSequence,
+            changed: false,
+            ignored: true,
+            jobId: incoming.id,
+            announcement: '',
+            previousClass: '',
+            nextClass: '',
+        };
+    }
     const incomingVersion = Number(incoming.version || 0);
     const currentVersion = Number(current?.version || 0);
     if (current && incomingVersion > 0 && incomingVersion < currentVersion) {
@@ -242,6 +263,13 @@ function streamSequence(value) {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
+export function streamCursorSequence(value) {
+    const cursor = String(value || '');
+    if (!/^v2:\d+$/.test(cursor)) return null;
+    const sequence = Number(cursor.slice(3));
+    return Number.isFinite(sequence) ? sequence : null;
+}
+
 export function progressText(job) {
     const progress = job?.progress || {};
     if (progress.message) return progress.message;
@@ -273,6 +301,7 @@ export function jobCenter(options = {}) {
         detailId: options.detailId || '',
         view: 'home',
         filters: {},
+        commandFilterEnabled: JOB_COMMAND_FILTER_ENABLED,
         jobs: [],
         sections: { attention: [], active: [], finished: [], other: [] },
         summary: null,
@@ -290,8 +319,12 @@ export function jobCenter(options = {}) {
         connectionStatus: 'disconnected',
         eventSource: null,
         lastSequence: 0,
+        streamCaughtUp: false,
         _liveRegion: null,
         _refreshTimer: null,
+        _streamRefreshGeneration: 0,
+        _streamRefreshRequested: false,
+        _streamRefreshPromise: null,
 
         init() {
             const state = parseJobCenterURL(globalThis.location?.search || '');
@@ -308,6 +341,8 @@ export function jobCenter(options = {}) {
 
         destroy() {
             if (this._refreshTimer) clearTimeout(this._refreshTimer);
+            this._streamRefreshGeneration += 1;
+            this._streamRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
         },
@@ -346,9 +381,56 @@ export function jobCenter(options = {}) {
             this.summary = await this.fetchJSON('/v1/jobs/summary');
         },
 
+        scheduleStreamRefresh() {
+            this._streamRefreshGeneration += 1;
+            this._streamRefreshRequested = true;
+            if (this._streamRefreshPromise) return;
+            if (this._refreshTimer) clearTimeout(this._refreshTimer);
+            const generation = this._streamRefreshGeneration;
+            this._refreshTimer = setTimeout(() => {
+                this._refreshTimer = null;
+                this._streamRefreshRequested = false;
+                this._streamRefreshPromise = this.refreshStreamState(generation)
+                    .catch(() => {})
+                    .finally(() => {
+                        this._streamRefreshPromise = null;
+                        if (this._streamRefreshRequested) this.scheduleStreamRefresh();
+                    });
+            }, 150);
+        },
+
+        async refreshStreamState(generation) {
+            if (this.detailId) return;
+            const stateKey = JSON.stringify({ view: this.view, filters: this.filters });
+            const refreshHome = this.view === 'home' && !this.hasFilters();
+            const requests = [this.fetchJSON('/v1/jobs/summary')];
+            if (refreshHome) {
+                const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
+                requests.push(Promise.all([
+                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: ATTENTION_STATES, limit: 6 })),
+                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: ACTIVE_STATES, limit: 6 })),
+                    this.fetchJSON(buildJobListURL({ filters: filterBase, states: FINISHED_STATES, limit: 6 })),
+                ]));
+            }
+            const [summary, homePages] = await Promise.all(requests);
+            if (generation !== this._streamRefreshGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return;
+            this.summary = summary;
+            if (refreshHome && homePages) {
+                this.sections = {
+                    attention: preserveJobUIState(this.jobs, pageJobs(homePages[0])),
+                    active: preserveJobUIState(this.jobs, pageJobs(homePages[1])),
+                    finished: preserveJobUIState(this.jobs, pageJobs(homePages[2])),
+                    other: [],
+                };
+                this.jobs = uniqueJobs(Object.values(this.sections).flat());
+                this.nextCursor = null;
+            }
+        },
+
         hasFilters() {
             return !!(
                 this.filters.search || this.filters.kinds?.length || this.filters.states?.length || this.filters.origins?.length ||
+                this.filters.command ||
                 this.filters.ownerId || this.filters.actorId || this.filters.acceptedAfter || this.filters.acceptedBefore ||
                 this.filters.relationship ||
                 (this.filters.pinned !== null && this.filters.pinned !== undefined) ||
@@ -364,9 +446,9 @@ export function jobCenter(options = {}) {
                 this.fetchJSON(buildJobListURL({ filters: filterBase, states: FINISHED_STATES, limit: 6 })),
             ]);
             const sections = {
-                attention: pageJobs(attention),
-                active: pageJobs(active),
-                finished: pageJobs(finished),
+                attention: preserveJobUIState(this.jobs, pageJobs(attention)),
+                active: preserveJobUIState(this.jobs, pageJobs(active)),
+                finished: preserveJobUIState(this.jobs, pageJobs(finished)),
                 other: [],
             };
             this.sections = sections;
@@ -380,7 +462,7 @@ export function jobCenter(options = {}) {
                 cursor,
                 limit: 50,
             }));
-            const rows = pageJobs(payload);
+            const rows = preserveJobUIState(this.jobs, pageJobs(payload));
             this.jobs = append ? uniqueJobs([...this.jobs, ...rows]) : rows;
             this.nextCursor = payload.nextCursor || null;
             this.sections = splitJobSections(this.jobs);
@@ -466,6 +548,7 @@ export function jobCenter(options = {}) {
             const csv = key => String(data.get(key) || '').split(',').map(value => value.trim()).filter(Boolean);
             this.filters = {
                 search: String(data.get('search') || '').trim(),
+                command: String(data.get('command') || '').trim(),
                 kinds: csv('kind'),
                 states: csv('state'),
                 origins: csv('origin'),
@@ -601,10 +684,24 @@ export function jobCenter(options = {}) {
             this.connectionStatus = 'connecting';
             this.eventSource = new EventSource('/v1/jobs/events?version=2');
             this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => { this.connectionStatus = 'reconnecting'; });
+            this.eventSource.addEventListener('error', () => {
+                this.connectionStatus = 'reconnecting';
+                this.streamCaughtUp = false;
+            });
+            this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
             for (const eventName of ['message', 'job']) {
                 this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
             }
+        },
+
+        markStreamCaughtUp(event) {
+            let boundary;
+            try { boundary = JSON.parse(event.data); }
+            catch { return; }
+            const sequence = streamCursorSequence(boundary?.cursor);
+            if (sequence === null) return;
+            this.lastSequence = Math.max(this.lastSequence, sequence);
+            this.streamCaughtUp = true;
         },
 
         handleStreamMessage(event) {
@@ -612,15 +709,21 @@ export function jobCenter(options = {}) {
             try { message = JSON.parse(event.data); }
             catch { return; }
             if (!message.deliverySequence && event.lastEventId) message.lastEventId = event.lastEventId;
+            message.replay = message.replay === true || !this.streamCaughtUp;
+            const announceSnapshot = !message.replay;
+            const previousSequence = this.lastSequence;
             const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence);
             this.lastSequence = result.lastSequence;
-            if (!result.changed) return;
+            if (this.lastSequence > previousSequence) this.scheduleStreamRefresh();
+            if (!result.changed) {
+                return;
+            }
             if (result.needsSnapshot) {
+                if (!this.jobs.some(job => job.id === result.jobId)) return;
                 this.fetchJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`)
                     .then(payload => {
                         const snapshot = payload.job || payload;
-                        if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, true);
-                        else this.refreshCurrentView();
+                        if (this.jobs.some(job => job.id === snapshot.id)) this.applyStreamSnapshot(snapshot, null, announceSnapshot);
                     })
                     .catch(() => {});
                 return;
@@ -663,6 +766,7 @@ export function jobCenter(options = {}) {
         commandLabel(command) { return commandLabel(command); },
         advertisedCommands(job) { return advertisedCommands(this.details[job.id] || job); },
         advertisedOutputs(job) { return advertisedOutputs(job); },
+        warningEvents() { return warningEvents(this.timeline); },
         outputEndpoint(output) { return outputEndpoint(output); },
         get bulkBusy() { return this._bulkBusy || false; },
         set bulkBusy(value) { this._bulkBusy = value; },
@@ -682,7 +786,7 @@ export function jobCenter(options = {}) {
 
 
 function emptyFilters() {
-    return { search: '', kinds: [], states: [], origins: [], ownerId: '', actorId: '', acceptedAfter: '', acceptedBefore: '', relationship: '', pinned: null, dismissed: null };
+    return { search: '', command: '', kinds: [], states: [], origins: [], ownerId: '', actorId: '', acceptedAfter: '', acceptedBefore: '', relationship: '', pinned: null, dismissed: null };
 }
 
 function parseSelectBoolean(value) {
@@ -702,6 +806,19 @@ function uniqueJobs(jobs) {
         if (!seen.has(job.id)) seen.set(job.id, job);
     }
     return [...seen.values()].sort((left, right) => String(right.acceptedAt || '').localeCompare(String(left.acceptedAt || '')) || String(right.id).localeCompare(String(left.id)));
+}
+
+function preserveJobUIState(previousJobs, incomingJobs) {
+    const previousById = new Map((previousJobs || []).map(job => [job.id, job]));
+    return (incomingJobs || []).map(job => {
+        const previous = previousById.get(job.id);
+        if (!previous) return job;
+        return {
+            ...job,
+            uiExpanded: previous.uiExpanded ?? job.uiExpanded ?? false,
+            uiSelected: previous.uiSelected ?? job.uiSelected ?? false,
+        };
+    });
 }
 
 function commandConfirmation(command) {

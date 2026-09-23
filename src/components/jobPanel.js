@@ -8,6 +8,7 @@ import {
     commandLabel,
     reduceJobStreamEvent,
     stateLabel,
+    streamCursorSequence,
 } from './jobCenter.js';
 
 const PANEL_LIMIT = 5;
@@ -56,6 +57,7 @@ export function jobPanel() {
         summary: null,
         eventSource: null,
         lastSequence: 0,
+        streamCaughtUp: false,
         connectionStatus: 'disconnected',
         error: '',
         notice: '',
@@ -67,6 +69,10 @@ export function jobPanel() {
         _root: null,
         _keydownHandler: null,
         _panelOpenHandler: null,
+        _summaryRefreshTimer: null,
+        _summaryRefreshGeneration: 0,
+        _summaryRefreshRequested: false,
+        _summaryRefreshPromise: null,
 
         init() {
             this._liveRegion = createLiveRegion();
@@ -90,6 +96,9 @@ export function jobPanel() {
         destroy() {
             if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
             if (this._panelOpenHandler) window.removeEventListener('jobs-panel-open', this._panelOpenHandler);
+            if (this._summaryRefreshTimer) clearTimeout(this._summaryRefreshTimer);
+            this._summaryRefreshGeneration += 1;
+            this._summaryRefreshRequested = false;
             this.eventSource?.close();
             this._liveRegion?.destroy();
         },
@@ -178,6 +187,27 @@ export function jobPanel() {
             }
         },
 
+        scheduleSummaryRefresh() {
+            this._summaryRefreshGeneration += 1;
+            this._summaryRefreshRequested = true;
+            if (this._summaryRefreshPromise) return;
+            if (this._summaryRefreshTimer) clearTimeout(this._summaryRefreshTimer);
+            const generation = this._summaryRefreshGeneration;
+            this._summaryRefreshTimer = setTimeout(() => {
+                this._summaryRefreshTimer = null;
+                this._summaryRefreshRequested = false;
+                this._summaryRefreshPromise = this.requestJSON('/v1/jobs/summary')
+                    .then(summary => {
+                        if (generation === this._summaryRefreshGeneration) this.summary = summary;
+                    })
+                    .catch(() => {})
+                    .finally(() => {
+                        this._summaryRefreshPromise = null;
+                        if (this._summaryRefreshRequested) this.scheduleSummaryRefresh();
+                    });
+            }, 150);
+        },
+
         async loadAdvertisedCommands(job) {
             if (advertisedCommands(job).length) {
                 this.details[job.id] = job;
@@ -194,10 +224,24 @@ export function jobPanel() {
             this.connectionStatus = 'connecting';
             this.eventSource = new EventSource('/v1/jobs/events?version=2');
             this.eventSource.addEventListener('open', () => { this.connectionStatus = 'connected'; });
-            this.eventSource.addEventListener('error', () => { this.connectionStatus = 'reconnecting'; });
+            this.eventSource.addEventListener('error', () => {
+                this.connectionStatus = 'reconnecting';
+                this.streamCaughtUp = false;
+            });
+            this.eventSource.addEventListener('job-caught-up', event => this.markStreamCaughtUp(event));
             for (const eventName of ['message', 'job']) {
                 this.eventSource.addEventListener(eventName, event => this.handleStreamMessage(event));
             }
+        },
+
+        markStreamCaughtUp(event) {
+            let boundary;
+            try { boundary = JSON.parse(event.data); }
+            catch { return; }
+            const sequence = streamCursorSequence(boundary?.cursor);
+            if (sequence === null) return;
+            this.lastSequence = Math.max(this.lastSequence, sequence);
+            this.streamCaughtUp = true;
         },
 
         async handleStreamMessage(event) {
@@ -205,13 +249,17 @@ export function jobPanel() {
             try { message = JSON.parse(event.data); }
             catch { return; }
             message.lastEventId = event.lastEventId;
-            const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence);
+            message.replay = message.replay === true || !this.streamCaughtUp;
+            const announceSnapshot = !message.replay;
+            const previousSequence = this.lastSequence;
+            const result = reduceJobStreamEvent(this.jobs, message, this.lastSequence, { allowInsert: true });
             this.lastSequence = result.lastSequence;
+            if (this.lastSequence > previousSequence) this.scheduleSummaryRefresh();
             if (!result.changed) return;
             if (result.needsSnapshot) {
                 try {
                     const detail = await this.requestJSON(`/v1/jobs/${encodeURIComponent(result.jobId)}`);
-                    this.applyStreamSnapshot(detail, true);
+                    this.applyStreamSnapshot(detail, announceSnapshot);
                 } catch { /* A hidden or expired Job stays absent from the panel. */ }
                 return;
             }
@@ -220,14 +268,14 @@ export function jobPanel() {
         },
 
         applyStreamSnapshot(job, announce = false) {
-            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
+            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert: true });
             this.jobs = result.jobs;
             this.details[job.id] = { ...(this.details[job.id] || {}), ...job };
             if (announce && result.announcement) this.announce(result.announcement);
         },
 
         upsert(job) {
-            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence);
+            const result = reduceJobStreamEvent(this.jobs, { job }, this.lastSequence, { allowInsert: true });
             this.jobs = result.jobs;
         },
 

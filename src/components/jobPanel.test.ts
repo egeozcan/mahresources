@@ -48,6 +48,7 @@ describe('Job Center panel', () => {
 
         expect(panel.eventSource?.url).toBe('/v1/jobs/events?version=2');
         expect(panel.eventSource?.listeners.has('job')).toBe(true);
+        expect(panel.eventSource?.listeners.has('job-caught-up')).toBe(true);
     });
 
     test('opens only advertised panel commands and sends per-job outcomes', async () => {
@@ -114,6 +115,7 @@ describe('Job Center panel accessibility hooks', () => {
             ok: true,
             json: async () => ({ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 3 }),
         })));
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:14' }) });
         return panel.handleStreamMessage({
             data: JSON.stringify({ jobId: 'job-1', type: 'failed', sequence: 3, deliverySequence: 15 }),
             lastEventId: 'v2:15',
@@ -122,6 +124,76 @@ describe('Job Center panel accessibility hooks', () => {
             expect(fetch).toHaveBeenCalledWith('/v1/jobs/job-1', expect.anything());
             expect(panel.lastSequence).toBe(15);
         });
+    });
+
+    test('announces only events after the catch-up boundary, including after reconnect', () => {
+        class FakeEventSource {
+            listeners = new Map<string, Function>();
+            constructor(public url: string) {}
+            addEventListener(name: string, callback: Function) { this.listeners.set(name, callback); }
+            close() {}
+        }
+        vi.stubGlobal('EventSource', FakeEventSource);
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'queued', version: 1 }];
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.connect();
+        const stream = panel.eventSource as unknown as FakeEventSource;
+        const sendJob = (state: string, version: number, sequence: number) => stream.listeners.get('job')?.({
+            data: JSON.stringify({ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state, version, deliverySequence: sequence }),
+            lastEventId: `v2:${sequence}`,
+        });
+
+        sendJob('running', 2, 10);
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:10' }) });
+        sendJob('failed', 3, 11);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+
+        stream.listeners.get('error')?.({});
+        sendJob('succeeded', 4, 12);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(1);
+        stream.listeners.get('job-caught-up')?.({ data: JSON.stringify({ cursor: 'v2:12' }) });
+        sendJob('cancelled', 5, 13);
+        expect(panel._liveRegion.announce).toHaveBeenCalledTimes(2);
+    });
+
+    test('does not announce a replay snapshot that finishes loading after the catch-up boundary', async () => {
+        let resolveDetail: (value: unknown) => void = () => {};
+        const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'job-1', title: 'Index rebuild', state: 'queued', version: 1 }];
+        panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
+        panel.requestJSON = vi.fn(() => detailRequest);
+
+        const event = panel.handleStreamMessage({
+            data: JSON.stringify({ id: 'event-1', jobId: 'job-1', type: 'failed', sequence: 2, deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:1' }) });
+        resolveDetail({ id: 'job-1', title: 'Index rebuild', state: 'failed', version: 2 });
+        await event;
+
+        expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+    });
+
+    test('refreshes the active and attention counts after a delivered state event', async () => {
+        vi.useFakeTimers();
+        const panel = jobPanel();
+        panel.streamCaughtUp = true;
+        panel.jobs = [{ id: 'job-1', state: 'running', version: 1 }];
+        panel.summary = { byState: { running: 1, failed: 0 } };
+        panel.requestJSON = vi.fn(async () => ({ byState: { running: 0, failed: 1 } }));
+
+        await panel.handleStreamMessage({
+            data: JSON.stringify({ id: 'job-1', state: 'failed', version: 2, deliverySequence: 1 }),
+            lastEventId: 'v2:1',
+        });
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(panel.counts).toEqual({ active: 0, attention: 1 });
+        expect(panel.requestJSON).toHaveBeenCalledWith('/v1/jobs/summary');
+        vi.useRealTimers();
     });
 
     test('template traps focus, supports a narrow viewport, and names the new actions', () => {
