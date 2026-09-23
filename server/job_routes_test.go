@@ -86,9 +86,16 @@ func TestCanonicalJobOpenAPIRoutesDescribeResponsesAndIdempotency(t *testing.T) 
 			t.Errorf("canonical Job OpenAPI path missing %s", path)
 		}
 	}
-	for _, parameter := range paths["/v1/jobs"].Get.Parameters {
-		if parameter.Value != nil && parameter.Value.Name == "command" {
-			t.Fatal("list OpenAPI must not advertise command filtering until the Service can answer it without page post-filtering")
+	for _, path := range []string{"/v1/jobs", "/v1/jobs/summary"} {
+		found := false
+		for _, parameter := range paths[path].Get.Parameters {
+			if parameter.Value != nil && parameter.Value.Name == "command" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s OpenAPI must advertise command filtering now that the Service applies it before pagination", path)
 		}
 	}
 	command := paths["/v1/jobs/{id}/commands/{command}"].Post

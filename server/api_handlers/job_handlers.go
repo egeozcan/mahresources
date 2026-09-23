@@ -438,7 +438,18 @@ func parseJobFilter(values url.Values) (jobs.Filter, error) {
 	if filter.Dismissed, err = queryBool(values, "dismissed"); err != nil {
 		return jobs.Filter{}, err
 	}
-	filter.Command = values.Get("command")
+	if commandValues, present := values["command"]; present {
+		if len(commandValues) != 1 {
+			return jobs.Filter{}, fmt.Errorf("command must be supplied once")
+		}
+		filter.Command = commandValues[0]
+		if strings.TrimSpace(filter.Command) == "" {
+			return jobs.Filter{}, fmt.Errorf("command must be a non-empty command key")
+		}
+		if len(filter.Command) > jobs.MaxCommandKeyBytes {
+			return jobs.Filter{}, fmt.Errorf("command key must not exceed %d bytes", jobs.MaxCommandKeyBytes)
+		}
+	}
 	return filter, nil
 }
 

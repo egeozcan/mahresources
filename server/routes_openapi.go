@@ -233,6 +233,7 @@ func canonicalJobFilterQueryParams() []openapi.QueryParam {
 		{Name: "acceptedBefore", Type: "string", Description: "Inclusive RFC3339 upper bound."},
 		{Name: "pinned", Type: "boolean", Description: "Filter this viewer's pin state."},
 		{Name: "dismissed", Type: "boolean", Description: "Filter this viewer's dismissal state."},
+		{Name: "command", Type: "string", Description: "Filter to Jobs currently advertising this command to the asking principal; evaluated before pagination and summary aggregation."},
 	}
 }
 

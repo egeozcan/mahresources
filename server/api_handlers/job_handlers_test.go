@@ -99,6 +99,30 @@ func TestJobListRejectsOversizedPageBeforeReading(t *testing.T) {
 	}
 }
 
+func TestJobListRejectsMalformedCommandQueryBeforeReading(t *testing.T) {
+	for _, query := range []string{
+		"command=",
+		"command=%20%20",
+		"command=inspect&command=repeat",
+		"command=" + url.QueryEscape(strings.Repeat("x", jobs.MaxCommandKeyBytes+1)),
+	} {
+		t.Run(query, func(t *testing.T) {
+			ctx := &jobListContextStub{}
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/v1/jobs?"+query, nil)
+
+			GetJobListHandler(ctx)(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if ctx.called {
+				t.Fatal("ListJobs was called for a malformed command filter")
+			}
+		})
+	}
+}
+
 func TestJobListMapsServiceValidationToBadRequest(t *testing.T) {
 	ctx := &jobListContextStub{err: errors.Join(errors.New("wrapped"), jobs.ErrInvalidFilter)}
 	recorder := httptest.NewRecorder()
@@ -123,11 +147,12 @@ func TestJobListForwardsFiltersAndOpaqueCursor(t *testing.T) {
 	}
 	ctx := &jobListContextStub{page: jobs.Page{Next: &jobs.Cursor{AcceptedAt: acceptedAt.Add(-time.Minute), ID: "job-next"}}}
 	query := url.Values{
-		"states": {"failed,blocked"},
-		"kinds":  {"group-export"},
-		"search": {"archive"},
-		"limit":  {"5"},
-		"cursor": {encoded},
+		"states":  {"failed,blocked"},
+		"kinds":   {"group-export"},
+		"search":  {"archive"},
+		"command": {"inspect"},
+		"limit":   {"5"},
+		"cursor":  {encoded},
 	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/jobs?"+query.Encode(), nil)
@@ -143,7 +168,7 @@ func TestJobListForwardsFiltersAndOpaqueCursor(t *testing.T) {
 	if got := strings.Join(ctx.filter.Kinds, ","); got != "group-export" {
 		t.Fatalf("kinds = %q, want group-export", got)
 	}
-	if ctx.filter.Search != "archive" || ctx.limit != 5 || ctx.cursor != cursor {
+	if ctx.filter.Search != "archive" || ctx.filter.Command != "inspect" || ctx.limit != 5 || ctx.cursor != cursor {
 		t.Fatalf("ListJobs args = filter %#v cursor %#v limit %d", ctx.filter, ctx.cursor, ctx.limit)
 	}
 	var response JobListResponse
