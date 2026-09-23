@@ -926,28 +926,33 @@ const DefaultReplayPurgeBatch = 200
 // by the terminal transition, so this sweep only ever reads back a decision the
 // lifecycle already made — it never decides that something is finished.
 //
-// The purge is one statement, and it is the transaction's first statement: on
-// SQLite the writer lock is taken before anything is read, which keeps the sweep
-// from promoting a read snapshot after another connection committed. The batch
-// is selected by a bounded subquery and claimed by the update itself, so two
-// sweeps racing each other purge one envelope once.
+// Each batch is selected before the transaction, then its guarded update is the
+// transaction's first statement: on SQLite the writer lock is taken before
+// anything is read, which keeps the sweep from promoting a read snapshot after
+// another connection committed. The candidate IDs are bounded, and all
+// eligibility predicates are checked again by the update so stale choices are
+// harmless.
 func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 	if limit <= 0 {
 		limit = DefaultReplayPurgeBatch
 	}
 	now := deps.now()
+<<<<<<< HEAD
 	// Candidate discovery may happen before the transaction. The guarded UPDATE
 	// below rechecks every expiry and terminal-state predicate after it has taken
 	// SQLite's writer lock, so this snapshot never authorizes a purge on its own.
-	var candidates []string
+	var candidateIDs []string
 	if err := deps.DB.Model(&models.JobReplayEnvelope{}).
 		Select("job_replay_envelopes.job_id").
 		Where("job_replay_envelopes.purged_at IS NULL").
 		Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
 		Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
 		Order("job_replay_envelopes.expires_at, job_replay_envelopes.job_id").
-		Limit(limit).Pluck("job_replay_envelopes.job_id", &candidates).Error; err != nil {
+		Limit(limit).Pluck("job_replay_envelopes.job_id", &candidateIDs).Error; err != nil {
 		return 0, fmt.Errorf("jobs: select expired replay input: %w", err)
+	}
+	if len(candidateIDs) == 0 {
+		return 0, nil
 	}
 	purge := map[string]any{
 		"ciphertext":   gorm.Expr("NULL"),
@@ -960,26 +965,30 @@ func (s *Service) PurgeExpiredReplay(deps Deps, limit int) (int, error) {
 	purged := int64(0)
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.JobReplayEnvelope{}).
-			Where("job_id IN ? AND purged_at IS NULL", candidates).
-			Where("expires_at IS NOT NULL AND expires_at <= ?", now).
+			Where("job_replay_envelopes.job_id IN ?", candidateIDs).
+			Where("job_replay_envelopes.purged_at IS NULL").
+			Where("job_replay_envelopes.expires_at IS NOT NULL AND job_replay_envelopes.expires_at <= ?", now).
 			Where("EXISTS (SELECT 1 FROM jobs WHERE jobs.id = job_replay_envelopes.job_id AND jobs.state IN ?)", terminalStates()).
 			Updates(purge)
 		if result.Error != nil {
 			return fmt.Errorf("jobs: purge expired replay input: %w", result.Error)
 		}
 		purged = result.RowsAffected
-		if len(candidates) == 0 {
-			return nil
-		}
-		var actuallyPurged []string
+		var purgedIDs []string
 		if err := tx.Model(&models.JobReplayEnvelope{}).
-			Where("job_id IN ? AND purged_at = ? AND purge_reason = ?", candidates, now, models.JobReplayPurgeExpired).
-			Pluck("job_id", &actuallyPurged).Error; err != nil {
-			return fmt.Errorf("jobs: read expired replay purge markers: %w", err)
+			Where("job_id IN ?", candidateIDs).
+			Where("purged_at = ? AND purge_reason = ?", now, models.JobReplayPurgeExpired).
+			Pluck("job_id", &purgedIDs).Error; err != nil {
+			return fmt.Errorf("jobs: read purged replay input: %w", err)
 		}
-		for _, jobID := range actuallyPurged {
+		for _, jobID := range purgedIDs {
 			if err := purgeLegacyReplaySourcesTx(tx, jobID, models.JobReplayPurgeExpired, now); err != nil {
 				return fmt.Errorf("jobs: purge legacy replay source: %w", err)
+			}
+		}
+		if deps.PurgeReplayDerivedFacts != nil && len(purgedIDs) != 0 {
+			if err := deps.PurgeReplayDerivedFacts(tx, purgedIDs); err != nil {
+				return fmt.Errorf("jobs: purge expired replay-derived facts: %w", err)
 			}
 		}
 		return nil
@@ -1062,7 +1071,13 @@ func (s *Service) ForgetReplay(deps Deps, access Access, jobID string) (Snapshot
 		if err := tx.Where("job_id = ?", job.ID).First(&envelope).Error; err != nil {
 			return err
 		}
-		return purgeLegacyReplaySourcesTx(tx, job.ID, envelope.PurgeReason, now)
+		if err := purgeLegacyReplaySourcesTx(tx, job.ID, envelope.PurgeReason, now); err != nil {
+			return err
+		}
+		if deps.PurgeReplayDerivedFacts != nil {
+			return deps.PurgeReplayDerivedFacts(tx, []string{job.ID})
+		}
+		return nil
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("jobs: forget replay input: %w", err)

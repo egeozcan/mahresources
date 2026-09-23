@@ -321,6 +321,11 @@ func (s *Service) pruneExpiredJob(deps Deps, candidate models.Job, now time.Time
 			return outputErr
 		}
 		outputs = removed
+		if deps.PurgeReplayDerivedFacts != nil {
+			if err := deps.PurgeReplayDerivedFacts(tx, []string{candidate.ID}); err != nil {
+				return fmt.Errorf("jobs: purge retained Job's replay-derived facts: %w", err)
+			}
+		}
 
 		for _, table := range []any{
 			&models.JobEvent{}, &models.JobOutput{}, &models.JobPreference{},

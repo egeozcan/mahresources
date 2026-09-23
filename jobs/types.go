@@ -487,6 +487,12 @@ const (
 type Deps struct {
 	DB  *gorm.DB
 	Now func() time.Time
+	// PurgeReplayDerivedFacts removes Kind-owned projections derived from a
+	// replay envelope. It runs inside the transaction that forgets or expires
+	// that envelope, and when ordinary retention removes its Job. The callback
+	// must use the supplied transaction so a failed purge rolls the lifecycle
+	// change back with it.
+	PurgeReplayDerivedFacts func(tx *gorm.DB, jobIDs []string) error
 	// RuntimeIsProvedGone answers whether a durable claimant identity can be
 	// positively shown to have stopped. It is used only when a Kind adapter or
 	// execution principal is unavailable; an absent callback is no proof.

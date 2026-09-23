@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -56,11 +57,37 @@ func pluginCommandImportFactFieldsJSON(encoded string) pluginCommandImportFactFi
 }
 
 func (ctx *MahresourcesContext) pluginCommandImportFieldsJSON(db *gorm.DB, source models.PluginCommandImport) (string, bool) {
-	if source.FieldsJSON != "" {
+	// Read the durable writer fence before looking at compatibility plaintext.
+	// Once epoch two is active, a nonempty legacy projection is stale data, not a
+	// fallback for an unavailable or purged canonical envelope.
+	retired, err := pluginCommandInputsRetired(db)
+	if err != nil {
+		return "", false
+	}
+	if source.JobID == "" {
+		if !retired && source.FieldsJSON != "" {
+			return source.FieldsJSON, true
+		}
+		return "", false
+	}
+
+	// Purge markers and elapsed deadlines take precedence over every source copy,
+	// including a pre-retirement compatibility projection. Otherwise startup
+	// reconciliation could recreate a fact that Forget or expiry just removed.
+	var envelope models.JobReplayEnvelope
+	envelopeErr := db.Where("job_id = ?", source.JobID).First(&envelope).Error
+	envelopeFound := envelopeErr == nil
+	if envelopeErr != nil && !errors.Is(envelopeErr, gorm.ErrRecordNotFound) {
+		return "", false
+	}
+	if envelopeFound && (envelope.PurgedAt != nil || len(envelope.Ciphertext) == 0 ||
+		(envelope.ExpiresAt != nil && !envelope.ExpiresAt.After(time.Now().UTC()))) {
+		return "", false
+	}
+	if !retired && source.FieldsJSON != "" {
 		return source.FieldsJSON, true
 	}
-	retired, err := pluginCommandInputsRetired(db)
-	if err != nil || !retired || source.JobID == "" || ctx == nil || ctx.JobService() == nil {
+	if ctx == nil || ctx.JobService() == nil || !envelopeFound {
 		return "", false
 	}
 	opened, err := ctx.JobService().OpenReplay(ctx.jobDepsWithDB(db), jobs.Access{Administrator: true}, source.JobID)
@@ -103,6 +130,63 @@ func setPluginCommandImportFactTx(tx *gorm.DB, source models.PluginCommandImport
 		return nil
 	}
 	return tx.CreateInBatches(&fields.groups, 200).Error
+}
+
+// purgePluginCommandImportReplayFactsTx removes the Kind-owned projection of
+// replay input in the caller's lifecycle transaction. Source import rows may
+// outlive a forgotten envelope or retained Job, so reconciliation also treats
+// the canonical envelope as authoritative before it can rebuild these rows.
+func purgePluginCommandImportReplayFactsTx(tx *gorm.DB, jobIDs []string) error {
+	if tx == nil || len(jobIDs) == 0 {
+		return nil
+	}
+	hasFacts := tx.Migrator().HasTable(&models.PluginCommandImportCommandFact{})
+	hasGroups := tx.Migrator().HasTable(&models.PluginCommandImportCommandFactGroup{})
+	hasSources := tx.Migrator().HasTable(&models.PluginCommandImport{})
+	if hasGroups {
+		var factImports, sourceImports *gorm.DB
+		if hasFacts {
+			factImports = tx.Model(&models.PluginCommandImportCommandFact{}).
+				Select("import_id").Where("job_id IN ?", jobIDs)
+		}
+		if hasSources {
+			sourceImports = tx.Model(&models.PluginCommandImport{}).
+				Select("id").Where("job_id IN ?", jobIDs)
+		}
+		query := tx
+		switch {
+		case factImports != nil && sourceImports != nil:
+			query = query.Where("import_id IN (?) OR import_id IN (?)", factImports, sourceImports)
+		case factImports != nil:
+			query = query.Where("import_id IN (?)", factImports)
+		case sourceImports != nil:
+			query = query.Where("import_id IN (?)", sourceImports)
+		default:
+			query = nil
+		}
+		if query != nil {
+			if err := query.Delete(&models.PluginCommandImportCommandFactGroup{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	if hasFacts {
+		return tx.Where("job_id IN ?", jobIDs).Delete(&models.PluginCommandImportCommandFact{}).Error
+	}
+	return nil
+}
+
+func purgePluginCommandImportFactsForSourcesTx(tx *gorm.DB, jobIDs, importIDs []string) error {
+	if tx == nil {
+		return nil
+	}
+	if len(importIDs) != 0 {
+		if err := tx.Where("import_id IN ?", importIDs).
+			Delete(&models.PluginCommandImportCommandFactGroup{}).Error; err != nil {
+			return err
+		}
+	}
+	return purgePluginCommandImportReplayFactsTx(tx, jobIDs)
 }
 
 func updatePluginCommandImportFactAvailabilityTx(tx *gorm.DB, runID, fileName string, available bool, now time.Time) error {
@@ -199,12 +283,39 @@ func (ctx *MahresourcesContext) ReconcilePluginCommandImportRetryFacts() error {
 		for _, run := range runs {
 			runByID[run.ID] = run
 		}
+		jobIDs := make([]string, 0, len(imports))
+		for _, source := range imports {
+			jobIDs = append(jobIDs, source.JobID)
+		}
+		var presentJobIDs []string
+		if err := ctx.db.Model(&models.Job{}).Where("id IN ?", jobIDs).Pluck("id", &presentJobIDs).Error; err != nil {
+			return fmt.Errorf("read Jobs for plugin command import fact reconciliation: %w", err)
+		}
+		presentJobIDSet := make(map[string]struct{}, len(presentJobIDs))
+		for _, jobID := range presentJobIDs {
+			presentJobIDSet[jobID] = struct{}{}
+		}
 
 		facts := make([]models.PluginCommandImportCommandFact, 0, len(imports))
 		groups := make([]models.PluginCommandImportCommandFactGroup, 0)
+		staleJobIDs := make([]string, 0)
+		staleImportIDs := make([]string, 0)
 		for _, source := range imports {
+			if _, exists := presentJobIDSet[source.JobID]; !exists {
+				staleJobIDs = append(staleJobIDs, source.JobID)
+				staleImportIDs = append(staleImportIDs, source.ID)
+				continue
+			}
 			fieldsJSON, found := ctx.pluginCommandImportFieldsJSON(ctx.db, source)
 			fieldFacts := pluginCommandImportFactFieldsJSON(fieldsJSON)
+			if !found || !fieldFacts.validated {
+				// Missing, retired, forgotten, expired, or invalid input has no
+				// retry fact. In particular, do not leave a blank fact that a later
+				// pass could mistake for a source worth reconstructing.
+				staleJobIDs = append(staleJobIDs, source.JobID)
+				staleImportIDs = append(staleImportIDs, source.ID)
+				continue
+			}
 			run, runFound := runByID[source.RunID]
 			fileAvailable := false
 			if runFound && source.FileName != "" {
@@ -212,14 +323,12 @@ func (ctx *MahresourcesContext) ReconcilePluginCommandImportRetryFacts() error {
 			}
 			facts = append(facts, models.PluginCommandImportCommandFact{
 				JobID: source.JobID, ImportID: source.ID, RunID: source.RunID, FileName: source.FileName,
-				FieldsValidated: found && fieldFacts.validated, ExchangeFileAvailable: fileAvailable,
+				FieldsValidated: true, ExchangeFileAvailable: fileAvailable,
 				SeriesID: fieldFacts.seriesID, GroupCount: len(fieldFacts.groups), UpdatedAt: time.Now().UTC(),
 			})
-			if found && fieldFacts.validated {
-				for _, group := range fieldFacts.groups {
-					group.ImportID = source.ID
-					groups = append(groups, group)
-				}
+			for _, group := range fieldFacts.groups {
+				group.ImportID = source.ID
+				groups = append(groups, group)
 			}
 		}
 
@@ -227,19 +336,24 @@ func (ctx *MahresourcesContext) ReconcilePluginCommandImportRetryFacts() error {
 			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
 				return err
 			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "job_id"}},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"import_id", "run_id", "file_name", "fields_validated", "exchange_file_available", "series_id", "group_count", "updated_at",
-				}),
-			}).CreateInBatches(&facts, 100).Error; err != nil {
-				return err
+			if len(facts) != 0 {
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "job_id"}},
+					DoUpdates: clause.AssignmentColumns([]string{
+						"import_id", "run_id", "file_name", "fields_validated", "exchange_file_available", "series_id", "group_count", "updated_at",
+					}),
+				}).CreateInBatches(&facts, 100).Error; err != nil {
+					return err
+				}
 			}
 			importIDs := make([]string, len(imports))
 			for i := range imports {
 				importIDs[i] = imports[i].ID
 			}
 			if err := tx.Where("import_id IN ?", importIDs).Delete(&models.PluginCommandImportCommandFactGroup{}).Error; err != nil {
+				return err
+			}
+			if err := purgePluginCommandImportFactsForSourcesTx(tx, staleJobIDs, staleImportIDs); err != nil {
 				return err
 			}
 			for start := 0; start < len(groups); start += 200 {

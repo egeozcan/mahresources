@@ -296,6 +296,114 @@ func TestPluginCommandImportRetryRequiresAvailableCanonicalReplayEnvelope(t *tes
 	require.False(t, offersCommand(commands, "retry-import"), "an expired canonical input suppresses Retry before the purge sweep runs")
 }
 
+func TestPluginCommandImportRetryFactsFollowReplayPurgeAndRetiredEnvelope(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	const actorID = uint(9)
+	preparePluginCommandRetryAuthority(t, ctx, actorID)
+	root, commandPath := t.TempDir(), t.TempDir()
+	runID := "retry-fact-retirement-parent"
+	require.NoError(t, ctx.db.Create(&models.PluginCommandRun{
+		ID: runID, PluginName: "worker", CommandName: "download", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusSucceeded, CreatedByUserId: ptrToUser(actorID), CreatedAt: time.Now().UTC(),
+	}).Error)
+	group := models.Group{Name: "retry-fact-retirement-group"}
+	require.NoError(t, ctx.db.Create(&group).Error)
+	acceptedFields, err := json.Marshal(plugin_commands.ResourceFields{
+		SeriesID: 314, GroupIDs: []uint{group.ID},
+	})
+	require.NoError(t, err)
+	forgottenJobID, forgottenImportID := seedPluginCommandRetryCandidateWithFields(
+		t, ctx, actorID, runID, "retry-fact-retirement-forgotten", "forget.bin", string(acceptedFields),
+	)
+	expiredJobID, expiredImportID := seedPluginCommandRetryCandidateWithFields(
+		t, ctx, actorID, runID, "retry-fact-retirement-expired", "expire.bin", string(acceptedFields),
+	)
+	retainedJobID, retainedImportID := seedPluginCommandRetryCandidateWithFields(
+		t, ctx, actorID, runID, "retry-fact-retirement-retained", "retained.bin", string(acceptedFields),
+	)
+	createPluginCommandRetryFile(t, root, "worker", runID, "forget.bin")
+	createPluginCommandRetryFile(t, root, "worker", runID, "expire.bin")
+	createPluginCommandRetryFile(t, root, "worker", runID, "retained.bin")
+	startPluginCommandRetryTestRuntime(t, ctx, root, commandPath)
+
+	// The canonical envelope remains the only source after epoch two. A stale
+	// compatibility projection must not replace its validated group or series.
+	require.NoError(t, ctx.db.Model(&models.JobWriterEpoch{}).
+		Where("id = ?", models.JobWriterEpochRowID).
+		Update("minimum_epoch", models.JobWriterEpochRetiredPlaintext).Error)
+	staleFields := `{"series_id":999,"group_ids":[]}`
+	require.NoError(t, ctx.db.Model(&models.PluginCommandImport{}).
+		Where("id IN ?", []string{forgottenImportID, expiredImportID, retainedImportID}).
+		Update("fields_json", staleFields).Error)
+	require.NoError(t, ctx.StopPluginCommands())
+	ctx.pluginCommandController = nil // Reconcile as a new process over retained legacy rows.
+	startPluginCommandRetryTestRuntime(t, ctx, root, commandPath)
+
+	var canonicalFact models.PluginCommandImportCommandFact
+	require.NoError(t, ctx.db.Where("job_id = ?", forgottenJobID).First(&canonicalFact).Error)
+	require.Equal(t, uint(314), canonicalFact.SeriesID)
+	require.Equal(t, 1, canonicalFact.GroupCount)
+	var canonicalGroup models.PluginCommandImportCommandFactGroup
+	require.NoError(t, ctx.db.Where("import_id = ?", forgottenImportID).First(&canonicalGroup).Error)
+	require.Equal(t, group.ID, canonicalGroup.GroupID)
+	var retainedFact models.PluginCommandImportCommandFact
+	require.NoError(t, ctx.db.Where("job_id = ?", retainedJobID).First(&retainedFact).Error)
+	require.Equal(t, uint(314), retainedFact.SeriesID)
+
+	admin := jobs.Access{Administrator: true}
+	_, err = service.ForgetReplay(ctx.jobDeps(), admin, forgottenJobID)
+	require.NoError(t, err)
+	assertPluginCommandImportFactsAbsent(t, ctx, forgottenJobID, forgottenImportID)
+
+	// Expiry purges the same derived values in the transaction that empties the
+	// envelope, rather than leaving GroupID and SeriesID behind indefinitely.
+	require.NoError(t, ctx.db.Model(&models.JobReplayEnvelope{}).Where("job_id = ?", expiredJobID).
+		Update("expires_at", time.Now().UTC().Add(-time.Second)).Error)
+	purged, err := service.PurgeExpiredReplay(ctx.jobDeps(), 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, purged)
+	assertPluginCommandImportFactsAbsent(t, ctx, expiredJobID, expiredImportID)
+
+	// Ordinary history retention also removes the projection when it deletes a
+	// Job whose replay deadline has not yet arrived.
+	now := time.Now().UTC()
+	finishedAt, jobDeadline, replayDeadline := now.Add(-48*time.Hour), now.Add(-24*time.Hour), now.Add(24*time.Hour)
+	require.NoError(t, ctx.db.Model(&models.Job{}).Where("id = ?", retainedJobID).
+		Updates(map[string]any{"finished_at": finishedAt, "expires_at": jobDeadline}).Error)
+	require.NoError(t, ctx.db.Model(&models.JobReplayEnvelope{}).Where("job_id = ?", retainedJobID).
+		Update("expires_at", replayDeadline).Error)
+	sweep, err := service.Sweep(ctx.jobDeps(), jobs.RetentionPolicy{}, jobs.SweepCursor{}, 100)
+	require.NoError(t, err)
+	require.Equal(t, 1, sweep.Pruned)
+	assertPluginCommandImportFactsAbsent(t, ctx, retainedJobID, retainedImportID)
+
+	// Source rows can outlive Job history. Startup reconciliation must neither
+	// reopen stale plaintext nor recreate derived facts from a purged envelope.
+	require.NoError(t, ctx.StopPluginCommands())
+	ctx.pluginCommandController = nil
+	startPluginCommandRetryTestRuntime(t, ctx, root, commandPath)
+	assertPluginCommandImportFactsAbsent(t, ctx, forgottenJobID, forgottenImportID)
+	assertPluginCommandImportFactsAbsent(t, ctx, expiredJobID, expiredImportID)
+	assertPluginCommandImportFactsAbsent(t, ctx, retainedJobID, retainedImportID)
+	commands, err := service.AdvertisedCommands(context.Background(), ctx.jobDeps(), admin, forgottenJobID)
+	require.NoError(t, err)
+	require.False(t, offersCommand(commands, "retry-import"))
+	commands, err = service.AdvertisedCommands(context.Background(), ctx.jobDeps(), admin, expiredJobID)
+	require.NoError(t, err)
+	require.False(t, offersCommand(commands, "retry-import"))
+}
+
+func assertPluginCommandImportFactsAbsent(t *testing.T, ctx *MahresourcesContext, jobID, importID string) {
+	t.Helper()
+	var facts, groups int64
+	require.NoError(t, ctx.db.Model(&models.PluginCommandImportCommandFact{}).Where("job_id = ?", jobID).Count(&facts).Error)
+	require.NoError(t, ctx.db.Model(&models.PluginCommandImportCommandFactGroup{}).Where("import_id = ?", importID).Count(&groups).Error)
+	require.Zero(t, facts, "purged replay input must not retain a derived command fact")
+	require.Zero(t, groups, "purged replay input or pruned Job must not retain normalized group facts")
+}
+
 func TestPluginCommandImportRetrySelectorHonorsCurrentActorGroupScope(t *testing.T) {
 	ctx := newPluginCommandStoreTestContext(t)
 	ctx.SetJobService(jobs.NewService())

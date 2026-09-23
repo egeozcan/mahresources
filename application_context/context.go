@@ -733,8 +733,9 @@ func (ctx *MahresourcesContext) jobDeps() jobs.Deps {
 		return jobs.Deps{}
 	}
 	return jobs.Deps{
-		DB:                  ctx.db,
-		RuntimeIsProvedGone: runtimeClaimantIsProvedGone,
+		DB:                      ctx.db,
+		RuntimeIsProvedGone:     runtimeClaimantIsProvedGone,
+		PurgeReplayDerivedFacts: purgePluginCommandImportReplayFactsTx,
 		Replay: &jobs.ReplayConfig{
 			Keys:      ctx.JobReplayKeyring(),
 			Retention: ctx.JobReplayRetention(),
