@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"mahresources/contracts"
 	"mahresources/jobs"
 	"mahresources/models"
 	"mahresources/plugin_commands"
@@ -80,6 +81,88 @@ func pluginCommandReplayCodec(kind string) jobs.ReplayCodec {
 type pluginCommandJobAdapter struct {
 	ctx  *MahresourcesContext
 	kind string
+}
+
+// AuthorizeJobOutput checks the current administrator role and, for command
+// history, binds the stored run reference to this exact canonical Job. The
+// history reference alone is never authority to read a run.
+func (a *pluginCommandJobAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	if a == nil || a.ctx == nil || request.Principal == nil || !request.Principal.IsAdmin() {
+		return ErrJobOutputForbidden
+	}
+	if !request.Principal.SuperUser {
+		current := commandActorOn(a.ctx.db, request.Principal.UserID)
+		if current == nil || !current.IsAdmin() {
+			return ErrJobOutputForbidden
+		}
+	}
+	if a.kind != JobKindPluginCommand {
+		return nil
+	}
+	if request.Output.Key != "command-history" || request.Output.Type != jobs.OutputTypeLog {
+		return ErrJobOutputForbidden
+	}
+	runID, err := pluginCommandOutputRunID(request.Output.Reference)
+	if err != nil {
+		return ErrJobOutputForbidden
+	}
+	var source models.PluginCommandRun
+	if err := a.ctx.db.Select("job_id").Where("id = ?", runID).First(&source).Error; err != nil || source.JobID != request.Snapshot.ID {
+		return ErrJobOutputForbidden
+	}
+	return nil
+}
+
+// OpenJobOutput returns bounded command metadata. A command's retained stdout
+// and stderr may contain arbitrary secrets, so this representation never reads
+// raw output_tail; it reports only whether a redacted tail is present.
+func (a *pluginCommandJobAdapter) OpenJobOutput(requestCtx context.Context, request JobOutputOpenRequest) (contracts.JobOutputContent, error) {
+	if err := a.AuthorizeJobOutput(requestCtx, request); err != nil {
+		return contracts.JobOutputContent{}, err
+	}
+	if a.kind != JobKindPluginCommand {
+		return a.ctx.openStandardJobOutput(request.Output)
+	}
+	runID, err := pluginCommandOutputRunID(request.Output.Reference)
+	if err != nil {
+		return contracts.JobOutputContent{}, ErrJobOutputInvalid
+	}
+	var source models.PluginCommandRun
+	if err := a.ctx.db.Select("id, job_id, plugin_name, command_name, status").Where("id = ? AND job_id = ?", runID, request.Snapshot.ID).
+		First(&source).Error; err != nil {
+		return contracts.JobOutputContent{}, ErrJobOutputForbidden
+	}
+	var tailPresent int
+	result := a.ctx.db.Raw(`SELECT CASE WHEN output_tail IS NOT NULL AND output_tail <> '' THEN 1 ELSE 0 END
+		FROM plugin_command_run_outputs WHERE run_id = ? LIMIT 1`, runID).Scan(&tailPresent)
+	if result.Error != nil {
+		return contracts.JobOutputContent{}, result.Error
+	}
+	response := struct {
+		RunID      string `json:"runId"`
+		Plugin     string `json:"plugin"`
+		Command    string `json:"command"`
+		Status     string `json:"status"`
+		OutputTail string `json:"outputTail,omitempty"`
+	}{RunID: runID, Plugin: source.PluginName, Command: source.CommandName, Status: source.Status}
+	if tailPresent != 0 {
+		response.OutputTail = "[redacted]"
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		return contracts.JobOutputContent{}, err
+	}
+	return contracts.JobOutputContent{Data: data, ContentType: "application/json"}, nil
+}
+
+func pluginCommandOutputRunID(reference json.RawMessage) (string, error) {
+	var stored struct {
+		RunID string `json:"runId"`
+	}
+	if err := json.Unmarshal(reference, &stored); err != nil || stored.RunID == "" || len(stored.RunID) > 32 {
+		return "", ErrJobOutputInvalid
+	}
+	return stored.RunID, nil
 }
 
 func (a *pluginCommandJobAdapter) Definition() jobs.Definition {
