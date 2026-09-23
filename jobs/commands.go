@@ -404,6 +404,17 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 	if err := validateCommandRequest(&request); err != nil {
 		return CommandResult{}, err
 	}
+	if request.LegacyRef != nil {
+		// A caller may be repeating a recorded request after a canonical Retry
+		// moved its stable handle. Authorize and check the mapping before looking
+		// up that replay, so a hidden current successor cannot be learned through
+		// the still-visible ancestor or an old idempotency result.
+		if err := deps.DB.Transaction(func(tx *gorm.DB) error {
+			return recheckLegacyCommandTarget(tx, request.Actor, *request.LegacyRef, request.JobID)
+		}); err != nil {
+			return CommandResult{}, err
+		}
+	}
 
 	job, err := loadVisibleJob(deps.DB, request.Actor, request.JobID)
 	if err != nil {
@@ -458,8 +469,14 @@ func (s *Service) ExecuteCommand(ctx context.Context, deps Deps, request Command
 // request's idempotency tuple, or nil when this request has not been made before.
 func (s *Service) recordedCommandOutcome(deps Deps, request CommandRequest) (*models.JobCommandRequest, error) {
 	var row models.JobCommandRequest
-	err := deps.DB.Where("job_id = ? AND command_key = ? AND actor_user_id = ? AND idempotency_key = ?",
-		request.JobID, request.Key, request.Actor.UserID, request.IdempotencyKey).First(&row).Error
+	query := deps.DB
+	if key := legacyCommandRequestKey(request); key != nil {
+		query = query.Where("legacy_request_key = ?", *key)
+	} else {
+		query = query.Where("job_id = ? AND command_key = ? AND actor_user_id = ? AND idempotency_key = ?",
+			request.JobID, request.Key, request.Actor.UserID, request.IdempotencyKey)
+	}
+	err := query.First(&row).Error
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil
@@ -467,6 +484,35 @@ func (s *Service) recordedCommandOutcome(deps Deps, request CommandRequest) (*mo
 		return nil, fmt.Errorf("jobs: read command request: %w", err)
 	}
 	return &row, nil
+}
+
+// ReplayCommand returns a recorded command outcome without applying a new
+// effect. Legacy retry handlers use this before queue-level URL guards: a keyed
+// repeat after Retry moved the handle must return the original answer even when
+// the new attempt is now the active download.
+func (s *Service) ReplayCommand(ctx context.Context, deps Deps, request CommandRequest) (CommandResult, bool, error) {
+	if deps.DB == nil {
+		return CommandResult{}, false, fmt.Errorf("%w: no database handle", ErrInvalidCommand)
+	}
+	if err := validateCommandRequest(&request); err != nil {
+		return CommandResult{}, false, err
+	}
+	if _, err := loadVisibleJob(deps.DB, request.Actor, request.JobID); err != nil {
+		return CommandResult{}, false, err
+	}
+	if request.LegacyRef != nil {
+		if err := deps.DB.Transaction(func(tx *gorm.DB) error {
+			return recheckLegacyCommandTarget(tx, request.Actor, *request.LegacyRef, request.JobID)
+		}); err != nil {
+			return CommandResult{}, false, err
+		}
+	}
+	recorded, err := s.recordedCommandOutcome(deps, request)
+	if err != nil || recorded == nil {
+		return CommandResult{}, false, err
+	}
+	result, err := s.replayCommandResult(deps, request, *recorded)
+	return result, true, err
 }
 
 // offersCommand reports whether an advertisement contains one key.
@@ -497,6 +543,14 @@ func validateCommandRequest(request *CommandRequest) error {
 
 	if strings.TrimSpace(request.JobID) == "" {
 		return invalid("a command needs a job id")
+	}
+	if request.LegacyRef != nil {
+		if strings.TrimSpace(request.LegacyRef.Namespace) == "" || len(request.LegacyRef.Namespace) > 40 {
+			return invalid("legacy namespace must be between 1 and 40 bytes")
+		}
+		if strings.TrimSpace(request.LegacyRef.Handle) == "" || len(request.LegacyRef.Handle) > 64 {
+			return invalid("legacy handle must be between 1 and 64 bytes")
+		}
 	}
 	if strings.TrimSpace(request.Key) == "" {
 		return invalid("a command needs a key")
@@ -572,15 +626,24 @@ func completeCommandRequest(tx *gorm.DB, id string, outcome commandOutcome, now 
 // newCommandClaim builds the idempotency row one command request is recorded
 // under.
 func newCommandClaim(request CommandRequest, now time.Time) models.JobCommandRequest {
+	idempotencyKey := request.IdempotencyKey
+	legacyKey := legacyCommandRequestKey(request)
+	if legacyKey != nil {
+		// The legacy alias is scoped to a handle. Use its digest in the original
+		// per-Job unique tuple too, so two handles that currently name the same Job
+		// can still have independent idempotency keys.
+		idempotencyKey = "legacy:" + *legacyKey
+	}
 	return models.JobCommandRequest{
-		ID:             types.NewUUIDv7(),
-		JobID:          request.JobID,
-		CommandKey:     request.Key,
-		ActorUserID:    request.Actor.UserID,
-		IdempotencyKey: request.IdempotencyKey,
-		RequestHash:    commandRequestHash(request),
-		Status:         models.JobCommandStatusRunning,
-		CreatedAt:      now,
+		ID:               types.NewUUIDv7(),
+		JobID:            request.JobID,
+		CommandKey:       request.Key,
+		ActorUserID:      request.Actor.UserID,
+		IdempotencyKey:   idempotencyKey,
+		LegacyRequestKey: legacyKey,
+		RequestHash:      commandRequestHash(request),
+		Status:           models.JobCommandStatusRunning,
+		CreatedAt:        now,
 	}
 }
 
@@ -595,13 +658,38 @@ func newCommandClaim(request CommandRequest, now time.Time) models.JobCommandReq
 // different command or origin is a different request this table has no outcome
 // for.
 func commandRequestHash(request CommandRequest) string {
+	jobKey := request.JobID
+	if request.LegacyRef != nil {
+		// Legacy requests name a stable handle. Its current canonical target is
+		// intentionally omitted because Retry moves that target after recording
+		// the original command outcome.
+		jobKey = request.LegacyRef.Namespace + "\x00" + request.LegacyRef.Handle
+	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		request.JobID,
+		jobKey,
 		request.Key,
 		strconv.FormatUint(uint64(request.Actor.UserID), 10),
 		strings.TrimSpace(request.Origin),
 	}, "\x1f")))
 	return hex.EncodeToString(sum[:])
+}
+
+// legacyCommandRequestKey is a separate idempotency index for a command issued
+// through a mutable legacy handle. Its stable tuple intentionally omits the
+// current canonical JobID so a keyed retry can replay after the handle moved.
+func legacyCommandRequestKey(request CommandRequest) *string {
+	if request.LegacyRef == nil {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		request.LegacyRef.Namespace,
+		request.LegacyRef.Handle,
+		request.Key,
+		strconv.FormatUint(uint64(request.Actor.UserID), 10),
+		request.IdempotencyKey,
+	}, "\x1f")))
+	key := hex.EncodeToString(sum[:])
+	return &key
 }
 
 // claimCommandRequest writes the idempotency row and reports whether this caller
@@ -617,8 +705,14 @@ func claimCommandRequest(tx *gorm.DB, claim models.JobCommandRequest) (*models.J
 		return nil, false, fmt.Errorf("jobs: claim command request: %w", err)
 	}
 	var stored models.JobCommandRequest
-	if err := tx.Where("job_id = ? AND command_key = ? AND actor_user_id = ? AND idempotency_key = ?",
-		claim.JobID, claim.CommandKey, claim.ActorUserID, claim.IdempotencyKey).First(&stored).Error; err != nil {
+	query := tx
+	if claim.LegacyRequestKey != nil {
+		query = query.Where("legacy_request_key = ?", *claim.LegacyRequestKey)
+	} else {
+		query = query.Where("job_id = ? AND command_key = ? AND actor_user_id = ? AND idempotency_key = ?",
+			claim.JobID, claim.CommandKey, claim.ActorUserID, claim.IdempotencyKey)
+	}
+	if err := query.First(&stored).Error; err != nil {
 		return nil, false, fmt.Errorf("jobs: read command request: %w", err)
 	}
 	if stored.ID == claim.ID {
@@ -947,6 +1041,11 @@ func (s *Service) executeWorkloadCommand(ctx context.Context, deps Deps, request
 // The refusals are typed and write nothing: the claim, the effect and the
 // outcome still commit together or not at all.
 func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, request CommandRequest) (models.Job, error) {
+	if request.LegacyRef != nil {
+		if err := recheckLegacyCommandTarget(tx, request.Actor, *request.LegacyRef, request.JobID); err != nil {
+			return models.Job{}, err
+		}
+	}
 	current, err := loadVisibleJob(tx, request.Actor, request.JobID)
 	if err != nil {
 		return models.Job{}, err
@@ -965,6 +1064,33 @@ func (s *Service) recheckCommand(ctx context.Context, deps Deps, tx *gorm.DB, re
 		return models.Job{}, fmt.Errorf("%w: job %s no longer offers %s", ErrCommandNotAdvertised, current.ID, request.Key)
 	}
 	return current, nil
+}
+
+// recheckLegacyCommandTarget binds a legacy command to the exact mapping the
+// caller projected. The row lock serializes this check with Retry's movement on
+// PostgreSQL. SQLite's command transaction has already written its claim row,
+// which takes the writer lock before this read. A moved handle returns a
+// conflict instead of retargeting a stale click to its successor.
+func recheckLegacyCommandTarget(tx *gorm.DB, access Access, ref LegacyRef, expectedJobID string) error {
+	var handle models.JobLegacyHandle
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("namespace = ? AND handle = ?", ref.Namespace, ref.Handle).
+		First(&handle).Error
+	if err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("%w: legacy handle not found", ErrNotFound)
+		}
+		return fmt.Errorf("jobs: read legacy handle for command: %w", err)
+	}
+	// Authorize the current target before returning a stale-mapping conflict. A
+	// caller cannot distinguish an inaccessible successor from a missing handle.
+	if _, err := loadVisibleJob(tx, access, handle.JobID); err != nil {
+		return err
+	}
+	if handle.JobID != expectedJobID {
+		return fmt.Errorf("%w: legacy handle moved while the command was being prepared", ErrVersionConflict)
+	}
+	return nil
 }
 
 // prepareControlIntent records the durable intent one control command asks for

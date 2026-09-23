@@ -1764,6 +1764,11 @@ type CommandRequest struct {
 	IdempotencyKey  string
 	ExpectedVersion uint64
 	Actor           Access
+	// LegacyRef is set when a compatibility surface resolved JobID from a
+	// durable legacy handle. The Service rechecks that exact mapping in the
+	// command transaction so a handle moved by a concurrent Retry cannot make a
+	// stale projection act on a different Job.
+	LegacyRef *LegacyRef
 	// Origin names the surface the command came from. Empty selects the Job's own
 	// origin, which is what a Retry or a Repeat copies onto its successor.
 	Origin string

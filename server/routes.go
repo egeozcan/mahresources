@@ -512,13 +512,29 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			return wrapContextWithPlugins(sc, info.contextFn(sc))(request)
 		}
 
-		router.Methods(info.method).Path(path).HandlerFunc(
-			template_handlers.RenderTemplate(info.templateName, scopedCtxFn),
-		)
+		pageHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
+		if path == "/downloads" {
+			legacyPageHandler := pageHandler
+			pageHandler = func(w http.ResponseWriter, r *http.Request) {
+				addLegacyJobHeaders(w.Header())
+				if canonicalJobUICutoverComplete {
+					http.Redirect(w, r, legacyDownloadsLocation(r.URL.Query()), http.StatusFound)
+					return
+				}
+				legacyPageHandler(w, r)
+			}
+		}
+		router.Methods(info.method).Path(path).HandlerFunc(pageHandler)
 
-		router.Methods(info.method).Path(path + ".json").HandlerFunc(
-			template_handlers.RenderTemplate(info.templateName, scopedCtxFn),
-		)
+		jsonHandler := template_handlers.RenderTemplate(info.templateName, scopedCtxFn)
+		if path == "/downloads" {
+			legacyJSONHandler := jsonHandler
+			jsonHandler = func(w http.ResponseWriter, r *http.Request) {
+				addLegacyJobHeaders(w.Header())
+				legacyJSONHandler(w, r)
+			}
+		}
+		router.Methods(info.method).Path(path + ".json").HandlerFunc(jsonHandler)
 
 		router.Methods(info.method).Path(path + ".body").HandlerFunc(
 			template_handlers.RenderTemplate(info.templateName, scopedCtxFn),
@@ -850,21 +866,21 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Retry and resume run scoped for the same reason: both hand the original
 	// payload back to that unscoped worker, so both re-check it against the
 	// principal pressing the button rather than trusting what was allowed once.
-	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
-	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler))
-	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler))
-	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler))
-	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
-	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
-	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler)))
+	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler)))
+	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler)))
+	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler)))
+	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
+	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
+	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(legacyJobHandler(api_handlers.GetDownloadEventsHandler(appContext)))
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
-	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
-	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler))
-	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler))
-	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler))
-	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
-	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler)))
+	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadQueueHandler)))
+	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadCancelHandler)))
+	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadPauseHandler)))
+	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler)))
+	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler)))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("version") == "2" {
 			requestContext := scopedCtx(appContext, r)
@@ -872,22 +888,24 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			return
 		}
 		// The compatibility stream retains its existing context and payload.
-		api_handlers.GetJobsEventsHandler(appContext, appContext, canonicalJobAPICutoverComplete)(w, r)
+		legacyJobHandler(api_handlers.GetJobsEventsHandler(appContext, appContext, canonicalJobAPICutoverComplete))(w, r)
 	})
-	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadJobHandler))
+	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetDownloadJobHandler)))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.
-	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(api_handlers.GetJobsClearCompletedHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(legacyJobHandler(api_handlers.GetJobsClearCompletedHandler(appContext)))
 	registerCanonicalJobRoutes(router, appContext, canonicalJobAPICutoverComplete)
 
 	// Download history — the durable record behind /downloads. Retry runs on a
 	// request-scoped context for the same reason submit does: it enqueues a
 	// download, and the stored payload has to clear the retrying principal's own
 	// scope check before it can run again.
-	router.Methods(http.MethodGet).Path("/v1/downloads").HandlerFunc(api_handlers.GetDownloadHistoryListHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/downloads/retry").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api_handlers.GetDownloadHistoryRetryHandler(scopedCtx(appContext, r))(w, r)
+	router.Methods(http.MethodGet).Path("/v1/downloads").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyJobHandler(api_handlers.GetDownloadHistoryListHandler(scopedCtx(appContext, r)))(w, r)
 	})
-	router.Methods(http.MethodPost).Path("/v1/downloads/delete").HandlerFunc(api_handlers.GetDownloadHistoryDeleteHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/downloads/retry").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyJobHandler(api_handlers.GetDownloadHistoryRetryHandler(scopedCtx(appContext, r)))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/downloads/delete").HandlerFunc(legacyJobHandler(api_handlers.GetDownloadHistoryDeleteHandler(appContext)))
 
 	// Resource Reductions. Every one of these runs on a request-scoped context:
 	// a Reduction's Extent, its plan and its apply all reach Resources, and a
@@ -942,8 +960,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// principal can only target entities inside its subtree.
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/plugin/displayTypes").HandlerFunc(api_handlers.GetPluginDisplayTypesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetActionRunHandler))
-	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(api_handlers.GetActionJobHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(legacyJobHandler(scopedAPI(appContext, api_handlers.GetActionRunHandler)))
+	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(legacyJobHandler(api_handlers.GetActionJobHandler(appContext)))
 
 	// Logs (read-only)
 	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))

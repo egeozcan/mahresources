@@ -241,6 +241,18 @@ func (ctx *MahresourcesContext) ExecuteJobCommand(requestCtx context.Context, re
 	return service.ExecuteCommand(requestCtx, ctx.jobDeps(), request)
 }
 
+// ReplayJobCommand returns an already-recorded command outcome without applying a
+// fresh effect. The legacy Retry route uses it before checking queue state so a
+// keyed repeat can receive its original outcome after the handle has moved.
+func (ctx *MahresourcesContext) ReplayJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, bool, error) {
+	service, err := ctx.requireJobService()
+	if err != nil {
+		return jobs.CommandResult{}, false, err
+	}
+	request.Actor = ctx.jobAccess()
+	return service.ReplayCommand(requestCtx, ctx.jobDeps(), request)
+}
+
 // ExecuteBulkJobCommand runs one command across a selection as this context's
 // principal, with one outcome per Job. A context with no control plane answers
 // nothing at all rather than reporting a refusal per Job it never looked at.

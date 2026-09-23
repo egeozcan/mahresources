@@ -65,6 +65,81 @@ func TestPublicOpenAPISpecFollowsCanonicalJobRouteGate(t *testing.T) {
 	}
 }
 
+func TestLegacyJobOpenAPIAdvertisesRetirementAndControlKeyHeaders(t *testing.T) {
+	registry := openapi.NewRegistry()
+	RegisterAPIRoutesWithOpenAPI(registry)
+	spec := registry.GenerateSpec()
+	paths := spec.Paths.Map()
+	if paths["/v1/jobs"] != nil {
+		t.Fatal("canonical Job list is public before Task 17 cutover")
+	}
+
+	for _, route := range []struct {
+		path   string
+		method string
+	}{
+		{"/v1/download/queue", http.MethodGet},
+		{"/v1/download/retry", http.MethodPost},
+		{"/v1/downloads", http.MethodGet},
+		{"/v1/jobs/get", http.MethodGet},
+		{"/v1/jobs/events", http.MethodGet},
+	} {
+		item := paths[route.path]
+		if item == nil {
+			t.Fatalf("legacy OpenAPI route %s is missing", route.path)
+		}
+		var operation *openapi3.Operation
+		switch route.method {
+		case http.MethodGet:
+			operation = item.Get
+		case http.MethodPost:
+			operation = item.Post
+		}
+		if operation == nil || !operation.Deprecated {
+			t.Errorf("%s %s must be marked deprecated", route.method, route.path)
+			continue
+		}
+		for _, status := range []string{"200", "400"} {
+			response := operation.Responses.Value(status)
+			if response == nil || response.Value == nil {
+				t.Errorf("%s %s response %s is missing", route.method, route.path, status)
+				continue
+			}
+			for _, name := range []string{"Deprecation", "Sunset", "Link"} {
+				if response.Value.Headers[name] == nil {
+					t.Errorf("%s %s response %s has no %s header", route.method, route.path, status, name)
+				}
+			}
+		}
+	}
+
+	for _, path := range []string{"/v1/download/cancel", "/v1/download/resume", "/v1/download/retry", "/v1/jobs/cancel", "/v1/jobs/resume", "/v1/jobs/retry", "/v1/downloads/retry"} {
+		item := paths[path]
+		if item == nil || item.Post == nil {
+			t.Errorf("legacy command route %s is missing", path)
+			continue
+		}
+		found := false
+		for _, parameter := range item.Post.Parameters {
+			if parameter.Value != nil && parameter.Value.In == "header" && parameter.Value.Name == "Idempotency-Key" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("legacy command route %s does not document Idempotency-Key", path)
+		}
+	}
+	for _, path := range []string{"/v1/download/submit", "/v1/jobs/download/submit", "/v1/jobs/action/run"} {
+		item := paths[path]
+		if item == nil || item.Post == nil || item.Post.Responses.Value("202") == nil {
+			t.Errorf("%s OpenAPI must document its HTTP 202 accepted response", path)
+		}
+	}
+	if body := paths["/v1/downloads/retry"].Post.RequestBody.Value.Content["application/json"].Schema.Value; body.Properties["idempotencyKey"] == nil {
+		t.Fatal("download history Retry body does not document idempotencyKey")
+	}
+}
+
 func TestCanonicalJobOpenAPIRoutesDescribeResponsesAndIdempotency(t *testing.T) {
 	registry := openapi.NewRegistry()
 	registerCanonicalJobRoutesOpenAPI(registry)

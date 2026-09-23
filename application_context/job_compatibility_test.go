@@ -220,6 +220,114 @@ func TestARefusedRetryLeavesTheHandleWhereItWas(t *testing.T) {
 	}
 }
 
+func TestLegacyCommandRejectsAProjectionWhoseHandleMoved(t *testing.T) {
+	ctx := newJobContext(t)
+	sqlDB, err := ctx.db.DB()
+	if err != nil {
+		t.Fatalf("underlying SQLite database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	registerCompatKind(t, ctx)
+	access := jobs.Access{UserID: 7, Administrator: true}
+
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7),
+		Replay:      jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://example.test/a"}`)},
+		LegacyRefs:  []jobs.LegacyRef{{Namespace: DownloadHandleNamespace, Handle: "race-handle"}},
+	})
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: compatTestKind, KindVersion: 1, Claimant: "legacy-control-race",
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim Job before legacy projection: claimed=%t err=%v", claimed, err)
+	}
+	// This is the legacy control's already-rendered running projection. The
+	// execution ends and canonical Retry moves the handle before that stale
+	// cancellation reaches the command service.
+	legacyProjection, err := ctx.GetJob(accepted.ID)
+	if err != nil || legacyProjection.State != jobs.StateRunning {
+		t.Fatalf("read running legacy projection: state=%s err=%v", legacyProjection.State, err)
+	}
+	failed, err := ctx.JobService().Finish(ctx.jobDeps(), jobs.FinishRequest{
+		ExecutionRef:    jobs.ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		ExpectedVersion: legacyProjection.Version,
+		Outcome:         jobs.StateFailed,
+		Failure:         &jobs.Failure{Code: "boom", Class: jobs.FailureClassInternal},
+	})
+	if err != nil {
+		t.Fatalf("finish source Job after projection: %v", err)
+	}
+	canonicalRetry, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "canonical-race-retry",
+		ExpectedVersion: failed.Version, Actor: access,
+	})
+	if err != nil {
+		t.Fatalf("canonical Retry: %v", err)
+	}
+
+	_, err = ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: legacyProjection.ID, Key: jobs.CommandCancel, IdempotencyKey: "legacy-stale-control",
+		ExpectedVersion: legacyProjection.Version, Actor: access,
+		LegacyRef: &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: "race-handle"},
+	})
+	if !errors.Is(err, jobs.ErrVersionConflict) {
+		t.Fatalf("stale legacy projection command error = %v, want ErrVersionConflict", err)
+	}
+
+	successor, err := ctx.GetJob(canonicalRetry.SuccessorID)
+	if err != nil || successor.State != jobs.StateQueued || successor.ControlIntent != "" {
+		t.Fatalf("stale cancel affected the successor: state=%s intent=%s err=%v", successor.State, successor.ControlIntent, err)
+	}
+	resolved, err := ctx.JobService().ResolveLegacyHandle(ctx.jobDeps(), DownloadHandleNamespace, "race-handle")
+	if err != nil || resolved != canonicalRetry.SuccessorID {
+		t.Fatalf("handle after stale control = %q, %v; want canonical successor %q", resolved, err, canonicalRetry.SuccessorID)
+	}
+}
+
+func TestLegacyRetryKeyReplaysAfterItsHandleMoves(t *testing.T) {
+	ctx := newJobContext(t)
+	registerCompatKind(t, ctx)
+	access := jobs.Access{UserID: 7, Administrator: true}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: compatTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api",
+		OwnerUserID: jobUintPtr(7),
+		Replay:      jobs.ReplayInput{Input: json.RawMessage(`{"url":"https://example.test/a"}`)},
+		LegacyRefs:  []jobs.LegacyRef{{Namespace: DownloadHandleNamespace, Handle: "keyed-handle"}},
+	})
+	failed := finishJobFor(t, ctx, accepted, jobs.StateFailed)
+	ref := &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: "keyed-handle"}
+
+	first, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandRetry, IdempotencyKey: "client-retry-1",
+		ExpectedVersion: failed.Version, Actor: access, LegacyRef: ref,
+	})
+	if err != nil {
+		t.Fatalf("first keyed legacy Retry: %v", err)
+	}
+	secondSnapshot, err := ctx.GetJob(first.SuccessorID)
+	if err != nil {
+		t.Fatalf("read retry successor: %v", err)
+	}
+	second, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: secondSnapshot.ID, Key: jobs.CommandRetry, IdempotencyKey: "client-retry-1",
+		ExpectedVersion: secondSnapshot.Version, Actor: access, LegacyRef: ref,
+	})
+	if err != nil {
+		t.Fatalf("repeat keyed legacy Retry after handle movement: %v", err)
+	}
+	if second.SuccessorID != first.SuccessorID {
+		t.Fatalf("replayed Retry successor = %q, want original %q", second.SuccessorID, first.SuccessorID)
+	}
+	var retries int64
+	if err := ctx.db.Model(&models.JobLink{}).Where("type = ? AND to_job_id = ?", string(jobs.LinkRetryOf), failed.ID).Count(&retries).Error; err != nil {
+		t.Fatalf("count Retry links: %v", err)
+	}
+	if retries != 1 {
+		t.Fatalf("Retry created %d successors, want one", retries)
+	}
+}
+
 // TestALegacyDownloadHandleResolvesATerminalJobAfterRestart pins the compatibility
 // contract in the direction the process-local queue cannot answer.
 //
@@ -377,6 +485,14 @@ func TestAHandleMovedToAnUnreachableSuccessorIsNotFoundNotEmptyQueue(t *testing.
 	}
 	if _, err := ownerCtx.ResolveJobHandle(DownloadHandleNamespace, handle); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("the owner's own read of the moved handle = %v, want ErrNotFound", err)
+	}
+	_, err = ownerCtx.JobService().ExecuteCommand(context.Background(), ownerCtx.jobDeps(), jobs.CommandRequest{
+		JobID: failed.ID, Key: jobs.CommandPin, IdempotencyKey: "hidden-successor-replay",
+		ExpectedVersion: failed.Version, Actor: ownerCtx.jobAccess(),
+		LegacyRef: &jobs.LegacyRef{Namespace: DownloadHandleNamespace, Handle: handle},
+	})
+	if !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("legacy command against a hidden current successor = %v, want ErrNotFound", err)
 	}
 
 	// So the projection answers the same way rather than falling back to the ancestor's

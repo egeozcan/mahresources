@@ -279,10 +279,11 @@ func (r RuntimeIdentity) Liveness() RuntimeLiveness {
 // client polling the id the server answered with gets a 404 for work that is plainly
 // still going to run, and the panel loses a row it was told about.
 type ProjectedActionJob struct {
-	Handle   string
-	Plugin   string
-	ActionID string
-	Label    string
+	Handle         string
+	CanonicalJobID string
+	Plugin         string
+	ActionID       string
+	Label          string
 	// EntityType is the plugin action's entity kind, or "custom" for a schedule.
 	EntityType string
 	// Status is the panel's own vocabulary: pending, running, paused, completed,
@@ -299,16 +300,17 @@ type ProjectedActionJob struct {
 // ActionJob renders the projection as the entry the route serializes.
 func (p ProjectedActionJob) ActionJob() *ActionJob {
 	return &ActionJob{
-		ID:          p.Handle,
-		Source:      "plugin",
-		PluginName:  p.Plugin,
-		ActionID:    p.ActionID,
-		Label:       p.Label,
-		EntityType:  p.EntityType,
-		Status:      p.Status,
-		Progress:    p.Progress,
-		Message:     p.Message,
-		CreatedAt:   p.CreatedAt,
-		ownerUserID: p.Owner,
+		ID:             p.Handle,
+		CanonicalJobID: p.CanonicalJobID,
+		Source:         "plugin",
+		PluginName:     p.Plugin,
+		ActionID:       p.ActionID,
+		Label:          p.Label,
+		EntityType:     p.EntityType,
+		Status:         p.Status,
+		Progress:       p.Progress,
+		Message:        p.Message,
+		CreatedAt:      p.CreatedAt,
+		ownerUserID:    p.Owner,
 	}
 }

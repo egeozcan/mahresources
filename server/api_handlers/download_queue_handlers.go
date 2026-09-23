@@ -307,6 +307,40 @@ type DownloadJobControl interface {
 	// accepted with, so the caller can re-validate it against its own principal.
 	DownloadRestartPayload(canonicalJobID string) (*query_models.ResourceFromRemoteCreator, error)
 	ExecuteJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, error)
+	ReplayJobCommand(requestCtx context.Context, request jobs.CommandRequest) (jobs.CommandResult, bool, error)
+}
+
+type legacyControlBody struct {
+	ID             string `json:"id"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+func legacyControlInput(request *http.Request) (id, idempotencyKey string) {
+	if strings.Contains(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		var body legacyControlBody
+		if err := json.NewDecoder(request.Body).Decode(&body); err == nil {
+			id, idempotencyKey = body.ID, body.IdempotencyKey
+		}
+	}
+	if id == "" {
+		id = request.FormValue("id")
+	}
+	if id == "" {
+		id = request.URL.Query().Get("id")
+	}
+	if key := strings.TrimSpace(request.Header.Get("Idempotency-Key")); key != "" {
+		idempotencyKey = key
+	} else if idempotencyKey == "" {
+		idempotencyKey = request.FormValue("idempotencyKey")
+	}
+	return id, strings.TrimSpace(idempotencyKey)
+}
+
+func legacyJobReference(projection download_queue.DownloadProjection) *jobs.LegacyRef {
+	if projection.LegacyNamespace == "" || projection.ID == "" {
+		return nil
+	}
+	return &jobs.LegacyRef{Namespace: projection.LegacyNamespace, Handle: projection.ID}
 }
 
 // restartScopeDeniedForJob re-validates a stored download Job's sealed submission
@@ -339,10 +373,7 @@ func projectOrNotFound(ctx DownloadJobProjector, writer http.ResponseWriter, req
 // Cancels a download job by ID
 func GetDownloadCancelHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobID := request.FormValue("id")
-		if jobID == "" {
-			jobID = request.URL.Query().Get("id")
-		}
+		jobID, idempotencyKey := legacyControlInput(request)
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
@@ -362,9 +393,10 @@ func GetDownloadCancelHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
 				JobID:           projection.CanonicalJobID,
 				Key:             jobs.CommandCancel,
-				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandCancel),
+				IdempotencyKey:  legacyIdempotencyKey(idempotencyKey, jobID, jobs.CommandCancel),
 				ExpectedVersion: projection.CanonicalVersion,
 				Origin:          "api",
+				LegacyRef:       legacyJobReference(projection),
 			})
 			if err != nil {
 				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
@@ -377,7 +409,7 @@ func GetDownloadCancelHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			// it is this layer's job, and it is idempotent: an entry an execution
 			// already cancelled refuses the second attempt, which is not a failure.
 			cancelQueueEntry(ctx, projection.Entry)
-			writeLegacyDownloadStatus(writer, "cancelled", result)
+			writeLegacyDownloadStatus(writer, "cancelled", result, projection.CanonicalJobID)
 			return
 		}
 
@@ -389,7 +421,7 @@ func GetDownloadCancelHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
-		writeLegacyDownloadStatus(writer, "cancelled", jobs.CommandResult{})
+		writeLegacyDownloadStatus(writer, "cancelled", jobs.CommandResult{}, "")
 	}
 }
 
@@ -407,10 +439,17 @@ func cancelQueueEntry(ctx DownloadJobProjector, entry *download_queue.DownloadJo
 // writeLegacyDownloadStatus answers one legacy control in the shape it has always
 // answered, adding the canonical identity the compatibility contract requires where
 // there is one.
-func writeLegacyDownloadStatus(writer http.ResponseWriter, status string, result jobs.CommandResult) {
+func writeLegacyDownloadStatus(writer http.ResponseWriter, status string, result jobs.CommandResult, canonicalJobIDs ...string) {
 	body := map[string]any{"status": status}
-	if result.SuccessorID != "" {
-		body["canonicalJobId"] = result.SuccessorID
+	canonicalJobID := result.SuccessorID
+	if canonicalJobID == "" {
+		canonicalJobID = result.Job.ID
+	}
+	if canonicalJobID == "" && len(canonicalJobIDs) > 0 {
+		canonicalJobID = canonicalJobIDs[0]
+	}
+	if canonicalJobID != "" {
+		body["canonicalJobId"] = canonicalJobID
 	}
 	writer.Header().Set("Content-Type", constants.JSON)
 	_ = json.NewEncoder(writer).Encode(body)
@@ -425,6 +464,13 @@ func writeLegacyDownloadStatus(writer http.ResponseWriter, status string, result
 // the person asked for.
 func legacyCommandKey(jobID, command string) string {
 	return fmt.Sprintf("legacy:%s:%s:%d", command, jobID, time.Now().UnixNano())
+}
+
+func legacyIdempotencyKey(key, jobID, command string) string {
+	if key = strings.TrimSpace(key); key != "" {
+		return key
+	}
+	return legacyCommandKey(jobID, command)
 }
 
 // restartScopeDenied re-checks a job's stored payload against the principal
@@ -468,10 +514,7 @@ func restartScopeDeniedForCreator(ctx DownloadSubmitter, request *http.Request, 
 // has always offered the button.
 func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobID := request.FormValue("id")
-		if jobID == "" {
-			jobID = request.URL.Query().Get("id")
-		}
+		jobID, _ := legacyControlInput(request)
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
@@ -494,8 +537,7 @@ func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.Response
 			return
 		}
 
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "paused"})
+		writeLegacyDownloadStatus(writer, "paused", jobs.CommandResult{}, projection.CanonicalJobID)
 	}
 }
 
@@ -503,10 +545,7 @@ func GetDownloadPauseHandler(ctx DownloadJobProjector) func(writer http.Response
 // Resumes a paused download job by ID
 func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobID := request.FormValue("id")
-		if jobID == "" {
-			jobID = request.URL.Query().Get("id")
-		}
+		jobID, idempotencyKey := legacyControlInput(request)
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
@@ -529,15 +568,16 @@ func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
 				JobID:           projection.CanonicalJobID,
 				Key:             jobs.CommandResume,
-				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandResume),
+				IdempotencyKey:  legacyIdempotencyKey(idempotencyKey, jobID, jobs.CommandResume),
 				ExpectedVersion: projection.CanonicalVersion,
 				Origin:          "api",
+				LegacyRef:       legacyJobReference(projection),
 			})
 			if err != nil {
 				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
 				return
 			}
-			writeLegacyDownloadStatus(writer, "resumed", result)
+			writeLegacyDownloadStatus(writer, "resumed", result, projection.CanonicalJobID)
 			return
 		}
 
@@ -553,7 +593,7 @@ func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseW
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
-		writeLegacyDownloadStatus(writer, "resumed", jobs.CommandResult{})
+		writeLegacyDownloadStatus(writer, "resumed", jobs.CommandResult{}, "")
 	}
 }
 
@@ -567,10 +607,7 @@ func GetDownloadResumeHandler(ctx DownloadJobControl) func(writer http.ResponseW
 // always had, which is what the CLI's and the package's own paths still use.
 func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobID := request.FormValue("id")
-		if jobID == "" {
-			jobID = request.URL.Query().Get("id")
-		}
+		jobID, idempotencyKey := legacyControlInput(request)
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
@@ -580,6 +617,32 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 		projection, ok := projectOrNotFound(ctx, writer, request, jobID)
 		if !ok {
 			return
+		}
+
+		if projection.CanonicalJobID != "" {
+			if err := restartScopeDeniedForJob(ctx, request, projection.CanonicalJobID); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusForbidden)
+				return
+			}
+			commandRequest := jobs.CommandRequest{
+				JobID:           projection.CanonicalJobID,
+				Key:             jobs.CommandRetry,
+				IdempotencyKey:  legacyIdempotencyKey(idempotencyKey, jobID, jobs.CommandRetry),
+				ExpectedVersion: projection.CanonicalVersion,
+				Origin:          "api",
+				LegacyRef:       legacyJobReference(projection),
+			}
+			if idempotencyKey != "" {
+				result, replayed, err := ctx.ReplayJobCommand(request.Context(), commandRequest)
+				if err != nil {
+					http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
+					return
+				}
+				if replayed {
+					writeLegacyDownloadStatus(writer, "retrying", result, projection.CanonicalJobID)
+					return
+				}
+			}
 		}
 
 		// The same anti-fork rule the /downloads page applies: a second job already
@@ -594,22 +657,20 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 		}
 
 		if projection.CanonicalJobID != "" {
-			if err := restartScopeDeniedForJob(ctx, request, projection.CanonicalJobID); err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusForbidden)
-				return
-			}
-			result, err := ctx.ExecuteJobCommand(request.Context(), jobs.CommandRequest{
+			commandRequest := jobs.CommandRequest{
 				JobID:           projection.CanonicalJobID,
 				Key:             jobs.CommandRetry,
-				IdempotencyKey:  legacyCommandKey(jobID, jobs.CommandRetry),
+				IdempotencyKey:  legacyIdempotencyKey(idempotencyKey, jobID, jobs.CommandRetry),
 				ExpectedVersion: projection.CanonicalVersion,
 				Origin:          "api",
-			})
+				LegacyRef:       legacyJobReference(projection),
+			}
+			result, err := ctx.ExecuteJobCommand(request.Context(), commandRequest)
 			if err != nil {
 				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusConflict))
 				return
 			}
-			writeLegacyDownloadStatus(writer, "retrying", result)
+			writeLegacyDownloadStatus(writer, "retrying", result, projection.CanonicalJobID)
 			return
 		}
 
@@ -625,7 +686,7 @@ func GetDownloadRetryHandler(ctx DownloadJobControl) func(writer http.ResponseWr
 			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
-		writeLegacyDownloadStatus(writer, "retrying", jobs.CommandResult{})
+		writeLegacyDownloadStatus(writer, "retrying", jobs.CommandResult{}, "")
 	}
 }
 

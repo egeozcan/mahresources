@@ -27,20 +27,21 @@ const (
 // — and without one this entry is the only lifecycle there is, which is what a
 // bare manager, the package's own tests and a programmatic embedder see.
 type ActionJob struct {
-	ID           string         `json:"id"`
-	Source       string         `json:"source"` // always "plugin"
-	PluginName   string         `json:"pluginName"`
-	ActionID     string         `json:"actionId"`
-	Label        string         `json:"label"`
-	EntityID     uint           `json:"entityId"`
-	EntityType   string         `json:"entityType"`
-	Status       string         `json:"status"`   // pending, running, completed, failed
-	Progress     int            `json:"progress"` // 0-100
-	Message      string         `json:"message"`
-	Result       map[string]any `json:"result,omitempty"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	mu           sync.RWMutex
-	lastNotified time.Time // tracks when the last SSE notification was sent for throttling
+	ID             string         `json:"id"`
+	CanonicalJobID string         `json:"canonicalJobId,omitempty"`
+	Source         string         `json:"source"` // always "plugin"
+	PluginName     string         `json:"pluginName"`
+	ActionID       string         `json:"actionId"`
+	Label          string         `json:"label"`
+	EntityID       uint           `json:"entityId"`
+	EntityType     string         `json:"entityType"`
+	Status         string         `json:"status"`   // pending, running, completed, failed
+	Progress       int            `json:"progress"` // 0-100
+	Message        string         `json:"message"`
+	Result         map[string]any `json:"result,omitempty"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	mu             sync.RWMutex
+	lastNotified   time.Time // tracks when the last SSE notification was sent for throttling
 	// ownerUserID is the user that submitted the action (RBAC). It is never
 	// serialized to JSON; callers read it via Owner() to decide visibility so a
 	// non-admin only sees the jobs it created.
@@ -161,18 +162,19 @@ func (j *ActionJob) Snapshot() *ActionJob {
 	defer j.mu.RUnlock()
 
 	snap := &ActionJob{
-		ID:          j.ID,
-		Source:      j.Source,
-		PluginName:  j.PluginName,
-		ActionID:    j.ActionID,
-		Label:       j.Label,
-		EntityID:    j.EntityID,
-		EntityType:  j.EntityType,
-		Status:      j.Status,
-		Progress:    j.Progress,
-		Message:     j.Message,
-		CreatedAt:   j.CreatedAt,
-		ownerUserID: j.ownerUserID,
+		ID:             j.ID,
+		CanonicalJobID: j.CanonicalJobID,
+		Source:         j.Source,
+		PluginName:     j.PluginName,
+		ActionID:       j.ActionID,
+		Label:          j.Label,
+		EntityID:       j.EntityID,
+		EntityType:     j.EntityType,
+		Status:         j.Status,
+		Progress:       j.Progress,
+		Message:        j.Message,
+		CreatedAt:      j.CreatedAt,
+		ownerUserID:    j.ownerUserID,
 	}
 
 	// Shallow copy of Result is safe because results are write-once:
@@ -190,6 +192,9 @@ func (j *ActionJob) Snapshot() *ActionJob {
 	if j.host != nil {
 		host := *j.host
 		snap.host = &host
+		if host.JobID != "" {
+			snap.CanonicalJobID = host.JobID
+		}
 	}
 
 	return snap

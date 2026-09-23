@@ -253,6 +253,17 @@ var downloadIDListRequestType = reflect.TypeOf(struct {
 	IDs []uint `json:"ids"`
 }{})
 
+var downloadRetryIDListRequestType = reflect.TypeOf(struct {
+	IDs            []uint `json:"ids"`
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+}{})
+
+var legacyJobIdempotencyHeader = []openapi.HeaderParam{{
+	Name:        "Idempotency-Key",
+	Type:        "string",
+	Description: "Optional stable key for replaying the same legacy command after its handle moves.",
+}}
+
 // The bodies the Resource Reduction endpoints take.
 var (
 	reductionCreatorType  = reflect.TypeOf(query_models.ResourceReductionCreator{})
@@ -2619,82 +2630,93 @@ func registerDownloadRoutes(r *openapi.Registry) {
 	remoteCreatorType := reflect.TypeOf(query_models.ResourceFromRemoteCreator{})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/download/submit",
-		OperationID:          "submitDownload",
-		Summary:              "Submit a URL for background download",
-		Description:          "Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines. `Headers` are extra request headers for this download, accepted on a JSON body only (a form post carries no header map); they are sent to the submitted URL's own origin and nowhere else, and connection-level headers, `Proxy-*`, `Keep-Alive` and `Range` are refused with HTTP 400.",
-		Tags:                 []string{"downloads"},
-		RequestType:          remoteCreatorType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/download/submit",
+		OperationID:            "submitDownload",
+		Summary:                "Submit a URL for background download",
+		Description:            "Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines. `Headers` are extra request headers for this download, accepted on a JSON body only (a form post carries no header map); they are sent to the submitted URL's own origin and nowhere else, and connection-level headers, `Proxy-*`, `Keep-Alive` and `Range` are refused with HTTP 400.",
+		Tags:                   []string{"downloads"},
+		RequestType:            remoteCreatorType,
+		SuccessStatus:          http.StatusAccepted,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/download/queue",
-		OperationID:          "getDownloadQueue",
-		Summary:              "Get all download jobs",
-		Description:          "Returns all download jobs in the queue, including pending, active, and completed jobs.",
-		Tags:                 []string{"downloads"},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodGet,
+		Path:                   "/v1/download/queue",
+		OperationID:            "getDownloadQueue",
+		Summary:                "Get all download jobs",
+		Description:            "Returns all download jobs in the queue, including pending, active, and completed jobs.",
+		Tags:                   []string{"downloads"},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/download/cancel",
-		OperationID:         "cancelDownload",
-		Summary:             "Cancel an active download",
-		Description:         "Cancels a pending or in-progress download job.",
-		Tags:                []string{"downloads"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/download/cancel",
+		OperationID:            "cancelDownload",
+		Summary:                "Cancel an active download",
+		Description:            "Cancels a pending or in-progress download job.",
+		Tags:                   []string{"downloads"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/download/pause",
-		OperationID:         "pauseDownload",
-		Summary:             "Pause a download",
-		Description:         "Pauses a pending or downloading job. The job can be resumed later.",
-		Tags:                []string{"downloads"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/download/pause",
+		OperationID:            "pauseDownload",
+		Summary:                "Pause a download",
+		Description:            "Pauses a pending or downloading job. The job can be resumed later.",
+		Tags:                   []string{"downloads"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/download/resume",
-		OperationID:         "resumeDownload",
-		Summary:             "Resume a paused download",
-		Description:         "Resumes a paused download job. The download will restart from the beginning.",
-		Tags:                []string{"downloads"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/download/resume",
+		OperationID:            "resumeDownload",
+		Summary:                "Resume a paused download",
+		Description:            "Resumes a paused download job. The download will restart from the beginning.",
+		Tags:                   []string{"downloads"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/download/retry",
-		OperationID:         "retryDownload",
-		Summary:             "Retry a failed or cancelled download",
-		Description:         "Retries a download that previously failed or was cancelled.",
-		Tags:                []string{"downloads"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/download/retry",
+		OperationID:            "retryDownload",
+		Summary:                "Retry a failed or cancelled download",
+		Description:            "Retries a download that previously failed or was cancelled.",
+		Tags:                   []string{"downloads"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:      http.MethodGet,
-		Path:        "/v1/download/events",
-		OperationID: "downloadEvents",
-		Summary:     "Server-Sent Events stream for download updates",
-		Description: "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
-		Tags:        []string{"downloads"},
+		Method:                 http.MethodGet,
+		Path:                   "/v1/download/events",
+		OperationID:            "downloadEvents",
+		Summary:                "Server-Sent Events stream for download updates",
+		Description:            "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
+		Tags:                   []string{"downloads"},
+		LegacyJobCompatibility: true,
 	})
 
 	// Download history — the durable record of finished downloads, which outlives
@@ -2722,32 +2744,36 @@ func registerDownloadRoutes(r *openapi.Registry) {
 			{Name: "error", Type: "string", Description: "Substring match over the stored error text, case-insensitive (ASCII-folded on SQLite). AND-ed with `reason`."},
 			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},
 		},
-		Paginated:            true,
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:              true,
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/downloads/retry",
-		OperationID:          "retryDownloadHistory",
-		Summary:              "Retry stored downloads",
-		Description:          "Runs one or more failed or cancelled downloads again from their stored submission, whether or not the original job is still in the queue. Refused for a completed download, for one whose retry is still queued or running, and for a URL the queue is already fetching. Reports an outcome per id.",
-		Tags:                 []string{"downloads"},
-		RequestType:          downloadIDListRequestType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/downloads/retry",
+		OperationID:            "retryDownloadHistory",
+		Summary:                "Retry stored downloads",
+		Description:            "Runs one or more failed or cancelled downloads again from their stored submission, whether or not the original job is still in the queue. Refused for a completed download, for one whose retry is still queued or running, and for a URL the queue is already fetching. Reports an outcome per id.",
+		Tags:                   []string{"downloads"},
+		RequestType:            downloadRetryIDListRequestType,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/downloads/delete",
-		OperationID:          "deleteDownloadHistory",
-		Summary:              "Delete stored downloads",
-		Description:          "Removes one or more download history rows, and the matching queue entries. A download that is still running or paused is refused, as is one whose retry is still running; cancel it first. Reports an outcome per id.",
-		Tags:                 []string{"downloads"},
-		RequestType:          downloadIDListRequestType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/downloads/delete",
+		OperationID:            "deleteDownloadHistory",
+		Summary:                "Delete stored downloads",
+		Description:            "Removes one or more download history rows, and the matching queue entries. A download that is still running or paused is refused, as is one whose retry is still running; cancel it first. Reports an outcome per id.",
+		Tags:                   []string{"downloads"},
+		RequestType:            downloadIDListRequestType,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	// Resource Reductions — named, durable proposals to collapse Clusters of
@@ -2773,15 +2799,16 @@ func registerDownloadRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/reduction",
-		OperationID:          "createResourceReduction",
-		Summary:              "Create a Resource Reduction, or widen an existing one",
-		Description:          "Creates a Resource Reduction over a selection of Resources or Groups. Passing the id of an existing Reduction adds the selection to its Extent instead. Groups are expanded through their descendants at compute time, not here.",
-		Tags:                 []string{"reductions"},
-		RequestType:          reductionCreatorType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/reduction",
+		OperationID:            "createResourceReduction",
+		Summary:                "Create a Resource Reduction, or widen an existing one",
+		Description:            "Creates a Resource Reduction over a selection of Resources or Groups. Passing the id of an existing Reduction adds the selection to its Extent instead. Groups are expanded through their descendants at compute time, not here.",
+		Tags:                   []string{"reductions"},
+		RequestType:            reductionCreatorType,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -2846,110 +2873,125 @@ func registerDownloadRoutes(r *openapi.Registry) {
 
 	// Jobs routes (canonical paths — aliases for download routes above, plus action routes)
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/jobs/download/submit",
-		OperationID:          "jobsSubmitDownload",
-		Summary:              "Submit a URL for background download (canonical path)",
-		Tags:                 []string{"jobs"},
-		RequestType:          remoteCreatorType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/download/submit",
+		OperationID:            "jobsSubmitDownload",
+		Summary:                "Submit a URL for background download (canonical path)",
+		Tags:                   []string{"jobs"},
+		RequestType:            remoteCreatorType,
+		SuccessStatus:          http.StatusAccepted,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/jobs/queue",
-		OperationID:          "jobsGetQueue",
-		Summary:              "Get all jobs in the queue (canonical path)",
-		Tags:                 []string{"jobs"},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodGet,
+		Path:                   "/v1/jobs/queue",
+		OperationID:            "jobsGetQueue",
+		Summary:                "Get all jobs in the queue (canonical path)",
+		Tags:                   []string{"jobs"},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/jobs/cancel",
-		OperationID:         "jobsCancel",
-		Summary:             "Cancel a job (canonical path)",
-		Tags:                []string{"jobs"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/cancel",
+		OperationID:            "jobsCancel",
+		Summary:                "Cancel a job (canonical path)",
+		Tags:                   []string{"jobs"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	// UI bug hunt finding 40: the jobs panel had no way to dismiss a finished job.
 	// Clears completed/failed/cancelled jobs the caller may see; active and paused
 	// jobs are kept.
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/jobs/clearCompleted",
-		OperationID:          "jobsClearCompleted",
-		Summary:              "Dismiss every finished job (completed, failed or cancelled)",
-		Tags:                 []string{"jobs"},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/clearCompleted",
+		OperationID:            "jobsClearCompleted",
+		Summary:                "Dismiss every finished job (completed, failed or cancelled)",
+		Tags:                   []string{"jobs"},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/jobs/pause",
-		OperationID:         "jobsPause",
-		Summary:             "Pause a job (canonical path)",
-		Tags:                []string{"jobs"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/pause",
+		OperationID:            "jobsPause",
+		Summary:                "Pause a job (canonical path)",
+		Tags:                   []string{"jobs"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/jobs/resume",
-		OperationID:         "jobsResume",
-		Summary:             "Resume a paused job (canonical path)",
-		Tags:                []string{"jobs"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/resume",
+		OperationID:            "jobsResume",
+		Summary:                "Resume a paused job (canonical path)",
+		Tags:                   []string{"jobs"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/jobs/retry",
-		OperationID:         "jobsRetry",
-		Summary:             "Retry a failed job (canonical path)",
-		Tags:                []string{"jobs"},
-		IDQueryParam:        "id",
-		IDRequired:          true,
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/retry",
+		OperationID:            "jobsRetry",
+		Summary:                "Retry a failed job (canonical path)",
+		Tags:                   []string{"jobs"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraHeaderParams:      legacyJobIdempotencyHeader,
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:      http.MethodGet,
-		Path:        "/v1/jobs/events",
-		OperationID: "jobsEvents",
-		Summary:     "Server-Sent Events stream for job updates (canonical path)",
-		Tags:        []string{"jobs"},
+		Method:                 http.MethodGet,
+		Path:                   "/v1/jobs/events",
+		OperationID:            "jobsEvents",
+		Summary:                "Server-Sent Events stream for job updates (canonical path)",
+		Tags:                   []string{"jobs"},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/jobs/get",
-		OperationID:          "getJob",
-		Summary:              "Get a single background job by ID",
-		Description:          "Returns the current status of a job. Used by the CLI client's polling loop.",
-		Tags:                 []string{"jobs"},
-		IDQueryParam:         "id",
-		IDRequired:           true,
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodGet,
+		Path:                   "/v1/jobs/get",
+		OperationID:            "getJob",
+		Summary:                "Get a single background job by ID",
+		Description:            "Returns the current status of a job. Used by the CLI client's polling loop.",
+		Tags:                   []string{"jobs"},
+		IDQueryParam:           "id",
+		IDRequired:             true,
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	// Plugin action routes via jobs
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/jobs/action/run",
-		OperationID:          "runPluginAction",
-		Summary:              "Run a plugin action as a background job",
-		Tags:                 []string{"jobs", "plugins"},
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:                 http.MethodPost,
+		Path:                   "/v1/jobs/action/run",
+		OperationID:            "runPluginAction",
+		Summary:                "Run a plugin action as a background job",
+		Tags:                   []string{"jobs", "plugins"},
+		SuccessStatus:          http.StatusAccepted,
+		RequestContentTypes:    []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -2959,9 +3001,10 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Summary:     "Get the status of a plugin action job",
 		Tags:        []string{"jobs", "plugins"},
 		ExtraQueryParams: []openapi.QueryParam{
-			{Name: "jobId", Type: "string", Required: true, Description: "Job ID"},
+			{Name: "id", Type: "string", Required: true, Description: "Legacy action-job handle"},
 		},
-		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes:   []openapi.ContentType{openapi.ContentTypeJSON},
+		LegacyJobCompatibility: true,
 	})
 }
 

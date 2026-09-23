@@ -512,6 +512,11 @@ type JobCommandRequest struct {
 	CommandKey     string `gorm:"size:40;not null;uniqueIndex:idx_job_command_requests_idempotency,priority:2" json:"commandKey"`
 	ActorUserID    uint   `gorm:"not null;uniqueIndex:idx_job_command_requests_idempotency,priority:3" json:"actorUserId"`
 	IdempotencyKey string `gorm:"size:200;not null;uniqueIndex:idx_job_command_requests_idempotency,priority:4" json:"idempotencyKey"`
+	// LegacyRequestKey aliases one keyed compatibility command independently of
+	// JobID. Retry moves a legacy handle to its successor, but repeating the same
+	// client request through that handle must still find the original outcome.
+	// NULL leaves canonical requests on their original idempotency tuple.
+	LegacyRequestKey *string `gorm:"size:64;uniqueIndex:idx_job_command_requests_legacy_request" json:"legacyRequestKey,omitempty"`
 
 	// RequestHash is the fingerprint of what was asked for through this key, so a
 	// key reused for a different request is refused rather than answered with the
