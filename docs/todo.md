@@ -1,3 +1,48 @@
+# Job Center Task 18 — million-row list and summary plans (2026-09-23)
+
+**Fixture:** The opt-in focused harness seeds 1,000,000 rows through the Job core
+schema and its GORM indexes, spread over 20 owners and 90 days, with 80% marked
+started. PostgreSQL runs `ANALYZE jobs`; SQLite retains its ordinary planner
+statistics. It calls the public `jobs.Service.List` and `jobs.Service.Summary`
+methods, captures their executed SQL, and explains each query. The 30-day
+summary sees 16,667 Jobs for one owner and 333,334 for an administrator.
+
+**Command:**
+
+```bash
+MAHRESOURCES_JOB_QUERY_PLAN_MILLION=1 go test --tags 'json1 fts5 postgres' ./jobs -run '^TestJobQueryPlansMillionRows' -count=1 -v
+```
+
+The environment variable is required so ordinary package and release tests skip
+the million-row fixture.
+
+**Evidence:**
+
+- SQLite: owner list 16 ms, administrator list 0.3 ms; owner summary 209 ms,
+  administrator summary 1.75 s. The owner list searches `idx_jobs_visible` and
+  sorts its 50,000 visible rows in a temporary B-tree because the composite
+  index has `state` before `accepted_at`. The administrator list walks
+  `idx_jobs_admin_order`. The owner summary searches the owner prefix of
+  `idx_jobs_visible`; the administrator summary uses the accepted-time range in
+  `idx_jobs_admin_order`. SQLite uses temporary B-trees for grouped counts and
+  duration percentiles.
+- PostgreSQL: owner list 2.7 ms, administrator list 0.8 ms; owner summary
+  100 ms, administrator summary 489 ms. Both list scopes use backward scans of
+  `idx_jobs_admin_order`. The owner summary uses `idx_jobs_visible`; the broad
+  administrator summary uses parallel sequential scans for its one-third-table
+  30-day window. One queue-duration percentile sort spills about 3.9 MB to
+  temporary storage; duration percentile query plans take 54–126 ms.
+- Each summary executes nine queries against `jobs` only; no event or replay
+  table is read. A list performs one additional replay-availability lookup
+  constrained to its 50 page IDs. The measured owner summary stays below 210 ms
+  on SQLite and 101 ms on PostgreSQL at this scale. No product change was
+  indicated by these timings.
+
+These timings are one local run after fixture construction, included as
+practical evidence rather than a performance guarantee.
+
+---
+
 # Job Center post-Task-9 checkpoint, ninth round — receipt cascade and mutable Resource hash (2026-09-23)
 
 **Goal:** Keep canonical download receipts from outliving their Job or Resource on production
