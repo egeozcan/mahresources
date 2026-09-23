@@ -107,21 +107,22 @@ describe('Job Center panel accessibility hooks', () => {
         });
     });
 
-    test('announces a newly delivered lifecycle outcome in text', () => {
+    test('announces a newly delivered lifecycle outcome from a complete stream snapshot', () => {
         const panel = jobPanel();
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
         panel.jobs = [{ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'running', version: 2 }];
-        vi.stubGlobal('fetch', vi.fn(async () => ({
-            ok: true,
-            json: async () => ({ id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 3 }),
-        })));
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:14' }) });
         return panel.handleStreamMessage({
-            data: JSON.stringify({ jobId: 'job-1', type: 'failed', sequence: 3, deliverySequence: 15 }),
+            data: JSON.stringify({
+                job: { id: 'job-1', title: 'Index rebuild', kind: 'maintenance', state: 'failed', version: 3 },
+                sequence: 3, deliverySequence: 15,
+            }),
             lastEventId: 'v2:15',
         }).then(() => {
             expect(panel._liveRegion.announce).toHaveBeenCalledWith(expect.stringMatching(/Index rebuild.*failed/i));
-            expect(fetch).toHaveBeenCalledWith('/v1/jobs/job-1', expect.anything());
+            expect(fetchMock).not.toHaveBeenCalled();
             expect(panel.lastSequence).toBe(15);
         });
     });
@@ -158,23 +159,38 @@ describe('Job Center panel accessibility hooks', () => {
         expect(panel._liveRegion.announce).toHaveBeenCalledTimes(2);
     });
 
-    test('does not announce a replay snapshot that finishes loading after the catch-up boundary', async () => {
+    test('does not announce replay events or apply page details loaded before the catch-up boundary', async () => {
         let resolveDetail: (value: unknown) => void = () => {};
+        let markDetailStarted: () => void = () => {};
         const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+        const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
         const panel = jobPanel();
-        panel.jobs = [{ id: 'job-1', title: 'Index rebuild', state: 'queued', version: 1 }];
+        const visibleJob = { id: 'job-1', title: 'Index rebuild', state: 'queued', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
         panel._liveRegion = { announce: vi.fn(), destroy: vi.fn() } as any;
-        panel.requestJSON = vi.fn(() => detailRequest);
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
+            if (url === '/v1/jobs/summary') return { byState: { queued: 1 } };
+            if (url.startsWith('/v1/jobs?')) {
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').includes('queued') ? [visibleJob] : [] };
+            }
+            markDetailStarted();
+            return detailRequest;
+        });
 
+        const refresh = panel.refresh();
+        await detailStarted;
         const event = panel.handleStreamMessage({
             data: JSON.stringify({ id: 'event-1', jobId: 'job-1', type: 'failed', sequence: 2, deliverySequence: 1 }),
             lastEventId: 'v2:1',
         });
         panel.markStreamCaughtUp({ data: JSON.stringify({ cursor: 'v2:1' }) });
         resolveDetail({ id: 'job-1', title: 'Index rebuild', state: 'failed', version: 2 });
-        await event;
+        await Promise.all([event, refresh]);
 
         expect(panel._liveRegion.announce).not.toHaveBeenCalled();
+        expect(panel.commandsFor(panel.jobs[0])).toEqual([]);
+        panel.destroy();
     });
 
     test('ignores unknown replay detail fetches, refreshes bounded pages after catch-up, and caps live rows', async () => {
@@ -325,29 +341,75 @@ describe('Job Center panel accessibility hooks', () => {
         vi.useRealTimers();
     });
 
-    test('does not apply an event detail response after a newer page refresh excludes that job', async () => {
-        let resolveDetail: (value: unknown) => void = () => {};
-        const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+    test('coalesces event-only bursts for one visible Job into a bounded page refresh', async () => {
+        vi.useFakeTimers();
         const panel = jobPanel();
         panel.streamCaughtUp = true;
-        panel.jobs = [{ id: 'job-1', title: 'Old job', state: 'running', version: 1 }];
+        const visibleJob = { id: 'visible-job', kind: 'maintenance', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
+        const detailRequests: string[] = [];
+        const listRequests: string[] = [];
+        panel.jobs = [visibleJob];
         panel.requestJSON = vi.fn(async raw => {
             const url = String(raw);
-            if (url === '/v1/jobs/job-1') return detailRequest;
+            if (url === '/v1/jobs/summary') return { byState: { running: 1 } };
+            if (url.startsWith('/v1/jobs?')) {
+                listRequests.push(url);
+                const query = new URL(url, 'http://localhost').searchParams;
+                return { jobs: query.getAll('state').includes('running') ? [visibleJob] : [] };
+            }
+            detailRequests.push(url);
+            return { ...visibleJob, commands: [{ key: 'pause', label: 'Pause', jobVersion: 1 }] };
+        });
+
+        await Promise.all(Array.from({ length: 1000 }, (_, index) => panel.handleStreamMessage({
+            data: JSON.stringify({
+                id: `same-job-event-${index + 1}`, jobId: 'visible-job',
+                type: 'state-change', deliverySequence: index + 1,
+            }),
+            lastEventId: `v2:${index + 1}`,
+        })));
+
+        expect(detailRequests).toEqual([]);
+        await vi.advanceTimersByTimeAsync(150);
+        await panel._panelRefreshPromise;
+
+        expect(listRequests).toHaveLength(3);
+        expect(detailRequests).toEqual(['/v1/jobs/visible-job']);
+        expect(panel.commandsFor(panel.jobs[0])).toEqual([{ key: 'pause', label: 'Pause', jobVersion: 1 }]);
+        panel.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not apply a page detail response after a newer page refresh excludes that job', async () => {
+        let resolveDetail: (value: unknown) => void = () => {};
+        let markDetailStarted: () => void = () => {};
+        const detailRequest = new Promise(resolve => { resolveDetail = resolve; });
+        const detailStarted = new Promise<void>(resolve => { markDetailStarted = resolve; });
+        const panel = jobPanel();
+        const visibleJob = { id: 'job-1', title: 'Old job', state: 'running', version: 1, acceptedAt: '2026-09-23T10:00:00Z' };
+        let pageCall = 0;
+        panel.requestJSON = vi.fn(async raw => {
+            const url = String(raw);
             if (url === '/v1/jobs/summary') return { byState: { running: 0 } };
-            if (url.startsWith('/v1/jobs?')) return { jobs: [] };
+            if (url.startsWith('/v1/jobs?')) {
+                const round = Math.floor(pageCall / 3);
+                pageCall += 1;
+                return { jobs: round === 0 ? [visibleJob] : [] };
+            }
+            if (url === '/v1/jobs/job-1') {
+                markDetailStarted();
+                return detailRequest;
+            }
             return {};
         });
 
-        const eventUpdate = panel.handleStreamMessage({
-            data: JSON.stringify({ jobId: 'job-1', type: 'succeeded', deliverySequence: 1 }),
-            lastEventId: 'v2:1',
-        });
+        const firstRefresh = panel.refresh();
+        await detailStarted;
         await panel.refresh();
         expect(panel.jobs).toEqual([]);
 
-        resolveDetail({ id: 'job-1', title: 'Old job', state: 'succeeded', version: 2 });
-        await eventUpdate;
+        resolveDetail({ ...visibleJob, state: 'succeeded', version: 2, commands: [{ key: 'dismiss' }] });
+        await firstRefresh;
 
         expect(panel.jobs).toEqual([]);
         panel.destroy();
