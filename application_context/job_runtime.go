@@ -227,6 +227,19 @@ func (r *JobRuntime) tick(ctx context.Context) {
 	if r == nil || r.service == nil || r.ctx == nil {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Publish lifecycle events committed by request handlers, host-side plugin
+	// executions, or another process before dispatching more work. The allocator
+	// row serializes concurrent runtimes, and delivery sequences remain global;
+	// each subscriber still applies the Job visibility predicate when it reads.
+	// A cancelled runtime leaves any remaining rows unsequenced for the next
+	// process to publish during its first tick.
+	if _, err := r.service.PublishPendingEvents(r.depsFor(ctx), jobs.DefaultPublishBatch); err != nil && ctx.Err() == nil {
+		log.Printf("job runtime: publishing pending Job events failed: %v", err)
+	}
 
 	report, err := r.service.ReconcileExpired(ctx, r.depsFor(ctx), r.claimant, jobs.DefaultReconcileBatch)
 	if err != nil {
