@@ -1247,23 +1247,23 @@ func (s *Service) ReconcileQuarantined(ctx context.Context, deps Deps, claimant 
 		}
 
 		access, accessErr := executionAccess(job)
-		if accessErr != nil {
-			// The principal the work acts as is gone. No adapter answer could be
-			// carried out — every one of them would run the work as somebody the
-			// deleted account was not — so the quarantine stays and this pass asks
-			// again later rather than releasing work nobody has proved stopped.
-			if err := deferClaimReconcile(deps, claim, now); err != nil {
-				return report, err
+		adapter, definition, adapterErr := s.adapterFor(claim.Kind, claim.KindVersion)
+		if accessErr != nil || adapterErr != nil {
+			// Never invoke work as a substitute principal. When either the principal
+			// or its Kind has disappeared, the only generic recovery evidence is a
+			// positive proof that the recorded owner runtime stopped. That proof
+			// releases claim and capacity but leaves the Job blocked: no work is
+			// reconstructed or queued without the missing authority or adapter.
+			if deps.RuntimeIsProvedGone != nil && deps.RuntimeIsProvedGone(claim.Claimant) {
+				if _, err := s.ReleaseClaim(deps, ReleaseRequest{
+					ExecutionRef: ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken},
+					Reason:       ReleaseReasonRuntimeProvedGone,
+				}); err != nil {
+					return report, err
+				}
+				report.Released++
+				continue
 			}
-			report.Deferred++
-			continue
-		}
-
-		adapter, definition, err := s.adapterFor(claim.Kind, claim.KindVersion)
-		if err != nil {
-			// No executor here can prove anything about this Kind's work, which is
-			// often *why* it was quarantined: a Kind registered in a process that
-			// starts later is exactly the evidence this pass exists for.
 			if err := deferClaimReconcile(deps, claim, now); err != nil {
 				return report, err
 			}

@@ -724,7 +724,11 @@ func (ctx *MahresourcesContext) queueEntryFor(jobID string) (*download_queue.Dow
 // those answers "not proved", which is what keeps a Job nonterminal rather than
 // terminating work that may still be running.
 func runtimeIsProvedGone(request jobs.ReconcileRequest) bool {
-	identity, ok := plugin_system.ParseRuntimeIdentity(request.Claimant)
+	return runtimeClaimantIsProvedGone(request.Claimant)
+}
+
+func runtimeClaimantIsProvedGone(claimant string) bool {
+	identity, ok := plugin_system.ParseRuntimeIdentity(claimant)
 	if !ok {
 		return false
 	}

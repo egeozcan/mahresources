@@ -487,6 +487,10 @@ const (
 type Deps struct {
 	DB  *gorm.DB
 	Now func() time.Time
+	// RuntimeIsProvedGone answers whether a durable claimant identity can be
+	// positively shown to have stopped. It is used only when a Kind adapter or
+	// execution principal is unavailable; an absent callback is no proof.
+	RuntimeIsProvedGone func(claimant string) bool
 	// PinLimit is how many Jobs the asking viewer may pin in this deployment. 0
 	// means "not configured", which selects DefaultPinLimit rather than
 	// "unlimited": a limit a missing value removed would be no limit at all.
@@ -1319,6 +1323,10 @@ const (
 	// ReleaseReasonExecutionEnded is an execution that returned without ending
 	// itself, so the runtime ended its ownership.
 	ReleaseReasonExecutionEnded = "execution-ended"
+	// ReleaseReasonRuntimeProvedGone records a quarantine released after
+	// identity evidence proved its owner stopped, when no adapter or execution
+	// principal remained to reconcile the work itself.
+	ReleaseReasonRuntimeProvedGone = "runtime-proved-gone"
 )
 
 // Definition is what a Kind fixes about itself before the control plane
@@ -1597,6 +1605,10 @@ type ReconcileReport struct {
 	// they are scheduled for a later pass rather than for the next one — which is
 	// what keeps a Kind whose reconciler is failing from occupying every batch.
 	Deferred int
+	// Released counts quarantined claims whose owner runtime was positively
+	// proved gone after the principal or adapter needed to reconcile them vanished.
+	// The Job remains blocked and is never redispatched by this recovery path.
+	Released int
 	// Outcomes records the applied decisions, in the order they were applied.
 	Outcomes []ReconcileOutcome
 	// Resume holds the executions the caller must dispatch: a resume keeps the

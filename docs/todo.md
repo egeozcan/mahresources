@@ -1,3 +1,25 @@
+# Job Center post-Task-9 checkpoint, seventh round — quarantine capacity recovery (2026-09-23)
+
+**Goal:** Recover deployment capacity after a quarantined execution's actor or Kind disappears,
+only when the owner runtime identity is positively proved gone.
+
+## Finding closed
+
+| Finding (P1) | Fix | Regression |
+|---|---|---|
+| A missing actor or adapter made `ReconcileQuarantined` defer forever, even after the owner process died | Inject a conservative runtime-loss proof callback through `jobs.Deps`; when actor or adapter is unavailable and the claimant is proved gone, release the claim/capacity while leaving the Job blocked. No adapter runs and no work is redispatched. | `TestADeletedPrincipalQuarantineReleasesCapacityOnlyAfterRuntimeLossIsProved`, `TestAMissingAdapterQuarantineReleasesCapacityOnlyAfterRuntimeLossIsProved`, and the unparseable claimant hold in `TestAHeldExportIsQuarantinedRatherThanReleasedByAReconcilerWithNoKey` |
+
+## Verification
+
+- Red: both new public-seam cases observed claim state `quarantined` where runtime-loss proof should release it.
+- Green: focused application-context quarantine regressions passed, including an unparseable owner identity remaining deferred with capacity held.
+- Full SQLite/PostgreSQL suites and race checks are pending for this correction round.
+
+## Files, commits and artifact
+
+- Code-fix commit: this round's `fix(jobs): ...` commit on `master`.
+- Baseline: `708ab0aa`.
+
 # Job Center post-Task-9 checkpoint, sixth round — import plan publication and scalar redaction (2026-09-23)
 
 **Goal:** Close the post-round-4 Spec review findings: an import reconciler could treat a

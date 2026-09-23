@@ -87,6 +87,17 @@ func TestAHeldExportIsQuarantinedRatherThanReleasedByAReconcilerWithNoKey(t *tes
 	if len(report.Outcomes) != 1 || report.Outcomes[0].Decision != jobs.ReconcileExternalWorkUnproven {
 		t.Fatalf("a hold nobody could decide was reported as %+v", report.Outcomes)
 	}
+	if err := ctx.db.Model(&models.JobClaim{}).Where("job_id = ?", accepted.ID).
+		UpdateColumn("next_reconcile_at", nil).Error; err != nil {
+		t.Fatalf("make the held claim's next check due: %v", err)
+	}
+	unknown, err := ctx.JobService().ReconcileQuarantined(context.Background(), ctx.jobDeps(), "restarted-runtime", 32)
+	if err != nil {
+		t.Fatalf("revisit claim with an unparseable owner identity: %v", err)
+	}
+	if unknown.Released != 0 || unknown.Deferred != 1 {
+		t.Fatalf("unproven runtime identity released or did not defer the claim: %+v", unknown)
+	}
 
 	held, err := ctx.GetJob(accepted.ID)
 	if err != nil {
@@ -152,6 +163,114 @@ func TestARestartedRuntimeResolvesAQuarantineWhoseRuntimeIsProvedGone(t *testing
 	}
 	if slots := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); slots != 0 {
 		t.Fatalf("the deployment budget still holds %d slots after the work ended", slots)
+	}
+}
+
+func TestADeletedPrincipalQuarantineReleasesCapacityOnlyAfterRuntimeLossIsProved(t *testing.T) {
+	ctx := newClaimableExportContext(t)
+	actor, err := ctx.CreateUser(&UserInput{Username: "quarantined-actor", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID := createExportGroupForTest(t, ctx, "deleted-principal-quarantine")
+	input, err := json.Marshal(exportJobInput{Request: *exportRequestForTest(groupID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion,
+		State: jobs.StateQueued, Origin: "api", Title: "Group export",
+		ActorUserID: &actor.ID, ExecutionPrincipal: jobs.PrincipalActor,
+		Replay: jobs.ReplayInput{Input: input},
+	})
+	if _, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindGroupExport, KindVersion: jobExportKindVersion, JobID: accepted.ID,
+		Claimant: goneRuntimeIdentityForTest(), Lease: 20 * time.Millisecond,
+		Capacity: []jobs.CapacityRef{{Group: jobs.CapacityGroupGlobal, Limit: 4}},
+	}); err != nil || !claimed {
+		t.Fatalf("claim export: claimed=%v err=%v", claimed, err)
+	}
+	if err := ctx.DeleteUser(actor.ID); err != nil {
+		t.Fatalf("delete execution actor: %v", err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if _, err := ctx.JobService().ReconcileExpired(context.Background(), ctx.jobDeps(), "runtime-without-actor", 32); err != nil {
+		t.Fatalf("quarantine expired claim: %v", err)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+
+	_, err = ctx.JobService().ReconcileQuarantined(context.Background(), ctx.jobDeps(), "restarted-runtime", 32)
+	if err != nil {
+		t.Fatalf("reconcile deleted-principal quarantine: %v", err)
+	}
+	job, err := ctx.GetJob(accepted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != jobs.StateBlocked {
+		t.Fatalf("deleted-principal job state = %s, want blocked", job.State)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("claim state = %s, want released after runtime loss proof", claim.State)
+	}
+	if slots := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); slots != 0 {
+		t.Fatalf("capacity slots = %d, want 0 after proved runtime loss", slots)
+	}
+}
+
+func TestAMissingAdapterQuarantineReleasesCapacityOnlyAfterRuntimeLossIsProved(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	service := jobs.NewService()
+	adapter := newRuntimeTestAdapter()
+	adapter.reconcile = func(context.Context, jobs.ReconcileRequest) (jobs.ReconcileDecision, error) {
+		return jobs.ReconcileExternalWorkUnproven, nil
+	}
+	if err := service.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	ctx.SetJobService(service)
+	accepted := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: runtimeTestKind, KindVersion: 1, State: jobs.StateQueued, Origin: "api", Title: "test work",
+		ExecutionPrincipal: jobs.PrincipalHost,
+		Replay:             jobs.ReplayInput{NonReplayable: true},
+	})
+	if _, claimed, err := service.Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: runtimeTestKind, KindVersion: 1, JobID: accepted.ID,
+		Claimant: goneRuntimeIdentityForTest(), Lease: 20 * time.Millisecond,
+		Capacity: []jobs.CapacityRef{{Group: jobs.CapacityGroupGlobal, Limit: 4}},
+	}); err != nil || !claimed {
+		t.Fatalf("claim test work: claimed=%v err=%v", claimed, err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if _, err := service.ReconcileExpired(context.Background(), ctx.jobDeps(), "reconciler", 32); err != nil {
+		t.Fatalf("quarantine expired claim: %v", err)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("claim state = %s, want quarantined", claim.State)
+	}
+
+	// Simulate a deployment where this Kind was removed or disabled after the
+	// owning runtime died. The generic runtime identity proof still recovers the
+	// capacity, while the blocked Job stays unavailable for redispatch.
+	ctx.SetJobService(jobs.NewService())
+	_, err := ctx.JobService().ReconcileQuarantined(context.Background(), ctx.jobDeps(), "restarted-runtime", 32)
+	if err != nil {
+		t.Fatalf("reconcile missing-adapter quarantine: %v", err)
+	}
+	job, err := ctx.GetJob(accepted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != jobs.StateBlocked {
+		t.Fatalf("missing-adapter job state = %s, want blocked", job.State)
+	}
+	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("claim state = %s, want released after runtime loss proof", claim.State)
+	}
+	if slots := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); slots != 0 {
+		t.Fatalf("capacity slots = %d, want 0 after proved runtime loss", slots)
 	}
 }
 
