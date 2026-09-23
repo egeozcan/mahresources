@@ -197,23 +197,13 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// when auth is off or for Bearer requests, where CSRF is not enforced.
 		ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
 
-		// BH-036: expose the export-retention window to every template context so
-		// the admin-export helper text and the per-job expiry label in the
-		// downloadCockpit can render consistent values without a bespoke provider
-		// on each route. The ms value is consumed by downloadCockpit.js; the
-		// human-readable string is rendered directly in adminExport.tpl.
+		// Keep the export-retention helper in the admin export template.
 		//
 		// Finding 104: this was retention.String(), so the helper text read
 		// "24h0m0s" while /admin/settings showed the same setting as "24h".
 		// ShortDuration is the Go twin of that page's nanosToShort.
 		retention := appContext.Settings().ExportRetention()
 		ctx["exportRetention"] = template_context_providers.ShortDuration(retention)
-		ctx["exportRetentionMs"] = retention.Milliseconds()
-		// How many rows the jobs panel renders. Read through the context accessor
-		// rather than Settings() directly, so a config that never set it (tests,
-		// programmatic embeds) falls back to the default instead of publishing 0 —
-		// which the panel would honour by rendering nothing.
-		ctx["downloadCockpitLimit"] = appContext.DownloadCockpitLimit()
 		// The client-side bulk upload widget on /resource/new. Read through the
 		// context accessors, not Settings(), for the same reason as above: a 0
 		// here would read as "every selection crosses the threshold" and "start

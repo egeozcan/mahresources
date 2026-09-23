@@ -6142,7 +6142,7 @@ paths:
                 "500":
                     description: Output could not be opened
                 default:
-                    description: Output resolves to an authorized entity or external link
+                    description: Output is no longer available
             summary: Open a currently authorized typed Job output
             tags:
                 - jobs
@@ -6804,7 +6804,8 @@ paths:
                 - jobs
     /v1/jobs/events:
         get:
-            description: Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream.
+            deprecated: true
+            description: Set version=2 to select the canonical stream and resume with a v2:<delivery-sequence> cursor or Last-Event-ID. After its initial replay, the stream emits a non-durable job-caught-up control event with the last-delivered cursor and no SSE id. Omit version to retain the legacy compatibility stream. This compatibility endpoint is deprecated. Responses include Deprecation (@1790121600), Sunset (Wed, 24 Mar 2027 00:00:00 GMT) and Link (</v1/jobs>; rel="successor-version") headers.
             operationId: streamCanonicalJobEvents
             parameters:
                 - description: Set to 2 for the canonical stream; omit to retain the legacy compatibility stream.
@@ -6824,12 +6825,109 @@ paths:
                             schema:
                                 type: string
                     description: Successful response
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
                 "400":
                     description: Invalid filter or request
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
+                "401":
+                    description: Authentication required
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
+                "403":
+                    description: Forbidden
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
                 "404":
                     description: Job not found or not visible
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
+                "409":
+                    description: Conflict
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
                 "500":
                     description: Job request failed
+                    headers:
+                        Deprecation:
+                            description: Deprecation date in RFC 9745 structured date form.
+                            schema:
+                                type: string
+                        Link:
+                            description: Successor-version link to the canonical Job API.
+                            schema:
+                                type: string
+                        Sunset:
+                            description: Planned retirement date in HTTP-date form.
+                            schema:
+                                type: string
             summary: Stream resumable canonical Job events
             tags:
                 - jobs

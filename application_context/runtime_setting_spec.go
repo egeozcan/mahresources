@@ -264,8 +264,8 @@ func buildSpecs() map[string]SettingSpec {
 			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
 		},
 		KeyDownloadCockpitLimit: {
-			Key: KeyDownloadCockpitLimit, Label: "Jobs panel row limit",
-			Description: "How many *finished downloads* the jobs panel renders, newest first. Older ones stay reachable on the downloads page, which is why only they are capped: anything still working, and every export, import or plugin action, is always shown, because their controls exist nowhere else.",
+			Key: KeyDownloadCockpitLimit, Label: "Legacy downloads panel row limit",
+			Description: "Compatibility setting retained for older deployments. The Job Center panel shows recent Jobs from every Kind and uses its own fixed limit.",
 			Group:       GroupRemoteDownloads, Type: SettingTypeInt,
 			MinNumeric: 1, MaxNumeric: 200,
 		},
