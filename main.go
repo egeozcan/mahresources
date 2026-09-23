@@ -28,6 +28,7 @@ import (
 	"mahresources/models/seed"
 	"mahresources/plugin_system"
 	"mahresources/server"
+	"mahresources/server/template_handlers/template_context_providers"
 	"mahresources/storage"
 	"mahresources/thumbnail_worker"
 )
@@ -710,6 +711,17 @@ func main() {
 	if !migration.Complete {
 		log.Printf("[jobs] source migration remains in phase %s after %d bounded batches; plaintext retirement is not active (quarantined sources: %d)",
 			migration.Phase, migration.Batches, migration.BlockedSources)
+	}
+	if template_context_providers.JobCenterCutoverEnabled {
+		readiness, err := context.GetJobMigrationReadiness()
+		if err != nil {
+			fail("Job Center cutover readiness could not be checked: %v", err)
+			return
+		}
+		if err := validateJobCenterCutover(jobService, readiness); err != nil {
+			fail("%v", err)
+			return
+		}
 	}
 
 	// Recovery must settle every durable command/import writer before a plugin
