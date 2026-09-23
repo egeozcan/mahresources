@@ -56,7 +56,11 @@
             {# header chrome now. Only the trigger is here: deferred-work item 7     #}
             {# teleports the panel it opens into `.overlays`, so the markup below is #}
             {# in the header but the dialog never renders in it.                     #}
-            {% include "/partials/downloadCockpit.tpl" %}
+            {% if jobCenterCutoverEnabled %}
+                {% include "/partials/jobPanel.tpl" %}
+            {% else %}
+                {% include "/partials/downloadCockpit.tpl" %}
+            {% endif %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
                 <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
