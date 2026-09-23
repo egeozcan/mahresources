@@ -732,6 +732,25 @@ func TestPauseResume(t *testing.T) {
 
 // TestRetry tests retry functionality
 func TestRetry(t *testing.T) {
+	holdRetryWorker := func(t *testing.T, dm *DownloadManager, job *DownloadJob) {
+		t.Helper()
+		// Retry starts a worker before it returns. Occupying every slot keeps the
+		// retry in pending for assertions about its reset state, and cancelling it
+		// during cleanup prevents the legacy test URL from starting a transfer.
+		for i := 0; i < cap(dm.semaphore); i++ {
+			dm.semaphore <- struct{}{}
+		}
+		t.Cleanup(func() {
+			if status := job.GetStatus(); status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing {
+				_ = dm.Cancel(job.ID)
+			}
+			dm.workers.Wait()
+			for i := 0; i < cap(dm.semaphore); i++ {
+				<-dm.semaphore
+			}
+		})
+	}
+
 	t.Run("retry failed job", func(t *testing.T) {
 		dm := createTestManager()
 		eventCh := make(chan JobEvent, 10)
@@ -741,9 +760,19 @@ func TestRetry(t *testing.T) {
 		job.creator = &query_models.ResourceFromRemoteCreator{URL: "http://example.com/file.txt"}
 		job.SetError("previous error")
 
+		holdRetryWorker(t, dm, job)
+
 		err := dm.Retry("failed")
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+		select {
+		case event := <-eventCh:
+			if event.Type != "updated" || event.Job.GetStatus() != JobStatusPending {
+				t.Fatalf("retry event = %s/%s, want updated/pending", event.Type, event.Job.GetStatus())
+			}
+		case <-time.After(time.Second):
+			t.Fatal("retry did not publish its pending update")
 		}
 
 		job, _ = dm.GetJob("failed")
@@ -759,6 +788,7 @@ func TestRetry(t *testing.T) {
 		dm := createTestManager()
 		job := addTestJob(dm, "cancelled", JobStatusCancelled)
 		job.creator = &query_models.ResourceFromRemoteCreator{URL: "http://example.com/file.txt"}
+		holdRetryWorker(t, dm, job)
 
 		err := dm.Retry("cancelled")
 		if err != nil {
