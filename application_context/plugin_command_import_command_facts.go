@@ -336,13 +336,51 @@ func (ctx *MahresourcesContext) ReconcilePluginCommandImportRetryFacts() error {
 			if err := ctx.requirePluginCommandFenceTx(tx); err != nil {
 				return err
 			}
-			if len(facts) != 0 {
+			// The source fields above were opened before this transaction so a slow
+			// filesystem probe cannot hold the writer lock. Forget, expiry, or Job
+			// retention may have purged their envelope in the meantime. Lock the
+			// current Job and envelope rows before publishing any replay-derived
+			// projection. A purge that won first is observed here; one that comes
+			// later waits and removes the projection we just wrote.
+			var currentJobs []models.Job
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("id").Where("id IN ?", jobIDs).Order("id").Find(&currentJobs).Error; err != nil {
+				return err
+			}
+			present := make(map[string]bool, len(currentJobs))
+			for _, job := range currentJobs {
+				present[job.ID] = true
+			}
+			var currentEnvelopes []models.JobReplayEnvelope
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("job_id").Where("job_id IN ?", jobIDs).
+				Where("purged_at IS NULL AND ciphertext IS NOT NULL").
+				Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+				Order("job_id").Find(&currentEnvelopes).Error; err != nil {
+				return err
+			}
+			eligible := make(map[string]bool, len(currentEnvelopes))
+			for _, envelope := range currentEnvelopes {
+				eligible[envelope.JobID] = present[envelope.JobID]
+			}
+			currentFacts := make([]models.PluginCommandImportCommandFact, 0, len(facts))
+			currentImports := make(map[string]bool, len(facts))
+			for _, fact := range facts {
+				if eligible[fact.JobID] {
+					currentFacts = append(currentFacts, fact)
+					currentImports[fact.ImportID] = true
+				} else {
+					staleJobIDs = append(staleJobIDs, fact.JobID)
+					staleImportIDs = append(staleImportIDs, fact.ImportID)
+				}
+			}
+			if len(currentFacts) != 0 {
 				if err := tx.Clauses(clause.OnConflict{
 					Columns: []clause.Column{{Name: "job_id"}},
 					DoUpdates: clause.AssignmentColumns([]string{
 						"import_id", "run_id", "file_name", "fields_validated", "exchange_file_available", "series_id", "group_count", "updated_at",
 					}),
-				}).CreateInBatches(&facts, 100).Error; err != nil {
+				}).CreateInBatches(&currentFacts, 100).Error; err != nil {
 					return err
 				}
 			}
@@ -358,8 +396,16 @@ func (ctx *MahresourcesContext) ReconcilePluginCommandImportRetryFacts() error {
 			}
 			for start := 0; start < len(groups); start += 200 {
 				end := min(start+200, len(groups))
-				if err := tx.Create(groups[start:end]).Error; err != nil {
-					return err
+				currentGroups := make([]models.PluginCommandImportCommandFactGroup, 0, end-start)
+				for _, group := range groups[start:end] {
+					if currentImports[group.ImportID] {
+						currentGroups = append(currentGroups, group)
+					}
+				}
+				if len(currentGroups) != 0 {
+					if err := tx.Create(currentGroups).Error; err != nil {
+						return err
+					}
 				}
 			}
 			return nil

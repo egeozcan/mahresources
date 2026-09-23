@@ -395,6 +395,65 @@ func TestPluginCommandImportRetryFactsFollowReplayPurgeAndRetiredEnvelope(t *tes
 	require.False(t, offersCommand(commands, "retry-import"))
 }
 
+type blockingImportFactExchange struct {
+	plugin_commands.Exchange
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingImportFactExchange) HasRegularFile(_, _, _ string) bool {
+	close(e.entered)
+	<-e.release
+	return true
+}
+
+func TestPluginCommandImportFactReconcileCannotRestoreFactsAfterConcurrentForget(t *testing.T) {
+	ctx := newPluginCommandStoreTestContext(t)
+	service := jobs.NewService()
+	ctx.SetJobService(service)
+	const actorID = uint(9)
+	preparePluginCommandRetryAuthority(t, ctx, actorID)
+	root, commandPath := t.TempDir(), t.TempDir()
+	runID := "retry-concurrent-forget-parent"
+	require.NoError(t, ctx.db.Create(&models.PluginCommandRun{
+		ID: runID, PluginName: "worker", CommandName: "download", ParamsJSON: `{}`,
+		Status: plugin_commands.RunStatusSucceeded, CreatedByUserId: ptrToUser(actorID),
+		CreatedAt: time.Now().UTC(),
+	}).Error)
+	jobID, importID := seedPluginCommandRetryCandidateWithFields(t, ctx, actorID, runID,
+		"retry-concurrent-forget-import", "asset.bin", `{"series_id":314,"group_ids":[42]}`)
+	createPluginCommandRetryFile(t, root, "worker", runID, "asset.bin")
+	startPluginCommandRetryTestRuntime(t, ctx, root, commandPath)
+
+	active, err := ctx.pluginCommandActive()
+	require.NoError(t, err)
+	probe := &blockingImportFactExchange{
+		Exchange: active.exchange,
+		entered:  make(chan struct{}), release: make(chan struct{}),
+	}
+	ctx.pluginCommandController.active.Store(&pluginCommandActiveRuntime{dispatcher: active.dispatcher, exchange: probe})
+	defer func() {
+		select {
+		case <-probe.release:
+		default:
+			close(probe.release)
+		}
+	}()
+
+	result := make(chan error, 1)
+	go func() { result <- ctx.ReconcilePluginCommandImportRetryFacts() }()
+	select {
+	case <-probe.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation did not reach its pre-transaction file probe")
+	}
+	_, err = service.ForgetReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	require.NoError(t, err)
+	close(probe.release)
+	require.NoError(t, <-result)
+	assertPluginCommandImportFactsAbsent(t, ctx, jobID, importID)
+}
+
 func assertPluginCommandImportFactsAbsent(t *testing.T, ctx *MahresourcesContext, jobID, importID string) {
 	t.Helper()
 	var facts, groups int64
