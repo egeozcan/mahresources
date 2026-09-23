@@ -1963,7 +1963,22 @@ func (ctx *MahresourcesContext) ProjectActionJob(handle string) (*plugin_system.
 	if projected.Kind != JobKindPluginAction {
 		return nil, fmt.Errorf("%w: %s", jobs.ErrNotFound, handle)
 	}
-	return projectActionJobSnapshot(projected, handle), nil
+	job := projectActionJobSnapshot(projected, handle)
+	outputs, err := ctx.JobService().Outputs(ctx.jobDeps(), ctx.jobAccess(), projected.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, output := range outputs {
+		if output.Key != "result" || output.Type != jobs.OutputTypeSummary || output.Availability != jobs.OutputAvailable {
+			continue
+		}
+		var result map[string]any
+		if err := json.Unmarshal(output.Reference, &result); err == nil {
+			job.Result = result
+		}
+		break
+	}
+	return job, nil
 }
 
 // ProjectActionJobs answers the rows a legacy action-event init can currently
@@ -2155,7 +2170,13 @@ func projectActionJobSnapshot(projected jobs.Snapshot, handle string) *plugin_sy
 	progress := projected.Progress
 	message := progress.Message
 	percent := 0
-	if progress.Total != nil && *progress.Total > 0 && progress.Completed != nil {
+	if projected.State == jobs.StateSucceeded {
+		// A successful durable Job is complete even when its last reported
+		// progress snapshot was a partial milestone. The legacy ActionJob shape
+		// has no separate outcome progress state, so preserve its 100% completion
+		// contract in this projection.
+		percent = 100
+	} else if progress.Total != nil && *progress.Total > 0 && progress.Completed != nil {
 		percent = int(*progress.Completed * 100 / *progress.Total)
 	}
 	if projected.Failure != nil && message == "" {

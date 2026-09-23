@@ -277,6 +277,17 @@ func TestAnAsyncPluginActionAcceptsADurableJobBeforeItRuns(t *testing.T) {
 		t.Fatalf("the handler ran %q times, want once", got)
 	}
 
+	projected, err := ctx.ProjectActionJob(handle)
+	if err != nil {
+		t.Fatalf("project the completed action job: %v", err)
+	}
+	if projected.Status != "completed" || projected.Progress != 100 {
+		t.Fatalf("the durable legacy projection is status %q at %d%%, want completed at 100%%", projected.Status, projected.Progress)
+	}
+	if projected.Result["message"] != "all done" {
+		t.Fatalf("the durable legacy projection result is %v, want message all done", projected.Result)
+	}
+
 	// The compatibility projection answers to the id the client holds, and the
 	// durable Job is the execution it describes.
 	legacy := ctx.PluginManager().GetActionJob(handle)
