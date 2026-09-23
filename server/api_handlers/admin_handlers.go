@@ -4,9 +4,27 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/server/http_utils"
 )
+
+// GetJobMigrationReadinessHandler exposes only fixed blocker codes and counts.
+// The route is admin-only and remains available during the migration release,
+// before the public Job Center cutover.
+func GetJobMigrationReadinessHandler(ctx interface {
+	GetJobMigrationReadiness() (application_context.JobMigrationReadiness, error)
+}) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		report, err := ctx.GetJobMigrationReadiness()
+		if err != nil {
+			http.Error(writer, "Job migration readiness unavailable", http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(report)
+	}
+}
 
 func GetServerStatsHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {

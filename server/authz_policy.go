@@ -152,6 +152,7 @@ func isSystemPath(path string) bool {
 	}
 	switch {
 	case strings.HasPrefix(path, "/v1/admin/server-stats"),
+		path == "/v1/admin/jobs/migration-readiness",
 		strings.HasPrefix(path, "/v1/admin/data-stats"),
 		strings.HasPrefix(path, "/v1/admin/settings"),
 		strings.HasPrefix(path, "/v1/admin/similarity"):

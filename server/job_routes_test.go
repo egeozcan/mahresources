@@ -48,6 +48,12 @@ func TestCanonicalJobRoutesAreOptInUntilCutover(t *testing.T) {
 	}
 }
 
+func TestJobMigrationReadinessIsAdminOnly(t *testing.T) {
+	if got := requiredCapability(http.MethodGet, "/v1/admin/jobs/migration-readiness"); got != capSystem {
+		t.Fatalf("migration readiness capability = %v, want admin-only system capability", got)
+	}
+}
+
 func TestPublicOpenAPISpecFollowsCanonicalJobRouteGate(t *testing.T) {
 	registry := openapi.NewRegistry()
 	RegisterAPIRoutesWithOpenAPI(registry)

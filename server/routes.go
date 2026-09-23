@@ -994,6 +994,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Admin stats routes
 	router.Methods(http.MethodGet).Path("/v1/admin/server-stats").HandlerFunc(api_handlers.GetServerStatsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/admin/jobs/migration-readiness").HandlerFunc(api_handlers.GetJobMigrationReadinessHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats").HandlerFunc(api_handlers.GetDataStatsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
 
