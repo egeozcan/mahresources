@@ -1,3 +1,132 @@
+# Job Center Task 18 — release review (2026-09-23)
+
+The 18-task Job Center cutover is implemented on `codex/job-center-integration`.
+Task 17's complete-Kind inventory and external cutover are enforced by the
+registered-Kind tests and browser/CLI flows. Task 18 exercised the fault,
+security, migration, scale, and release gates below.
+
+## Review findings closed
+
+| Finding | Correction and regression |
+|---|---|
+| A legacy SSE initial snapshot and live projection used the system principal; a fast import/export could also finish without a post-commit legacy update | Both legacy streams now use a request-scoped context, and queue-backed completion wakes clients only after canonical `Finish`. Public SSE tests reproduce cross-user, group-scope, and admin-only leaks and the missing post-commit completion before the fix. |
+| A plugin-action legacy handle could show its failed ancestor after canonical Retry; SSE and Clear completed could also keep or remove the wrong row across processes | GET, SSE init, live events, and Clear completed now resolve the visible current target. A target-bound durable clear marker survives restart but stops applying when Retry moves the handle. A scoped durable SSE poll reports cross-process handle movement. Public regressions cover queued Retry, hidden successors, no local plugin manager, cross-process clear, and stale ancestor events. |
+| Missing Kind/version adapter allowed retained Job artifacts to bypass Kind-specific output policy | Output advertisement and direct open now fail closed; SQLite, PostgreSQL, and HTTP regressions cover an unsupported group-export version after scope loss. |
+| Fast export completion lost byte progress, including capacity-queued dispatch and a transient progress-write refusal | The terminal queue snapshot is persisted before outcome publication; deterministic owned/dispatch and PostgreSQL capacity tests check byte totals and retry. The admin export browser regression passes three repeated runs. |
+| Quarantine during a final progress write could discard an outcome; a late Cancel could leave terminal queue work retrying success indefinitely | The token and quarantined claim remain the ownership proof through a blocked-state conflict. A winning Cancel settles the canonical Job as cancelled and releases its claim. Both interleavings failed before the fix and pass focused regressions. |
+| Replay expiry/Forget could race Retry or Repeat; command-output redaction could exhaust its scan bound | Replay successors lock their envelope against purge, with PostgreSQL barrier tests for Retry/Repeat and Forget/expiry. Incomplete command-output scanning now persists a fail-closed redacted tail; cap-edge and API tests cover it. |
+| Concurrent plugin-command `CreateRun` calls could hit a SQLite stale snapshot after the writer-epoch read and fail with `database is locked` | The complete source/output/canonical-Job acceptance transaction now uses the existing SQLite lock retry helper. A deterministic competing-WAL-write test failed before the fix and passes under `-race`; the original cancellation reproducer passes ten race-enabled repeats. |
+| A legacy action Clear could return 500 on a transient SQLite table lock, and the remote-resource submit response could race its queue worker while JSON-encoding a mutable download job | Clear retries the whole transaction with a fresh SQLite snapshot on lock errors; a fault-injection regression failed before the fix. The remote response encodes locked job snapshots. The focused API race checks pass three repeats. |
+| A successful async plugin action kept its last partial canonical progress in legacy GET and omitted its result; durable SSE reconnects also lost the result | The legacy projection maps successful completion to 100% and reads the available, sanitized result summary. SSE init and polling hydrate visible current handles in one bulk output query and diff result-only changes. Red regressions reproduced the 50% GET, missing SSE init result, and suppressed poll update. The focused browser set passes 29/29 on both SQLite and PostgreSQL, and focused race checks cover result expiry, Retry leaves, and the 501-history query bound. |
+| Job Center advertised controls were labeled on a `div` without a valid role, causing an axe serious violation when failed Jobs were visible | The controls now form a named group. The browser a11y regression seeds a failed Job with Retry before scanning; focused SQLite and PostgreSQL checks pass 9/9. |
+| Cutover readiness checked replay only for Jobs with a legacy source mapping, so a queued canonical-only export could pass readiness after its key was removed or its envelope was corrupted | Readiness now keyset-pages replayable nonterminal Jobs without a source mapping and opens each envelope through the registered Kind codec. A fixed, secret-free canonical blocker prevents cutover when input is unavailable. A SQLite capacity-queued export regression failed before the fix and passes under `-race`; PostgreSQL verifies valid, missing-key, and corrupt-envelope cases under `-race`. |
+| Cancelling a blocked Job could return an error when a shared-cache SQLite reader temporarily locked `jobs` | The command path retries the whole outer transaction after SQLite `ErrLocked`, re-reading authorization, version, Job, idempotency claim, and source state after rollback; external completion hooks still run only after commit. A public canonical cancel regression holds a verified table lock until the target `jobs` update reports `SQLITE_LOCKED`; it failed all five pre-fix runs with HTTP 500, then passed five ordinary and three race-enabled repeats. |
+
+The release race attempt exposed two test timing issues. SQLite fixture helpers
+reused shared in-memory database names across `-count=3` iterations; they now
+allocate a distinct name per invocation while sharing connections within each
+fixture. A download Retry assertion now holds the worker semaphore while it
+checks the pending event. Focused race checks and the ordinary three-repeat
+`application_context` package pass after these test-only corrections.
+
+The next race attempt exposed a download-history fixture mutating its live Job
+Service, a concurrent Retry test that did not hold both requests in flight,
+plain callback flags and callback removal racing reduction workers, and
+shared-cache SQLite contention in one asynchronous reduction fixture. The
+history fixture now builds its legacy row directly, the Retry test holds its
+transfer, reduction callbacks use atomic one-shot gates, and that fixture uses
+one database connection. Seven common application-context test constructors
+also close their queues, plugin loops, and SQL pools at test cleanup so repeated
+race runs do not accumulate thousands of background goroutines. Focused
+`-race -count=3` checks pass for these corrections.
+
+The full application-context race run then exposed a probabilistic MRQL test:
+its replacement character could match the random token's first character.
+That test now always changes the character and passes 50 race-enabled repeats.
+A specialized async Job harness now stops its managers before closing SQLDB;
+its original reproducer passes three race-enabled repeats without a
+closed-database or heartbeat warning. The complete package rerun is recorded
+below.
+
+A later whole-tree SQLite run timed out in the macOS plugin-command process
+group recovery test. Its helper group was still alive while the test waited
+without a bound in `cmd.Wait()`. The test now checks the durable running row
+before recovery, verifies the interrupted row and dead group, independently
+checks the captured descendant PID, and bounds the direct-child wait with
+test-owned cleanup. The focused test passes 100 ordinary and 100 race-enabled
+repeats after the independent check. The original one-off recovery outcome was
+not reproduced; the complete SQLite Go rerun is recorded below.
+
+## Fault and security evidence
+
+- The SQLite migration restart test reopens a file-backed database with a fresh
+  context at durable Copy, Verify, DrainFence, Scrub, and Complete checkpoints.
+  It also fails the fence-to-Scrub checkpoint write after the writer epoch was
+  retired and verifies recovery. The PostgreSQL fresh-controller mid-Scrub
+  restart test passes. Source/mapping atomicity, bounded passes, writer drain,
+  and scrub/marker atomicity have focused tests.
+- Claim, stale-token, reconciliation, capacity, cancellation, output expiry,
+  and replay purge races have focused SQLite and PostgreSQL tests in `jobs`,
+  `application_context`, and the adapter packages. The final race detector
+  command below repeats their Go packages three times.
+- Exact secret corpus tests cover persisted command tails, Job/API projection,
+  and redaction cap exhaustion. Visibility tests cover hidden Job, lineage,
+  output, event, and summary reads; legacy-handle tests keep authority on the
+  visible current target. Rooted artifact paths and Kind-specific external-link
+  and output policies have focused tests. The SSE regressions verify request
+  scope on both legacy aliases and live frames.
+- The opt-in million-row SQLite/PostgreSQL harness below captures list,
+  summary, retention, and claim plans. Interactive summaries read only `jobs`;
+  page replay lookups are limited to listed Job IDs.
+
+## Final commands and outcomes
+
+| Command | Outcome |
+|---|---|
+| `go test --tags 'json1 fts5' ./... -count=1` | Passed. |
+| `go test --tags 'json1 fts5 postgres' ./jobs ./application_context ./mrql/... ./server/api_tests/... -count=1` | Passed. |
+| `go test -race -timeout 60m -p 2 --tags 'json1 fts5' ./jobs ./download_queue ./plugin_system ./plugin_commands ./server/api_handlers ./server/api_tests -count=3` | Passed; the six packages were repeated three times under the race detector. |
+| `go test -race -timeout 60m -p 1 --tags 'json1 fts5' ./application_context -count=3` | Passed in 2,098.9 s after the test-fixture and MRQL assertion corrections. The canonical-only readiness correction was then checked by the focused race runs below. |
+| `go test -race ./application_context -run '^TestJobMigrationReadinessChecksCanonicalOnlyQueuedReplay$' -count=1`; PostgreSQL-tagged race run of `TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub` | Passed after the canonical-only readiness correction. |
+| `go test -race --tags 'json1 fts5' ./jobs -count=3`; `go test -race --tags 'json1 fts5' ./server/api_tests -run '^TestCancelBlockedJobRetriesSharedCacheTableLock$' -count=3`; `go test --tags 'json1 fts5' ./server/api_tests -count=1` | Passed after the SQLite command retry and synchronized regression; the route also passed five ordinary repeats. |
+| `go vet --tags 'json1 fts5' ./...` | Passed. |
+| `npm run test:unit -- --run` | Passed: 91 files, 1,407 tests. |
+| `npm run build`; `./scripts/css-scan-test.sh` | Passed. |
+| `make openapi-validate` | Passed: OpenAPI 3.0, 243 paths, 140 schemas, 27 tags. |
+| `cd e2e && npm run test:with-server:all` | Passed: 2,227 tests, 5 expected skips. |
+| `cd e2e && npm run test:with-server:postgres` | Passed: 2,228 tests, 4 expected skips. |
+| `./mr docs lint`; `./mr docs check-examples --server http://127.0.0.1:8195 --environment=ephemeral` | Passed. |
+| `git diff --check master...HEAD`; `git diff --name-only master...HEAD -- '*.go' \| xargs gofmt -l` | Clean; no unformatted Go files. |
+
+## Residual risks
+
+- The five-phase restart matrix uses SQLite; PostgreSQL has an explicit
+  fresh-controller crash/restart test at mid-Scrub, plus the ordinary
+  cross-engine migration suite. A separate forced PostgreSQL restart at every
+  other checkpoint is still useful operational validation.
+- At one million Jobs, the broad SQLite administrator summary took 1.75 s,
+  and the background retention and claim selectors needed temporary sorts.
+  The PostgreSQL broad summary took 489 ms and one percentile sort spilled
+  about 3.9 MB. These are fixture measurements, not latency guarantees;
+  monitor production growth before changing the indexes or aggregates.
+- Redaction is fail-closed when its known parser/scan bounds are exhausted.
+  A transformed secret that no detector or supplied input identifies remains
+  outside the exact-match corpus and warrants normal secret-handling discipline.
+- Legacy plugin-action SSE checks the scoped durable action projection every
+  two seconds per connected client so handle movements committed by another
+  process reach an already-open stream. Its single joined query filters current
+  and recent terminal actions, and a 501-history regression guards against the
+  earlier per-handle lookup pattern. The client-count × retained-history cost
+  has not been measured at production scale; monitor it before increasing
+  connection counts or action history substantially.
+- The SQLite `ErrLocked` retry is scoped to workload commands, where the
+  shared-cache API fixture exposed the blocked-Job cancellation failure.
+  Host-only and lineage command transactions remain one-shot on this fixture.
+  Production file-backed SQLite uses WAL and a 10-second busy timeout; a
+  comparable failure in those other command paths has not been reproduced.
+
+---
+
 # Job Center Task 18 — million-row list and summary plans (2026-09-23)
 
 **Fixture:** The opt-in focused harness seeds 1,000,000 rows through the Job core
