@@ -993,6 +993,194 @@ func TestJobMigrationQuarantinesMalformedSourceWithoutPersistingSecrets(t *testi
 	}
 }
 
+func TestJobMigrationRestartsFromEveryDurablePhaseOnSQLite(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, ctx, key)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 2; i++ {
+		jobID := "restart-history-" + strconv.Itoa(i)
+		creator := query_models.ResourceFromRemoteCreator{URL: "https://restart.example.invalid/private/" + jobID + "?token=sealed"}
+		payload, err := json.Marshal(creator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finished := now.Add(time.Duration(i+1) * time.Minute)
+		row := models.DownloadHistoryEntry{JobID: jobID, URL: creator.URL, Status: models.DownloadHistoryStatusFailed,
+			CreatedAt: now.Add(time.Duration(i) * time.Minute), CompletedAt: &finished, Payload: payload}
+		if err := ctx.db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	options := JobMigrationOptions{BatchSize: 1, MaxBatches: 1, WritersDrained: false, Now: func() time.Time { return now.Add(time.Hour) }}
+	readCheckpoint := func(current *MahresourcesContext) models.JobMigrationCheckpoint {
+		t.Helper()
+		var checkpoint models.JobMigrationCheckpoint
+		if err := current.db.First(&checkpoint, models.JobMigrationCheckpointRowID).Error; err != nil {
+			t.Fatal(err)
+		}
+		return checkpoint
+	}
+	driveTo := func(current *MahresourcesContext, description string, reached func(models.JobMigrationCheckpoint) bool) models.JobMigrationCheckpoint {
+		t.Helper()
+		for pass := 0; pass < 200; pass++ {
+			if checkpoint := readCheckpoint(current); reached(checkpoint) {
+				return checkpoint
+			}
+			if _, err := current.RunJobMigration(options); err != nil {
+				var mappings []models.JobSourceMapping
+				_ = current.db.Order("source_kind, source_id").Find(&mappings).Error
+				t.Fatalf("migration while reaching %s: %v (checkpoint=%+v mappings=%+v)", description, err, readCheckpoint(current), mappings)
+			}
+		}
+		t.Fatalf("migration did not reach %s; checkpoint=%+v", description, readCheckpoint(current))
+		return models.JobMigrationCheckpoint{}
+	}
+	restart := func(current *MahresourcesContext) *MahresourcesContext {
+		t.Helper()
+		// Closing the SQLite handle models the process that owned this context dying;
+		// the next controller reopens the same file and sees only durable rows.
+		sqlDB, err := current.db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlDB.Close(); err != nil {
+			t.Fatalf("close migration process database: %v", err)
+		}
+		other, _ := newSecondProcessJobContext(t, current, key)
+		return other
+	}
+	assertCheckpoint := func(current *MahresourcesContext, want models.JobMigrationCheckpoint) {
+		t.Helper()
+		got := readCheckpoint(current)
+		if got.Phase != want.Phase || got.SourceKind != want.SourceKind || got.CursorID != want.CursorID {
+			t.Fatalf("restarted checkpoint = {phase:%q kind:%q cursor:%q}, want {phase:%q kind:%q cursor:%q}",
+				got.Phase, got.SourceKind, got.CursorID, want.Phase, want.SourceKind, want.CursorID)
+		}
+	}
+	assertRow := func(current *MahresourcesContext, id uint, wantScrubbed bool) {
+		t.Helper()
+		var row models.DownloadHistoryEntry
+		if err := current.db.First(&row, id).Error; err != nil {
+			t.Fatal(err)
+		}
+		scrubbed := len(row.Payload) == 0 && row.URL == "https://restart.example.invalid"
+		if scrubbed != wantScrubbed {
+			t.Fatalf("source row %d scrubbed=%v, want %v (payload=%d URL=%q)", id, scrubbed, wantScrubbed, len(row.Payload), row.URL)
+		}
+	}
+
+	var sourceRows []models.DownloadHistoryEntry
+	if err := ctx.db.Order("id ASC").Find(&sourceRows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(sourceRows) != 2 {
+		t.Fatalf("source fixture rows = %d, want 2", len(sourceRows))
+	}
+	if _, err := ctx.RunJobMigration(options); err != nil {
+		t.Fatalf("initial copy batch: %v", err)
+	}
+
+	// Copy commits each mapping before the cursor is persisted. Restarting from the
+	// first durable cursor must preserve the first mapping and copy the next row.
+	copyCheckpoint := driveTo(ctx, "a mid-copy cursor", func(c models.JobMigrationCheckpoint) bool {
+		return c.Phase == models.JobMigrationPhaseCopy && c.SourceKind == jobMigrationDownloadHistory && c.CursorID != ""
+	})
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, copyCheckpoint)
+	var copied models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, strconv.FormatUint(uint64(sourceRows[0].ID), 10)).First(&copied).Error; err != nil {
+		t.Fatalf("first copy batch was not durable across restart: %v", err)
+	}
+	if err := ctx.verifyDownloadReplay(ctx.db, copied.JobID, sourceRows[0]); err != nil {
+		t.Fatalf("copied replay could not be opened by the restarted process: %v", err)
+	}
+	verifyCheckpoint := driveTo(ctx, "a mid-verify cursor", func(c models.JobMigrationCheckpoint) bool {
+		return c.Phase == models.JobMigrationPhaseVerify && c.SourceKind == jobMigrationDownloadHistory && c.CursorID != ""
+	})
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, verifyCheckpoint)
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, verifyCheckpoint.CursorID).First(&copied).Error; err != nil {
+		t.Fatalf("verified batch marker was not durable across restart: %v", err)
+	}
+	if copied.Status != models.JobSourceMappingVerified {
+		t.Fatalf("restarted verification marker status = %q, want verified", copied.Status)
+	}
+
+	// The drain-fence phase is a durable stop while older writers are still
+	// attested as live. A fresh process can honor the gate and later resume with
+	// the operator's drain attestation.
+	fenceCheckpoint := driveTo(ctx, "the drain-fence phase", func(c models.JobMigrationCheckpoint) bool {
+		return c.Phase == models.JobMigrationPhaseDrainFence
+	})
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, fenceCheckpoint)
+	fenced, err := ctx.RunJobMigration(options)
+	if err != nil || fenced.Phase != models.JobMigrationPhaseDrainFence || fenced.Complete {
+		t.Fatalf("unattested restart at fence = %+v, %v", fenced, err)
+	}
+	assertRow(ctx, sourceRows[0].ID, false)
+	options.WritersDrained = true
+	if err := ctx.db.Exec(`CREATE TRIGGER fail_scrub_phase_checkpoint BEFORE UPDATE ON job_migration_checkpoints
+		WHEN NEW.phase = 'scrub' BEGIN SELECT RAISE(ABORT, 'injected fence checkpoint failure'); END`).Error; err != nil {
+		t.Fatalf("install fence transition fault: %v", err)
+	}
+	var transitionErr error
+	for pass := 0; pass < 100; pass++ {
+		_, transitionErr = ctx.RunJobMigration(options)
+		if transitionErr != nil {
+			break
+		}
+	}
+	if transitionErr == nil {
+		t.Fatal("fence transition unexpectedly persisted its scrub checkpoint through the injected failure")
+	}
+	if got := readCheckpoint(ctx); got.Phase != models.JobMigrationPhaseDrainFence {
+		t.Fatalf("checkpoint after interrupted fence transition = %+v, want drain-fence", got)
+	}
+	epoch, err := models.JobWriterEpochMinimum(ctx.db)
+	if err != nil || epoch != models.JobWriterEpochRetiredPlaintext {
+		t.Fatalf("writer epoch after interrupted fence transition = %d, %v; want retired", epoch, err)
+	}
+	if err := ctx.db.Exec("DROP TRIGGER fail_scrub_phase_checkpoint").Error; err != nil {
+		t.Fatalf("remove fence transition fault: %v", err)
+	}
+	fenceCheckpoint = readCheckpoint(ctx)
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, fenceCheckpoint)
+	// The completed writer barrier is durable even though the phase checkpoint was
+	// not. Recovery can resume from the old fence checkpoint without another drain
+	// attestation because the database epoch has already advanced.
+	options.WritersDrained = false
+	scrubCheckpoint := driveTo(ctx, "a mid-scrub cursor", func(c models.JobMigrationCheckpoint) bool {
+		return c.Phase == models.JobMigrationPhaseScrub && c.SourceKind == jobMigrationDownloadHistory && c.CursorID != ""
+	})
+	assertRow(ctx, sourceRows[0].ID, true)
+	assertRow(ctx, sourceRows[1].ID, false)
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, scrubCheckpoint)
+
+	completeCheckpoint := driveTo(ctx, "the persisted complete phase", func(c models.JobMigrationCheckpoint) bool {
+		return c.Phase == models.JobMigrationPhaseComplete
+	})
+	if completeCheckpoint.CompletedAt == nil {
+		t.Fatalf("complete checkpoint has no completion time: %+v", completeCheckpoint)
+	}
+	ctx = restart(ctx)
+	assertCheckpoint(ctx, completeCheckpoint)
+	result, err := ctx.RunJobMigration(options)
+	if err != nil || !result.Complete || result.Phase != models.JobMigrationPhaseComplete {
+		t.Fatalf("fresh process finalizes complete checkpoint = %+v, %v", result, err)
+	}
+	for _, row := range sourceRows {
+		assertRow(ctx, row.ID, true)
+	}
+	readiness, err := ctx.GetJobMigrationReadiness()
+	if err != nil || !readiness.Ready {
+		t.Fatalf("readiness after restarted completion = %+v, %v", readiness, err)
+	}
+}
+
 func TestJobMigrationScrubAndMarkerAreAtomic(t *testing.T) {
 	tests := []struct {
 		name string
