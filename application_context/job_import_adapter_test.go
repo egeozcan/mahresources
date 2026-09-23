@@ -677,3 +677,265 @@ func TestAQueuedImportApplyRestartsFromItsAdmittedPlan(t *testing.T) {
 		t.Fatalf("%d groups named Imported, want the one the apply created", imported)
 	}
 }
+
+// stageConsumedApplyForTest puts one import in the exact filesystem state an apply is
+// in *while it runs*: the plan has been consumed, and the archive it reads blobs from
+// is still there.
+//
+// It is the state the accounting has to be right about, and the only one that
+// distinguishes nothing from the outside: a consumed plan is written by the submission
+// before the executor exists, and it is what a live executor leaves behind for the whole
+// of its run.
+func stageConsumedApplyForTest(t *testing.T, ctx *MahresourcesContext, handle string) string {
+	t.Helper()
+	fs := ctx.GetDefaultFs()
+	if err := fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("mkdir _imports: %v", err)
+	}
+	consumed := importConsumedPlanPathFor(handle)
+	for _, path := range []string{consumed, importArchivePathFor(handle)} {
+		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return consumed
+}
+
+// acceptApplyJobForTest accepts one apply Job whose input names a consumed plan.
+func acceptApplyJobForTest(t *testing.T, ctx *MahresourcesContext, handle, legacyID, consumed string) jobs.Snapshot {
+	t.Helper()
+	input, err := json.Marshal(importApplyJobInput{
+		ParseHandle: handle,
+		Plan:        consumed,
+		Decisions: ImportDecisions{
+			MappingActions:  map[string]MappingAction{},
+			DanglingActions: map[string]DanglingAction{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode the apply input: %v", err)
+	}
+	return acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: legacyID}},
+	})
+}
+
+// TestAnApplyReconciledWhereItIsNotRunningIsNotTerminatedWhileItMayBeLive is the
+// two-process reconciliation boundary.
+//
+// A consumed plan is what an apply *runs* against, so the process that holds no queue
+// entry for the Job is in the same filesystem state whether the apply is running in
+// another process or died half-way through. Reading that absence as "nothing can
+// continue" terminated live work, released its ownership and recorded a failure for an
+// import that was still committing rows. Liveness is the missing premise, and with the
+// runtime alive the claim, the capacity and the Job stay exactly where they are.
+func TestAnApplyReconciledWhereItIsNotRunningIsNotTerminatedWhileItMayBeLive(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 2
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, _ := newSecondProcessJobContext(t, first, key)
+
+	const handle = "apply-live-1"
+	consumed := stageConsumedApplyForTest(t, first, handle)
+	accepted := acceptApplyJobForTest(t, first, handle, "apply-live-1", consumed)
+
+	// The process that owns it: a real claim under this runtime's own identity, with
+	// the queue entry that is applying the plan.
+	execution, claimed, err := first.JobService().Claim(context.Background(), first.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion, JobID: accepted.ID,
+		Claimant: defaultJobRuntimeClaimant(), Capacity: first.hostClaimCapacityBudget(),
+		// A lease short enough to expire inside the test; the adapter is asked about the
+		// claim, not about the clock.
+		Lease: 20 * time.Millisecond,
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim the apply: claimed=%v err=%v", claimed, err)
+	}
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	entry, err := first.submitQueueJob(
+		download_queue.JobOptions{Source: download_queue.JobSourceGroupImportApply, InitialPhase: "applying"},
+		"apply-live-1",
+		jobs.ExecutionRef{JobID: accepted.ID, ExecutionToken: execution.ExecutionToken},
+		func(context.Context, *download_queue.DownloadJob, download_queue.ProgressSink) error {
+			<-release
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("start the apply's executor: %v", err)
+	}
+	if _, found := other.DownloadManager().GetJobByCanonicalJobID(accepted.ID); found {
+		t.Fatalf("the second process holds an executor for work it does not own")
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if decision := reconcileOnce(t, other, accepted.ID); decision != jobs.ReconcileExternalWorkUnproven {
+		t.Fatalf("the reconciler decided %q for an apply it cannot prove stopped, want %q",
+			decision, jobs.ReconcileExternalWorkUnproven)
+	}
+
+	snap := jobSnapshot(t, other.JobService(), other, accepted.ID)
+	if snap.State != jobs.StateBlocked {
+		t.Fatalf("the reconciled apply is %s, want blocked for a person to resolve", snap.State)
+	}
+	if snap.Failure != nil {
+		t.Fatalf("the apply recorded the failure %+v: nothing was proved about its execution", snap.Failure)
+	}
+	if claim := storedClaim(t, other, accepted.ID); claim.State != models.JobClaimStateQuarantined {
+		t.Fatalf("the claim is %s, want it held for the work that may still be running", claim.State)
+	}
+	if held := storedCapacity(t, other, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the deployment budget holds %d slots, want the running apply's one still occupied", held)
+	}
+	// And the transfer of the claim is untouched: the executor is still applying.
+	if current := storedClaim(t, other, accepted.ID); current.ExecutionToken != execution.ExecutionToken {
+		t.Fatalf("the claim's token moved from %q to %q while the execution was unproven",
+			execution.ExecutionToken, current.ExecutionToken)
+	}
+	if entryNow, found := first.DownloadManager().GetJob(entry.ID); !found ||
+		entryNow.GetStatus() == download_queue.JobStatusFailed ||
+		entryNow.GetStatus() == download_queue.JobStatusCancelled {
+		t.Fatalf("the running apply's executor was stopped from another process: %v", entryNow)
+	}
+}
+
+// TestAnApplyReconciledAfterItsRuntimeIsProvedGoneIsFailed is the other side of the same
+// rule: once quiescence *is* proved, an apply whose plan was consumed and never restored
+// has reached the one state that cannot be replayed, and the honest answer is a failure
+// with its report rather than work nobody can run.
+func TestAnApplyReconciledAfterItsRuntimeIsProvedGoneIsFailed(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+
+	const handle = "apply-gone-1"
+	consumed := stageConsumedApplyForTest(t, ctx, handle)
+	accepted := acceptApplyJobForTest(t, ctx, handle, "apply-gone-1", consumed)
+	registerClaimableKind(t, ctx, JobKindGroupImportApply, jobImportKindVersion)
+
+	// A runtime that cannot still exist: this host, a boot session it is not in.
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion, JobID: accepted.ID,
+		Claimant: goneRuntimeIdentityForTest(), Lease: 20 * time.Millisecond,
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim the apply: claimed=%v err=%v", claimed, err)
+	}
+	_ = execution
+	time.Sleep(40 * time.Millisecond)
+
+	if decision := reconcileOnce(t, ctx, accepted.ID); decision != jobs.ReconcileFail {
+		t.Fatalf("the reconciler decided %q for an apply whose runtime is gone, want %q",
+			decision, jobs.ReconcileFail)
+	}
+	snap := waitForSnapshot(t, ctx, accepted.ID, "the reconciled apply to be failed", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if snap.State != jobs.StateFailed {
+		t.Fatalf("the apply ended %s, want failed", snap.State)
+	}
+}
+
+// TestStartupCleanupKeepsTheInputsARetriedApplyStillReads is the retention invariant one
+// link further out than a parent: a Retry.
+//
+// A Retry creates a new Job and moves the failed apply's legacy handle onto it, so the
+// successor carries an apply handle and nothing else. The plan, archive and report it
+// runs against are named after its *parse's* handle, and the parse is not its parent —
+// the retry-of link replaced that relation. Protecting only the open Job's own handles
+// plus one level of parentage therefore stopped covering `_imports/<parseHandle>.*` at
+// exactly the moment the work was retried, and startup cleanup deleted the queued
+// successor's input.
+func TestStartupCleanupKeepsTheInputsARetriedApplyStillReads(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if ctx.exportSweepFs == nil {
+		t.Skip("this harness has no startup sweep filesystem")
+	}
+	ctx.DownloadManager().SetSettings(download_queue.NewStaticDownloadSettings(
+		download_queue.TimeoutConfig{}, time.Hour))
+	fs := ctx.GetDefaultFs()
+	if err := fs.MkdirAll("_imports", 0o755); err != nil {
+		t.Fatalf("mkdir _imports: %v", err)
+	}
+
+	const parseHandle = "cafe0123456789ab"
+	parse := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportParse, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: json.RawMessage(`{"handle":"` + parseHandle + `","archive":"_imports/` + parseHandle + `.tar"}`)},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportParseHandleNamespace, Handle: parseHandle}},
+	})
+	finishedParse := finishJobFor(t, ctx, parse, jobs.StateSucceeded)
+
+	// The apply that decided on the parse, and was retried after failing.
+	input, err := json.Marshal(importApplyJobInput{
+		ParseHandle: parseHandle,
+		Plan:        importConsumedPlanPathFor(parseHandle),
+		Decisions: ImportDecisions{
+			MappingActions:  map[string]MappingAction{},
+			DanglingActions: map[string]DanglingAction{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode the apply input: %v", err)
+	}
+	apply := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay:     jobs.ReplayInput{Input: input},
+		LegacyRefs: []jobs.LegacyRef{{Namespace: ImportApplyHandleNamespace, Handle: "retried-apply"}},
+	})
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkParentChild, FromJobID: finishedParse.ID, ToJobID: apply.ID,
+	}); err != nil {
+		t.Fatalf("link the apply to its parse: %v", err)
+	}
+	failedApply := finishJobFor(t, ctx, apply, jobs.StateFailed)
+
+	// The Retry: a new queued Job, linked retry-of, holding the moved handle.
+	retried := acceptJobFor(t, ctx, jobs.Acceptance{
+		Kind: JobKindGroupImportApply, KindVersion: jobImportKindVersion,
+		State: jobs.StateQueued, Origin: "api",
+		Replay: jobs.ReplayInput{Input: input},
+	})
+	if err := ctx.JobService().Link(ctx.jobDeps(), jobs.LinkRequest{
+		Type: jobs.LinkRetryOf, FromJobID: retried.ID, ToJobID: failedApply.ID,
+	}); err != nil {
+		t.Fatalf("link the retry to the failed apply: %v", err)
+	}
+	if err := moveLegacyHandlesForTest(t, ctx, failedApply.ID, retried.ID); err != nil {
+		t.Fatalf("move the handle onto the retry: %v", err)
+	}
+
+	required := []string{
+		importArchivePathFor(parseHandle),
+		importConsumedPlanPathFor(parseHandle),
+	}
+	for _, path := range required {
+		if err := afero.WriteFile(fs, path, []byte("staged"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		ageStagingFileForTest(t, fs, path)
+	}
+
+	ctx.RunStartupExportSweep()
+
+	for _, path := range required {
+		if exists, _ := afero.Exists(fs, path); !exists {
+			t.Fatalf("startup cleanup deleted %s, which the queued retry %s still reads", path, retried.ID)
+		}
+	}
+}
+
+// moveLegacyHandlesForTest performs the handle movement a Retry commits, through the
+// durable table the production path writes. The movement is normally inside the command
+// transaction; a test that built the lineage by hand has to do it explicitly, because the
+// handle is what the sweep reads.
+func moveLegacyHandlesForTest(t *testing.T, ctx *MahresourcesContext, from, to string) error {
+	t.Helper()
+	return ctx.db.Model(&models.JobLegacyHandle{}).Where("job_id = ?", from).
+		Update("job_id", to).Error
+}

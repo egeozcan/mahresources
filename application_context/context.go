@@ -778,8 +778,8 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 }
 
 // startupSweepProtectedStems answers the staging names startup cleanup must leave
-// alone: every stem that names a Job which has not finished, or a Job such a Job
-// still depends on.
+// alone: every stem that names a Job which has not finished, or a Job such a Job still
+// depends on.
 //
 // The naming scheme is the executors' own — a staging file is named after a legacy
 // handle the Job carries (`_imports/<handle>.tar`, `.plan.json`, `.plan.applied.json`,
@@ -787,9 +787,13 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 // built from those two facts rather than from a list of file names nothing keeps in
 // sync.
 //
-// A nonterminal Job's *parent* is included because a pending apply names its parse's
-// files and the parse is already in a terminal state: the Job that still needs the
-// archive is a child of the Job whose handle the archive is named by.
+// The Jobs whose handles are collected are the open ones *and their lineage above them*,
+// because a staged hand-off is named by an ancestor rather than by the Job that reads it:
+// a pending apply names its parse's files and a Retry successor names its ancestor's. One
+// level of parentage was not enough — a Retry adds a link without adding an ancestor of
+// the kind it walked, so the parse two hops up stopped being protected the moment the
+// apply it belonged to was retried, and the queued successor's input was deleted under
+// it.
 func (ctx *MahresourcesContext) startupSweepProtectedStems() (map[string]bool, error) {
 	protected := map[string]bool{}
 	if ctx == nil || ctx.db == nil {
@@ -810,20 +814,17 @@ func (ctx *MahresourcesContext) startupSweepProtectedStems() (map[string]bool, e
 	if len(open) == 0 {
 		return protected, nil
 	}
-	ids := make([]string, 0, len(open))
+	openIDs := make([]string, 0, len(open))
 	for _, job := range open {
-		ids = append(ids, job.ID)
+		openIDs = append(openIDs, job.ID)
 		protected[job.ID] = true
 	}
 
-	// The parents of the work in flight, one level: that is the shape every staged
-	// hand-off in this tree has (parse → apply, command run → import).
-	var parents []string
-	if err := ctx.db.Model(&models.JobLink{}).Where("type = ? AND to_job_id IN ?",
-		string(jobs.LinkParentChild), ids).Distinct().Pluck("from_job_id", &parents).Error; err != nil {
+	ancestors, err := ctx.stagingLineageAncestors(openIDs)
+	if err != nil {
 		return nil, err
 	}
-	named := append(append([]string(nil), ids...), parents...)
+	named := append(append(make([]string, 0, len(openIDs)+len(ancestors)), openIDs...), ancestors...)
 
 	var handles []string
 	if err := ctx.db.Model(&models.JobLegacyHandle{}).Where("job_id IN ?", named).
@@ -835,6 +836,60 @@ func (ctx *MahresourcesContext) startupSweepProtectedStems() (map[string]bool, e
 	}
 	return protected, nil
 }
+
+// stagingLineageAncestors walks up from one set of Jobs over every link a staging file's
+// name can be inherited through: a parent-child link, whose parent's handle names the
+// archive and plan a child workflow reads, and a Retry/Repeat link, whose ancestor's
+// handle a successor carries and whose input the successor's own input still names.
+//
+// The walk is bounded in both directions — a fixed maximum of hops and one query per
+// hop rather than per Job — because a lineage is data: a corrupted or hand-edited link
+// table must not turn startup into an unbounded traversal. The bound is generous where
+// the real depth is one or two, and reaching it stops the walk rather than failing it:
+// the cost is a staging file that lives slightly longer than it had to, which is the
+// direction a cleanup may safely err in.
+func (ctx *MahresourcesContext) stagingLineageAncestors(ids []string) ([]string, error) {
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+	frontier := ids
+	ancestors := make([]string, 0, len(ids))
+
+	for hop := 0; hop < maxStagingLineageHops && len(frontier) > 0; hop++ {
+		var linked []string
+		if err := ctx.db.Model(&models.JobLink{}).
+			Where("type IN ? AND to_job_id IN ?",
+				[]string{string(jobs.LinkParentChild)}, frontier).
+			Distinct().Pluck("from_job_id", &linked).Error; err != nil {
+			return nil, err
+		}
+		var prior []string
+		if err := ctx.db.Model(&models.JobLink{}).
+			Where("type IN ? AND from_job_id IN ?",
+				[]string{string(jobs.LinkRetryOf), string(jobs.LinkRepeatOf)}, frontier).
+			Distinct().Pluck("to_job_id", &prior).Error; err != nil {
+			return nil, err
+		}
+		linked = append(linked, prior...)
+
+		frontier = frontier[:0]
+		for _, id := range linked {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			ancestors = append(ancestors, id)
+			frontier = append(frontier, id)
+		}
+	}
+	return ancestors, nil
+}
+
+// maxStagingLineageHops bounds the walk above over a lineage. The relations a staging
+// name travels are one or two links deep in every shape this tree has, so this is a
+// ceiling on a corrupt table rather than a limit on a real one.
+const maxStagingLineageHops = 32
 
 // stagingPathIsProtected reports whether one staging path is named after a Job in
 // the protected set.

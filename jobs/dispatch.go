@@ -150,7 +150,7 @@ func (s *Service) Claim(ctx context.Context, deps Deps, request ClaimRequest) (E
 		return Execution{}, false, err
 	}
 
-	execution, err := s.executionFor(ctx, deps, claimed, claim)
+	execution, err := s.executionFor(ctx, deps, claimed, claim, State(job.State))
 	if err != nil {
 		return Execution{}, false, err
 	}
@@ -455,7 +455,7 @@ func releaseClaimTx(tx *gorm.DB, jobID, token, reason string, now time.Time) err
 // a key this process does not hold, a Kind version nothing can decode, a
 // payload that fails authentication — the Job is blocked, fenced by the token
 // that was just taken, and the claim is released with it.
-func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim) (Execution, error) {
+func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, claim models.JobClaim, claimedFrom State) (Execution, error) {
 	// Who the work acts as is settled before what it runs with: a Job whose
 	// recorded principal has been deleted may not be handed to an adapter at all,
 	// because every adapter receives that identity as the authority its work
@@ -471,7 +471,7 @@ func (s *Service) executionFor(ctx context.Context, deps Deps, job models.Job, c
 		}
 		return Execution{}, err
 	}
-	return newExecution(ctx, deps, s, job, claim, access, input), nil
+	return newExecution(ctx, deps, s, job, claim, access, input, claimedFrom), nil
 }
 
 // Reasons a claimed Job is blocked by the control plane itself rather than by
@@ -529,7 +529,7 @@ func (s *Service) blockUnrunnableJob(deps Deps, job models.Job, claim models.Job
 }
 
 // newExecution builds the Execution an adapter is handed.
-func newExecution(ctx context.Context, deps Deps, service *Service, job models.Job, claim models.JobClaim, access Access, input json.RawMessage) Execution {
+func newExecution(ctx context.Context, deps Deps, service *Service, job models.Job, claim models.JobClaim, access Access, input json.RawMessage, claimedFrom State) Execution {
 	ref := ExecutionRef{JobID: job.ID, ExecutionToken: claim.ExecutionToken}
 	return Execution{
 		JobID:          job.ID,
@@ -538,6 +538,7 @@ func newExecution(ctx context.Context, deps Deps, service *Service, job models.J
 		Version:        job.Version,
 		ExecutionToken: claim.ExecutionToken,
 		Claimant:       claim.Claimant,
+		ClaimedFrom:    claimedFrom,
 		Access:         access,
 		Input:          input,
 		report:         &executionReport{service: service, deps: deps.withContext(ctx), ref: ref},
@@ -927,7 +928,9 @@ func (s *Service) ReconcileExpired(ctx context.Context, deps Deps, claimant stri
 				}
 				return report, err
 			}
-			execution, err := s.executionFor(ctx, deps, resumedJob, resumedClaim)
+			// Claimed running: a resume hands the *same* execution back under a fresh
+			// token rather than admitting work that was waiting.
+			execution, err := s.executionFor(ctx, deps, resumedJob, resumedClaim, StateRunning)
 			if err != nil {
 				// The resumed execution could not be built — its input is not
 				// readable in this process — and executionFor has blocked the

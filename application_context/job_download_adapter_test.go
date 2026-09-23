@@ -778,3 +778,186 @@ func TestAQueueBackedReconcileNeedsProofTheExecutorIsGone(t *testing.T) {
 		t.Fatalf("a transfer whose runtime is proved gone was decided %q, want it queued again", decision)
 	}
 }
+
+// TestAResumeQueuesWorkRatherThanStartingAnUnbudgetedTransfer is the admission half
+// of releasing a hold.
+//
+// A held download has already given its claim and its capacity back, so a resume that
+// started a worker from inside the command would run unowned and unbudgeted — and a
+// runtime would be entitled to claim the queued Job in the same instant, giving one
+// transfer two executors. The command therefore only records the release: it queues the
+// Job, and the executor starts inside a fresh claim with that claim's token and the
+// deployment's budget.
+func TestAResumeQueuesWorkRatherThanStartingAnUnbudgetedTransfer(t *testing.T) {
+	ctx := newDownloadJobContextWithBudget(t, 1)
+
+	server, requests, unblock := heldTransferServer(t)
+	submissions := ctx.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/held.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	handle := submissions[0].Row.ID
+
+	if snap := waitForSnapshot(t, ctx, jobID, "the transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	}); snap.State != jobs.StateRunning {
+		t.Fatalf("the transfer is %s, want running", snap.State)
+	}
+
+	// A person holds it. The queue's own pause is the executor's side of that, and the
+	// durable Job is blocked once the mirror has recorded it.
+	if err := ctx.DownloadManager().Pause(handle); err != nil {
+		t.Fatalf("pause the transfer: %v", err)
+	}
+	held := waitForSnapshot(t, ctx, jobID, "the hold to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateBlocked
+	})
+	if storedCapacity(t, ctx, jobs.CapacityGroupGlobal) != 0 {
+		t.Fatalf("a held transfer still occupies the deployment budget")
+	}
+
+	// The deployment's one slot is taken by something else, so there is no room for the
+	// transfer to start again in.
+	holder := holdTheDeploymentBudgetIn(t, ctx)
+	unblock() // the held transfer's own request may return; it is paused, so nothing reads it
+
+	before := requests.Load()
+	result, err := ctx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandResume, IdempotencyKey: "resume-unbudgeted",
+		ExpectedVersion: held.Version,
+	})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if result.Status != jobs.CommandStatusSucceeded {
+		t.Fatalf("the resume answered %s: %s", result.Status, result.Message)
+	}
+
+	// Queued, and running nowhere: no worker was started by the command.
+	if snap := jobSnapshot(t, ctx.JobService(), ctx, jobID); snap.State != jobs.StateQueued {
+		t.Fatalf("the resumed job is %s, want queued for a claim", snap.State)
+	}
+	if entry, found := ctx.DownloadManager().GetJob(handle); !found || entry.GetStatus() != download_queue.JobStatusPaused {
+		t.Fatalf("the resume started an executor directly: the queue entry is %v", entry)
+	}
+	if got := requests.Load(); got != before {
+		t.Fatalf("the resumed transfer fetched %d more times before any claim admitted it", got-before)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the deployment budget holds %d slots, want only the other execution's one", held)
+	}
+
+	// The slot frees, a runtime claims the queued Job with its capacity, and the paused
+	// entry is resumed inside that claim.
+	if _, err := ctx.JobService().ReleaseClaim(ctx.jobDeps(), jobs.ReleaseRequest{
+		ExecutionRef: jobs.ExecutionRef{JobID: holder.JobID, ExecutionToken: holder.ExecutionToken},
+		To:           jobs.StateQueued,
+		Reason:       "test released the budget",
+	}); err != nil {
+		t.Fatalf("release the budget holder: %v", err)
+	}
+
+	finished := waitForSnapshot(t, ctx, jobID, "the resumed transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateSucceeded {
+		t.Fatalf("the resumed transfer ended %s (%+v)", finished.State, finished.Failure)
+	}
+	if got := requests.Load(); got != before+1 {
+		t.Fatalf("the resumed transfer fetched %d times, want once: %d", got-before, got)
+	}
+	if storedCapacity(t, ctx, jobs.CapacityGroupGlobal) != 0 {
+		t.Fatalf("the deployment budget still holds slots after the resumed transfer ended")
+	}
+}
+
+// newDownloadJobContextWithBudget is the download harness with a deployment budget and
+// a running loop.
+//
+// The budget has to be the deployment's own *before* the runtime is built — a runtime
+// reads it once, at construction — and the loop has to exist for the second half of the
+// admission contract: work the command only queued is claimed by whatever process has a
+// free slot.
+func newDownloadJobContextWithBudget(t *testing.T, budget int) *MahresourcesContext {
+	t.Helper()
+	ctx := newJobHarnessContext(t, false)
+	ctx.Config.MaxJobConcurrency = budget
+	runtime := NewJobRuntime(ctx, ctx.JobService(), JobRuntimeConfig{
+		Claimant: "download-budget-test",
+		Interval: 25 * time.Millisecond,
+	})
+	runtime.Start()
+	t.Cleanup(runtime.Stop)
+	return ctx
+}
+
+// TestACancellationRecordedByAnotherProcessStopsTheTransferItOwns is the delivery half
+// of §4's cancellation, across the gap a process boundary opens.
+//
+// The intent is durable, so it survives an executor that stops answering — but
+// recording it is only half the contract. A cancellation routed to a runtime that does
+// not hold the transfer reaches no executor at all: the process running the work keeps
+// running it, and its eventual success is refused by an intent it never saw, which
+// leaves the Job nonterminal and the side effects already made. The execution reads the
+// intent for itself, and that is what this test drives: one context submits and runs,
+// another cancels, and nothing carries the request between them but the row.
+func TestACancellationRecordedByAnotherProcessStopsTheTransferItOwns(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 2
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, _ := newSecondProcessJobContext(t, first, key)
+
+	server, requests, unblock := heldTransferServer(t)
+	submissions := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/held.bin"}, nil, "", "api")
+	if len(submissions) != 1 || submissions[0].Err != nil || submissions[0].Job == nil {
+		t.Fatalf("submit: %+v", submissions)
+	}
+	jobID := submissions[0].CanonicalJobID
+	handle := submissions[0].Row.ID
+
+	if snap := waitForSnapshot(t, first, jobID, "the transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	}); snap.State != jobs.StateRunning {
+		t.Fatalf("the transfer is %s, want running", snap.State)
+	}
+	// The transfer is genuinely in flight before anything is cancelled: the Job is
+	// running from its claim, and the request is what the server is holding.
+	waitFor(t, "the transfer's request to reach the server", func() bool { return requests.Load() >= 1 })
+
+	// The other process cancels. It holds no queue entry for the transfer, so the
+	// command records the intent and answers; nothing it can do stops the transfer.
+	result, err := other.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+		JobID: jobID, Key: jobs.CommandCancel, IdempotencyKey: "cross-process-cancel",
+		ExpectedVersion: jobSnapshot(t, first.JobService(), first, jobID).Version,
+	})
+	if err != nil {
+		t.Fatalf("the other process refused to cancel: %v", err)
+	}
+	if result.Status != jobs.CommandStatusSucceeded {
+		t.Fatalf("the cancellation answered %s: %s", result.Status, result.Message)
+	}
+	if snap := jobSnapshot(t, first.JobService(), first, jobID); snap.ControlIntent != jobs.ControlIntentCancel {
+		t.Fatalf("the cancellation was not recorded durably: intent %q", snap.ControlIntent)
+	}
+
+	// The transfer is stopped while the server is still holding the response, so it
+	// cannot have reached a terminal status on its own: only the owning execution
+	// reading the intent can explain it.
+	cancelled := waitForSnapshot(t, first, jobID, "the owning execution to stop its transfer", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if cancelled.State != jobs.StateCancelled {
+		t.Fatalf("a cancelled transfer ended %s (%+v), want cancelled", cancelled.State, cancelled.Failure)
+	}
+	if entry, found := first.DownloadManager().GetJob(handle); !found || entry.GetStatus() != download_queue.JobStatusCancelled {
+		t.Fatalf("the transfer's queue entry is %v after the cancellation, want cancelled", entry)
+	}
+
+	unblock()
+	time.Sleep(200 * time.Millisecond)
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("the transfer was fetched %d times, want the one attempt it stopped", got)
+	}
+}

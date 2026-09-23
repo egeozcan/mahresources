@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -142,6 +143,19 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 		return fmt.Errorf("%w: reduction v%d input", jobs.ErrReplayCodecUnregistered, execution.KindVersion)
 	}
 
+	// One binding for both halves: the refusal below and the clustering itself are
+	// resolved against the same principal. A submission path runs on a
+	// request-scoped context and inherits the requester's subtree; a capacity-queued
+	// run, a Retry and a redispatched Job after a restart reach this adapter with a
+	// Job whose only remaining principal is the recorded actor, and the process's
+	// singleton context is unscoped. The Extent is resolved through the handle's own
+	// scope filter, so an unbound dispatch clustered — and could destroy — Resources
+	// outside the acting principal's subtree.
+	a = a.forExecution(execution)
+	if reason := a.refusalReason(execution, input); reason != "" {
+		return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, reason)
+	}
+
 	entry, found := a.ctx.queueEntryFor(execution.JobID)
 	if !found {
 		entry, err = a.start(execution, input)
@@ -170,6 +184,61 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 		return err
 	}
 	return a.publishOutcome(execution, input, snap)
+}
+
+// forExecution returns this adapter bound to the principal one execution acts as,
+// so that what is *authorized* and what is *executed* are one view of the subtree.
+//
+// The binding is the whole confinement story for a redispatched run. The Extent is
+// resolved against the database handle's scope filter (`resolveReductionExtent`'
+// own comment says so), and the handle a dispatch reaches for is the process's
+// singleton unless something binds it. A capacity-queued run, a Retry and a
+// redispatched Job all reach here with no request behind them, so the recorded actor
+// is the only principal left — and resolving it once, here, is what makes the check
+// and the run answer the same question.
+func (a *reductionComputeAdapter) forExecution(execution jobs.Execution) *reductionComputeAdapter {
+	if a.ctx == nil || execution.Access.UserID == 0 {
+		return a
+	}
+	principal := a.ctx.principalForPluginActor(execution.Access.UserID)
+	if principal == nil {
+		return a
+	}
+	return &reductionComputeAdapter{ctx: a.ctx.WithPrincipal(principal), kind: a.kind}
+}
+
+// refusalReason answers why this execution may not start, or an empty string.
+//
+// Everything here was checked when the request arrived, and none of it is a standing
+// permission: a Retry runs as whoever asked for the retry, a queued Job may run after
+// the deployment restarted, and a principal's role or subtree may have narrowed since.
+// The Reduction's own visibility is the owner predicate — the row is not subtree-scoped
+// itself, only everything it reaches is — so it is asked with the acting principal's
+// owner filter, exactly as the HTTP surface asks it.
+func (a *reductionComputeAdapter) refusalReason(execution jobs.Execution, input *reductionComputeJobInput) string {
+	if execution.Access.UserID == 0 {
+		return ""
+	}
+	if err := a.ctx.requireWriteRole("run a clustering run"); err != nil {
+		return "role-refused"
+	}
+	owner, restricted := reductionOwnerFilter(a.ctx.Principal())
+	if _, err := a.ctx.loadReductionForUpdate(input.ReductionID, owner, restricted); err != nil {
+		return "reduction-refused"
+	}
+	return ""
+}
+
+// reductionOwnerFilter is the owner predicate a principal reads a Reduction under:
+// administrators (and the auth-off super-user) see every row, and every other
+// principal only its own. It is the application layer's copy of the HTTP surface's
+// rule, expressed in the terms the predicate itself takes.
+func reductionOwnerFilter(principal *auth.Principal) (*uint, bool) {
+	if principal == nil || principal.IsAdmin() || principal.UserID == 0 {
+		return nil, false
+	}
+	id := principal.UserID
+	return &id, true
 }
 
 // start takes the Reduction's compute claim and submits the clustering run.
@@ -322,23 +391,25 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 	if state != jobs.StateFailed && state != jobs.StateCancelled && state != jobs.StateInterrupted {
 		return commands, nil
 	}
-	input, err := a.inputOf(commandContext.Snapshot.ID)
+	input, err := a.inputOf(commandContext.Deps, commandContext.Snapshot.ID)
 	if err != nil {
 		return commands, nil
 	}
-	if a.ctx.reductionComputable(input.ReductionID) {
+	if a.ctx.reductionComputableOn(commandContext.Deps, input.ReductionID) {
 		commands = append(commands, jobs.Command{Key: jobs.CommandRetry, Label: "Compute again"})
 	}
 	return commands, nil
 }
 
-// inputOf opens one Job's sealed input as this Kind reads it.
-func (a *reductionComputeAdapter) inputOf(jobID string) (*reductionComputeJobInput, error) {
+// inputOf opens one Job's sealed input as this Kind reads it, on the caller's own
+// handle: the command plane re-asks this question inside the transaction that would
+// create the successor, and a second connection there deadlocks a pool of one.
+func (a *reductionComputeAdapter) inputOf(deps jobs.Deps, jobID string) (*reductionComputeJobInput, error) {
 	service := a.ctx.JobService()
 	if service == nil {
 		return nil, errors.New("this context has no job control plane installed")
 	}
-	opened, err := service.OpenReplay(a.ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	opened, err := service.OpenReplay(deps, jobs.Access{Administrator: true}, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -350,11 +421,17 @@ func (a *reductionComputeAdapter) inputOf(jobID string) (*reductionComputeJobInp
 // compute deadline has passed reads as failed, which is exactly the state this
 // mechanism exists to make recomputable.
 func (ctx *MahresourcesContext) reductionComputable(reductionID uint) bool {
-	if ctx == nil || ctx.db == nil || reductionID == 0 {
+	return ctx.reductionComputableOn(ctx.jobDeps(), reductionID)
+}
+
+// reductionComputableOn is reductionComputable on a caller's own handle, for the
+// advertisement the command plane re-asks inside its transaction.
+func (ctx *MahresourcesContext) reductionComputableOn(deps jobs.Deps, reductionID uint) bool {
+	if ctx == nil || deps.DB == nil || reductionID == 0 {
 		return false
 	}
 	var reduction models.ResourceReduction
-	if err := ctx.db.First(&reduction, reductionID).Error; err != nil {
+	if err := deps.DB.First(&reduction, reductionID).Error; err != nil {
 		return false
 	}
 	return EffectiveReductionStatus(&reduction) == models.ReductionStatusFailed

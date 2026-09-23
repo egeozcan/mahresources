@@ -1623,6 +1623,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 
+		// The outcome is *requested* here and reported when the callback returns —
+		// see settleActionJob. Reporting it from inside the Lua call ended a durable
+		// Job whose handler could still be writing, freeing the deployment's capacity
+		// for work that had not stopped.
 		job.mu.Lock()
 		job.Status = "completed"
 		job.Progress = 100
@@ -1639,11 +1643,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		} else {
 			job.Message = "Completed"
 		}
-		message := job.Message
 		job.mu.Unlock()
 
 		pm.notifyActionJobSubscribers("updated", job)
-		reportHostJob(job, func(sink HostJobSink) { sink.Completed(message, parsed) })
 		return 0
 	})
 
@@ -1662,13 +1664,14 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 
+		// Requested, not published: settleActionJob reports it once the handler has
+		// returned, which is the point at which the work is quiescent.
 		job.mu.Lock()
 		job.Status = "failed"
 		job.Message = errMsg
 		job.mu.Unlock()
 
 		pm.notifyActionJobSubscribers("updated", job)
-		reportHostJob(job, func(sink HostJobSink) { sink.Failed(errMsg) })
 		return 0
 	})
 

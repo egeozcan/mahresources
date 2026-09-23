@@ -48,6 +48,13 @@ type ActionJob struct {
 	// host is the durable Job this execution reports into, or nil when this
 	// process has no control plane. It is read under mu like every other field.
 	host *HostJobRef
+	// hostSettled records that this execution's *outcome* has been reported to the
+	// durable Job. It is deliberately not derived from Status: a handler may request
+	// an outcome (mah.job_complete/mah.job_fail) and keep running, so the entry can
+	// read as finished while the Job it owns is still running and still holds the
+	// deployment's capacity — which is exactly the state a graceful shutdown has to
+	// report as a lost callback.
+	hostSettled bool
 }
 
 // Owner returns the user that submitted the action job, or nil when it was
@@ -89,6 +96,24 @@ func reportHostJob(job *ActionJob, report func(HostJobSink)) {
 	report(ref.Sink)
 }
 
+// reportHostJobOnce reports one execution's terminal outcome to its durable Job,
+// at most once per execution.
+//
+// One report per execution is a property of the *outcome*, not of the entry's
+// status: the plugin's own request is recorded when it is made but published only
+// once its callback returns, so a panic unwinding that callback and the settle path
+// can both reach here, and exactly one of them may speak for the Job.
+func reportHostJobOnce(job *ActionJob, report func(HostJobSink)) {
+	job.mu.Lock()
+	if job.hostSettled {
+		job.mu.Unlock()
+		return
+	}
+	job.hostSettled = true
+	job.mu.Unlock()
+	reportHostJob(job, report)
+}
+
 // reportLostCallbacks tells the host that the callbacks of every execution still
 // running in this process will never finish.
 //
@@ -96,15 +121,20 @@ func reportHostJob(job *ActionJob, report func(HostJobSink)) {
 // callback, while stopping the VM proves the *lua.LFunction cannot run again.
 // Both queued and running work is named — a job that never started is as
 // unfinishable as one that did — and the host decides what that means for each.
+//
+// What is *not* named is an execution whose outcome has already been reported: the
+// in-memory status cannot answer that question, because a handler that called
+// mah.job_fail and kept running reads as failed while its durable Job is still
+// running.
 func (pm *PluginManager) reportLostCallbacks(reason string) {
 	pm.actionJobsMu.RLock()
 	running := make([]*ActionJob, 0, len(pm.actionJobs))
 	for _, job := range pm.actionJobs {
 		job.mu.RLock()
-		status := job.Status
 		host := job.host
+		settled := job.hostSettled
 		job.mu.RUnlock()
-		if host != nil && host.Sink != nil && status != "completed" && status != "failed" && status != "cancelled" {
+		if host != nil && host.Sink != nil && !settled {
 			running = append(running, job)
 		}
 	}
@@ -336,7 +366,7 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 			job.Message = message
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
-			reportHostJob(job, func(sink HostJobSink) { sink.Failed(message) })
+			reportHostJobOnce(job, func(sink HostJobSink) { sink.Failed(message) })
 			log.Printf("[plugin] panic in %s: %v", logLabel, r)
 		}
 	}()
@@ -372,44 +402,60 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 		return false
 	}
 
-	if err != nil {
-		// Check if the Lua code already set the job to completed/failed via mah.job_complete/mah.job_fail.
-		job.mu.RLock()
-		alreadyDone := job.Status == "completed" || job.Status == "failed"
-		job.mu.RUnlock()
-		if alreadyDone {
-			return true
-		}
-
-		errMsg := err.Error()
-		if isAbort, reason := parseAbortError(err); isAbort {
-			errMsg = reason
-		}
-
-		job.mu.Lock()
-		job.Status = "failed"
-		job.Message = errMsg
-		job.mu.Unlock()
-		pm.notifyActionJobSubscribers("updated", job)
-		reportHostJob(job, func(sink HostJobSink) { sink.Failed(errMsg) })
-		log.Printf("[plugin] %s failed: %v", logLabel, err)
-		return true
-	}
-
-	// If the work function didn't already set a terminal status, mark completed.
-	job.mu.RLock()
-	alreadyDone := job.Status == "completed" || job.Status == "failed"
-	job.mu.RUnlock()
-	if !alreadyDone {
-		job.mu.Lock()
-		job.Status = "completed"
-		job.Progress = 100
-		job.Message = "Completed"
-		job.mu.Unlock()
-		pm.notifyActionJobSubscribers("updated", job)
-		reportHostJob(job, func(sink HostJobSink) { sink.Completed("Completed", nil) })
-	}
+	pm.settleActionJob(job, logLabel, err)
 	return true
+}
+
+// settleActionJob records one execution's outcome once its callback has returned,
+// and is the only place plugin background work ends a durable Job.
+//
+// The timing is the whole of it. mah.job_complete and mah.job_fail *request* an
+// outcome; the callback that called them can keep running — sleeping, writing
+// through mah.db, calling mah.http — and §3 keeps an execution's occupied capacity
+// and its unresolved claim held until the runtime that owns the callback proves the
+// external work is quiescent. Reporting from inside the Lua call therefore ended a
+// Job whose Lua was still writing, freed the deployment's slot for it, and offered a
+// Retry that a second worker could start beside the handler that had not stopped.
+// The handler has returned by the time this runs, so the request is settled and this
+// is where it becomes an outcome.
+//
+// A status the plugin set itself wins over the error the host unwound: the plugin's
+// own report is about work it declared finished, and a Go-level failure raised after
+// it says nothing about whether that work is done.
+func (pm *PluginManager) settleActionJob(job *ActionJob, logLabel string, workErr error) {
+	job.mu.Lock()
+	status := job.Status
+	message := job.Message
+	result := job.Result
+	if status != "completed" && status != "failed" {
+		if workErr != nil {
+			status = "failed"
+			if isAbort, reason := parseAbortError(workErr); isAbort {
+				message = reason
+			} else {
+				message = workErr.Error()
+			}
+		} else {
+			status = "completed"
+			message = "Completed"
+		}
+		job.Status = status
+		job.Message = message
+	}
+	if status == "completed" {
+		job.Progress = 100
+	}
+	job.mu.Unlock()
+
+	pm.notifyActionJobSubscribers("updated", job)
+	if status == "failed" {
+		if workErr != nil {
+			log.Printf("[plugin] %s failed: %v", logLabel, workErr)
+		}
+		reportHostJobOnce(job, func(sink HostJobSink) { sink.Failed(message) })
+		return
+	}
+	reportHostJobOnce(job, func(sink HostJobSink) { sink.Completed(message, result) })
 }
 
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.

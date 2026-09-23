@@ -49,6 +49,16 @@ function failing_work(ctx)
     mah.job_fail(ctx.job_id, "the action refused")
 end
 
+-- Reports failure and keeps executing. The plugin's report is a *request*: the
+-- handler can still be writing when it makes it, and the durable Job must not be
+-- ended — with its capacity and its claim handed back — while that is true.
+function lingering_work(ctx)
+    mah.job_fail(ctx.job_id, "the action refused")
+    mah.kv.set("lingering", "reported")
+    mah.sleep(2)
+    mah.kv.set("lingering", "returned")
+end
+
 function closure_work(job_id)
     mah.kv.set("closure", "ran")
     mah.job_complete(job_id, { message = "closure done" })
@@ -92,6 +102,8 @@ function init()
                  handler = async_work })
     mah.action({ id = "failing-work", label = "Failing Work", entity = "resource", async = true,
                  handler = failing_work })
+    mah.action({ id = "lingering-work", label = "Lingering Work", entity = "resource", async = true,
+                 handler = lingering_work })
     mah.action({ id = "retryable-work", label = "Retryable Work", entity = "resource", async = true,
                  retry = true, handler = failing_work })
     mah.action({ id = "parent-work", label = "Parent Work", entity = "resource", async = true,
@@ -1139,5 +1151,77 @@ func TestADispatchedPluginExecutionWaitsForItsOwnReportNotForAClock(t *testing.T
 	}
 	if claim := storedClaim(t, ctx, accepted.ID); claim.State != models.JobClaimStateHeld {
 		t.Fatalf("the claim is %s, want held for reconciliation", claim.State)
+	}
+}
+
+// TestAPluginOutcomeIsPublishedOnlyAfterItsCallbackReturns is the quiescence
+// requirement of §3 applied to the one executor whose handler keeps running after
+// it has spoken.
+//
+// mah.job_fail *requests* an outcome; the Lua that called it can go on sleeping,
+// reading and writing. Publishing from inside the call ended the durable Job while
+// its handler was still executing — handing the deployment's capacity back, and
+// offering a Retry that another worker could start beside the callback that had not
+// stopped. The outcome is therefore published when the callback returns, which is
+// the only point at which the work is provably quiescent.
+func TestAPluginOutcomeIsPublishedOnlyAfterItsCallbackReturns(t *testing.T) {
+	ctx := newPluginActionJobContextWithDeploymentBudget(t, 2)
+
+	_, canonical, err := ctx.RunPluginActionAsync(nil, pluginActionTestPlugin, "lingering-work", 4, nil, "")
+	if err != nil {
+		t.Fatalf("run the action: %v", err)
+	}
+
+	// The handler has reported its failure and is still executing: the sleep it is
+	// inside is the work that has not stopped.
+	waitFor(t, "the handler to report failure and keep running", func() bool {
+		return pluginKVForTest(t, ctx, "lingering") == "reported"
+	})
+
+	running, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, canonical)
+	if err != nil {
+		t.Fatalf("read the job: %v", err)
+	}
+	if running.State != jobs.StateRunning {
+		t.Fatalf("the job is %s while its handler is still running, want running", running.State)
+	}
+	if claim := storedClaim(t, ctx, canonical); claim.State != models.JobClaimStateHeld {
+		t.Fatalf("the claim is %s while the handler still runs, want held", claim.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 1 {
+		t.Fatalf("the deployment budget holds %d slots for one running handler, want one", held)
+	}
+	// Retry is the control the premature outcome used to hand out: a Job that is
+	// still running does not offer one, and its lineage has no leaf to retry.
+	advertised, err := ctx.JobService().AdvertisedCommands(context.Background(), ctx.jobDeps(),
+		jobs.Access{Administrator: true}, canonical)
+	if err != nil {
+		t.Fatalf("read the advertised commands: %v", err)
+	}
+	if offersCommand(advertised, jobs.CommandRetry) {
+		t.Fatalf("a job whose handler is still executing offered a Retry")
+	}
+	if _, err := ctx.JobService().ExecuteCommand(context.Background(), ctx.jobDeps(), jobs.CommandRequest{
+		JobID: canonical, Key: jobs.CommandRetry, IdempotencyKey: "lingering-retry",
+		ExpectedVersion: running.Version, Actor: jobs.Access{Administrator: true},
+	}); err == nil {
+		t.Fatalf("a Retry was accepted for a job whose handler is still running")
+	}
+
+	// The callback returns, and only now is the requested outcome the Job's own.
+	waitFor(t, "the handler to return", func() bool {
+		return pluginKVForTest(t, ctx, "lingering") == "returned"
+	})
+	finished := waitForJobState(t, ctx, canonical, "the job to reach its outcome", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if finished.State != jobs.StateFailed {
+		t.Fatalf("the job ended %s (%+v), want the failure the handler requested", finished.State, finished.Failure)
+	}
+	if claim := storedClaim(t, ctx, canonical); claim.State != models.JobClaimStateReleased {
+		t.Fatalf("the claim is %s after the handler returned, want released", claim.State)
+	}
+	if held := storedCapacity(t, ctx, jobs.CapacityGroupGlobal); held != 0 {
+		t.Fatalf("the deployment budget still holds %d slots after the handler returned", held)
 	}
 }

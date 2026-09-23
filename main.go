@@ -744,13 +744,16 @@ func main() {
 		}
 	}
 
-	// Initialize plugin states in DB and activate enabled plugins
-	if context.PluginManager() != nil {
-		if _, err := context.EnsurePluginStates(); err != nil {
-			log.Printf("[plugin] WARNING: failed to initialize plugin states: %v", err)
-		}
-		context.ActivateEnabledPlugins()
-		if plugins := context.PluginManager().Plugins(); len(plugins) > 0 {
+	// The durable Job control plane, installed, and then the enabled plugins.
+	//
+	// One step rather than two because their order is a correctness property: an
+	// enabled plugin's init() runs during activation, and the host half of the
+	// plugin-work seam is installed with the control plane. Whatever the order, the
+	// process has to end up with the plane installed before any plugin can accept
+	// work — see installJobControlPlaneBeforePluginActivation.
+	jobService := installJobControlPlaneBeforePluginActivation(context)
+	if pm := context.PluginManager(); pm != nil {
+		if plugins := pm.Plugins(); len(plugins) > 0 {
 			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
 		}
 	}
@@ -885,12 +888,9 @@ func main() {
 	// deployment's own configuration inside the runtime, because the host-side
 	// claim paths (a plugin action's submitting process) take that same budget:
 	// one number, one place it is read.
-	jobService := jobs.NewService()
-	// Installed on the context as well as handed to the runtime: the runtime
-	// registers the Kind adapters, and a facade holding a second control plane
-	// would read one with no adapters registered. One process, one control
-	// plane.
-	context.SetJobService(jobService)
+	//
+	// The service itself was installed before plugin activation; this is only the
+	// loop.
 	jobRuntime := application_context.NewJobRuntime(context, jobService, application_context.JobRuntimeConfig{})
 	jobRuntime.Start()
 	defer jobRuntime.Stop()
@@ -953,6 +953,36 @@ func main() {
 	}
 
 	log.Println("Server exited cleanly")
+}
+
+// installJobControlPlaneBeforePluginActivation installs the process's Job control plane
+// and then activates the plugins an operator has enabled.
+//
+// The two are one step because their order is a correctness property rather than a
+// matter of taste. An enabled plugin's init() runs during activation, `mah.start_job`
+// reaches the durable control plane only once the host half of that seam is installed,
+// and the plugin manager silently keeps its in-memory registry without it — so activating
+// first made every job a plugin started at boot a memory-only record, on every boot,
+// while a request starting the same work was durable. The step returns the plane the
+// dispatch loop later runs on; starting that loop is a separate question, asked further
+// down once startup is ready for it.
+//
+// It lives here rather than inline so the ordering is testable without starting a server,
+// exactly as migrateJobCore does.
+func installJobControlPlaneBeforePluginActivation(context *application_context.MahresourcesContext) *jobs.Service {
+	jobService := jobs.NewService()
+	// Installed on the context as well as handed back for the runtime: the runtime
+	// registers the Kind adapters, and a facade holding a second control plane would
+	// read one with no adapters registered. One process, one control plane.
+	context.SetJobService(jobService)
+
+	if context.PluginManager() != nil {
+		if _, err := context.EnsurePluginStates(); err != nil {
+			log.Printf("[plugin] WARNING: failed to initialize plugin states: %v", err)
+		}
+		context.ActivateEnabledPlugins()
+	}
+	return jobService
 }
 
 // migrateJobCore creates the durable job tables and seeds the writer epoch.

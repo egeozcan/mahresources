@@ -60,6 +60,60 @@ const (
 // poll, exactly as the download adapter's is and for the same reason.
 const queueJobPollInterval = 100 * time.Millisecond
 
+// queueJobIntentPollInterval is how often a claimed execution re-reads its Job's
+// durable control intent.
+//
+// §4 splits a cancellation in two: the intent is recorded where it can outlive an
+// executor that stops answering, and the executor that holds the work publishes the
+// outcome. When the person asking and the process running are the same one, the command
+// path cancels the entry directly — but the Job may equally be owned by another runtime
+// of the deployment, and nothing carries the request across that gap. The execution
+// reads it for itself instead, which is the delivery mechanism that needs nothing new
+// invented: it is already the thing that owns the work and the only thing that may end
+// it. The cadence is slower than the entry poll because a cancellation is not a progress
+// tick and this is a second query.
+const queueJobIntentPollInterval = time.Second
+
+// deliverCancelIntent reads one owned execution's durable control intent and, when a
+// cancellation is waiting, stops the queue entry carrying the work in this process.
+//
+// next is the waiting loop's own clock for this check, so the several loops that need it
+// do not each grow a ticker: the zero value asks immediately, which is what a Job
+// cancelled before its execution started waiting needs.
+//
+// A refusal to cancel is deliberately not reported. An entry that is already terminal,
+// already being cancelled, or gone from this process's registry is exactly what a
+// delivered cancellation looks like, and the terminal publish that follows is what
+// records the outcome.
+func (ctx *MahresourcesContext) deliverCancelIntent(execution jobs.Execution, entry *download_queue.DownloadJob, next *time.Time) {
+	now := time.Now()
+	if next != nil {
+		if now.Before(*next) {
+			return
+		}
+		*next = now.Add(queueJobIntentPollInterval)
+	}
+	service := ctx.JobService()
+	if service == nil || ctx.downloadManager == nil || entry == nil || execution.JobID == "" || entry.ID == "" {
+		return
+	}
+	snap, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
+	if err != nil || snap.State.Terminal() {
+		return
+	}
+	if snap.ControlIntent != jobs.ControlIntentCancel {
+		return
+	}
+	if err := ctx.downloadManager.Cancel(entry.ID); err != nil {
+		var conflict *download_queue.StateConflictError
+		if errors.As(err, &conflict) {
+			// The entry moved on its own; nothing was asked of it any more.
+			return
+		}
+		log.Printf("warning: job %s was cancelled and its executor's entry could not be stopped: %v", execution.JobID, err)
+	}
+}
+
 // QueueJobSubmission is one queue-backed submission's outcome: the queue entry
 // carrying the work, the durable Job it publishes into, and the refusal when there
 // is neither.
@@ -267,6 +321,7 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 	defer ticker.Stop()
 
 	var published jobs.Progress
+	var nextIntentCheck time.Time
 	for {
 		if ctx.queueIsShuttingDown() {
 			return nil, true
@@ -281,6 +336,7 @@ func (ctx *MahresourcesContext) followQueueExecution(execution jobs.Execution, e
 				log.Printf("warning: mirroring the progress of queue job %s failed: %v", execution.JobID, err)
 			}
 		}
+		ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
 		<-ticker.C
 	}
 }
@@ -457,11 +513,21 @@ func (ctx *MahresourcesContext) failUndispatchedQueueJob(admission queueJobAdmis
 // viewer: an adapter has no principal, and a handle carries no authority — it is a
 // name the executor's own id space answers to.
 func (ctx *MahresourcesContext) jobHandleFor(jobID, namespace string) (string, error) {
+	return ctx.jobHandleForDeps(ctx.jobDeps(), jobID, namespace)
+}
+
+// jobHandleForDeps is jobHandleFor on a caller's own handle.
+//
+// It exists because a handle read is one of the answers a Kind's *advertisement*
+// gives, and an advertisement computed inside a command's transaction must read on
+// that transaction's handle. Reaching for the process's own would take a second
+// connection while the first is held.
+func (ctx *MahresourcesContext) jobHandleForDeps(deps jobs.Deps, jobID, namespace string) (string, error) {
 	service := ctx.JobService()
 	if service == nil {
 		return "", nil
 	}
-	refs, err := service.LegacyHandlesFor(ctx.jobDeps(), jobID)
+	refs, err := service.LegacyHandlesFor(deps, jobID)
 	if err != nil {
 		return "", err
 	}
@@ -501,6 +567,23 @@ func (ctx *MahresourcesContext) queueEntryFor(jobID string) (*download_queue.Dow
 	return ctx.downloadManager.GetJobByCanonicalJobID(jobID)
 }
 
+// runtimeIsProvedGone reports whether the runtime a claim named cannot still be
+// running its work: this host has booted since, or the process no longer exists.
+//
+// It is the only positive evidence of quiescence available to a reconciler that
+// reaches nothing but the database, and it is deliberately conservative: another
+// host's process table is not ours to read, a pid that exists may be a reused one,
+// and with no boot session recorded a pid says nothing across a reboot. Every one of
+// those answers "not proved", which is what keeps a Job nonterminal rather than
+// terminating work that may still be running.
+func runtimeIsProvedGone(request jobs.ReconcileRequest) bool {
+	identity, ok := plugin_system.ParseRuntimeIdentity(request.Claimant)
+	if !ok {
+		return false
+	}
+	return identity.Liveness() == plugin_system.RuntimeGone
+}
+
 // queueOnlyIfTheRuntimeIsProvedGone is the honest form of "run it again" for a Kind
 // whose executor lives in one process's memory.
 //
@@ -525,11 +608,7 @@ func (ctx *MahresourcesContext) queueEntryFor(jobID string) (*download_queue.Dow
 // wrote. That is evidence about the work rather than about a process's memory, and
 // acting on it is what §3 means by reconciling durable side effects.
 func (ctx *MahresourcesContext) queueOnlyIfTheRuntimeIsProvedGone(request jobs.ReconcileRequest) jobs.ReconcileDecision {
-	identity, ok := plugin_system.ParseRuntimeIdentity(request.Claimant)
-	if !ok {
-		return jobs.ReconcileExternalWorkUnproven
-	}
-	if identity.Liveness() == plugin_system.RuntimeGone {
+	if runtimeIsProvedGone(request) {
 		return jobs.ReconcileQueue
 	}
 	return jobs.ReconcileExternalWorkUnproven
@@ -551,6 +630,7 @@ func (ctx *MahresourcesContext) waitForQueueExecution(
 	defer ticker.Stop()
 
 	var published jobs.Progress
+	var nextIntentCheck time.Time
 	for {
 		select {
 		case <-ctxDone.Done():
@@ -563,6 +643,7 @@ func (ctx *MahresourcesContext) waitForQueueExecution(
 					return nil, err
 				}
 			}
+			ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
 			if queueJobTerminal(snap.Status) {
 				return snap, nil
 			}

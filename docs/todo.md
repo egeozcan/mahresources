@@ -1,3 +1,97 @@
+# Job Center post-Task-9 checkpoint, second round — close the Astra review's ten P1 findings (2026-09-23)
+
+**Goal:** Close every P0/P1 the Astra checkpoint raised after Task 9, each through the
+public seam with an observed failure first: quiescence before a plugin outcome is published,
+the acting principal on a redispatched clustering run, live-execution evidence in import
+apply reconciliation, admission before a resume starts anything, cancellation delivered to
+the process that owns the work, the durable plane installed before plugins activate, the
+command recheck's own transaction, staging retention across Retry lineage, the legacy id a
+capacity-queued apply answers with, and the queue-backed handle namespaces the compatibility
+projector resolves.
+
+## Findings closed
+
+| Finding | Regression |
+|---|---|
+| A plugin's requested outcome ended its Job while the handler was still running | `TestAPluginOutcomeIsPublishedOnlyAfterItsCallbackReturns` |
+| A redispatched clustering run lost its acting principal | `TestAQueuedClusteringRunIsClusteredAsItsActorNotAsTheProcess`, `TestARedispatchedClusteringRunIsRefusedForAPrincipalItIsNotFor` |
+| Import apply reconciliation terminated a live remote executor | `TestAnApplyReconciledWhereItIsNotRunningIsNotTerminatedWhileItMayBeLive`, `TestAnApplyReconciledAfterItsRuntimeIsProvedGoneIsFailed` |
+| Resume started a download before reacquiring durable capacity | `TestAResumeQueuesWorkRatherThanStartingAnUnbudgetedTransfer` |
+| Cancellation intent never reached an executor in another process | `TestACancellationRecordedByAnotherProcessStopsTheTransferItOwns` |
+| Production activated plugins before installing durable job acceptance | `TestAnEnabledPluginsStartJobAtBootIsDurable` |
+| A real adapter's command recheck deadlocked a one-connection pool | `TestACommandRecheckReadsOnTheTransactionItHolds`, `TestConcurrentCommandsRecheckOnTheirOwnTransactions` |
+| Startup retention deleted inputs a queued Retry still reads | `TestStartupCleanupKeepsTheInputsARetriedApplyStillReads` |
+| A capacity-queued import apply answered an empty legacy id | `TestAnImportApplyWaitingForCapacityAnswersItsLegacyId` |
+| Queued generic workflows were unreadable and uncancellable through `/v1/jobs` | `TestAQueuedExportIsReadableAndCancellableThroughTheJobRoutes` |
+
+Every one was observed failing first, with the source restored afterwards.
+
+## Decisions worth recording
+
+- **A plugin's terminal report is published when its callback returns.** `mah.job_complete`
+  and `mah.job_fail` *request* an outcome; the Lua that called them can keep sleeping,
+  reading and writing. §3 keeps an execution's capacity and its unresolved claim held until
+  the owning runtime proves the external work quiescent, so the request is recorded on the
+  in-memory entry and settled by `PluginManager.settleActionJob` once `work()` has returned.
+  The in-memory `ActionJob` therefore carries a second terminal-ish fact — `hostSettled` —
+  because its `status` cannot answer "has the durable Job heard yet", and a graceful
+  shutdown has to report a callback that asked to fail and is still executing.
+- **`Execution.ClaimedFrom` is what tells "waiting work" from "the same execution handed
+  back".** An adapter cannot read the Job's state to answer it — a claim has already moved
+  it to running — and a held queue entry means opposite things in the two cases. Resume
+  therefore queues the Job and never starts a worker: the paused entry is resumed inside
+  the dispatch that claimed it, under that claim's token and against the deployment's
+  budget.
+- **A cancelled Job is delivered to its owner by the owner reading it.** §4 splits the
+  intent from the outcome for exactly this; there is no second channel to invent, because
+  the claim-owning execution is already the only thing that may end the Job. It is read on
+  a one-second cadence by each waiting loop rather than every entry poll.
+- **Positive evidence, not absence.** An import apply's consumed plan is what a *running*
+  apply looks like, so reconciliation classifies terminally only once the claimant's runtime
+  is proved gone; otherwise the claim, the capacity and the Job stay put for a person.
+  `runtimeIsProvedGone` is shared with the requeue arm of the same rule.
+- **The command recheck carries the transaction's deps.** `CommandContext.Deps` is the
+  handle the advertisement is computed on, so a Kind that must open its own sealed input
+  reads it there rather than on a handle of its own — a second connection while the first
+  is held is a deadlock on a pool of one.
+- **Staging protection follows lineage, not one level of parentage.** A Retry link is not a
+  parent link, so a queued successor's parse handle stopped being protected the moment the
+  apply was retried. The walk goes up over both relations, bounded.
+- **The compatibility projector resolves every queue-backed namespace.** They were all given
+  durable namespaces by Task 8, and `/v1/jobs/get` and `/v1/jobs/cancel` are the two routes a
+  CLI uses for any of them.
+
+## Open, recorded rather than closed
+
+- **A capacity-queued apply whose submission process died between acceptance and enqueue.**
+  The claim is taken at acceptance, so such a Job can be reconciled with the plan consumed
+  and no executor ever started — and nothing durable distinguishes that from an apply that
+  died mid-way. Reconciliation fails it once the runtime is proved gone, which is the same
+  answer the code gave before this change in *every* case; requeueing would be the better
+  answer for that one sub-case and needs a durable marker of "the executor was dispatched",
+  which does not exist yet.
+- **`ws9-jobs-cockpit.spec.ts`'s two "Clear completed" tests fail at the base commit too.**
+  They assert `/v1/jobs/get` answers 404 once an entry is cleared, which stopped being true
+  when the durable Job became the thing that answers a handle; that is the intended
+  behaviour and the specs are stale. Out of scope here, and recorded so it is not mistaken
+  for a regression from this change.
+
+## Verification
+
+- `go test --tags 'json1 fts5' ./... -count=1` — the whole tree, clean.
+- `go test --tags 'json1 fts5 postgres' ./application_context ./jobs ./server/api_tests -count=1`
+  — clean, including the concurrent-command regression.
+- `go test -race --tags 'json1 fts5' ./plugin_system ./jobs ./download_queue -count=1` and
+  the same over the new `application_context` tests — clean.
+- Browser: `tests/downloads-history.spec.ts`, `tests/admin-export/export.spec.ts`,
+  `tests/admin-import/import.spec.ts`, `tests/admin-import/import-apply.spec.ts`,
+  `tests/plugins/plugin-actions.spec.ts`, `tests/plugins/plugin-action-refusal.spec.ts`,
+  `tests/resource-reduction.spec.ts` — passed. CLI: `tests/cli/cli-jobs.spec.ts` — passed.
+- `npm run build` leaves `public/dist/` and `public/tailwind.css` byte-identical (no frontend
+  source changed); `./scripts/css-scan-test.sh` passes.
+- `go vet --tags 'json1 fts5' ./...` clean, `gofmt -l` on every changed file clean,
+  `git diff --check` clean.
+
 # Job Center queue-backed executor ownership — close the checkpoint's last P1 (2026-09-23)
 
 **Goal:** Close the P1 the post-Task-9 checkpoint left open: the six queue-backed

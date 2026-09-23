@@ -257,7 +257,10 @@ func (s *Service) accept(ctx context.Context, deps Deps, acceptance Acceptance, 
 	if claim == nil {
 		return stored, Execution{}, nil
 	}
-	execution, err := s.executionFor(ctx, deps, claimedJob, claimRow)
+	// A claim taken at acceptance takes work that was never waiting: the caller
+	// already owns the executor, and its Job was born running. The state it
+	// claimed from is therefore the queued state it was accepted in.
+	execution, err := s.executionFor(ctx, deps, claimedJob, claimRow, StateQueued)
 	if err != nil {
 		return stored, Execution{}, err
 	}

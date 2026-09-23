@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/application_context"
 	"mahresources/archive"
 	"mahresources/jobs"
 	"mahresources/models"
@@ -230,5 +231,63 @@ func TestExportSubmitRouteKeepsTheQueueIdAsItsHandle(t *testing.T) {
 	unknown := tc.MakeRequest(http.MethodGet, "/v1/exports/no-such-export/download", nil)
 	if unknown.Code != http.StatusNotFound {
 		t.Fatalf("an unknown export answered %d: %s", unknown.Code, unknown.Body.String())
+	}
+}
+
+// TestAnImportApplyWaitingForCapacityAnswersItsLegacyId is the answer a client polls with.
+//
+// The apply route consumes the plan before it accepts anything — that is what makes a
+// second /apply on one review a refusal — and it answers with the legacy id. A submission
+// admitted while the deployment's budget is full has no queue entry, so the id it answers
+// with is the only name that work will ever have: an empty one left the caller holding a
+// 202 for an import it could neither poll nor cancel, while the controller had already
+// consumed the plan it decided on.
+func TestAnImportApplyWaitingForCapacityAnswersItsLegacyId(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	tc.AppCtx.Config.MaxJobConcurrency = 1
+
+	handle, canonicalID := submitImportParseForTest(t, tc, nil)
+	waitForCanonicalState(t, tc, canonicalID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateSucceeded
+	})
+
+	// The deployment's one slot is taken, so the apply is accepted to wait rather than
+	// dispatched here.
+	occupyTheDeploymentBudget(t, tc)
+
+	res := tc.MakeRequest(http.MethodPost, "/v1/imports/"+handle+"/apply",
+		map[string]any{"decisions": map[string]any{}})
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("the apply answered %d: %s", res.Code, res.Body.String())
+	}
+	var applied struct {
+		JobID          string `json:"jobId"`
+		CanonicalJobID string `json:"canonicalJobId"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("decode %s: %v", res.Body.String(), err)
+	}
+	if applied.CanonicalJobID == "" {
+		t.Fatalf("the accepted apply created no durable job: %s", res.Body.String())
+	}
+	if applied.JobID == "" {
+		t.Fatalf("an accepted apply answered no legacy id for a client to poll: %s", res.Body.String())
+	}
+
+	// The id it answered with is the one the durable Job answers to, and the Job is
+	// waiting rather than running.
+	snap := waitForCanonicalState(t, tc, applied.CanonicalJobID, "the apply to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateQueued
+	})
+	if snap.State != jobs.StateQueued {
+		t.Fatalf("the apply is %s while the deployment has no room for it, want queued", snap.State)
+	}
+	resolved, err := tc.AppCtx.ResolveJobHandle(application_context.ImportApplyHandleNamespace, applied.JobID)
+	if err != nil {
+		t.Fatalf("the id the apply answered with resolves to no job: %v", err)
+	}
+	if resolved.ID != applied.CanonicalJobID {
+		t.Fatalf("the answered id resolves to %s, want %s", resolved.ID, applied.CanonicalJobID)
 	}
 }

@@ -130,6 +130,11 @@ func (s *Service) advertisedCommands(ctx context.Context, deps Deps, access Acce
 		offered, advertiseErr := adapter.Commands(ctx, CommandContext{
 			Snapshot: viewerSnapshot(job, access),
 			Access:   access,
+			// The handle this advertisement is computed on, so an adapter whose answer
+			// needs a read reads it here rather than on a handle of its own: the
+			// recheck inside a command's transaction runs with the *transaction's*
+			// handle, and a second one would deadlock a one-connection pool.
+			Deps: deps,
 		})
 		if advertiseErr != nil {
 			// The adapter's own text is deliberately not carried: only the Kind

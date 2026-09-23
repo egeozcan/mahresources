@@ -512,7 +512,7 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 	}}
 	state := commandContext.Snapshot.State
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
-		handle, err := a.ctx.jobHandleFor(commandContext.Snapshot.ID, ImportParseHandleNamespace)
+		handle, err := a.ctx.jobHandleForDeps(commandContext.Deps, commandContext.Snapshot.ID, ImportParseHandleNamespace)
 		if err != nil {
 			return nil, err
 		}
@@ -698,10 +698,21 @@ func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *imp
 
 // Reconcile answers what should happen to one apply whose claim expired.
 //
-// The two files are the evidence, and they answer the question the design asks:
-// a restored plan means the executor itself proved replay safe, so the work is
-// queued again; a consumed plan without a restored one means it did not, so the
-// Job fails with its published report attached and offers no Retry.
+// The two files are the evidence, and they answer the design's question — but only the
+// first arm of it is positive. A plan back at its unconsumed path is produced by one
+// thing only: the executor's own replay-safety gate, which restores it exactly when a
+// replay is provably idempotent and never before the run has ended. That is why it may
+// be queued again without proving anything about the process that wrote it.
+//
+// A *consumed* plan is the opposite kind of answer. Consuming the plan is what the
+// submission does before the executor exists, so it is equally the state of an apply
+// another process is walking right now — and "this process has no queue entry"
+// distinguishes nothing, because the queue is memory and the process is another one.
+// Reading absence there as "nothing can continue" terminated live work and released its
+// ownership, which is the one thing §3 forbids: a terminal outcome on external work
+// nobody has proved quiescent. So the terminal classification is taken only on positive
+// evidence that the runtime is gone, and otherwise the claim, the capacity and the Job
+// stay exactly where they are for a person to resolve.
 func (a *importApplyAdapter) Reconcile(_ context.Context, request jobs.ReconcileRequest) (jobs.ReconcileDecision, error) {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return jobs.ReconcileExternalWorkUnproven, nil
@@ -719,6 +730,16 @@ func (a *importApplyAdapter) Reconcile(_ context.Context, request jobs.Reconcile
 	if a.ctx.importPlanExists(input.ParseHandle) && a.ctx.importArchiveExists(input.ParseHandle) {
 		return jobs.ReconcileQueue, nil
 	}
+	if !runtimeIsProvedGone(request) {
+		// An executor in another process may be applying this plan at this instant, and
+		// nothing here can tell that from a process that died mid-apply. The Job keeps
+		// its claim and its capacity, no terminal outcome is recorded, and a person
+		// decides — which is recoverable, where a duplicated import is not.
+		return jobs.ReconcileExternalWorkUnproven, nil
+	}
+	// The runtime is proved gone and the plan is consumed without having been restored:
+	// the apply reached the one state that cannot be replayed. It stays failed, with
+	// whatever report the executor left for a reader.
 	return jobs.ReconcileFail, nil
 }
 
@@ -749,8 +770,11 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
 		// The Job's own sealed input names the plan that would be replayed, so the
 		// evidence is read from the same input the Retry would use rather than from a
-		// handle that may have moved.
-		input, err := a.inputOf(commandContext.Snapshot.ID)
+		// handle that may have moved. It is read on the handle this advertisement was
+		// asked on: the command plane re-asks this question inside the transaction
+		// that would create the successor, and a second connection there deadlocks a
+		// pool of one.
+		input, err := a.inputOf(commandContext.Deps, commandContext.Snapshot.ID)
 		if err != nil {
 			return commands, nil
 		}
@@ -761,15 +785,16 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 	return commands, nil
 }
 
-// inputOf opens one Job's sealed input as this Kind reads it. An input this process
-// cannot open answers an error, and every caller treats that as "nothing can be
-// promised about a re-run" rather than as a failure to answer.
-func (a *importApplyAdapter) inputOf(jobID string) (*importApplyJobInput, error) {
+// inputOf opens one Job's sealed input as this Kind reads it, on the caller's own
+// handle. An input this process cannot open answers an error, and every caller
+// treats that as "nothing can be promised about a re-run" rather than as a failure
+// to answer.
+func (a *importApplyAdapter) inputOf(deps jobs.Deps, jobID string) (*importApplyJobInput, error) {
 	service := a.ctx.JobService()
 	if service == nil {
 		return nil, errors.New("this context has no job control plane installed")
 	}
-	opened, err := service.OpenReplay(a.ctx.jobDeps(), jobs.Access{Administrator: true}, jobID)
+	opened, err := service.OpenReplay(deps, jobs.Access{Administrator: true}, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -1021,6 +1046,10 @@ func (ctx *MahresourcesContext) SubmitImportApply(parseHandle string, consumedPl
 		return result
 	}
 	legacyID := download_queue.NewJobID()
+	// Answered before the capacity question, because it is the id the caller is
+	// handed whatever happens next: the Job is durable and answers this handle
+	// whether this process runs its executor or a runtime with a free slot does.
+	result.QueueJobID = legacyID
 	admission, err := ctx.admitQueueJob(jobs.Acceptance{
 		Kind:        JobKindGroupImportApply,
 		KindVersion: jobImportKindVersion,

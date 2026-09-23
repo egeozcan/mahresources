@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 
@@ -251,5 +252,72 @@ func TestAnExportWaitingForCapacityIsAcceptedAndNotMissing(t *testing.T) {
 	res := tc.MakeRequest(http.MethodGet, "/v1/exports/"+legacyID+"/download", nil)
 	if res.Code != http.StatusConflict {
 		t.Fatalf("the archive route answered %d for an export waiting for capacity: %s", res.Code, res.Body.String())
+	}
+}
+
+// TestAQueuedExportIsReadableAndCancellableThroughTheJobRoutes is the compatibility
+// surface of a queue-backed Kind that is waiting rather than running.
+//
+// `/v1/jobs/get` and `/v1/jobs/cancel` are the two routes a CLI or a bookmark uses for any
+// background job, and the id they are given is the legacy handle the submission answered
+// with. A Job admitted for later has no queue entry in this process at all, so an id
+// space the compatibility projector did not resolve was a 404 for an id the server itself
+// had just handed out — the client could neither read the work it was promised nor cancel
+// it.
+func TestAQueuedExportIsReadableAndCancellableThroughTheJobRoutes(t *testing.T) {
+	tc := SetupTestEnv(t)
+	installJobControlPlane(t, tc)
+	tc.AppCtx.Config.MaxJobConcurrency = 1
+	occupyTheDeploymentBudget(t, tc)
+
+	groupID := createGroupForExport(t, tc, "export-queued-routes")
+	legacyID, canonicalID := submitGroupExport(t, tc, []uint{groupID})
+	if canonicalID == "" {
+		t.Fatalf("an export refused admission for capacity: legacy id %s", legacyID)
+	}
+	if snap := waitForCanonicalState(t, tc, canonicalID, "the export to be recorded", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateQueued
+	}); snap.State != jobs.StateQueued {
+		t.Fatalf("the export is %s while the deployment has no room for it, want queued", snap.State)
+	}
+
+	// Readable through the route the CLI polls with.
+	res := tc.MakeRequest(http.MethodGet, "/v1/jobs/get?id="+legacyID, nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /v1/jobs/get answered %d for an export the server accepted: %s", res.Code, res.Body.String())
+	}
+	var row struct {
+		ID             string `json:"id"`
+		Status         string `json:"status"`
+		Source         string `json:"source"`
+		CanonicalJobID string `json:"canonicalJobId"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &row); err != nil {
+		t.Fatalf("decode /v1/jobs/get %s: %v", res.Body.String(), err)
+	}
+	if row.ID != legacyID {
+		t.Fatalf("the row reports id %q, want the handle %q it was asked for", row.ID, legacyID)
+	}
+	if row.CanonicalJobID != canonicalID {
+		t.Fatalf("the row names job %q, want %q", row.CanonicalJobID, canonicalID)
+	}
+	if row.Source != download_queue.JobSourceGroupExport {
+		t.Fatalf("the row is labelled %q, want %q: an export was projected as a download",
+			row.Source, download_queue.JobSourceGroupExport)
+	}
+	if row.Status != string(download_queue.JobStatusPending) {
+		t.Fatalf("a queued export reads as %q, want %q", row.Status, download_queue.JobStatusPending)
+	}
+
+	// And cancellable through the same id, through the route a person's own control uses.
+	cancel := tc.MakeRequest(http.MethodPost, "/v1/jobs/cancel?id="+legacyID, map[string]any{})
+	if cancel.Code != http.StatusOK {
+		t.Fatalf("POST /v1/jobs/cancel answered %d for an accepted export: %s", cancel.Code, cancel.Body.String())
+	}
+	cancelled := waitForCanonicalState(t, tc, canonicalID, "the export to be cancelled", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if cancelled.State != jobs.StateCancelled {
+		t.Fatalf("the cancelled export ended %s (%+v)", cancelled.State, cancelled.Failure)
 	}
 }

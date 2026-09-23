@@ -249,14 +249,28 @@ func (a *downloadJobAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 		}
 	}
 
-	// A held transfer is not resumed here. It is waiting for a person, and §4 makes
-	// the executor's own confirmation the thing that ends a hold: adopting it would
-	// restart a download its owner deliberately stopped.
+	// A held transfer is not adopted here. It is waiting for a person, and §4 makes
+	// the executor's own confirmation the thing that ends a hold. The confirmation is
+	// durable rather than a call into this process: a resume queues the Job, so a
+	// paused entry reached by a *dispatch* is one whose hold the person released —
+	// whereas a Job that is still running under a paused entry is a hold nobody
+	// released, and restarting it would undo what its owner deliberately stopped.
 	if entry.GetStatus() == download_queue.JobStatusPaused {
-		return a.block(execution, "paused")
+		if !a.queuedForDispatch(execution) {
+			return a.block(execution, "paused")
+		}
+		if err := a.ctx.downloadManager.Resume(entry.ID); err != nil {
+			var conflict *download_queue.StateConflictError
+			if errors.As(err, &conflict) {
+				// The entry moved while this dispatch held its claim: whatever it moved
+				// to is the executor's answer, and the wait below publishes it.
+				return a.block(execution, "paused")
+			}
+			return err
+		}
 	}
 
-	snap, err := a.waitForTerminal(ctx, entry)
+	snap, err := a.waitForTerminal(ctx, execution, entry)
 	if err != nil {
 		return err
 	}
@@ -351,7 +365,7 @@ func (a *downloadJobAdapter) block(execution jobs.Execution, reason string) erro
 
 // waitForTerminal blocks until the queue entry reaches a terminal status, the
 // context is cancelled, or the entry disappears from this process's queue.
-func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, error) {
+func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, execution jobs.Execution, entry *download_queue.DownloadJob) (*download_queue.DownloadJob, error) {
 	// One read before the loop: a transfer that finished while the Job was being
 	// claimed needs no wait at all.
 	if snap := entry.Snapshot(); downloadTerminal(snap.Status) {
@@ -359,6 +373,7 @@ func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, entry *downloa
 	}
 	ticker := time.NewTicker(jobDownloadPollInterval)
 	defer ticker.Stop()
+	var nextIntentCheck time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -368,7 +383,26 @@ func (a *downloadJobAdapter) waitForTerminal(ctx context.Context, entry *downloa
 			if downloadTerminal(snap.Status) {
 				return snap, nil
 			}
+			// A cancellation recorded against this Job by anybody — another runtime's
+			// command endpoint, another process's compatibility route — is delivered
+			// here, because this is the execution that owns the transfer.
+			a.ctx.deliverCancelIntent(execution, entry, &nextIntentCheck)
 		}
+	}
+}
+
+// queuedForDispatch reports whether the Job this execution claimed was waiting work.
+//
+// A queued or scheduled Job reached this adapter through a claim, which is what a
+// released hold produces; a Job claimed from running is a reconciliation handing the
+// same execution back under a fresh token. The two need opposite answers about a
+// paused queue entry, and the claim records which one this is.
+func (a *downloadJobAdapter) queuedForDispatch(execution jobs.Execution) bool {
+	switch execution.ClaimedFrom {
+	case jobs.StateQueued, jobs.StateScheduled:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -564,24 +598,15 @@ func (a *downloadJobAdapter) ExecuteCommand(_ context.Context, execution jobs.Co
 		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "cancelling"}, nil
 
 	case jobs.CommandResume:
-		if !found {
-			// The held transfer is gone from the queue — this process restarted, or
-			// the queue evicted it. The Job still holds everything a transfer needs,
-			// so resuming it means starting again, and the host returning it to the
-			// queue is what does that.
-			return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "the held transfer was gone; the download will start again"}, nil
-		}
-		if err := a.ctx.downloadManager.Resume(entry.ID); err != nil {
-			var conflict *download_queue.StateConflictError
-			if errors.As(err, &conflict) {
-				return jobs.CommandOutcome{}, fmt.Errorf("the transfer is %s, not paused", conflict.Status)
-			}
-			if !found {
-				return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "the download will start again"}, nil
-			}
-			return jobs.CommandOutcome{}, err
-		}
-		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "resuming"}, nil
+		// A hold is released by queueing the Job, never by starting a worker from
+		// here. The Job's claim and the capacity that admitted it were handed back
+		// when it was held, so a worker started by this command would run unowned
+		// and unbudgeted — and another runtime could claim the queued Job in the
+		// same instant, giving one transfer two executors. The executor starts
+		// inside a fresh claim, under that claim's own token and against the
+		// deployment's budget: see Dispatch, which is where the paused queue entry
+		// is resumed.
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "queued to start again"}, nil
 	}
 	return jobs.CommandOutcome{}, fmt.Errorf("%w: %s", jobs.ErrCommandNotAdvertised, execution.Key)
 }
@@ -827,7 +852,7 @@ func (ctx *MahresourcesContext) submitRemoteDownload(creator *query_models.Resou
 		// from the sealed payload — see admitQueueJob. The reported row is the projection
 		// of that Job, which is what a client polling the id would get from the
 		// compatibility route anyway.
-		result.Row = downloadRowFromJob(admission.Accepted, legacyID)
+		result.Row = downloadRowFromJob(admission.Accepted, legacyID, download_queue.JobSourceDownload)
 		return result
 	}
 

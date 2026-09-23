@@ -1425,6 +1425,14 @@ type Execution struct {
 	Version        uint64
 	ExecutionToken string
 	Claimant       string
+	// ClaimedFrom is the state the Job was in when this execution claimed it. A
+	// queued or scheduled Job was waiting work; a running one was handed back to
+	// this runtime by a reconciliation under a fresh token. The two are different
+	// questions for an adapter whose executor has a *held* state of its own — a
+	// queue entry a person paused — because only the first is work a command has
+	// released. It is recorded here rather than re-read from the Job, which the
+	// claim has already moved.
+	ClaimedFrom State
 	// Access is the principal the work acts as: the Job's actor when it recorded
 	// one, otherwise its owner. A zero UserID means the Job has no acting
 	// identity — the host itself is running the work.
@@ -1800,6 +1808,15 @@ const (
 type CommandContext struct {
 	Snapshot Snapshot
 	Access   Access
+	// Deps is the per-call handle this advertisement is being computed on. It is
+	// carried because the host asks the same question twice: as a read, on the
+	// caller's own handle, and again *inside the transaction* that would act on the
+	// command, whose handle carries that transaction. An adapter that reached for a
+	// handle of its own there — the process's singleton, say — would open a second
+	// database connection while the first is held, which is a deadlock on a pool of
+	// one and contention on every other. Everything an advertisement needs to read
+	// belongs on this handle.
+	Deps Deps
 }
 
 // CommandExecution is one command the host is running against a Job an adapter

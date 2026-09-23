@@ -91,6 +91,54 @@ func (ctx *MahresourcesContext) JobHandleNamespaceFor(jobID, namespace string) (
 	return "", nil
 }
 
+// queueBackedHandleNamespaces lists the legacy id spaces this projector resolves, in the
+// order they are tried: the download queue's first, because it is the id space every
+// deployed client already speaks, and then the queue-backed Kinds that were given their
+// own durable namespaces.
+//
+// They are all resolved here rather than only the download one because the compatibility
+// routes are not download-only: `/v1/jobs/get` and `/v1/jobs/cancel` are the two paths a
+// CLI or a bookmark uses for *any* background job, and a queue-backed export whose Job was
+// accepted but not dispatched has no queue entry in this process to fall back to. A
+// namespace left out of this list is a 404 for an id the server itself just answered with.
+//
+// The Source each one projects onto is the label the jobs panel and the legacy rows have
+// always used for that Kind, so a client branching on `source` keeps working.
+var queueBackedHandleNamespaces = []struct {
+	Namespace string
+	Source    string
+}{
+	{DownloadHandleNamespace, download_queue.JobSourceDownload},
+	{GroupExportHandleNamespace, download_queue.JobSourceGroupExport},
+	{ImportParseHandleNamespace, download_queue.JobSourceGroupImportParse},
+	{ImportApplyHandleNamespace, download_queue.JobSourceGroupImportApply},
+	{ReductionComputeHandleNamespace, download_queue.JobSourceResourceReduction},
+	{SimilarityRecomputeHandleNamespace, maintenanceJobSource},
+}
+
+// resolveQueueBackedHandle answers the canonical Job one legacy identifier currently
+// names in any of the queue-backed id spaces, together with the source label that id
+// space projects onto.
+//
+// The namespaces are tried in order and the first hit wins. Each is a space of random
+// ids, so two spaces holding one string is not a case that arises; trying the download
+// space first is what keeps every already-deployed client on exactly the path it had.
+func (ctx *MahresourcesContext) resolveQueueBackedHandle(id string) (*jobs.Snapshot, string, error) {
+	for _, candidate := range queueBackedHandleNamespaces {
+		resolved, err := ctx.ResolveJobHandle(candidate.Namespace, id)
+		switch {
+		case err == nil:
+			return &resolved, candidate.Source, nil
+		case errors.Is(err, jobs.ErrNotFound):
+			// Not a handle in this space. It may be one in the next, or a raw queue id.
+			continue
+		default:
+			return nil, "", err
+		}
+	}
+	return nil, "", nil
+}
+
 // ProjectDownloadJob answers the legacy row one download identifier currently names.
 //
 // It resolves in the order the compatibility contract implies, and each step is
@@ -112,16 +160,14 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 	}
 
 	var canonical *jobs.Snapshot
+	source := download_queue.JobSourceDownload
 	if ctx.JobService() != nil {
-		resolved, err := ctx.ResolveJobHandle(DownloadHandleNamespace, id)
+		resolved, resolvedSource, err := ctx.resolveQueueBackedHandle(id)
 		switch {
-		case err == nil:
-			canonical = &resolved
-		case errors.Is(err, jobs.ErrNotFound):
-			// Not a handle: it may still be a queue entry from before the handle
-			// table existed, or one this process queued without a control plane.
-		default:
+		case err != nil:
 			return projection, err
+		case resolved != nil:
+			canonical, source = resolved, resolvedSource
 		}
 	}
 
@@ -141,7 +187,7 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 				projection.Row = downloadRowFromEntry(entry, id, canonical.ID)
 				return projection, nil
 			}
-			projection.Row = downloadRowFromJob(*canonical, id)
+			projection.Row = downloadRowFromJob(*canonical, id, source)
 			return projection, nil
 		}
 		// No queue entry in this process. The durable Job is what answers, whatever
@@ -152,7 +198,7 @@ func (ctx *MahresourcesContext) ProjectDownloadJob(id string) (download_queue.Do
 		// cleared it — the Job Center's dismissal is a per-viewer preference, not a
 		// deletion, and a client that kept one id may still read its outcome and ask
 		// for a Retry.
-		projection.Row = downloadRowFromJob(*canonical, id)
+		projection.Row = downloadRowFromJob(*canonical, id, source)
 		return projection, nil
 	}
 
@@ -206,14 +252,18 @@ func downloadRowFromEntry(entry *download_queue.DownloadJob, handle, canonicalJo
 	return snap
 }
 
-// downloadRowFromJob projects a durable Job into the legacy row shape, for a
-// download this process's queue does not hold.
+// downloadRowFromJob projects a durable Job into the legacy row shape, for a download
+// this process's queue does not hold.
 //
 // It is a projection and nothing more: the queue's own statuses are finer than a
 // Job's states, so a state maps onto the queue's closest word for it, and no
 // progress is invented. A client that needs the authoritative view has the
 // canonical surfaces for exactly that.
-func downloadRowFromJob(projected jobs.Snapshot, handle string) *download_queue.DownloadJob {
+//
+// source is the label the id's own namespace uses, so an export projected here is not
+// relabelled a download: the jobs panel branches on it, and a client that kept an export
+// id from before this release still recognizes its own row.
+func downloadRowFromJob(projected jobs.Snapshot, handle, source string) *download_queue.DownloadJob {
 	row := &download_queue.DownloadJob{
 		ID:             handle,
 		URL:            downloadURLFromSummary(projected.Summary),
@@ -221,7 +271,7 @@ func downloadRowFromJob(projected jobs.Snapshot, handle string) *download_queue.
 		Progress:       progressCompleted(projected.Progress),
 		TotalSize:      progressTotal(projected.Progress),
 		CreatedAt:      projected.AcceptedAt,
-		Source:         download_queue.JobSourceDownload,
+		Source:         source,
 		CanonicalJobID: projected.ID,
 		Phase:          projected.Phase,
 	}
