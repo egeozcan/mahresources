@@ -21,6 +21,15 @@ import (
 const jobMigrationDownloadHistory = "download-history"
 const jobMigrationScheduledDownload = "scheduled-download"
 const jobMigrationReduction = "resource-reduction"
+const jobMigrationDownloadCanonicalImportFailed = "canonical-job-import-failed"
+
+var jobMigrationRetryableQuarantineClasses = []struct {
+	sourceKind  string
+	blockerCode string
+}{
+	{sourceKind: jobMigrationDownloadHistory, blockerCode: jobMigrationDownloadCanonicalImportFailed},
+	{sourceKind: jobMigrationPluginCommandImport, blockerCode: "source-input-unreadable"},
+}
 
 var jobMigrationSourceKinds = []string{
 	jobMigrationDownloadHistory, jobMigrationScheduledDownload,
@@ -305,6 +314,21 @@ func (ctx *MahresourcesContext) RunJobMigration(options JobMigrationOptions) (Jo
 	if err != nil {
 		return JobMigrationResult{}, err
 	}
+	if checkpoint.Phase == models.JobMigrationPhaseDrainFence {
+		sourceKind, _, rearmed, err := ctx.rearmOneFixedQuarantine()
+		if err != nil {
+			return JobMigrationResult{}, err
+		}
+		if rearmed {
+			checkpoint.Phase, checkpoint.SourceKind = models.JobMigrationPhaseCopy, sourceKind
+			checkpoint.CursorID = ""
+			checkpoint.LastError = ""
+			checkpoint.CompletedAt = nil
+			if err := ctx.saveJobMigrationCheckpoint(checkpoint, now()); err != nil {
+				return JobMigrationResult{}, err
+			}
+		}
+	}
 	result := JobMigrationResult{}
 	for result.Batches < options.MaxBatches {
 		result.Phase = checkpoint.Phase
@@ -561,6 +585,113 @@ func (ctx *MahresourcesContext) recordSafeSourceBlocker(blocker *jobMigrationBlo
 		return errors.New("job migration could not persist safe source diagnostics")
 	}
 	return nil
+}
+
+// rearmOneFixedQuarantine resumes one exact quarantine class whose conversion
+// path now understands the unchanged source. The source-specific copy routine
+// remains responsible for proving and importing that source.
+func (ctx *MahresourcesContext) rearmOneFixedQuarantine() (string, string, bool, error) {
+	for _, class := range jobMigrationRetryableQuarantineClasses {
+		var cursor string
+		for {
+			var candidates []models.JobSourceMapping
+			query := ctx.db.Where("source_kind = ? AND status = ? AND blocker_code = ?", class.sourceKind,
+				models.JobSourceMappingQuarantined, class.blockerCode).Order("source_id ASC").Limit(jobMigrationReadinessBatchSize)
+			if cursor != "" {
+				query = query.Where("source_id > ?", cursor)
+			}
+			if err := query.Find(&candidates).Error; err != nil {
+				return "", "", false, errors.New("job migration retryable source scan failed")
+			}
+			for _, mapping := range candidates {
+				unchanged := false
+				err := ctx.db.Transaction(func(tx *gorm.DB) error {
+					var current models.JobSourceMapping
+					if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_kind = ? AND source_id = ?", mapping.SourceKind, mapping.SourceID).First(&current).Error; err != nil {
+						if errors.Is(err, gorm.ErrRecordNotFound) {
+							return nil
+						}
+						return errors.New("job migration retryable mapping could not be rechecked")
+					}
+					if current.Status != models.JobSourceMappingQuarantined || current.BlockerCode != class.blockerCode || current.JobID != "" || current.SourceHash != mapping.SourceHash {
+						return nil
+					}
+					// Recheck the source under the transaction before resetting
+					// the checkpoint. The copy phase performs the actual retry.
+					latestHash, latestValid, err := ctx.migrationRetryableSourceHash(tx, current.SourceKind, current.SourceID)
+					if err != nil {
+						return errors.New("job migration retryable source could not be rechecked")
+					}
+					if !latestValid || latestHash != current.SourceHash {
+						return nil
+					}
+					unchanged = true
+					return nil
+				})
+				if err != nil {
+					return "", "", false, err
+				}
+				if unchanged {
+					return mapping.SourceKind, mapping.SourceID, true, nil
+				}
+			}
+			if len(candidates) < jobMigrationReadinessBatchSize {
+				break
+			}
+			cursor = candidates[len(candidates)-1].SourceID
+		}
+	}
+	return "", "", false, nil
+}
+
+func (ctx *MahresourcesContext) migrationRetryableSourceHash(db *gorm.DB, kind, sourceID string) (string, bool, error) {
+	switch kind {
+	case jobMigrationDownloadHistory:
+		id, err := strconv.ParseUint(sourceID, 10, 64)
+		if err != nil || id == 0 {
+			return "", false, nil
+		}
+		var row models.DownloadHistoryEntry
+		if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		creator, err := downloadHistoryCreator(row)
+		if err != nil {
+			return "", false, nil
+		}
+		input, err := remoteDownloadInputJSON(creator, row.PluginName)
+		if err != nil || len(downloadJobTitle(input)) > jobs.MaxTitleBytes {
+			return "", false, nil
+		}
+		if _, _, err := downloadHistoryJobOutcome(row); err != nil {
+			return "", false, nil
+		}
+		return hashDownloadHistory(row), true, nil
+	case jobMigrationPluginCommandImport:
+		var row models.PluginCommandImport
+		if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", sourceID).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		if row.ID == "" || row.RunID == "" || row.FileName == "" || row.FieldsJSON != "" || row.CreatedAt.IsZero() || row.Status != models.PluginCommandImportStatusSucceeded {
+			return "", false, nil
+		}
+		if _, err := ctx.proveBlankPluginCommandImport(db, row); err != nil {
+			var blocker *jobMigrationBlockerError
+			if errors.As(err, &blocker) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		return hashPluginCommandImport(row), true, nil
+	default:
+		return "", false, nil
+	}
 }
 
 func (ctx *MahresourcesContext) quarantineDownloadHistory(row models.DownloadHistoryEntry, code string, now time.Time) error {
@@ -929,6 +1060,7 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 	hash := hashDownloadHistory(row)
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		var prior models.JobSourceMapping
+		retryingQuarantine := false
 		err := tx.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, strconv.FormatUint(uint64(row.ID), 10)).First(&prior).Error
 		if err == nil {
 			if prior.Status == models.JobSourceMappingPurged || prior.Status == models.JobSourceMappingScrubbed {
@@ -937,9 +1069,12 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 			if prior.SourceHash != hash {
 				return ctx.refreshChangedDownloadHistoryMapping(tx, &prior, now)
 			}
-			return nil
+			if prior.Status != models.JobSourceMappingQuarantined || prior.BlockerCode != jobMigrationDownloadCanonicalImportFailed || prior.JobID != "" {
+				return nil
+			}
+			retryingQuarantine = true
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 
@@ -947,6 +1082,23 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 			SourceKind: jobMigrationDownloadHistory, SourceID: strconv.FormatUint(uint64(row.ID), 10),
 			SourceRevision: 1, SourceHash: hash, Status: models.JobSourceMappingCopied,
 			Origin: models.JobSourceOriginBackfilled, CopiedAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+		if retryingQuarantine {
+			mapping = prior
+			mapping.JobID = ""
+			mapping.SourceHash = hash
+			mapping.Status = models.JobSourceMappingCopied
+			mapping.BlockerCode = ""
+			mapping.Origin = models.JobSourceOriginBackfilled
+			mapping.CopiedAt, mapping.UpdatedAt = now, now
+			mapping.VerifiedAt, mapping.ScrubbedAt, mapping.PurgedAt = nil, nil, nil
+			mapping.PostScrubHash, mapping.PurgeReason = "", ""
+		}
+		saveMapping := func() error {
+			if retryingQuarantine {
+				return tx.Save(&mapping).Error
+			}
+			return tx.Create(&mapping).Error
 		}
 		var handle models.JobLegacyHandle
 		handleErr := tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&handle).Error
@@ -962,7 +1114,7 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 				mapping.Status, mapping.PurgedAt, mapping.PurgeReason = models.JobSourceMappingPurged, &at, reason
 			} else if err := ctx.verifyDownloadReplay(tx, handle.JobID, row); err != nil {
 				mapping.Status, mapping.BlockerCode = models.JobSourceMappingQuarantined, "canonical-replay-mismatch"
-				if createErr := tx.Create(&mapping).Error; createErr != nil {
+				if createErr := saveMapping(); createErr != nil {
 					return createErr
 				}
 				return nil
@@ -971,7 +1123,7 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 			if mapping.Status == models.JobSourceMappingCopied {
 				mapping.Status = models.JobSourceMappingVerified
 			}
-			return tx.Create(&mapping).Error
+			return saveMapping()
 		}
 		if !errors.Is(handleErr, gorm.ErrRecordNotFound) {
 			return handleErr
@@ -1015,7 +1167,7 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 			Acceptance: acceptance, State: state, AcceptedAt: row.CreatedAt.UTC(), StartedAt: row.StartedAt,
 			FinishedAt: row.CompletedAt, Failure: failure, MigrationNote: note, PurgeReplayReason: purgeReason,
 		}); err != nil {
-			return migrationBlocker(jobMigrationDownloadHistory, mapping.SourceID, "canonical-job-import-failed")
+			return migrationBlocker(jobMigrationDownloadHistory, mapping.SourceID, jobMigrationDownloadCanonicalImportFailed)
 		}
 		var createdHandle models.JobLegacyHandle
 		if err := tx.Where("namespace = ? AND handle = ?", DownloadHandleNamespace, row.JobID).First(&createdHandle).Error; err != nil {
@@ -1026,7 +1178,7 @@ func (ctx *MahresourcesContext) copyDownloadHistory(row models.DownloadHistoryEn
 			at := now
 			mapping.Status, mapping.PurgedAt, mapping.PurgeReason = models.JobSourceMappingPurged, &at, models.JobReplayPurgeExpired
 		}
-		if err := tx.Create(&mapping).Error; err != nil {
+		if err := saveMapping(); err != nil {
 			return err
 		}
 		return nil

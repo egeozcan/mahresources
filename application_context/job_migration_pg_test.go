@@ -293,3 +293,91 @@ func TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub(t *tes
 func newPostgresMigrationFilesystem() afero.Fs {
 	return afero.NewMemMapFs()
 }
+
+func TestPostgresBlankPluginImportOutputEventSurvivesSecondVerification(t *testing.T) {
+	db, dsn := pgContainer.CreateTestDBWithDSN(t)
+	if err := db.AutoMigrate(
+		&models.Resource{}, &models.ResourceCategory{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
+		&models.PluginCommandImportMap{}, &models.Job{}, &models.JobEvent{}, &models.JobEventSequence{},
+		&models.JobLink{}, &models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobLegacyHandle{},
+		&models.JobSourceMapping{},
+	); err != nil {
+		t.Fatalf("migrate blank import PostgreSQL fixture: %v", err)
+	}
+	ctx := newPostgresOwnershipContext(t, dsn, sharedReplayKey(t), newPostgresMigrationFilesystem(), 2)
+	category := models.ResourceCategory{Name: "pg-blank-import-proof"}
+	if err := ctx.db.Create(&category).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	created := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	runStarted, runFinished := created.Add(time.Minute), created.Add(2*time.Minute)
+	run := models.PluginCommandRun{ID: "pg-blank-import-parent", PluginName: "worker", CommandName: "ingest",
+		ParamsJSON: `{}`, InputsJSON: `[]`, Status: models.PluginCommandRunStatusSucceeded,
+		CreatedAt: created, StartedAt: &runStarted, FinishedAt: &runFinished}
+	if err := ctx.db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	migrationNow := runFinished.Add(10 * time.Minute)
+	if err := ctx.copyPluginCommandRun(run, migrationNow); err != nil {
+		t.Fatalf("copy successful parent run: %v", err)
+	}
+	var migratedRun models.PluginCommandRun
+	if err := ctx.db.Where("id = ?", run.ID).First(&migratedRun).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	importCreated := runFinished.Add(time.Minute)
+	importStarted, importFinished := importCreated.Add(10*time.Second), importCreated.Add(time.Minute)
+	row := models.PluginCommandImport{ID: "pg-blank-import-result", RunID: run.ID, FileName: "historical.csv",
+		Status: models.PluginCommandImportStatusSucceeded, CreatedAt: importCreated, StartedAt: &importStarted, FinishedAt: &importFinished}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource := models.Resource{Name: "pg historical import result", ResourceCategoryId: category.ID}
+	if err := ctx.db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	resourceID := resource.ID
+	if err := ctx.db.Create(&models.PluginCommandImportMap{RunID: run.ID, FileName: row.FileName, ImportID: row.ID,
+		ResourceID: &resourceID, Status: models.PluginCommandImportStatusSucceeded}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.copyPluginCommandImport(row, migrationNow); err != nil {
+		t.Fatalf("copy proven blank import: %v", err)
+	}
+	var migrated models.PluginCommandImport
+	if err := ctx.db.Where("id = ?", row.ID).First(&migrated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if migrated.JobID == "" || migrated.FieldsJSON != "" {
+		t.Fatalf("blank source after copy = %+v", migrated)
+	}
+
+	expectedDetail, err := historicalPluginCommandImportOutputDetail()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var publication models.JobEvent
+	if err := ctx.db.Where("job_id = ? AND type = ?", migrated.JobID, jobs.EventOutputPublished).First(&publication).Error; err != nil {
+		t.Fatalf("read JSONB publication roundtrip: %v", err)
+	}
+	if string(publication.Detail) == string(expectedDetail) {
+		t.Fatalf("PostgreSQL JSONB roundtrip preserved formatting unexpectedly: %s", publication.Detail)
+	}
+	if !sameHistoricalPluginCommandImportOutputDetail(publication.Detail, expectedDetail) {
+		t.Fatalf("PostgreSQL JSONB publication = %s, want equivalent to %s", publication.Detail, expectedDetail)
+	}
+
+	more, _, err := ctx.verifyPluginCommandImportsBatch("", 10, migrationNow.Add(time.Minute))
+	if err != nil || more {
+		t.Fatalf("second verification of recovered blank import: more=%t err=%v", more, err)
+	}
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationPluginCommandImport, row.ID).First(&mapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mapping.Status != models.JobSourceMappingVerified || mapping.BlockerCode != "" || mapping.JobID != migrated.JobID {
+		t.Fatalf("second verification mapping = %+v, want verified without a blocker", mapping)
+	}
+}

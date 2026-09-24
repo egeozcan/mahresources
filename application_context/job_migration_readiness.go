@@ -530,7 +530,7 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", mapping.SourceID).First(&row).Error; err != nil {
 			return "", false, err
 		}
-		if err := ctx.verifyPluginCommandImportReplay(tx, mapping.JobID, row); err != nil {
+		if err := ctx.verifyPluginCommandImportSource(tx, mapping.JobID, row); err != nil {
 			return "", false, err
 		}
 		return hashPluginCommandImport(row), true, nil

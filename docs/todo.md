@@ -13834,3 +13834,18 @@ The earlier commits updated `docs/todo.md`, `docs/lessons.md`, and the Job Syste
 The popup had the authorized Job detail outputs in memory for advertised controls but rendered only the Job detail link. It now shows a direct result link for a successful plugin action: an available typed entity output takes priority, while an older summary uses its validated local destination. The link's accessible name includes the Job title. The change adds no network requests to the popup.
 
 The focused Job panel tests passed 24/24, and Sol's combined Job panel and Job Center run passed 65/65. The JS bundle and docs site built, and `git diff --check` passed. In the restarted local demo, the historical fal.ai Job showed **View result** in the popup, and clicking it opened `/resource?id=1`. Sol and the requested final Astra reviews found no actionable issues; Astra also independently rebuilt the JS bundle and matched the checked-in asset byte for byte.
+
+## Mahlayf Job Center rollout — 2026-09-24
+
+- [x] Confirm local master already includes the Job Center integration and push `0c1b2a30` to origin and mahlayf master.
+- [x] Detect the mahlayf startup failure, configure its required PostgreSQL replay key, and restore the previous compatible binary while preserving the pushed ref.
+- [x] Fix and verify migration of historical downloads whose filenames exceed the canonical Job title limit.
+- [x] Resolve historical successful plugin imports with no stored fields without fabricating replay input.
+- [ ] Recover quarantined mappings through an explicit migration path, then complete the documented writer-drain and cutover checks.
+- [ ] Review, push, and verify the new mahlayf service.
+
+### Review
+
+Both remotes advanced from `0494452a` to `0c1b2a30`. The mahlayf post-receive hook built and restarted the new binary, which refused to start because PostgreSQL lacked `JOB_REPLAY_KEY`. A generated persistent key was placed in the server's private `.env` at mode `0600`. The subsequent cutover gate found 45 quarantined legacy records, so the prior compatible binary was rebuilt and restored while the remote master ref remained at the new commit. The service is active and `/dashboard` returns HTTP 200. Read-only diagnosis found 37 download filenames over the 200-byte Job title limit and eight successful plugin imports with blank stored fields. No source records have been edited.
+
+The download title projection now limits UTF-8 bytes without shortening replay input. Exact, unchanged quarantine classes can resume copy from the beginning of their source scan; the mixed-digit ID regression prevents a textual-order cursor from skipping earlier numeric IDs. Blank historical plugin imports are converted only when their completed source, successful parent Job, import map, and extant Resource agree. Their canonical Jobs are terminal and non-replayable, retain the Resource output and timeline event, and never receive invented accepted fields. Restored-source verification uses this same proof. Recovery appends timeline events without changing published cursors and compares PostgreSQL JSONB by content. A live dual-published running import keeps its canonical Job. The user confirmed mahlayf's service is the only writer; that service and its database connections must be drained before attesting to the epoch advance. Focused SQLite migration tests, the PostgreSQL blank-import roundtrip, and the PostgreSQL crash/resume retirement test pass. Sol and Astra predeployment reviews found no remaining release blockers.

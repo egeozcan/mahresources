@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mahresources/download_queue"
 	"mahresources/hostfetch"
@@ -175,19 +176,31 @@ func downloadSummaryOf(input json.RawMessage) (downloadSummary, error) {
 
 // downloadJobTitle is the Job's own title: the file name the submission chose, or
 // the URL's host when it chose none. Never the URL itself — a title is searchable
-// text, and a URL can carry a token.
+// text, and a URL can carry a token. The title is a bounded projection; the replay
+// input keeps the complete file name for execution and retry.
 func downloadJobTitle(input json.RawMessage) string {
 	summary, err := downloadSummaryOf(input)
 	if err != nil {
 		return "Download"
 	}
+	title := "Download"
 	if summary.Name != "" {
-		return summary.Name
+		title = summary.Name
+	} else if summary.Host != "" {
+		title = "Download from " + summary.Host
 	}
-	if summary.Host != "" {
-		return "Download from " + summary.Host
+	return truncateDownloadJobTitle(title)
+}
+
+func truncateDownloadJobTitle(title string) string {
+	if len(title) <= jobs.MaxTitleBytes {
+		return title
 	}
-	return "Download"
+	title = title[:jobs.MaxTitleBytes]
+	for !utf8.ValidString(title) {
+		title = title[:len(title)-1]
+	}
+	return title
 }
 
 // downloadJobAdapter runs one of the download Kinds.

@@ -3,10 +3,12 @@ package application_context
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"mahresources/download_queue"
 	"mahresources/jobs"
@@ -113,6 +115,251 @@ func TestJobMigrationUpgradesReleaseASourceSchema(t *testing.T) {
 	var link models.JobLink
 	if err := ctx.db.Where("type = ? AND from_job_id = ? AND to_job_id = ?", models.JobLinkParentChild, run.JobID, imp.JobID).First(&link).Error; err != nil {
 		t.Fatalf("Release A run/import parent link was not preserved: %v", err)
+	}
+}
+
+func TestJobMigrationBoundsDownloadTitleAndKeepsFullUTF8FilenameInReplay(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	finished := now.Add(time.Minute)
+	fullName := strings.Repeat("界", 300)
+	creator := query_models.ResourceFromRemoteCreator{
+		FileName: fullName, URL: "https://long-name.example.invalid/archive",
+	}
+	payload, err := json.Marshal(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := models.DownloadHistoryEntry{
+		JobID: "long-utf8-download", URL: creator.URL, Status: models.DownloadHistoryStatusCompleted,
+		CreatedAt: now, CompletedAt: &finished, Payload: payload,
+	}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.copyDownloadHistory(row, now); err != nil {
+		t.Fatalf("copy long filename source: %v", err)
+	}
+
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, strconv.FormatUint(uint64(row.ID), 10)).First(&mapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mapping.Status != models.JobSourceMappingCopied || mapping.BlockerCode != "" || mapping.JobID == "" {
+		t.Fatalf("long filename mapping = %+v, want a copied Job without a blocker", mapping)
+	}
+	job, err := ctx.JobService().Get(ctx.jobDeps(), jobs.Access{Administrator: true}, mapping.JobID)
+	if err != nil {
+		t.Fatalf("read imported Job: %v", err)
+	}
+	wantTitle := strings.Repeat("界", jobs.MaxTitleBytes/len("界"))
+	if job.Title != wantTitle || len(job.Title) > jobs.MaxTitleBytes || !utf8.ValidString(job.Title) {
+		t.Fatalf("Job title = %q (%d bytes), want a valid UTF-8 prefix of %d bytes", job.Title, len(job.Title), jobs.MaxTitleBytes)
+	}
+	opened, err := ctx.JobService().OpenReplay(ctx.jobDeps(), jobs.Access{Administrator: true}, mapping.JobID)
+	if err != nil {
+		t.Fatalf("open imported download replay: %v", err)
+	}
+	var replay downloadJobInput
+	if err := json.Unmarshal(opened.Input, &replay); err != nil {
+		t.Fatalf("decode imported replay: %v", err)
+	}
+	if replay.Creator == nil {
+		t.Fatal("imported replay has no download creator")
+	}
+	if replay.Creator.FileName != fullName {
+		t.Fatalf("replay filename was shortened: got %d bytes, want the complete %d-byte filename", len(replay.Creator.FileName), len(fullName))
+	}
+}
+
+func TestJobMigrationRetriesUnchangedDownloadImportQuarantineFromDrainFence(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	finished := now.Add(time.Minute)
+	creator := query_models.ResourceFromRemoteCreator{URL: "https://retry.example.invalid/file.bin", FileName: "file.bin"}
+	payload, err := json.Marshal(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := models.DownloadHistoryEntry{
+		JobID: "retry-download-history", URL: creator.URL, Status: models.DownloadHistoryStatusCompleted,
+		CreatedAt: now, CompletedAt: &finished, Payload: payload,
+	}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	sourceID := strconv.FormatUint(uint64(row.ID), 10)
+	if err := ctx.db.Create(&models.JobSourceMapping{
+		SourceKind: jobMigrationDownloadHistory, SourceID: sourceID, SourceRevision: 1,
+		SourceHash: hashDownloadHistory(row), Status: models.JobSourceMappingQuarantined,
+		BlockerCode: jobMigrationDownloadCanonicalImportFailed, Origin: models.JobSourceOriginBackfilled,
+		CopiedAt: now, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := models.JobMigrationCheckpoint{
+		ID: models.JobMigrationCheckpointRowID, Phase: models.JobMigrationPhaseDrainFence,
+		LastError: "source download-history/1 is quarantined (canonical-job-import-failed)", UpdatedAt: now,
+	}
+	if err := ctx.db.Create(&checkpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := ctx.RunJobMigration(JobMigrationOptions{
+		BatchSize: 1, MaxBatches: 1, WritersDrained: false, Now: func() time.Time { return now.Add(time.Second) },
+	})
+	if err != nil {
+		t.Fatalf("retry quarantined download: %v", err)
+	}
+	if first.Phase != models.JobMigrationPhaseCopy || first.Batches != 1 {
+		t.Fatalf("first recovery pass = %+v, want one copy batch", first)
+	}
+	var recovered models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, sourceID).First(&recovered).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != models.JobSourceMappingCopied || recovered.BlockerCode != "" || recovered.JobID == "" || recovered.SourceHash != hashDownloadHistory(row) {
+		t.Fatalf("recovered mapping = %+v, want the same source hash copied to a Job", recovered)
+	}
+	var reset models.JobMigrationCheckpoint
+	if err := ctx.db.First(&reset, models.JobMigrationCheckpointRowID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reset.Phase != models.JobMigrationPhaseCopy || reset.SourceKind != jobMigrationDownloadHistory || reset.CursorID != sourceID || reset.LastError != "" {
+		t.Fatalf("checkpoint after retry batch = %+v, want copy/download-history after the retried row", reset)
+	}
+
+	finishedResult, err := ctx.RunJobMigrationToGate(JobMigrationOptions{
+		BatchSize: 10, MaxBatches: 20, WritersDrained: true, Now: func() time.Time { return now.Add(2 * time.Second) },
+	})
+	if err != nil || !finishedResult.Complete {
+		t.Fatalf("migration after quarantine retry = %+v, %v", finishedResult, err)
+	}
+}
+
+func TestJobMigrationRetriesDownloadQuarantinesAcrossTextIDOrder(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	finished := now.Add(time.Minute)
+	for _, id := range []uint{9, 10} {
+		creator := query_models.ResourceFromRemoteCreator{URL: fmt.Sprintf("https://retry.example.invalid/%d.bin", id), FileName: fmt.Sprintf("%d.bin", id)}
+		payload, err := json.Marshal(creator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := models.DownloadHistoryEntry{
+			ID: id, JobID: fmt.Sprintf("retry-download-%d", id), URL: creator.URL,
+			Status: models.DownloadHistoryStatusCompleted, CreatedAt: now, CompletedAt: &finished, Payload: payload,
+		}
+		if err := ctx.db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := ctx.db.Create(&models.JobSourceMapping{
+			SourceKind: jobMigrationDownloadHistory, SourceID: strconv.FormatUint(uint64(id), 10), SourceRevision: 1,
+			SourceHash: hashDownloadHistory(row), Status: models.JobSourceMappingQuarantined,
+			BlockerCode: jobMigrationDownloadCanonicalImportFailed, Origin: models.JobSourceOriginBackfilled,
+			CopiedAt: now, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ctx.db.Create(&models.JobMigrationCheckpoint{
+		ID: models.JobMigrationCheckpointRowID, Phase: models.JobMigrationPhaseDrainFence, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ctx.RunJobMigration(JobMigrationOptions{BatchSize: 10, MaxBatches: 1, WritersDrained: false})
+	if err != nil || result.Phase != models.JobMigrationPhaseCopy {
+		t.Fatalf("retry mixed-digit download IDs: %+v, %v", result, err)
+	}
+	for _, id := range []uint{9, 10} {
+		var mapping models.JobSourceMapping
+		if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, strconv.FormatUint(uint64(id), 10)).First(&mapping).Error; err != nil {
+			t.Fatal(err)
+		}
+		if mapping.Status != models.JobSourceMappingCopied || mapping.JobID == "" || mapping.BlockerCode != "" {
+			t.Fatalf("download %d was skipped by the retry cursor: %+v", id, mapping)
+		}
+	}
+}
+
+func TestJobMigrationLeavesChangedDownloadImportQuarantineAtDrainFence(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	if err := ctx.db.AutoMigrate(&models.JobWriterEpoch{}, &models.JobSourceMapping{}, &models.JobMigrationCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.EnsureJobWriterEpoch(ctx.db); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	finished := now.Add(time.Minute)
+	creator := query_models.ResourceFromRemoteCreator{URL: "https://changed.example.invalid/file.bin", FileName: "file.bin"}
+	payload, err := json.Marshal(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := models.DownloadHistoryEntry{
+		JobID: "changed-retry-download-history", URL: creator.URL, Status: models.DownloadHistoryStatusCompleted,
+		CreatedAt: now, CompletedAt: &finished, Payload: payload,
+	}
+	if err := ctx.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	originalHash := hashDownloadHistory(row)
+	if err := ctx.db.Model(&models.DownloadHistoryEntry{}).Where("id = ?", row.ID).Update("error", "source changed after quarantine").Error; err != nil {
+		t.Fatal(err)
+	}
+	sourceID := strconv.FormatUint(uint64(row.ID), 10)
+	if err := ctx.db.Create(&models.JobSourceMapping{
+		SourceKind: jobMigrationDownloadHistory, SourceID: sourceID, SourceRevision: 1,
+		SourceHash: originalHash, Status: models.JobSourceMappingQuarantined,
+		BlockerCode: jobMigrationDownloadCanonicalImportFailed, Origin: models.JobSourceOriginBackfilled,
+		CopiedAt: now, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.db.Create(&models.JobMigrationCheckpoint{
+		ID: models.JobMigrationCheckpointRowID, Phase: models.JobMigrationPhaseDrainFence, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ctx.RunJobMigration(JobMigrationOptions{BatchSize: 1, MaxBatches: 1, WritersDrained: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Phase != models.JobMigrationPhaseDrainFence || result.BlockedSources != 1 || result.Batches != 0 {
+		t.Fatalf("changed source recovery = %+v, want the existing quarantine to stay blocked", result)
+	}
+	var mapping models.JobSourceMapping
+	if err := ctx.db.Where("source_kind = ? AND source_id = ?", jobMigrationDownloadHistory, sourceID).First(&mapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mapping.Status != models.JobSourceMappingQuarantined || mapping.BlockerCode != jobMigrationDownloadCanonicalImportFailed || mapping.SourceHash != originalHash {
+		t.Fatalf("changed source mapping was rearmed: %+v", mapping)
 	}
 }
 

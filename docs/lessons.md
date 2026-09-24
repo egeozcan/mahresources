@@ -2099,3 +2099,10 @@ where the review's own record lives.
 - When replacing a plugin cockpit with canonical Job outputs, check the action result's navigation fields as well as its status and progress. Persisting a `redirect` inside a JSON summary keeps the data but loses the one-click path; publish a typed entity output for new Jobs and preserve a safe link for historical summaries.
 - After a user-facing Job Center change, update both the feature reference and the task-oriented user guide. When plugin result semantics change, check the plugin author guide as well; a single Job System page does not cover those readers' workflows.
 - Check every place a Job appears after adding a Job detail action. The Jobs popup is a separate surface, even though it already fetches the same authorized output descriptors for its controls. Verify the direct result path there as well as on the full detail page.
+
+## Job Center remote rollout — 2026-09-24
+
+- A push to a deployment remote can restart a service immediately. Check new required environment variables and startup gates before that push, then verify service health after the hook reports success.
+- Migration fixtures must include real historical schema gaps and large stored values. A valid old download filename can exceed a new display-title limit; a successful old plugin import may predate fields needed for replay. Preserve source facts, represent missing replay as non-replayable, and recover quarantines through code with explicit proof rather than changing legacy rows by hand.
+- Do not treat a complete checkpoint as the only rollout proof. Resume existing quarantines, verify restored sources, and keep output rows paired with timeline events. Before advancing the writer epoch, stop every older writer and confirm its database sessions have drained.
+- Migration recovery must append to a published Job timeline without moving earlier event sequences or delivery cursors. Compare persisted JSON by decoded content: PostgreSQL JSONB can reorder keys and whitespace after a roundtrip.
