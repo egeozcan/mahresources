@@ -884,18 +884,33 @@ test('dependencies resolve task names and subtask promotion is idempotent', asyn
 test('rollup reconciles native changes and mini-board counts match stats',async ({page,request,baseURL,apiClient}) => {
   const block = await apiClient.createBlock(pm.epicTask,'plugin:project-management:subtasks','z',{items:[{id:'rollup-one',label:'Checked subtask'}]});
   await apiClient.updateBlockState(block.id,{checked:['rollup-one']});
-  try {
+  const rollupRow = async () => {
+    const schedules = await (await request.get(`${baseURL}/v1/plugin/schedules?name=project-management`)).json();
+    return schedules.find((row: any) => row.scheduleId === 'rollup');
+  };
+  const runRollup = async () => {
+    const before = (await rollupRow())?.runs || 0;
     const run = await request.post(`${baseURL}/v1/plugin/schedule/run`,{form:{name:'project-management',scheduleId:'rollup'}});
     expect(run.ok(),await run.text()).toBe(true);
     await expect.poll(async () => {
-      const schedules = await (await request.get(`${baseURL}/v1/plugin/schedules?name=project-management`)).json();
-      const rollup = schedules.find((row: any) => row.scheduleId === 'rollup');
-      return {status:rollup?.lastStatus,error:rollup?.lastError};
-    }).toEqual({status:'completed',error:''});
-    const meta = (await (await request.get(`${baseURL}/v1/group?id=${pm.projectId}`)).json()).Meta;
+      const rollup = await rollupRow();
+      return {ran:(rollup?.runs || 0) > before,status:rollup?.lastStatus,error:rollup?.lastError};
+    }).toEqual({ran:true,status:'completed',error:''});
+  };
+  const project = async () => await (await request.get(`${baseURL}/v1/group?id=${pm.projectId}`)).json();
+  try {
+    await runRollup();
+    const reconciled = await project();
+    const meta = reconciled.Meta;
     expect(meta.pm_counts?.total).toBe(6);
     expect(meta.pm_subtasks).toBe(1);
     expect(meta.pm_subtasks_done).toBe(1);
+    expect(meta.pm_rollup_at).toBeTruthy();
+    // Nothing changed since the last sweep, so the next one must not rewrite the group.
+    await runRollup();
+    const idle = await project();
+    expect(idle.Meta.pm_rollup_at).toBe(meta.pm_rollup_at);
+    expect(idle.UpdatedAt).toBe(reconciled.UpdatedAt);
     const stats = await pluginRequest(request,'get',`/api/stats?project=${pm.projectId}`,undefined,baseURL);
     await page.goto(`/group?id=${pm.projectId}`);
     for (const status of ['backlog','todo','in_progress','blocked','done']) {

@@ -305,7 +305,8 @@ PM move does that under the existing ordering locks.
 The `rollup` schedule runs every **10 minutes**, skipping overlap. It writes
 `pm_open`, `pm_done`, `pm_overdue`, `pm_next_due`, `pm_counts`, `pm_subtasks`,
 `pm_subtasks_done` and `pm_rollup_at` into project/epic metadata, preserving other
-keys. Card summaries read these values without per-card MRQL queries. Mini-board
+keys. A group whose values have not changed since the last run is not rewritten, so
+`pm_rollup_at` is the time its rollup last changed, not the time of the last run. Card summaries read these values without per-card MRQL queries. Mini-board
 counts and progress use the stored counts, falling back to a query before the
 first rollup. Run the schedule manually from plugin management for an immediate
 reconciliation.

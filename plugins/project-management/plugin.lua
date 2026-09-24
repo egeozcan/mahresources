@@ -725,6 +725,18 @@ local function meta_string(obj)
     return mah.json.encode(obj)
 end
 
+-- same_value compares decoded JSON values structurally.
+local function same_value(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+    for k, v in pairs(a) do
+        if not same_value(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
 local function meta_get(note_or_group, key)
     local obj = meta_object(note_or_group.meta)
     if not obj then return nil end
@@ -1583,16 +1595,21 @@ local function reconcile_rollups()
                 if not current then error(err or "Group disappeared during rollup") end
                 local meta = meta_object(current.meta)
                 if not meta then error("Group metadata is not an object") end
-                meta.pm_counts = counts
-                meta.pm_subtasks = subtasks
-                meta.pm_subtasks_done = checked
-                meta.pm_done = counts[cfg.done_status] or 0
-                meta.pm_open = counts.total - meta.pm_done
-                meta.pm_overdue = overdue.total
-                meta.pm_next_due = next_due
-                meta.pm_rollup_at = mah.util.now_iso()
-                local saved, err = mah.db.patch_group(group.id,{meta=meta_string(meta)})
-                if not saved then error(err) end
+                local done = counts[cfg.done_status] or 0
+                local rollup = {pm_counts=counts, pm_subtasks=subtasks, pm_subtasks_done=checked,
+                    pm_done=done, pm_open=counts.total - done, pm_overdue=overdue.total, pm_next_due=next_due}
+                -- An unchanged group is not rewritten, so pm_rollup_at records
+                -- the last change rather than the last sweep.
+                local changed = false
+                for key, value in pairs(rollup) do
+                    if not same_value(meta[key], value) then changed = true end
+                    meta[key] = value
+                end
+                if changed then
+                    meta.pm_rollup_at = mah.util.now_iso()
+                    local saved, err = mah.db.patch_group(group.id,{meta=meta_string(meta)})
+                    if not saved then error(err) end
+                end
             end)
             if not ok then error(txerr) end
         end
