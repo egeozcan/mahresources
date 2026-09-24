@@ -45,6 +45,9 @@ type jobSummaryExportInput struct {
 type jobSummaryExportDataScope struct {
 	Class       string `json:"class"`
 	OwnerUserID uint   `json:"ownerUserId,omitempty"`
+	// PrincipalUserID preserves the requester's preference identity for an
+	// administrator query. It does not narrow the administrator's visibility.
+	PrincipalUserID uint `json:"principalUserId,omitempty"`
 }
 
 func (scope jobSummaryExportDataScope) valid() bool {
@@ -52,14 +55,17 @@ func (scope jobSummaryExportDataScope) valid() bool {
 	case jobSummaryExportAdminScope:
 		return scope.OwnerUserID == 0
 	case jobSummaryExportOwnerScope:
-		return scope.OwnerUserID != 0
+		return scope.OwnerUserID != 0 && scope.PrincipalUserID == 0
 	default:
 		return false
 	}
 }
 
 func (scope jobSummaryExportDataScope) access() jobs.Access {
-	return jobs.Access{UserID: scope.OwnerUserID, Administrator: scope.Class == jobSummaryExportAdminScope}
+	if scope.Class == jobSummaryExportAdminScope {
+		return jobs.Access{UserID: scope.PrincipalUserID, Administrator: true}
+	}
+	return jobs.Access{UserID: scope.OwnerUserID}
 }
 
 func (scope jobSummaryExportDataScope) contains(principal *auth.Principal) bool {
@@ -77,10 +83,7 @@ func jobSummaryExportScopeFor(principal *auth.Principal, filter jobs.Filter) (jo
 		return jobSummaryExportDataScope{}, ErrRoleCapability
 	}
 	if principal.IsAdmin() {
-		if filter.OwnerID != nil && *filter.OwnerID != 0 {
-			return jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: *filter.OwnerID}, nil
-		}
-		return jobSummaryExportDataScope{Class: jobSummaryExportAdminScope}, nil
+		return jobSummaryExportDataScope{Class: jobSummaryExportAdminScope, PrincipalUserID: principal.UserID}, nil
 	}
 	if principal.UserID == 0 {
 		return jobSummaryExportDataScope{}, errors.New("a Job summary export needs a principal with a durable owner")

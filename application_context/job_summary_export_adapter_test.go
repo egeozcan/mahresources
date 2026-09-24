@@ -108,6 +108,91 @@ func TestSummaryExportIsAnOwnerVisibleJobWithExpiringTypedOutput(t *testing.T) {
 	}
 }
 
+func TestSummaryExportAdminOwnerFilterRetainsAdminQueryAndOutputAccess(t *testing.T) {
+	ctx := newJobHarnessContext(t, false)
+	admin, err := ctx.CreateUser(&UserInput{Username: "summary-filter-admin", Password: "password1", Role: models.RoleAdmin})
+	if err != nil {
+		t.Fatalf("create administrator: %v", err)
+	}
+	if _, err := ctx.CreateUser(&UserInput{Username: "summary-filter-replacement-admin", Password: "password1", Role: models.RoleAdmin}); err != nil {
+		t.Fatalf("create replacement administrator: %v", err)
+	}
+	owner, err := ctx.CreateUser(&UserInput{Username: "summary-filter-owner", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create filtered owner: %v", err)
+	}
+	adminCtx := ctx.WithPrincipal(auth.FromUser(admin))
+	ownerID := owner.ID
+	actorID := admin.ID
+	adminVisibleJob, err := ctx.JobService().Accept(adminCtx.jobDeps(), jobs.Acceptance{
+		Kind: JobKindSimilarityRecompute, KindVersion: jobMaintenanceKindVersion,
+		State: jobs.StateQueued, OwnerUserID: &ownerID, ActorUserID: &actorID,
+		Origin: "api", Title: "admin-visible job for filtered export",
+		Replay: jobs.ReplayInput{Input: maintenanceJobInputJSON()},
+	})
+	if err != nil {
+		t.Fatalf("accept admin-visible Job: %v", err)
+	}
+	pinned := true
+	if err := adminCtx.SetJobPreference(jobs.PreferenceRequest{JobID: adminVisibleJob.ID, Pinned: &pinned}); err != nil {
+		t.Fatalf("pin admin-visible Job as export requester: %v", err)
+	}
+	dismissed := false
+	filter := jobs.Filter{OwnerID: &ownerID, Pinned: &pinned, Dismissed: &dismissed}
+	from := time.Now().UTC().Add(-181 * 24 * time.Hour)
+	to := time.Now().UTC().Add(time.Hour)
+	accepted, err := adminCtx.SubmitJobSummaryExport(filter, from, to, "json", "api")
+	if err != nil {
+		t.Fatalf("submit owner-filtered admin export: %v", err)
+	}
+
+	execution, claimed, err := ctx.JobService().Claim(context.Background(), ctx.jobDeps(), jobs.ClaimRequest{
+		Kind: JobKindSummaryExport, KindVersion: jobSummaryExportVersion, Claimant: "admin-summary-filter-test",
+	})
+	if err != nil || !claimed || execution.JobID != accepted.ID {
+		t.Fatalf("claim summary export = (%+v, %t, %v)", execution, claimed, err)
+	}
+	adapter, registered := ctx.JobService().AdapterFor(JobKindSummaryExport, jobSummaryExportVersion)
+	if !registered {
+		t.Fatal("summary export adapter is not registered")
+	}
+	if err := adapter.Dispatch(context.Background(), execution); err != nil {
+		t.Fatalf("dispatch owner-filtered admin export: %v", err)
+	}
+
+	outputs, err := adminCtx.GetOpenableJobOutputs(accepted.ID)
+	if err != nil || len(outputs) != 1 || outputs[0].Key != jobSummaryExportOutput {
+		t.Fatalf("administrator openable outputs = %#v, err=%v; want summary artifact", outputs, err)
+	}
+	content, err := adminCtx.OpenJobOutput(context.Background(), accepted.ID, jobSummaryExportOutput)
+	if err != nil {
+		t.Fatalf("administrator could not open filtered summary: %v", err)
+	}
+	body, err := io.ReadAll(content.Body)
+	_ = content.Body.Close()
+	if err != nil {
+		t.Fatalf("read filtered summary: %v", err)
+	}
+	var summary jobs.Summary
+	if err := json.Unmarshal(body, &summary); err != nil {
+		t.Fatalf("decode filtered summary: %v (%s)", err, body)
+	}
+	if summary.Total != 1 || summary.ByKind[JobKindSimilarityRecompute] != 1 {
+		t.Fatalf("admin summary with owner and preference filters = %+v, want its pinned admin-visible Job", summary)
+	}
+
+	if _, err := adminCtx.UpdateUser(admin.ID, &UserUpdate{Role: UserField[models.Role]{Set: true, Value: models.RoleEditor}}); err != nil {
+		t.Fatalf("demote export administrator: %v", err)
+	}
+	demotedCtx := ctx.WithPrincipal(&auth.Principal{UserID: admin.ID, Role: models.RoleEditor})
+	if outputs, err := demotedCtx.GetOpenableJobOutputs(accepted.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("demoted administrator's openable outputs = %#v, err=%v; want hidden", outputs, err)
+	}
+	if _, err := demotedCtx.OpenJobOutput(context.Background(), accepted.ID, jobSummaryExportOutput); !errors.Is(err, ErrJobOutputForbidden) {
+		t.Fatalf("demoted administrator opened admin-scoped export: %v", err)
+	}
+}
+
 func TestSummaryExportCSVIsStableAndComplete(t *testing.T) {
 	data, err := encodeJobSummaryExport(jobs.Summary{
 		Total: 3, ByState: map[string]int64{"queued": 2, "failed": 1},
@@ -172,11 +257,14 @@ func TestSummaryExportScopeRevalidatesAgainstCurrentVisibility(t *testing.T) {
 	}
 	filteredOwnerID := owner.UserID
 	filteredAdminScope, err := jobSummaryExportScopeFor(admin, jobs.Filter{OwnerID: &filteredOwnerID})
-	if err != nil || filteredAdminScope != (jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: owner.UserID}) {
-		t.Fatalf("administrator scope filtered to one owner = %+v, err=%v; want that owner's effective scope", filteredAdminScope, err)
+	if err != nil || filteredAdminScope != (jobSummaryExportDataScope{Class: jobSummaryExportAdminScope, PrincipalUserID: admin.UserID}) {
+		t.Fatalf("administrator scope filtered to one owner = %+v, err=%v; want administrator scope with the query principal", filteredAdminScope, err)
 	}
-	if !filteredAdminScope.contains(owner) {
-		t.Fatal("owner lost access to an administrator export filtered to their Jobs")
+	if filteredAdminScope.contains(owner) {
+		t.Fatal("filtered owner gained access to an administrator export")
+	}
+	if got, want := filteredAdminScope.access(), (jobs.Access{UserID: admin.UserID, Administrator: true}); got != want {
+		t.Fatalf("administrator summary query access = %+v, want %+v", got, want)
 	}
 
 	ownerScope := jobSummaryExportDataScope{Class: jobSummaryExportOwnerScope, OwnerUserID: owner.UserID}
