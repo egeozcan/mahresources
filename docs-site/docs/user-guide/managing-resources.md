@@ -370,6 +370,9 @@ exports, imports, Resource Reduction, maintenance, and plugin work.
 
 Filter Jobs by state, Kind, origin, time, owner, actor, and currently available
 command. Open a Job to see its progress, timeline, outputs, and related Jobs.
+The **Overview** shows work that has not been dismissed. In **All jobs**, choose
+**Any** under **Dismissed** to include dismissed Jobs, or choose **Dismissed**
+to see only those Jobs. Dismissal does not delete Job history.
 Use only the controls displayed on that Job; available commands are checked
 again when submitted. Selecting several Jobs offers only commands they all
 advertise for bulk use, with a separate result for each Job.

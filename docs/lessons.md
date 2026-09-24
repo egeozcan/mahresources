@@ -2106,3 +2106,7 @@ where the review's own record lives.
 - Migration fixtures must include real historical schema gaps and large stored values. A valid old download filename can exceed a new display-title limit; a successful old plugin import may predate fields needed for replay. Preserve source facts, represent missing replay as non-replayable, and recover quarantines through code with explicit proof rather than changing legacy rows by hand.
 - Do not treat a complete checkpoint as the only rollout proof. Resume existing quarantines, verify restored sources, and keep output rows paired with timeline events. Before advancing the writer epoch, stop every older writer and confirm its database sessions have drained.
 - Migration recovery must append to a published Job timeline without moving earlier event sequences or delivery cursors. Compare persisted JSON by decoded content: PostgreSQL JSONB can reorder keys and whitespace after a roundtrip.
+
+## Job Center dismissal filters — 2026-09-24
+
+- Treat an **Any** filter as the absence of a query parameter throughout list, summary, pagination, and live refresh requests. Apply the undismissed default only to Overview. Clear All jobs filters when entering Overview so later stream refreshes use the same scope as its summary. Test both directions of view navigation against dismissed records.

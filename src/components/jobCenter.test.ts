@@ -301,7 +301,7 @@ describe('Job Center URL state', () => {
         expect(list.searchParams.get('cursor')).toBe('list-v1-page-two');
         expect(list.searchParams.get('limit')).toBe('50');
         expect(new URL(buildJobSummaryURL({ filters: { search: 'download' } }), 'http://localhost')
-            .searchParams.get('dismissed')).toBe('false');
+            .searchParams.has('dismissed')).toBe(false);
     });
 
     test('loads the next opaque keyset cursor and retains newest-first order', async () => {
@@ -558,6 +558,70 @@ describe('Job Center event stream catch-up boundary', () => {
 });
 
 describe('Job Center live summary', () => {
+    test('submitting Dismissed Any includes dismissed Jobs in the list and summary', async () => {
+        vi.stubGlobal('FormData', class {
+            get(key: string) { return key === 'dismissed' ? '' : null; }
+        });
+        const center = jobCenter();
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') return { byState: { failed: 1 } };
+            return { jobs: [{ id: 'dismissed-download', kind: 'remote-download', state: 'failed' }] };
+        });
+
+        await center.submitFilters({} as HTMLFormElement);
+
+        const urls = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
+        expect(urls.map(url => url.pathname)).toEqual(['/v1/jobs/summary', '/v1/jobs']);
+        expect(urls.every(url => !url.searchParams.has('dismissed'))).toBe(true);
+        expect(center.jobs.map(job => job.id)).toEqual(['dismissed-download']);
+        expect(center.summary?.byState?.failed).toBe(1);
+    });
+
+    test('switching from Overview to All jobs reloads the summary without the dismissal filter', async () => {
+        const center = jobCenter();
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') {
+                return { byState: { failed: url.searchParams.has('dismissed') ? 0 : 1 } };
+            }
+            return { jobs: [{ id: 'dismissed-download', kind: 'remote-download', state: 'failed' }] };
+        });
+
+        await center.loadSummary();
+        expect(new URL(center.fetchJSON.mock.calls[0][0], 'http://localhost').searchParams.get('dismissed')).toBe('false');
+        await center.setView('all');
+
+        const urls = center.fetchJSON.mock.calls.slice(1).map(([raw]) => new URL(String(raw), 'http://localhost'));
+        expect(urls.map(url => url.pathname)).toEqual(['/v1/jobs/summary', '/v1/jobs']);
+        expect(urls.every(url => !url.searchParams.has('dismissed'))).toBe(true);
+        expect(center.summary?.byState?.failed).toBe(1);
+    });
+
+    test('returning to Overview clears All jobs filters for its list, summary, and live refresh', async () => {
+        const center = jobCenter();
+        center.view = 'all';
+        center.filters = { ...center.filters, search: 'download', dismissed: null };
+        center.fetchJSON = vi.fn(async raw => {
+            const url = new URL(String(raw), 'http://localhost');
+            if (url.pathname === '/v1/jobs/summary') return { byState: { failed: 0 } };
+            return { jobs: [] };
+        });
+
+        await center.setView('home');
+        expect(center.filters.search).toBe('');
+        expect(center.filters.dismissed).toBeNull();
+        const initialURLs = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
+        expect(initialURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
+        expect(initialURLs.every(url => !url.searchParams.has('search'))).toBe(true);
+
+        center.fetchJSON.mockClear();
+        await center.refreshStreamState(center._streamRefreshGeneration);
+        const refreshedURLs = center.fetchJSON.mock.calls.map(([raw]) => new URL(String(raw), 'http://localhost'));
+        expect(refreshedURLs.every(url => url.searchParams.get('dismissed') === 'false')).toBe(true);
+        expect(refreshedURLs.every(url => !url.searchParams.has('search'))).toBe(true);
+    });
+
     test('refreshes summaries with submitted filters and ignores results from an older filter generation', async () => {
         let resolveFirstSummary: (value: unknown) => void = () => {};
         const firstSummary = new Promise(resolve => { resolveFirstSummary = resolve; });
@@ -591,10 +655,10 @@ describe('Job Center live summary', () => {
         expect(center.summary).toEqual({ byState: { queued: 1 } });
         expect(olderSubmissionSettled).toBe(false);
         expect(center.fetchJSON.mock.calls.map(([raw]) => String(raw))).toEqual([
-            expect.stringContaining('/v1/jobs/summary?search=older+filter&dismissed=false'),
-            expect.stringContaining('/v1/jobs?search=older+filter&dismissed=false&limit=50'),
-            expect.stringContaining('/v1/jobs/summary?search=newer+filter&dismissed=false'),
-            expect.stringContaining('/v1/jobs?search=newer+filter&dismissed=false&limit=50'),
+            '/v1/jobs/summary?search=older+filter',
+            '/v1/jobs?search=older+filter&limit=50',
+            '/v1/jobs/summary?search=newer+filter',
+            '/v1/jobs?search=newer+filter&limit=50',
         ]);
 
         resolveFirstSummary({ byState: { failed: 1 } });
@@ -667,7 +731,7 @@ describe('Job Center live summary', () => {
         const initialSummaryURL = summaryURLs[0];
         expect(initialSummaryURL).toBeDefined();
         expect(initialSummaryURL.searchParams.get('search')).toBe('Index rebuild');
-        expect(initialSummaryURL.searchParams.get('dismissed')).toBe('false');
+        expect(initialSummaryURL.searchParams.has('dismissed')).toBe(false);
 
         center.handleStreamMessage({
             data: JSON.stringify({ id: 'live-job', title: 'Index rebuild', state: 'failed', version: 2, deliverySequence: 1 }),
@@ -679,6 +743,9 @@ describe('Job Center live summary', () => {
         expect(center.summary.byState).toEqual({ running: 0, failed: 1 });
         expect(summaryURLs).toHaveLength(2);
         expect(summaryURLs[1].search).toBe(initialSummaryURL.search);
+        expect(center.fetchJSON.mock.calls
+            .filter(([raw]) => new URL(String(raw), 'http://localhost').pathname === '/v1/jobs')
+            .every(([raw]) => !new URL(String(raw), 'http://localhost').searchParams.has('dismissed'))).toBe(true);
         vi.useRealTimers();
     });
 

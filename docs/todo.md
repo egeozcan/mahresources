@@ -13851,3 +13851,24 @@ Both remotes advanced from `0494452a` to `0c1b2a30`. The mahlayf post-receive ho
 The download title projection now limits UTF-8 bytes without shortening replay input. Exact, unchanged quarantine classes can resume copy from the beginning of their source scan; the mixed-digit ID regression prevents a textual-order cursor from skipping earlier numeric IDs. Blank historical plugin imports are converted only when their completed source, successful parent Job, import map, and extant Resource agree. Their canonical Jobs are terminal and non-replayable, retain the Resource output and timeline event, and never receive invented accepted fields. Restored-source verification uses this same proof. Recovery appends timeline events without changing published cursors and compares PostgreSQL JSONB by content. A live dual-published running import keeps its canonical Job. The user confirmed mahlayf's service is the only writer; that service and its database connections must be drained before attesting to the epoch advance. Focused SQLite migration tests, the PostgreSQL blank-import roundtrip, and the PostgreSQL crash/resume retirement test pass. Sol and Astra predeployment reviews found no remaining release blockers.
 
 A private PostgreSQL 17 archive and replay-key backup were saved on mahlayf before cutover; the archive index and full payload read passed. The reviewed candidate ran with drain attestation disabled after the old service stopped and its PostgreSQL sessions reached zero. This preflight verified 158 download-history, eight plugin-import, and eight plugin-run mappings, with no quarantines, while the writer epoch remained 1. After the drain attestation, the mahlayf master push deployed the new binary. The admin readiness endpoint reports `ready: true`, epoch 2, phase `complete`, 174 scrubbed mappings, and no blockers. `/dashboard`, `/jobs?view=all`, and `/plugins/manage` return HTTP 200; systemd reports one active service with no restarts. Both remote master refs match `f4ec5418` before this documentation follow-up.
+
+## Job Center Dismissed Any filter — 2026-09-24
+
+- [x] Compare mahlayf's dismissed Job API results with the Job Center requests.
+- [x] Reproduce the Dismissed Any client bug in a focused regression test.
+- [x] Preserve the unfiltered dismissal choice in All jobs, including summaries, pagination, and live refresh, while keeping Overview focused on undismissed work.
+- [x] Verify the focused UI and browser cases, build the JS bundle, and build the docs site.
+- [x] Complete Sol and final Astra reviews, then check the diff for remaining undismissed defaults.
+
+### Review
+
+The mahlayf API returned dismissed downloads when `dismissed=true` or when the
+parameter was absent. The client changed the **Any** selection to `false` in
+both list and summary requests. The regression test failed before the fix and
+passes afterward. All 44 focused UI tests and the two targeted ephemeral
+browser checks pass; the JS bundle and docs site build. Astra found a view
+transition where retained All jobs filters made Overview's summary disagree
+with a later live-refreshed list. Overview now clears those filters on entry;
+the reverse-transition regression failed before that fix and passes afterward.
+Sol and Astra found no remaining actionable issues. A final diff check found
+no further dismissal coercion in the All jobs requests.

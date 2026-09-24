@@ -53,7 +53,7 @@ async function waitForJobState(
 }
 
 test.describe('Job Center', () => {
-  test('requests a filtered summary with the current list filters and default dismissal scope', async ({ page }) => {
+  test('requests a filtered summary with the current list filters and Any dismissal scope', async ({ page }) => {
     let summaryRequestURL = '';
     await page.route('**/v1/jobs/summary**', async route => {
       summaryRequestURL = route.request().url();
@@ -77,9 +77,39 @@ test.describe('Job Center', () => {
     expect(summary.get('acceptedBefore')).toBe('2026-09-20T00:00:00.000Z');
     expect(summary.get('relationship')).toBe('retry-of');
     expect(summary.get('pinned')).toBe('true');
-    expect(summary.get('dismissed')).toBe('false');
+    expect(summary.has('dismissed')).toBe(false);
     expect(summary.has('cursor')).toBe(false);
     expect(summary.has('limit')).toBe(false);
+  });
+
+  test('Dismissed Any shows previously dismissed jobs in All jobs', async ({ page }) => {
+    const dismissedJob = {
+      id: 'dismissed-download', kind: 'remote-download', state: 'failed', version: 1,
+      title: 'Dismissed download', dismissed: true, acceptedAt: new Date().toISOString(),
+    };
+    const listURLs: URL[] = [];
+    await page.route('**/v1/jobs/summary**', route => {
+      const hidden = new URL(route.request().url()).searchParams.get('dismissed') === 'false';
+      return route.fulfill({ json: { byState: { failed: hidden ? 0 : 1 } } });
+    });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, route => {
+      const url = new URL(route.request().url());
+      listURLs.push(url);
+      return route.fulfill({ json: { jobs: url.searchParams.get('dismissed') === 'false' ? [] : [dismissedJob] } });
+    });
+
+    await page.goto('/jobs?view=all&dismissed=false');
+    await expect(page.locator('[data-job-id="dismissed-download"]')).toHaveCount(0);
+    await page.getByText('Filter jobs', { exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Search' }).fill('download');
+    await page.getByRole('combobox', { name: 'Dismissed' }).selectOption('');
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+
+    await expect(page.locator('[data-job-id="dismissed-download"]')).toBeVisible();
+    expect(listURLs.some(url => !url.searchParams.has('dismissed'))).toBe(true);
+    await page.getByRole('button', { name: 'Overview' }).click();
+    await expect(page.locator('[data-job-id="dismissed-download"]')).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.has('search')).toBe(false);
   });
 
   test('findings 41 and 113: paused progress stays visible and unknown totals keep a named indeterminate bar', async ({ page }) => {

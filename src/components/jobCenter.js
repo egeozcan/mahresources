@@ -113,7 +113,7 @@ export function buildJobListURL({ filters = {}, states = null, cursor = null, li
 
 export function buildJobSummaryURL({ filters = {}, window = null } = {}) {
     const params = new URLSearchParams();
-    appendJobFilters(params, { ...filters, dismissed: filters.dismissed ?? false });
+    appendJobFilters(params, filters);
     if (window) params.set('window', window);
     return `/v1/jobs/summary${params.size ? `?${params.toString()}` : ''}`;
 }
@@ -482,11 +482,17 @@ export function jobCenter(options = {}) {
         },
 
         async loadSummary(generation = ++this._summaryGeneration) {
-            const summaryURL = buildJobSummaryURL({ filters: this.filters });
+            const summaryURL = buildJobSummaryURL({ filters: this.summaryFilters() });
             const summary = await this.fetchJSON(summaryURL);
-            if (generation !== this._summaryGeneration || summaryURL !== buildJobSummaryURL({ filters: this.filters })) return false;
+            if (generation !== this._summaryGeneration || summaryURL !== buildJobSummaryURL({ filters: this.summaryFilters() })) return false;
             this.summary = summary;
             return true;
+        },
+
+        summaryFilters() {
+            return this.view === 'home'
+                ? { ...this.filters, dismissed: this.filters.dismissed ?? false }
+                : this.filters;
         },
 
         scheduleStreamRefresh() {
@@ -516,7 +522,7 @@ export function jobCenter(options = {}) {
             const listGeneration = this._listGeneration;
             const summaryGeneration = ++this._summaryGeneration;
             const refreshHome = this.view === 'home' && !this.hasFilters();
-            const requests = [this.fetchJSON(buildJobSummaryURL({ filters: this.filters }))];
+            const requests = [this.fetchJSON(buildJobSummaryURL({ filters: this.summaryFilters() }))];
             if (refreshHome) {
                 const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
                 requests.push(Promise.all([
@@ -554,7 +560,6 @@ export function jobCenter(options = {}) {
 
         async fetchLoadedAllWindow(generation, listGeneration, stateKey) {
             const starts = this._allPageCursors.length ? [...this._allPageCursors] : [null];
-            const filterBase = { ...this.filters, dismissed: this.filters.dismissed ?? false };
             const jobs = [];
             const cursors = [];
             let cursor = starts[0];
@@ -562,7 +567,7 @@ export function jobCenter(options = {}) {
             for (let page = 0; page < starts.length; page++) {
                 if (page > 0 && !cursor) break;
                 const pageCursor = cursor;
-                const payload = await this.fetchJSON(buildJobListURL({ filters: filterBase, cursor: pageCursor, limit: 50 }));
+                const payload = await this.fetchJSON(buildJobListURL({ filters: this.filters, cursor: pageCursor, limit: 50 }));
                 if (generation !== this._streamRefreshGeneration || listGeneration !== this._listGeneration || stateKey !== JSON.stringify({ view: this.view, filters: this.filters })) return null;
                 jobs.push(...pageJobs(payload));
                 cursors.push(pageCursor);
@@ -610,7 +615,7 @@ export function jobCenter(options = {}) {
             if (this._streamRefreshPromise) this._streamRefreshRequested = true;
             if (!append) this._allPageCursors = [cursor];
             const payload = await this.fetchJSON(buildJobListURL({
-                filters: { ...this.filters, dismissed: this.filters.dismissed ?? false },
+                filters: this.filters,
                 cursor,
                 limit: 50,
             }));
@@ -770,13 +775,19 @@ export function jobCenter(options = {}) {
         async setView(view) {
             this._filterSubmitGeneration += 1;
             this.view = view === 'all' ? 'all' : 'home';
+            if (this.view === 'home') this.filters = emptyFilters();
             this.nextCursor = null;
             this._allPageCursors = [];
+            this.selectedIds = new Set();
             this.replaceURL(null);
             this.loading = true;
             this.error = '';
             try {
-                return await (this.view === 'all' ? this.loadAll() : this.loadHome());
+                const [, jobs] = await Promise.all([
+                    this.loadSummary(),
+                    this.view === 'all' ? this.loadAll() : this.loadHome(),
+                ]);
+                return jobs;
             } catch (error) {
                 this.error = error.message || 'Could not change job views.';
                 return null;
