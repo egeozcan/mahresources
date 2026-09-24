@@ -20,10 +20,13 @@ import {
     outputLinkURL,
     parseJobCenterURL,
     progressAccessibleText,
+    progressIndeterminate,
     progressText,
     progressValue,
     reduceJobStreamEvent,
     reduceJobSnapshot,
+    resultOutput,
+    resultURL,
     selectedBulkCommands,
     serializeJobCenterURL,
     warningEvents,
@@ -476,7 +479,7 @@ describe('canonical event reducer', () => {
         expect(progressValue({ progress: { completed: 1, total: 4 } })).toBe(25);
     });
 
-    test('shows stale percent progress as complete only for successful plugin-action jobs', () => {
+    test('shows stale percent progress as complete for any successful job', () => {
         const staleSuccess = {
             kind: 'plugin-action',
             state: 'succeeded',
@@ -493,8 +496,53 @@ describe('canonical event reducer', () => {
         }
 
         const otherKind = { ...staleSuccess, kind: 'deferred-download' };
-        expect(progressText(otherKind)).toBe('Fetching result...');
-        expect(progressValue(otherKind)).toBe(70);
+        expect(progressText(otherKind)).toBe('Completed');
+        expect(progressValue(otherKind)).toBe(100);
+    });
+
+    test('a finished download whose size was never known is complete, not in progress', () => {
+        // A transfer with no Content-Length (or an HLS stream) publishes no total,
+        // and the last progress row it wrote is the one the finished Job keeps.
+        const download = { kind: 'remote-download', state: 'succeeded', progress: {} };
+        expect(progressText(download)).toBe('Completed');
+        expect(progressValue(download)).toBe(100);
+        expect(progressIndeterminate(download)).toBe(false);
+
+        const running = { ...download, state: 'running' };
+        expect(progressValue(running)).toBeNull();
+        expect(progressIndeterminate(running)).toBe(true);
+
+        // A job that stopped without finishing keeps its honest "unknown", but it
+        // is not still working, so nothing may animate as though it were.
+        for (const state of ['failed', 'cancelled', 'interrupted', 'blocked']) {
+            const stopped = { ...download, state };
+            expect(progressValue(stopped)).toBeNull();
+            expect(progressIndeterminate(stopped)).toBe(false);
+        }
+        expect(progressValue({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe(100);
+        expect(progressText({ ...download, state: 'succeeded', progress: { completed: 136, total: 136, unit: 'bytes' } })).toBe('136 / 136 bytes');
+    });
+
+    test('a succeeded job links to the entity it created, whatever its kind', () => {
+        const entity = {
+            key: 'resource', type: 'entity', label: 'Created resource', availability: 'available',
+            url: '/v1/jobs/dl-1/outputs?key=resource',
+        };
+        const download = { id: 'dl-1', kind: 'remote-download', state: 'succeeded', outputs: [entity] };
+        expect(resultOutput(download)).toBe(entity);
+        expect(resultURL(download)).toBe(entity.url);
+        expect(outputLinkLabel(entity, download.outputs)).toBe('View created resource');
+
+        expect(resultOutput({ ...download, state: 'running' })).toBeNull();
+        expect(resultOutput({ ...download, outputs: [{ ...entity, availability: 'removed' }] })).toBeNull();
+        expect(resultOutput({ ...download, outputs: [{ ...entity, url: 'https://example.com/x' }] })).toBeNull();
+        expect(resultOutput({ ...download, outputs: [] })).toBeNull();
+        expect(resultURL({ ...download, outputs: [] })).toBe('');
+
+        // A summary destination is plugin-action vocabulary; no other kind records one.
+        const summary = { key: 'result', type: 'summary', availability: 'available', destinationUrl: '/resource?id=1', url: '/v1/jobs/dl-1/outputs?key=result' };
+        expect(resultOutput({ ...download, outputs: [summary] })).toBeNull();
+        expect(resultOutput({ ...download, kind: 'plugin-action', outputs: [summary] })).toBe(summary);
     });
 });
 
@@ -913,6 +961,40 @@ describe('Job Center templates', () => {
         expect(listTemplate).toContain(':aria-valuetext="progressAccessibleText(job)"');
         expect(listTemplate).toContain("(job.title || job.kind || 'Job') + ' progress: '");
         expect(listTemplate).toContain(':aria-valuenow="progressValue(job)"');
+        // Only work that is still going may pulse or read "In progress".
+        expect(listTemplate).toContain("progressIndeterminate(job) ? 'w-full animate-pulse' : ''");
+        expect(listTemplate).not.toContain("progressValue(job) === null ? 'w-full animate-pulse'");
+        expect(listTemplate).not.toContain("progressValue(job) === null ? 'In progress'");
+    });
+
+    test('the list links a succeeded job to the entity it created', () => {
+        expect(listTemplate).toContain('x-if="resultURL(job)"');
+        expect(listTemplate).toContain(':href="resultURL(job)"');
+        expect(listTemplate).toContain(':aria-label="resultAccessibleLabel(job)"');
+    });
+
+    test('the list reads each succeeded job\'s outputs once, and only those', async () => {
+        const center = jobCenter();
+        const requests = [];
+        vi.stubGlobal('fetch', vi.fn(async url => {
+            requests.push(url);
+            const id = decodeURIComponent(String(url).split('/').pop());
+            return { ok: true, json: async () => ({
+                id, kind: 'remote-download', state: 'succeeded', title: 'Download from example.com',
+                outputs: [{ key: 'resource', type: 'entity', label: 'Created resource', availability: 'available', url: `/v1/jobs/${id}/outputs?key=resource` }],
+            }) };
+        }));
+        const done = { id: 'done', kind: 'remote-download', state: 'succeeded', title: 'Download from example.com' };
+        const running = { id: 'busy', kind: 'remote-download', state: 'running' };
+        center.jobs = [done, running];
+
+        await center.loadResultOutputs(center.jobs);
+        await center.loadResultOutputs(center.jobs);
+
+        expect(requests).toEqual(['/v1/jobs/done']);
+        expect(center.resultURL(done)).toBe('/v1/jobs/done/outputs?key=resource');
+        expect(center.resultAccessibleLabel(done)).toBe('View created resource for Download from example.com');
+        expect(center.resultURL(running)).toBe('');
     });
 
     test('provides the required default sections and newest-first paginated All jobs view', () => {

@@ -119,6 +119,10 @@ test.describe('Job Center', () => {
         title: 'Paused transfer', acceptedAt, progress: { completed: 20, total: 50, unit: 'MB' } },
       { id: 'progress-unknown', kind: 'remote-download', state: 'running', version: 2,
         title: 'Unknown size transfer', acceptedAt, progress: { completed: 7, total: null, unit: 'bytes' } },
+      // A transfer that never learned its size and then finished keeps that last
+      // row: it must read as done, not pulse "In progress" forever.
+      { id: 'progress-finished-unknown', kind: 'remote-download', state: 'succeeded', version: 3,
+        title: 'Finished unknown size transfer', acceptedAt, progress: {} },
     ];
     await page.route(/\/v1\/jobs(?:\?.*)?$/, route => route.fulfill({ json: { jobs, nextCursor: null } }));
     await page.route('**/v1/jobs/summary', route => route.fulfill({ json: { byState: { paused: 1, running: 1 } } }));
@@ -133,6 +137,53 @@ test.describe('Job Center', () => {
     await expect(bar).toBeVisible();
     await expect(bar).not.toHaveAttribute('aria-valuenow', /.+/);
     await expect(bar).toHaveAttribute('aria-valuetext', /7 bytes processed; total unknown/);
+    await expect(unknown.locator('.animate-pulse')).toHaveCount(1);
+    await expect(unknown).toContainText('In progress');
+
+    const finished = page.locator('[data-job-id="progress-finished-unknown"]');
+    const finishedBar = finished.getByRole('progressbar', { name: /Finished unknown size transfer progress/ });
+    await expect(finishedBar).toHaveAttribute('aria-valuenow', '100');
+    await expect(finishedBar).toHaveAttribute('aria-valuetext', 'Completed');
+    await expect(finished.locator('.animate-pulse')).toHaveCount(0);
+    await expect(finished).not.toContainText('In progress');
+  });
+
+  test('a background download from the create form reaches the panel and /jobs with a link to its resource', async ({ page, request, baseURL }) => {
+    const stamp = Date.now();
+    // A fresh owner per run: a hash collision under another owner still succeeds
+    // (it returns the existing Resource), so a shared server or a retry cannot turn
+    // this into a failed download.
+    const groupId = await createGroup(request, `job-center-form-download-${stamp}`);
+    const source = `${baseURL}/public/favicon/ms-icon-150x150.png`;
+    await page.goto(`/resource/new?OwnerId=${groupId}&URL=${encodeURIComponent(source)}`);
+    await page.getByLabel('Download in background').check();
+    await page.locator('form[x-data="resourceUpload()"] button[type="submit"]').click();
+    await expect(page).toHaveURL(new RegExp(`/group\\?id=${groupId}$`));
+
+    // The form's background path must accept a durable Job; before, it went to the
+    // queue alone and the download never appeared in the Jobs panel or /jobs.
+    await expect.poll(async () => {
+      const response = await request.get('/v1/jobs?kind=remote-download&state=succeeded&limit=50');
+      if (!response.ok()) return false;
+      const body = await response.json();
+      return (body.jobs as Job[]).some(candidate => candidate.title === `Download from ${new URL(source).host}`);
+    }, { timeout: 20_000 }).toBe(true);
+
+    const trigger = page.getByRole('button', { name: 'Open Jobs panel' });
+    await trigger.click();
+    const panel = page.getByRole('dialog', { name: 'Jobs' });
+    const panelLink = panel.getByRole('link', { name: /^View created resource for Download from / }).first();
+    await expect(panelLink).toBeVisible();
+    await panelLink.click();
+    await expect(page).toHaveURL(/\/resource\?id=\d+$/);
+    const resourceURL = page.url();
+
+    await page.goto('/jobs');
+    const listLink = page.getByRole('link', { name: /^View created resource for Download from / }).first();
+    await expect(listLink).toBeVisible();
+    await listLink.click();
+    await expect(page).toHaveURL(/\/resource\?id=\d+$/);
+    expect(page.url()).toBe(resourceURL);
   });
 
   test('the legacy Downloads page redirects to the canonical list with compatible filters', async ({ page }) => {

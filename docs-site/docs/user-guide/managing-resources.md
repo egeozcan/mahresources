@@ -65,6 +65,7 @@ For large files or slow connections, enable **Download in background**:
 
 - The download starts immediately but you can navigate away
 - Progress is tracked in the **Jobs panel**, opened from the header
+- When the download finishes, **View created resource** in the Jobs panel or the [Job Center](#job-center) opens the new resource
 - Failed downloads remain in the [Job Center](#job-center) after restart and can be retried when the Job advertises Retry
 
 ### Paste Upload
@@ -377,11 +378,13 @@ Use only the controls displayed on that Job; available commands are checked
 again when submitted. Selecting several Jobs offers only commands they all
 advertise for bulk use, with a separate result for each Job.
 
-A successful plugin action shows complete progress. When its result points to a
-Resource, Note, or Group, open it from the **Jobs** panel or the Job detail
-page. New Jobs show a typed entity link such as **View resource**. Older plugin
-Jobs with only a result summary show **View result** for the entity; their Job
-detail page also shows **View JSON result** for the stored summary.
+A succeeded Job always shows complete progress, including a download whose
+size the remote server never reported. When a Job created a Resource, Note, or
+Group, open it from the **Jobs** panel, the Job Center list, or the Job detail
+page. A download shows **View created resource**; a plugin action shows a typed
+entity link such as **View resource**. Older plugin Jobs with only a result
+summary show **View result** for the entity; their Job detail page also shows
+**View JSON result** for the stored summary.
 
 A Retry creates a linked successor. Dismiss hides a finished Job from your
 view; Forget removes its stored replay input and cannot be undone. A pin keeps

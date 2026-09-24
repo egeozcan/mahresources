@@ -193,6 +193,58 @@ export function outputLinkAccessibleLabel(output, outputs = []) {
     return output?.type === 'log' ? `Open log ${name}` : `Open ${name}`;
 }
 
+function safeResultURL(value) {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') ||
+        /[\\\u0000-\u001f\u007f]/.test(value)) return '';
+    const origin = globalThis.location?.origin || 'http://localhost';
+    try {
+        const parsed = new URL(value, origin);
+        if (parsed.origin !== origin || parsed.username || parsed.password || parsed.hash) return '';
+        return value;
+    } catch {
+        return '';
+    }
+}
+
+// The one link a finished job offers straight from a list: what it made. Any
+// succeeded job's available entity output is that — the Resource a download
+// created, the entity a plugin action returned. The endpoint it names redirects to
+// the entity after checking the viewer may open it. Only a plugin action records
+// a summary destination instead (historical result.redirect values), so that
+// fallback stays with that kind.
+export function resultOutput(job) {
+    if (job?.state !== 'succeeded') return null;
+    const outputs = advertisedOutputs(job);
+    const entity = outputs.find(output => output?.type === 'entity' &&
+        output.availability === 'available' &&
+        safeResultURL(outputLinkURL(output, outputs)));
+    if (entity) return entity;
+    if (job.kind !== 'plugin-action') return null;
+    return outputs.find(output => {
+        if (output?.type !== 'summary' || output.availability !== 'available' || !output.destinationUrl) return false;
+        const url = outputLinkURL(output, outputs);
+        return url === output.destinationUrl && Boolean(safeResultURL(url));
+    }) || null;
+}
+
+export function resultURL(job) {
+    const output = resultOutput(job);
+    return output ? safeResultURL(outputLinkURL(output, advertisedOutputs(job))) : '';
+}
+
+export function resultLinkLabel(job) {
+    const output = resultOutput(job);
+    return output ? outputLinkLabel(output, advertisedOutputs(job)) : '';
+}
+
+export function resultAccessibleLabel(job) {
+    const output = resultOutput(job);
+    if (!output) return '';
+    const label = outputLinkAccessibleLabel(output, advertisedOutputs(job));
+    const context = String(job?.title || job?.kind || job?.id || '').trim();
+    return context ? `${label} for ${context}` : label;
+}
+
 export function stateOf(job) {
     return String(job?.state || 'unknown').toLowerCase();
 }
@@ -342,19 +394,22 @@ export function streamCursorSequence(value) {
     return Number.isFinite(sequence) ? sequence : null;
 }
 
-function hasStalePluginActionProgress(job) {
+// A succeeded job is complete whatever its last progress row says. Producers
+// publish progress while they work and none rewrites it on the way out, so a
+// finished job keeps whatever was current when the work ended: a plugin action's
+// last percent, or — for a download whose size was never known (no
+// Content-Length, an HLS stream) — no total at all, which reads as indeterminate
+// and would keep pulsing "In progress" on a download that finished long ago.
+function progressSupersededBySuccess(job) {
+    if (job?.state !== 'succeeded') return false;
     const progress = job?.progress || {};
-    return job?.kind === 'plugin-action'
-        && job?.state === 'succeeded'
-        && progress.unit === 'percent'
-        && Number.isFinite(progress.completed)
-        && Number.isFinite(progress.total)
-        && progress.total > 0
-        && progress.completed < progress.total;
+    const completed = progress.completed;
+    const total = progress.total;
+    return !(Number.isFinite(completed) && Number.isFinite(total) && total > 0 && completed >= total);
 }
 
 export function progressText(job) {
-    if (hasStalePluginActionProgress(job)) return 'Completed';
+    if (progressSupersededBySuccess(job)) return 'Completed';
     const progress = job?.progress || {};
     if (progress.message) return progress.message;
     const completed = progress.completed;
@@ -366,10 +421,17 @@ export function progressText(job) {
 }
 
 export function progressValue(job) {
-    if (hasStalePluginActionProgress(job)) return 100;
+    if (progressSupersededBySuccess(job)) return 100;
     const progress = job?.progress || {};
     if (progress.completed === null || progress.completed === undefined || !(progress.total > 0)) return null;
     return Math.max(0, Math.min(100, Math.round((progress.completed / progress.total) * 100)));
+}
+
+// Whether the progress bar may animate and read "In progress". An unknown total
+// on a job that has stopped — failed, cancelled, interrupted, blocked — stays
+// unknown, but nothing is working on it any more.
+export function progressIndeterminate(job) {
+    return progressValue(job) === null && classifyJobState(job) === 'active';
 }
 
 export function progressAccessibleText(job) {
@@ -403,6 +465,8 @@ export function jobCenter(options = {}) {
         sections: { attention: [], active: [], finished: [], other: [] },
         summary: null,
         details: {},
+        resultOutputs: {},
+        _resultOutputsPending: new Set(),
         selectedIds: new Set(),
         nextCursor: null,
         _allPageCursors: [],
@@ -436,6 +500,7 @@ export function jobCenter(options = {}) {
                 this.detailId = new URLSearchParams(globalThis.location.search).get('id') || '';
             }
             this._liveRegion = createLiveRegion();
+            this.$watch?.('jobs', jobs => { this.loadResultOutputs(jobs); });
             this.connect();
             this.load();
         },
@@ -669,6 +734,37 @@ export function jobCenter(options = {}) {
             if (freshJob?.id) this.updateJob(freshJob);
             return freshJob;
         },
+
+        // List rows carry no outputs, so a succeeded row's result link needs its
+        // detail. Each is read once per page: a finished job's outputs do not come
+        // back, and the stream refreshes that rebuild these rows would otherwise
+        // re-read every one of them.
+        async loadResultOutputs(jobs) {
+            const wanted = (jobs || []).filter(job => job?.id && job.state === 'succeeded' &&
+                !advertisedOutputs(job).length && !(job.id in this.resultOutputs) &&
+                !this._resultOutputsPending.has(job.id));
+            await Promise.all(wanted.map(async job => {
+                this._resultOutputsPending.add(job.id);
+                try {
+                    const payload = await this.fetchJSON(`/v1/jobs/${encodeURIComponent(job.id)}`);
+                    const detail = payload.job || payload;
+                    this.resultOutputs = { ...this.resultOutputs, [job.id]: advertisedOutputs(detail) };
+                } catch {
+                    // No link rather than an error: the row and its Open link still work.
+                } finally {
+                    this._resultOutputsPending.delete(job.id);
+                }
+            }));
+        },
+
+        resultSource(job) {
+            const outputs = advertisedOutputs(job).length ? advertisedOutputs(job) : this.resultOutputs[job?.id] || [];
+            return { ...job, outputs };
+        },
+
+        resultURL(job) { return resultURL(this.resultSource(job)); },
+        resultLinkLabel(job) { return resultLinkLabel(this.resultSource(job)); },
+        resultAccessibleLabel(job) { return resultAccessibleLabel(this.resultSource(job)); },
 
         async detailFor(job) {
             if (advertisedCommands(job).length || advertisedOutputs(job).length || this.details[job.id]) {
@@ -971,6 +1067,7 @@ export function jobCenter(options = {}) {
         progressText(job) { return progressText(job); },
         progressValue(job) { return progressValue(job); },
         progressAccessibleText(job) { return progressAccessibleText(job); },
+        progressIndeterminate(job) { return progressIndeterminate(job); },
         dateTimeLocalValue(value) { return dateTimeLocalValue(value); },
         stateLabel(job) { return stateLabel(job); },
         stateClass(job) { return classifyJobState(job); },

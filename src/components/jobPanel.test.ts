@@ -100,6 +100,23 @@ describe('Job Center panel', () => {
         expect(panel.resultOutput({ ...job, kind: 'remote-download' })).toBeNull();
     });
 
+    test('links a completed download to the resource it created', () => {
+        const panel = jobPanel();
+        const job = { id: 'dl', title: 'Download from example.com', kind: 'remote-download', state: 'succeeded' };
+        const resource = {
+            key: 'resource', type: 'entity', label: 'Created resource', availability: 'available',
+            url: '/v1/jobs/dl/outputs?key=resource',
+        };
+        panel.jobs = [job];
+        panel.details[job.id] = { ...job, outputs: [resource] };
+
+        expect(panel.resultOutput(job)).toBe(resource);
+        expect(panel.resultURL(job)).toBe(resource.url);
+        expect(panel.resultLinkLabel(job)).toBe('View created resource');
+        expect(panel.resultAccessibleLabel(job)).toBe('View created resource for Download from example.com');
+        expect(panel.resultOutput({ ...job, state: 'running' })).toBeNull();
+    });
+
     test('keeps the existing Cmd/Ctrl+Shift+D shortcut and toggles the dialog', () => {
         vi.stubGlobal('document', {
             activeElement: null,

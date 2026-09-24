@@ -130,9 +130,9 @@
                                     <p x-show="job.summary" x-cloak class="mt-2 break-words text-sm text-stone-700" x-text="typeof job.summary === 'string' ? job.summary : JSON.stringify(job.summary)"></p>
                                     <template x-if="job.progress">
                                         <div class="mt-3 max-w-xl">
-                                            <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600"><span x-text="progressText(job)"></span><span x-text="progressValue(job) === null ? 'In progress' : `${progressValue(job)}%`"></span></div>
+                                            <div class="mb-1 flex justify-between gap-2 text-xs text-stone-600"><span x-text="progressText(job)"></span><span x-text="progressValue(job) !== null ? `${progressValue(job)}%` : progressIndeterminate(job) ? 'In progress' : ''"></span></div>
                                             <div class="h-2 rounded bg-stone-200" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="progressValue(job)" :aria-valuetext="progressAccessibleText(job)" :aria-label="(job.title || job.kind || 'Job') + ' progress: ' + progressAccessibleText(job)">
-                                                <div class="h-2 rounded bg-amber-800" :class="progressValue(job) === null ? 'w-full animate-pulse' : ''" :style="progressValue(job) === null ? '' : `width:${progressValue(job)}%`"></div>
+                                                <div class="h-2 rounded bg-amber-800" :class="progressIndeterminate(job) ? 'w-full animate-pulse' : ''" :style="progressIndeterminate(job) ? '' : `width:${progressValue(job) ?? 0}%`"></div>
                                             </div>
                                         </div>
                                     </template>
@@ -147,7 +147,12 @@
                                         <p>Version <span class="font-mono" x-text="job.version"></span></p>
                                     </div>
                                 </div>
-                                <a :href="detailURL(job)" :aria-label="'Open job ' + (job.title || job.kind || job.id)" class="shrink-0 rounded border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">Open</a>
+                                <div class="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                                    <template x-if="resultURL(job)">
+                                        <a :href="resultURL(job)" :aria-label="resultAccessibleLabel(job)" class="rounded border border-amber-700 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50" x-text="resultLinkLabel(job)"></a>
+                                    </template>
+                                    <a :href="detailURL(job)" :aria-label="'Open job ' + (job.title || job.kind || job.id)" class="rounded border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50">Open</a>
+                                </div>
                             </div>
                         </article>
                     </template>

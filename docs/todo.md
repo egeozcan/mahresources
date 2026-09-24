@@ -13872,3 +13872,28 @@ with a later live-refreshed list. Overview now clears those filters on entry;
 the reverse-transition regression failed before that fix and passes afterward.
 Sol and Astra found no remaining actionable issues. A final diff check found
 no further dismissal coercion in the All jobs requests.
+
+## Job Center download links, finished progress, and form downloads — 2026-09-24
+
+- [x] Reproduce against an ephemeral server: a form "Download in background" produced no canonical Job, succeeded downloads showed no resource link in the panel or `/jobs`, and a succeeded download with no known size kept a pulsing "In progress" bar.
+- [x] Route `/v1/resource/remote?background=true` through `SubmitRemoteDownloads`, sharing one batch helper with `/v1/download/submit`.
+- [x] Link any succeeded Job's available entity output from the Jobs panel and the `/jobs` list; keep the summary-destination fallback for plugin actions.
+- [x] Treat a succeeded Job as complete whatever its last progress row says, and animate only active work.
+- [x] Regenerate `openapi.yaml`, which had been stale since the viewer pin field was added.
+- [x] Run Go, vitest, browser and CLI E2E, Postgres Go and Postgres E2E suites.
+
+### Review
+
+The create form posts background downloads to `/v1/resource/remote?background=true`,
+which called `DownloadManager().SubmitMultiple` directly, so the transfer ran with no
+durable Job. It now uses the same submission path as `/v1/download/submit`.
+`TestBackgroundRemoteResourceIsACanonicalJob` failed before the change and passes
+after it. The panel limited result links to plugin actions, and `/jobs` list rows carry
+no outputs; the list now reads each succeeded row's detail once per page. A transfer
+without `Content-Length` publishes no total, and nothing rewrote that row on success,
+so `/jobs` and the detail page kept the indeterminate bar. The new vitest cases failed
+before the change. The browser check followed the created-resource link from both the
+panel and `/jobs` to the Resource. The full Postgres Go run failed once in
+`TestImportParseLegacySSEPublishesCompletionAfterPlanCommit` on an in-memory SQLite
+`database table is locked` error while writing the import plan fact. That test passed
+five of five runs in isolation and does not touch downloads.

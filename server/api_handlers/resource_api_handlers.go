@@ -8,8 +8,6 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
-	"mahresources/download_queue"
-	"mahresources/hostfetch"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -414,15 +412,15 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 				// so the worker attributes the created resource to them and the queue
 				// surfaces it only to that user (and admins). Set at enqueue, before
 				// processing starts, so there is no attribution race.
+				//
+				// Submitted through the same door as /v1/download/submit, so the
+				// durable Job is accepted before the transfer runs. Handing the URL
+				// to the queue directly ran the download with no Job behind it, and
+				// the create form's "Download in background" never reached the Jobs
+				// panel or /jobs.
 				owner := principalOwnerID(principalFor(request))
-				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator, owner)
+				body, status, err := submitRemoteDownloadBatch(queueCtx, &creator, owner)
 				if err != nil {
-					// A refused header is the submitter's mistake, not a busy
-					// queue; every other failure here is still capacity.
-					status := http.StatusServiceUnavailable
-					if errors.Is(err, hostfetch.ErrInvalidHeaders) {
-						status = http.StatusBadRequest
-					}
 					http_utils.HandleError(err, writer, request, status)
 					return
 				}
@@ -438,19 +436,7 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 
 				writer.Header().Set("Content-Type", constants.JSON)
 				writer.WriteHeader(http.StatusAccepted)
-				// The queue starts each worker before SubmitMultiple returns. Capture
-				// each mutable job under its own lock before encoding so a fast worker
-				// cannot race the JSON encoder while changing status or progress.
-				jobSnapshots := make([]*download_queue.DownloadJob, len(jobs))
-				for i, job := range jobs {
-					if job != nil {
-						jobSnapshots[i] = job.Snapshot()
-					}
-				}
-				_ = json.NewEncoder(writer).Encode(map[string]interface{}{
-					"queued": true,
-					"jobs":   jobSnapshots,
-				})
+				_ = json.NewEncoder(writer).Encode(body)
 				return
 			}
 		}

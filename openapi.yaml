@@ -898,6 +898,8 @@ components:
                     type: integer
                 phase:
                     type: string
+                pinned:
+                    type: boolean
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:
@@ -1069,6 +1071,8 @@ components:
                     type: integer
                 phase:
                     type: string
+                pinned:
+                    type: boolean
                 progress:
                     $ref: '#/components/schemas/JobProgressResponse'
                 queueDuration:

@@ -222,7 +222,7 @@ curl -X POST http://localhost:8181/v1/resource/remote \
   }'
 ```
 
-Pass `background=true` (query or form field) to queue the download instead of blocking. The request then returns `202 Accepted` with `{"queued": true, "jobs": [...]}` rather than the created resource. `POST /v1/jobs/download/submit` always queues in the background. The URL field accepts multiple URLs separated by newlines for batch imports; a synchronous multi-URL request returns only the first created resource, so use `background=true` when you need a per-URL result. Legacy alias: `POST /v1/download/submit`.
+Pass `background=true` (query or form field) to queue the download instead of blocking. The request then goes through the same submission path as `POST /v1/jobs/download/submit`: each URL is accepted as a durable `remote-download` Job before its transfer starts, and the response is `202 Accepted` with `{"queued": true, "jobs": [...]}` rather than the created resource. Each row in `jobs` names its Job in `canonicalJobId`. A URL the server refuses is listed under `refused` with its `reason` and does not fail the rest of the batch. When no URL is accepted, the request answers `400` for an empty URL list or a refused header and `503` otherwise. `POST /v1/jobs/download/submit` always queues in the background. The URL field accepts multiple URLs separated by newlines for batch imports; a synchronous multi-URL request returns only the first created resource, so use `background=true` when you need a per-URL result. Legacy alias: `POST /v1/download/submit`.
 
 ## Add Local Resource
 

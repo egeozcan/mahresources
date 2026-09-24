@@ -137,12 +137,14 @@ includes them.
 | `GET` | `/v1/jobs/summary` | Visible aggregate with a window up to 90 days |
 | `POST` | `/v1/jobs/summary/export` | Queue a CSV or JSON export for an explicit range over 90 days |
 
-Plugin actions that return a local Resource, Note, or Group redirect publish an
-entity output. Opening that output rechecks access before navigating to the
-entity. The Jobs panel and Job detail page show this link. Both also show a
-direct “View result” link for older plugin-action summary outputs that stored
-the same safe redirect before entity outputs were published. Job detail still
-offers “View JSON result” for the stored summary.
+A succeeded download publishes the Resource it created as its `resource` entity
+output. Plugin actions that return a local Resource, Note, or Group redirect
+publish an entity output too. Opening an entity output rechecks access before
+navigating to the entity. The Jobs panel, the Job Center list, and the Job
+detail page link a succeeded Job's available entity output. For plugin actions
+they also show a direct “View result” link for older summary outputs that
+stored the same safe redirect before entity outputs were published. Job detail
+still offers “View JSON result” for the stored summary.
 
 Command requests carry `expectedVersion`, `idempotencyKey`, and `origin`. The
 server recomputes the command under current authorization and rejects a stale

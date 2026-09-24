@@ -163,57 +163,72 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 		// A batch therefore reports per URL — the accepted ones hand back a queue
 		// entry, and a refused one is named rather than taking the batch with it.
 		owner := principalOwnerID(auth.PrincipalFromContext(request.Context()))
-		submissions := ctx.SubmitRemoteDownloads(&creator, owner, "", "api")
-
-		jobs := make([]*download_queue.DownloadJob, 0, len(submissions))
-		refused := make([]map[string]string, 0)
-		var firstErr error
-		for _, submission := range submissions {
-			if submission.Err != nil {
-				if firstErr == nil {
-					firstErr = submission.Err
-				}
-				refused = append(refused, map[string]string{"url": submission.URL, "reason": submission.Err.Error()})
-				continue
-			}
-			// Rows, not live jobs: the workers are already running by the time this
-			// encodes, and a submission whose durable Job is waiting for the deployment's
-			// budget to free has no entry at all. The row is the entry's own snapshot when
-			// there is one and the projection of that Job otherwise, so the answer keeps
-			// the shape every client of this endpoint has always read — an id it polls and
-			// controls, and a status.
-			jobs = append(jobs, submission.Row)
-		}
-
-		if len(jobs) == 0 {
-			// Nothing was accepted at all. "no valid URLs provided" is a client
-			// validation error (400), while "download queue is full" is a capacity
-			// issue (503). A refused header is the first kind too, and typed rather
-			// than matched on wording: telling a submitter to retry a header that can
-			// never be sent is an instruction to fail again.
-			if firstErr == nil {
-				firstErr = fmt.Errorf("no valid URLs provided")
-			}
-			status := http.StatusServiceUnavailable
-			if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) {
-				status = http.StatusBadRequest
-			}
-			http_utils.HandleError(firstErr, writer, request, status)
+		body, status, err := submitRemoteDownloadBatch(ctx, &creator, owner)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, status)
 			return
-		}
-
-		body := map[string]any{
-			"queued": true,
-			"jobs":   jobs,
-		}
-		if len(refused) > 0 {
-			body["refused"] = refused
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		writer.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(writer).Encode(body)
 	}
+}
+
+// submitRemoteDownloadBatch sends one submission through SubmitRemoteDownloads —
+// the door that accepts the durable Job before the transfer is dispatched — and
+// builds the 202 body both background routes answer with. Every route that queues
+// a download goes through here; one that handed the URL to the queue directly would
+// run the transfer with no Job behind it, invisible to the Jobs panel and /jobs.
+//
+// A batch reports per URL: the accepted ones hand back a queue row, and a refused
+// one is named rather than taking the batch with it. When nothing was accepted the
+// error comes back with its status: "no valid URLs provided" and a refused header
+// are the submitter's mistake (400), everything else is capacity (503). A refused
+// header is typed rather than matched on wording: telling a submitter to retry a
+// header that can never be sent is an instruction to fail again.
+func submitRemoteDownloadBatch(ctx DownloadSubmitter, creator *query_models.ResourceFromRemoteCreator, owner *uint) (map[string]any, int, error) {
+	submissions := ctx.SubmitRemoteDownloads(creator, owner, "", "api")
+
+	jobs := make([]*download_queue.DownloadJob, 0, len(submissions))
+	refused := make([]map[string]string, 0)
+	var firstErr error
+	for _, submission := range submissions {
+		if submission.Err != nil {
+			if firstErr == nil {
+				firstErr = submission.Err
+			}
+			refused = append(refused, map[string]string{"url": submission.URL, "reason": submission.Err.Error()})
+			continue
+		}
+		// Rows, not live jobs: the workers are already running by the time this
+		// encodes, and a submission whose durable Job is waiting for the deployment's
+		// budget to free has no entry at all. The row is the entry's own snapshot when
+		// there is one and the projection of that Job otherwise, so the answer keeps
+		// the shape every client of these endpoints has always read — an id it polls
+		// and controls, and a status.
+		jobs = append(jobs, submission.Row)
+	}
+
+	if len(jobs) == 0 {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("no valid URLs provided")
+		}
+		status := http.StatusServiceUnavailable
+		if strings.Contains(firstErr.Error(), "no valid URLs") || errors.Is(firstErr, hostfetch.ErrInvalidHeaders) {
+			status = http.StatusBadRequest
+		}
+		return nil, status, firstErr
+	}
+
+	body := map[string]any{
+		"queued": true,
+		"jobs":   jobs,
+	}
+	if len(refused) > 0 {
+		body["refused"] = refused
+	}
+	return body, http.StatusAccepted, nil
 }
 
 // GetDownloadQueueHandler handles GET /v1/download/queue
