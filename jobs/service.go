@@ -1389,6 +1389,20 @@ func (s *Service) PublishPendingEvents(deps Deps, limit int) (int, error) {
 		limit = DefaultPublishBatch
 	}
 
+	// Most runtime ticks have nothing to publish. Check before opening a write
+	// transaction so an idle publisher never seeds or locks the global allocator
+	// row. An event committed after this read remains unsequenced for the next
+	// tick, which is preferable to contending on SQLite's single writer lock.
+	var pendingCount int64
+	if err := deps.DB.Model(&models.JobEvent{}).
+		Where("delivery_sequence IS NULL").
+		Count(&pendingCount).Error; err != nil {
+		return 0, fmt.Errorf("jobs: count unsequenced events: %w", err)
+	}
+	if pendingCount == 0 {
+		return 0, nil
+	}
+
 	published := 0
 	err := deps.DB.Transaction(func(tx *gorm.DB) error {
 		sequence, err := lockEventSequence(tx)

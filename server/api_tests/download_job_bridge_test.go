@@ -26,6 +26,16 @@ import (
 // and a replay keyring so a submission's input can be sealed.
 func installJobControlPlane(t *testing.T, tc *TestContext) {
 	t.Helper()
+	service := installJobControlPlaneWithoutRuntime(t, tc)
+	startJobControlPlaneRuntime(t, tc, service)
+}
+
+// installJobControlPlaneWithoutRuntime installs the durable adapters but leaves
+// dispatch under the test's control. A test that must create a queued Job or
+// occupy capacity before the first runtime pass can start the real loop after
+// that state is committed.
+func installJobControlPlaneWithoutRuntime(t *testing.T, tc *TestContext) *jobs.Service {
+	t.Helper()
 	ring, err := jobs.LoadReplayKeyring(jobs.ReplayKeyConfig{Dialect: "SQLITE", Ephemeral: true})
 	if err != nil {
 		t.Fatalf("build replay keyring: %v", err)
@@ -39,6 +49,11 @@ func installJobControlPlane(t *testing.T, tc *TestContext) {
 			t.Fatalf("installing the control plane did not register %s", kind)
 		}
 	}
+	return service
+}
+
+func startJobControlPlaneRuntime(t *testing.T, tc *TestContext, service *jobs.Service) {
+	t.Helper()
 	// The dispatch loop is what adopts a submitted transfer and publishes its
 	// progress and outcome into the Job; a deployment always runs one, and a test
 	// without it would be asserting against a Job nobody is executing.

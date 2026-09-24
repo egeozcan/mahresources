@@ -366,7 +366,7 @@ func occupyTheDeploymentBudget(t *testing.T, tc *TestContext) {
 // answer for work the client holds an id for.
 func TestAnExportWaitingForCapacityIsAcceptedAndNotMissing(t *testing.T) {
 	tc := SetupTestEnv(t)
-	installJobControlPlane(t, tc)
+	installJobControlPlaneWithoutRuntime(t, tc)
 	tc.AppCtx.Config.MaxJobConcurrency = 1
 	occupyTheDeploymentBudget(t, tc)
 
@@ -401,7 +401,7 @@ func TestAnExportWaitingForCapacityIsAcceptedAndNotMissing(t *testing.T) {
 // it.
 func TestAQueuedExportIsReadableAndCancellableThroughTheJobRoutes(t *testing.T) {
 	tc := SetupTestEnv(t)
-	installJobControlPlane(t, tc)
+	installJobControlPlaneWithoutRuntime(t, tc)
 	tc.AppCtx.Config.MaxJobConcurrency = 1
 	occupyTheDeploymentBudget(t, tc)
 

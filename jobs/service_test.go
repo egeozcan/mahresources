@@ -1023,6 +1023,62 @@ func TestJobPublishIsBoundedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestJobPublishWithoutPendingEventsDoesNotAcquireWriterLock(t *testing.T) {
+	deps := newTestDeps(t)
+	svc := NewService()
+	blocker := deps.DB.Begin()
+	if blocker.Error != nil {
+		t.Fatalf("begin writer transaction: %v", blocker.Error)
+	}
+	if err := blocker.Create(&models.JobEventSequence{ID: models.JobEventSequenceRowID, Value: 0}).Error; err != nil {
+		_ = blocker.Rollback().Error
+		t.Fatalf("hold SQLite writer lock: %v", err)
+	}
+	transactionOpen := true
+	defer func() {
+		if transactionOpen {
+			_ = blocker.Rollback().Error
+		}
+	}()
+
+	type publishResult struct {
+		count int
+		err   error
+	}
+	done := make(chan publishResult, 1)
+	go func() {
+		count, err := svc.PublishPendingEvents(deps, DefaultPublishBatch)
+		done <- publishResult{count: count, err: err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("publish with no pending events: %v", result.err)
+		}
+		if result.count != 0 {
+			t.Fatalf("published %d events with no pending events", result.count)
+		}
+	case <-time.After(time.Second):
+		_ = blocker.Rollback().Error
+		transactionOpen = false
+		<-done
+		t.Fatal("empty publisher waited for SQLite's writer lock")
+	}
+
+	if err := blocker.Rollback().Error; err != nil {
+		t.Fatalf("release writer transaction: %v", err)
+	}
+	transactionOpen = false
+	var sequenceRows int64
+	if err := deps.DB.Model(&models.JobEventSequence{}).Count(&sequenceRows).Error; err != nil {
+		t.Fatalf("count event sequence rows: %v", err)
+	}
+	if sequenceRows != 0 {
+		t.Fatalf("empty publisher seeded %d event sequence rows", sequenceRows)
+	}
+}
+
 // TestJobTerminalTransitionAllocatesItsEventSequenceInsideTheTransaction covers
 // the one write in a terminal transition that must not be decided outside the
 // transaction that performs it.
